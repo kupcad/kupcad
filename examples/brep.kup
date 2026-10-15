@@ -1,10 +1,11 @@
+# @title Exact B-Rep (preview)
+# @description Locus, KupCAD's exact B-Rep kernel, is still being written. It builds the
+# primitives and the hulls of flat-faced solids, and exports them to STEP; anything else
+# raises a NotImplementedError naming what is missing. Build with: kupcad build brep.kup -o brep.step
 CAD.config(engine: :brep)
 
-box = cube(10, center: true)
+# A tapered block: the hull of a wide plate and a narrow column, both centred.
+plate = cube(30, 30, 4, center: true)
+column = cube(10, 10, 20, center: true)
 
-# Use a square drill instead of a cylinder so our MVP engine can calculate the line-plane intersections!
-drill = cube(3, 3, 20, center: true)
-    .rotate(0, 90, 0)
-    .translate(0, 2, 0)
-
-part = box - drill
+part = batch_hull([plate, column])

@@ -55,12 +55,57 @@ pub const BrepSolid = struct {
         return self;
     }
 
+    /// An independent copy: Locus has no copy operation, and copying through an identity
+    /// transform dropped the curved surfaces (a cylinder's, a sphere's).
+    pub fn clone(self: *const BrepSolid) !*BrepSolid {
+        const copy = try create(self.allocator, self.env);
+        errdefer copy.destroy();
+        copy.t_arena = try cloneArena(locus_topo_arena.TopologyArena, self.allocator, &self.t_arena);
+        copy.g_arena = try cloneArena(locus_geom_arena.GeometryArena, self.allocator, &self.g_arena);
+        copy.solid_id = self.solid_id;
+        return copy;
+    }
+
     pub fn destroy(self: *BrepSolid) void {
         self.t_arena.deinit(self.allocator);
         self.g_arena.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 };
+
+/// A deep copy of a Locus arena: every list, and every slice its items own (NURBS knots and
+/// control points, which the arena's deinit frees).
+fn cloneArena(comptime Arena: type, allocator: std.mem.Allocator, src: *const Arena) !Arena {
+    var out: Arena = .{};
+    errdefer out.deinit(allocator);
+    inline for (comptime std.meta.fieldNames(Arena)) |name| {
+        const items = @field(src, name).items;
+        try @field(out, name).ensureTotalCapacityPrecise(allocator, items.len);
+        for (items) |item| @field(out, name).appendAssumeCapacity(try dupeOwned(allocator, item));
+    }
+    return out;
+}
+
+/// `item` with each slice field copied, so the copy owns its own.
+fn dupeOwned(allocator: std.mem.Allocator, item: anytype) !@TypeOf(item) {
+    const T = @TypeOf(item);
+    if (@typeInfo(T) != .@"struct") return item;
+    const info = @typeInfo(T).@"struct";
+    var copy = item;
+    var duped: usize = 0;
+    errdefer inline for (info.field_names, info.field_types, 0..) |name, F, i| {
+        if (comptime isSlice(F)) if (i < duped) allocator.free(@field(copy, name));
+    };
+    inline for (info.field_names, info.field_types, 0..) |name, F, i| {
+        if (comptime isSlice(F)) @field(copy, name) = try allocator.dupe(@typeInfo(F).pointer.child, @field(item, name));
+        duped = i + 1;
+    }
+    return copy;
+}
+
+fn isSlice(comptime T: type) bool {
+    return @typeInfo(T) == .pointer and @typeInfo(T).pointer.size == .slice;
+}
 
 /// The Locus settings for solids built under `config`. Every distance tolerance follows
 /// the one `tolerance`; the angular one compares unit directions, so it doesn't scale with
@@ -106,6 +151,8 @@ fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.Geomet
         if (@intFromPtr(h.ptr) == 0) continue;
         const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
         const s = solid.t_arena.solids.items[@backingInt(solid.solid_id)];
+        // Point indices are per solid: carried over, the second solid's points looked seen.
+        seen.clearRetainingCapacity();
 
         for (0..s.shells_len) |s_off| {
             const shell_idx = solid.t_arena.solid_shells.items[s.shells_start + s_off];
@@ -143,36 +190,51 @@ fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.Geomet
 
 fn buildHullFromHandles(handles: []const geom.GeometryHandle) ?geom.GeometryHandle {
     for (handles) |h| if (@intFromPtr(h.ptr) == 0) return null;
-    const pts = extractAllVertices(backend_allocator, handles) catch return null;
-    defer backend_allocator.free(pts);
+    const solid = hullOf(handles) catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
 
-    if (pts.len < 4) return null;
-    const first: *BrepSolid = @ptrCast(@alignCast(handles[0].ptr));
-    const solid = BrepSolid.create(backend_allocator, first.env) catch return null;
+/// The convex hull of the solids' vertices, as a new solid with the first one's settings.
+/// Only the points the hull's faces use become its vertices: the others (inside the hull,
+/// or on a face of it) used to stay behind as unconnected vertices.
+fn hullOf(handles: []const geom.GeometryHandle) !*BrepSolid {
+    const pts = try extractAllVertices(backend_allocator, handles);
+    defer backend_allocator.free(pts);
+    if (pts.len < 4) return error.TooFewPoints;
 
     var builder = locus_qh.QuickhullBuilder.init(backend_allocator, pts);
     defer builder.deinit();
-    builder.buildHull() catch {
-        solid.destroy();
-        return null;
-    };
+    try builder.buildHull();
 
+    // The hull's triangles, their corners renumbered over the points they use.
+    var corner_of = std.AutoHashMapUnmanaged(u32, u32).empty; // point index -> corner index
+    defer corner_of.deinit(backend_allocator);
+    var corners = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    defer corners.deinit(backend_allocator);
     var tris = std.ArrayListUnmanaged([3]u32).empty;
     defer tris.deinit(backend_allocator);
-
     for (builder.faces.items) |hull_face| {
         if (hull_face.disabled) continue;
         const he0 = builder.half_edges.items[hull_face.first_half_edge];
         const he1 = builder.half_edges.items[he0.next_edge];
         const he2 = builder.half_edges.items[he1.next_edge];
-        tris.append(backend_allocator, .{ he2.end_vertex, he0.end_vertex, he1.end_vertex }) catch return null;
+        const ends = [3]u32{ @intCast(he2.end_vertex), @intCast(he0.end_vertex), @intCast(he1.end_vertex) };
+        var tri: [3]u32 = undefined;
+        for (ends, &tri) |point, *corner| {
+            const entry = try corner_of.getOrPut(backend_allocator, point);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = @intCast(corners.items.len);
+                try corners.append(backend_allocator, pts[point]);
+            }
+            corner.* = entry.value_ptr.*;
+        }
+        try tris.append(backend_allocator, tri);
     }
 
-    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, tris.items) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    const solid = try BrepSolid.create(backend_allocator, solidOf(handles[0].ptr).env);
+    errdefer solid.destroy();
+    solid.solid_id = try locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, corners.items, tris.items);
+    return solid;
 }
 
 fn destructImpl(handle: geom.GeometryHandle) void {
@@ -783,14 +845,20 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
     return cloneImpl(a);
 }
 
-/// Deep copy via an identity translation (locus has no dedicated copy operation).
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
-    return translateImpl(a, 0.0, 0.0, 0.0);
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const copy = solidOf(a.ptr).clone() catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
 }
 
 fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    const identity = [6]f64{ 1.0, 0.0, 0.0, 0.0, 1.0, 0.0 };
-    return crossSectionTransformImpl(cs, identity);
+    if (@intFromPtr(cs.ptr) == 0) return null;
+    const copy = solidOf(cs.ptr).clone() catch return null;
+    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
+}
+
+fn solidOf(ptr: *anyopaque) *BrepSolid {
+    return @ptrCast(@alignCast(ptr));
 }
 
 /// B-Rep solids are validated by Locus as they are built; there is no deferred status.
@@ -799,10 +867,29 @@ fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
     return null;
 }
 
-/// What Locus implements so far. Its other operations are still stubs that would answer
-/// 0, null or an empty solid, so callers turn these into errors (kernel.Feature).
+/// Whether any face of the solid lies on a curved surface. The hull is built from the
+/// solid's vertices, which is the true hull only when every face is flat.
+pub fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
+    if (@intFromPtr(handle.ptr) == 0) return false;
+    const g = &solidOf(handle.ptr).g_arena;
+    return g.spheres.items.len + g.cylinders.items.len + g.cones.items.len + g.toruses.items.len + g.nurbs_surfaces.items.len > 0;
+}
+
+/// What Locus implements so far: cubes, cylinders, polyhedra, sketches, hulls of flat-faced
+/// solids and STEP export. Its other
+/// operations are still stubs that answer 0, a fixed 10 mm cube, an untouched copy, or
+/// drop the curved surfaces (the transforms), so callers turn these into errors
+/// (kernel.Feature).
 pub fn supports(feature: kernel.Feature) bool {
     return switch (feature) {
+        .transform,
+        .boolean,
+        .extrude,
+        .revolve,
+        .loft,
+        .sketch_boolean,
+        .curved_hull,
+        .sphere, // Locus builds a fixed 16-sided faceted one, whatever the resolution
         .cone,
         .extrude_twist,
         .extrude_scale,

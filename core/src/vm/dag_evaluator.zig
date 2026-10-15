@@ -134,6 +134,11 @@ fn checkEstimatedVertices(vm: *VM, tag: dag.DAGTag, factors: []const usize, limi
     return checkVertexLimit(vm, tag, verts, limit, true);
 }
 
+/// A hull of a curved solid needs an engine that hulls curved faces, not just vertices.
+fn requireFlatOrCurvedHull(vm: *VM, solid: geom.GeometryHandle) !void {
+    if (kernel.hasCurvedFaces(solid)) try vm.requireFeature(solid.engine, .curved_hull);
+}
+
 fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
     if (a != b) {
         _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
@@ -319,6 +324,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .sphere => {
+                    try vm.requireFeature(config.engine, .sphere);
                     const p = vm.dag_builder.getSpherePayload(node);
                     const handle = kernel.sphere(&config, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
@@ -344,8 +350,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const left_handle = try geometryOf(left);
                     const right_handle = try geometryOf(right);
                     try checkSameEngine(vm, left_handle.engine, right_handle.engine);
+                    try vm.requireFeature(left_handle.engine, if (node.tag == .minkowski) .minkowski else .boolean);
                     if (node.tag == .minkowski) {
-                        try vm.requireFeature(left_handle.engine, .minkowski);
                         try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
                     }
 
@@ -380,6 +386,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         h.* = try geometryOf(e);
                         try checkSameEngine(vm, handles[0].engine, h.engine);
                     }
+                    if (node.tag == .batch_union_op) try vm.requireFeature(handles[0].engine, .boolean);
+                    if (node.tag == .batch_hull_op) for (handles) |h| try requireFlatOrCurvedHull(vm, h);
 
                     const result = if (node.tag == .batch_union_op)
                         kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return kernelFailed(vm, node.tag)
@@ -394,6 +402,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const target = v_stack.pop();
                     defer v_stack.release(target);
                     const target_handle = try geometryOf(target);
+                    try vm.requireFeature(target_handle.engine, .transform);
                     const p = vm.dag_builder.getTranslatePayload(node); // All share same struct layout
                     const result = switch (node.tag) {
                         .translate => kernel.translate(target_handle, p.x, p.y, p.z),
@@ -410,7 +419,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const p = vm.dag_builder.getTransformPayload(node);
                     var mat: [12]f64 = undefined;
                     std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
-                    const result = kernel.transformMatrix(try geometryOf(target), mat) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    try vm.requireFeature(solid.engine, .transform);
+                    const result = kernel.transformMatrix(solid, mat) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
                 .trim_by_plane => {
@@ -425,7 +436,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 .hull => {
                     const target = v_stack.pop();
                     defer v_stack.release(target);
-                    const result = kernel.hull(try geometryOf(target)) orelse return kernelFailed(vm, node.tag);
+                    const solid = try geometryOf(target);
+                    try requireFlatOrCurvedHull(vm, solid);
+                    const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
                 },
                 .set_material => {
@@ -444,6 +457,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getExtrudePayload(node);
                     const profile = try crossSectionOf(target);
+                    try vm.requireFeature(profile.engine, .extrude);
                     if (p.twist_degrees != 0) try vm.requireFeature(profile.engine, .extrude_twist);
                     if (p.scale_x != 1 or p.scale_y != 1) try vm.requireFeature(profile.engine, .extrude_scale);
                     // A copy of the profile at the bottom, the top and each slice between.
@@ -456,6 +470,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(target);
                     const p = vm.dag_builder.getRevolvePayload(node);
                     const profile = try crossSectionOf(target);
+                    try vm.requireFeature(profile.engine, .revolve);
                     // A copy of the profile per segment, and one more to close a partial turn.
                     try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.segments, 0))) + 1 }, config.max_vertices);
                     const result = kernel.revolve(profile, p.segments, p.degrees) orelse return kernelFailed(vm, node.tag);
@@ -469,6 +484,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const top_cs = try crossSectionOf(top);
                     const base_cs = try crossSectionOf(base);
                     try checkSameEngine(vm, base_cs.engine, top_cs.engine);
+                    try vm.requireFeature(base_cs.engine, .loft);
                     // loft is a hull of the two profiles, which is only the true loft for convex
                     // ones; a concave profile would be filled in silently.
                     inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
@@ -565,7 +581,9 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const p = vm.dag_builder.getTransformPayload(node);
                     var mat: [6]f64 = undefined;
                     std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
-                    const handle = kernel.crossSectionTransform(try crossSectionOf(target), mat) orelse return kernelFailed(vm, node.tag);
+                    const sketch = try crossSectionOf(target);
+                    try vm.requireFeature(sketch.engine, .transform);
+                    const handle = kernel.crossSectionTransform(sketch, mat) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .cs_union_op, .cs_difference_op, .cs_intersection_op => {
@@ -576,6 +594,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const left_handle = try crossSectionOf(left);
                     const right_handle = try crossSectionOf(right);
                     try checkSameEngine(vm, left_handle.engine, right_handle.engine);
+                    try vm.requireFeature(left_handle.engine, .sketch_boolean);
                     const op: kernel.BooleanOp = switch (node.tag) {
                         .cs_union_op => .union_op,
                         .cs_difference_op => .difference_op,

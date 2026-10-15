@@ -1303,15 +1303,29 @@ fn brepLacks(comptime feature: kernel.Feature) []const u8 {
 }
 
 test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a stand-in result" {
-    // Each of these used to answer 0, an empty or untouched solid, or a generic failure.
+    // Locus is unfinished: each of these used to answer 0, a fixed 10 mm cube, an untouched
+    // or surface-less copy, or a generic failure.
     const cases = [_]struct { src: []const u8, expected: []const u8 }{
+        .{ .src = comptime rescued("cube(10).translate(5, 0, 0).simplify"), .expected = brepLacks(.transform) }, // lost its planes' positions
+        .{ .src = comptime rescued("cube(10).rotate(0, 0, 45).simplify"), .expected = brepLacks(.transform) }, // was not turned
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10).scale(2).simplify"), .expected = brepLacks(.transform) }, // lost its curved face
+        .{ .src = comptime rescued("square(10).translate(5, 0).extrude(1).simplify"), .expected = brepLacks(.transform) },
+        .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = brepLacks(.boolean) }, // kept both solids
+        .{ .src = comptime rescued("union([cube(10), cube(5), cube(2)]).simplify"), .expected = brepLacks(.boolean) },
+        .{ .src = comptime rescued("(square(10) - square(5)).extrude(1).simplify"), .expected = brepLacks(.sketch_boolean) }, // was a 3D cube
+        .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = brepLacks(.extrude) }, // was a 10 mm cube
+        .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = brepLacks(.extrude) },
+        .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = brepLacks(.revolve) }, // was a 10 mm cube
+        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
+        .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
-        .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude_twist) }, // was untwisted
-        .{ .src = comptime rescued("square(4).translate(5, 0).helix(h: 10).simplify"), .expected = brepLacks(.extrude_twist) },
-        .{ .src = comptime rescued("square(10).extrude(5, scale: 0.5).simplify"), .expected = brepLacks(.extrude_scale) }, // was untapered
+        .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = brepLacks(.sphere) }, // was 16-sided whatever the resolution
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
+        .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
-        .{ .src = comptime rescued("cube(10).fillet_edges(1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).fillet_edges(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
         .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
@@ -1326,14 +1340,12 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).contains?([1, 1, 1])"), .expected = brepLacks(.contains_point) },
         .{ .src = comptime rescued("square(10).contains?([5, 5])"), .expected = brepLacks(.contains_point) },
         .{ .src = comptime rescued("cube(10).ray_cast([5, 5, -5], [5, 5, 15])"), .expected = brepLacks(.ray_cast) },
-        .{ .src = comptime rescued("cube(1).min_gap(cube(1).translate(5, 0, 0))"), .expected = brepLacks(.min_gap) },
+        .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
         .{ .src = comptime rescued("cube(10).on_face(:top)"), .expected = brepLacks(.faces) },
-        .{ .src = comptime rescued("square(4).translate(5, 0).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
         // What it has keeps working.
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
-        .{ .src = comptime rescued("square(10).extrude(5).simplify"), .expected = "no error" },
-        .{ .src = comptime rescued("square(4).translate(5, 0).revolve(segments: 16).simplify"), .expected = "no error" },
-        .{ .src = comptime rescued("(cube(10) - cube(5)).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("batch_hull([cube(10), cube(4, 4, 30)]).simplify"), .expected = "no error" },
+        .{ .src = comptime rescued("cube(10).hull.simplify"), .expected = "no error" },
     };
     for (cases) |case| {
         errdefer std.debug.print("script: {s}\n", .{case.src});

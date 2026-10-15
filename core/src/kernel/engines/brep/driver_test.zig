@@ -139,13 +139,23 @@ test "Driver: Convex Hull (Single and Batch)" {
 
     try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(hull1));
 
-    // Hull of two disjoint boxes along X is a single box: 8 corners.
+    // Hull of two disjoint boxes along X is one box spanning both: 8 corners, from x = -5
+    // to x = 25. (It used to be the first box alone: its points hid the second's.)
     const cube2 = driver.driver.translateFn(cube1, 20, 0, 0) orelse return error.Translate;
     defer driver.driver.destructFn(cube2);
     const hull2 = driver.driver.batchHullFn(std.testing.allocator, &.{ cube1, cube2 }) orelse return error.Hull;
     defer driver.driver.destructFn(hull2);
 
     try std.testing.expectEqual(@as(usize, 8), driver.driver.numVertsFn(hull2));
+    const points = @as(*driver.BrepSolid, @ptrCast(@alignCast(hull2.ptr))).g_arena.points.items;
+    var min_x: f64 = std.math.inf(f64);
+    var max_x: f64 = -std.math.inf(f64);
+    for (points) |p| {
+        min_x = @min(min_x, p[0]);
+        max_x = @max(max_x, p[0]);
+    }
+    try std.testing.expectEqual(@as(f64, -5), min_x);
+    try std.testing.expectEqual(@as(f64, 25), max_x);
 }
 
 test "Driver: STEP Export of CSG Boolean Result" {
@@ -239,4 +249,20 @@ test "BRep Driver: a mesh copy leaves nothing allocated when an allocation fails
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
         try std.testing.expectError(error.OutOfMemory, driver.copyMesh(failing.allocator(), &mesh));
     }
+}
+
+test "BRep Driver: a clone is the same solid, curved surfaces included" {
+    // Clones went through an identity transform, which copies only points, lines and
+    // planes: a cylinder's copy lost its curved face and failed STEP export.
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 10, false, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cyl);
+    const copy = driver.driver.cloneFn(cyl) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(copy);
+    try std.testing.expect(copy.ptr != cyl.ptr);
+
+    const original_step = try driver.exportStep(std.testing.allocator, &.{cyl});
+    defer std.testing.allocator.free(original_step);
+    const copy_step = try driver.exportStep(std.testing.allocator, &.{copy});
+    defer std.testing.allocator.free(copy_step);
+    try std.testing.expectEqualStrings(original_step, copy_step);
 }

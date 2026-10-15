@@ -311,13 +311,13 @@ end
 
 ### The B-Rep engine today
 
-`engine: :brep` (and every STEP export, which needs exact geometry) runs on Locus, KupCAD's own B-Rep kernel, which is still being written. It builds cubes, cylinders, spheres, polygons and polyhedra, straight extrusions, revolutions, booleans, hulls, lofts and transforms. Anything else is a `NotImplementedError` that names what is missing and suggests `engine: :manifold`, rather than a stand-in answer:
+`engine: :brep` (and every STEP export, which needs exact geometry) runs on Locus, KupCAD's own B-Rep kernel, which is still being written. Today it builds cubes, cylinders and polyhedra (and the sketches `square`, `circle`, `polygon`, `text`), the convex hulls of flat-faced solids (`hull`, `batch_hull`), and STEP files of them. Everything else is a `NotImplementedError` that names what is missing and suggests `engine: :manifold`, rather than a stand-in answer:
 
-* shapes: cones (`r1` different from `r2`), twisted or tapered extrusions (`twist:`, `scale:`, `helix`), `offset`, `minkowski` and `fillet_edges`, `trim_by_plane` and `split_by_plane`, `slice`, `project`, `decompose`;
-* measurements: `volume`, `surface_area`, `genus`, `empty?`, `bbox` and what uses it (`align`, `center`, `resize`), `contains?`, `ray_cast`, `min_gap`, `on_face`, and `revolve` without `segments:` (it measures the profile);
+* shapes and operations: spheres (Locus builds a fixed faceted one), cones (`r1` different from `r2`); `translate`, `rotate`, `scale`, `mirror`, `transform`; booleans on solids and sketches; hulls of curved solids; `extrude` (so `cube(round_r:)` and `text` solids too), `revolve`, `loft`, `helix`; `offset`, `minkowski` and `fillet_edges`, `trim_by_plane` and `split_by_plane`, `slice`, `project`, `decompose`;
+* measurements: `volume`, `surface_area`, `genus`, `empty?`, `bbox` and what uses it (`align`, `center`, `resize`), `contains?`, `ray_cast`, `min_gap`, `on_face`;
 * meshes: STL and glTF export, and the viewport.
 
-Materials are the exception: a B-Rep model is built without them, with one warning.
+Materials are the exception: a B-Rep model is built without them, with one warning. Each of these turns on as Locus implements it (`supports` in `kernel/engines/brep/driver.zig`).
 
 ## 5. Geometry Modifiers & Sweeps
 

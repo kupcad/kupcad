@@ -450,7 +450,8 @@ test "DAG Evaluator: cache is keyed by engine" {
 
     const small = try vm.dag_builder.addCube(10, 10, 10, false);
     const big = try vm.dag_builder.addCube(20, 20, 20, false);
-    const diff = try vm.dag_builder.addBinary(.difference_op, big, small);
+    // A hull, since it is an operation both engines have.
+    const hull = try vm.dag_builder.addBatchHull(&.{ big, small });
 
     const m = try dag_evaluator.evaluateDAG(&vm, small);
     try testing.expectEqual(geom.EngineType.manifold, m.engine);
@@ -461,8 +462,8 @@ test "DAG Evaluator: cache is keyed by engine" {
     const b = try dag_evaluator.evaluateDAG(&vm, small);
     try testing.expectEqual(geom.EngineType.brep_native, b.engine);
 
-    const d = try dag_evaluator.evaluateDAG(&vm, diff);
-    try testing.expectEqual(geom.EngineType.brep_native, d.engine);
+    const h = try dag_evaluator.evaluateDAG(&vm, hull);
+    try testing.expectEqual(geom.EngineType.brep_native, h.engine);
 }
 
 test "DAG Evaluator: GC keeps the B-Rep cache entry of live geometry" {

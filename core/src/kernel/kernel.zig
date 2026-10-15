@@ -30,6 +30,14 @@ pub fn materialSlot(material_id: u32) u32 {
 /// script that needs a missing one gets an error naming it, never a generic failure or a
 /// stand-in answer (a volume of 0, an untwisted extrusion, an empty mesh).
 pub const Feature = enum {
+    transform,
+    boolean,
+    extrude,
+    revolve,
+    loft,
+    sketch_boolean,
+    curved_hull,
+    sphere,
     cone,
     extrude_twist,
     extrude_scale,
@@ -55,6 +63,14 @@ pub const Feature = enum {
     /// measure volume yet".
     pub fn describe(self: Feature) []const u8 {
         return switch (self) {
+            .transform => "move, turn, scale or mirror shapes (translate, rotate, scale, mirror, transform)",
+            .boolean => "combine solids (union, difference, intersection)",
+            .extrude => "extrude sketches",
+            .revolve => "revolve sketches",
+            .loft => "loft sketches",
+            .sketch_boolean => "combine sketches (union, difference, intersection)",
+            .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's)",
+            .sphere => "make exact spheres",
             .cone => "make cones (a cylinder with r1 different from r2)",
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
             .extrude_scale => "taper an extrusion (extrude scale:)",
@@ -78,6 +94,15 @@ pub const Feature = enum {
         };
     }
 };
+
+/// Whether the solid has faces that aren't flat. A mesh has none; a B-Rep sphere or cylinder
+/// does, which matters where the engine handles only flat faces (`curved_hull`).
+pub inline fn hasCurvedFaces(handle: geom.GeometryHandle) bool {
+    return switch (handle.engine) {
+        .manifold => false,
+        .brep_native => brep_driver.hasCurvedFaces(handle),
+    };
+}
 
 pub fn supports(engine: geom.EngineType, feature: Feature) bool {
     return switch (engine) {
