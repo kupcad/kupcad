@@ -319,18 +319,21 @@ pub const Parser = struct {
         }
     }
 
-    /// Safely peeks ahead through newlines and comments.
-    /// If it finds a method chain continuation (e.g., `.`), it consumes the whitespace
-    /// and commits to the chain. Otherwise, it leaves the stream untouched.
+    /// A method chain continued on the next line (`.foo`, `&.foo`): see skipIgnoredBefore.
     fn skipNewlinesIfChainedCall(self: *Parser) bool {
+        return self.skipIgnoredBefore(&.{ .dot, .ampersand_dot });
+    }
+
+    /// Peeks through line breaks and comments. If the next real token is one of `tags`,
+    /// consumes them (keeping the comments) and returns true; otherwise leaves the stream
+    /// untouched, so the line break still ends the statement.
+    fn skipIgnoredBefore(self: *Parser, tags: []const Tag) bool {
         var lookahead: u24 = 0;
         while (self.tag(lookahead) == .newline or self.tag(lookahead) == .comment or self.tag(lookahead) == .semicolon or self.tag(lookahead) == .docstring) {
             lookahead += 1;
         }
 
-        const peek_tag = self.tag(lookahead);
-        if (peek_tag == .dot or peek_tag == .ampersand_dot) {
-            // It's a valid chain! Commit to consuming the whitespace/comments
+        if (std.mem.indexOfScalar(Tag, tags, self.tag(lookahead)) != null) {
             while (lookahead > 0) {
                 if (self.tag(0) == .comment) {
                     self.comments.append(self.allocator, .{
@@ -419,6 +422,11 @@ pub const Parser = struct {
             if (self.tag(0) == .eof) break;
             if (self.parseStatement()) |parsed_stmt| {
                 try self.scratch_nodes.append(self.allocator, parsed_stmt);
+                // `puts 1 2` used to run as `puts 1` and then `2`; Ruby rejects it too.
+                if (!self.atStatementEnd(end_tags)) {
+                    self.reportError(self.getLoc(self.tok_idx), "Expected a line break or ';' before '{s}'", .{self.lexeme(0)});
+                    self.synchronize();
+                }
             } else |err| {
                 // Depth errors abort the whole parse: recovering would just re-hit the
                 // limit on every following nested statement and flood diagnostics.
@@ -428,6 +436,16 @@ pub const Parser = struct {
         }
         const end_tok = self.tok_idx;
         return self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch ParseError.OutOfMemory;
+    }
+
+    /// Whether a statement may end here: at a line break, `;`, a comment, the end of the
+    /// file, or one of the tokens that close the enclosing block (`end`, `}`, `else`, ...).
+    fn atStatementEnd(self: *const Parser, end_tags: []const Tag) bool {
+        switch (self.tag(0)) {
+            .newline, .semicolon, .comment, .docstring, .eof => return true,
+            else => {},
+        }
+        return std.mem.indexOfScalar(Tag, end_tags, self.tag(0)) != null;
     }
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {
@@ -684,6 +702,35 @@ pub const Parser = struct {
         return self.b.beginStmt(body, payload.rescues, payload.ensure_body, start_tok) catch ParseError.OutOfMemory;
     }
 
+    /// One entry of an import or export list: `name` or `Mod::Name`, then `as alias` if
+    /// given. A line break after the name ends a bare `export m1` rather than being skipped
+    /// in search of `as` (that ran `export m1` into the next line's statement).
+    fn parseAliasPair(self: *Parser) ParseError!void {
+        const path_start_tok = self.tok_idx;
+        if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+        self.advance();
+        while (self.tag(0) == .colon_colon) {
+            self.advance();
+            if (self.tag(0) != .constant and self.tag(0) != .ident) return ParseError.UnexpectedToken;
+            self.advance();
+        }
+
+        const p_start = self.tokens.starts[path_start_tok];
+        const prev_tok = self.tok_idx - 1;
+        const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+        const orig_id = try self.b.intern(self.source[p_start..p_end]);
+        var alias_id = orig_id;
+
+        if (self.skipIgnoredBefore(&.{.keyword_as})) {
+            self.advance();
+            self.skipIgnored();
+            if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+            alias_id = try self.b.intern(self.lexeme(0));
+            self.advance();
+        }
+        try self.scratch_alias_pairs.append(self.allocator, .{ .original = orig_id, .alias = alias_id });
+    }
+
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!ast.NodeIndex {
         if (self.scope_depth > 0) {
             self.reportError(self.getLoc(self.tok_idx), "Import and Export statements are only allowed at the top level", .{});
@@ -702,38 +749,11 @@ pub const Parser = struct {
             self.advance();
             while (self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 self.skipIgnored();
-
-                const path_start_tok = self.tok_idx;
-
-                if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
-                self.advance();
-
-                while (self.tag(0) == .colon_colon) {
-                    self.advance();
-                    if (self.tag(0) == .constant or self.tag(0) == .ident) {
-                        self.advance();
-                    } else return ParseError.UnexpectedToken;
-                }
-
-                const p_start = self.tokens.starts[path_start_tok];
-                const prev_tok = self.tok_idx - 1;
-                const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
-                const orig_id = try self.b.intern(self.source[p_start..p_end]);
-                var alias_id = orig_id;
-
-                self.skipIgnored();
-                if (self.tag(0) == .keyword_as) {
-                    self.advance();
-                    self.skipIgnored();
-                    if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
-                    alias_id = try self.b.intern(self.lexeme(0));
-                    self.advance();
-                }
-
-                try self.scratch_alias_pairs.append(self.allocator, .{ .original = orig_id, .alias = alias_id });
-
+                try self.parseAliasPair();
+                self.skipIgnored(); // line breaks are fine inside the braces
                 if (self.tag(0) == .comma) self.advance() else break;
             }
+            self.skipIgnored();
             _ = try self.expect(.r_brace);
 
             // Make 'from' optional for braced export statements
@@ -743,40 +763,9 @@ pub const Parser = struct {
             }
         } else if (self.tag(0) == .constant or self.tag(0) == .ident) {
             while (true) {
-                self.skipIgnored();
-                const path_start_tok = self.tok_idx;
-                if (self.tag(0) != .constant and self.tag(0) != .ident) return ParseError.UnexpectedToken;
-
-                self.advance();
-                while (self.tag(0) == .colon_colon) {
-                    self.advance();
-                    if (self.tag(0) == .constant or self.tag(0) == .ident) {
-                        self.advance();
-                    } else return ParseError.UnexpectedToken;
-                }
-
-                const p_start = self.tokens.starts[path_start_tok];
-                const prev_tok = self.tok_idx - 1;
-                const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
-                const orig_id = try self.b.intern(self.source[p_start..p_end]);
-                var alias_id = orig_id;
-
-                self.skipIgnored();
-                if (self.tag(0) == .keyword_as) {
-                    self.advance();
-                    self.skipIgnored();
-                    if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
-                    alias_id = try self.b.intern(self.lexeme(0));
-                    self.advance();
-                }
-
-                try self.scratch_alias_pairs.append(self.allocator, .{ .original = orig_id, .alias = alias_id });
-
-                if (self.tag(0) == .comma) {
-                    self.advance();
-                } else {
-                    break;
-                }
+                self.skipIgnored(); // after a comma
+                try self.parseAliasPair();
+                if (self.tag(0) == .comma) self.advance() else break;
             }
 
             if (self.tag(0) == .keyword_from) {
@@ -792,8 +781,8 @@ pub const Parser = struct {
         if (has_from) {
             const path_idx = try self.expect(.string);
             path_node = try self.b.intern(self.tokens.lexeme(self.source, path_idx));
-            self.skipIgnored();
-            if (self.tag(0) == .keyword_with) {
+            // `with { ... }` may follow on the next line; otherwise the line break ends the import.
+            if (self.skipIgnoredBefore(&.{.keyword_with})) {
                 self.advance();
                 attributes = try self.parseHashLiteral();
             }

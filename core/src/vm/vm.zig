@@ -2759,7 +2759,8 @@ pub const VM = struct {
             // Bare identifier evaluation of a non-callable value: leave value on stack
             return .ok;
         } else {
-            return self.raiseError(.TypeError, "Can only call functions and classes.", .{});
+            // `a = 1; a 2` lands here: a call of what the name holds, as in Ruby a method call.
+            return self.raiseError(.TypeError, "a {s} can't be called; only methods, built-ins and classes take arguments", .{self.typeName(callee)});
         }
         return .ok;
     }

@@ -4415,3 +4415,49 @@ test "Parser: a loop header ends at the line break, and a `do` there is reported
         _ = try lastStatement(&pt, src);
     }
 }
+
+test "Parser: statements on one line need a ';' between them" {
+    // `puts 1 2` used to run `puts 1` and then `2`.
+    const bad = [_]struct { src: []const u8, at: []const u8 }{
+        .{ .src = "puts 1 2", .at = "2" },
+        .{ .src = "x = 1 y = 2", .at = "y" },
+        .{ .src = "cube(1) cube(2)", .at = "cube" },
+        .{ .src = "def f\n  1 2\nend", .at = "2" },
+    };
+    for (bad) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        _ = pt.parser.parseProgram() catch {};
+        try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
+        const d = pt.parser.diagnostics.list.items[0];
+        const expected = try std.fmt.allocPrint(testing.allocator, "Expected a line break or ';' before '{s}'", .{case.at});
+        defer testing.allocator.free(expected);
+        try testing.expectEqualStrings(expected, d.message);
+    }
+
+    // What legitimately ends a statement on the same line: `;`, a comment, or the token
+    // that closes the block. Imports and exports end at the line break too.
+    const good = [_][]const u8{
+        "x = 1; y = 2",
+        "x = 1 # note",
+        "r = if ok then 1 else 2 end",
+        "r = case x when 1 then 10 when 2 then 20 else 30 end",
+        "[1].map { |v| v * 2 }",
+        "f = -> { 1 }",
+        "while x < 3; x += 1; end",
+        "x = 1 if ok",
+        "def f = 1",
+        "export m1\nexport m2",
+        "import { a } from \"./a.kup\"\nx = 1",
+        "import { a,\n  b as c\n} from \"./a.kup\"\nx = 1",
+        "import { a } from \"./a.kup\"\n  with { type: :kup }\nx = 1",
+    };
+    for (good) |src| {
+        errdefer std.debug.print("source:\n{s}\n", .{src});
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = try pt.parser.parseProgram();
+        try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+    }
+}

@@ -880,6 +880,15 @@ test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
     });
 }
 
+test "Stdlib: calling a value that isn't callable names what it is" {
+    // As in Ruby, `a 2` is a call even when `a` is a variable; the error used to be just
+    // "Can only call functions and classes."
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("a = 1\n  b = a 2"), .expected = .{ .str = "TypeError: a Number can't be called; only methods, built-ins and classes take arguments" } },
+        .{ .src = comptime rescued("s = \"x\"\n  s(1)"), .expected = .{ .str = "TypeError: a String can't be called; only methods, built-ins and classes take arguments" } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectGlobalR(&.{
