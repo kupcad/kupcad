@@ -6,18 +6,24 @@ const LintRule = @import("rule.zig").LintRule;
 const literals = @import("literals.zig");
 const token_span = @import("../../../core/token_span.zig");
 const token = @import("../../../core/token.zig");
+const Signature = @import("../../../stdlib/signature.zig").Signature;
+const Shapes = @import("../shapes.zig").Shapes;
 
 /// Most edits between a misspelt keyword and the one it suggests (`sise` to `size` is 1).
 const MAX_SUGGESTION_DISTANCE = 2;
 /// Longest keyword the suggestion compares (the edit-distance row lives on the stack).
 const MAX_KEYWORD_LEN = 64;
 
-/// Flags a keyword a primitive doesn't take (`cube(sise: 3)`), which is an ArgumentError
-/// when the script runs; built-ins can't be redefined, so the call can't mean another
-/// `cube`. The keywords come from each primitive's Signature.
+/// Flags a keyword a built-in doesn't take, which is an ArgumentError when the script runs:
+/// a primitive's (`cube(sise: 3)`; built-ins can't be redefined, so the call can't mean
+/// another `cube`) or a method's on a value the script shows is a solid or a sketch
+/// (`cube(1).translate(X: 5)`; on anything else, `translate` may be the script's own).
+/// The keywords come from each one's Signature.
 pub const UnknownKeywordRule = struct {
     pub const id = "unknown-keyword";
-    pub const description = "A keyword a primitive doesn't take, such as cube(sise: 3)";
+    pub const description = "A keyword a built-in doesn't take, such as cube(sise: 3)";
+
+    shapes: Shapes = .{},
 
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -25,18 +31,24 @@ pub const UnknownKeywordRule = struct {
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
+                .checkEOF = checkEOF,
             },
         };
     }
 
+    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+        const self: *UnknownKeywordRule = @ptrCast(@alignCast(ptr));
+        self.shapes.deinit(engine.allocator);
+    }
+
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        _ = ptr;
+        const self: *UnknownKeywordRule = @ptrCast(@alignCast(ptr));
         const node = tree.getNode(node_idx) orelse return;
+        try self.shapes.observe(engine.allocator, tree, node);
         if (node.tag != .method_call) return;
         const call = tree.methodCall(node);
-        if (call.receiver != .none) return;
         const method = tree.getString(call.method_name);
-        const signature = manifest.signatureOf(method) orelse return;
+        const signature = self.signatureFor(tree, call, method) orelse return;
 
         for (tree.getNamedArgs(call.args)) |arg| {
             if (arg.name == .none or arg.modifier != null) continue;
@@ -49,12 +61,21 @@ pub const UnknownKeywordRule = struct {
             const fix: ?linter.Fix = if (nearest) |better| try renameFix(engine, loc, name, better) else null;
             if (nearest) |better| {
                 try engine.reportFix(id, loc, fix, "{s} doesn't take '{s}'; did you mean '{s}'?", .{ method, name, better });
+            } else if (signature.keywords.len == 0) {
+                try engine.reportFix(id, loc, fix, "{s} doesn't take '{s}' (it takes no keywords)", .{ method, name });
             } else {
                 const accepted = try std.mem.join(engine.allocator, ", ", signature.keywords);
                 defer engine.allocator.free(accepted);
                 try engine.reportFix(id, loc, fix, "{s} doesn't take '{s}' (it takes: {s})", .{ method, name, accepted });
             }
         }
+    }
+
+    /// The built-in a call surely is: a primitive, or a method of a known solid or sketch.
+    fn signatureFor(self: *const UnknownKeywordRule, tree: *const ast.Tree, call: ast.MethodCall, method: []const u8) ?*const Signature {
+        if (call.receiver == .none) return manifest.signatureOf(method);
+        _ = self.shapes.of(tree, call.receiver) orelse return null;
+        return manifest.methodSignatureOf(method);
     }
 
     fn accepts(keywords: []const []const u8, name: []const u8) bool {
@@ -65,7 +86,11 @@ pub const UnknownKeywordRule = struct {
     }
 
     /// The accepted keyword nearest `name`, if one is close enough and no other is as close.
+    /// One that differs only in case is nearest (`X` is `x`, though `y` is one edit away too).
     fn closest(keywords: []const []const u8, name: []const u8) ?[]const u8 {
+        for (keywords) |k| {
+            if (std.ascii.eqlIgnoreCase(k, name)) return k;
+        }
         var best: ?[]const u8 = null;
         var best_distance: usize = MAX_SUGGESTION_DISTANCE + 1;
         var tied = false;

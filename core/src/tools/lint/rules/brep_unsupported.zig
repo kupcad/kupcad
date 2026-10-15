@@ -1,18 +1,12 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const kernel = @import("../../../kernel/kernel.zig");
-const manifest = @import("../../../stdlib/manifest.zig");
 const EngineType = @import("../../../kernel/geometry_handle.zig").EngineType;
 const token_span = @import("../../../core/token_span.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 const literals = @import("literals.zig");
-
-/// Methods that keep their receiver a solid or a sketch, beyond those that make one from
-/// the other; the rest (measurements) give something else.
-const MAKES_SOLID = [_][]const u8{ "extrude", "revolve", "loft", "helix" };
-const MAKES_SKETCH = [_][]const u8{ "slice", "project", "offset" };
-const MEASURES = [_][]const u8{ "volume", "surface_area", "genus", "bbox", "contains?", "ray_cast", "min_gap", "empty?", "on_face", "decompose", "export_stl", "export_gltf" };
+const Shapes = @import("../shapes.zig").Shapes;
 
 /// Warns, before the script runs, about what the engine it runs on can't do yet: a call
 /// such as `translate`, a boolean on shapes (`a - b`), or a call to a method of the script
@@ -30,11 +24,9 @@ pub const BrepUnsupportedRule = struct {
     scoped: std.ArrayListUnmanaged(Scoped) = .empty,
     /// The script's methods, by the tokens of their bodies and their names.
     methods: std.ArrayListUnmanaged(Method) = .empty,
-    /// Variables known to hold a solid or a sketch (the last assignment seen).
-    shapes: std.StringHashMapUnmanaged(Shape) = .empty,
+    shapes: Shapes = .{},
 
     const Scoped = struct { first: u32, last: u32, engine: EngineType };
-    const Shape = enum { solid, sketch };
     const Method = struct {
         name: []const u8,
         first: u32,
@@ -77,20 +69,14 @@ pub const BrepUnsupportedRule = struct {
                 const def = tree.defStmt(node);
                 try self.methods.append(engine.allocator, .{ .name = tree.getString(def.name), .first = token_span.first(tree, def.body), .last = token_span.last(tree, def.body) });
             },
-            .assignment => {
-                const a = tree.assignment(node);
-                if (a.op == null) {
-                    const name = tree.getString(a.name);
-                    if (self.shapeOf(tree, a.value)) |shape| try self.shapes.put(engine.allocator, name, shape) else _ = self.shapes.remove(name);
-                }
-            },
+            .assignment => try self.shapes.observe(engine.allocator, tree, node),
             .binary_op => {
                 const b = tree.binaryExpr(node);
                 switch (b.op) {
                     .add, .subtract, .bitwise_and => {},
                     else => return,
                 }
-                const shape = self.shapeOf(tree, b.left) orelse self.shapeOf(tree, b.right) orelse return;
+                const shape = self.shapes.of(tree, b.left) orelse self.shapes.of(tree, b.right) orelse return;
                 const feature: kernel.Feature = if (shape == .solid) .boolean else .sketch_boolean;
                 try self.found(engine, node, .{ .feature = feature, .what = opName(b.op) });
             },
@@ -178,44 +164,6 @@ pub const BrepUnsupportedRule = struct {
             if (best == null or s.first >= best.?.first) best = s;
         }
         return best;
-    }
-
-    /// Whether an expression is a solid or a sketch, as far as the script says: a
-    /// primitive, a variable holding one, a method that keeps or makes one, a boolean.
-    fn shapeOf(self: *const BrepUnsupportedRule, tree: *const ast.Tree, idx: ast.NodeIndex) ?Shape {
-        const node = tree.getNode(idx) orelse return null;
-        return switch (node.tag) {
-            .identifier => self.shapes.get(tree.getString(@as(ast.StringId, @fromBackingInt(node.data)))),
-            .binary_op => blk: {
-                const b = tree.binaryExpr(node);
-                break :blk switch (b.op) {
-                    .add, .subtract, .bitwise_and => self.shapeOf(tree, b.left) orelse self.shapeOf(tree, b.right),
-                    else => null,
-                };
-            },
-            .method_call => blk: {
-                const call = tree.methodCall(node);
-                const name = tree.getString(call.method_name);
-                if (call.receiver == .none) break :blk switch (manifest.categoryOf(name) orelse break :blk null) {
-                    .primitive_3d => .solid,
-                    .primitive_2d => .sketch,
-                    else => null,
-                };
-                const receiver = self.shapeOf(tree, call.receiver) orelse break :blk null;
-                if (isOneOf(name, &MAKES_SOLID)) break :blk .solid;
-                if (isOneOf(name, &MAKES_SKETCH)) break :blk .sketch;
-                if (isOneOf(name, &MEASURES)) break :blk null;
-                break :blk receiver;
-            },
-            else => null,
-        };
-    }
-
-    fn isOneOf(name: []const u8, names: []const []const u8) bool {
-        for (names) |n| {
-            if (std.mem.eql(u8, n, name)) return true;
-        }
-        return false;
     }
 
     fn opName(op: ast.BinaryOp) []const u8 {
