@@ -331,8 +331,26 @@ pub const Handler = struct {
             }
         }
 
-        const server_capabilities: lsp.types.ServerCapabilities = .{
-            .positionEncoding = switch (self.offset_encoding) {
+        const server_capabilities = serverCapabilities(self.offset_encoding);
+        if (builtin.mode == .debug) {
+            lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
+        }
+
+        return .{
+            .serverInfo = .{
+                .name = "kupcad-lsp",
+                .version = "0.1.0",
+            },
+            .capabilities = server_capabilities,
+        };
+    }
+
+    /// What the server offers. Every capability needs its handler: lsp_kit checks that in
+    /// Debug builds, so declaring inlay hints as plain `true` (which promises
+    /// `inlayHint/resolve` too) made a Debug server panic on `initialize`.
+    pub fn serverCapabilities(encoding: lsp.offsets.Encoding) lsp.types.ServerCapabilities {
+        return .{
+            .positionEncoding = switch (encoding) {
                 .@"utf-8" => .@"utf-8",
                 .@"utf-16" => .@"utf-16",
                 .@"utf-32" => .@"utf-32",
@@ -345,23 +363,12 @@ pub const Handler = struct {
             },
             .documentFormattingProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
-            .inlayHintProvider = .{ .bool = true },
+            // The hints are complete when sent: nothing to resolve later.
+            .inlayHintProvider = .{ .inlay_hint_options = .{ .resolveProvider = false } },
             .completionProvider = .{
                 .triggerCharacters = &.{ ".", ":" },
             },
             .documentSymbolProvider = .{ .bool = true },
-        };
-
-        if (builtin.mode == .debug) {
-            lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
-        }
-
-        return .{
-            .serverInfo = .{
-                .name = "kupcad-lsp",
-                .version = "0.1.0",
-            },
-            .capabilities = server_capabilities,
         };
     }
 
@@ -905,4 +912,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("o
         logger.err,
     );
     return .success;
+}
+
+test "LSP: every declared capability has its handler" {
+    inline for (.{ .@"utf-8", .@"utf-16", .@"utf-32" }) |encoding| {
+        lsp.basic_server.validateServerCapabilities(Handler, Handler.serverCapabilities(encoding));
+    }
 }

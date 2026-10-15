@@ -108,4 +108,5 @@ fn dispatch(init: std.process.Init) !Outcome {
 
 test {
     _ = @import("main_test.zig");
+    _ = @import("cli/lsp.zig");
 }
