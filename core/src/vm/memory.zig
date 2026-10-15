@@ -431,6 +431,7 @@ pub const GC = struct {
         for (vm.unwind_stack.items) |u_frame| {
             self.markValue(u_frame.err_val);
         }
+        if (vm.pending_break) |pending| self.markValue(pending.value);
 
         // Constants of chunks still being compiled (or not yet wrapped in a function)
         for (self.live_chunks.chunks.items) |c| {

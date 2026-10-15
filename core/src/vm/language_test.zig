@@ -157,10 +157,61 @@ test "Language: a new class variable belongs to the class that assigns it" {
 test "Language: yield, block_given? and super outside a method are compile errors" {
     // A top-level yield read a stale stack slot above the frame and called whatever the
     // previous statement had left there.
-    const support_mod = @import("../test_support.zig");
     for ([_][]const u8{ "yield", "r = block_given?", "super", "f = ->() { yield 1 }\nf.call", "def m\n  [1].each { super }\nend" }) |src| {
-        var vm = try support_mod.initVm();
+        var vm = try support.initVm();
         defer vm.deinit();
-        try testing.expectError(error.OutsideMethod, support_mod.runOn(&vm, src));
+        try testing.expectError(error.OutsideMethod, support.runOn(&vm, src));
     }
+}
+
+test "Language: ensure runs when an error leaves the begin" {
+    // Only a matched rescue reached the ensure body: an error no clause matched, one raised
+    // by a rescue clause, or one leaving a begin with no rescue at all skipped it.
+    try expectScripts(&.{
+        .{ .src = "log = []\nbegin\n  begin\n    raise \"x\"\n  ensure\n    log.push(\"e\")\n  end\nrescue => e\n  log.push(e.message)\nend\nr = log.join(\" \")", .expected = .{ .str = "e x" } },
+        .{ .src = "log = []\nbegin\n  begin\n    raise \"x\"\n  rescue TypeError => e\n    log.push(\"wrong\")\n  ensure\n    log.push(\"e\")\n  end\nrescue => e\n  log.push(e.message)\nend\nr = log.join(\" \")", .expected = .{ .str = "e x" } },
+        .{ .src = "log = []\nbegin\n  begin\n    raise \"a\"\n  rescue => e\n    raise \"b\"\n  ensure\n    log.push(\"e\")\n  end\nrescue => e\n  log.push(e.message)\nend\nr = log.join(\" \")", .expected = .{ .str = "e b" } },
+        .{ .src = "r = begin\n  begin\n    raise \"a\"\n  ensure\n    raise \"b\"\n  end\nrescue => e\n  e.message\nend", .expected = .{ .str = "b" } },
+        // Once, on every other way out.
+        .{ .src = "log = []\nbegin\n  raise \"x\"\nrescue => e\n  log.push(\"r\")\nensure\n  log.push(\"e\")\nend\nr = log.join(\" \")", .expected = .{ .str = "r e" } },
+        .{ .src = "log = []\nbegin\n  log.push(\"b\")\nensure\n  log.push(\"e\")\nend\nr = log.join(\" \")", .expected = .{ .str = "b e" } },
+        .{ .src = "def f(log)\n  begin\n    raise \"x\"\n  rescue => e\n    return \"ret\"\n  ensure\n    log.push(\"e\")\n  end\nend\nlog = []\nlog.push(f(log))\nr = log.join(\" \")", .expected = .{ .str = "e ret" } },
+        .{ .src = "log = []\n[1, 2].each do |i|\n  begin\n    next if i == 1\n    log.push(i)\n  ensure\n    log.push(\"e\")\n  end\nend\nr = log.join(\" \")", .expected = .{ .str = "e 2 e" } },
+    });
+}
+
+test "Language: ensure runs before an uncaught error ends the script" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.runtime_error, try support.runOn(&vm, "log = []\nbegin\n  raise \"x\"\nensure\n  log.push(\"e\")\nend\nlog.push(\"unreached\")"));
+    const log = (vm.globals.get("log") orelse return error.MissingGlobal).asArray().items.items;
+    try testing.expectEqual(@as(usize, 1), log.len);
+    try support.expectValue(.{ .str = "e" }, log[0]);
+}
+
+test "Language: a method left by its block's break drops its rescue handlers" {
+    // The handler of a begin around the yield outlived the method; the next error jumped
+    // to it in whatever frame had the method's index.
+    try expectScripts(&.{
+        .{ .src = "def m\n  begin\n    yield\n  rescue => e\n    \"rescued \" + e.message\n  end\nend\nfirst = m { break \"broke\" }\nsecond = begin\n  raise \"boom\"\nrescue => e\n  e.message\nend\nr = first + \" \" + second", .expected = .{ .str = "broke boom" } },
+        .{ .src = "def m\n  begin\n    [1].each { yield }\n  rescue => e\n    \"rescued\"\n  end\nend\nfirst = m { break \"broke\" }\nr = first + \" \" + (begin\n  raise \"boom\"\nrescue => e\n  e.message\nend)", .expected = .{ .str = "broke boom" } },
+    });
+}
+
+test "Language: break leaves the method the block was given to, however it got called" {
+    // A method yielding from inside another block (`xs.each { |x| yield x }`) kept going:
+    // the break stopped the inner block only, so each went on and the block ran again.
+    try expectScripts(&.{
+        .{ .src = "def each_doubled(xs)\n  xs.each { |x| yield x * 2 }\n  :finished\nend\nr = each_doubled([1, 2, 3]) { |v| break v if v > 2 }", .expected = .{ .num = 4 } },
+        .{ .src = "def m\n  [1, 2].each { |i| yield i }\n  99\nend\nr = m { |i| break i * 10 }", .expected = .{ .num = 10 } },
+        .{ .src = "def m(&b)\n  [1, 2].each(&b)\n  99\nend\nr = m { |i| break i + 5 }", .expected = .{ .num = 6 } },
+        .{ .src = "def m(&b)\n  [1, 2].each { |i| b.call(i) }\n  99\nend\nr = m { |i| break i + 5 }", .expected = .{ .num = 6 } },
+        .{ .src = "def helper\n  yield\n  :helper_done\nend\ndef m\n  helper { yield 1 }\n  99\nend\nr = m { |v| break v + 1 }", .expected = .{ .num = 2 } },
+        .{ .src = "def m\n  [1].map { [2].map { yield } }\n  99\nend\nr = m { break 7 }", .expected = .{ .num = 7 } },
+        // The value travels through two natives while they clean up; it must stay rooted.
+        .{ .src = "def m\n  [1].map { [2].map { yield } }\n  99\nend\nr = m { break \"br\" + \"oke\" }", .expected = .{ .str = "broke" }, .gc_stress = true },
+        // A block given to a native stops that native only: m goes on.
+        .{ .src = "def m\n  [1, 2].each { |i| break i }\n  99\nend\nr = m { }", .expected = .{ .num = 99 } },
+        .{ .src = "log = []\ndef m(log)\n  [1, 2].each { |i| yield i }\n  log.push(:after)\nend\nm(log) { |i| log.push(i); break if i == 1 }\nr = log.length", .expected = .{ .num = 1 } },
+    });
 }

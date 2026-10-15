@@ -497,8 +497,7 @@ pub const Compiler = struct {
                     // region, so a jump inside it doesn't re-run it recursively.
                     self.unwind_stack.shrinkRetainingCapacity(target_len);
                     try self.unwind_stack.appendSlice(self.allocator, exited[0..i]);
-                    try self.compileNode(body);
-                    try self.emitOp(.op_pop); // discard ensure block output
+                    try self.compileEnsureBody(body);
                 },
             }
         }
@@ -1287,12 +1286,19 @@ pub const Compiler = struct {
 
         const rescues = self.tree.getRescueClauses(bs.rescues);
         var rescue_jump: usize = 0;
+        const has_ensure = bs.ensure_body != .none;
 
         // The ensure region covers the body and the rescue clauses
         const unwind_base = self.unwind_stack.items.len;
         defer self.unwind_stack.shrinkRetainingCapacity(unwind_base);
-        if (bs.ensure_body != .none) {
+        // An error leaving the body or a rescue clause (unmatched, or raised by the clause)
+        // lands in this handler, which runs the ensure body and rethrows. Before, only a
+        // matched rescue reached the ensure body.
+        var ensure_jump: usize = 0;
+        if (has_ensure) {
             try self.unwind_stack.append(self.allocator, .{ .ensure_body = bs.ensure_body });
+            ensure_jump = try self.emitJump(.op_setup_rescue);
+            try self.unwind_stack.append(self.allocator, .rescue_handler);
         }
 
         if (rescues.len > 0) {
@@ -1394,10 +1400,28 @@ pub const Compiler = struct {
         self.patchJump(end_jump);
 
         self.unwind_stack.shrinkRetainingCapacity(unwind_base);
-        if (bs.ensure_body != .none) {
-            try self.compileNode(bs.ensure_body);
-            try self.emitOp(.op_pop); // discard ensure block output
+        if (has_ensure) {
+            try self.emitOp(.op_pop_rescue); // nothing escaped
+            try self.compileEnsureBody(bs.ensure_body);
+            const done_jump = try self.emitJump(.op_jump);
+            const exit_depth = self.current_stack_depth;
+
+            // Something escaped: the handler left the error on top.
+            self.patchJump(ensure_jump);
+            self.current_stack_depth = saved_depth;
+            self.simulatePush(1);
+            try self.compileEnsureBody(bs.ensure_body);
+            try self.emitOp(.op_throw);
+
+            self.patchJump(done_jump);
+            self.current_stack_depth = exit_depth;
         }
+    }
+
+    /// An ensure body is a statement: its value is dropped.
+    fn compileEnsureBody(self: *Compiler, body: ast.NodeIndex) CompileError!void {
+        try self.compileNode(body);
+        try self.emitOp(.op_pop);
     }
 
     fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {

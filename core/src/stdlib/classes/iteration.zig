@@ -40,7 +40,7 @@ pub const BlockResult = union(enum) { value: value.Value, broke: value.Value };
 /// (`show(1, xs.each { break 2 })` then called a Number). Other errors propagate.
 pub fn callBlock(vm: *VM, block: *value.ObjClosure, args: []const value.Value) !BlockResult {
     const result = vm.callClosureSync(block, args) catch |err| switch (err) {
-        error.BlockBreak => return .{ .broke = vm.pop() },
+        error.BlockBreak => return .{ .broke = vm.takeBlockBreak() orelse return error.BlockBreak },
         else => return err,
     };
     return .{ .value = result };

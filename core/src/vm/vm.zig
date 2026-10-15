@@ -76,6 +76,15 @@ pub const RescueFrame = struct {
     upvalue_ptr: ?*value.ObjUpvalue,
 };
 
+/// A block's `break` between the block and the call it leaves.
+pub const PendingBreak = struct {
+    /// What the call hands back.
+    value: value.Value,
+    /// The frame of the method the block was given to; null when a native got the block
+    /// (`xs.each { break }`), which then takes the value (takeBlockBreak).
+    target: ?usize,
+};
+
 /// Pending exception transfer across a native (Zig) boundary.
 ///
 /// executeThrow pops frames down to the rescuing frame immediately, but every
@@ -184,6 +193,9 @@ pub const VM = struct {
     throw_seq: u64 = 0,
     // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
     last_throw_target: ?usize = null,
+    /// A block's `break` on its way out (see carryBreak). It travels here, not on the
+    /// stack, so the natives it passes through find the stack as they left it.
+    pending_break: ?PendingBreak = null,
 
     /// Features already warned about (warnUnsupported), so each is reported once per run.
     warned_features: std.EnumSet(kernel.Feature) = .empty,
@@ -652,18 +664,8 @@ pub const VM = struct {
                     if (res != .ok) return res;
                 },
                 .op_break_block => {
-                    const break_val = self.pop();
-
-                    self.closeUpvalues(&self.stack[frame.base_slot]);
-                    self.shrinkStack(frame.base_slot);
-                    std.debug.assert(self.frames.items.len > 0);
-
-                    _ = self.frames.pop();
-
-                    self.stack.ptr[self.stack_top] = break_val;
-                    self.stack_top += 1;
-
-                    return .block_break;
+                    self.pending_break = .{ .value = self.pop(), .target = self.blockReceiverFrame(frame.closure) };
+                    if (self.carryBreak(target_depth)) |res| return res;
                 },
                 .op_build_array, .op_build_array_wide => {
                     const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
@@ -1066,24 +1068,10 @@ pub const VM = struct {
                     }
                 },
                 .op_return => {
-                    // --- PROFILER: Stop Timer ---
-                    if (self.profiler) |p| p.exitFrame() catch |err| {
-                        std.log.err("Profiler error: {}", .{err});
-                    };
-
                     const result = self.pop();
-
-                    self.closeUpvalues(&self.stack[frame.base_slot]);
-
                     // Constructor intercepts the return and yields `self` instead of the function's result
                     const return_val = if (frame.is_constructor) self.stack[frame.base_slot] else result;
-
-                    self.shrinkStack(frame.base_slot);
-                    // Catch runaway returns
-                    std.debug.assert(self.frames.items.len > 0);
-
-                    _ = self.frames.pop();
-
+                    self.popFrame();
                     self.stack.ptr[self.stack_top] = return_val;
                     self.stack_top += 1;
 
@@ -1268,11 +1256,11 @@ pub const VM = struct {
                 },
                 .op_call => {
                     const res = self.executeCall(frame, exec_chunk);
-                    if (res != .ok) return res;
+                    if (self.afterCall(res, target_depth)) |out| return out;
                 },
                 .op_invoke, .op_invoke_wide => {
                     const res = self.executeInvoke(frame, exec_chunk, op == .op_invoke_wide);
-                    if (res != .ok) return res;
+                    if (self.afterCall(res, target_depth)) |out| return out;
                 },
                 .op_unpack_splat => {
                     const res = self.executeUnpackSplat(frame, exec_chunk);
@@ -1321,7 +1309,7 @@ pub const VM = struct {
                             } else if (m_val.isNative()) {
                                 const args_ptr = self.stack.ptr + base_slot + 1;
                                 const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
-                                if (res != .ok) return res;
+                                if (self.afterCall(res, target_depth)) |out| return out;
                                 continue;
                             } else {
                                 if (self.raiseError(.RuntimeError, "Superclass method '{s}' is not callable.", .{method_name_str}) != .ok) return .runtime_error;
@@ -1361,17 +1349,12 @@ pub const VM = struct {
                     const result = self.callClosureSync(block_closure, yield_args) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.BlockBreak) {
-                            // The break value is on top, above the yielded arguments (it used
-                            // to be dropped with them, and the first argument returned instead).
-                            const break_val = self.pop();
                             self.popAndRelease(yield_arg_count);
-                            self.closeUpvalues(&self.stack[frame.base_slot]);
-                            self.shrinkStack(frame.base_slot);
-                            std.debug.assert(self.frames.items.len > 0);
-                            _ = self.frames.pop();
-                            self.stack.ptr[self.stack_top] = break_val;
-                            self.stack_top += 1;
-                            if (self.frames.items.len == target_depth) return .ok;
+                            // A block yielded to sits in its method's block slot, so the break
+                            // found that frame; should the slot have been reassigned, this
+                            // frame is the one to leave.
+                            if (self.pending_break.?.target == null) self.pending_break.?.target = self.frames.items.len - 1;
+                            if (self.carryBreak(target_depth)) |res| return res;
                             continue;
                         }
                         if (err == error.Unwind) {
@@ -2919,9 +2902,14 @@ pub const VM = struct {
             }
             if (err == error.FatalError) return .runtime_error;
             if (err == error.BlockBreak) {
-                // A `break` in a block the native didn't iterate (highlight { }, benchmark { }):
-                // its value is on the stack, where it would have shifted every later value.
-                _ = self.pop();
+                if (self.pending_break.?.target != null) {
+                    // Aimed at a method below this native (`m { break }` where m yields from
+                    // inside `each`): the native is done; the calling frame carries it on.
+                    self.popAndRelease(arg_count + 1);
+                    return .block_break;
+                }
+                // A `break` in a block the native didn't iterate (highlight { }, benchmark { }).
+                self.pending_break = null;
                 return self.raiseError(.ArgumentError, "break can only stop a block given to an iterating method, not {s}'s", .{native_obj.name});
             }
             if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
@@ -2968,6 +2956,85 @@ pub const VM = struct {
         if (target > caller_depth) return null;
         self.restoreAfterUnwind(caller_depth);
         return .ok;
+    }
+
+    /// Leaves the top frame: its upvalues are closed, its slots dropped, and the handlers
+    /// it set up forgotten.
+    fn popFrame(self: *VM) void {
+        if (self.profiler) |p| p.exitFrame() catch |err| {
+            std.log.err("Profiler error: {}", .{err});
+        };
+        std.debug.assert(self.frames.items.len > 0);
+        const top = self.frames.items[self.frames.items.len - 1];
+        self.closeUpvalues(&self.stack[top.base_slot]);
+        self.shrinkStack(top.base_slot);
+        _ = self.frames.pop();
+        self.dropStaleRescueFrames();
+    }
+
+    /// Forgets the handlers of frames that are gone: a method left through `yield` by its
+    /// block's `break` never reaches the `op_pop_rescue` of a `begin` it was inside, and a
+    /// later error would have jumped to that handler in whatever frame had its index.
+    fn dropStaleRescueFrames(self: *VM) void {
+        while (self.rescue_frames.items.len > 0 and self.rescue_frames.items[self.rescue_frames.items.len - 1].frame_count > self.frames.items.len) {
+            _ = self.rescue_frames.pop();
+        }
+    }
+
+    /// The frame of the method a block was given to: `m { break }` leaves m, however m
+    /// calls the block (`yield`, also from inside another block, or `each(&blk)`). Null
+    /// when a native got the block (`xs.each { break }` leaves each) or m has returned.
+    fn blockReceiverFrame(self: *const VM, block: *const value.ObjClosure) ?usize {
+        var i = self.frames.items.len;
+        while (i > 0) {
+            i -= 1;
+            const f = self.frames.items[i];
+            if (!f.closure.function.is_method) continue;
+            const slot = self.stack[f.base_slot + f.closure.function.arity + 1];
+            if (slot.isClosure() and slot.asClosure() == block) return i;
+        }
+        return null;
+    }
+
+    /// Carries `pending_break` out of the top frame and, when it is aimed at a method
+    /// frame, out of every frame above that one and the method's own, which gets the value
+    /// as its result. Each run loop pops only its own frames: at `target_depth` a native
+    /// sits between them, so this returns `.block_break` for the native to return first
+    /// (takeBlockBreak, or error.BlockBreak through it) and its caller to carry on
+    /// (afterCall). Null: the break has landed, its value is on top, this loop goes on.
+    fn carryBreak(self: *VM, target_depth: usize) ?InterpretResult {
+        const pending = self.pending_break.?;
+        while (true) {
+            const leaving = self.frames.items.len - 1;
+            self.popFrame();
+            // A native's block: the native takes the value as the block's result.
+            const target = pending.target orelse return .block_break;
+            if (leaving == target) {
+                self.pending_break = null;
+                self.push(pending.value);
+                return if (self.frames.items.len == target_depth) .ok else null;
+            }
+            if (self.frames.items.len == target_depth) return .block_break;
+        }
+    }
+
+    /// What the run loop does with a call op's result: `.block_break` means a native let a
+    /// block's `break` through, and the break goes on from the calling frame. Null: carry
+    /// on with the next instruction.
+    fn afterCall(self: *VM, res: InterpretResult, target_depth: usize) ?InterpretResult {
+        if (res == .ok) return null;
+        if (res != .block_break) return res;
+        return self.carryBreak(target_depth);
+    }
+
+    /// For a native whose block broke (callClosureSync failed with error.BlockBreak): the
+    /// value the native returns, or null when the break is aimed at a method below the
+    /// native, which then fails with error.BlockBreak itself so the VM carries it on.
+    pub fn takeBlockBreak(self: *VM) ?value.Value {
+        const pending = self.pending_break.?;
+        if (pending.target != null) return null;
+        self.pending_break = null;
+        return pending.value;
     }
 
     pub fn executeThrow(self: *VM) InterpretResult {
