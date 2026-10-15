@@ -61,25 +61,25 @@ const History = struct {
 };
 
 // --- Raw Terminal Line Editor ---
-fn refreshLine(vm: *VM, out_file: std.Io.File, prompt: []const u8, buf: []const u8, cursor: usize) !void {
-    out_file.writeStreamingAll(vm.io, "\r\x1b[2K") catch return; // Clear line
-    out_file.writeStreamingAll(vm.io, prompt) catch return;
-    out_file.writeStreamingAll(vm.io, buf) catch return;
+fn refreshLine(vm: *VM, stderr: std.Io.File, prompt: []const u8, buf: []const u8, cursor: usize) !void {
+    stderr.writeStreamingAll(vm.io, "\r\x1b[2K") catch return; // Clear line
+    stderr.writeStreamingAll(vm.io, prompt) catch return;
+    stderr.writeStreamingAll(vm.io, buf) catch return;
 
     if (buf.len > cursor) {
         var ansi_buf: [32]u8 = undefined;
         if (std.fmt.bufPrint(&ansi_buf, "\x1b[{d}D", .{buf.len - cursor})) |msg| {
-            out_file.writeStreamingAll(vm.io, msg) catch return;
+            stderr.writeStreamingAll(vm.io, msg) catch return;
         } else |_| {}
     }
 }
 
 fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     const stdin = std.Io.File.stdin();
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
 
     if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
-        out_file.writeStreamingAll(vm.io, prompt) catch return null;
+        stderr.writeStreamingAll(vm.io, prompt) catch return null;
         var buf: [1024]u8 = undefined;
         const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch return null;
         if (bytes_read == 0) return null;
@@ -109,7 +109,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     var cursor: usize = 0;
     var hist_idx: usize = history.count();
 
-    try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+    try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
 
     while (true) {
         var b_buf: [1]u8 = undefined;
@@ -118,17 +118,17 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         const c = b_buf[0];
 
         if (c == '\n' or c == '\r') {
-            out_file.writeStreamingAll(vm.io, "\n") catch return null;
+            stderr.writeStreamingAll(vm.io, "\n") catch return null;
             return try vm.allocator.dupe(u8, buf[0..len]);
         } else if (c == 3 or c == 4) { // Ctrl+C or Ctrl+D
-            out_file.writeStreamingAll(vm.io, "\n") catch return null;
+            stderr.writeStreamingAll(vm.io, "\n") catch return null;
             return null;
         } else if (c == 127 or c == 8) { // Backspace
             if (cursor > 0) {
                 std.mem.copyForwards(u8, buf[cursor - 1 .. len - 1], buf[cursor..len]);
                 len -= 1;
                 cursor -= 1;
-                try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
             }
         } else if (c == 27) { // ANSI Escape sequence parsing
             var seq1: [1]u8 = undefined;
@@ -142,7 +142,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
                             @memcpy(buf[0..h.len], h);
                             len = h.len;
                             cursor = h.len;
-                            try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                            try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
                         }
                     } else if (seq2[0] == 'B') { // Down Arrow
                         if (hist_idx < history.count()) {
@@ -156,17 +156,17 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
                                 len = h.len;
                                 cursor = h.len;
                             }
-                            try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                            try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
                         }
                     } else if (seq2[0] == 'C') { // Right Arrow
                         if (cursor < len) {
                             cursor += 1;
-                            try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                            try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
                         }
                     } else if (seq2[0] == 'D') { // Left Arrow
                         if (cursor > 0) {
                             cursor -= 1;
-                            try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                            try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
                         }
                     }
                 }
@@ -177,14 +177,14 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
                 buf[cursor] = c;
                 len += 1;
                 cursor += 1;
-                try refreshLine(vm, out_file, prompt, buf[0..len], cursor);
+                try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
             }
         }
     }
 }
 
 fn printLocals(vm: *VM) void {
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- Locals ---\n") catch return;
@@ -206,11 +206,11 @@ fn printLocals(vm: *VM) void {
         }
     }
     out.writer.writeAll("--------------\n") catch return;
-    out_file.writeStreamingAll(vm.io, out.written()) catch return;
+    stderr.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn printStack(vm: *VM) void {
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- VM Stack ---\n") catch return;
@@ -222,11 +222,11 @@ fn printStack(vm: *VM) void {
         out.writer.writeAll("\n") catch return;
     }
     out.writer.writeAll("----------------\n") catch return;
-    out_file.writeStreamingAll(vm.io, out.written()) catch return;
+    stderr.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn printGlobals(vm: *VM) void {
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
     var out: std.Io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
     out.writer.writeAll("--- User Globals ---\n") catch return;
@@ -242,19 +242,19 @@ fn printGlobals(vm: *VM) void {
         out.writer.writeAll("\n") catch return;
     }
     out.writer.writeAll("--------------------\n") catch return;
-    out_file.writeStreamingAll(vm.io, out.written()) catch return;
+    stderr.writeStreamingAll(vm.io, out.written()) catch return;
 }
 
 fn evaluateContextually(vm: *VM, input: []const u8) void {
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
     var doc = Document.parse(vm.allocator, input) catch {
-        out_file.writeStreamingAll(vm.io, "Parse error.\n") catch return;
+        stderr.writeStreamingAll(vm.io, "Parse error.\n") catch return;
         return;
     };
     defer doc.deinit();
 
     if (doc.diagnostics.len > 0) {
-        out_file.writeStreamingAll(vm.io, "Syntax error.\n") catch return;
+        stderr.writeStreamingAll(vm.io, "Syntax error.\n") catch return;
         return;
     }
 
@@ -277,7 +277,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         defer if (where) |w| vm.allocator.free(w);
         var err_buf: [256]u8 = undefined;
         const err_str = std.fmt.bufPrint(&err_buf, "Compile error: {s}\n", .{where orelse @errorName(err)}) catch "Compile error.\n";
-        out_file.writeStreamingAll(vm.io, err_str) catch return;
+        stderr.writeStreamingAll(vm.io, err_str) catch return;
         return;
     };
 
@@ -333,19 +333,19 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         defer out.deinit();
         result_val.stringify(true, &out.writer) catch return;
         out.writer.writeAll("\n") catch return;
-        out_file.writeStreamingAll(vm.io, out.written()) catch return;
+        stderr.writeStreamingAll(vm.io, out.written()) catch return;
     } else {
-        out_file.writeStreamingAll(vm.io, "Evaluation failed.\n") catch return;
+        stderr.writeStreamingAll(vm.io, "Evaluation failed.\n") catch return;
     }
 
     vm.shrinkStack(repl_base_slot);
 }
 
 pub fn debuggerLoop(vm: *VM) void {
-    const out_file = std.Io.File.stderr();
+    const stderr = std.Io.File.stderr();
 
-    out_file.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch return;
-    out_file.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
+    stderr.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch return;
+    stderr.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
 
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
@@ -358,7 +358,7 @@ pub fn debuggerLoop(vm: *VM) void {
                 const col = li.getUtf8Column(source_offset) + 1;
                 var loc_buf: [64]u8 = undefined;
                 if (std.fmt.bufPrint(&loc_buf, "Break at line {d}, col {d}\n", .{ line, col })) |msg| {
-                    out_file.writeStreamingAll(vm.io, msg) catch return;
+                    stderr.writeStreamingAll(vm.io, msg) catch return;
                 } else |_| {}
             }
         }
@@ -384,14 +384,14 @@ pub fn debuggerLoop(vm: *VM) void {
         history.push(vm.allocator, trimmed) catch |err| log.warn("History push failed: {}", .{err});
 
         if (std.mem.eql(u8, trimmed, ".c") or std.mem.eql(u8, trimmed, ".continue")) {
-            out_file.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch return;
+            stderr.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch return;
             vm.step_mode = false;
             break;
         } else if (std.mem.eql(u8, trimmed, ".s") or std.mem.eql(u8, trimmed, ".step")) {
             vm.step_mode = true;
             break;
         } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
-            out_file.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch return;
+            stderr.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch return;
             std.process.exit(0);
         } else if (std.mem.eql(u8, trimmed, ".l") or std.mem.eql(u8, trimmed, ".locals")) {
             printLocals(vm);
@@ -400,7 +400,7 @@ pub fn debuggerLoop(vm: *VM) void {
         } else if (std.mem.eql(u8, trimmed, ".g") or std.mem.eql(u8, trimmed, ".globals")) {
             printGlobals(vm);
         } else if (std.mem.eql(u8, trimmed, ".h") or std.mem.eql(u8, trimmed, ".help")) {
-            out_file.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
+            stderr.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
         } else {
             evaluateContextually(vm, trimmed);
         }
