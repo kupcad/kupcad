@@ -75,7 +75,7 @@ test "fmt --check: passes on formatted files, names the others and fails, writin
     try testing.expectEqual(fmt_cmd.Outcome.failure, try fx.run(&.{ "good.kup", "messy.kup" }, .check, &dirty));
     const messy = try fx.path("messy.kup");
     defer testing.allocator.free(messy);
-    const expected = try std.fmt.allocPrint(testing.allocator, "{s}\n1 file(s) need formatting; run kupcad fmt --write to fix them.\n", .{messy});
+    const expected = try std.fmt.allocPrint(testing.allocator, "{s}\n1 file needs formatting; run kupcad fmt --write to fix it.\n", .{messy});
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, dirty.written());
     try fx.expectContents("messy.kup", UNFORMATTED);

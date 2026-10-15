@@ -5,6 +5,7 @@ const walker = @import("walker.zig");
 const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
 const report = @import("diagnostic_report.zig");
 const Reporter = @import("reporter.zig").Reporter;
+const plural = @import("reporter.zig").plural;
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const CommandSetup = @import("options.zig").CommandSetup(struct {});
@@ -50,13 +51,17 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     if (totals.errors == 0 and totals.warnings == 0 and totals.infos == 0) {
         const c = reporter.out_style;
-        reporter.out("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} file(s).{s}\n", .{ c.green, totals.files, c.reset });
+        reporter.out("\n{s}Success: No CAD geometry, syntax, or semantic issues found across {d} {s}.{s}\n", .{ c.green, totals.files, plural(totals.files, "file", "files"), c.reset });
     } else {
         const c = reporter.err_style;
-        reporter.err("\n{d} file(s) inspected, {s}{d} errors{s}, {s}{d} warnings{s}, {s}{d} info{s} detected.\n", .{
-            totals.files, c.red,           totals.errors, c.reset,
-            c.yellow,     totals.warnings, c.reset,       c.cyan,
-            totals.infos, c.reset,
+        reporter.err("\n{d} {s} inspected, {s}{d} {s}{s}, {s}{d} {s}{s}, {s}{d} info{s} detected.\n", .{
+            totals.files,                                   plural(totals.files, "file", "files"),
+            c.red,                                          totals.errors,
+            plural(totals.errors, "error", "errors"),       c.reset,
+            c.yellow,                                       totals.warnings,
+            plural(totals.warnings, "warning", "warnings"), c.reset,
+            c.cyan,                                         totals.infos,
+            c.reset,
         });
     }
     return if (totals.errors > 0) .failure else .success;

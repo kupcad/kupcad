@@ -4,6 +4,7 @@ const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const walker = @import("walker.zig");
 const fs = @import("fs.zig");
 const Reporter = @import("reporter.zig").Reporter;
+const plural = @import("reporter.zig").plural;
 pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const CommandSetup = @import("options.zig").CommandSetup(struct { check: bool = false, write: bool = false });
@@ -62,7 +63,7 @@ pub fn run(allocator: std.mem.Allocator, paths: []const []const u8, config: FmtC
     const unreadable = try walker.walkPaths(reporter, allocator, paths, &state, processFile);
     state.failed += unreadable;
     if (mode == .check and state.unformatted > 0) {
-        reporter.err("{d} file(s) need formatting; run kupcad fmt --write to fix them.\n", .{state.unformatted});
+        reporter.err("{d} {s} formatting; run kupcad fmt --write to fix {s}.\n", .{ state.unformatted, plural(state.unformatted, "file needs", "files need"), plural(state.unformatted, "it", "them") });
     }
     return if (state.failed > 0 or (mode == .check and state.unformatted > 0)) .failure else .success;
 }

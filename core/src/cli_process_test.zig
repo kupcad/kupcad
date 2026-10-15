@@ -147,7 +147,7 @@ test "kupcad: errors found in a file fail the command and are counted" {
     // exited 0 on a file it could not format: each command's walk overwrote the count
     // its per-file callback had kept. build printed "Build failed: 0 syntax errors".
     try expectRuns(&.{
-        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file(s) inspected, 1 errors" },
+        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file inspected, 1 error, 1 warning, 0 info detected." },
         .{ .args = &.{ "check", "syntax_error.kup" }, .code = 1, .contains = "Invalid expression starting with ')'" },
         .{ .args = &.{ "fmt", "syntax_error.kup" }, .code = 1 },
         .{ .args = &.{ "build", "semantic_error.kup", "-o", "out.stl" }, .code = 1, .contains = "Cannot use 'break' outside of a loop" },
@@ -192,5 +192,5 @@ test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for th
     try env.put("CLICOLOR_FORCE", "1");
     const forced = try kupcadIn(sb.path, &.{ "check", "semantic_error.kup" }, &env);
     defer forced.deinit();
-    try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 errors") != null);
+    try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 error") != null);
 }

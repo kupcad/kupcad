@@ -5,6 +5,12 @@ const std = @import("std");
 const log_helpers = @import("../log.zig");
 const Style = @import("diagnostic_report.zig").Style;
 
+/// `one` for a count of 1, else `many`: "1 error", "2 errors" (summaries said "1 errors"
+/// and "1 file(s)").
+pub fn plural(n: usize, comptime one: []const u8, comptime many: []const u8) []const u8 {
+    return if (n == 1) one else many;
+}
+
 pub const Reporter = struct {
     io: std.Io,
     /// Set by tests: everything goes here, in order, uncoloured unless a style says otherwise.
