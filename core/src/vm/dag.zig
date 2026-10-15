@@ -827,7 +827,9 @@ pub const DAGBuilder = struct {
     /// or a Balanced Binary Tree depending on the operation type.
     pub fn addBalancedChain(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) !DAGNodeIndex {
         if (targets.len == 0) return error.EmptyChain;
-        if (targets.len == 1) return targets[0];
+        // A union of one shape is that shape, but its hull is not: `part.hull` with no
+        // arguments used to return `part` itself, concave or not.
+        if (targets.len == 1) return if (tag == .hull or tag == .batch_hull_op) self.addHull(targets[0]) else targets[0];
 
         // 1. Homogeneous Chain Flattening (Spatial $O(N \log N)$ acceleration in Manifold)
         // Commutative associative ops are best sent to the C++ kernel as a single array.

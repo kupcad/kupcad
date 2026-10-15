@@ -1279,6 +1279,24 @@ fn rescued(comptime src: []const u8) []const u8 {
     return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
 
+test "Stdlib: the hull of one shape is its hull, not the shape" {
+    // A 10 mm cube with a 5 mm corner cut out (875) hulls to the cube less the corner
+    // tetrahedron its three cut edges span (125 / 6); with the corner given back, the cube.
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "r = (cube(10) - cube(5)).volume", .expected = 875 },
+        .{ .src = "r = (cube(10) - cube(5)).hull.volume", .expected = 1000 - 125.0 / 6.0 },
+        .{ .src = "r = batch_hull([cube(10) - cube(5)]).volume", .expected = 1000 - 125.0 / 6.0 },
+        .{ .src = "r = (cube(10) - cube(5)).hull(cube(1)).volume", .expected = 1000 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectApproxEqAbs(case.expected, vm.globals.get("r").?.asNumber(), 1e-6);
+    }
+}
+
 /// The error a B-Rep script gets for a feature the engine lacks.
 fn brepLacks(comptime feature: kernel.Feature) []const u8 {
     return comptime "NotImplementedError: the brep engine can't " ++ feature.describe() ++ " yet; build this part with engine: :manifold";
