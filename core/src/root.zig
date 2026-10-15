@@ -66,6 +66,7 @@ test {
     _ = @import("cli/diagnostic_report_test.zig");
     _ = @import("cli/options_test.zig");
     _ = @import("cli/lsp_actions_test.zig");
+    _ = @import("cli/lsp_hints_test.zig");
     _ = @import("cli/fmt_test.zig");
     _ = @import("cli/walker_test.zig");
 
