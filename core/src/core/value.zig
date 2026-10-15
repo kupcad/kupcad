@@ -3,6 +3,28 @@ const dag = @import("../vm/dag.zig");
 const locus_topo_arena = @import("../locus/src/topology/arena.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
+/// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
+/// print in scientific notation instead (1e-7), as in JavaScript.
+const MIN_PLAIN_MAGNITUDE = 1e-6;
+/// From this magnitude plain notation prints a long digit string (1e300 had 301 digits).
+/// It is the first power of ten past 2^53, where f64 stops holding every integer exactly:
+/// plain digits above it look exact but aren't (2^60 printed as 1152921504606846976).
+/// Ruby and Crystal switch at the same point.
+const MAX_PLAIN_MAGNITUDE = 1e16;
+
+// --- NaN Tagging Constants ---
+const QNAN: u64 = 0x7FFC000000000000;
+const SIGN_BIT: u64 = 0x8000000000000000;
+
+const TAG_NIL: u64 = 1;
+const TAG_FALSE: u64 = 2;
+const TAG_TRUE: u64 = 3;
+
+const VAL_NIL: u64 = QNAN | TAG_NIL;
+const VAL_FALSE: u64 = QNAN | TAG_FALSE;
+const VAL_TRUE: u64 = QNAN | TAG_TRUE;
+const TAG_OBJ: u64 = SIGN_BIT | QNAN;
+
 /// Identifies the primitive type of a Value.
 pub const ValueTag = enum(u8) {
     number,
@@ -188,15 +210,6 @@ pub fn fmtNumber(n: f64) NumberFormat {
     return .{ .n = n };
 }
 
-/// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
-/// print in scientific notation instead (1e-7), as in JavaScript.
-const MIN_PLAIN_MAGNITUDE = 1e-6;
-/// From this magnitude plain notation prints a long digit string (1e300 had 301 digits).
-/// It is the first power of ten past 2^53, where f64 stops holding every integer exactly:
-/// plain digits above it look exact but aren't (2^60 printed as 1152921504606846976).
-/// Ruby and Crystal switch at the same point.
-const MAX_PLAIN_MAGNITUDE = 1e16;
-
 pub const NumberFormat = struct {
     n: f64,
 
@@ -324,19 +337,6 @@ pub const ObjBBox = struct {
     min: [3]f64,
     max: [3]f64,
 };
-
-// --- NaN Tagging Constants ---
-const QNAN: u64 = 0x7FFC000000000000;
-const SIGN_BIT: u64 = 0x8000000000000000;
-
-const TAG_NIL: u64 = 1;
-const TAG_FALSE: u64 = 2;
-const TAG_TRUE: u64 = 3;
-
-const VAL_NIL: u64 = QNAN | TAG_NIL;
-const VAL_FALSE: u64 = QNAN | TAG_FALSE;
-const VAL_TRUE: u64 = QNAN | TAG_TRUE;
-const TAG_OBJ: u64 = SIGN_BIT | QNAN;
 
 /// A completely unboxed, 8-byte value payload.
 pub const Value = packed struct {

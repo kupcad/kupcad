@@ -1,6 +1,11 @@
 const std = @import("std");
 pub const Location = @import("token.zig").Location;
 
+// --- AST Builder ---
+/// Longest number literal accepted (underscores excluded): longer ones are errors, not
+/// silently cut short.
+pub const MAX_NUMBER_LITERAL_LEN = 128;
+
 pub const UnaryOp = enum {
     negate, // -
     positive, // +
@@ -700,11 +705,6 @@ pub const Tree = struct {
         };
     }
 };
-
-// --- AST Builder ---
-/// Longest number literal accepted (underscores excluded): longer ones are errors, not
-/// silently cut short.
-pub const MAX_NUMBER_LITERAL_LEN = 128;
 
 /// The value of a number literal (`1_000`, `2.5e3`, `0xff`, `0b101`, `0o17`), or null when
 /// it is malformed, too long, or out of range (an integer beyond i64, or a value beyond

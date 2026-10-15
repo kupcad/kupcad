@@ -4,6 +4,9 @@ const geom = @import("../../geometry_handle.zig");
 const planar = @import("../../planar.zig");
 const manifold = @import("../../../bindings/manifold.zig");
 
+/// Thickness of the profile sheets loft hulls together (must be well below any real height).
+const LOFT_SHEET_THICKNESS = 1e-3;
+
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -305,9 +308,6 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     const ptr = manifold.batchHull(m_objs) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
-
-/// Thickness of the profile sheets loft hulls together (must be well below any real height).
-const LOFT_SHEET_THICKNESS = 1e-3;
 
 fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;

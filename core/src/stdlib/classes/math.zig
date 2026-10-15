@@ -5,6 +5,26 @@ const common = @import("common.zig");
 const util = @import("../methods/util.zig");
 const iteration = @import("iteration.zig");
 
+const Exact = struct { at: f64, value: f64 };
+
+/// Exact sines at the angles in [0, 360) where the sine is 0, ±1/2 or ±1.
+const EXACT_SIN = [_]Exact{
+    .{ .at = 0, .value = 0 },   .{ .at = 30, .value = 0.5 },   .{ .at = 90, .value = 1 },   .{ .at = 150, .value = 0.5 },
+    .{ .at = 180, .value = 0 }, .{ .at = 210, .value = -0.5 }, .{ .at = 270, .value = -1 }, .{ .at = 330, .value = -0.5 },
+};
+/// Exact tangents at the angles in [0, 180) where the tangent is 0 or ±1.
+const EXACT_TAN = [_]Exact{ .{ .at = 0, .value = 0 }, .{ .at = 45, .value = 1 }, .{ .at = 135, .value = -1 } };
+
+/// Exact inverse sines (degrees) of 0, ±1/2 and ±1; inverse cosines follow as 90 - asind.
+const EXACT_ASIN = [_]Exact{ .{ .at = -1, .value = -90 }, .{ .at = -0.5, .value = -30 }, .{ .at = 0, .value = 0 }, .{ .at = 0.5, .value = 30 }, .{ .at = 1, .value = 90 } };
+const EXACT_ATAN = [_]Exact{ .{ .at = -1, .value = -45 }, .{ .at = 0, .value = 0 }, .{ .at = 1, .value = 45 } };
+
+/// Math.close?'s tolerance when none is given.
+const DEFAULT_TOLERANCE = 1e-9;
+
+/// Past 2^53 a float no longer holds every whole number.
+const MAX_EXACT_INT: f64 = 9007199254740992;
+
 // Math functions are methods of the Math object; the receiver carries nothing.
 
 /// A one-number Math function such as Math.sin.
@@ -91,22 +111,12 @@ fn mathHypot(vm: *VM, receiver: value.Value, nums: []const value.Value) !value.V
 // functions. Each is exact where the true value is a simple fraction: `Math.cosd(90)` is 0,
 // where `Math.cos(Math::PI / 2)` is 6.1e-17, enough to leave slivers between parts.
 
-const Exact = struct { at: f64, value: f64 };
-
 fn lookup(table: []const Exact, at: f64) ?f64 {
     for (table) |e| {
         if (e.at == at) return e.value;
     }
     return null;
 }
-
-/// Exact sines at the angles in [0, 360) where the sine is 0, ±1/2 or ±1.
-const EXACT_SIN = [_]Exact{
-    .{ .at = 0, .value = 0 },   .{ .at = 30, .value = 0.5 },   .{ .at = 90, .value = 1 },   .{ .at = 150, .value = 0.5 },
-    .{ .at = 180, .value = 0 }, .{ .at = 210, .value = -0.5 }, .{ .at = 270, .value = -1 }, .{ .at = 330, .value = -0.5 },
-};
-/// Exact tangents at the angles in [0, 180) where the tangent is 0 or ±1.
-const EXACT_TAN = [_]Exact{ .{ .at = 0, .value = 0 }, .{ .at = 45, .value = 1 }, .{ .at = 135, .value = -1 } };
 
 fn sind(deg: f64) f64 {
     if (!std.math.isFinite(deg)) return std.math.nan(f64);
@@ -123,10 +133,6 @@ fn tand(deg: f64) f64 {
     if (half_turn == 90) return std.math.nan(f64);
     return lookup(&EXACT_TAN, half_turn) orelse @tan(half_turn * std.math.pi / 180.0);
 }
-
-/// Exact inverse sines (degrees) of 0, ±1/2 and ±1; inverse cosines follow as 90 - asind.
-const EXACT_ASIN = [_]Exact{ .{ .at = -1, .value = -90 }, .{ .at = -0.5, .value = -30 }, .{ .at = 0, .value = 0 }, .{ .at = 0.5, .value = 30 }, .{ .at = 1, .value = 90 } };
-const EXACT_ATAN = [_]Exact{ .{ .at = -1, .value = -45 }, .{ .at = 0, .value = 0 }, .{ .at = 1, .value = 45 } };
 
 fn asind(x: f64) f64 {
     return lookup(&EXACT_ASIN, x) orelse rad2deg(std.math.asin(x));
@@ -194,7 +200,6 @@ fn mathClose(vm: *VM, receiver: value.Value, a: f64, b: f64, tolerance: ?f64) !v
     }
     return value.Value.initBool(@abs(a - b) <= tol);
 }
-const DEFAULT_TOLERANCE = 1e-9;
 
 /// Math.gcd(a, b) and Math.lcm(a, b), of whole numbers (gear tooth counts, pitches).
 fn mathGcd(vm: *VM, receiver: value.Value, a: f64, b: f64) !value.Value {
@@ -223,8 +228,6 @@ fn gcdOf(vm: *VM, comptime name: []const u8, a: f64, b: f64) !u64 {
     }
     return x;
 }
-/// Past 2^53 a float no longer holds every whole number.
-const MAX_EXACT_INT: f64 = 9007199254740992;
 
 /// Math.min / Math.max over any number of numbers (nil for none).
 fn mathExtremum(comptime pick: anytype, comptime name: []const u8) value.NativeFn {

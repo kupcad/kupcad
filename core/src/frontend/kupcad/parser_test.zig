@@ -14,6 +14,9 @@ const Lexer = lexer.Lexer;
 const Parser = @import("parser.zig").Parser;
 const KTest = ParserTest(Lexer, Parser);
 
+// Comfortably above MAX_AST_DEPTH so every repro overshoots the limit
+const DEEP: usize = 3000;
+
 test "AST Node Memory Size Optimization" {
     // Ensures the Node stays at exactly 8 bytes for cache locality
     try testing.expectEqual(@as(usize, 8), @sizeOf(ast.Node));
@@ -3695,9 +3698,6 @@ test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
 // Depth regressions: only parseExpression used to count depth, so statements,
 // blocks and infix chains recursed without a bound in the parser, resolver or
 // compiler.
-
-// Comfortably above MAX_AST_DEPTH so every repro overshoots the limit
-const DEEP: usize = 3000;
 
 /// `prefix * count ++ middle ++ suffix * count ++ tail`
 const NestCase = struct {

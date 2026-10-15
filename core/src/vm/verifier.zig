@@ -14,6 +14,15 @@ pub const VerifierError = error{
     OutOfMemory,
 };
 
+/// Bytes per op_switch jump-table entry: 2-byte constant index + 4-byte jump offset.
+const SWITCH_ENTRY_SIZE: usize = 6;
+/// Bytes per op_closure upvalue descriptor: is_local flag + 2-byte index.
+const UPVALUE_DESCRIPTOR_SIZE: usize = 3;
+/// Size of a jump offset operand.
+const JUMP_OPERAND_SIZE: usize = 4;
+/// Bound on verifying nested function chunks (each `def`/block nests one level).
+const MAX_NESTED_CHUNK_DEPTH: usize = 256;
+
 /// What a chunk's code may address: the slots of its frame and its closure's upvalues.
 /// Out-of-range slot operands used to reach the VM, where only debug builds assert.
 const Scope = struct {
@@ -28,15 +37,6 @@ const Scope = struct {
         if (slot >= self.upvalue_count) return error.InvalidSlot;
     }
 };
-
-/// Bytes per op_switch jump-table entry: 2-byte constant index + 4-byte jump offset.
-const SWITCH_ENTRY_SIZE: usize = 6;
-/// Bytes per op_closure upvalue descriptor: is_local flag + 2-byte index.
-const UPVALUE_DESCRIPTOR_SIZE: usize = 3;
-/// Size of a jump offset operand.
-const JUMP_OPERAND_SIZE: usize = 4;
-/// Bound on verifying nested function chunks (each `def`/block nests one level).
-const MAX_NESTED_CHUNK_DEPTH: usize = 256;
 
 /// A top-level chunk (a script or module) has no enclosing closure, so no upvalues.
 pub fn verifyChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk) VerifierError!void {

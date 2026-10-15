@@ -8,28 +8,6 @@ const limits = @import("../core/limits.zig");
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
-const GeomOptions = struct {
-    x: f64 = 1.0,
-    y: f64 = 1.0,
-    z: f64 = 1.0,
-    r: f64 = 1.0,
-    r1: ?f64 = null,
-    r2: ?f64 = null,
-    h: f64 = 1.0,
-    round_r: ?f64 = null,
-    chamfer: ?f64 = null,
-    segments: i32 = 0,
-    center: bool = false,
-    /// regular_polygon's side count.
-    sides: ?i32 = null,
-    // Aliases, folded into the fields above by parseGeomOptions.
-    size: ?f64 = null,
-    d: ?f64 = null,
-    d1: ?f64 = null,
-    d2: ?f64 = null,
-    radius: ?f64 = null,
-};
-
 /// What a primitive takes. The runtime parses its keywords from it, and `kupcad check`
 /// reads its sizes to flag `cube(-5)` before the script runs.
 pub const Signature = struct {
@@ -78,6 +56,38 @@ pub const TEXT = Signature{
     .sizes = &.{ "size", "tolerance" },
 };
 
+/// Fewest points that enclose an area (a polygon contour).
+const MIN_CONTOUR_POINTS = 3;
+/// Fewest points and faces of a closed solid (a tetrahedron).
+const MIN_POLYHEDRON_POINTS = 4;
+const MIN_POLYHEDRON_FACES = 4;
+/// Faces are triangles: the kernels take exactly three point indices per face.
+const POLYHEDRON_FACE_LEN = 3;
+/// Room for an argument label such as "a point index (path 12, entry 345)".
+const MAX_LABEL_LEN = 64;
+
+const GeomOptions = struct {
+    x: f64 = 1.0,
+    y: f64 = 1.0,
+    z: f64 = 1.0,
+    r: f64 = 1.0,
+    r1: ?f64 = null,
+    r2: ?f64 = null,
+    h: f64 = 1.0,
+    round_r: ?f64 = null,
+    chamfer: ?f64 = null,
+    segments: i32 = 0,
+    center: bool = false,
+    /// regular_polygon's side count.
+    sides: ?i32 = null,
+    // Aliases, folded into the fields above by parseGeomOptions.
+    size: ?f64 = null,
+    d: ?f64 = null,
+    d1: ?f64 = null,
+    d2: ?f64 = null,
+    radius: ?f64 = null,
+};
+
 // --- Helpers ---
 
 /// The primitives share GeomOptions; each accepts only the keywords it lists.
@@ -102,16 +112,6 @@ fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
     }
     return @intFromFloat(raw);
 }
-
-/// Fewest points that enclose an area (a polygon contour).
-const MIN_CONTOUR_POINTS = 3;
-/// Fewest points and faces of a closed solid (a tetrahedron).
-const MIN_POLYHEDRON_POINTS = 4;
-const MIN_POLYHEDRON_FACES = 4;
-/// Faces are triangles: the kernels take exactly three point indices per face.
-const POLYHEDRON_FACE_LEN = 3;
-/// Room for an argument label such as "a point index (path 12, entry 345)".
-const MAX_LABEL_LEN = 64;
 
 fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: []const u8) !void {
     if (count < min) {

@@ -7,6 +7,9 @@ const error_kind = @import("../../vm/error_kind.zig");
 
 // --- Utilizing Strongly Typed Receivers ---
 
+/// split_by_plane's arguments, positionally or as kwargs.
+const PLANE_ARGS = [_][]const u8{ "nx", "ny", "nz", "offset" };
+
 pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var scratch = std.ArrayListUnmanaged(u32).empty;
     const alloc = vm.scratch_arena.allocator();
@@ -141,9 +144,6 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
 }
-
-/// split_by_plane's arguments, positionally or as kwargs.
-const PLANE_ARGS = [_][]const u8{ "nx", "ny", "nz", "offset" };
 
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "split_by_plane", receiver);

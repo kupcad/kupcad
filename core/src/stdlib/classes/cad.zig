@@ -5,6 +5,8 @@ const common = @import("common.zig");
 const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
 const limits = @import("../../core/limits.zig");
 
+const MAX_SEGMENTS_U32: u32 = @intCast(limits.MAX_SEGMENTS);
+
 /// Converts a config number to a count in [0, max]. @intFromFloat on NaN or an
 /// out-of-range value panics in Debug and is UB in ReleaseFast, so clamp first;
 /// NaN has no meaningful magnitude and falls back to `nan_default`.
@@ -12,8 +14,6 @@ fn clampedCount(raw: f64, max: u32, nan_default: u32) u32 {
     if (std.math.isNan(raw)) return nan_default;
     return @intFromFloat(std.math.clamp(raw, 0.0, @as(f64, @floatFromInt(max))));
 }
-
-const MAX_SEGMENTS_U32: u32 = @intCast(limits.MAX_SEGMENTS);
 
 fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
     // --- Engine Selection ---

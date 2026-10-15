@@ -2,6 +2,9 @@ const std = @import("std");
 const semver = @import("../../core/semver.zig");
 const validate = @import("../validate.zig");
 
+/// Length of the hex digest prefix used to derive ids for URL/path based packages.
+const URL_ID_HEX_LEN = 16;
+
 pub const ProviderType = enum {
     github,
     gitlab,
@@ -17,9 +20,6 @@ pub const ProviderType = enum {
         };
     }
 };
-
-/// Length of the hex digest prefix used to derive ids for URL/path based packages.
-const URL_ID_HEX_LEN = 16;
 
 pub const ParsedPackage = struct {
     provider: ProviderType,

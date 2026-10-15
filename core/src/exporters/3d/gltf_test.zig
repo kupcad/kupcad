@@ -5,6 +5,9 @@ const dag_evaluator = @import("../../vm/dag_evaluator.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const VM = @import("../../vm/vm.zig").VM;
 
+const GLB_HEADER_LEN = 12;
+const CHUNK_HEADER_LEN = 8;
+
 test "GLTF: Zero-Copy GLB export generates valid binary container" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
@@ -30,9 +33,6 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
 // --- Structural validation of exported GLB files ---
 
 const api = @import("../../api.zig");
-
-const GLB_HEADER_LEN = 12;
-const CHUNK_HEADER_LEN = 8;
 
 const Glb = struct {
     json: std.json.Parsed(std.json.Value),

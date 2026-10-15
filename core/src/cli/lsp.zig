@@ -27,6 +27,14 @@ pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
 /// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
 pub const VIEWPORT_PORT_ENV = "KUPCAD_VIEWPORT_PORT";
 
+pub const USAGE =
+    \\Usage: kupcad lsp
+    \\
+    \\Starts the language server on stdin and stdout. Editors start it themselves;
+    \\the VS Code extension runs it for .kup files.
+    \\
+;
+
 /// Resolves the preferred viewport port from the environment, defaulting to DEFAULT_PORT.
 pub fn preferredViewportPort(environ: *const std.process.Environ.Map) u16 {
     const raw = environ.get(VIEWPORT_PORT_ENV) orelse return viewport_ws.DEFAULT_PORT;
@@ -844,14 +852,6 @@ pub const Handler = struct {
         self.log("Received unexpected response: {?}", .{response.id});
     }
 };
-
-pub const USAGE =
-    \\Usage: kupcad lsp
-    \\
-    \\Starts the language server on stdin and stdout. Editors start it themselves;
-    \\the VS Code extension runs it for .kup files.
-    \\
-;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("outcome.zig").Outcome {
     // 1. Setup global dependencies

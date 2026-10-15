@@ -5,6 +5,13 @@ const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 
+// Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
+// a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
+const HEADER_LEN = 80;
+const PREAMBLE_LEN = HEADER_LEN + 4;
+const RECORD_LEN = 50;
+const HEADER_TITLE = "KupCAD Export";
+
 pub const StlMesh = struct {
     points: [][3]f64,
     faces: [][3]u32,
@@ -14,13 +21,6 @@ pub const StlMesh = struct {
         allocator.free(self.faces);
     }
 };
-
-// Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
-// a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
-const HEADER_LEN = 80;
-const PREAMBLE_LEN = HEADER_LEN + 4;
-const RECORD_LEN = 50;
-const HEADER_TITLE = "KupCAD Export";
 
 const PointKey = struct {
     x: u32,

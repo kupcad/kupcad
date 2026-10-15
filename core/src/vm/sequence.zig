@@ -5,6 +5,12 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("vm.zig").VM;
 
+/// Largest count whose indices are all exactly representable as f64 (2^53). Beyond it,
+/// `start + i * step` stops producing distinct values, so iteration would be wrong, not just
+/// long. This is a correctness bound, not a resource limit: block iteration is governed by
+/// the VM's instruction budget and cancellation, exactly like a `while` loop.
+const MAX_EXACT_COUNT: u64 = 1 << std.math.floatMantissaBits(f64) + 1;
+
 /// An arithmetic sequence start, start + step, ... bounded by `end`.
 pub const Span = struct {
     start: f64,
@@ -38,12 +44,6 @@ pub const Span = struct {
         return d;
     }
 };
-
-/// Largest count whose indices are all exactly representable as f64 (2^53). Beyond it,
-/// `start + i * step` stops producing distinct values, so iteration would be wrong, not just
-/// long. This is a correctness bound, not a resource limit: block iteration is governed by
-/// the VM's instruction budget and cancellation, exactly like a `while` loop.
-const MAX_EXACT_COUNT: u64 = 1 << std.math.floatMantissaBits(f64) + 1;
 
 /// Validates `span` for `method` (finite bounds and step, non-zero step) and returns its
 /// value count as an f64, or raises a rescuable ValueError.

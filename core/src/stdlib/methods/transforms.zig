@@ -9,6 +9,11 @@ const limits = @import("../../core/limits.zig");
 // would move it out of the plane is a ValueError: it used to be dropped silently, so
 // `translate(z: 5)` did nothing and `rotate(z: 45)` left the sketch unrotated.
 
+/// Flat matrix lengths `transform` accepts: a column-major 3x4 affine matrix
+/// (3x3 linear part, then the translation) for a Geometry, 2x3 for a CrossSection.
+const MATRIX_3D_LEN = 12;
+const MATRIX_2D_LEN = 6;
+
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try util.parseVec3(vm, args, 0.0, "translate");
     if (receiver.isGeometry()) {
@@ -221,11 +226,6 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     }
     return util.notDefinedFor(vm, "mirror", receiver);
 }
-
-/// Flat matrix lengths `transform` accepts: a column-major 3x4 affine matrix
-/// (3x3 linear part, then the translation) for a Geometry, 2x3 for a CrossSection.
-const MATRIX_3D_LEN = 12;
-const MATRIX_2D_LEN = 6;
 
 pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (args.len < 1) {

@@ -26,16 +26,6 @@ const log = std.log.scoped(.vm);
 
 pub const Host = host_mod.Host;
 
-pub const MethodLookupResult = struct {
-    method: ?value.Value,
-    is_private: bool,
-};
-
-pub const LookupTarget = enum {
-    instance,
-    class,
-};
-
 /// Stack slots every native call may push (GC roots) without reserving them (see VM.push).
 const NATIVE_STACK_RESERVE = 16;
 
@@ -46,6 +36,16 @@ const MAX_TRACE_LINE_LEN = 256;
 
 /// Values a call site pushes after its packed positional Array: the keyword Map and the block.
 const MAX_TRAILING_CALL_VALUES = 2;
+
+pub const MethodLookupResult = struct {
+    method: ?value.Value,
+    is_private: bool,
+};
+
+pub const LookupTarget = enum {
+    instance,
+    class,
+};
 
 pub const InterpretResult = enum {
     ok,

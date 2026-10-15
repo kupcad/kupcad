@@ -17,6 +17,17 @@ const log = std.log.scoped(.dev);
 
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 
+pub const USAGE =
+    \\Usage: kupcad dev <subcommand> [options]
+    \\
+    \\Subcommands:
+    \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
+    \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
+    \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
+    \\  bench <file>     Profile Parse, Compile, and VM Execution times
+    \\
+;
+
 const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
@@ -265,17 +276,6 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     try stdout.flush();
     return .success;
 }
-
-pub const USAGE =
-    \\Usage: kupcad dev <subcommand> [options]
-    \\
-    \\Subcommands:
-    \\  ast-dump <file>  Generate an AST tree dump (.dump) for compiler debugging
-    \\  disasm <file>    Disassemble KupCAD script into raw VM bytecode (.disasm)
-    \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
-    \\  bench <file>     Profile Parse, Compile, and VM Execution times
-    \\
-;
 
 fn printUsage(io: std.Io) void {
     log_helpers.printStderr(io, USAGE, .{});

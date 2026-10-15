@@ -9,6 +9,14 @@ const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
+const LIB_C =
+    \\c = 3
+    \\def lib_fn
+    \\  c
+    \\end
+    \\export lib_fn
+;
+
 test "VM: op_import correctly evaluates and destructures modules" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -1117,14 +1125,6 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
 // --- Module isolation: each imported module has its own top-level scope ---
 
 const ModuleFile = struct { path: []const u8, source: []const u8 };
-
-const LIB_C =
-    \\c = 3
-    \\def lib_fn
-    \\  c
-    \\end
-    \\export lib_fn
-;
 
 /// Writes `files` into a fresh MemoryVfs, runs `main` and returns the number left in `r`.
 fn runWithModules(files: []const ModuleFile, main: []const u8) !f64 {

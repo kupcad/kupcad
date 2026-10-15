@@ -16,6 +16,14 @@ const DRACO_POSITION_QUANTIZATION_BITS = 14;
 const DEFAULT_BASE_COLOR = [4]f64{ 0.8, 0.8, 0.8, 1.0 };
 const DEFAULT_ROUGHNESS = 0.5;
 
+const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
+
+/// glTF is Y-up and KupCAD Z-up: the scene's one node turns the model -90 degrees about X.
+const Z_UP_TO_Y_UP = [4]f64{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 };
+/// glTF lengths are metres and KupCAD's millimetres: without this a 10 mm cube opened in
+/// another tool as a 10 m one. The mesh data stays in millimetres; the node scales it.
+const MM_TO_METRES = 0.001;
+
 // --- GLTF Struct Definitions for std.json ---
 const Pbr = struct {
     baseColorFactor: [4]f64,
@@ -87,14 +95,6 @@ pub const Container = enum {
         return if (std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".gltf")) .gltf else .glb;
     }
 };
-
-const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
-
-/// glTF is Y-up and KupCAD Z-up: the scene's one node turns the model -90 degrees about X.
-const Z_UP_TO_Y_UP = [4]f64{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 };
-/// glTF lengths are metres and KupCAD's millimetres: without this a 10 mm cube opened in
-/// another tool as a 10 m one. The mesh data stays in millimetres; the node scales it.
-const MM_TO_METRES = 0.001;
 
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,

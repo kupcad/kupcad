@@ -15,6 +15,24 @@ const print = std.fmt.comptimePrint;
 const MAX_SEGS = limits.MAX_SEGMENTS;
 const MAX_COUNT = limits.MAX_PATTERN_COUNT;
 
+const MAX_MATERIALIZE = limits.MAX_RANGE_MATERIALIZE;
+
+/// What a script leaves in the global `r`.
+/// Kernel-computed quantities (volumes, bounds) are compared with this absolute tolerance.
+const NUMBER_TOLERANCE = 1e-9;
+
+/// Wraps `src` so the global `r` holds the rescued error message (or "no error").
+/// `rescue <Kind> => e` for every runtime error kind, each yielding "<Kind>: <message>",
+/// so an expected string checks the error's class as well as its message.
+const RESCUE_BY_KIND = blk: {
+    var text: []const u8 = "";
+    for (std.meta.fieldNames(ErrorKind)) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
+    break :blk text;
+};
+
+const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
+const TETRA_FACES = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
+
 test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive instances" {
     const alloc = testing.allocator;
 
@@ -482,12 +500,6 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
 }
 
 // --- Range iteration and Number#times/upto/downto ---
-
-const MAX_MATERIALIZE = limits.MAX_RANGE_MATERIALIZE;
-
-/// What a script leaves in the global `r`.
-/// Kernel-computed quantities (volumes, bounds) are compared with this absolute tolerance.
-const NUMBER_TOLERANCE = 1e-9;
 
 const Expected = union(enum) {
     nums: []const f64,
@@ -1254,21 +1266,9 @@ test "Stdlib: Range#map keeps its result array and block results alive across GC
 // Non-number coordinates used to read as 0 (polygon([[0,0],[10,"x"],[10,10]]) was a
 // 50 mm^3 prism) and NaN/inf went straight to the kernels.
 
-/// Wraps `src` so the global `r` holds the rescued error message (or "no error").
-/// `rescue <Kind> => e` for every runtime error kind, each yielding "<Kind>: <message>",
-/// so an expected string checks the error's class as well as its message.
-const RESCUE_BY_KIND = blk: {
-    var text: []const u8 = "";
-    for (std.meta.fieldNames(ErrorKind)) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
-    break :blk text;
-};
-
 fn rescued(comptime src: []const u8) []const u8 {
     return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
-
-const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
-const TETRA_FACES = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
 
 test "Stdlib: geometry arguments reject non-number coordinates" {
     try expectAll(.runtime_error, &.{

@@ -14,6 +14,9 @@ const ParsedPackage = @import("providers/provider.zig").ParsedPackage;
 const helpers = @import("test_helpers.zig");
 const TarEntry = helpers.TarEntry;
 
+const SAMPLE_PKG = [_]TarEntry{.{ .name = "main.kup", .data = "def f() 1 end" }};
+const BOGUS_INTEGRITY = "sha256-0000000000000000000000000000000000000000000000000000000000000000";
+
 const Fixture = struct {
     tmp: testing.TmpDir,
     tmp_path: [:0]u8,
@@ -121,9 +124,6 @@ fn setOwned(field: *[]const u8, value: []const u8) !void {
     testing.allocator.free(field.*);
     field.* = dup;
 }
-
-const SAMPLE_PKG = [_]TarEntry{.{ .name = "main.kup", .data = "def f() 1 end" }};
-const BOGUS_INTEGRITY = "sha256-0000000000000000000000000000000000000000000000000000000000000000";
 
 test "Resolver: linkWorkspace links locked packages (flat and nested files) into the store" {
     var fx: Fixture = undefined;

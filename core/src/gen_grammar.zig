@@ -12,6 +12,9 @@ const object_class = @import("stdlib/classes/object.zig");
 const gc_class = @import("stdlib/classes/gc.zig");
 const log_helpers = @import("log.zig");
 
+/// `for`, the loop variables (up to a comment), then the first standalone `in`.
+pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
+
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var keywords: std.ArrayListUnmanaged([]const u8) = .empty;
@@ -323,9 +326,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     try out.writer.print("{f}", .{std.json.fmt(grammar, .{ .whitespace = .indent_2 })});
     return try allocator.dupe(u8, out.written());
 }
-
-/// `for`, the loop variables (up to a comment), then the first standalone `in`.
-pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 
 /// CLI Entry Point
 pub fn main(init: std.process.Init) !void {

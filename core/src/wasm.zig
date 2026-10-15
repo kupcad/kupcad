@@ -7,16 +7,16 @@ const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 // falls back to standard malloc in single-threaded builds.
 const allocator = std.heap.c_allocator;
 
+// --- Global Error State ---
+/// Longest message `get_last_error` returns; longer ones are cut at a UTF-8 boundary.
+pub const MAX_ERROR_MSG_LEN = 1024;
+
 /// A real Io for the VM. Script features such as `benchmark { }` (Clock.now) and `debugger`
 /// (stdin/stdout) dereference `vm.io`; passing `undefined` trapped the wasm instance.
 /// The single-threaded Threaded backend maps onto WASI clocks/fds and needs no setup.
 fn wasmIo() std.Io {
     return std.Io.Threaded.global_single_threaded.io();
 }
-
-// --- Global Error State ---
-/// Longest message `get_last_error` returns; longer ones are cut at a UTF-8 boundary.
-pub const MAX_ERROR_MSG_LEN = 1024;
 
 // Messages are copied in, so they may come from memory freed right after (e.g. the VM's).
 // The array's sentinel keeps even a full-length message NUL-terminated for JS.

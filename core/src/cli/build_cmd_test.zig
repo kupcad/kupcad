@@ -4,6 +4,14 @@ const build_cmd = @import("build_cmd.zig");
 
 const Args = @import("args.zig").Args;
 
+const STL_HEADER_LEN = 80;
+const STL_COUNT_LEN = 4;
+const STL_TRIANGLE_LEN = 50;
+const GLB_MAGIC = "glTF";
+const STEP_MAGIC = "ISO-10303-21";
+
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp) or pass --format.\n";
+
 const Result = struct {
     outcome: build_cmd.Outcome,
     output: std.Io.Writer.Allocating,
@@ -143,12 +151,6 @@ test "build_cmd: --param sets the script's param" {
     try testing.expectEqual(build_cmd.Outcome.failure, default.outcome);
 }
 
-const STL_HEADER_LEN = 80;
-const STL_COUNT_LEN = 4;
-const STL_TRIANGLE_LEN = 50;
-const GLB_MAGIC = "glTF";
-const STEP_MAGIC = "ISO-10303-21";
-
 /// What an exporter actually wrote, judged by content rather than by file name.
 const FileKind = enum { stl, glb, gltf, step };
 
@@ -187,8 +189,6 @@ const FormatCase = struct {
         rejected: []const u8,
     },
 };
-
-const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp) or pass --format.\n";
 
 test "build_cmd: output format follows the -o extension and must agree with --format" {
     const cases = [_]FormatCase{

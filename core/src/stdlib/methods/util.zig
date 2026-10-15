@@ -16,6 +16,10 @@ const geom = @import("../../kernel/geometry_handle.zig");
 /// Room for an element description such as "a coordinate (point 12, component 1)".
 const MAX_DESCRIPTION_LEN = 128;
 
+/// Maximum positional components of a vector argument (x, y, z).
+const VEC3_LEN = 3;
+const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
+
 /// The script-facing name of a value's type, for TypeError messages.
 pub fn typeName(vm: *VM, val: value.Value) []const u8 {
     return vm.typeName(val);
@@ -226,10 +230,6 @@ fn keyName(k: value.Value) ?[]const u8 {
         else => null,
     };
 }
-
-/// Maximum positional components of a vector argument (x, y, z).
-const VEC3_LEN = 3;
-const VEC3_NAMES = [VEC3_LEN][]const u8{ "x", "y", "z" };
 
 /// Parses positional arguments and/or `x:`, `y:`, `z:` kwargs into [x, y, z].
 /// Unset components are `default_val`; kwargs override positionals.

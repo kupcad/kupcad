@@ -14,6 +14,9 @@ const emitter_mod = @import("emitter.zig");
 
 const DEFAULT_IMPORT_ENDPOINT = "main.kup";
 
+/// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
+const MAX_FAILURE_MESSAGE_LEN = 192;
+
 /// True for a name that can become a function-local: not `@ivar`, `@@cvar`,
 /// `$global` or a Constant, which `classifyStorage` routes by their first char.
 fn isPlainLocalName(name: []const u8) bool {
@@ -37,9 +40,6 @@ pub const CompileError = error{
     TooManyParameters,
     TooManyInlineCaches,
 };
-
-/// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
-const MAX_FAILURE_MESSAGE_LEN = 192;
 
 /// The first error of a failed compile: where it happened and what went wrong, for callers
 /// to report like a syntax error (Compiler.errorDiagnostic). Before, they could only print

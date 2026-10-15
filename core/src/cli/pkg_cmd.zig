@@ -17,8 +17,6 @@ const limits = @import("../pkg/limits.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 
-const Subcommand = enum { init, add, install, prune, doctor };
-
 const ADD_USAGE = "Usage: kupcad pkg add <alias>=<url>\n";
 
 /// "Usage: kupcad pkg <init|add|install|prune|doctor>", generated from Subcommand, then
@@ -36,6 +34,8 @@ pub const USAGE = blk: {
         \\
     ;
 };
+
+const Subcommand = enum { init, add, install, prune, doctor };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // Validate the subcommand before touching the manifest or the global store, so a typo
