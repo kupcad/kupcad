@@ -321,3 +321,9 @@ test "Store: an integrity under a root folder is that of the paths with it" {
         try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &stripped, old, .{ .algo = algo }));
     }
 }
+
+test "Store: a database that can't be opened is an open error, and its handle is closed" {
+    // It was reported as DatabaseCorrupted (which is what quick_check finds), and the
+    // handle SQLite hands back for a failed open was never closed.
+    try testing.expectError(error.SqliteOpenFailed, Store.init(testing.io, "/nonexistent-kupcad-dir/index.db"));
+}

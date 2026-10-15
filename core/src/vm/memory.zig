@@ -213,14 +213,15 @@ pub const GC = struct {
         }
 
         const ptr = try self.allocator.create(T);
+        // Not in its list yet: nothing would ever sweep it (it leaked, and stayed counted).
+        errdefer self.allocator.destroy(ptr);
+        try list.append(self.allocator, ptr);
         self.bytes_allocated += @sizeOf(T);
 
         ptr.obj = .{
             .obj_type = obj_type,
             .is_marked = false,
         };
-
-        try list.append(self.allocator, ptr);
         return ptr;
     }
 

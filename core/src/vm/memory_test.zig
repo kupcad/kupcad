@@ -344,3 +344,21 @@ test "GC: string constants survive collections triggered during compilation" {
     // Once the script closure roots the chunk, interpret drops the compile-time registration
     try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
 }
+
+test "GC: an object whose list entry can't be allocated is freed, not leaked" {
+    // allocateObject created the object, then appended it to its type's list; a failed
+    // append returned OutOfMemory with the object unreachable by the sweep.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try testing.expectEqual(@as(usize, 0), vm.gc.bboxes.items.len);
+
+    // The first allocation is the object, the second its list's storage.
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    vm.gc.allocator = failing.allocator();
+    const before = vm.gc.bytes_allocated;
+    try testing.expectError(error.OutOfMemory, vm.gc.allocateBBox(&vm, 0, 0, 0, 1, 1, 1));
+    vm.gc.allocator = testing.allocator;
+    try testing.expectEqual(before, vm.gc.bytes_allocated);
+    try testing.expectEqual(@as(usize, 0), vm.gc.bboxes.items.len);
+    // testing.allocator reports the object as leaked at deinit if it wasn't destroyed.
+}

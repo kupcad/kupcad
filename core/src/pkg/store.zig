@@ -163,12 +163,12 @@ pub const Store = struct {
 
         var handle: ?*sqlite.sqlite3 = null;
         const rc = sqlite.sqlite3_open(db_path_z, &handle);
-        if (rc != sqlite.SQLITE_OK or handle == null) return error.DatabaseCorrupted;
+        // SQLite hands back a handle even when opening failed; it is closed like any other.
+        errdefer _ = sqlite.sqlite3_close(handle);
+        // Usually the path or its permissions, not corruption (which quick_check finds below).
+        if (rc != sqlite.SQLITE_OK or handle == null) return error.SqliteOpenFailed;
         // Without it a locked index fails at once ("database is locked").
-        if (sqlite.sqlite3_busy_timeout(handle, BUSY_TIMEOUT_MS) != sqlite.SQLITE_OK) {
-            _ = sqlite.sqlite3_close(handle);
-            return error.SqliteError;
-        }
+        if (sqlite.sqlite3_busy_timeout(handle, BUSY_TIMEOUT_MS) != sqlite.SQLITE_OK) return error.SqliteError;
 
         const db = Db{ .handle = handle };
         var store = Store{ .db = db, .io = io };

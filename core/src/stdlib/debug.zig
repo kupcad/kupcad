@@ -264,7 +264,9 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     var comp = Compiler.init(vm.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &eval_chunk, vm);
     defer comp.deinit();
 
-    const caller_frame = &vm.frames.items[vm.frames.items.len - 1];
+    // By index: `vm.frames` grows below (the REPL's own frame), which can move its items.
+    const caller_frame_index = vm.frames.items.len - 1;
+    const caller_frame = &vm.frames.items[caller_frame_index];
     var caller_locals: []const []const u8 = &.{};
     if (caller_frame.closure.function.chunk) |c_ptr| {
         const caller_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
@@ -286,17 +288,23 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     func.owns_chunk = false;
     func.local_count = eval_chunk.local_count;
 
-    const closure = vm.gc.allocateClosure(vm, func) catch return;
     const target_depth = vm.frames.items.len;
     const repl_base_slot = vm.stack_top;
 
     // The closure, the caller's locals and the padding, then the frame's own depth.
     vm.ensureStackCapacity(vm.stack_top + 1 + @max(caller_locals.len, func.local_count) + eval_chunk.max_stack_slots) catch return;
-    vm.push(value.Value.initObj(&closure.obj));
+    // Rooted while the closure is allocated (which can collect), then swapped for it.
+    vm.push(value.Value.initObj(&func.obj));
+    const closure = vm.gc.allocateClosure(vm, func) catch {
+        _ = vm.pop();
+        return;
+    };
+    vm.stack[repl_base_slot] = value.Value.initObj(&closure.obj);
 
+    const caller_base_slot = caller_frame.base_slot;
     for (0..caller_locals.len) |i| {
-        if (caller_frame.base_slot + i < repl_base_slot) {
-            vm.push(vm.stack[caller_frame.base_slot + i]);
+        if (caller_base_slot + i < repl_base_slot) {
+            vm.push(vm.stack[caller_base_slot + i]);
         } else {
             vm.push(value.Value.initNil());
         }
@@ -324,8 +332,8 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         const result_val = vm.pop();
 
         for (0..caller_locals.len) |i| {
-            if (caller_frame.base_slot + i < repl_base_slot) {
-                vm.stack[caller_frame.base_slot + i] = vm.stack[repl_base_slot + 1 + i];
+            if (caller_base_slot + i < repl_base_slot) {
+                vm.stack[caller_base_slot + i] = vm.stack[repl_base_slot + 1 + i];
             }
         }
 

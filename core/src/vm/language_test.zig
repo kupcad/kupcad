@@ -50,3 +50,12 @@ test "Language: break in a block that isn't an iteration is an error, not a cras
         .{ .src = "x = begin\n  highlight { break 5 }\nrescue ArgumentError => e\n  1\nend\nr = [x, 2]", .expected = .{ .nums = &.{ 1, 2 } } },
     });
 }
+
+test "Language: a call's block survives a collection while its splat is packed" {
+    // dispatchClosure popped the block into a Zig local before the splat Array was
+    // allocated; a collection there swept it, and `yield` found no block.
+    try expectScripts(&.{
+        .{ .src = "def f(*args)\n  yield args.length\nend\nr = 0\n50.times { r += f(1, 2) { |n| n + 1 } }", .expected = .{ .num = 150 }, .gc_stress = true },
+        .{ .src = "def g(a, *rest, &blk)\n  blk.call(rest.length)\nend\nr = g(1, 2, 3) { |n| n * 10 }", .expected = .{ .num = 20 }, .gc_stress = true },
+    });
+}

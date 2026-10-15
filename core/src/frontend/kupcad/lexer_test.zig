@@ -949,3 +949,15 @@ test "KupCAD Lexer: a word after `.`, `&.` or `def` names a method, even a keywo
         t(.keyword_class, "class"), t(.eof, ""),
     });
 }
+
+fn lexAllWith(allocator: std.mem.Allocator, source: []const u8) !void {
+    var lexer = Lexer.init(source, 0);
+    var tokens = try lexer.lexAll(allocator);
+    tokens.deinit(allocator);
+}
+
+test "Lexer: lexAll frees what it allocated when an allocation fails" {
+    // Its three lists registered their errdefers after reserving capacity, so a failure on
+    // the second list leaked the first.
+    try testing.checkAllAllocationFailures(testing.allocator, lexAllWith, .{"x = cube(10).translate(1, 2, 3)\nputs x\n"});
+}

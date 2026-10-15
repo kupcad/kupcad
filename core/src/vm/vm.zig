@@ -1895,11 +1895,18 @@ pub const VM = struct {
             const trailing_arity = expected_args - fixed_arity - 1;
             const splat_size = provided_args - fixed_arity - trailing_arity;
             // An empty splat still takes a slot, shifting the trailing arguments up by one.
-            try self.ensureStackCapacity(base_slot + 1 + fixed_arity + 1 + trailing_arity);
+            try self.ensureStackCapacity(base_slot + 1 + fixed_arity + 1 + trailing_arity + 2);
 
+            // The caller popped the block into a Zig local, which the collector can't see:
+            // it is rooted here while the Array is allocated, then the Array is rooted
+            // while its storage is (the GC swept the block, and `yield` found none).
+            if (block_val_opt) |block_val| self.push(block_val);
             const arr_obj = try self.gc.allocateArray(self);
             const arr_val = value.Value.initObj(&arr_obj.obj);
+            self.push(arr_val);
             try arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size);
+            _ = self.pop();
+            if (block_val_opt != null) _ = self.pop();
 
             const start_idx = base_slot + 1 + fixed_arity;
             for (0..splat_size) |i| {

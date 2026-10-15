@@ -73,7 +73,12 @@ pub const Expected = union(enum) {
     nil,
 };
 
-pub const ScriptCase = struct { src: []const u8, expected: Expected };
+pub const ScriptCase = struct {
+    src: []const u8,
+    expected: Expected,
+    /// Collect before every instruction, so a value a native forgot to root is swept at once.
+    gc_stress: bool = false,
+};
 
 /// Runs each script on a fresh VM and checks its `r`; names the offending script on failure.
 pub fn expectScripts(cases: []const ScriptCase) !void {
@@ -81,6 +86,7 @@ pub fn expectScripts(cases: []const ScriptCase) !void {
         errdefer std.debug.print("script:\n{s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
+        vm.zealous_gc = case.gc_stress;
         try std.testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         const r = vm.globals.get("r") orelse return error.MissingGlobal;
         try expectValue(case.expected, r);
