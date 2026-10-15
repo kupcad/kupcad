@@ -203,6 +203,10 @@ pub const VM = struct {
 
     cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
+    /// Bumped whenever a method table changes (op_method, op_class_method, op_mixin,
+    /// op_inherit): an inline cache from an earlier epoch is stale (chunk.InlineCache).
+    method_epoch: u32 = 0,
+
     const STACK_GROW_FACTOR: usize = 2;
     pub const MAX_IMPORT_DEPTH: u8 = 64;
     pub const MAX_STACK_STRING_LEN: usize = 1024;
@@ -1125,6 +1129,7 @@ pub const VM = struct {
                     const class_obj = class_val.asClass();
 
                     class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch return .runtime_error;
+                    self.method_epoch +%= 1;
                 },
                 .op_class, .op_class_wide => {
                     const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_class_wide);
@@ -1152,6 +1157,7 @@ pub const VM = struct {
                     } else if (receiver_val.isModule()) {
                         receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
                     } else return .runtime_error;
+                    self.method_epoch +%= 1;
                 },
                 .op_define_global, .op_define_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
@@ -1254,6 +1260,7 @@ pub const VM = struct {
                     if (!super_val.isClass()) return .runtime_error;
                     const sub_val = self.stack[self.stack_top - 1];
                     sub_val.asClass().superclass = super_val.asClass();
+                    self.method_epoch +%= 1;
                 },
                 .op_call => {
                     const res = self.executeCall(frame, exec_chunk);
@@ -1390,6 +1397,7 @@ pub const VM = struct {
                         if (self.raiseError(.TypeError, "Can only define singleton methods on classes or modules.", .{}) != .ok) return .runtime_error;
                         continue;
                     }
+                    self.method_epoch +%= 1;
                 },
                 .op_get_class_var, .op_get_class_var_wide => {
                     const name_val = self.readValueOperand(exec_chunk, frame, op == .op_get_class_var_wide);
@@ -2276,6 +2284,17 @@ pub const VM = struct {
                 method_val = self.findMethod(self.object_class.?, method_name_val);
             }
         } else if (class_obj) |c| {
+            // A field read written as a call (`p.x`): the cache remembers it is a field, so
+            // the hierarchy isn't searched again (it was, on every call).
+            self.refreshInlineCache(ic);
+            if (receiver.isInstance() and arg_count == 0) {
+                if (ic.fieldOffset(c)) |idx| {
+                    const instance = receiver.asInstance();
+                    self.popAndRelease(1); // Pop receiver
+                    self.push(if (idx < instance.fields.items.len) instance.fields.items[idx] else value.Value.initNil());
+                    return .ok;
+                }
+            }
             const resolved = self.findMethodWithPrivacy(c, method_name_val, ic);
             method_val = resolved.method;
             is_private_call = resolved.is_private;
@@ -2306,14 +2325,7 @@ pub const VM = struct {
         if (receiver.isInstance() and arg_count == 0) {
             const instance = receiver.asInstance();
             if (instance.class.instance_layout.get(method_name_val)) |idx| {
-                // Populate PIC slots
-                if (ic.cached_class_1 == null) {
-                    ic.cached_class_1 = instance.class;
-                    ic.offset_1 = idx;
-                } else if (ic.cached_class_1 != instance.class) { // Prevents redundant slot 2 evictions
-                    ic.cached_class_2 = instance.class;
-                    ic.offset_2 = idx;
-                }
+                ic.remember(instance.class, value.Value.initNil(), idx);
 
                 self.popAndRelease(1); // Pop receiver
                 if (idx < instance.fields.items.len) {
@@ -3143,24 +3155,13 @@ pub const VM = struct {
     }
 
     inline fn getPropertyCached(self: *VM, instance: *value.ObjInstance, name: value.Value, ic: *chunk.InlineCache) ?value.Value {
-        _ = self;
+        self.refreshInlineCache(ic);
         var offset: usize = 0;
 
-        // Fast Path
-        if (ic.cached_class_1 == instance.class) {
-            offset = ic.offset_1;
-        } else if (ic.cached_class_2 == instance.class) {
-            offset = ic.offset_2;
-        }
-        // Slow Path
-        else if (instance.class.instance_layout.get(name)) |idx| {
-            if (ic.cached_class_1 == null) {
-                ic.cached_class_1 = instance.class;
-                ic.offset_1 = idx;
-            } else {
-                ic.cached_class_2 = instance.class;
-                ic.offset_2 = idx;
-            }
+        if (ic.fieldOffset(instance.class)) |cached| {
+            offset = cached;
+        } else if (instance.class.instance_layout.get(name)) |idx| {
+            ic.remember(instance.class, value.Value.initNil(), idx);
             offset = idx;
         } else {
             return null; // Return null so the VM knows to check for methods
@@ -3176,29 +3177,17 @@ pub const VM = struct {
     pub fn setInstanceField(self: *VM, instance: *value.ObjInstance, name: value.Value, val: value.Value, ic: ?*chunk.InlineCache) !void {
         var idx: usize = 0;
 
-        // Fast Path
-        if (ic != null and ic.?.cached_class_1 == instance.class) {
-            idx = ic.?.offset_1;
-        } else if (ic != null and ic.?.cached_class_2 == instance.class) {
-            idx = ic.?.offset_2;
-        }
-        // Slow Path
-        else {
+        if (ic) |cache| self.refreshInlineCache(cache);
+        if (if (ic) |cache| cache.fieldOffset(instance.class) else null) |cached| {
+            idx = cached;
+        } else {
             if (instance.class.instance_layout.get(name)) |existing_idx| {
                 idx = existing_idx;
             } else {
                 idx = instance.class.instance_layout.count();
                 try instance.class.instance_layout.put(self.gc.trackingAllocator(), name, idx);
             }
-            if (ic) |cache| {
-                if (cache.cached_class_1 == null) {
-                    cache.cached_class_1 = instance.class;
-                    cache.offset_1 = idx;
-                } else {
-                    cache.cached_class_2 = instance.class;
-                    cache.offset_2 = idx;
-                }
-            }
+            if (ic) |cache| cache.remember(instance.class, value.Value.initNil(), idx);
         }
 
         // Ensure the instance's flat array is large enough
@@ -3282,13 +3271,15 @@ pub const VM = struct {
         };
         if (method_val) |m| return .{ .method = m, .is_private = false };
 
-        // Zero-allocation stack buffer for private method name lookup
+        // A private method is stored under "@private:<name>". That key was interned when the
+        // method was defined, so a name that isn't interned names no private method: looking
+        // it up allocates nothing (interning it on every miss made garbage on every field
+        // read and every NoMethodError).
         var name_buf: [256]u8 = undefined;
-        // Verify it's actually an ObjString before casting
-        if (name.isObject() and name.asObj().obj_type == .string) {
+        if (name.isString()) {
             if (std.fmt.bufPrint(&name_buf, "@private:{s}", .{name.asString().chars})) |priv_name| {
-                // Dynamically allocate a Value to use as the dictionary lookup key
-                if (self.allocateString(priv_name) catch null) |priv_val| {
+                if (self.strings.get(priv_name)) |priv_str| {
+                    const priv_val = value.Value.initObj(&priv_str.obj);
                     const priv_method = switch (target) {
                         .instance => self.findMethod(class, priv_val),
                         .class => self.findClassMethod(class, priv_val),
@@ -3546,7 +3537,13 @@ pub const VM = struct {
         return &exec_chunk.inline_caches.items[ic_idx];
     }
 
+    /// Empties `ic` if a method table changed since it was filled.
+    inline fn refreshInlineCache(self: *const VM, ic: *chunk.InlineCache) void {
+        if (ic.epoch != self.method_epoch) ic.* = .{ .epoch = self.method_epoch };
+    }
+
     inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: value.Value, ic: *chunk.InlineCache) ?value.Value {
+        self.refreshInlineCache(ic);
         // Fast Path (Monomorphic)
         if (ic.cached_class_1 == class) {
             if (!ic.cached_val_1.isNil()) return ic.cached_val_1;
@@ -3558,13 +3555,7 @@ pub const VM = struct {
 
         // Slow Path (Traverse inheritance hierarchy)
         if (self.findMethod(class, name)) |method_val| {
-            if (ic.cached_class_1 == null) {
-                ic.cached_class_1 = class;
-                ic.cached_val_1 = method_val;
-            } else {
-                ic.cached_class_2 = class;
-                ic.cached_val_2 = method_val;
-            }
+            ic.remember(class, method_val, 0);
             return method_val;
         }
         return null;

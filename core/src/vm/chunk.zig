@@ -144,8 +144,14 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
-// A 2-way Polymorphic Inline Cache (PIC)
+/// A 2-way polymorphic inline cache at one property or invoke site: per class, the method
+/// found (`cached_val`), or the field offset when the name is a field (`cached_val` nil).
+/// Valid for `VM.method_epoch` as of `epoch`: defining, redefining or mixing in a method
+/// anywhere bumps the epoch, so no site keeps calling a method that was replaced (it did,
+/// and after a collection it called freed memory). The GC traces the entries.
 pub const InlineCache = struct {
+    epoch: u32 = 0,
+
     cached_class_1: ?*value.ObjClass = null,
     cached_val_1: value.Value = value.Value.initNil(),
     offset_1: usize = 0,
@@ -153,6 +159,26 @@ pub const InlineCache = struct {
     cached_class_2: ?*value.ObjClass = null,
     cached_val_2: value.Value = value.Value.initNil(),
     offset_2: usize = 0,
+
+    /// The field offset cached for `class` at this site, if the name is one of its fields.
+    pub fn fieldOffset(self: *const InlineCache, class: *value.ObjClass) ?usize {
+        if (self.cached_class_1 == class and self.cached_val_1.isNil()) return self.offset_1;
+        if (self.cached_class_2 == class and self.cached_val_2.isNil()) return self.offset_2;
+        return null;
+    }
+
+    /// Records that `name` is `class`'s field at `offset` (or its method `method`) here.
+    pub fn remember(self: *InlineCache, class: *value.ObjClass, method: value.Value, offset: usize) void {
+        if (self.cached_class_1 == null or self.cached_class_1 == class) {
+            self.cached_class_1 = class;
+            self.cached_val_1 = method;
+            self.offset_1 = offset;
+        } else {
+            self.cached_class_2 = class;
+            self.cached_val_2 = method;
+            self.offset_2 = offset;
+        }
+    }
 };
 
 pub const DebugSpan = struct {

@@ -527,6 +527,14 @@ pub const GC = struct {
                 if (func.chunk) |c_ptr| {
                     const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
                     for (exec_chunk.constants.items) |val| self.markValue(val);
+                    // The caches hold classes and methods; an unmarked one could be swept
+                    // and its address reused while a site still trusts the cache.
+                    for (exec_chunk.inline_caches.items) |ic| {
+                        if (ic.cached_class_1) |c| self.markObject(&c.obj);
+                        if (ic.cached_class_2) |c| self.markObject(&c.obj);
+                        self.markValue(ic.cached_val_1);
+                        self.markValue(ic.cached_val_2);
+                    }
                 }
             },
             .module => {

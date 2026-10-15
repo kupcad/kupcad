@@ -59,3 +59,25 @@ test "Language: a call's block survives a collection while its splat is packed" 
         .{ .src = "def g(a, *rest, &blk)\n  blk.call(rest.length)\nend\nr = g(1, 2, 3) { |n| n * 10 }", .expected = .{ .num = 20 }, .gc_stress = true },
     });
 }
+
+test "Language: a call site follows a method redefined after it ran" {
+    // Inline caches were never invalidated: the site kept calling the first definition,
+    // and once a collection freed it, called freed memory (NoMethodError, or worse).
+    try expectScripts(&.{
+        .{ .src = "class A\n  def v\n    1\n  end\nend\na = A.new\ndef call_v(x)\n  x.v\nend\nfirst = call_v(a)\nclass A\n  def v\n    2\n  end\nend\nr = [first, call_v(a), a.v]", .expected = .{ .nums = &.{ 1, 2, 2 } } },
+        // A subclass that overrides later, and a redefinition followed by a collection.
+        .{ .src = "class A\n  def foo\n    3\n  end\nend\nclass B < A\nend\ndef go(x)\n  x.foo\nend\nb = B.new\nfirst = go(b)\nclass B\n  def foo\n    4\n  end\nend\nr = [first, go(b)]", .expected = .{ .nums = &.{ 3, 4 } } },
+        .{ .src = "class A\n  def foo\n    1\n  end\nend\ndef go(x)\n  x.foo\nend\na = A.new\ngo(a)\nclass A\n  def foo\n    2\n  end\nend\nGC.collect\nr = go(a)", .expected = .{ .num = 2 }, .gc_stress = true },
+        // A module included after the site cached a miss.
+        .{ .src = "module M\n  def m\n    5\n  end\nend\nclass A\n  def initialize\n    @x = 1\n  end\nend\na = A.new\ndef x_of(o)\n  o.x\nend\nfirst = x_of(a)\nclass A\n  include M\n  def x\n    9\n  end\nend\nr = [first, x_of(a), a.m]", .expected = .{ .nums = &.{ 1, 9, 5 } } },
+    });
+}
+
+test "Language: a field read through a call site stays a field read" {
+    // `p.x` with no method `x` is a field read; the site cached it as a miss and went
+    // down the full lookup (and interned a private name) on every call.
+    try expectScripts(&.{
+        .{ .src = "class P\n  def initialize(x)\n    @x = x\n  end\nend\np = P.new(3)\nr = 0\n100.times { r += p.x }", .expected = .{ .num = 300 }, .gc_stress = true },
+        .{ .src = "class P\n  def initialize\n    @x = 1\n  end\n  def set(v)\n    @x = v\n  end\nend\np = P.new\nq = P.new\nq.set(5)\nr = [p.x, q.x]", .expected = .{ .nums = &.{ 1, 5 } } },
+    });
+}
