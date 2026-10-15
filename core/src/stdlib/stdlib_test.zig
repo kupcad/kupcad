@@ -200,14 +200,26 @@ test "Stdlib: variadic instance booleans flatten arguments and balance trees" {
     const arr = vm.stack[0].asArray();
     const res_geom = arr.items.items[0].asGeometry();
 
-    // Verify DAG node is a balanced difference_op, not a batch op
+    // One difference: the base minus the union of the cutters
     const root_node = vm.dag_builder.nodes.items[res_geom.dag_idx];
     try testing.expectEqual(.difference_op, root_node.tag);
+    const cutters = vm.dag_builder.nodes.items[vm.dag_builder.getBinaryPayload(root_node).right];
+    try testing.expectEqual(.batch_union_op, cutters.tag);
 
     // 8000 base volume - 1000 removed = 7000 final volume
     const handle = try vm.ensureConcrete(arr.items.items[0]);
     const vol = kernel.volume(handle);
     try testing.expectApproxEqAbs(@as(f64, 7000.0), vol, 1e-5);
+}
+
+test "Stdlib: difference removes every cutter, overlapping ones included" {
+    // The cutters went into a balanced tree, (a - b) - (c - d): where c and d overlapped,
+    // c's share of d came back into the result.
+    try test_support.expectScripts(&.{
+        .{ .src = "r = cube(10).difference(cube(6), cube(6).translate(3, 0, 0)).volume", .expected = .{ .num = 1000 - 324 } },
+        .{ .src = "r = cube(10).difference([cube(6), cube(6).translate(3, 0, 0), cube(6).translate(0, 3, 0)]).volume", .expected = .{ .num = 1000 - 432 } },
+        .{ .src = "r = square(10).difference(square(6), square(6).translate(3, 0)).extrude(1).volume", .expected = .{ .num = 100 - 54 } },
+    });
 }
 
 test "Stdlib: meshHull dynamically gathers direct arguments and arrays into batch hull" {

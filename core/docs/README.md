@@ -49,7 +49,7 @@ boss = with_boss ? cylinder(r: 4, h: 6) : nil
 part = cube(20).union([boss, rib].compact)
 ```
 
-`a.union(b, c)`, `.difference`, `.intersection` and `.hull` take shapes of the receiver's kind, or Arrays of them; anything else, `nil` included, is a `TypeError` that says where it is. An empty list leaves the receiver as it is.
+`a.union(b, c)`, `.difference`, `.intersection` and `.hull` take shapes of the receiver's kind, or Arrays of them; anything else, `nil` included, is a `TypeError` that says where it is. An empty list leaves the receiver as it is. `a.difference(b, c)` removes `b` and `c` from `a`, the same as `a - b - c`.
 
 ---
 

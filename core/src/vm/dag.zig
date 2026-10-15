@@ -873,8 +873,15 @@ pub const DAGBuilder = struct {
             return self.addBatchHull(targets);
         }
 
+        // A difference isn't associative: a - b - c is a - (b ∪ c). The balanced tree
+        // below made (a - b) - (c - d) of it, putting back whatever c cut out of d.
+        if (tag == .difference_op or tag == .cs_difference_op) {
+            const cutters = try self.addBalancedChain(if (tag == .difference_op) .union_op else .cs_union_op, targets[1..]);
+            return self.addBinary(tag, targets[0], cutters);
+        }
+
         // 2. Heterogeneous/Non-Batchable Chain Balancing
-        // For Differences, Intersections, or 2D ops, we reduce the DAG depth
+        // For Intersections or 2D ops, we reduce the DAG depth
         // from $O(N)$ to $O(\log N)$ by building a balanced binary tree `(a+b) + (c+d)`.
         // This is critical for interactive memoization (Sliders) so a change in `d`
         // doesn't invalidate `a+b`.

@@ -27,7 +27,7 @@ test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     try std.testing.expectEqual(@as(usize, 4), payload.len);
 }
 
-test "DAG: addBalancedChain balances Differences into an O(log N) tree" {
+test "DAG: addBalancedChain subtracts the union of the cutters" {
     var buffer: [8192]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     var builder = @import("dag.zig").DAGBuilder.init(fba.allocator());
@@ -44,21 +44,15 @@ test "DAG: addBalancedChain balances Differences into an O(log N) tree" {
     const root_idx = try builder.addBalancedChain(.difference_op, &targets);
     const root_node = builder.nodes.items[root_idx];
 
-    // Assert: Root is a difference_op, not a batch
+    // c1 - (c2 ∪ c3 ∪ c4): one difference whose cutter is a batch union. It used to be
+    // the balanced (c1 - c2) - (c3 - c4), which isn't a difference of the four.
     try std.testing.expectEqual(.difference_op, root_node.tag);
-
     const root_payload = builder.getBinaryPayload(root_node);
+    try std.testing.expectEqual(c1, root_payload.left);
 
-    const left_node = builder.nodes.items[root_payload.left];
-    const right_node = builder.nodes.items[root_payload.right];
-
-    // Assert: Tree is perfectly balanced (c1 - c2) - (c3 - c4)
-    try std.testing.expectEqual(.difference_op, left_node.tag);
-    try std.testing.expectEqual(.difference_op, right_node.tag);
-
-    const left_payload = builder.getBinaryPayload(left_node);
-    try std.testing.expectEqual(c1, left_payload.left);
-    try std.testing.expectEqual(c2, left_payload.right);
+    const cutters = builder.nodes.items[root_payload.right];
+    try std.testing.expectEqual(.batch_union_op, cutters.tag);
+    try std.testing.expectEqualSlices(u32, &.{ c2, c3, c4 }, builder.getBatchUnionPayload(cutters));
 }
 
 // --- CSE hashing and child validation ---
