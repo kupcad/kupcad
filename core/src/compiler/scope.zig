@@ -149,6 +149,8 @@ pub fn resolveSelfUpvalue(self: *Compiler) CompileError!?u8 {
         // The parent IS a method. Its `self` is at local 0.
         return try self.addUpvalue(0, true);
     }
+    // The parent is a class or module body: its `self` is in a hidden local.
+    if (enclosing.namespace_selfs.getLastOrNull()) |slot| return try self.addUpvalue(slot, true);
 
     // The parent is also a block. Recursively capture.
     if (try enclosing.resolveSelfUpvalue()) |upv_idx| {

@@ -116,6 +116,9 @@ pub const Compiler = struct {
     has_export_module: bool = false,
     // Lexical Scope tracking
     namespace_stack: std.ArrayListUnmanaged(ast.StringId) = .empty,
+    /// The hidden local holding `self` for each class, module or singleton body being
+    /// compiled, innermost last (enterNamespaceSelf).
+    namespace_selfs: std.ArrayListUnmanaged(u16) = .empty,
 
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
@@ -232,6 +235,7 @@ pub const Compiler = struct {
         self.scratch_ops.deinit(self.allocator);
         self.scratch_rights.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
+        self.namespace_selfs.deinit(self.allocator);
     }
 
     // --- Compilation Engine ---
@@ -442,21 +446,15 @@ pub const Compiler = struct {
 
     fn compileSingletonClass(self: *Compiler, node: *const ast.Node) CompileError!void {
         const sc = self.tree.singletonClassPayload(node);
-        const target_node = self.tree.getNode(sc.target).?;
-
-        // If `self` is referenced at the root level of a class/module definition,
-        // the namespace object is already sitting at the top of the stack baseline!
-        if (target_node.tag == .self_expr and self.enclosing == null and self.active_namespaces > 0) {
-            try self.emitOp(.op_dup);
-        } else {
-            try self.compileNode(sc.target);
-        }
+        try self.compileNode(sc.target); // `class << self` in a class body: the class (emitPushSelf)
 
         const body_node = self.tree.getNode(sc.body).?;
         const block_payload = self.tree.block(body_node);
         const stmts = self.tree.getNodes(block_payload.stmts);
 
         // Compile entire body as singleton methods
+        try self.enterNamespaceSelf();
+        defer self.leaveNamespaceSelf();
         try self.compileNamespaceBody(stmts, true);
 
         // Stack equilibrium: The target remains on the stack as the expression's return value
@@ -1659,6 +1657,8 @@ pub const Compiler = struct {
         const stmts = self.tree.getNodes(block_payload.stmts);
 
         // Compile entire class body natively!
+        try self.enterNamespaceSelf();
+        defer self.leaveNamespaceSelf();
         try self.compileNamespaceBody(stmts, false);
 
         // Export Fully Qualified Name
@@ -1696,6 +1696,8 @@ pub const Compiler = struct {
         const stmts = self.tree.getNodes(block_payload.stmts);
 
         // Compile entire module body natively
+        try self.enterNamespaceSelf();
+        defer self.leaveNamespaceSelf();
         try self.compileNamespaceBody(stmts, false);
 
         // Export Fully Qualified Name
@@ -2095,18 +2097,34 @@ pub const Compiler = struct {
         }
     }
 
+    /// Makes the namespace on top of the stack (a class, module or singleton target)
+    /// `self` for the body compiled next: it is kept in a hidden local, where the body's
+    /// code and the blocks in it reach it. `self` there used to be the script closure
+    /// (slot 0 of the top-level frame), so `@@count = 0` in a class body had "no class
+    /// context" and `self.helper` called the script.
+    fn enterNamespaceSelf(self: *Compiler) CompileError!void {
+        const slot = try self.hiddenLocalSlots(1);
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot); // keeps the namespace on the stack
+        try self.namespace_selfs.append(self.allocator, slot);
+    }
+
+    fn leaveNamespaceSelf(self: *Compiler) void {
+        _ = self.namespace_selfs.pop();
+    }
+
     fn emitPushSelf(self: *Compiler) CompileError!void {
-        if (self.is_method or self.enclosing == null) {
-            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+        if (self.is_method) return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+        // A class or module body: the namespace being defined
+        if (self.namespace_selfs.getLastOrNull()) |slot| return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, slot);
+        // The top-level script
+        if (self.enclosing == null) return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
+        // A block: the enclosing method's or namespace's `self`
+        if (try self.resolveSelfUpvalue()) |upv_idx| {
+            try self.emitOp(.op_get_upvalue);
+            try self.emitByte(upv_idx);
         } else {
-            // We are in a block. Capture the parent method's `self`
-            if (try self.resolveSelfUpvalue()) |upv_idx| {
-                try self.emitOp(.op_get_upvalue);
-                try self.emitByte(upv_idx);
-            } else {
-                // Fallback (shouldn't happen in valid code)
-                try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
-            }
+            // A block at the top level, outside any class: the script, like its parent
+            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
         }
     }
 

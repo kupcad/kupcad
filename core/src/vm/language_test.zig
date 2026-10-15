@@ -259,3 +259,17 @@ test "Language: raise with a class raises an instance of it" {
         .{ .src = "r = begin\n  raise ArgumentError\nrescue => e\n  e.backtrace.length > 0\nend", .expected = .{ .boolean = true } },
     });
 }
+
+test "Language: self in a class or module body is the namespace being defined" {
+    // It was the script closure (slot 0 of the top-level frame): `@@count = 0` in a class
+    // body had "no class context", and `self.helper` there called the script.
+    try expectScripts(&.{
+        .{ .src = "class A\n  @@count = 0\n  def self.inc\n    @@count = @@count + 1\n  end\nend\nA.inc\nr = A.inc", .expected = .{ .num = 2 } },
+        .{ .src = "class A\n  def self.make\n    7\n  end\n  X = self.make\nend\nr = A::X", .expected = .{ .num = 7 } },
+        .{ .src = "module M\n  def self.two\n    2\n  end\n  X = self.two\nend\nr = M::X", .expected = .{ .num = 2 } },
+        // A block in the body sees the same self.
+        .{ .src = "class A\n  @@items = []\n  def self.add(i)\n    @@items.push(i)\n  end\n  def self.items\n    @@items\n  end\n  [1, 2].each { |i| self.add(i) }\nend\nr = A.items", .expected = .{ .nums = &.{ 1, 2 } } },
+        .{ .src = "class A\n  class << self\n    def hi\n      \"hi\"\n    end\n  end\nend\nr = A.hi", .expected = .{ .str = "hi" } },
+        .{ .src = "class A\n  def self.hello\n    \"hello\"\n  end\nend\nclass A\n  GREETING = self.hello\nend\nr = A::GREETING", .expected = .{ .str = "hello" } },
+    });
+}
