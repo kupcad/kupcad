@@ -759,3 +759,45 @@ test "Formatter: line_width is a setting" {
     defer allocator.free(formatted);
     try testing.expectEqualStrings("p = cube(10)\n  .translate(1, 2, 3)\n  .rotate(z: 5)\n", formatted);
 }
+
+test "Formatter: elsif stays elsif, and an if inside an else stays inside it" {
+    // `elsif` printed as `else` + a nested `if ... end`, a different program, so any `if`
+    // with an `elsif` was refused.
+    try expectStableFormat(
+        \\if a
+        \\  1
+        \\elsif b # second
+        \\  2
+        \\elsif c
+        \\  3
+        \\else
+        \\  4
+        \\end
+        \\if x
+        \\  1
+        \\else
+        \\  if y
+        \\    2
+        \\  end
+        \\end
+        \\
+    ,
+        \\if a
+        \\  1
+        \\elsif b # second
+        \\  2
+        \\elsif c
+        \\  3
+        \\else
+        \\  4
+        \\end
+        \\if x
+        \\  1
+        \\else
+        \\  if y
+        \\    2
+        \\  end
+        \\end
+        \\
+    );
+}

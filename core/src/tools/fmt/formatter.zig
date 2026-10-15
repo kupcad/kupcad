@@ -596,13 +596,33 @@ pub const Formatter = struct {
         self.indent_level += 1;
         try self.formatNode(tree, ifs.then_branch);
         self.indent_level -= 1;
-        try self.ensureNewline(); // Force a newline before 'else' or 'end'
+        try self.ensureNewline(); // Force a newline before 'elsif', 'else' or 'end'
 
-        if (ifs.else_branch != .none) {
+        // An `elsif` is an `if` that is the else branch itself (a nested `if` written in an
+        // `else` is inside a block). It used to print as `else` + `if ... end`, a different
+        // program, so the formatter refused any `if` with an `elsif`.
+        var else_branch = ifs.else_branch;
+        while (tree.getNode(else_branch)) |branch| {
+            if (branch.tag != .if_stmt or tree.isGrouped(else_branch)) break;
+            const elsif = tree.ifStmt(branch);
+            if (elsif.is_unless) break;
+            try self.writeIndent();
+            try self.out.appendSlice(self.allocator, "elsif ");
+            try self.formatNode(tree, elsif.condition);
+            try self.flushInlineComments(self.getNodeLine(branch));
+            try self.ensureNewline();
+            self.indent_level += 1;
+            try self.formatNode(tree, elsif.then_branch);
+            self.indent_level -= 1;
+            try self.ensureNewline();
+            else_branch = elsif.else_branch;
+        }
+
+        if (else_branch != .none) {
             try self.writeIndent();
             try self.out.appendSlice(self.allocator, "else\n");
             self.indent_level += 1;
-            try self.formatNode(tree, ifs.else_branch);
+            try self.formatNode(tree, else_branch);
             self.indent_level -= 1;
             try self.ensureNewline(); // Force a newline before 'end'
         }
