@@ -19,7 +19,7 @@ test "Linter Rule: UnreachableCodeRule catches code after return" {
     defer engine.deinit();
 
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
+    try testing.expectEqualStrings("Unreachable: the statement before this always returns, breaks, nexts or raises", engine.diagnostics.items[0].message);
 }
 
 test "Linter Rule: UnreachableCodeRule catches code after break and next" {
@@ -29,6 +29,6 @@ test "Linter Rule: UnreachableCodeRule catches code after break and next" {
         defer engine.deinit();
 
         try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-        try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
+        try testing.expectEqualStrings("Unreachable: the statement before this always returns, breaks, nexts or raises", engine.diagnostics.items[0].message);
     }
 }

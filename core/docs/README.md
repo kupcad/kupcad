@@ -464,7 +464,7 @@ Every finding names the rule that made it: `part.kup:3:1: W: Unused variable 'x'
 |---|---|
 | `nonpositive-size` | A primitive's size written as zero or a negative number (`cube(-5)`, `cylinder(h: 0)`). Which arguments are sizes comes from each primitive's `Signature` in `stdlib/primitives.zig`, the declaration it parses its keywords from, so a coordinate such as `translate(-5)` is never flagged. |
 | `unused-variable` | A variable assigned and never read in its scope. Scopes are the language's (a `def`, lambda, call block, class or module; an `if`, `while` or `for` body belongs to the enclosing one); `x += 1` reads `x`, `export x` uses it, and the last statement of a script, method or block hands its value back, so `part = box - drill` at the end of a model is not reported. A name starting with `_` is never reported. |
-| `unreachable-code` | Statements after a `return`, `break` or `next`. |
+| `unreachable-code` | Statements after one that always leaves: a `return`, `break`, `next` or `raise`, an `if` whose branches all do, a `case` with an `else` whose branches all do, or a `begin` whose body and rescues all do. A `return` inside a block leaves only the block, so it never ends the method around it. Reported once, at the first dead statement. |
 | `self-subtraction` | `part - part`, which leaves nothing. |
 | `param-order` | A `param` read before it is defined, or defined inside a body, where the UI can't find it. |
 

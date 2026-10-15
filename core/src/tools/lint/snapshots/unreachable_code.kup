@@ -1,6 +1,7 @@
 def bracket(n)
   return cube(n)
   puts "never"
+  puts "nor this (one finding covers the rest)"
 end
 
 [1, 2, 3].each do |i|
@@ -8,4 +9,47 @@ end
   puts i
 end
 
-bracket(2)
+# Every branch leaves.
+def size_of(kind)
+  if kind == :small
+    return 1
+  elsif kind == :large
+    return 3
+  else
+    raise "unknown kind"
+  end
+  puts "after the if"
+end
+
+def pick(n)
+  case n
+  when 1 then return :one
+  else return :many
+  end
+  :unreachable
+end
+
+def guarded
+  begin
+    return 1
+  rescue => e
+    raise "failed"
+  end
+  2
+end
+
+# Not every branch leaves: nothing to report.
+def maybe(n)
+  if n > 1
+    return n
+  end
+  n + 1
+end
+
+# `return` inside a block leaves only the block.
+def first_even(list)
+  list.each { |x| return x }
+  0
+end
+
+results = [bracket(2), size_of(:small), pick(1), guarded, maybe(2), first_even([2])]

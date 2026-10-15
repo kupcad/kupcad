@@ -1,2 +1,5 @@
-3:3 W [unreachable-code] Unreachable code detected after explicit control flow return/break.
-8:3 W [unreachable-code] Unreachable code detected after explicit control flow return/break.
+3:3 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
+9:3 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
+21:3 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
+29:4 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
+38:3 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
