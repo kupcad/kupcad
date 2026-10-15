@@ -5,21 +5,7 @@ const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const log_helpers = @import("../log.zig");
 const VM = @import("vm.zig").VM;
-
-/// dag_cache key for a node evaluated under settings whose `EngineConfig.resultHash` is
-/// `config_hash`. The same node built under another engine is another kind of handle (a
-/// Manifold handle fed to the B-Rep driver is garbage), and under another tolerance or
-/// resolution another shape, so the settings are part of the key.
-pub inline fn cacheKey(node_hash: u64, config_hash: u64) u64 {
-    return node_hash ^ config_hash;
-}
-
-/// A dag_cache entry. The node's hash is kept beside the result because the key can't be
-/// turned back into it; GC eviction needs it to tell whether the node is still in use.
-pub const CachedResult = struct {
-    handle: geom.GeometryHandle,
-    node_hash: u64,
-};
+const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
 pub const ValueHandle = union(enum) {
@@ -139,13 +125,6 @@ fn requireFlatOrCurvedHull(vm: *VM, solid: geom.GeometryHandle) !void {
     if (kernel.hasCurvedFaces(solid)) try vm.requireFeature(solid.engine, .curved_hull);
 }
 
-fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
-    if (a != b) {
-        _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
-        return error.EngineMismatch;
-    }
-}
-
 const EvalState = enum {
     visit,
     execute,
@@ -243,9 +222,6 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 
     try f_stack.push(root_node_idx);
 
-    const config = vm.config().*;
-    const config_hash = config.resultHash();
-
     while (f_stack.frames.items.len > 0) {
         if (vm.cancel_token.load(.acquire)) return error.Cancelled;
 
@@ -257,15 +233,18 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         }
 
         // --- O(1) DAG Node Caching ---
+        // The hash covers the node's settings, so it is the whole key: the same shape made
+        // under another engine, tolerance or resolution is another node.
         const node_hash = vm.dag_builder.node_hashes.items[frame.node_idx];
-        const cache_key = cacheKey(node_hash, config_hash);
-        if (vm.dag_cache.get(cache_key)) |cached| {
+        if (vm.dag_cache.get(node_hash)) |cached| {
             _ = f_stack.pop();
-            try v_stack.pushBorrowed(.{ .geometry = cached.handle });
+            try v_stack.pushBorrowed(.{ .geometry = cached });
             continue;
         }
 
         const node = vm.dag_builder.nodes.items[frame.node_idx];
+        // The settings the node was made under, whatever is in force now.
+        const config = vm.dag_builder.settings(node.settings);
 
         if (frame.state == .visit) {
             frame.state = .execute;
@@ -349,7 +328,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(left);
                     const left_handle = try geometryOf(left);
                     const right_handle = try geometryOf(right);
-                    try checkSameEngine(vm, left_handle.engine, right_handle.engine);
+                    try vm.requireSameEngine(left_handle.engine, right_handle.engine);
                     try vm.requireFeature(left_handle.engine, if (node.tag == .minkowski) .minkowski else .boolean);
                     if (node.tag == .minkowski) {
                         try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
@@ -362,7 +341,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         .minkowski => kernel.minkowski(left_handle, right_handle),
                         else => unreachable,
                     } orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
+                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
                 },
 
                 // --- Batch 3D Ops ---
@@ -384,7 +363,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer vm.allocator.free(handles);
                     for (entries, handles) |e, *h| {
                         h.* = try geometryOf(e);
-                        try checkSameEngine(vm, handles[0].engine, h.engine);
+                        try vm.requireSameEngine(handles[0].engine, h.engine);
                     }
                     if (node.tag == .batch_union_op) try vm.requireFeature(handles[0].engine, .boolean);
                     if (node.tag == .batch_hull_op) for (handles) |h| try requireFlatOrCurvedHull(vm, h);
@@ -394,7 +373,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     else
                         kernel.batchHull(vm.allocator, handles) orelse return kernelFailed(vm, node.tag);
 
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
+                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
                 },
 
                 // --- Unary 3D Transforms ---
@@ -439,7 +418,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     const solid = try geometryOf(target);
                     try requireFlatOrCurvedHull(vm, solid);
                     const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(vm, result) });
+                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
                 },
                 .set_material => {
                     const target = v_stack.pop();
@@ -483,7 +462,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(base);
                     const top_cs = try crossSectionOf(top);
                     const base_cs = try crossSectionOf(base);
-                    try checkSameEngine(vm, base_cs.engine, top_cs.engine);
+                    try vm.requireSameEngine(base_cs.engine, top_cs.engine);
                     try vm.requireFeature(base_cs.engine, .loft);
                     // loft is a hull of the two profiles, which is only the true loft for convex
                     // ones; a concave profile would be filled in silently.
@@ -593,7 +572,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     defer v_stack.release(left);
                     const left_handle = try crossSectionOf(left);
                     const right_handle = try crossSectionOf(right);
-                    try checkSameEngine(vm, left_handle.engine, right_handle.engine);
+                    try vm.requireSameEngine(left_handle.engine, right_handle.engine);
                     try vm.requireFeature(left_handle.engine, .sketch_boolean);
                     const op: kernel.BooleanOp = switch (node.tag) {
                         .cs_union_op => .union_op,
@@ -621,7 +600,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
 
                 // Ownership moves to the cache only once the put succeeds.
-                try vm.dag_cache.put(vm.allocator, cache_key, .{ .handle = top.value.geometry, .node_hash = node_hash });
+                try vm.dag_cache.put(vm.allocator, node_hash, top.value.geometry);
                 top.owned = false;
             }
             // Cross-sections are intentionally not cached: they stay owned by the
@@ -661,8 +640,7 @@ pub fn evaluateCrossSectionDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerro
 
 /// Takes ownership of `handle` (a fresh, uncached result) and returns the
 /// handle to keep: either the same one or a simplified replacement.
-inline fn maybeSimplify(vm: *VM, handle: geom.GeometryHandle) geom.GeometryHandle {
-    const config = vm.config().*;
+inline fn maybeSimplify(config: EngineConfig, handle: geom.GeometryHandle) geom.GeometryHandle {
     if (handle.engine == .manifold and config.manifold.simplify_coplanar) {
         const simplified = kernel.simplify(handle, config.tolerance) orelse return handle;
         kernel.destruct(handle);

@@ -653,9 +653,10 @@ pub const GC = struct {
 
         var cache_it = vm.dag_cache.iterator();
         while (cache_it.next()) |entry| {
-            if (!live_hashes.contains(entry.value_ptr.node_hash)) {
+            // Keys are node hashes (which cover the node's settings).
+            if (!live_hashes.contains(entry.key_ptr.*)) {
                 // Destruct C++ handle immediately
-                kernel.destruct(entry.value_ptr.handle);
+                kernel.destruct(entry.value_ptr.*);
                 keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
             }
         }

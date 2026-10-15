@@ -361,9 +361,9 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle1 = try dag_evaluator.evaluateDAG(&vm, c1);
 
-    // 2. Ensure it populated the VM's DAG cache under the (node hash, settings) key
+    // 2. Ensure it populated the VM's DAG cache under its node hash (which covers its settings)
     const hash = vm.dag_builder.node_hashes.items[c1];
-    try testing.expect(vm.dag_cache.contains(dag_evaluator.cacheKey(hash, vm.config().resultHash())));
+    try testing.expect(vm.dag_cache.contains(hash));
 
     // 3. Evaluate the exact same node again. It MUST pull from cache.
     const handle2 = try dag_evaluator.evaluateDAG(&vm, c1);
@@ -372,24 +372,26 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     try testing.expectEqual(handle1.ptr, handle2.ptr);
 }
 
-test "DAG Evaluator: a node built under other settings is not served from the cache" {
+test "DAG Evaluator: a node is built with the settings it was made under" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
-    const coarse = try dag_evaluator.evaluateDAG(&vm, c1);
+    const coarse_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    const coarse = try dag_evaluator.evaluateDAG(&vm, coarse_idx);
 
-    // A tolerance (or engine, or resolution) changes what the kernel builds, so the
-    // cached result of the default settings must not be reused.
-    try vm.config_stack.append(vm.allocator, .{ .tolerance = 1e-3 });
-    const fine = try dag_evaluator.evaluateDAG(&vm, c1);
-    _ = vm.config_stack.pop();
+    // The same cube made under another tolerance is another node, with its own result.
+    try vm.pushConfig(.{ .tolerance = 1e-3 });
+    const fine_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    try testing.expect(fine_idx != coarse_idx);
+    const fine = try dag_evaluator.evaluateDAG(&vm, fine_idx);
     try testing.expect(coarse.ptr != fine.ptr);
-    try testing.expectEqual(@as(u32, 2), vm.dag_cache.count());
+    // A node evaluated while other settings are in force keeps its own.
+    try testing.expectEqual(coarse.ptr, (try dag_evaluator.evaluateDAG(&vm, coarse_idx)).ptr);
+    vm.popConfig();
 
-    // Back under the default settings, the first result is reused.
-    try testing.expectEqual(coarse.ptr, (try dag_evaluator.evaluateDAG(&vm, c1)).ptr);
+    try testing.expectEqual(@as(u32, 2), vm.dag_cache.count());
+    try testing.expectEqual(fine.ptr, (try dag_evaluator.evaluateDAG(&vm, fine_idx)).ptr);
 }
 
 test "DAG Evaluator: RAM budgeting traps complex meshes" {
@@ -398,7 +400,7 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
     try registry.registerStandardLibrary(&vm);
 
     // Artificially lower the RAM budget to 10 vertices
-    vm.config().max_vertices = 10;
+    try vm.setConfig(.{ .max_vertices = 10 });
 
     // A high-segment sphere will easily exceed 10 vertices
     const sphere_idx = try vm.dag_builder.addSphere(10.0, 0);
@@ -413,13 +415,12 @@ test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
     var vm = try initVm();
     defer vm.deinit(); // the cached cube used to be freed twice here
 
+    // Cache the cube, then make a sphere under a vertex budget it blows.
     const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);
+    const cube_h = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+    try vm.setConfig(.{ .max_vertices = 100 });
     const sphere_idx = try vm.dag_builder.addSphere(5, 0);
     const union_idx = try vm.dag_builder.addBinary(.union_op, cube_idx, sphere_idx);
-
-    // Cache the cube, then make the sphere blow the vertex budget.
-    const cube_h = try dag_evaluator.evaluateDAG(&vm, cube_idx);
-    vm.config().max_vertices = 100;
 
     try testing.expectError(error.RamBudgetExceeded, dag_evaluator.evaluateDAG(&vm, union_idx));
 
@@ -435,7 +436,7 @@ test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     try registry.registerStandardLibrary(&vm);
 
     // Switch the active engine config to B-Rep
-    vm.config().engine = .brep_native;
+    try vm.setConfig(.{ .engine = .brep_native });
 
     const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
@@ -444,25 +445,24 @@ test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     try testing.expectEqual(@as(usize, 8), kernel.numVerts(handle));
 }
 
-test "DAG Evaluator: cache is keyed by engine" {
+test "DAG Evaluator: the same shape under two engines is two nodes" {
     var vm = try initVm();
     defer vm.deinit();
 
-    const small = try vm.dag_builder.addCube(10, 10, 10, false);
-    const big = try vm.dag_builder.addCube(20, 20, 20, false);
-    // A hull, since it is an operation both engines have.
-    const hull = try vm.dag_builder.addBatchHull(&.{ big, small });
-
-    const m = try dag_evaluator.evaluateDAG(&vm, small);
+    const small_mesh = try vm.dag_builder.addCube(10, 10, 10, false);
+    const m = try dag_evaluator.evaluateDAG(&vm, small_mesh);
     try testing.expectEqual(geom.EngineType.manifold, m.engine);
 
-    vm.config().engine = .brep_native;
-
-    // Before the fix this was a cache hit returning the Manifold handle.
+    // It used to be one node, so the B-Rep evaluation was a cache hit on the Manifold handle.
+    try vm.setConfig(.{ .engine = .brep_native });
+    const small = try vm.dag_builder.addCube(10, 10, 10, false);
+    try testing.expect(small != small_mesh);
     const b = try dag_evaluator.evaluateDAG(&vm, small);
     try testing.expectEqual(geom.EngineType.brep_native, b.engine);
 
-    const h = try dag_evaluator.evaluateDAG(&vm, hull);
+    // A hull, since it is an operation both engines have.
+    const big = try vm.dag_builder.addCube(20, 20, 20, false);
+    const h = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addBatchHull(&.{ big, small }));
     try testing.expectEqual(geom.EngineType.brep_native, h.engine);
 }
 
@@ -539,15 +539,14 @@ test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
     var targets = try testing.allocator.alloc(dag.DAGNodeIndex, count);
     defer testing.allocator.free(targets);
 
+    // Ensure we don't accidentally trip the RAM budget during the stress test
+    try vm.setConfig(.{ .max_vertices = 50_000_000 });
     for (0..count) |i| {
         // Use `i` in dimension to prevent CSE deduplication from collapsing the branch count
         targets[i] = try vm.dag_builder.addCube(1.0 + @as(f64, @floatFromInt(i)), 1.0, 1.0, true);
     }
 
     const batch_idx = try vm.dag_builder.addBatchUnion(targets);
-
-    // Ensure we don't accidentally trip the RAM budget during the stress test
-    vm.config().max_vertices = 50_000_000;
 
     const handle = try dag_evaluator.evaluateDAG(&vm, batch_idx);
 

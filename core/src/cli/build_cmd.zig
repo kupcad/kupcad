@@ -210,7 +210,9 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // Force exact analytical representations if STEP export is requested
     if (format == .step) {
-        session.vm.config_stack.items[0].engine = .brep_native;
+        var settings = session.vm.config();
+        settings.engine = .brep_native;
+        try session.vm.setConfig(settings);
     }
 
     // --- 4. Evaluate the Workspace ---

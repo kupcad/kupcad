@@ -236,7 +236,7 @@ test "API: buildModelWithDiagnostic reports an error raised while exporting" {
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
-        error.EngineMismatch,
+        error.RuntimeError,
         api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
     );
     try testing.expectEqualStrings(

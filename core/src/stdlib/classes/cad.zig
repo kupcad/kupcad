@@ -77,8 +77,7 @@ fn settingsMap(vm: *VM, comptime T: type, config: T) !value.Value {
 /// CAD.config(settings) -> applies the settings to the active config
 fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Value {
     _ = receiver;
-    const current = vm.config();
-    current.* = try applySettings(vm, settings, current.*);
+    try vm.setConfig(try applySettings(vm, settings, vm.config()));
     return value.Value.initNil();
 }
 
@@ -92,16 +91,16 @@ fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block:
     };
 
     // Inherit the current config, then apply overrides
-    const new_config = try applySettings(vm, settings, vm.config().*);
+    const new_config = try applySettings(vm, settings, vm.config());
 
     // Push the new scope
-    try vm.config_stack.append(vm.allocator, new_config);
+    try vm.pushConfig(new_config);
 
     // Evaluate the block
     const result = vm.callClosureSync(body, &.{});
 
     // Pop the scope (Guarantees no state leakage!)
-    _ = vm.config_stack.pop();
+    vm.popConfig();
 
     return result catch |err| {
         if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
@@ -112,7 +111,7 @@ fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block:
 /// CAD.current_config -> the active config as nested Maps
 fn cadCurrentConfig(vm: *VM, receiver: value.Value) !value.Value {
     _ = receiver;
-    return settingsMap(vm, EngineConfig, vm.config().*);
+    return settingsMap(vm, EngineConfig, vm.config());
 }
 
 pub const methods = [_]common.MethodDef{

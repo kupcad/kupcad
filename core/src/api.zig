@@ -323,7 +323,9 @@ pub fn buildModelWithDiagnostic(
 
     // STEP requires exact B-Rep geometry, not polygonal Manifold meshes
     if (std.mem.eql(u8, format, "step")) {
-        vm.config_stack.items[0].engine = .brep_native;
+        var settings = vm.config();
+        settings.engine = .brep_native;
+        try vm.setConfig(settings);
     }
 
     // Inject parameters securely

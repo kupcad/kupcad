@@ -333,7 +333,7 @@ test "Stdlib: an operation that multiplies its inputs is refused before the kern
         errdefer std.debug.print("script: {s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
-        vm.config().max_vertices = if (i < 3) 50 else 100;
+        try vm.setConfig(.{ .max_vertices = if (i < 3) 50 else 100 });
         try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
     }
@@ -370,10 +370,23 @@ test "Stdlib: CAD.config applies each setting and current_config reads it back" 
         vm.globals.get("r").?.asString().chars,
     );
 
-    const config = vm.config().*;
+    const config = vm.config();
     try testing.expectEqual(geom.EngineType.brep_native, config.engine);
     try testing.expectEqual(@as(u32, 24), config.resolution.segments);
     try testing.expectEqual(@as(usize, 1000), config.max_vertices);
+}
+
+test "Stdlib: geometry keeps the settings it was made under, wherever it is evaluated" {
+    // Geometry is evaluated lazily; it used to be built under the settings in force then,
+    // so CAD.with_config was lost on anything measured or exported after the block.
+    try expectGlobalR(&.{
+        .{ .src = "a = nil\nCAD.with_config(engine: :brep) do\n  a = cube(10)\nend\n" ++ comptime rescued("a.volume"), .expected = .{ .str = brepLacks(.volume) } },
+        .{ .src = "s = nil\nCAD.with_config(max_vertices: 10) do\n  s = sphere(r: 10)\nend\n" ++ comptime rescued("s.volume"), .expected = .{ .str = "GeometryError: sphere produced 258 vertices, above the 10-vertex limit; lower the resolution (segments:) or simplify the model" } },
+        // After the block, the outer settings again.
+        .{ .src = "CAD.with_config(engine: :brep) do\n  cube(1)\nend\nr = cube(10).volume", .expected = .{ .num = 1000 } },
+        // CAD.config changes the settings for what comes after it, not for what came before.
+        .{ .src = "a = cube(10)\nCAD.config(engine: :brep)\nr = a.volume", .expected = .{ .num = 1000 } },
+    });
 }
 
 test "Stdlib: CAD.config rejects settings it doesn't have or can't use" {
@@ -409,7 +422,7 @@ test "Stdlib: CAD.config rejects settings it doesn't have or can't use" {
         try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
         // Nothing of a rejected call is applied.
-        try testing.expectEqual(engine_config.EngineConfig{}, vm.config().*);
+        try testing.expectEqual(engine_config.EngineConfig{}, vm.config());
     }
 }
 

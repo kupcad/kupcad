@@ -249,10 +249,9 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
-    const mesh_part = try dag_evaluator.evaluateDAG(&vm, cube_idx);
-    vm.config().engine = .brep_native;
-    const brep_part = try dag_evaluator.evaluateDAG(&vm, cube_idx);
+    const mesh_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
+    try vm.setConfig(.{ .engine = .brep_native });
+    const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
     const handles = [_]geom.GeometryHandle{ mesh_part, brep_part };
     try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false, .glb));

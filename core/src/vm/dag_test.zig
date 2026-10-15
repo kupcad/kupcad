@@ -1,5 +1,6 @@
 const std = @import("std");
 const dag = @import("dag.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 
 test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     // Setup
@@ -116,4 +117,30 @@ test "DAG: builder rejects the concrete sentinel as a child" {
     try std.testing.expectError(error.InvalidDAGNode, builder.addBatchUnion(&.{ c, dag.CONCRETE_NODE_SENTINEL }));
     // Rollback leaves the builder usable.
     try std.testing.expectEqual(@as(usize, 1), builder.nodes.items.len);
+}
+
+test "DAG: settings are interned, the defaults being id 0" {
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), try builder.internSettings(.{}));
+    const brep = try builder.internSettings(.{ .engine = .brep_native });
+    try std.testing.expect(brep != 0);
+    try std.testing.expectEqual(brep, try builder.internSettings(.{ .engine = .brep_native }));
+    try std.testing.expect(try builder.internSettings(.{ .tolerance = 1e-3 }) != brep);
+    try std.testing.expectEqual(geom.EngineType.brep_native, builder.settings(brep).engine);
+}
+
+test "DAG: a node records the settings it was made under, and they tell it apart" {
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const plain = try builder.addCube(1, 1, 1, false);
+    builder.current_settings = try builder.internSettings(.{ .tolerance = 1e-3 });
+    const fine = try builder.addCube(1, 1, 1, false);
+    try std.testing.expect(fine != plain); // not merged by CSE
+    try std.testing.expect(builder.node_hashes.items[fine] != builder.node_hashes.items[plain]);
+    try std.testing.expectEqual(@as(f64, 1e-3), builder.settings(builder.nodes.items[fine].settings).tolerance);
+    try std.testing.expectEqual(plain, blk: {
+        builder.current_settings = 0;
+        break :blk try builder.addCube(1, 1, 1, false);
+    });
 }

@@ -132,7 +132,7 @@ pub const VM = struct {
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
-    dag_cache: std.AutoHashMapUnmanaged(u64, dag_evaluator.CachedResult) = .empty,
+    dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
     mute_errors: bool = false,
     /// The first error reported since the run started or the last exception was rescued,
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
@@ -183,8 +183,10 @@ pub const VM = struct {
 
     /// Features already warned about (warnUnsupported), so each is reported once per run.
     warned_features: std.EnumSet(kernel.Feature) = .empty,
-    /// CAD.with_config pushes, CAD.config changes the top; never empty. Read it via `config`.
-    config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
+    /// The settings in force, as ids into dag_builder's settings table: CAD.with_config
+    /// pushes, CAD.config changes the top; never empty. Read with `config`, change only with
+    /// setConfig / pushConfig / popConfig, which keep the DAG builder's settings in step.
+    config_stack: std.ArrayListUnmanaged(dag.SettingsId) = .empty,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -202,8 +204,8 @@ pub const VM = struct {
     pub const MAX_STACK_STRING_LEN: usize = 1024;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
-        var config_stack = std.ArrayListUnmanaged(EngineConfig).empty;
-        try config_stack.append(allocator, .{});
+        var config_stack = std.ArrayListUnmanaged(dag.SettingsId).empty;
+        try config_stack.append(allocator, 0); // the default settings
 
         // Pre-allocate a massive 64K stack (512KB of contiguous memory)
         const initial_stack = try allocator.alloc(value.Value, 65536);
@@ -1700,8 +1702,15 @@ pub const VM = struct {
     /// Destroys every cached result (GC eviction drops only those no geometry still uses).
     pub fn clearDagCache(self: *VM) void {
         var it = self.dag_cache.valueIterator();
-        while (it.next()) |cached| kernel.destruct(cached.handle);
+        while (it.next()) |handle| kernel.destruct(handle.*);
         self.dag_cache.clearRetainingCapacity();
+    }
+
+    /// Raises the GeometryError for one operation given geometry of two engines.
+    pub fn requireSameEngine(self: *VM, a: geom.EngineType, b: geom.EngineType) error{RuntimeError}!void {
+        if (a == b) return;
+        _ = self.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
+        return error.RuntimeError;
     }
 
     /// Raises NotImplementedError unless `engine` has `feature` (see kernel.Feature).
@@ -1720,8 +1729,28 @@ pub const VM = struct {
     }
 
     /// The settings in force (CAD.config / CAD.with_config).
-    pub fn config(self: *VM) *EngineConfig {
-        return &self.config_stack.items[self.config_stack.items.len - 1];
+    pub fn config(self: *const VM) EngineConfig {
+        return self.dag_builder.settings(self.config_stack.items[self.config_stack.items.len - 1]);
+    }
+
+    /// Replaces the settings in force (CAD.config): geometry made from now on uses them.
+    pub fn setConfig(self: *VM, settings: EngineConfig) !void {
+        const id = try self.dag_builder.internSettings(settings);
+        self.config_stack.items[self.config_stack.items.len - 1] = id;
+        self.dag_builder.current_settings = id;
+    }
+
+    /// Puts `settings` in force until popConfig (CAD.with_config).
+    pub fn pushConfig(self: *VM, settings: EngineConfig) !void {
+        const id = try self.dag_builder.internSettings(settings);
+        try self.config_stack.append(self.allocator, id);
+        self.dag_builder.current_settings = id;
+    }
+
+    pub fn popConfig(self: *VM) void {
+        std.debug.assert(self.config_stack.items.len > 1); // the base settings stay
+        _ = self.config_stack.pop();
+        self.dag_builder.current_settings = self.config_stack.items[self.config_stack.items.len - 1];
     }
 
     // --- JIT Materialization ---

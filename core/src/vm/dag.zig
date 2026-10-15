@@ -1,8 +1,12 @@
 const std = @import("std");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 pub const DAGNodeIndex = u32;
+
+/// Index of a node's settings in DAGBuilder.settings_table; 0 is the default settings.
+pub const SettingsId = u16;
 
 /// Legacy marker for an ObjGeometry that has no DAG node (raw concrete handle).
 /// Never a valid node index: appendNodeWithRollback refuses to grow that far.
@@ -68,7 +72,8 @@ pub fn scriptName(tag: DAGTag) []const u8 {
 pub const DAGNode = struct {
     tag: DAGTag,
     flags: u8 = 0, // e.g., bit 0 = center boolean
-    _padding: u16 = 0,
+    /// The settings (CAD.config) the node was created under, which it is built with.
+    settings: SettingsId = 0,
     data: u32 = 0, // Payload index into extra_data or numbers
 };
 
@@ -98,6 +103,13 @@ pub const DAGBuilder = struct {
     node_hashes: std.ArrayListUnmanaged(u64) = .empty,
     dedup_map: std.AutoHashMapUnmanaged(u64, DAGNodeIndex) = .empty,
 
+    /// Every distinct non-default settings nodes were created under (SettingsId n is entry
+    /// n - 1). Geometry is evaluated lazily, so a node made inside CAD.with_config must
+    /// carry its settings: it used to be built with whatever was active when evaluated.
+    settings_table: std.ArrayListUnmanaged(EngineConfig) = .empty,
+    /// The settings new nodes get; the VM sets it whenever its config changes.
+    current_settings: SettingsId = 0,
+
     pub fn init(child_allocator: std.mem.Allocator) DAGBuilder {
         return .{ .arena = std.heap.ArenaAllocator.init(child_allocator) };
     }
@@ -109,6 +121,23 @@ pub const DAGBuilder = struct {
 
     inline fn allocator(self: *DAGBuilder) std.mem.Allocator {
         return self.arena.allocator();
+    }
+
+    // --- Settings ---
+
+    /// The id of `config`, added to the table if it is new.
+    pub fn internSettings(self: *DAGBuilder, config: EngineConfig) !SettingsId {
+        if (std.meta.eql(config, EngineConfig{})) return 0;
+        for (self.settings_table.items, 1..) |known, id| {
+            if (std.meta.eql(known, config)) return @intCast(id);
+        }
+        if (self.settings_table.items.len == std.math.maxInt(SettingsId)) return error.TooManySettings;
+        try self.settings_table.append(self.allocator(), config);
+        return @intCast(self.settings_table.items.len);
+    }
+
+    pub fn settings(self: *const DAGBuilder, id: SettingsId) EngineConfig {
+        return if (id == 0) .{} else self.settings_table.items[id - 1];
     }
 
     // --- Allocation & Rollback Infrastructure ---
@@ -142,8 +171,10 @@ pub const DAGBuilder = struct {
     }
 
     /// Primary internal entry point to register nodes with common subexpression elimination (CSE)
-    fn appendNodeWithRollback(self: *DAGBuilder, new_node: DAGNode, snap: StateSnapshot) !DAGNodeIndex {
+    fn appendNodeWithRollback(self: *DAGBuilder, node: DAGNode, snap: StateSnapshot) !DAGNodeIndex {
         errdefer self.rollback(snap);
+        var new_node = node;
+        new_node.settings = self.current_settings;
 
         // SAFETY: Prevents the DAG index from reaching CONCRETE_NODE_SENTINEL
         if (self.nodes.items.len >= CONCRETE_NODE_SENTINEL - 1) {
@@ -607,6 +638,8 @@ pub const DAGBuilder = struct {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(std.mem.asBytes(&node.tag));
         hasher.update(std.mem.asBytes(&node.flags));
+        // By content, not id: the hash keys the result cache, which outlives the table.
+        hasher.update(std.mem.asBytes(&self.settings(node.settings).resultHash()));
 
         switch (node.tag) {
             .cube => {
@@ -768,7 +801,7 @@ pub const DAGBuilder = struct {
     /// compared by index: children are themselves deduplicated exactly, so equal
     /// sub-DAGs always share one index.
     fn nodesEqual(self: *const DAGBuilder, a: DAGNode, b: DAGNode) bool {
-        if (a.tag != b.tag or a.flags != b.flags) return false;
+        if (a.tag != b.tag or a.flags != b.flags or a.settings != b.settings) return false;
         const ex = self.extra_data.items;
 
         return switch (a.tag) {
