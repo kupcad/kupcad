@@ -1,0 +1,2 @@
+3:1 W [unused-variable] Unused variable 'empty'. Prefix with '_' if intentional.
+3:9 W [self-subtraction] 'plate - plate' subtracts a shape from itself, which leaves nothing

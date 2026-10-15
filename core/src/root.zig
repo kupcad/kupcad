@@ -100,6 +100,7 @@ test {
 
     // Linter Tests
     _ = @import("tools/lint/linter_test.zig");
+    _ = @import("tools/lint/snapshot_test.zig");
     _ = @import("tools/lint/rules/negative_dim_test.zig");
     _ = @import("tools/lint/rules/unused_vars_test.zig");
     _ = @import("tools/lint/rules/unreachable_code_test.zig");

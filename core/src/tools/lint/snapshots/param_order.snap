@@ -1,0 +1,2 @@
+1:8 W [param-order] Parameter ':thickness' used before definition.
+5:3 W [param-order] Parameter ':height' definition should be placed at the top level for static UI extraction.

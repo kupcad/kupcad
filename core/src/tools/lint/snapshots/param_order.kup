@@ -1,0 +1,8 @@
+wall = param(:thickness)
+thickness = param(:thickness, default: 2)
+
+def body
+  param(:height, default: 10)
+end
+
+cube(thickness + wall).scale(body)

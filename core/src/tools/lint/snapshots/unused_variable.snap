@@ -1,0 +1,2 @@
+2:1 W [unused-variable] Unused variable 'spare'. Prefix with '_' if intentional.
+13:16 W [unused-variable] Unused variable 'item'. Prefix with '_' if intentional.

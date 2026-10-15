@@ -1,0 +1,11 @@
+# @title Bracket
+width = param(:width, default: 40)
+height = param(:height, default: 20)
+
+def hole(at)
+  cylinder(d: 4, h: 20).translate(at, 5, -1)
+end
+
+plate = cube(width, 10, height / 4)
+holes = [5, width - 5].map { |x| hole(x) }
+part = plate - union(holes)

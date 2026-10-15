@@ -496,12 +496,19 @@ pub fn build(b: *std.Build) void {
         run_cmd.step.dependOn(b.getInstallStep());
 
         const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
+        // Lint snapshot tests rewrite their expected output instead of comparing with it.
+        const update_snapshots = b.option(bool, "update-snapshots", "Rewrite the lint snapshots (src/tools/lint/snapshots) from the current output") orelse false;
+        const snapshot_options = b.addOptions();
+        snapshot_options.addOption(bool, "update", update_snapshots);
+        mod.addOptions("lint_snapshot_options", snapshot_options);
 
         const mod_tests = b.addTest(.{
             .root_module = mod,
             .filters = test_filters,
         });
         const run_mod_tests = b.addRunArtifact(mod_tests);
+        // Rewriting the snapshots must run the tests even when nothing they embed changed.
+        if (update_snapshots) run_mod_tests.has_side_effects = true;
 
         const exe_tests = b.addTest(.{
             .root_module = exe.root_module,

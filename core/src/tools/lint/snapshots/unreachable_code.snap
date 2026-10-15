@@ -1,0 +1,2 @@
+3:3 W [unreachable-code] Unreachable code detected after explicit control flow return/break.
+8:3 W [unreachable-code] Unreachable code detected after explicit control flow return/break.

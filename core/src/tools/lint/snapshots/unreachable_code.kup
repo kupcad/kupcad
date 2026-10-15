@@ -1,0 +1,11 @@
+def bracket(n)
+  return cube(n)
+  puts "never"
+end
+
+[1, 2, 3].each do |i|
+  next
+  puts i
+end
+
+bracket(2)
