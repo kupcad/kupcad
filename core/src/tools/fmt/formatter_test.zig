@@ -24,7 +24,7 @@ fn formatCodeLocal(allocator: std.mem.Allocator, source: []const u8, config: For
 
     const line_index = try LineIndex.init(arena_alloc, source);
 
-    var formatter = Formatter.init(allocator, tokens.starts, &line_index, parser.comments.items, config);
+    var formatter = Formatter.init(allocator, source, tokens.starts, tokens.lengths, &line_index, parser.comments.items, config);
     defer formatter.deinit();
     try formatter.registerDefaultRules();
 
@@ -619,4 +619,9 @@ test "Formatter: for loops print as KupCAD" {
         \\end
         \\
     );
+}
+
+test "Formatter: number literals keep their spelling" {
+    // `20.0` used to print as `20`, losing the author's choice; the value is the same.
+    try expectFormat("w = 20.0\nn = 1_000\ne = 1e3\nm = -2.50\nh = 0.5 * w\n", "w = 20.0\nn = 1_000\ne = 1e3\nm = -2.50\nh = 0.5 * w\n");
 }

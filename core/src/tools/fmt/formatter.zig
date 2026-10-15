@@ -14,7 +14,10 @@ pub const Formatter = struct {
 
     allocator: std.mem.Allocator,
     out: std.ArrayListUnmanaged(u8) = .empty,
+    /// The text being formatted: literals are printed as written.
+    source: []const u8,
     token_starts: []const u32,
+    token_lengths: []const u32,
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
@@ -25,10 +28,12 @@ pub const Formatter = struct {
 
     sort_imports_rule: SortImportsRule = .{},
 
-    pub fn init(allocator: std.mem.Allocator, token_starts: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{
             .allocator = allocator,
+            .source = source,
             .token_starts = token_starts,
+            .token_lengths = token_lengths,
             .line_index = line_index,
             .comments = comments,
             .config = config,
@@ -54,6 +59,11 @@ pub const Formatter = struct {
     }
 
     // --- State & Spacing Helpers ---
+
+    fn tokenText(self: *const Formatter, tok: u32) []const u8 {
+        const start = self.token_starts[tok];
+        return self.source[start..][0..self.token_lengths[tok]];
+    }
 
     inline fn getNodeLine(self: *Formatter, node: *const ast.Node) u32 {
         if (node.main_token >= self.token_starts.len) return 0;
@@ -197,11 +207,9 @@ pub const Formatter = struct {
                 const end_line = if (b.end_token < self.token_starts.len) self.line_index.getLine(self.token_starts[b.end_token]) else std.math.maxInt(u32);
                 try self.formatBlockStmts(tree, tree.getNodes(b.stmts), end_line);
             },
-            .number => {
-                const n = tree.number(node);
-                var buf: [64]u8 = undefined;
-                try self.out.appendSlice(self.allocator, try std.fmt.bufPrint(&buf, "{d}", .{n}));
-            },
+            // As written: `20.0` stays `20.0` (it used to print as `20`), `1_000` and `1e3` keep
+            // their form. The value can't change: equivalence checks it.
+            .number => try self.out.appendSlice(self.allocator, self.tokenText(node.main_token)),
             .string => try self.formatWrappedString(tree.getString(@fromBackingInt(node.data)), '"'),
             .interpolated_string => {
                 const parts = tree.nodeSpan(node);

@@ -39,7 +39,7 @@ const MAX_FIX_PASSES = 10;
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
     if (doc.diagnostics.len > 0) return error.SyntaxError;
     if (doc.tree.root == .none) return error.SyntaxError;
-    var formatter = Formatter.init(allocator, doc.tokens.starts, &doc.line_index, doc.comments, config);
+    var formatter = Formatter.init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, &doc.line_index, doc.comments, config);
     defer formatter.deinit();
     try formatter.registerDefaultRules();
     const formatted = try formatter.format(&doc.tree, doc.tree.root);
@@ -69,12 +69,11 @@ pub fn formatCode(allocator: std.mem.Allocator, source: []const u8, config: Form
 /// Lints an already parsed Document and, when it parsed cleanly, compiles it, so a compile
 /// error (such as assigning to `cube`) is reported by `kupcad check` and the editor just as
 /// `kupcad build` would. Caller owns the returned array of diagnostics.
-/// `source` is the text `doc` was parsed from (fixes edit it).
-pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
+pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, config: LinterConfig) ![]LinterDiagnostic {
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
     try linter.registerDefaultRules();
-    try linter.check(&doc.tree, source, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
+    try linter.check(&doc.tree, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
     try suppressions.apply(allocator, &linter.diagnostics, doc.comments, &doc.line_index, config);
     if (doc.diagnostics.len == 0) {
         if (try compileError(allocator, io, doc)) |compile_error| {
@@ -159,7 +158,7 @@ fn errorCount(diags: []const LinterDiagnostic) usize {
 pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: LinterConfig) ![]LinterDiagnostic {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    return checkDocument(allocator, io, &doc, source, config);
+    return checkDocument(allocator, io, &doc, config);
 }
 
 pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io, writer: anytype) !void {

@@ -14,6 +14,9 @@ pub const LineIndex = @import("line_index.zig").LineIndex;
 /// Owns the ArenaAllocator that backs the AST, tokens, comments, and diagnostics.
 pub const Document = struct {
     arena: std.heap.ArenaAllocator,
+    /// The text it was parsed from, borrowed: the caller keeps it alive (tokens, comments
+    /// and diagnostics point into it).
+    source: []const u8,
     tree: ast.Tree,
     tokens: common_token.TokenList(lexer_mod.Tag),
     comments: []const common_token.Comment,
@@ -64,6 +67,7 @@ pub const Document = struct {
 
         return .{
             .arena = arena,
+            .source = source,
             .tree = tree,
             .tokens = tokens,
             .comments = parser.comments.items,
