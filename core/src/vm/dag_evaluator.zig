@@ -494,7 +494,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         }
                     }
                     const p = vm.dag_builder.getLoftPayload(node);
-                    const result = kernel.loft(config.engine, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
+                    const result = kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
 

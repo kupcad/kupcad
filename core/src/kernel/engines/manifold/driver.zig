@@ -4,9 +4,6 @@ const geom = @import("../../geometry_handle.zig");
 const planar = @import("../../planar.zig");
 const manifold = @import("../../../bindings/manifold.zig");
 
-/// Thickness of the profile sheets loft hulls together (must be well below any real height).
-const LOFT_SHEET_THICKNESS = 1e-3;
-
 pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -309,26 +306,26 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn loftImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+/// The loft of two convex profiles (the evaluator rejects others) is the hull of their
+/// outlines placed at z = 0 and z = height: exact, with nothing to tune. (It hulled two thin
+/// extruded sheets, which bulged by their thickness wherever the profiles differ.)
+fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
-    // The loft is the hull of two thin sheets, which is exact for convex profiles (the
-    // evaluator rejects others). The top sheet sits just below `height` so the solid spans
-    // exactly [0, height].
-    const m_a = manifold.extrude(@ptrCast(@alignCast(a.ptr)), LOFT_SHEET_THICKNESS, 0, 0.0, 1.0, 1.0) orelse return null;
-    defer manifold.destruct(m_a);
-
-    const m_b_flat = manifold.extrude(@ptrCast(@alignCast(b.ptr)), LOFT_SHEET_THICKNESS, 0, 0.0, 1.0, 1.0) orelse return null;
-    defer manifold.destruct(m_b_flat);
-
-    const m_b = manifold.translate(m_b_flat, 0.0, 0.0, height - LOFT_SHEET_THICKNESS) orelse return null;
-    defer manifold.destruct(m_b);
-
-    // Pass the objects as a standard Zig slice to the public batchHull wrapper
-    const objs = [_]?*manifold.ManifoldObj{ m_a, m_b };
-    const hull_ptr = manifold.batchHull(&objs) orelse return null;
-
+    var pts = std.ArrayListUnmanaged(manifold.ManifoldVec3).empty;
+    defer pts.deinit(allocator);
+    for ([2]geom.CrossSectionHandle{ a, b }, [2]f64{ 0.0, height }) |profile, z| {
+        const contours = Contours.of(profile) orelse return null;
+        defer contours.deinit();
+        for (0..contours.count()) |ci| {
+            for (0..contours.len(ci)) |i| {
+                const p = contours.point(ci, i);
+                pts.append(allocator, .{ .x = p[0], .y = p[1], .z = z }) catch return null;
+            }
+        }
+    }
+    const hull_ptr = manifold.hullPoints(pts.items) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(hull_ptr) };
 }
 

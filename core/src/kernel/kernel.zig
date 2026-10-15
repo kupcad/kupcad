@@ -375,11 +375,11 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
     }
 }
 
-pub inline fn loft(engine: geom.EngineType, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
+pub inline fn loft(engine: geom.EngineType, allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != engine or b.engine != engine) return null;
     switch (engine) {
-        .manifold => return manifold_driver.driver.loftFn(a, b, height),
-        .brep_native => return brep_driver.driver.loftFn(a, b, height),
+        .manifold => return manifold_driver.driver.loftFn(allocator, a, b, height),
+        .brep_native => return brep_driver.driver.loftFn(allocator, a, b, height),
     }
 }
 

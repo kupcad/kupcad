@@ -80,6 +80,7 @@ extern fn manifold_scale(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z
 extern fn manifold_mirror(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj;
 extern fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
 extern fn manifold_batch_hull(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj) ?*ManifoldObj;
+extern fn manifold_hull_pts(mem: ?*ManifoldObj, ps: [*]const ManifoldVec3, length: usize) ?*ManifoldObj;
 extern fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
 extern fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
 extern fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
@@ -237,6 +238,11 @@ pub fn mirror(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj {
 
 pub fn hull(obj: ?*ManifoldObj) ?*ManifoldObj {
     return manifold_hull(manifold_alloc_manifold(), obj);
+}
+
+/// The convex hull of a point set.
+pub fn hullPoints(pts: []const ManifoldVec3) ?*ManifoldObj {
+    return manifold_hull_pts(manifold_alloc_manifold(), pts.ptr, pts.len);
 }
 
 pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {

@@ -8832,8 +8832,8 @@ test "VM CAD: loft skins two 2D profiles into a 3D solid" {
 
     // Exact volume of a square frustum: V = (h/3) * (A1 + A2 + sqrt(A1*A2))
     // (10/3) * (100 + 25 + 50) = 583.33
-    const vol = result.asNumber();
-    try testing.expect(vol > 580.0 and vol < 590.0);
+    // Exact: it used to be the hull of two 1e-3 thick sheets, a little larger.
+    try testing.expectApproxEqAbs(@as(f64, 10.0 / 3.0 * 175.0), result.asNumber(), 1e-9);
 }
 
 test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
