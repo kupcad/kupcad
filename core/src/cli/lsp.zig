@@ -27,7 +27,6 @@ const limits = @import("../core/limits.zig");
 const logger = std.log.scoped(.lsp);
 
 /// Instruction budget for hover evaluation so the LSP doesn't hang on infinite loops.
-const HOVER_INSTRUCTION_LIMIT: usize = 500_000;
 /// Custom notification telling the editor where the viewport WebSocket listens.
 pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
 /// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
@@ -67,108 +66,130 @@ const ScopeContext = struct {
     class_name: ?[]const u8 = null,
 };
 
-/// `sandbox` must be a non-writing VFS (see ReadOnlyVfs): the document is untrusted.
-pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, target_node: ast.NodeIndex, writer: anytype) !void {
-    var vm = try VM.init(allocator, io);
-    defer vm.deinit();
-    // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
-    vm.vfs = sandbox;
-    vm.mute_errors = true; // Prevent LSP from spamming stderr
+/// A document run once for its hovers. It used to run again for every hover, in a fresh
+/// VM capped at 500k instructions, so a big model's hovers showed nothing; now it runs
+/// once per version of the workspace, under the preview's limit, and every hover reads
+/// what that run left. Heap-allocated: the VM must not move.
+pub const HoverRun = struct {
+    allocator: std.mem.Allocator,
+    /// The document it ran (owned).
+    uri: []const u8,
+    vm: VM,
+    program: chunk.Chunk,
 
-    vm.instruction_limit = HOVER_INSTRUCTION_LIMIT;
+    /// Runs `doc` (known in the project as `module_path`) on `sandbox`, which must not
+    /// write: the document is untrusted. Null when it doesn't compile: running an
+    /// incomplete chunk broke the VM's invariants, and its diagnostics say why.
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, uri: []const u8, module_path: []const u8) !?*HoverRun {
+        const self = try allocator.create(HoverRun);
+        errdefer allocator.destroy(self);
+        self.* = .{ .allocator = allocator, .uri = try allocator.dupe(u8, uri), .vm = undefined, .program = chunk.Chunk.init() };
+        errdefer allocator.free(self.uri);
+        self.vm = try VM.init(allocator, io);
+        errdefer self.vm.deinit();
+        // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
+        self.vm.vfs = sandbox;
+        self.vm.mute_errors = true; // its errors are the document's diagnostics
+        self.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+        try registry.registerStandardLibrary(&self.vm);
 
-    try registry.registerStandardLibrary(&vm);
-
-    // 1. Compile and run the ENTIRE document to populate global variables and state
-    var main_chunk = chunk.Chunk.init();
-    defer main_chunk.free(allocator);
-
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
-    defer comp.deinit();
-    comp.module_path = module_path;
-    comp.compile(doc.tree.root) catch |err| {
-        // A chunk that didn't compile is incomplete, and running it broke the VM's
-        // invariants; the error is the document's diagnostic.
-        logger.debug("Hover: the document doesn't compile: {}", .{err});
-        return error.NoValue;
-    };
-
-    _ = vm.interpret(&main_chunk);
-
-    // 2. Extract requested node safely
-    const node = doc.tree.getNode(target_node) orelse return error.NoValue;
-    var val: value.Value = value.Value.initNil();
-
-    if (node.tag == .identifier) {
-        const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
-        val = vm.globals.get(name) orelse return error.NoValue;
-    } else if (node.tag == .assignment) {
-        const assign = doc.tree.assignment(node);
-        const name = doc.tree.getString(assign.name);
-        val = vm.globals.get(name) orelse return error.NoValue;
-    } else if (node.tag == .method_call) {
-        // Compile and evaluate inline expression safely inside the VM
-        var expr_chunk = chunk.Chunk.init();
-        defer expr_chunk.free(allocator);
-
-        var expr_comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &expr_chunk, &vm);
-        expr_comp.compile(target_node) catch return error.RuntimeError;
-
-        const res = vm.interpret(&expr_chunk);
-        if (res != .ok or vm.stack_top == 0) return error.NoValue;
-        val = vm.stack[vm.stack_top - 1];
-    } else {
-        return;
+        var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &self.program, &self.vm);
+        defer comp.deinit();
+        comp.module_path = module_path;
+        comp.compile(doc.tree.root) catch |err| {
+            logger.debug("Hover: the document doesn't compile: {}", .{err});
+            self.destroy();
+            return null;
+        };
+        // A run that stops early still leaves what it defined before stopping.
+        _ = self.vm.interpret(&self.program);
+        return self;
     }
 
-    // 3. Concretize and write Markdown while memory is safe
-    if (val.isGeometry()) {
-        try writer.print("\n---\n### 🧊 3D Solid\n", .{});
-
-        if (vm.ensureConcrete(val)) |handle| {
-            // Only what the engine can measure: a B-Rep part would otherwise show zeros.
-            const engine = handle.engine;
-            if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
-                const dx = bx.max[0] - bx.min[0];
-                const dy = bx.max[1] - bx.min[1];
-                const dz = bx.max[2] - bx.min[2];
-                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
-            };
-
-            if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
-            if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
-            if (kernel.supports(engine, .genus)) {
-                const gen = kernel.genus(handle);
-                if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
-            }
-
-            if (kernel.supports(engine, .mesh)) if (kernel.getMesh(allocator, handle)) |mesh| {
-                defer allocator.free(mesh.vert_props);
-                defer allocator.free(mesh.tri_verts);
-                try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
-            };
-        } else |_| {}
-    } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
-        try writer.print("\n---\n### 📐 2D Profile\n", .{});
-
-        if (vm.ensureConcreteCrossSection(val)) |cs_handle| {
-            if (kernel.supports(cs_handle.engine, .sketch_measure)) {
-                const area = kernel.crossSectionArea(cs_handle);
-                const rect = kernel.crossSectionBounds(cs_handle);
-
-                const w = rect.max[0] - rect.min[0];
-                const l = rect.max[1] - rect.min[1];
-
-                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
-                try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
-            }
-        } else |_| {}
-    } else if (val.isString()) {
-        try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});
-    } else if (val.isBool()) {
-        try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
+    pub fn destroy(self: *HoverRun) void {
+        const allocator = self.allocator;
+        self.program.free(allocator);
+        self.vm.deinit();
+        allocator.free(self.uri);
+        allocator.destroy(self);
     }
-}
+
+    /// What the run knows about the value at `target_node` of `doc` (the document it ran):
+    /// a variable's value, or a call's, with a shape's measurements.
+    pub fn writeFacts(self: *HoverRun, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
+        const node = doc.tree.getNode(target_node) orelse return error.NoValue;
+        var val: value.Value = value.Value.initNil();
+
+        if (node.tag == .identifier) {
+            const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
+            val = self.vm.globals.get(name) orelse return error.NoValue;
+        } else if (node.tag == .assignment) {
+            const assign = doc.tree.assignment(node);
+            const name = doc.tree.getString(assign.name);
+            val = self.vm.globals.get(name) orelse return error.NoValue;
+        } else if (node.tag == .method_call) {
+            // The call alone, in the run's VM, so it sees the run's variables.
+            var expr_chunk = chunk.Chunk.init();
+            defer expr_chunk.free(self.allocator);
+            var expr_comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &expr_chunk, &self.vm);
+            defer expr_comp.deinit();
+            expr_comp.compile(target_node) catch return error.NoValue;
+            const res = self.vm.interpret(&expr_chunk);
+            if (res != .ok or self.vm.stack_top == 0) return error.NoValue;
+            val = self.vm.stack[self.vm.stack_top - 1];
+        } else {
+            return;
+        }
+
+        // 3. Concretize and write Markdown while memory is safe
+        if (val.isGeometry()) {
+            try writer.print("\n---\n### 🧊 3D Solid\n", .{});
+
+            if (self.vm.ensureConcrete(val)) |handle| {
+                // Only what the engine can measure: a B-Rep part would otherwise show zeros.
+                const engine = handle.engine;
+                if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
+                    const dx = bx.max[0] - bx.min[0];
+                    const dy = bx.max[1] - bx.min[1];
+                    const dz = bx.max[2] - bx.min[2];
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
+                };
+
+                if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
+                if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
+                if (kernel.supports(engine, .genus)) {
+                    const gen = kernel.genus(handle);
+                    if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
+                }
+
+                if (kernel.supports(engine, .mesh)) if (kernel.getMesh(self.allocator, handle)) |mesh| {
+                    defer self.allocator.free(mesh.vert_props);
+                    defer self.allocator.free(mesh.tri_verts);
+                    try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
+                };
+            } else |_| {}
+        } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
+            try writer.print("\n---\n### 📐 2D Profile\n", .{});
+
+            if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
+                if (kernel.supports(cs_handle.engine, .sketch_measure)) {
+                    const area = kernel.crossSectionArea(cs_handle);
+                    const rect = kernel.crossSectionBounds(cs_handle);
+
+                    const w = rect.max[0] - rect.min[0];
+                    const l = rect.max[1] - rect.min[1];
+
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+                }
+            } else |_| {}
+        } else if (val.isString()) {
+            try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});
+        } else if (val.isBool()) {
+            try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
+        }
+    }
+};
 
 inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
     var current = start_node;
@@ -238,6 +259,9 @@ pub const Handler = struct {
     root_dir: ?std.Io.Dir = null,
     /// The module path of the document last edited, whose mesh the viewport shows (owned).
     preview_module: ?[]u8 = null,
+    /// The last document run for hovers, until any document changes (imports make any
+    /// edit matter).
+    hover_run: ?*HoverRun = null,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
 
@@ -280,10 +304,26 @@ pub const Handler = struct {
         try self.session.buildReverseGraph();
         try self.session.markFileEdited(module_path);
 
+        self.dropHoverRun();
         const previewed = try self.allocator.dupe(u8, module_path);
         if (self.preview_module) |old| self.allocator.free(old);
         self.preview_module = previewed;
         self.preview_pending = true;
+    }
+
+    /// The run of `buf` for hovers: the last one if it ran this document, else a new one.
+    fn hoverRun(self: *Handler, buf: DocumentBuffer, doc: *const api.Document) !?*HoverRun {
+        if (self.hover_run) |run| {
+            if (std.mem.eql(u8, run.uri, buf.uri)) return run;
+            self.dropHoverRun();
+        }
+        self.hover_run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), doc, buf.uri, buf.module_path);
+        return self.hover_run;
+    }
+
+    fn dropHoverRun(self: *Handler) void {
+        if (self.hover_run) |run| run.destroy();
+        self.hover_run = null;
     }
 
     /// What the session and imports call the document at `uri`: its path relative to the
@@ -355,6 +395,7 @@ pub const Handler = struct {
     }
 
     pub fn deinit(self: *Handler) void {
+        self.dropHoverRun();
         if (self.preview_module) |m| self.allocator.free(m);
         if (self.root) |r| self.allocator.free(r);
         if (self.root_dir) |d| d.close(self.io);
@@ -513,6 +554,7 @@ pub const Handler = struct {
         logger.debug("Closed {s}", .{uri});
         // The editor keeps the last diagnostics it was sent for a file until told otherwise.
         try self.publishDiagnostics(arena, uri, &.{});
+        self.dropHoverRun();
         var closed = (self.files.fetchRemove(uri) orelse return).value;
         defer closed.deinit(self.allocator);
         try self.session.removeModule(closed.module_path);
@@ -603,11 +645,12 @@ pub const Handler = struct {
             out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
         }
 
-        // LIVE SPATIAL EVALUATION
-        // Silently execute and append live Markdown traits
-        writeSpatialHover(arena, self.io, self.sandbox.vfs(), &doc, buf.module_path, found_node_idx, &out.writer) catch |err| {
-            logger.debug("Hover: no value to show: {}", .{err});
-        };
+        // What running the document says about it (bounds, volume, ...).
+        if (self.hoverRun(buf, &doc)) |maybe_run| {
+            if (maybe_run) |run| run.writeFacts(&doc, found_node_idx, &out.writer) catch |err| {
+                logger.debug("Hover: no value to show: {}", .{err});
+            };
+        } else |err| logger.warn("Hover: could not run the document: {}", .{err});
 
         // Add scope footer
         if (scope.def_name) |dn| {

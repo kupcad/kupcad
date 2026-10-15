@@ -89,6 +89,15 @@ const Server = struct {
         if (self.handler.preview_pending) self.handler.evaluatePreview();
     }
 
+    /// The markdown the server answers a hover at `line`, `character` with.
+    fn hover(self: *Server, uri: []const u8, line: u32, character: u32) ?[]const u8 {
+        const answer = self.handler.@"textDocument/hover"(self.arena.allocator(), .{
+            .textDocument = .{ .uri = uri },
+            .position = .{ .line = line, .character = character },
+        }) orelse return null;
+        return answer.contents.markup_content.value;
+    }
+
     fn close(self: *Server, uri: []const u8) !void {
         try self.handler.@"textDocument/didClose"(self.arena.allocator(), .{ .textDocument = .{ .uri = uri } });
     }
@@ -230,4 +239,31 @@ test "LSP: open documents import each other, and editing one re-evaluates its im
     try server.change("file:///work/parts/hw.kup", "def bolt\n  cube(3)\nend\nexport bolt\n");
     server.settle();
     try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(server.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+}
+
+test "LSP: hovers are answered from one run of the document, until something changes" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "a = cube(2)\nb = a.translate(1, 0, 0)\n");
+
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
+    const run = server.handler.hover_run.?;
+    // It used to run the whole document again for each hover.
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 1, 0).?, "**Volume:** `8.00`") != null);
+    try testing.expectEqual(run, server.handler.hover_run.?);
+
+    // An edit (here, or in a file it imports) makes the next hover run it again.
+    try server.change(URI, "a = cube(3)\n");
+    try testing.expect(server.handler.hover_run == null);
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
+}
+
+test "LSP: a model that takes long to run still gets its hovers" {
+    // The hover's run stopped at 500k instructions, before `a` existed, and showed nothing.
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "n = 0\nwhile n < 200000\n  n += 1\nend\na = cube(2)\n");
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 4, 0).?, "**Volume:** `8.00`") != null);
 }
