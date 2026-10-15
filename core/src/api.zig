@@ -5,6 +5,7 @@ const value = @import("core/value.zig");
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
+const error_kind = @import("vm/error_kind.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const profiler_mod = @import("vm/profiler.zig");
 const geom = @import("kernel/geometry_handle.zig");
@@ -162,99 +163,70 @@ pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMapUnmanaged(f64)) 
 }
 
 /// Extracts evaluated Geometry from the VM stack/display list and routes it to the requested 3D exporter.
+/// A failure the script can read about (an engine that can't mesh, a failed union) is
+/// raised in the VM first, so `vm.last_error` says what went wrong.
 pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
     vm: *VM,
     format: []const u8,
     use_draco: bool,
 ) ![]const u8 {
-    var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
-    defer export_handles.deinit(allocator);
+    const is_stl = std.mem.eql(u8, format, "stl");
+    const is_gltf = std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf");
+    const is_step = std.mem.eql(u8, format, "step");
+    if (!is_stl and !is_gltf and !is_step) return error.UnsupportedFormat;
 
-    // 1. Extract "Ghosted" items from the display list first
-    for (vm.display_list.items) |ghost_handle| {
-        try export_handles.append(allocator, ghost_handle);
-    }
-
-    var main_handle_opt: ?geom.GeometryHandle = null;
-    var batch_created_handle: ?geom.GeometryHandle = null;
-
-    // If we create a temporary batched handle just for exporting, clean it up when we're done
-    defer if (batch_created_handle) |h| kernel.destruct(h);
-
-    // 2. Extract the primary returned geometry from the top of the VM stack
+    // The model: the value the script left on the stack, a solid or an assembly's or an
+    // array's parts.
+    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    defer parts.deinit(allocator);
     if (vm.stack_top > 0) {
         const final_val = vm.stack[0];
-
         if (final_val.isGeometry()) {
-            // Standard single geometry return
-            const main_handle = try vm.ensureConcrete(final_val);
-            try export_handles.append(allocator, main_handle);
-            main_handle_opt = main_handle;
-        } else if (final_val.isAssembly()) {
-            // Explode assemblies into their component parts
-            var asm_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
-            defer asm_handles.deinit(allocator);
-
-            for (final_val.asAssembly().parts.items.items) |part_val| {
-                if (part_val.isGeometry()) {
-                    const h = try vm.ensureConcrete(part_val);
-                    try export_handles.append(allocator, h);
-                    try asm_handles.append(allocator, h);
-                }
-            }
-
-            if (asm_handles.items.len == 1) {
-                main_handle_opt = asm_handles.items[0];
-            } else if (asm_handles.items.len > 1) {
-                // STL files don't support multiple disjoint meshes natively,
-                // so we must boolean union them together first.
-                if (std.mem.eql(u8, format, "stl")) {
-                    main_handle_opt = kernel.batchBoolean(allocator, asm_handles.items, .union_op);
-                    batch_created_handle = main_handle_opt;
-                }
-            }
-        } else if (final_val.isArray()) {
-            // Arrays of geometry are treated exactly like assemblies
-            var arr_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
-            defer arr_handles.deinit(allocator);
-
-            for (final_val.asArray().items.items) |part_val| {
-                if (part_val.isGeometry()) {
-                    const h = try vm.ensureConcrete(part_val);
-                    try export_handles.append(allocator, h);
-                    try arr_handles.append(allocator, h);
-                }
-            }
-
-            if (arr_handles.items.len == 1) {
-                main_handle_opt = arr_handles.items[0];
-            } else if (arr_handles.items.len > 1) {
-                if (std.mem.eql(u8, format, "stl")) {
-                    main_handle_opt = kernel.batchBoolean(allocator, arr_handles.items, .union_op);
-                    batch_created_handle = main_handle_opt;
-                }
+            try parts.append(allocator, try vm.ensureConcrete(final_val));
+        } else {
+            const items: []const value.Value = if (final_val.isAssembly())
+                final_val.asAssembly().parts.items.items
+            else if (final_val.isArray())
+                final_val.asArray().items.items
+            else
+                &.{};
+            for (items) |part| {
+                if (part.isGeometry()) try parts.append(allocator, try vm.ensureConcrete(part));
             }
         }
     }
 
+    // Ghosted items (the display list) are exported beside the model.
+    var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    defer export_handles.deinit(allocator);
+    try export_handles.appendSlice(allocator, vm.display_list.items);
+    try export_handles.appendSlice(allocator, parts.items);
     if (export_handles.items.len == 0) return error.NoGeometry;
 
-    // 3. Route the extracted handles to the appropriate binary exporter
-    if (std.mem.eql(u8, format, "stl")) {
-        if (main_handle_opt) |h| {
-            return stl_exporter.buildStlBuffer(allocator, h);
-        } else {
-            return error.NoGeometry; // STL requires a unified mesh
-        }
-    } else if (std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf")) {
+    if (is_step) return step_exporter.buildStepBuffer(allocator, export_handles.items);
+
+    // Mesh formats: refuse parts the engine can't tessellate before any work on them.
+    for (export_handles.items) |h| try vm.requireFeature(h.engine, .mesh);
+    if (is_gltf) {
         // GLTF handles multiple distinct meshes naturally
         const container: gltf_exporter.Container = if (std.mem.eql(u8, format, "gltf")) .gltf else .glb;
         return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco, container);
-    } else if (std.mem.eql(u8, format, "step")) {
-        return step_exporter.buildStepBuffer(allocator, export_handles.items);
-    } else {
-        return error.UnsupportedFormat;
+    }
+
+    // STL holds one mesh: the model's parts are united, the ghosts left out.
+    switch (parts.items.len) {
+        0 => return error.NoGeometry,
+        1 => return stl_exporter.buildStlBuffer(allocator, parts.items[0]),
+        else => {
+            try vm.requireFeature(parts.items[0].engine, .boolean);
+            const united = kernel.batchBoolean(allocator, parts.items, .union_op) orelse {
+                _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
+                return error.RuntimeError;
+            };
+            defer kernel.destruct(united);
+            return stl_exporter.buildStlBuffer(allocator, united);
+        },
     }
 }
 

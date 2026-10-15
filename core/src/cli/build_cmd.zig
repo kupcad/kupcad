@@ -236,10 +236,9 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // --- 5. Export Resulting Geometry ---
     // Use the shared DRY helper to pull from the VM stack and create the binary file
+    // A failure the script can read about was raised (and reported) by the VM.
     const output_bytes = api.exportModelFromVm(allocator, &session.vm, format_name, use_draco) catch |err| {
-        if (err == error.EngineCannotTessellate) {
-            reporter.err("Export failed: the brep engine can't {s} yet; export to .step, or build with engine: :manifold\n", .{kernel.Feature.mesh.describe()});
-        } else reporter.err("Export failed: {}\n", .{err});
+        reporter.err("Export failed: {}\n", .{err});
         return .failure;
     };
     defer allocator.free(output_bytes);

@@ -172,6 +172,7 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "export_stl", receiver);
     const handle = try vm.ensureConcrete(receiver);
+    try vm.requireFeature(handle.engine, .mesh);
 
     const stl_bytes = try buildStlBuffer(vm.allocator, handle);
     defer vm.allocator.free(stl_bytes);

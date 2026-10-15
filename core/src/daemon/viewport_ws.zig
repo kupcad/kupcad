@@ -2,6 +2,7 @@ const std = @import("std");
 const gltf = @import("../exporters/3d/gltf.zig");
 const ScriptSession = @import("session.zig").ScriptSession;
 const geom = @import("../kernel/geometry_handle.zig");
+const kernel = @import("../kernel/kernel.zig");
 
 const log = std.log.scoped(.viewport_ws);
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -474,6 +475,10 @@ pub const ViewportWsServer = struct {
         const node = &session.nodes.items[@backingInt(root_id)];
         const handle = node.cached_handle orelse return;
 
+        if (!kernel.supports(handle.engine, .mesh)) {
+            log.warn("the viewport can't show this model: the {s} engine can't {s} yet", .{ handle.engine.scriptName(), kernel.Feature.mesh.describe() });
+            return;
+        }
         const handles = [_]geom.GeometryHandle{handle};
         const glb_bytes = gltf.buildGltfBuffer(self.allocator, &session.vm, &handles, false, .glb) catch |err| {
             log.err("Failed to build GLB: {}", .{err});

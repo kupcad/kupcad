@@ -244,3 +244,29 @@ test "API: buildModelWithDiagnostic reports an error raised while exporting" {
         diag.message.?,
     );
 }
+
+test "API: a model the engine can't mesh says so, for every mesh format" {
+    // The API, wasm and the CLI got only error.EngineCannotTessellate, with no message.
+    const expected = "NotImplementedError: the brep engine can't tessellate solids for STL, glTF or the viewport (STEP export works) yet; build this part with engine: :manifold";
+    inline for (.{ "stl", "glb", "gltf" }) |format| {
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModelWithDiagnostic(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", format, false, null, null, &diag));
+        try testing.expectEqualStrings(expected, diag.message.?);
+    }
+    // STEP is what the B-Rep engine exports.
+    const step = try api.buildModel(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", "step", false, null, null);
+    defer testing.allocator.free(step);
+    try testing.expect(std.mem.startsWith(u8, step, "ISO-10303-21;"));
+}
+
+test "API: an STL of several parts is their union; glTF keeps them apart" {
+    const source = "[cube(10), cube(10).translate(5, 0, 0)]";
+    const stl = try api.buildModel(testing.allocator, testing.io, source, "stl", false, null, null);
+    defer testing.allocator.free(stl);
+    // One closed 15 x 10 x 10 box: the overlap is gone, so fewer than 2 x 12 triangles.
+    try testing.expect(std.mem.readInt(u32, stl[80..84], .little) < 24);
+    const glb = try api.buildModel(testing.allocator, testing.io, source, "glb", false, null, null);
+    defer testing.allocator.free(glb);
+    try testing.expectEqualStrings("glTF", glb[0..4]);
+}

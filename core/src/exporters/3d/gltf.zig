@@ -432,6 +432,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
         return error.RuntimeError;
     }
 
+    for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
     const bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, Container.forPath(filepath));
     defer vm.allocator.free(bytes);
 
