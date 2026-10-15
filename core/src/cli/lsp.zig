@@ -294,9 +294,13 @@ pub const Handler = struct {
         try self.session.buildReverseGraph();
         try self.session.markFileEdited(uri);
 
-        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
+        // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
+        self.session.evaluateWorkspace() catch |err| switch (err) {
+            error.ParseError, error.CompileError, error.RuntimeError => logger.debug("{s} did not evaluate: {}", .{ uri, err }),
+            else => logger.warn("Session evaluation failed: {}", .{err}),
+        };
         if (self.ws_server) |ws| {
-            ws.broadcastSessionMesh(self.session, uri) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
+            ws.broadcastSessionMesh(self.session, uri) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
         }
     }
 
@@ -308,17 +312,12 @@ pub const Handler = struct {
         self.files.deinit(self.allocator);
     }
 
-    fn log(self: *Handler, comptime fmt: []const u8, args: anytype) void {
-        _ = self;
-        logger.err("LSP: " ++ fmt, args);
-    }
-
     pub fn initialize(
         self: *Handler,
         _: std.mem.Allocator,
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
-        self.log("Initializing Server...", .{});
+        logger.info("Initializing server", .{});
 
         if (request.capabilities.general) |general| {
             for (general.positionEncodings orelse &.{}) |encoding| {
@@ -380,7 +379,7 @@ pub const Handler = struct {
         const ws = self.ws_server orelse return;
         const Params = struct { port: u16 };
         self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, Params, .{ .port = ws.port }, .{}) catch |err| {
-            self.log("Failed to announce viewport port: {}", .{err});
+            logger.warn("Failed to announce viewport port: {}", .{err});
         };
     }
 
@@ -403,7 +402,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidOpenParams,
     ) !void {
-        self.log("Opened {s}", .{params.textDocument.uri});
+        logger.debug("Opened {s}", .{params.textDocument.uri});
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
@@ -429,7 +428,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidChangeParams,
     ) !void {
-        self.log("Changed {s}", .{params.textDocument.uri});
+        logger.debug("Changed {s}", .{params.textDocument.uri});
         if (params.contentChanges.len > 0) {
             switch (params.contentChanges[0]) {
                 .text_document_content_change_whole_document => |doc_change| {
@@ -455,7 +454,7 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidCloseParams,
     ) !void {
         _ = arena;
-        self.log("Closed {s}", .{params.textDocument.uri});
+        logger.debug("Closed {s}", .{params.textDocument.uri});
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
@@ -467,12 +466,12 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.document_formatting.Params,
     ) !?[]const lsp.types.TextEdit {
-        self.log("Formatting requested for {s}", .{params.textDocument.uri});
+        logger.debug("Formatting requested for {s}", .{params.textDocument.uri});
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const source = doc_buf.source;
 
         const formatted = api.formatCode(arena, source, .{}) catch |err| {
-            self.log("Formatter failed: {}", .{err});
+            logger.debug("Not formatted: {}", .{err});
             return null;
         };
 
@@ -498,7 +497,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.Hover.Params,
     ) ?lsp.types.Hover {
-        self.log("Hover requested for {s}", .{params.textDocument.uri});
+        logger.debug("Hover requested for {s}", .{params.textDocument.uri});
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
@@ -574,7 +573,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.InlayHint.Params,
     ) !?[]const lsp.types.InlayHint {
-        self.log("Inlay hints requested for {s}", .{params.textDocument.uri});
+        logger.debug("Inlay hints requested for {s}", .{params.textDocument.uri});
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
@@ -653,7 +652,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.completion.Params,
     ) !lsp.ResultType("textDocument/completion") {
-        self.log("Completion requested for {s}", .{params.textDocument.uri});
+        logger.debug("Completion requested for {s}", .{params.textDocument.uri});
 
         var items = std.ArrayListUnmanaged(lsp.types.completion.Item).empty;
 
@@ -712,7 +711,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.DocumentSymbol.Params,
     ) !lsp.ResultType("textDocument/documentSymbol") {
-        self.log("Document symbol requested for {s}", .{params.textDocument.uri});
+        logger.debug("Document symbol requested for {s}", .{params.textDocument.uri});
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = doc_buf.doc orelse return null;
 
@@ -814,14 +813,13 @@ pub const Handler = struct {
         return results;
     }
 
-    pub fn @"kupcad/setParam"(self: *Handler, arena: std.mem.Allocator, params: std.json.Value) !void {
-        _ = arena;
-        self.log("Received interactive parameter update: {}", .{params});
+    pub fn @"kupcad/setParam"(_: *Handler, _: std.mem.Allocator, params: std.json.Value) !void {
+        logger.debug("Received interactive parameter update: {}", .{params});
     }
 
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
         const diags = api.checkCode(self.allocator, self.io, source, .{}) catch |err| {
-            self.log("Linter crashed: {}", .{err});
+            logger.err("Linter failed: {}", .{err});
             return;
         };
         defer api.freeDiagnostics(self.allocator, diags);
@@ -892,12 +890,11 @@ pub const Handler = struct {
     }
 
     pub fn onResponse(
-        self: *Handler,
-        arena: std.mem.Allocator,
+        _: *Handler,
+        _: std.mem.Allocator,
         response: lsp.JsonRPCMessage.Response,
     ) void {
-        _ = arena;
-        self.log("Received unexpected response: {?}", .{response.id});
+        logger.warn("Received unexpected response: {?}", .{response.id});
     }
 };
 
@@ -923,11 +920,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("o
         if (ws_storage.start()) |_| {
             ws_server = &ws_storage;
         } else |err| {
-            logger.err("Viewport server failed to start: {}; continuing without it", .{err});
+            logger.warn("Viewport server failed to start: {}; continuing without it", .{err});
             ws_storage.deinit();
         }
     } else |err| {
-        logger.err("Viewport server unavailable: {}; continuing without it", .{err});
+        logger.warn("Viewport server unavailable: {}; continuing without it", .{err});
     }
     defer if (ws_server) |ws| ws.deinit();
 
