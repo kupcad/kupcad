@@ -211,6 +211,24 @@ test "kupcad: check names each finding's rule, at the level .kupcad.json gives i
     });
 }
 
+test "kupcad: check run in a subfolder uses the project's .kupcad.json above it" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "parts");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/unused.kup", .data = "x = 1\ncube(1)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
+    const parts = try std.fs.path.join(testing.allocator, &.{ sb.path, "parts" });
+    defer testing.allocator.free(parts);
+
+    // It used to read .kupcad.json from the current directory only.
+    const run = try kupcad(parts, &.{ "check", "unused.kup" });
+    defer run.deinit();
+    try testing.expectEqual(@as(u8, 1), run.code);
+    const report = try std.mem.concat(testing.allocator, u8, &.{ run.stdout, run.stderr });
+    defer testing.allocator.free(report);
+    try testing.expect(std.mem.indexOf(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
+}
+
 test "kupcad: check --fix rewrites what it can fix and reports the rest" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .contains = "Fixed 1 problem in fixme.kup" },

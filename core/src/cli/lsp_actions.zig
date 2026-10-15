@@ -20,9 +20,9 @@ pub const Action = struct {
 pub const Encoding = enum { utf8, utf16 };
 
 /// The actions for findings starting on lines `first_line` to `last_line` (0-based) of
-/// `source`. Everything is allocated in `arena`.
-pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, first_line: u32, last_line: u32, encoding: Encoding) ![]Action {
-    const diags = try api.checkCode(arena, io, source, .{});
+/// `source`, linted with `config`. Everything is allocated in `arena`.
+pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, config: api.LinterConfig, first_line: u32, last_line: u32, encoding: Encoding) ![]Action {
+    const diags = try api.checkCode(arena, io, source, config);
     const line_index = try api.LineIndex.init(arena, source);
     var actions: std.ArrayListUnmanaged(Action) = .empty;
     for (diags) |d| {

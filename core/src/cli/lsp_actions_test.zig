@@ -3,7 +3,7 @@ const testing = std.testing;
 const actions = @import("lsp_actions.zig");
 
 fn actionsOn(arena: std.mem.Allocator, source: []const u8, line: u32, encoding: actions.Encoding) ![]actions.Action {
-    return actions.actionsFor(arena, testing.io, source, line, line, encoding);
+    return actions.actionsFor(arena, testing.io, source, .{}, line, line, encoding);
 }
 
 test "LSP actions: a finding's fix, preferred when safe, and a disable action indented like its line" {

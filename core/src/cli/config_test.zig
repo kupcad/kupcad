@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const ProjectConfig = @import("config.zig").ProjectConfig;
+const FILE_NAME = @import("config.zig").FILE_NAME;
 const Level = @import("../tools/lint/config.zig").Level;
 
 test "ProjectConfig: defaults are applied correctly" {
@@ -65,4 +66,27 @@ test "ProjectConfig: gracefully fails on malformed JSON" {
     ;
 
     try testing.expectError(error.SyntaxError, ProjectConfig.parse(testing.allocator, json_source, null));
+}
+
+test "ProjectConfig: find looks in the folder, then each folder above it" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "project/parts/small");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "project/" ++ FILE_NAME, .data = "{}" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+
+    const nested = try std.fs.path.join(testing.allocator, &.{ root, "project", "parts", "small" });
+    defer testing.allocator.free(nested);
+    const found = (try ProjectConfig.find(testing.io, testing.allocator, nested)).?;
+    defer testing.allocator.free(found);
+    const expected = try std.fs.path.join(testing.allocator, &.{ root, "project", FILE_NAME });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, found);
+
+    // The nearest one wins.
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "project/parts/" ++ FILE_NAME, .data = "{}" });
+    const nearer = (try ProjectConfig.find(testing.io, testing.allocator, nested)).?;
+    defer testing.allocator.free(nearer);
+    try testing.expect(std.mem.endsWith(u8, nearer, "parts" ++ std.fs.path.sep_str ++ FILE_NAME));
 }

@@ -77,11 +77,13 @@ pub fn CommandSetup(comptime Flags: type) type {
             };
             errdefer options.deinit(allocator);
 
+            const config_path = if (options.config_path) |p| try allocator.dupe(u8, p) else try findFromCwd(io, allocator);
+            defer if (config_path) |p| allocator.free(p);
             var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-            const config = ProjectConfig.load(io, allocator, options.config_path, &where) catch |err| {
-                const path = options.config_path orelse ".kupcad.json";
+            const config = ProjectConfig.load(io, allocator, config_path, &where) catch |err| {
+                const path = config_path.?;
                 if (where.line > 0) {
-                    log_helpers.printStderr(io, "Error: {s}:{d}:{d}: {s}\n", .{ path, where.line, where.column, configProblem(err) });
+                    log_helpers.printStderr(io, "Error: {s}:{d}:{d}: {s}\n", .{ path, where.line, where.column, ProjectConfig.describeError(err) });
                 } else log_helpers.printStderr(io, "Error: Could not load {s}: {s}\n", .{ path, @errorName(err) });
                 return err;
             };
@@ -94,12 +96,9 @@ pub fn CommandSetup(comptime Flags: type) type {
     };
 }
 
-/// What a `.kupcad.json` parse error means.
-fn configProblem(err: anyerror) []const u8 {
-    return switch (err) {
-        error.UnknownField => "unknown setting (see the lint rules with `kupcad check --help`)",
-        error.InvalidEnumTag => "unknown value (a lint rule's level is off, info, warning or error)",
-        error.SyntaxError, error.UnexpectedEndOfInput => "invalid JSON",
-        else => @errorName(err),
-    };
+/// The project's settings file for the current directory, as `ProjectConfig.find` looks.
+fn findFromCwd(io: std.Io, allocator: std.mem.Allocator) !?[]u8 {
+    const cwd = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd);
+    return ProjectConfig.find(io, allocator, cwd);
 }

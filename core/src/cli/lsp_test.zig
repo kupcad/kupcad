@@ -5,6 +5,8 @@ const std = @import("std");
 const testing = std.testing;
 const lsp = @import("lsp");
 const Handler = @import("lsp.zig").Handler;
+const documentPath = @import("lsp.zig").documentPath;
+const FILE_NAME = @import("config.zig").FILE_NAME;
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
@@ -121,4 +123,32 @@ test "LSP: closing a document clears its diagnostics and forgets its module" {
     // Opening it again starts over.
     try server.open(URI, "cube(1)\n");
     try testing.expectEqual(@as(usize, 1), server.session.workspace.modules.items.len);
+}
+
+test "LSP: documentPath reads file URIs and nothing else" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("/work/part.kup", (try documentPath(a, URI)).?);
+    try testing.expectEqualStrings("/work/my part.kup", (try documentPath(a, "file:///work/my%20part.kup")).?);
+    try testing.expect(try documentPath(a, "untitled:Untitled-1") == null);
+}
+
+test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "parts");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = FILE_NAME, .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const uri = try std.fmt.allocPrint(testing.allocator, "file://{s}/parts/part.kup", .{root});
+    defer testing.allocator.free(uri);
+
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(uri, "def f\n  spare = 1\n  2\nend\nf\n");
+    // LSP severity 1 is an error: the project's level, where the default is a warning.
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1,") != null);
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "unused-variable") != null);
 }

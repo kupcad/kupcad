@@ -18,6 +18,8 @@ const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
+const project_config = @import("config.zig");
+const ProjectConfig = project_config.ProjectConfig;
 
 const logger = std.log.scoped(.lsp);
 
@@ -486,7 +488,8 @@ pub const Handler = struct {
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const source = doc_buf.source;
 
-        const formatted = api.formatCode(arena, source, .{}) catch |err| {
+        const config = self.projectConfig(arena, params.textDocument.uri);
+        const formatted = api.formatCode(arena, source, config.fmt) catch |err| {
             logger.debug("Not formatted: {}", .{err});
             return null;
         };
@@ -805,7 +808,8 @@ pub const Handler = struct {
     ) !lsp.ResultType("textDocument/codeAction") {
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const encoding: lsp_actions.Encoding = if (self.useUtf8()) .utf8 else .utf16;
-        const found = try lsp_actions.actionsFor(arena, self.io, doc_buf.source, params.range.start.line, params.range.end.line, encoding);
+        const config = self.projectConfig(arena, params.textDocument.uri);
+        const found = try lsp_actions.actionsFor(arena, self.io, doc_buf.source, config.lint, params.range.start.line, params.range.end.line, encoding);
 
         const results = try arena.alloc(lsp.types.CodeAction.Result, found.len);
         for (found, results) |action, *result| {
@@ -833,8 +837,27 @@ pub const Handler = struct {
         logger.debug("Received interactive parameter update: {}", .{params});
     }
 
+    /// The settings for the document at `uri`, from the `.kupcad.json` nearest its folder, so
+    /// they don't depend on the directory the editor started the server in. The defaults
+    /// when there is none, or when it can't be read (logged).
+    fn projectConfig(self: *Handler, arena: std.mem.Allocator, uri: []const u8) ProjectConfig {
+        const document = documentPath(arena, uri) catch return .{};
+        const path = document orelse return .{};
+        const dir = std.fs.path.dirname(path) orelse return .{};
+        const found = ProjectConfig.find(self.io, arena, dir) catch |err| {
+            logger.warn("Could not look for {s} above {s}: {}", .{ project_config.FILE_NAME, dir, err });
+            return .{};
+        } orelse return .{};
+        var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
+        return ProjectConfig.load(self.io, arena, found, &where) catch |err| {
+            logger.warn("{s}:{d}:{d}: {s}; using the default settings", .{ found, where.line, where.column, ProjectConfig.describeError(err) });
+            return .{};
+        };
+    }
+
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
-        const diags = api.checkCode(self.allocator, self.io, source, .{}) catch |err| {
+        const config = self.projectConfig(arena, uri);
+        const diags = api.checkCode(self.allocator, self.io, source, config.lint) catch |err| {
             logger.err("Linter failed: {}", .{err});
             return;
         };
@@ -896,6 +919,17 @@ pub const Handler = struct {
         logger.warn("Received unexpected response: {?}", .{response.id});
     }
 };
+
+/// The file a `file:` URI names (percent-decoding it), or null for another scheme, such as
+/// an editor's unsaved `untitled:` buffer.
+pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
+    const parsed = std.Uri.parse(uri) catch return null;
+    if (!std.mem.eql(u8, parsed.scheme, "file")) return null;
+    const path = try parsed.path.toRawMaybeAlloc(arena);
+    // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
+    if (builtin.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
+    return path;
+}
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("outcome.zig").Outcome {
     // 1. Setup global dependencies

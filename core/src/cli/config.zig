@@ -5,7 +5,8 @@ const LintConfig = @import("../tools/lint/config.zig").Config;
 
 // Shares the frontend's cap so the CLI never accepts a file the parser would reject.
 pub const MAX_FILE_SIZE = @import("../core/limits.zig").MAX_SOURCE_BYTES;
-const DEFAULT_CONFIG_NAME = ".kupcad.json";
+/// A project's settings file, found in a script's folder or a folder above it.
+pub const FILE_NAME = ".kupcad.json";
 
 pub const ProjectConfig = struct {
     fmt: FmtConfig = .{},
@@ -31,16 +32,35 @@ pub const ProjectConfig = struct {
 
     pub const Position = struct { line: u64, column: u64 };
 
-    pub fn load(io: std.Io, allocator: std.mem.Allocator, custom_path: ?[]const u8, where: ?*Position) !ProjectConfig {
-        const target_path = custom_path orelse DEFAULT_CONFIG_NAME;
-        const source = fs.readFileLimit(io, allocator, target_path, MAX_FILE_SIZE) catch |err| {
-            // If the user didn't explicitly provide a config path, it's okay if the default is missing
-            if (err == error.FileNotFound and custom_path == null) {
-                return ProjectConfig{};
-            }
-            return err;
-        };
+    /// Reads the settings at `path`; the defaults when there is no file (null).
+    pub fn load(io: std.Io, allocator: std.mem.Allocator, path: ?[]const u8, where: ?*Position) !ProjectConfig {
+        const source = try fs.readFileLimit(io, allocator, path orelse return .{}, MAX_FILE_SIZE);
         defer allocator.free(source);
         return parse(allocator, source, where);
+    }
+
+    /// The FILE_NAME that governs scripts in `dir`: the one in `dir` or the nearest folder
+    /// above it, as git finds a repository, so a project's settings hold in every folder of
+    /// it whatever directory a tool starts in. Null if there is none; caller owns the path.
+    pub fn find(io: std.Io, allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
+        var current: ?[]const u8 = dir;
+        while (current) |folder| : (current = std.fs.path.dirname(folder)) {
+            const candidate = try std.fs.path.join(allocator, &.{ folder, FILE_NAME });
+            if (std.Io.Dir.cwd().access(io, candidate, .{})) |_| return candidate else |err| {
+                allocator.free(candidate);
+                if (err != error.FileNotFound) return err;
+            }
+        }
+        return null;
+    }
+
+    /// What a `parse` error means, for a person.
+    pub fn describeError(err: anyerror) []const u8 {
+        return switch (err) {
+            error.UnknownField => "unknown setting (see the lint rules with `kupcad check --help`)",
+            error.InvalidEnumTag => "unknown value (a lint rule's level is off, info, warning or error)",
+            error.SyntaxError, error.UnexpectedEndOfInput => "invalid JSON",
+            else => @errorName(err),
+        };
     }
 };
