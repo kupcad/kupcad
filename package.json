@@ -7,6 +7,7 @@
     "build:core:native": "cd core && zig build -Doptimize=safe",
     "build:core:grammar": "cd core && zig build grammar -Doptimize=fast",
     "test:core": "cd core && zig build test -Doptimize=debug --summary all",
+    "check:examples": "cd core && zig build && ./zig-out/bin/kupcad fmt --check ../examples && ./zig-out/bin/kupcad check --max-warnings 0 ../examples",
     "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug --summary all",
     "test:wasm:safe": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=safe --summary all",
     "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all"

@@ -3,11 +3,11 @@
 # 2D Offsets, 3D Minkowski sums, Plane Trimming, Text, and Spatial Queries.
 
 # --- 1. Custom 2D Polygon & 2D Affine Matrix Transformation ---
-raw_pts = [ [0.0, 0.0], [40.0, 0.0], [30.0, 25.0], [10.0, 25.0] ]
+raw_pts = [[0.0, 0.0], [40.0, 0.0], [30.0, 25.0], [10.0, 25.0]]
 base_poly = polygon(raw_pts)
 
 # Apply 2D Matrix Transform (Scale X by 1.1, Translate Y by +5)
-transformed_poly = base_poly.transform([1.1, 0.0,  0.0, 1.0,  0.0, 5.0])
+transformed_poly = base_poly.transform([1.1, 0.0, 0.0, 1.0, 0.0, 5.0])
 
 # 2D Offsetting & CSG Difference with 2D Translation
 outer_profile = transformed_poly.offset(4.0)
@@ -22,7 +22,7 @@ matrix_3d = [
   1.0, 0.0, 0.0,
   0.0, 1.0, 0.0,
   0.0, 0.0, 1.0,
-  0.0, 0.0, 10.0
+  0.0, 0.0, 10.0,
 ]
 shifted_bracket = bracket_3d.transform(matrix_3d)
 
@@ -37,7 +37,7 @@ soft_pin = pin_core.minkowski(softener).translate(22.0, 17.5, 12.0)
 main_assembly = trimmed_bracket + soft_pin
 
 # --- 4. Iterative Feature Generation ---
-standoffs = [ [5.0, 10.0], [39.0, 10.0], [22.0, 25.0] ]
+standoffs = [[5.0, 10.0], [39.0, 10.0], [22.0, 25.0]]
 
 standoffs.each do |pt|
   radius = pt[0] > 20.0 ? 3.0 : 2.0
@@ -47,8 +47,8 @@ end
 
 # --- 5. Custom Polyhedron ---
 # Add a custom triangular pyramid to the side of the bracket
-pts = [[0,0,0], [10,0,0], [5,10,0], [5,5,10]]
-faces = [[0,1,2], [0,2,3], [0,3,1], [1,3,2]]
+pts = [[0, 0, 0], [10, 0, 0], [5, 10, 0], [5, 5, 10]]
+faces = [[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 3, 2]]
 pyr = polyhedron(pts, faces).translate(-5.0, -10.0, 0.0)
 
 main_assembly = main_assembly + pyr
@@ -90,7 +90,7 @@ if ray_hits.length > 0
 end
 
 puts("Final Mass Properties:")
-inspect("Volume:", main_assembly.volume().round(2))
-inspect("Bounding Box:", main_assembly.bbox())
+inspect("Volume:", main_assembly.volume.round(2))
+inspect("Bounding Box:", main_assembly.bbox)
 
 main_assembly

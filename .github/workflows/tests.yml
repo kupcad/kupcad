@@ -46,5 +46,8 @@ jobs:
       - name: Run lib tests
         run: pnpm test:core
 
+      - name: Check the examples are formatted and lint-clean
+        run: pnpm check:examples
+
       - name: Run wasm tests
         run: pnpm test:wasm
