@@ -2117,3 +2117,17 @@ test "Stdlib: debugger() opens the host's debugger, and does nothing without one
     try testing.expectEqual(.ok, try runOn(&vm, "debugger()\nKernel.debugger\nr = 1"));
     try testing.expectEqual(@as(usize, 2), debugger_opened);
 }
+
+test "Stdlib: Array#compact drops the nils, Array#reject the items its block accepts" {
+    try expectGlobalR(&.{
+        // false is a value, not a missing one, as in Ruby.
+        .{ .src = "r = [1, nil, false, 2, nil].compact.inspect", .expected = .{ .str = "[1, false, 2]" } },
+        .{ .src = "a = [nil, 3]\nb = a.compact\nr = [a.size, b.size]", .expected = .{ .nums = &.{ 2, 1 } } },
+        .{ .src = "r = [].compact.size", .expected = .{ .num = 0 } },
+        .{ .src = "r = [1, 2, 3, 4].reject { |x| x.even? }", .expected = .{ .nums = &.{ 1, 3 } } },
+        // The complement of filter: false and nil from the block keep the item.
+        .{ .src = "r = [1, 2, 3].reject { |x| x == 2 ? true : (x == 1 ? nil : false) }", .expected = .{ .nums = &.{ 1, 3 } } },
+        .{ .src = comptime rescued("[1].reject"), .expected = .{ .str = "ArgumentError: Array#reject requires a block" } },
+        .{ .src = comptime rescued("[1].compact(2)"), .expected = .{ .str = "ArgumentError: Array#compact expects 0 arguments, got 1" } },
+    });
+}

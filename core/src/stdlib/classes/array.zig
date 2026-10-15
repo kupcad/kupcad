@@ -165,6 +165,16 @@ pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, blo
 
 /// Array#filter { |x| ... }
 pub fn arrayFilter(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
+    return keepWhere(vm, arr, closure, true);
+}
+
+/// Array#reject: the items the block is false or nil for (Array#filter's complement).
+pub fn arrayReject(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
+    return keepWhere(vm, arr, closure, false);
+}
+
+/// A new array of the items whose block result is truthy (`truthy`) or falsey (`!truthy`).
+fn keepWhere(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure, truthy: bool) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
@@ -173,10 +183,23 @@ pub fn arrayFilter(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !v
 
     for (arr.items.items) |item| {
         const res = try vm.callClosureSync(closure, &.{item});
-        const is_truthy = !res.isNil() and !(res.isBool() and !res.asBool());
-        if (is_truthy) {
+        if (res.isFalsey() != truthy) {
             try new_arr.items.append(vm.gc.trackingAllocator(), item);
         }
+    }
+    return value.Value.initObj(&new_arr.obj);
+}
+
+/// Array#compact: a new array without the nils (false stays: it is a value).
+pub fn arrayCompact(vm: *VM, arr: *value.ObjArray) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+
+    const new_arr = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&new_arr.obj));
+
+    for (arr.items.items) |item| {
+        if (!item.isNil()) try new_arr.items.append(vm.gc.trackingAllocator(), item);
     }
     return value.Value.initObj(&new_arr.obj);
 }
@@ -418,6 +441,8 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "each", .func = common.wrapMethod(arrayEach) },
     .{ .name = "map", .func = common.wrapMethod(arrayMap) },
     .{ .name = "filter", .func = common.wrapMethod(arrayFilter) },
+    .{ .name = "reject", .func = common.wrapMethod(arrayReject) },
+    .{ .name = "compact", .func = common.wrapMethod(arrayCompact) },
     .{ .name = "reduce", .func = common.wrapMethod(arrayReduce) },
     .{ .name = "first", .func = common.wrapMethod(arrayFirst) },
     .{ .name = "last", .func = common.wrapMethod(arrayLast) },
