@@ -40,7 +40,7 @@ fn runScript(source: []const u8) !InterpretResult {
 
 test "Kernel Dispatcher: routes primitives to the requested engine" {
     inline for (.{ geom.EngineType.manifold, geom.EngineType.brep_native }) |engine| {
-        const handle = kernel.cube(engine, 10.0, 10.0, 10.0, true) orelse return error.DispatchFailed;
+        const handle = kernel.cube(&.{ .engine = engine }, 10.0, 10.0, 10.0, true) orelse return error.DispatchFailed;
         defer kernel.destruct(handle);
 
         // The returned handle is tagged with, and usable by, the requested engine.
@@ -51,9 +51,9 @@ test "Kernel Dispatcher: routes primitives to the requested engine" {
 
 test "Kernel Dispatcher: rejects mixed-engine operands at runtime" {
     // Engine tags must be checked: a handle of one engine is never fed to the other.
-    const m = kernel.cube(.manifold, 10, 10, 10, false) orelse return error.KernelFailed;
+    const m = kernel.cube(&.{ .engine = .manifold }, 10, 10, 10, false) orelse return error.KernelFailed;
     defer kernel.destruct(m);
-    const b = kernel.cube(.brep_native, 20, 20, 20, false) orelse return error.KernelFailed;
+    const b = kernel.cube(&.{ .engine = .brep_native }, 20, 20, 20, false) orelse return error.KernelFailed;
     defer kernel.destruct(b);
 
     try testing.expect(kernel.boolean(b, m, .difference_op) == null);

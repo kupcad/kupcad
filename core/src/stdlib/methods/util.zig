@@ -205,12 +205,11 @@ pub fn requireSegmentCount(vm: *VM, segs: i32, name: []const u8) !void {
     }
 }
 
-/// The segment count the active config gives a circle of `radius` (what `segments: 0`
-/// means), clamped to MAX_SEGMENTS: auto counts are not the user's fault, so we clamp
-/// rather than error.
+/// The segment count the active resolution gives a circle of `radius` (what `segments: 0`
+/// means), within MAX_SEGMENTS: an automatic count is not the script's fault, so it is
+/// clamped rather than an error.
 pub fn autoSegments(vm: *VM, radius: f64) i32 {
-    const segs = vm.config_stack.items[vm.config_stack.items.len - 1].manifold.getSegments(radius);
-    return @intCast(@min(segs, @as(u32, @intCast(limits.MAX_SEGMENTS))));
+    return @intCast(vm.config().segmentsFor(radius));
 }
 
 /// The trailing kwargs map of a native call, if any.
@@ -325,9 +324,9 @@ fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name
         return try readKwarg(@typeInfo(F).optional.child, vm, v, method, name);
     }
     if (F == f64) return requireNumber(vm, v, method, name);
-    if (F == i32) {
+    if (@typeInfo(F) == .int) {
         if (!v.isNumber()) return typeError(vm, method, "a number", name, v);
-        return checkedInt(i32, vm, v.asNumber(), name);
+        return checkedInt(F, vm, v.asNumber(), name);
     }
     if (F == bool) return requireBool(vm, v, method, name);
     if (F == []const u8) return requireName(vm, v, method, name);

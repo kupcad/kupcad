@@ -3,7 +3,7 @@ param(:resolution, default: 32)
 
 # --- 1. Parameter Injection & VM Diagnostics ---
 benchmark("Total Generation Time") do
-  CAD.config(manifold: { fixed_segments: param(:resolution) })
+  CAD.config(resolution: { segments: param(:resolution) })
 
   # --- 2. New 2D Primitives & Sweeps ---
   # Base motor mount using regular_polygon, offset, and extrude

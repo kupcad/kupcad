@@ -361,9 +361,9 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle1 = try dag_evaluator.evaluateDAG(&vm, c1);
 
-    // 2. Ensure it populated the VM's DAG cache under the (node hash, engine) key
+    // 2. Ensure it populated the VM's DAG cache under the (node hash, settings) key
     const hash = vm.dag_builder.node_hashes.items[c1];
-    try testing.expect(vm.dag_cache.contains(dag_evaluator.cacheKey(hash, .manifold)));
+    try testing.expect(vm.dag_cache.contains(dag_evaluator.cacheKey(hash, vm.config().resultHash())));
 
     // 3. Evaluate the exact same node again. It MUST pull from cache.
     const handle2 = try dag_evaluator.evaluateDAG(&vm, c1);
@@ -372,13 +372,33 @@ test "DAG Evaluator: O(1) DAG Cache bypasses kernel evaluation" {
     try testing.expectEqual(handle1.ptr, handle2.ptr);
 }
 
+test "DAG Evaluator: a node built under other settings is not served from the cache" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const c1 = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
+    const coarse = try dag_evaluator.evaluateDAG(&vm, c1);
+
+    // A tolerance (or engine, or resolution) changes what the kernel builds, so the
+    // cached result of the default settings must not be reused.
+    try vm.config_stack.append(vm.allocator, .{ .tolerance = 1e-3 });
+    const fine = try dag_evaluator.evaluateDAG(&vm, c1);
+    _ = vm.config_stack.pop();
+    try testing.expect(coarse.ptr != fine.ptr);
+    try testing.expectEqual(@as(u32, 2), vm.dag_cache.count());
+
+    // Back under the default settings, the first result is reused.
+    try testing.expectEqual(coarse.ptr, (try dag_evaluator.evaluateDAG(&vm, c1)).ptr);
+}
+
 test "DAG Evaluator: RAM budgeting traps complex meshes" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
     // Artificially lower the RAM budget to 10 vertices
-    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 10;
+    vm.config().max_vertices = 10;
 
     // A high-segment sphere will easily exceed 10 vertices
     const sphere_idx = try vm.dag_builder.addSphere(10.0, 0);
@@ -399,7 +419,7 @@ test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
 
     // Cache the cube, then make the sphere blow the vertex budget.
     const cube_h = try dag_evaluator.evaluateDAG(&vm, cube_idx);
-    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 100;
+    vm.config().max_vertices = 100;
 
     try testing.expectError(error.RamBudgetExceeded, dag_evaluator.evaluateDAG(&vm, union_idx));
 
@@ -415,7 +435,7 @@ test "DAG Evaluator: B-Rep engine config yields a B-Rep cube" {
     try registry.registerStandardLibrary(&vm);
 
     // Switch the active engine config to B-Rep
-    vm.config_stack.items[vm.config_stack.items.len - 1].engine = .brep_native;
+    vm.config().engine = .brep_native;
 
     const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
@@ -435,7 +455,7 @@ test "DAG Evaluator: cache is keyed by engine" {
     const m = try dag_evaluator.evaluateDAG(&vm, small);
     try testing.expectEqual(geom.EngineType.manifold, m.engine);
 
-    vm.config_stack.items[vm.config_stack.items.len - 1].engine = .brep_native;
+    vm.config().engine = .brep_native;
 
     // Before the fix this was a cache hit returning the Manifold handle.
     const b = try dag_evaluator.evaluateDAG(&vm, small);
@@ -526,7 +546,7 @@ test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
     const batch_idx = try vm.dag_builder.addBatchUnion(targets);
 
     // Ensure we don't accidentally trip the RAM budget during the stress test
-    vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = 50_000_000;
+    vm.config().max_vertices = 50_000_000;
 
     const handle = try dag_evaluator.evaluateDAG(&vm, batch_idx);
 

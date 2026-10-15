@@ -2,95 +2,74 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
-const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
-const limits = @import("../../core/limits.zig");
+const util = @import("../methods/util.zig");
+const engine_config = @import("../../core/engine_config.zig");
+const EngineConfig = engine_config.EngineConfig;
+const EngineType = @import("../../kernel/geometry_handle.zig").EngineType;
 
-const MAX_SEGMENTS_U32: u32 = @intCast(limits.MAX_SEGMENTS);
+/// The top-level settings of CAD.config: EngineConfig's fields, with the engine given by
+/// name and each nested group as a Map (parsed into its own struct by `applyGroup`).
+const Settings = struct {
+    engine: ?[]const u8 = null,
+    tolerance: ?f64 = null,
+    resolution: ?value.Value = null,
+    max_vertices: ?usize = null,
+    manifold: ?value.Value = null,
+    brep: ?value.Value = null,
+};
 
-/// Converts a config number to a count in [0, max]. @intFromFloat on NaN or an
-/// out-of-range value panics in Debug and is UB in ReleaseFast, so clamp first;
-/// NaN has no meaningful magnitude and falls back to `nan_default`.
-fn clampedCount(raw: f64, max: u32, nan_default: u32) u32 {
-    if (std.math.isNan(raw)) return nan_default;
-    return @intFromFloat(std.math.clamp(raw, 0.0, @as(f64, @floatFromInt(max))));
+/// `config` with `settings` applied. Unknown or mistyped settings and values the kernels
+/// can't use are errors, and nothing is applied then.
+fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !EngineConfig {
+    const parsed = try util.parseKwargs(Settings, vm, &.{value.Value.initObj(&settings.obj)}, "CAD.config");
+    const s = parsed.opts;
+    var next = config;
+    if (s.engine) |name| next.engine = EngineType.fromScriptName(name) orelse {
+        _ = vm.raiseError(.ValueError, "CAD.config engine must be manifold or brep, got '{s}'", .{name});
+        return error.RuntimeError;
+    };
+    if (s.tolerance) |t| next.tolerance = t;
+    if (s.max_vertices) |n| next.max_vertices = n;
+    if (s.resolution) |v| next.resolution = try applyGroup(engine_config.Resolution, vm, v, next.resolution, "CAD.config resolution");
+    if (s.manifold) |v| next.manifold = try applyGroup(engine_config.ManifoldConfig, vm, v, next.manifold, "CAD.config manifold");
+    if (s.brep) |v| next.brep = try applyGroup(engine_config.BRepConfig, vm, v, next.brep, "CAD.config brep");
+    if (next.problem()) |reason| {
+        _ = vm.raiseError(.ValueError, "CAD.config: {s}", .{reason});
+        return error.RuntimeError;
+    }
+    return next;
 }
 
-fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
-    // --- Engine Selection ---
-    if (vm.findMapKeyByString(map, "engine")) |idx| {
-        const v = map.map.values()[idx];
-        if (v.isSymbol()) {
-            const sym = v.asSymbol().chars;
-            if (std.mem.eql(u8, sym, "manifold")) config.engine = .manifold;
-            if (std.mem.eql(u8, sym, "brep")) config.engine = .brep_native;
-        }
+/// `current` with the settings of the Map `v` applied; its keys are T's fields.
+fn applyGroup(comptime T: type, vm: *VM, v: value.Value, current: T, what: []const u8) !T {
+    if (!v.isMap()) {
+        _ = vm.raiseError(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, util.typeName(vm, v) });
+        return error.RuntimeError;
     }
+    return (try util.parseKwargsOnto(T, current, vm, &.{v}, what)).opts;
+}
 
-    // --- Nested Manifold-Specific Map ---
-    if (vm.findMapKeyByString(map, "manifold")) |idx| {
-        const v = map.map.values()[idx];
-        if (v.isMap()) {
-            const m = v.asMap();
-
-            if (vm.findMapKeyByString(m, "simplify_coplanar")) |i| {
-                const tv = m.map.values()[i];
-                if (tv.isBool()) config.manifold.simplify_coplanar = tv.asBool();
-            }
-            if (vm.findMapKeyByString(m, "tolerance")) |i| {
-                const tv = m.map.values()[i];
-                if (tv.isNumber()) config.manifold.tolerance = tv.asNumber();
-            }
-            if (vm.findMapKeyByString(m, "fixed_segments")) |i| {
-                // NaN -> 0 (auto). This value feeds every getSegments() call, including the kernels' spheres.
-                if (m.map.values()[i].isNumber()) config.manifold.fixed_segments = clampedCount(m.map.values()[i].asNumber(), MAX_SEGMENTS_U32, 0);
-            }
-            if (vm.findMapKeyByString(m, "min_angle_deg")) |i| {
-                if (m.map.values()[i].isNumber()) config.manifold.min_angle_deg = m.map.values()[i].asNumber();
-            }
-            if (vm.findMapKeyByString(m, "min_segment_len")) |i| {
-                if (m.map.values()[i].isNumber()) config.manifold.min_segment_len = m.map.values()[i].asNumber();
-            }
-        }
+/// `config` as nested Maps with the same keys CAD.config takes.
+fn settingsMap(vm: *VM, comptime T: type, config: T) !value.Value {
+    const map = try vm.gc.allocateMap(vm);
+    vm.push(value.Value.initObj(&map.obj)); // protected from GC while it fills
+    defer _ = vm.pop();
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types) |name, F| {
+        const v = @field(config, name);
+        const item = switch (@typeInfo(F)) {
+            .float => value.Value.initNumber(v),
+            .int => value.Value.initNumber(@floatFromInt(v)),
+            .bool => value.Value.initBool(v),
+            .@"enum" => try vm.allocateSymbol(v.scriptName()),
+            .@"struct" => try settingsMap(vm, F, v),
+            else => @compileError("CAD.current_config: unsupported setting type " ++ @typeName(F)),
+        };
+        vm.push(item); // the key's allocation may collect
+        defer _ = vm.pop();
+        try map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol(name), item);
     }
-
-    // --- Nested B-Rep-Specific Map ---
-    if (vm.findMapKeyByString(map, "brep")) |idx| {
-        const v = map.map.values()[idx];
-        if (v.isMap()) {
-            const m = v.asMap();
-
-            // Tolerances
-            if (vm.findMapKeyByString(m, "tolerance")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.tolerance = m.map.values()[i].asNumber();
-            }
-            if (vm.findMapKeyByString(m, "angle_tolerance")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.angle_tolerance = m.map.values()[i].asNumber();
-            }
-            if (vm.findMapKeyByString(m, "sewing_tolerance")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.sewing_tolerance = m.map.values()[i].asNumber();
-            }
-
-            // Tessellation
-            if (vm.findMapKeyByString(m, "chordal_deflection")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.chordal_deflection = m.map.values()[i].asNumber();
-            }
-            if (vm.findMapKeyByString(m, "angular_deflection")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.angular_deflection = m.map.values()[i].asNumber();
-            }
-            // NaN keeps the current value: unlike fixed_segments, 0 is not an "auto" sentinel here.
-            if (vm.findMapKeyByString(m, "min_circle_segments")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.min_circle_segments = clampedCount(m.map.values()[i].asNumber(), MAX_SEGMENTS_U32, config.brep.min_circle_segments);
-            }
-
-            // Solvers
-            if (vm.findMapKeyByString(m, "max_newton_trials")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.max_newton_trials = clampedCount(m.map.values()[i].asNumber(), limits.MAX_NEWTON_TRIALS, config.brep.max_newton_trials);
-            }
-            if (vm.findMapKeyByString(m, "max_marching_steps")) |i| {
-                if (m.map.values()[i].isNumber()) config.brep.max_marching_steps = clampedCount(m.map.values()[i].asNumber(), limits.MAX_MARCHING_STEPS, config.brep.max_marching_steps);
-            }
-        }
-    }
+    return value.Value.initObj(&map.obj);
 }
 
 // CAD's methods are called on the CAD object; the receiver carries nothing.
@@ -98,8 +77,8 @@ fn applyConfigMap(vm: *VM, map: *value.ObjMap, config: *EngineConfig) void {
 /// CAD.config(settings) -> applies the settings to the active config
 fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Value {
     _ = receiver;
-    const current = &vm.config_stack.items[vm.config_stack.items.len - 1];
-    applyConfigMap(vm, settings, current);
+    const current = vm.config();
+    current.* = try applySettings(vm, settings, current.*);
     return value.Value.initNil();
 }
 
@@ -113,8 +92,7 @@ fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block:
     };
 
     // Inherit the current config, then apply overrides
-    var new_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-    applyConfigMap(vm, settings, &new_config);
+    const new_config = try applySettings(vm, settings, vm.config().*);
 
     // Push the new scope
     try vm.config_stack.append(vm.allocator, new_config);
@@ -134,56 +112,7 @@ fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block:
 /// CAD.current_config -> the active config as nested Maps
 fn cadCurrentConfig(vm: *VM, receiver: value.Value) !value.Value {
     _ = receiver;
-
-    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    // --- Create the Root Configuration Map ---
-    const root_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&root_map.obj)); // Protect root_map from GC
-    defer _ = vm.pop();
-
-    // Set Active Engine
-    const engine_sym = if (config.engine == .manifold) "manifold" else "brep";
-    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("engine"), try vm.allocateSymbol(engine_sym));
-
-    // --- Create Nested Manifold Map ---
-    const man_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&man_map.obj)); // Protect man_map from GC
-
-    // Manifold Options
-    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.manifold.tolerance));
-    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("simplify_coplanar"), value.Value.initBool(config.manifold.simplify_coplanar));
-    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("fixed_segments"), value.Value.initNumber(@floatFromInt(config.manifold.fixed_segments)));
-    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_angle_deg"), value.Value.initNumber(config.manifold.min_angle_deg));
-    try man_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_segment_len"), value.Value.initNumber(config.manifold.min_segment_len));
-
-    // Attach Manifold Map to Root
-    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("manifold"), value.Value.initObj(&man_map.obj));
-    _ = vm.pop();
-
-    // --- Create Nested B-Rep Map ---
-    const brep_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&brep_map.obj)); // Protect brep_map from GC
-
-    // B-Rep Tolerances
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("tolerance"), value.Value.initNumber(config.brep.tolerance));
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("angle_tolerance"), value.Value.initNumber(config.brep.angle_tolerance));
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("sewing_tolerance"), value.Value.initNumber(config.brep.sewing_tolerance));
-
-    // B-Rep Tessellation
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("chordal_deflection"), value.Value.initNumber(config.brep.chordal_deflection));
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("angular_deflection"), value.Value.initNumber(config.brep.angular_deflection));
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("min_circle_segments"), value.Value.initNumber(@floatFromInt(config.brep.min_circle_segments)));
-
-    // B-Rep Solvers
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("max_newton_trials"), value.Value.initNumber(@floatFromInt(config.brep.max_newton_trials)));
-    try brep_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("max_marching_steps"), value.Value.initNumber(@floatFromInt(config.brep.max_marching_steps)));
-
-    // Attach B-Rep Map to Root
-    try root_map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol("brep"), value.Value.initObj(&brep_map.obj));
-    _ = vm.pop();
-
-    return value.Value.initObj(&root_map.obj);
+    return settingsMap(vm, EngineConfig, vm.config().*);
 }
 
 pub const methods = [_]common.MethodDef{

@@ -653,10 +653,9 @@ pub const GC = struct {
 
         var cache_it = vm.dag_cache.iterator();
         while (cache_it.next()) |entry| {
-            // Cache keys mix in the engine; recover the node hash before the liveness check.
-            if (!live_hashes.contains(@import("dag_evaluator.zig").nodeHashOfCacheEntry(entry.key_ptr.*, entry.value_ptr.*))) {
+            if (!live_hashes.contains(entry.value_ptr.node_hash)) {
                 // Destruct C++ handle immediately
-                kernel.destruct(entry.value_ptr.*);
+                kernel.destruct(entry.value_ptr.handle);
                 keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
             }
         }

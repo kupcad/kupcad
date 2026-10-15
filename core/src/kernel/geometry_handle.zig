@@ -1,6 +1,23 @@
+const std = @import("std");
+
 pub const EngineType = enum {
     manifold,
     brep_native,
+
+    /// What scripts call the engine (`CAD.config(engine: :brep)`).
+    pub fn scriptName(self: EngineType) []const u8 {
+        return switch (self) {
+            .manifold => "manifold",
+            .brep_native => "brep",
+        };
+    }
+
+    pub fn fromScriptName(name: []const u8) ?EngineType {
+        for (std.enums.values(EngineType)) |engine| {
+            if (std.mem.eql(u8, name, engine.scriptName())) return engine;
+        }
+        return null;
+    }
 };
 
 /// A safe, tagged wrapper around C++ opaque pointers.

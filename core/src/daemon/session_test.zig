@@ -118,9 +118,7 @@ test "ScriptSession: stores its own copy of the module output" {
 
     // The session copy must survive the DAG cache dropping its entry (what GC
     // eviction does once no ObjGeometry references the node).
-    var it = session.vm.dag_cache.valueIterator();
-    while (it.next()) |h| kernel.destruct(h.*);
-    session.vm.dag_cache.clearRetainingCapacity();
+    session.vm.clearDagCache();
     try testing.expectApproxEqAbs(@as(f64, 1000.0), kernel.volume(first), 1e-6);
 
     // Changing the output destroys the old copy (not the cache's handle).

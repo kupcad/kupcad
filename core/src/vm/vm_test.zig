@@ -7303,18 +7303,17 @@ test "VM: CAD.with_config safely applies and pops engine settings block-scoped" 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Updated keys to match nested EngineConfig (`fixed_segments` under `manifold`)
     const source =
-        \\CAD.config(manifold: { fixed_segments: 16 })
+        \\CAD.config(resolution: { segments: 16 })
         \\conf1 = CAD.current_config
         \\
         \\conf2 = nil
-        \\CAD.with_config(manifold: { fixed_segments: 64 }, engine: :brep) do
+        \\CAD.with_config(resolution: { segments: 64 }, engine: :brep) do
         \\  conf2 = CAD.current_config
         \\end
         \\
         \\conf3 = CAD.current_config
-        \\[conf1[:manifold][:fixed_segments], conf2[:manifold][:fixed_segments], conf3[:manifold][:fixed_segments], conf2[:engine]]
+        \\[conf1[:resolution][:segments], conf2[:resolution][:segments], conf3[:resolution][:segments], conf2[:engine]]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -7530,9 +7529,7 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
     }
 
     // clear cache
-    var it = vm.dag_cache.valueIterator();
-    while (it.next()) |handle| kernel.destruct(handle.*);
-    vm.dag_cache.clearRetainingCapacity();
+    vm.clearDagCache();
 
     // 2. Evaluate with simplify_coplanar: true
     const source_simplified =

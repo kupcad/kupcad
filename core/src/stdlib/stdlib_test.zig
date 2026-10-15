@@ -10,6 +10,7 @@ const kernel = @import("../kernel/kernel.zig");
 const limits = @import("../core/limits.zig");
 const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 
 const print = std.fmt.comptimePrint;
 const MAX_SEGS = limits.MAX_SEGMENTS;
@@ -331,7 +332,7 @@ test "Stdlib: an operation that multiplies its inputs is refused before the kern
         errdefer std.debug.print("script: {s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
-        vm.config_stack.items[vm.config_stack.items.len - 1].max_vertices = if (i < 3) 50 else 100;
+        vm.config().max_vertices = if (i < 3) 50 else 100;
         try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
     }
@@ -341,9 +342,9 @@ test "Stdlib: auto-computed segment counts are clamped to MAX_SEGMENTS" {
     var vm = try initVm();
     defer vm.deinit();
 
-    // min_angle_deg 0.1 asks getSegments() for 3600 segments on a large circle.
+    // A 0.1 degree min_angle asks for 3600 segments on a large circle.
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
-        \\CAD.config(manifold: { min_angle_deg: 0.1, min_segment_len: 0.01 })
+        \\CAD.config(resolution: { min_angle: 0.1, min_length: 0.01 })
         \\c = circle(r: 1000)
     ));
     const c = vm.globals.get("c") orelse return error.MissingGlobal;
@@ -351,56 +352,63 @@ test "Stdlib: auto-computed segment counts are clamped to MAX_SEGMENTS" {
     try testing.expectEqual(MAX_SEGS, vm.dag_builder.getCirclePayload(node).segments);
 }
 
-test "Stdlib: CAD.config fixed_segments is clamped instead of UB" {
+test "Stdlib: CAD.config applies each setting and current_config reads it back" {
     var vm = try initVm();
     defer vm.deinit();
-    const Case = struct { src: []const u8, expected: u32 };
-    const cases = [_]Case{
-        .{ .src = "CAD.config(manifold: { fixed_segments: 1e12 })", .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(manifold: { fixed_segments: Number::INFINITY })", .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(manifold: { fixed_segments: Number::NAN })", .expected = 0 },
-        .{ .src = "CAD.config(manifold: { fixed_segments: -5 })", .expected = 0 },
-    };
-    for (cases) |case| {
-        errdefer std.debug.print("script: {s}\n", .{case.src});
-        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
-        const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-        try testing.expectEqual(case.expected, config.manifold.fixed_segments);
-    }
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
+        \\CAD.config(engine: :brep, tolerance: 1e-3, max_vertices: 1000,
+        \\  resolution: { segments: 24, min_angle: 6, min_length: 0.5 },
+        \\  manifold: { simplify_coplanar: true },
+        \\  brep: { max_newton_trials: 20, max_marching_steps: 900 })
+        \\r = "#{CAD.current_config}"
+    ));
+    // Read back with the keys CAD.config takes.
+    try testing.expectEqualStrings(
+        "{engine: :brep, tolerance: 0.001, resolution: {segments: 24, min_angle: 6, min_length: 0.5}, max_vertices: 1000, " ++
+            "manifold: {simplify_coplanar: true}, brep: {max_newton_trials: 20, max_marching_steps: 900}}",
+        vm.globals.get("r").?.asString().chars,
+    );
+
+    const config = vm.config().*;
+    try testing.expectEqual(geom.EngineType.brep_native, config.engine);
+    try testing.expectEqual(@as(u32, 24), config.resolution.segments);
+    try testing.expectEqual(@as(usize, 1000), config.max_vertices);
 }
 
-test "Stdlib: CAD.config brep counts are clamped instead of UB" {
-    const defaults = engine_config.BRepConfig{};
-    const Field = enum { min_circle_segments, max_newton_trials, max_marching_steps };
-    const Case = struct { src: []const u8, field: Field, expected: u32 };
-    const cases = [_]Case{
-        .{ .src = "CAD.config(brep: { min_circle_segments: 1e12 })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(brep: { min_circle_segments: Number::INFINITY })", .field = .min_circle_segments, .expected = @intCast(MAX_SEGS) },
-        .{ .src = "CAD.config(brep: { min_circle_segments: -5 })", .field = .min_circle_segments, .expected = 0 },
-        .{ .src = "CAD.config(brep: { min_circle_segments: 32.7 })", .field = .min_circle_segments, .expected = 32 },
-        // NaN keeps the current value (0 is not an "auto" sentinel for these fields).
-        .{ .src = "CAD.config(brep: { min_circle_segments: Number::NAN })", .field = .min_circle_segments, .expected = defaults.min_circle_segments },
-        .{ .src = "CAD.config(brep: { max_newton_trials: 1e12 })", .field = .max_newton_trials, .expected = limits.MAX_NEWTON_TRIALS },
-        .{ .src = "CAD.config(brep: { max_newton_trials: Number::NAN })", .field = .max_newton_trials, .expected = defaults.max_newton_trials },
-        .{ .src = "CAD.config(brep: { max_newton_trials: 20 })", .field = .max_newton_trials, .expected = 20 },
-        .{ .src = "CAD.config(brep: { max_marching_steps: Number::INFINITY })", .field = .max_marching_steps, .expected = limits.MAX_MARCHING_STEPS },
-        .{ .src = "CAD.config(brep: { max_marching_steps: -Number::INFINITY })", .field = .max_marching_steps, .expected = 0 },
-        .{ .src = "CAD.config(brep: { max_marching_steps: Number::NAN })", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
-        // CAD.with_config shares the same parsing path.
-        .{ .src = "CAD.with_config({ brep: { max_marching_steps: 1e12 } }) do\n  1\nend", .field = .max_marching_steps, .expected = defaults.max_marching_steps },
+test "Stdlib: CAD.config rejects settings it doesn't have or can't use" {
+    const cases = [_]struct { src: []const u8, expected: []const u8 }{
+        // Unknown keys, including the settings that were removed.
+        .{ .src = comptime rescued("CAD.config(tolerence: 1e-3)"), .expected = "ArgumentError: CAD.config does not take a keyword 'tolerence' (it accepts: engine, tolerance, resolution, max_vertices, manifold, brep)" },
+        .{ .src = comptime rescued("CAD.config(manifold: { fixed_segments: 16 })"), .expected = "ArgumentError: CAD.config manifold does not take a keyword 'fixed_segments' (it accepts: simplify_coplanar)" },
+        .{ .src = comptime rescued("CAD.config(brep: { chordal_deflection: 0.1 })"), .expected = "ArgumentError: CAD.config brep does not take a keyword 'chordal_deflection' (it accepts: max_newton_trials, max_marching_steps)" },
+        .{ .src = comptime rescued("CAD.config(resolution: { fn: 8 })"), .expected = "ArgumentError: CAD.config resolution does not take a keyword 'fn' (it accepts: segments, min_angle, min_length)" },
+        // Wrong types.
+        .{ .src = comptime rescued("CAD.config(engine: :openscad)"), .expected = "ValueError: CAD.config engine must be manifold or brep, got 'openscad'" },
+        .{ .src = comptime rescued("CAD.config(tolerance: \"fine\")"), .expected = "TypeError: CAD.config expects a number for tolerance, got String" },
+        .{ .src = comptime rescued("CAD.config(resolution: 16)"), .expected = "TypeError: CAD.config resolution expects a Map of settings, got Number" },
+        .{ .src = comptime rescued("CAD.config(manifold: { simplify_coplanar: 1 })"), .expected = "TypeError: CAD.config manifold expects true or false for simplify_coplanar, got Number" },
+        // Values no kernel can use (NaN, infinities and out-of-range counts used to be clamped silently).
+        .{ .src = comptime rescued("CAD.config(tolerance: 0)"), .expected = "ValueError: CAD.config: tolerance must be a positive number" },
+        .{ .src = comptime rescued("CAD.config(tolerance: Number::NAN)"), .expected = "ValueError: CAD.config expects a finite number for tolerance, got NaN" },
+        .{ .src = comptime rescued("CAD.config(resolution: { segments: 2 })"), .expected = "ValueError: CAD.config: resolution segments must be 0 (automatic) or 3 to 2048" },
+        .{ .src = comptime rescued("CAD.config(resolution: { segments: 2049 })"), .expected = "ValueError: CAD.config: resolution segments must be 0 (automatic) or 3 to 2048" },
+        .{ .src = comptime rescued("CAD.config(resolution: { segments: -5 })"), .expected = "ValueError: 'segments' must be a finite integer in [0, 4294967295], got -5" },
+        .{ .src = comptime rescued("CAD.config(resolution: { min_angle: 0 })"), .expected = "ValueError: CAD.config: resolution min_angle must be above 0 and at most 180 degrees" },
+        .{ .src = comptime rescued("CAD.config(resolution: { min_length: -1 })"), .expected = "ValueError: CAD.config: resolution min_length must be a positive number" },
+        .{ .src = comptime rescued("CAD.config(max_vertices: 0)"), .expected = "ValueError: CAD.config: max_vertices must be at least 1" },
+        .{ .src = comptime rescued("CAD.config(brep: { max_newton_trials: 1001 })"), .expected = "ValueError: CAD.config: brep max_newton_trials must be 1 to 1000" },
+        .{ .src = comptime rescued("CAD.config(brep: { max_marching_steps: 0 })"), .expected = "ValueError: CAD.config: brep max_marching_steps must be 1 to 100000" },
+        // CAD.with_config shares the same parsing path, and runs nothing on an error.
+        .{ .src = comptime rescued("CAD.with_config(tolerance: -1) do\n  raise \"ran\"\nend"), .expected = "ValueError: CAD.config: tolerance must be a positive number" },
     };
     for (cases) |case| {
         errdefer std.debug.print("script: {s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
         try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
-        const brep = vm.config_stack.items[vm.config_stack.items.len - 1].brep;
-        const actual = switch (case.field) {
-            .min_circle_segments => brep.min_circle_segments,
-            .max_newton_trials => brep.max_newton_trials,
-            .max_marching_steps => brep.max_marching_steps,
-        };
-        try testing.expectEqual(case.expected, actual);
+        try testing.expectEqualStrings(case.expected, vm.globals.get("r").?.asString().chars);
+        // Nothing of a rejected call is applied.
+        try testing.expectEqual(engine_config.EngineConfig{}, vm.config().*);
     }
 }
 
@@ -1152,7 +1160,7 @@ test "Stdlib: a keyword wins over the same option given positionally" {
 
 test "Stdlib: revolve takes segments and sizes them to the profile" {
     // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
-    const seg8 = "v = nil\nCAD.with_config(manifold: { min_angle_deg: 1, min_segment_len: 1 }) do\n  v = ";
+    const seg8 = "v = nil\nCAD.with_config(resolution: { min_angle: 1, min_length: 1 }) do\n  v = ";
     try expectGlobalR(&.{
         .{ .src = "r = square(1).translate(x: 1).revolve(segments: 4).volume < square(1).translate(x: 1).revolve(segments: 64).volume", .expected = .{ .boolean = true } },
         // A larger profile gets more segments for the same minimum segment length.
@@ -1783,7 +1791,7 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
 }
 
 test "Stdlib: sphere resolution follows segments and the active config" {
-    const with_8_segments = "v = nil\nCAD.with_config(manifold: { fixed_segments: 8 }) do\n  v = ";
+    const with_8_segments = "v = nil\nCAD.with_config(resolution: { segments: 8 }) do\n  v = ";
     try expectGlobalR(&.{
         // Both used to be Manifold's built-in default, whatever was asked for.
         .{ .src = "r = sphere(r: 1, segments: 8).volume < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },

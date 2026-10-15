@@ -22,7 +22,7 @@ else
 
 // Geometry input limits
 // Upper bound for any user-supplied tessellation count (segments, sides, slices,
-// fixed_segments). Chosen so that MAX_SEGMENTS^2 (~4.2M) stays under the default
+// CAD.config resolution segments). Chosen so that MAX_SEGMENTS^2 (~4.2M) stays under the default
 // 5M `max_vertices` budget in engine_config.zig: two-parameter surfaces such as a
 // sphere or torus scale quadratically, and that budget is only enforced *after*
 // the kernel has already allocated the mesh.

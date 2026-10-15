@@ -6,26 +6,20 @@ const geom = @import("../kernel/geometry_handle.zig");
 const log_helpers = @import("../log.zig");
 const VM = @import("vm.zig").VM;
 
-/// Golden-ratio multiplier used to spread engine tags across the 64-bit key space.
-const ENGINE_KEY_SALT: u64 = 0x9E3779B97F4A7C15;
-
-inline fn engineSalt(engine: geom.EngineType) u64 {
-    // Manifold (tag 0) keeps salt 0, so its keys equal the raw node hash.
-    return @as(u64, @backingInt(engine)) *% ENGINE_KEY_SALT;
+/// dag_cache key for a node evaluated under settings whose `EngineConfig.resultHash` is
+/// `config_hash`. The same node built under another engine is another kind of handle (a
+/// Manifold handle fed to the B-Rep driver is garbage), and under another tolerance or
+/// resolution another shape, so the settings are part of the key.
+pub inline fn cacheKey(node_hash: u64, config_hash: u64) u64 {
+    return node_hash ^ config_hash;
 }
 
-/// dag_cache key for a node evaluated under `engine`. The same DAG node evaluated
-/// under different engines yields different handle types, so the engine must be
-/// part of the key or a Manifold handle could be fed to the B-Rep driver.
-pub inline fn cacheKey(node_hash: u64, engine: geom.EngineType) u64 {
-    return node_hash ^ engineSalt(engine);
-}
-
-/// Inverse of `cacheKey`, recovering the DAG node hash from a dag_cache entry
-/// (the handle records which engine produced it). Used by GC cache eviction.
-pub inline fn nodeHashOfCacheEntry(key: u64, handle: geom.GeometryHandle) u64 {
-    return key ^ engineSalt(handle.engine);
-}
+/// A dag_cache entry. The node's hash is kept beside the result because the key can't be
+/// turned back into it; GC eviction needs it to tell whether the node is still in use.
+pub const CachedResult = struct {
+    handle: geom.GeometryHandle,
+    node_hash: u64,
+};
 
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
 pub const ValueHandle = union(enum) {
@@ -142,7 +136,7 @@ fn checkEstimatedVertices(vm: *VM, tag: dag.DAGTag, factors: []const usize, limi
 
 fn checkSameEngine(vm: *VM, a: geom.EngineType, b: geom.EngineType) !void {
     if (a != b) {
-        _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ @tagName(a), @tagName(b) });
+        _ = vm.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
         return error.EngineMismatch;
     }
 }
@@ -244,8 +238,8 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 
     try f_stack.push(root_node_idx);
 
-    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-    const engine = config.engine;
+    const config = vm.config().*;
+    const config_hash = config.resultHash();
 
     while (f_stack.frames.items.len > 0) {
         if (vm.cancel_token.load(.acquire)) return error.Cancelled;
@@ -259,10 +253,10 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 
         // --- O(1) DAG Node Caching ---
         const node_hash = vm.dag_builder.node_hashes.items[frame.node_idx];
-        const cache_key = cacheKey(node_hash, engine);
-        if (vm.dag_cache.get(cache_key)) |cached_handle| {
+        const cache_key = cacheKey(node_hash, config_hash);
+        if (vm.dag_cache.get(cache_key)) |cached| {
             _ = f_stack.pop();
-            try v_stack.pushBorrowed(.{ .geometry = cached_handle });
+            try v_stack.pushBorrowed(.{ .geometry = cached.handle });
             continue;
         }
 
@@ -315,22 +309,22 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 // --- Leaf Geometry 3D ---
                 .cube => {
                     const p = vm.dag_builder.getCubeDimensions(node);
-                    const handle = kernel.cube(engine, p.x, p.y, p.z, p.center) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.cube(&config, p.x, p.y, p.z, p.center) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .cylinder => {
                     const p = vm.dag_builder.getCylinderPayload(node);
-                    const handle = kernel.cylinder(engine, p.r1, p.r2, p.height, p.center, p.segments) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.cylinder(&config, p.r1, p.r2, p.height, p.center, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .sphere => {
                     const p = vm.dag_builder.getSpherePayload(node);
-                    const handle = kernel.sphere(engine, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.sphere(&config, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
                 .polyhedron_op => {
                     const p = vm.dag_builder.getPolyhedronPayload(node);
-                    const handle = kernel.polyhedron(engine, vm.allocator, p.pts, p.faces) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.polyhedron(&config, vm.allocator, p.pts, p.faces) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = handle });
                 },
 
@@ -476,19 +470,19 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         }
                     }
                     const p = vm.dag_builder.getLoftPayload(node);
-                    const result = kernel.loft(engine, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
+                    const result = kernel.loft(config.engine, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .geometry = result });
                 },
 
                 // --- Leaf Cross Sections 2D ---
                 .square => {
                     const p = vm.dag_builder.getSquarePayload(node);
-                    const handle = kernel.square(engine, p.x, p.y, p.center) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.square(&config, p.x, p.y, p.center) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .circle => {
                     const p = vm.dag_builder.getCirclePayload(node);
-                    const handle = kernel.circle(engine, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.circle(&config, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .polygon => {
@@ -500,7 +494,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         pts[i][0] = vm.dag_builder.numbers.items[num_idx + (i * 2)];
                         pts[i][1] = vm.dag_builder.numbers.items[num_idx + (i * 2) + 1];
                     }
-                    const handle = kernel.polygon(engine, vm.allocator, pts) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.polygon(&config, vm.allocator, pts) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
                 .polygons_even_odd => {
@@ -524,7 +518,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                         }
                         contours[i] = pts;
                     }
-                    const handle = kernel.polygonsEvenOdd(engine, vm.allocator, contours) orelse return kernelFailed(vm, node.tag);
+                    const handle = kernel.polygonsEvenOdd(&config, vm.allocator, contours) orelse return kernelFailed(vm, node.tag);
                     try v_stack.pushOwned(.{ .cross_section = handle });
                 },
 
@@ -594,7 +588,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
 
                 // Ownership moves to the cache only once the put succeeds.
-                try vm.dag_cache.put(vm.allocator, cache_key, top.value.geometry);
+                try vm.dag_cache.put(vm.allocator, cache_key, .{ .handle = top.value.geometry, .node_hash = node_hash });
                 top.owned = false;
             }
             // Cross-sections are intentionally not cached: they stay owned by the
@@ -635,9 +629,9 @@ pub fn evaluateCrossSectionDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerro
 /// Takes ownership of `handle` (a fresh, uncached result) and returns the
 /// handle to keep: either the same one or a simplified replacement.
 inline fn maybeSimplify(vm: *VM, handle: geom.GeometryHandle) geom.GeometryHandle {
-    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
+    const config = vm.config().*;
     if (handle.engine == .manifold and config.manifold.simplify_coplanar) {
-        const simplified = kernel.simplify(handle, config.manifold.tolerance) orelse return handle;
+        const simplified = kernel.simplify(handle, config.tolerance) orelse return handle;
         kernel.destruct(handle);
         return simplified;
     }

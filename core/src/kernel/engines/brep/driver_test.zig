@@ -2,16 +2,19 @@ const std = @import("std");
 const driver = @import("driver.zig");
 const geom = @import("../../geometry_handle.zig");
 const step_exporter = @import("../../../exporters/3d/step.zig");
+const EngineConfig = @import("../../../core/engine_config.zig").EngineConfig;
+
+const TEST_CONFIG: EngineConfig = .{ .engine = .brep_native };
 
 test "Driver: End-to-End API Calls" {
     // Verifies creation, transformation, and destruction of basic 3D B-Rep primitives
-    const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
+    const cube_handle = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube_handle);
 
-    const cyl_handle = driver.driver.cylinderFn(5, 5, 15, true, 32) orelse return error.CylinderFailed;
+    const cyl_handle = driver.driver.cylinderFn(&TEST_CONFIG, 5, 5, 15, true, 32) orelse return error.CylinderFailed;
     defer driver.driver.destructFn(cyl_handle);
 
-    const sphere_handle = driver.driver.sphereFn(5, 0) orelse return error.SphereFailed;
+    const sphere_handle = driver.driver.sphereFn(&TEST_CONFIG, 5, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(sphere_handle);
 
     // Ensure translation succeeds on a valid B-Rep handle
@@ -24,7 +27,7 @@ test "Driver: End-to-End API Calls" {
 
 test "Driver: Custom Matrix Transformations" {
     // Verifies 4x4 row-major affine transformation matrix application
-    const cube_handle = driver.driver.cubeFn(10, 10, 10, true) orelse return error.CubeFailed;
+    const cube_handle = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube_handle);
 
     const translation_matrix = [12]f64{
@@ -39,7 +42,7 @@ test "Driver: Custom Matrix Transformations" {
 }
 
 test "Driver: Mirror Solid" {
-    const cube_handle = driver.driver.cubeFn(10, 10, 10, false) orelse return error.CubeFailed;
+    const cube_handle = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(cube_handle);
 
     const mirrored_handle = driver.driver.mirrorFn(cube_handle, 1, 0, 0) orelse return error.MirrorFailed;
@@ -57,14 +60,14 @@ test "Driver: Polyhedron Import (Mesh to B-Rep)" {
     const faces = [_][3]u32{
         .{ 0, 3, 2 }, .{ 0, 2, 1 }, .{ 0, 1, 4 }, .{ 1, 2, 4 }, .{ 2, 3, 4 }, .{ 3, 0, 4 },
     };
-    const poly_handle = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
+    const poly_handle = driver.driver.polyhedronFn(&TEST_CONFIG, std.testing.allocator, &pts, &faces) orelse return error.PolyhedronFailed;
     defer driver.driver.destructFn(poly_handle);
 
     try std.testing.expectEqual(@as(usize, 5), driver.driver.numVertsFn(poly_handle));
 }
 
 test "Driver: Revolve 2D Profile" {
-    const cs_handle = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const cs_handle = driver.driver.squareFn(&TEST_CONFIG, 10.0, 10.0, false) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(cs_handle);
 
     const rev_handle = driver.driver.revolveFn(cs_handle, 36, 360.0) orelse return error.RevolveFailed;
@@ -76,10 +79,10 @@ test "Driver: Revolve 2D Profile" {
 // --- 2D Cross Sections & Booleans ---
 
 test "Driver: 2D Operations (Boolean, Transform)" {
-    const sq1 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const sq1 = driver.driver.squareFn(&TEST_CONFIG, 10.0, 10.0, false) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(sq1);
 
-    const sq2 = driver.driver.squareFn(10.0, 10.0, false) orelse return error.SquareFailed;
+    const sq2 = driver.driver.squareFn(&TEST_CONFIG, 10.0, 10.0, false) orelse return error.SquareFailed;
     defer driver.driver.destructCrossSectionFn(sq2);
 
     const mat = [6]f64{ 1, 0, 5, 0, 1, 5 };
@@ -100,7 +103,7 @@ test "Driver: Polygons Even-Odd" {
     const inner = [_][2]f64{ .{ -5, -5 }, .{ -5, 5 }, .{ 5, 5 }, .{ 5, -5 } };
     const contours = [_][]const [2]f64{ &outer, &inner };
 
-    const cs_handle = driver.driver.polygonsEvenOddFn(std.testing.allocator, &contours) orelse return error.EvenOddFailed;
+    const cs_handle = driver.driver.polygonsEvenOddFn(&TEST_CONFIG, std.testing.allocator, &contours) orelse return error.EvenOddFailed;
     defer driver.driver.destructCrossSectionFn(cs_handle);
 
     const solid_handle = driver.driver.extrudeFn(cs_handle, 10, 0, 0, 1, 1) orelse return error.ExtrudeFailed;
@@ -113,7 +116,7 @@ test "Driver: Polygons Even-Odd" {
 // --- Projections & Slicing ---
 
 test "Driver: Slice Solid to 2D" {
-    const cyl = driver.driver.cylinderFn(5.0, 5.0, 20.0, true, 32) orelse return error.Cyl;
+    const cyl = driver.driver.cylinderFn(&TEST_CONFIG, 5.0, 5.0, 20.0, true, 32) orelse return error.Cyl;
     defer driver.driver.destructFn(cyl);
 
     const cs = driver.driver.sliceFn(cyl, 0.0) orelse return error.Slice;
@@ -128,7 +131,7 @@ test "Driver: Slice Solid to 2D" {
 // --- Convex Hulls & Queries ---
 
 test "Driver: Convex Hull (Single and Batch)" {
-    const cube1 = driver.driver.cubeFn(10, 10, 10, true) orelse return error.Cube;
+    const cube1 = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, true) orelse return error.Cube;
     defer driver.driver.destructFn(cube1);
 
     const hull1 = driver.driver.hullFn(cube1) orelse return error.Hull;
@@ -148,10 +151,10 @@ test "Driver: Convex Hull (Single and Batch)" {
 test "Driver: STEP Export of CSG Boolean Result" {
     const alloc = std.testing.allocator;
 
-    const base = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const base = driver.driver.cubeFn(&TEST_CONFIG, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(base);
 
-    const hole = driver.driver.cylinderFn(2.5, 2.5, 20.0, true, 16) orelse return error.CylFailed;
+    const hole = driver.driver.cylinderFn(&TEST_CONFIG, 2.5, 2.5, 20.0, true, 16) orelse return error.CylFailed;
     defer driver.driver.destructFn(hole);
 
     const result = driver.driver.booleanFn(base, hole, .difference_op) orelse return error.BoolFailed;
@@ -168,7 +171,7 @@ test "Driver: STEP Export of CSG Boolean Result" {
 
 test "Driver: No-op Ops Return New Handles, Never Their Input" {
     // Drivers must never return their input handle (single-owner rule).
-    const cube = driver.driver.cubeFn(10, 10, 10, false) orelse return error.KernelFailed;
+    const cube = driver.driver.cubeFn(&TEST_CONFIG, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);
 
     const mat = driver.driver.setMaterialFn(cube, 1) orelse return error.KernelFailed;
@@ -193,9 +196,27 @@ test "Driver: No-op Ops Return New Handles, Never Their Input" {
 
 test "Driver: unsupported or failed B-Rep operations report null, never a stand-in result" {
     // offset is unimplemented; it used to return the unchanged sketch (silently wrong).
-    const sq = driver.driver.squareFn(10, 10, false) orelse return error.KernelFailed;
+    const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructCrossSectionFn(sq);
     try std.testing.expect(driver.driver.offsetFn(sq, 1, 0) == null);
+}
+
+test "BRep Driver: solids keep the tolerance they were built under, and pass it on" {
+    // Every operation used Locus's default tolerances, whatever CAD.config said.
+    const config: EngineConfig = .{ .engine = .brep_native, .tolerance = 1e-3, .resolution = .{ .segments = 12 }, .brep = .{ .max_newton_trials = 7 } };
+    const cube = driver.driver.cubeFn(&config, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(cube);
+    const moved = driver.driver.translateFn(cube, 5, 0, 0) orelse return error.KernelFailed;
+    defer driver.driver.destructFn(moved);
+
+    for ([_]geom.GeometryHandle{ cube, moved }) |h| {
+        const env = @as(*driver.BrepSolid, @ptrCast(@alignCast(h.ptr))).env;
+        try std.testing.expectEqual(@as(f64, 1e-3), env.vertex_tolerance);
+        try std.testing.expectEqual(@as(f64, 1e-6), env.vertex_tol_sq); // the hot-loop square follows it
+        try std.testing.expectEqual(@as(f64, 1e-3), env.sewing_tolerance);
+        try std.testing.expectEqual(@as(u32, 12), env.resolution.segments);
+        try std.testing.expectEqual(@as(u32, 7), env.max_newton_trials);
+    }
 }
 
 test "BRep Driver: a mesh copy leaves nothing allocated when an allocation fails" {

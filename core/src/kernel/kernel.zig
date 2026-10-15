@@ -15,6 +15,7 @@ const std = @import("std");
 const geom = @import("geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
+const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 /// Material slots carried on solids (the Manifold engine stores them as a vertex property).
 /// Slot 0 is the default material and user material `id` (an index into VM.materials) is
@@ -51,59 +52,62 @@ inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype)
     }
 }
 
-pub inline fn cube(engine: geom.EngineType, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    switch (engine) {
+// Solids are created under the active config (`CAD.config`); everything derived from one
+// keeps the settings it was created with.
+
+pub inline fn cube(config: *const EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.cubeFn(x, y, z, center),
-        .brep_native => return brep_driver.driver.cubeFn(x, y, z, center),
+        .brep_native => return brep_driver.driver.cubeFn(config, x, y, z, center),
     }
 }
 
-pub inline fn cylinder(engine: geom.EngineType, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    switch (engine) {
+pub inline fn cylinder(config: *const EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.cylinderFn(r1, r2, height, center, segments),
-        .brep_native => return brep_driver.driver.cylinderFn(r1, r2, height, center, segments),
+        .brep_native => return brep_driver.driver.cylinderFn(config, r1, r2, height, center, segments),
     }
 }
 
-pub inline fn sphere(engine: geom.EngineType, radius: f64, segments: i32) ?geom.GeometryHandle {
-    switch (engine) {
+pub inline fn sphere(config: *const EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.sphereFn(radius, segments),
-        .brep_native => return brep_driver.driver.sphereFn(radius, segments),
+        .brep_native => return brep_driver.driver.sphereFn(config, radius, segments),
     }
 }
 
-pub inline fn square(engine: geom.EngineType, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    switch (engine) {
+pub inline fn square(config: *const EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.squareFn(x, y, center),
-        .brep_native => return brep_driver.driver.squareFn(x, y, center),
+        .brep_native => return brep_driver.driver.squareFn(config, x, y, center),
     }
 }
 
-pub inline fn circle(engine: geom.EngineType, radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    switch (engine) {
+pub inline fn circle(config: *const EngineConfig, radius: f64, segments: i32) ?geom.CrossSectionHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.circleFn(radius, segments),
-        .brep_native => return brep_driver.driver.circleFn(radius, segments),
+        .brep_native => return brep_driver.driver.circleFn(config, radius, segments),
     }
 }
 
-pub inline fn polygon(engine: geom.EngineType, allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
-    switch (engine) {
+pub inline fn polygon(config: *const EngineConfig, allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.polygonFn(allocator, pts),
-        .brep_native => return brep_driver.driver.polygonFn(allocator, pts),
+        .brep_native => return brep_driver.driver.polygonFn(config, allocator, pts),
     }
 }
 
-pub inline fn polyhedron(engine: geom.EngineType, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    switch (engine) {
+pub inline fn polyhedron(config: *const EngineConfig, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.polyhedronFn(allocator, points, faces),
-        .brep_native => return brep_driver.driver.polyhedronFn(allocator, points, faces),
+        .brep_native => return brep_driver.driver.polyhedronFn(config, allocator, points, faces),
     }
 }
 
-pub inline fn polygonsEvenOdd(engine: geom.EngineType, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
-    switch (engine) {
+pub inline fn polygonsEvenOdd(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
+    switch (config.engine) {
         .manifold => return manifold_driver.driver.polygonsEvenOddFn(allocator, contours),
-        .brep_native => return brep_driver.driver.polygonsEvenOddFn(allocator, contours),
+        .brep_native => return brep_driver.driver.polygonsEvenOddFn(config, allocator, contours),
     }
 }
 

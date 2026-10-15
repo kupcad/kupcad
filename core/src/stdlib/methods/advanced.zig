@@ -125,12 +125,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         receiver.cached_topology.?.* = .{ .is_populated = true };
     }
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    const tolerance = switch (handle.engine) {
-        .manifold => active_config.manifold.tolerance,
-        .brep_native => active_config.brep.tolerance,
-    };
+    const tolerance = vm.config().tolerance;
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
         _ = vm.raiseError(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
@@ -250,8 +245,7 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
     // Optional positional argument: part.simplify(0.01); nil keeps the configured tolerance.
     if (args.len > 0 and !args[0].isNil()) tolerance = try util.requireNumber(vm, args[0], "simplify", "tolerance");
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-    const tol = tolerance orelse active_config.manifold.tolerance;
+    const tol = tolerance orelse vm.config().tolerance;
 
     // Force concrete DAG evaluation up to this point and run simplification
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));

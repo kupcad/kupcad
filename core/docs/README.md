@@ -280,17 +280,34 @@ end
 
 ```
 
-Global CAD engine overrides can be dynamically applied using the `CAD` module. Curved shapes (`sphere`, `cylinder`, `circle`, `torus`, `fillet_edges`) take their segment count from the active config; the primitives also accept `segments:` to override it per call:
+### Engine settings (`CAD.config`)
+
+`CAD.config(...)` changes the settings for the rest of the script; `CAD.with_config(...) do ... end` applies them only inside the block; `CAD.current_config` returns them as a Map with the same keys. The shared settings mean the same on both kernels, so a model reads the same whichever engine builds it:
 
 ```ruby
-# Force specific tessellation resolutions for the enclosed block
-CAD.with_config({ manifold: { min_angle_deg: 5.0 } }) do
+CAD.config(
+  engine: :manifold,          # or :brep (exact B-Rep, for STEP)
+  tolerance: 1e-5,            # points closer than this are the same point
+  resolution: {               # how finely curves are cut into straight edges
+    segments: 0,              # edges per full circle; 0 = from the two rules below
+    min_angle: 12,            # at most this many degrees of arc per edge ...
+    min_length: 2,            # ... and edges no shorter than this, whichever gives fewer
+  },
+  max_vertices: 5_000_000,    # most vertices one operation may produce
+  manifold: { simplify_coplanar: false },                       # mesh engine only
+  brep: { max_newton_trials: 50, max_marching_steps: 500 },     # B-Rep only
+)
+
+# A finer resolution for one part
+CAD.with_config(resolution: { min_angle: 5 }) do
   sphere(r: 10)
 end
-
 ```
 
----
+* `resolution` is OpenSCAD's `$fn`, `$fa` and `$fs`. Curved shapes (`sphere`, `cylinder`, `circle`, `torus`, `fillet_edges`, `revolve`) take their segment count from it; `segments:` on a call overrides it for that call. Automatic counts are capped at 2048.
+* `tolerance` is the one distance tolerance: the B-Rep kernel welds points and sews faces within it, `manifold: { simplify_coplanar: true }` merges coplanar faces within it, and measurements such as `contains?` and `faces` use it.
+* A setting CAD.config doesn't have is an `ArgumentError` naming the ones it has, a value of the wrong type a `TypeError`, and a value the kernels can't use (a tolerance of 0, a 2-edge circle) a `ValueError`; nothing is applied then.
+* Results are cached per node *and* per setting that changes them, so the same part built under two tolerances or resolutions is built twice, not reused.
 
 ## 5. Geometry Modifiers & Sweeps
 

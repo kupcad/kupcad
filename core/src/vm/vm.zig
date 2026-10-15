@@ -131,7 +131,7 @@ pub const VM = struct {
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
-    dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
+    dag_cache: std.AutoHashMapUnmanaged(u64, dag_evaluator.CachedResult) = .empty,
     mute_errors: bool = false,
     /// The first error reported since the run started or the last exception was rescued,
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
@@ -180,6 +180,7 @@ pub const VM = struct {
     // frame_count of the rescuing frame for the latest throw, null if it was uncaught.
     last_throw_target: ?usize = null,
 
+    /// CAD.with_config pushes, CAD.config changes the top; never empty. Read it via `config`.
     config_stack: std.ArrayListUnmanaged(EngineConfig) = .empty,
 
     // safety for infinite loops
@@ -274,10 +275,7 @@ pub const VM = struct {
 
         self.dag_builder.deinit();
 
-        var it = self.dag_cache.valueIterator();
-        while (it.next()) |handle| {
-            kernel.destruct(handle.*);
-        }
+        self.clearDagCache();
         self.dag_cache.deinit(self.allocator);
 
         self.allocator.destroy(self.native_vfs_ptr);
@@ -1694,6 +1692,18 @@ pub const VM = struct {
     pub fn resetStack(self: *VM) void {
         self.shrinkStack(0);
         self.clearUnwindState();
+    }
+
+    /// Destroys every cached result (GC eviction drops only those no geometry still uses).
+    pub fn clearDagCache(self: *VM) void {
+        var it = self.dag_cache.valueIterator();
+        while (it.next()) |cached| kernel.destruct(cached.handle);
+        self.dag_cache.clearRetainingCapacity();
+    }
+
+    /// The settings in force (CAD.config / CAD.with_config).
+    pub fn config(self: *VM) *EngineConfig {
+        return &self.config_stack.items[self.config_stack.items.len - 1];
     }
 
     // --- JIT Materialization ---
