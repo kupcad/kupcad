@@ -139,6 +139,15 @@ pub const mesh_methods = [_]MeshMethod{
 };
 
 /// The signature of the global function `name`, if it is a primitive that declares one.
+/// The category of the global function `name` (whether it makes a solid or a sketch, for
+/// tools that read a script before it runs).
+pub fn categoryOf(name: []const u8) ?Category {
+    for (global_functions) |f| {
+        if (std.mem.eql(u8, f.name, name)) return f.category;
+    }
+    return null;
+}
+
 pub fn signatureOf(name: []const u8) ?*const primitives.Signature {
     for (global_functions) |f| {
         if (std.mem.eql(u8, f.name, name)) return f.signature;

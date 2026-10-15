@@ -13,3 +13,29 @@ peg = cylinder(r: 2, h: 10)         # B-Rep has cylinders
 cone = cylinder(h: 5, r1: 3, r2: 1)
 ball = sphere(r: 3)
 [plate, peg.translate(1, 0, 0), cone, ball]
+
+# A method runs under the engine of its call: reported where it is called.
+def bracket(n)
+  cube(n).translate(1, 0, 0)
+end
+
+def plate(n)
+  bracket(n)                        # through another method
+end
+
+def scoped_part
+  CAD.with_config(engine: :brep) do
+    cube(2).rotate(0, 0, 45)        # the method sets the engine itself
+  end
+end
+
+holder = plate(4)
+
+# Booleans on shapes, whatever operator writes them.
+box = cube(10)
+hole = cylinder(r: 2, h: 20)
+cut = box - hole
+joined = box + cube(2).extrude(1)   # a solid on either side is enough
+profile = square(4) - circle(r: 1)
+count = 2 - 1                       # numbers: not a boolean
+[cut, joined, profile, count, holder, scoped_part]
