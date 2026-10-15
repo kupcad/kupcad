@@ -3051,6 +3051,23 @@ pub const VM = struct {
         // PEEK instead of POP to protect the thrown error from the GC
         var err_val = self.stack[self.stack_top - 1];
 
+        // `raise Klass` raises Klass.new, as in Ruby: a rescue gets an instance, with a
+        // message (the class name) and a backtrace. The class itself was thrown before,
+        // so `e.message` on it was a NoMethodError.
+        if (err_val.isClass()) {
+            const throw_seq = self.throw_seq;
+            const depth = self.frames.items.len;
+            const res = self.constructInstance(err_val.asClass(), 0, self.stack_top - 1, false);
+            if (res != .ok) return res;
+            if (self.frames.items.len > depth) {
+                const init_res = self.runUntil(depth);
+                if (init_res != .ok) return init_res;
+            }
+            // initialize raised, and a rescue took over: nothing is left to throw
+            if (self.throw_seq != throw_seq) return .ok;
+            err_val = self.stack[self.stack_top - 1];
+        }
+
         // --- Auto-wrap primitives in RuntimeError ---
         // Each allocation below can collect, and Zig locals are not GC roots: every
         // new object goes onto the stack as soon as it exists.

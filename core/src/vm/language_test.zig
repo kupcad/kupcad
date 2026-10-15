@@ -244,3 +244,18 @@ test "Language: a module whose value is nil can be imported again" {
     try expectImported(&.{.{ "lib.kup", "x = nil" }}, "import \"./lib.kup\"\nimport \"./lib.kup\"\nr = 1", .{ .num = 1 });
     try expectImported(&.{ .{ "a.kup", "import \"./b.kup\"\nx = 1\nexport x" }, .{ "b.kup", "import \"./a.kup\"" } }, rescued("import \"./a.kup\""), .{ .str = "ImportError: Circular dependency detected for 'a.kup'" });
 }
+
+test "Language: raise with a class raises an instance of it" {
+    // `raise Klass, "msg"` dropped the message and threw the class itself, on which
+    // `e.message` was a NoMethodError; `raise Klass` did the same.
+    try expectScripts(&.{
+        .{ .src = rescued("raise ArgumentError, \"bad\""), .expected = .{ .str = "ArgumentError: bad" } },
+        .{ .src = rescued("raise ArgumentError"), .expected = .{ .str = "ArgumentError: ArgumentError" } },
+        .{ .src = "class MyError < StandardError\nend\nr = begin\n  raise MyError, \"x\"\nrescue MyError => e\n  e.message\nend", .expected = .{ .str = "x" } },
+        .{ .src = "class MyError < StandardError\n  def initialize(code)\n    super(\"code #{code}\")\n  end\nend\nr = begin\n  raise MyError, 7\nrescue StandardError => e\n  e.message\nend", .expected = .{ .str = "code 7" } },
+        .{ .src = "class MyError < StandardError\n  def initialize\n    super(\"fixed\")\n  end\nend\nr = begin\n  raise MyError\nrescue => e\n  e.message\nend", .expected = .{ .str = "fixed" } },
+        // initialize itself raising: its error is the one rescued
+        .{ .src = "class Bad < StandardError\n  def initialize\n    raise \"inner\"\n  end\nend\nr = begin\n  raise Bad\nrescue => e\n  e.message\nend", .expected = .{ .str = "inner" } },
+        .{ .src = "r = begin\n  raise ArgumentError\nrescue => e\n  e.backtrace.length > 0\nend", .expected = .{ .boolean = true } },
+    });
+}

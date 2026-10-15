@@ -1444,6 +1444,11 @@ pub const Compiler = struct {
                 .raise_err => {
                     const args = self.tree.getNamedArgs(mc.args);
                     if (args.len > 0) try self.compileNode(args[0].value) else try self.emitOp(.op_nil);
+                    if (args.len > 1) {
+                        // `raise Klass, "msg"` raises Klass.new("msg"); the message was dropped.
+                        try self.compileNode(args[1].value);
+                        try self.emitInvoke("new", .{ .count = 1 });
+                    }
                     try self.emitOp(.op_throw);
                     self.simulatePush(1); // Dead code equilibrium
                     return;
@@ -1500,15 +1505,20 @@ pub const Compiler = struct {
 
         if (mc.receiver == .none) {
             try self.emitCall(.op_call, call);
+            self.simulatePop(call.count + 1); // Pops args + callee
+            self.simulatePush(1); // Pushes the returned result
         } else {
-            const name_idx = try self.makeStringConstant(func_name);
-            try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
-            try self.emitCallOperands(call);
-            try self.emitInlineCacheIndex();
-
+            try self.emitInvoke(func_name, call);
             if (mc.is_safe) self.patchJump(safe_jump);
         }
+    }
 
+    /// `receiver.name(args)`, the receiver and arguments already on the stack.
+    fn emitInvoke(self: *Compiler, name: []const u8, call: CallArgs) CompileError!void {
+        const name_idx = try self.makeStringConstant(name);
+        try self.emitOpWithOperand(.op_invoke, .op_invoke_wide, name_idx);
+        try self.emitCallOperands(call);
+        try self.emitInlineCacheIndex();
         self.simulatePop(call.count + 1); // Pops args + receiver
         self.simulatePush(1); // Pushes the returned result
     }
