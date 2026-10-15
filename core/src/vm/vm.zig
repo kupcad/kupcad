@@ -946,6 +946,7 @@ pub const VM = struct {
                     var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
                     defer comp.deinit();
                     comp.module_namespace = namespace;
+                    comp.module_path = path_str; // its own imports are its neighbours
 
                     comp.compile(doc.tree.root) catch |err| {
                         const where = if (comp.errorDiagnostic()) |d| d.formatLine(self.allocator, &doc.line_index) catch null else null;

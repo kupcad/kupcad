@@ -1,4 +1,5 @@
 const std = @import("std");
+const import_path = @import("../core/import_path.zig");
 const macros = @import("macros.zig");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -11,8 +12,6 @@ const VM = @import("../vm/vm.zig").VM;
 const manifest = @import("../stdlib/manifest.zig");
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
-
-const DEFAULT_IMPORT_ENDPOINT = "main.kup";
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
@@ -107,6 +106,9 @@ pub const Compiler = struct {
     /// Set (on the root compiler) when compiling an imported module: every function
     /// compiled for it resolves globals in the module's own namespace.
     module_namespace: ?*value.Namespace = null,
+    /// Set (on the root compiler) to the path of the file being compiled, relative to the
+    /// project root: its relative imports are its neighbours (core/import_path.zig).
+    module_path: []const u8 = "",
     active_namespaces: usize = 0,
     has_export_module: bool = false,
     // Lexical Scope tracking
@@ -148,9 +150,13 @@ pub const Compiler = struct {
 
     /// The namespace of the module being compiled (null for the main script).
     pub fn rootModuleNamespace(self: *const Compiler) ?*value.Namespace {
+        return self.rootCompiler().module_namespace;
+    }
+
+    fn rootCompiler(self: *const Compiler) *const Compiler {
         var root = self;
         while (root.enclosing) |parent| root = parent;
-        return root.module_namespace;
+        return root;
     }
     pub const seedLocals = scope_mod.seedLocals;
     pub const getNextLocalSlot = scope_mod.getNextLocalSlot;
@@ -660,13 +666,17 @@ pub const Compiler = struct {
         const path_str = std.mem.trimEnd(u8, raw_path_str, "/");
         const symbols = self.tree.getAliasPairs(is_stmt.symbols);
 
+        const importer = self.rootCompiler().module_path;
+
         // --- 1. Asset Interception ---
         if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
             const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
             const func_idx = try self.makeStringConstant(func_name);
             try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, func_idx);
 
-            const path_val = try self.vm.allocateString(path_str);
+            const asset_path = try import_path.resolveFile(self.allocator, importer, path_str);
+            defer self.allocator.free(asset_path);
+            const path_val = try self.vm.allocateString(asset_path);
             self.vm.push(path_val);
             const path_idx = try self.makeConstant(path_val);
             _ = self.vm.pop();
@@ -692,24 +702,9 @@ pub const Compiler = struct {
             return;
         }
 
-        // --- 2. Package Cache Resolution ---
-        var final_path_str: []const u8 = path_str;
-        var allocated_path: ?[]u8 = null;
-        defer if (allocated_path) |p| self.allocator.free(p);
-
-        // If the import is not a local relative path, route it to the new Package Manager VFS workspace
-        const is_local_path = std.mem.startsWith(u8, path_str, "./") or std.mem.startsWith(u8, path_str, "../") or std.mem.startsWith(u8, path_str, "/");
-        if (!is_local_path) {
-            if (@import("builtin").target.os.tag != .freestanding and @import("builtin").target.os.tag != .wasi) {
-                // Route to the symlinked package workspace created by Resolver.linkWorkspace()
-                if (std.mem.endsWith(u8, path_str, ".kup")) {
-                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}", .{path_str});
-                } else {
-                    allocated_path = try self.allocator.print(".kupcad/pkg/{s}/{s}", .{ path_str, DEFAULT_IMPORT_ENDPOINT });
-                }
-                final_path_str = allocated_path.?;
-            }
-        }
+        // --- 2. The module's path, from the importer's (core/import_path.zig) ---
+        const final_path_str = try import_path.resolve(self.allocator, importer, path_str);
+        defer self.allocator.free(final_path_str);
 
         // --- 3. Standard Module Import & Destructuring ---
         const path_val = try self.vm.allocateString(final_path_str);

@@ -21,7 +21,7 @@ test "ScriptSession: buildReverseGraph inverts workspace module dependency edges
     const parent_path = "main.kup";
 
     const child_id = try session.workspace.addModule(child_path, "def square(x) x * x end");
-    const parent_id = try session.workspace.addModule(parent_path, "import \"math.kup\" as math; val = math.square(5)");
+    const parent_id = try session.workspace.addModule(parent_path, "import \"./math.kup\" as math; val = math.square(5)");
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -42,7 +42,7 @@ test "ScriptSession: markFileEdited triggers reverse BFS invalidation" {
     const parent_path = "main.kup";
 
     const child_id = try session.workspace.addModule(child_path, "def square(x) x * x end");
-    const parent_id = try session.workspace.addModule(parent_path, "import \"math.kup\" as math; val = math.square(5)");
+    const parent_id = try session.workspace.addModule(parent_path, "import \"./math.kup\" as math; val = math.square(5)");
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -141,8 +141,8 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
 
     session.vm.vfs = mem_vfs.vfs();
 
-    const leaf_path = "./leaf.kup";
-    const root_path = "./root.kup";
+    const leaf_path = "leaf.kup";
+    const root_path = "root.kup";
 
     const leaf_source = "c = cube(10.0); export c;";
     const root_source = "import { c as l_c } from \"./leaf.kup\"; out = l_c.translate(20.0, 0.0, 0.0); export out;";
@@ -206,14 +206,14 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
     const b_source = "import { out as a_out } from \"./a.kup\"; out_b = a_out.translate(5.0, 0.0, 0.0); export out_b;";
     const c_source = "import { out_b as b_out } from \"./b.kup\"; out_c = b_out.translate(0.0, 5.0, 0.0); export out_c;";
 
-    try mem_vfs.vfs().writeFile("./a.kup", a_source);
-    try mem_vfs.vfs().writeFile("./b.kup", b_source);
-    try mem_vfs.vfs().writeFile("./c.kup", c_source);
+    try mem_vfs.vfs().writeFile("a.kup", a_source);
+    try mem_vfs.vfs().writeFile("b.kup", b_source);
+    try mem_vfs.vfs().writeFile("c.kup", c_source);
 
     // A -> B -> C
-    const a_id = try session.workspace.addModule("./a.kup", a_source);
-    const b_id = try session.workspace.addModule("./b.kup", b_source);
-    const c_id = try session.workspace.addModule("./c.kup", c_source);
+    const a_id = try session.workspace.addModule("a.kup", a_source);
+    const b_id = try session.workspace.addModule("b.kup", b_source);
+    const c_id = try session.workspace.addModule("c.kup", c_source);
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -222,11 +222,11 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
 
     // Change 'A' source code but maintain identical geometric output
     const new_a_source = "x = cube(10.0); out = x; export out;";
-    try mem_vfs.vfs().writeFile("./a.kup", new_a_source);
+    try mem_vfs.vfs().writeFile("a.kup", new_a_source);
 
     try session.workspace.updateModuleSource(a_id, new_a_source);
 
-    try session.markFileEdited("./a.kup");
+    try session.markFileEdited("a.kup");
     try session.evaluateWorkspace();
 
     const a_node = &session.nodes.items[@backingInt(a_id)];
@@ -254,11 +254,11 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     const a_source = "out = cube(10.0); export out;";
     const b_source = "import { out as a_out } from \"./a.kup\"; out_b = a_out.translate(5.0, 0.0, 0.0); export out_b;";
 
-    try mem_vfs.vfs().writeFile("./a.kup", a_source);
-    try mem_vfs.vfs().writeFile("./b.kup", b_source);
+    try mem_vfs.vfs().writeFile("a.kup", a_source);
+    try mem_vfs.vfs().writeFile("b.kup", b_source);
 
-    const a_id = try session.workspace.addModule("./a.kup", a_source);
-    const b_id = try session.workspace.addModule("./b.kup", b_source);
+    const a_id = try session.workspace.addModule("a.kup", a_source);
+    const b_id = try session.workspace.addModule("b.kup", b_source);
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -268,11 +268,11 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
 
     // Introduce a syntax error in A
     const bad_a_source = "out = cube(10.0; export out;";
-    try mem_vfs.vfs().writeFile("./a.kup", bad_a_source);
+    try mem_vfs.vfs().writeFile("a.kup", bad_a_source);
 
     try session.workspace.updateModuleSource(a_id, bad_a_source);
 
-    try session.markFileEdited("./a.kup");
+    try session.markFileEdited("a.kup");
 
     const err = session.evaluateWorkspace();
     try testing.expectError(error.ParseError, err);
@@ -295,8 +295,8 @@ test "ScriptSession: keeps the failing parse, with resolver errors, until the ne
     // Valid syntax, but the resolver rejects it; the workspace's own parse skips the
     // resolver, so the build used to report "0 syntax errors" and no message.
     const bad = "f = ->(x) { break x }\ncube(1)";
-    try mem_vfs.vfs().writeFile("./a.kup", bad);
-    const a_id = try session.workspace.addModule("./a.kup", bad);
+    try mem_vfs.vfs().writeFile("a.kup", bad);
+    const a_id = try session.workspace.addModule("a.kup", bad);
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
 
@@ -307,9 +307,9 @@ test "ScriptSession: keeps the failing parse, with resolver errors, until the ne
     try testing.expectEqualStrings("Cannot use 'break' outside of a loop", failure.diagnostics[0].message);
 
     const good = "cube(1)";
-    try mem_vfs.vfs().writeFile("./a.kup", good);
+    try mem_vfs.vfs().writeFile("a.kup", good);
     try session.workspace.updateModuleSource(a_id, good);
-    try session.markFileEdited("./a.kup");
+    try session.markFileEdited("a.kup");
     try session.evaluateWorkspace();
     try testing.expect(session.failure == null);
 }
@@ -323,8 +323,8 @@ test "ScriptSession: a compile error is kept as the failure, with its location" 
     session.vm.vfs = mem_vfs.vfs();
 
     const bad = "w = 1\ncube = 5";
-    try mem_vfs.vfs().writeFile("./a.kup", bad);
-    const a_id = try session.workspace.addModule("./a.kup", bad);
+    try mem_vfs.vfs().writeFile("a.kup", bad);
+    const a_id = try session.workspace.addModule("a.kup", bad);
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
 

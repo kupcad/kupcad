@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const Document = @import("document.zig").Document;
+const import_path = @import("import_path.zig");
 
 pub const ModuleId = enum(u32) { _ };
 
@@ -117,7 +118,9 @@ pub const Workspace = struct {
             for (mod.doc.tree.nodes.items) |*node| {
                 if (node.tag == .import_stmt) {
                     const import_stmt = mod.doc.tree.importStmt(node);
-                    const dep_path = mod.doc.tree.getString(import_stmt.path);
+                    // The path the compiler will read, so `./hw.kup` in parts/main.kup is parts/hw.kup.
+                    const dep_path = try import_path.resolve(self.allocator, mod.path, mod.doc.tree.getString(import_stmt.path));
+                    defer self.allocator.free(dep_path);
 
                     if (self.path_to_id.get(dep_path)) |dep_id| {
                         try mod.deps.append(self.allocator, dep_id);

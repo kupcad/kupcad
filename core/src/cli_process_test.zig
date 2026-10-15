@@ -259,6 +259,19 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     try testing.expect(std.mem.indexOf(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
+test "kupcad: build of a script in a subfolder imports its neighbours" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "parts");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/hw.kup", .data = "def bolt(l)\n  cylinder(r: 1, h: l)\nend\nexport bolt\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/main.kup", .data = "import { bolt } from \"./hw.kup\"\nbolt(5)\n" });
+    // "./hw.kup" used to be read from the current directory.
+    const run = try kupcad(sb.path, &.{ "build", "parts/main.kup", "-o", "out.stl" });
+    defer run.deinit();
+    errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+    try testing.expectEqual(@as(u8, 0), run.code);
+}
+
 test "kupcad: check --fix rewrites what it can fix and reports the rest" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .contains = "Fixed 1 problem in fixme.kup" },

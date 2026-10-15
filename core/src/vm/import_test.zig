@@ -27,7 +27,7 @@ test "VM: op_import correctly evaluates and destructures modules" {
         \\end
         \\export MathPkg
     ;
-    try mem_vfs.vfs().writeFile("./math_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("math_pkg.kup", pkg_source);
 
     const main_source =
         \\import { MathPkg } from "./math_pkg.kup"
@@ -64,7 +64,7 @@ test "VM: op_import resolves transitive dependencies securely via Modules" {
         \\end
         \\export MathHelper
     ;
-    try mem_vfs.vfs().writeFile("./mod_b.kup", mod_b_source);
+    try mem_vfs.vfs().writeFile("mod_b.kup", mod_b_source);
 
     // Module A
     const mod_a_source =
@@ -74,7 +74,7 @@ test "VM: op_import resolves transitive dependencies securely via Modules" {
         \\end
         \\export Calculator
     ;
-    try mem_vfs.vfs().writeFile("./mod_a.kup", mod_a_source);
+    try mem_vfs.vfs().writeFile("mod_a.kup", mod_a_source);
 
     // Main Script
     const main_source =
@@ -109,7 +109,7 @@ test "VM: op_import caches evaluated modules to prevent redundant execution" {
         \\def get_value() 99 end
         \\export get_value
     ;
-    try mem_vfs.vfs().writeFile("./shared_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("shared_pkg.kup", pkg_source);
 
     // Removed the destructuring on the second import to prevent VariableAlreadyDeclared
     const main_source =
@@ -139,7 +139,7 @@ test "VM: op_import safely halts on package runtime errors" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./crash_pkg.kup", "raise(ArgumentError)");
+    try mem_vfs.vfs().writeFile("crash_pkg.kup", "raise(ArgumentError)");
 
     const main_source =
         \\import "./crash_pkg.kup"
@@ -169,7 +169,7 @@ test "VM: op_import safely returns empty modules for blank files" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./empty_pkg.kup", "");
+    try mem_vfs.vfs().writeFile("empty_pkg.kup", "");
 
     const main_source =
         \\import "./empty_pkg.kup"
@@ -196,7 +196,7 @@ test "VM: op_import destructuring throws RuntimeError for missing exports" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./pkg.kup", "export func_a");
+    try mem_vfs.vfs().writeFile("pkg.kup", "export func_a");
 
     const main_source = "import { func_b } from \"./pkg.kup\"";
 
@@ -248,7 +248,7 @@ test "VM: op_import destructuring a primitive export throws RuntimeError" {
     defer mem_vfs.deinit();
 
     // Package exports a raw number instead of a Module/Class
-    try mem_vfs.vfs().writeFile("./prim.kup", "export 42");
+    try mem_vfs.vfs().writeFile("prim.kup", "export 42");
 
     // Parent attempts to destructure the number, which lacks properties
     const main_source = "import { x } from \"./prim.kup\"";
@@ -276,8 +276,8 @@ test "VM: op_import safely aborts on infinite circular dependencies" {
     defer mem_vfs.deinit();
 
     // Ping imports Pong, Pong imports Ping
-    try mem_vfs.vfs().writeFile("./ping.kup", "import \"./pong.kup\"");
-    try mem_vfs.vfs().writeFile("./pong.kup", "import \"./ping.kup\"");
+    try mem_vfs.vfs().writeFile("ping.kup", "import \"./pong.kup\"");
+    try mem_vfs.vfs().writeFile("pong.kup", "import \"./ping.kup\"");
 
     const main_source = "import \"./ping.kup\"";
 
@@ -309,14 +309,14 @@ test "VM: op_import caches by reference allowing cross-file state sharing" {
         \\shared_list = [1, 2, 3]
         \\export shared_list
     ;
-    try mem_vfs.vfs().writeFile("./state.kup", state_source);
+    try mem_vfs.vfs().writeFile("state.kup", state_source);
 
     // Mutator Module modifies the array by reference
     const mutator_source =
         \\import { shared_list } from "./state.kup"
         \\shared_list[0] = 99
     ;
-    try mem_vfs.vfs().writeFile("./mutator.kup", mutator_source);
+    try mem_vfs.vfs().writeFile("mutator.kup", mutator_source);
 
     // Main script verifies the mutation persisted across the cache
     const main_source =
@@ -355,7 +355,7 @@ test "VM: op_import supports destructuring multiple exports perfectly" {
         \\def func_two() 2 end
         \\export func_one, func_two
     ;
-    try mem_vfs.vfs().writeFile("./multi.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("multi.kup", pkg_source);
 
     // Destructuring imports DO use braces
     const main_source =
@@ -402,7 +402,7 @@ test "VM: op_import supports exporting Classes and Modules securely" {
         \\
         \\export CustomBox, MathUtils
     ;
-    try mem_vfs.vfs().writeFile("./complex_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("complex_pkg.kup", pkg_source);
 
     const main_source =
         \\import { CustomBox, MathUtils } from "./complex_pkg.kup"
@@ -447,7 +447,7 @@ test "VM: op_import closures maintain upvalues to private package state" {
         \\increment = create_counter
         \\export increment
     ;
-    try mem_vfs.vfs().writeFile("./stateful_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("stateful_pkg.kup", pkg_source);
 
     const main_source =
         \\import { increment } from "./stateful_pkg.kup"
@@ -492,7 +492,7 @@ test "VM: op_import merges multiple sequential export statements" {
         \\export m1
         \\export m2
     ;
-    try mem_vfs.vfs().writeFile("./seq_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("seq_pkg.kup", pkg_source);
 
     const main_source =
         \\import { m1, m2 } from "./seq_pkg.kup"
@@ -528,7 +528,7 @@ test "VM: op_import allows exporting aliased primitives and references" {
         \\app_name = "KupCAD Plugin"
         \\export my_list, app_name
     ;
-    try mem_vfs.vfs().writeFile("./alias_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("alias_pkg.kup", pkg_source);
 
     const main_source =
         \\import { my_list, app_name } from "./alias_pkg.kup"
@@ -648,14 +648,14 @@ test "VM: op_import supports nested namespace re-exports" {
         \\end
         \\export Core
     ;
-    try mem_vfs.vfs().writeFile("./core_math.kup", core_source);
+    try mem_vfs.vfs().writeFile("core_math.kup", core_source);
 
     // Facade file re-exporting Core
     const facade_source =
         \\import { Core } from "./core_math.kup"
         \\export Core
     ;
-    try mem_vfs.vfs().writeFile("./facade.kup", facade_source);
+    try mem_vfs.vfs().writeFile("facade.kup", facade_source);
 
     // Consumer file importing Core from Facade
     const main_source =
@@ -687,9 +687,9 @@ test "VM: op_import detects multi-level circular dependencies (A -> B -> C -> A)
     defer mem_vfs.deinit();
 
     // 3-way cyclic dependency loop
-    try mem_vfs.vfs().writeFile("./a.kup", "import \"./b.kup\"");
-    try mem_vfs.vfs().writeFile("./b.kup", "import \"./c.kup\"");
-    try mem_vfs.vfs().writeFile("./c.kup", "import \"./a.kup\"");
+    try mem_vfs.vfs().writeFile("a.kup", "import \"./b.kup\"");
+    try mem_vfs.vfs().writeFile("b.kup", "import \"./c.kup\"");
+    try mem_vfs.vfs().writeFile("c.kup", "import \"./a.kup\"");
 
     const main_source = "import \"./a.kup\"";
 
@@ -725,7 +725,7 @@ test "VM: op_import supports cross-file class inheritance hierarchy" {
         \\end
         \\export Shape
     ;
-    try mem_vfs.vfs().writeFile("./shape.kup", base_source);
+    try mem_vfs.vfs().writeFile("shape.kup", base_source);
 
     // Child shape library extending imported base class
     const square_source =
@@ -737,7 +737,7 @@ test "VM: op_import supports cross-file class inheritance hierarchy" {
         \\end
         \\export Square
     ;
-    try mem_vfs.vfs().writeFile("./square.kup", square_source);
+    try mem_vfs.vfs().writeFile("square.kup", square_source);
 
     const main_source =
         \\import { Square } from "./square.kup"
@@ -768,8 +768,8 @@ test "VM: op_import supports barrel re-exports from multiple files" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./part1.kup", "def val1()\n 10\nend\nexport val1");
-    try mem_vfs.vfs().writeFile("./part2.kup", "def val2()\n 20\nend\nexport val2");
+    try mem_vfs.vfs().writeFile("part1.kup", "def val1()\n 10\nend\nexport val1");
+    try mem_vfs.vfs().writeFile("part2.kup", "def val2()\n 20\nend\nexport val2");
 
     // Barrel index file bundling multiple sub-modules
     const index_source =
@@ -777,7 +777,7 @@ test "VM: op_import supports barrel re-exports from multiple files" {
         \\import { val2 } from "./part2.kup"
         \\export val1, val2
     ;
-    try mem_vfs.vfs().writeFile("./index.kup", index_source);
+    try mem_vfs.vfs().writeFile("index.kup", index_source);
 
     const main_source =
         \\import { val1, val2 } from "./index.kup"
@@ -807,7 +807,7 @@ test "VM: op_import supports symbol aliasing via 'as'" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./pkg.kup", "def val() 10 end\nexport val");
+    try mem_vfs.vfs().writeFile("pkg.kup", "def val() 10 end\nexport val");
 
     const main_source =
         \\import { val as external_val } from "./pkg.kup"
@@ -860,7 +860,7 @@ test "VM: op_import catches self-import cycles gracefully" {
     defer mem_vfs.deinit();
 
     // File imports itself
-    try mem_vfs.vfs().writeFile("./self.kup", "import \"./self.kup\"");
+    try mem_vfs.vfs().writeFile("self.kup", "import \"./self.kup\"");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -889,7 +889,7 @@ test "VM: op_import supports aliased exports (export { internal as public })" {
         \\def internal_func() 42 end
         \\export { internal_func as public_func }
     ;
-    try mem_vfs.vfs().writeFile("./aliased_export.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("aliased_export.kup", pkg_source);
 
     const main_source =
         \\import { public_func } from "./aliased_export.kup"
@@ -924,7 +924,7 @@ test "VM: op_import supports multiple aliases in a single import statement" {
         \\def fn_b() 20 end
         \\export fn_a, fn_b
     ;
-    try mem_vfs.vfs().writeFile("./multi_pkg.kup", pkg_source);
+    try mem_vfs.vfs().writeFile("multi_pkg.kup", pkg_source);
 
     const main_source =
         \\import { fn_a as x, fn_b as y } from "./multi_pkg.kup"
@@ -975,13 +975,13 @@ test "VM: op_import supports chained aliased re-exports across modules" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    try mem_vfs.vfs().writeFile("./base.kup", "def raw_val() 100 end\nexport raw_val");
+    try mem_vfs.vfs().writeFile("base.kup", "def raw_val() 100 end\nexport raw_val");
 
     const pkg2_source =
         \\import { raw_val as middle_val } from "./base.kup"
         \\export { middle_val as final_val }
     ;
-    try mem_vfs.vfs().writeFile("./middle.kup", pkg2_source);
+    try mem_vfs.vfs().writeFile("middle.kup", pkg2_source);
 
     const main_source =
         \\import { final_val } from "./middle.kup"
@@ -1030,7 +1030,7 @@ fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
 test "VM: op_import cached module results survive GC and re-import" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("./mod.kup", "Payload = [\"payload\", \"more\"]\nexport Payload");
+    try mem_vfs.vfs().writeFile("mod.kup", "Payload = [\"payload\", \"more\"]\nexport Payload");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1059,7 +1059,7 @@ test "VM: op_import cached module results survive GC and re-import" {
 test "VM: op_import exception raised inside an imported module is rescued by the importer" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("./boom.kup", "raise \"module failed\"");
+    try mem_vfs.vfs().writeFile("boom.kup", "raise \"module failed\"");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1098,7 +1098,7 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     // Parses cleanly but fails to compile (assigning to the protected intrinsic `cube`)
-    try mem_vfs.vfs().writeFile("./bad.kup", "x = \"keep\"\ncube = 1");
+    try mem_vfs.vfs().writeFile("bad.kup", "x = \"keep\"\ncube = 1");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1119,7 +1119,7 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
     // testing.allocator reports the heap chunk as leaked if it is not freed
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
     const msg = vm.globals.get("result") orelse return error.MissingGlobal;
-    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "could not compile './bad.kup': "));
+    try testing.expect(std.mem.startsWith(u8, msg.asString().chars, "could not compile 'bad.kup': "));
 }
 
 // --- Module isolation: each imported module has its own top-level scope ---
@@ -1150,32 +1150,32 @@ test "VM: imported modules keep their top-level names to themselves" {
     // library's private variables and silently change what the library computed.
     const cases = [_]struct { files: []const ModuleFile, main: []const u8, expected: f64 }{
         // The importer can't change a module's variable...
-        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nc = 1000\nr = lib_fn()", .expected = 3 },
+        .{ .files = &.{.{ .path = "lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nc = 1000\nr = lib_fn()", .expected = 3 },
         // ...or see it, or the hidden __exports__ object.
-        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(c) ? 1 : 0", .expected = 0 },
-        .{ .files = &.{.{ .path = "./lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(__exports__) ? 1 : 0", .expected = 0 },
+        .{ .files = &.{.{ .path = "lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(c) ? 1 : 0", .expected = 0 },
+        .{ .files = &.{.{ .path = "lib.kup", .source = LIB_C }}, .main = "import { lib_fn } from \"./lib.kup\"\nr = defined?(__exports__) ? 1 : 0", .expected = 0 },
         // A module can't read the importer's variables either.
-        .{ .files = &.{.{ .path = "./w.kup", .source = "def get_width\n  width\nend\nexport get_width" }}, .main = "width = 7\nimport { get_width } from \"./w.kup\"\nr = begin\n  get_width()\nrescue => e\n  -1\nend", .expected = -1 },
+        .{ .files = &.{.{ .path = "w.kup", .source = "def get_width\n  width\nend\nexport get_width" }}, .main = "width = 7\nimport { get_width } from \"./w.kup\"\nr = begin\n  get_width()\nrescue => e\n  -1\nend", .expected = -1 },
         // Module functions see module variables defined later in the file.
-        .{ .files = &.{.{ .path = "./area.kup", .source = "def area\n  side * side\nend\nside = 4\nexport area" }}, .main = "side = 100\nimport { area } from \"./area.kup\"\nr = area()", .expected = 16 },
+        .{ .files = &.{.{ .path = "area.kup", .source = "def area\n  side * side\nend\nside = 4\nexport area" }}, .main = "side = 100\nimport { area } from \"./area.kup\"\nr = area()", .expected = 16 },
         // Methods of an exported class keep the module's scope when called from outside.
-        .{ .files = &.{.{ .path = "./plate.kup", .source = "k = 3\nclass Plate\n  def scaled(x)\n    x * k\n  end\nend\nexport Plate" }}, .main = "k = 50\nimport { Plate } from \"./plate.kup\"\nr = Plate.new.scaled(2)", .expected = 6 },
+        .{ .files = &.{.{ .path = "plate.kup", .source = "k = 3\nclass Plate\n  def scaled(x)\n    x * k\n  end\nend\nexport Plate" }}, .main = "k = 50\nimport { Plate } from \"./plate.kup\"\nr = Plate.new.scaled(2)", .expected = 6 },
         // Two modules may use the same top-level name without clobbering each other.
         .{
             .files = &.{
-                .{ .path = "./a.kup", .source = "v = 1\ndef get_a\n  v\nend\nexport get_a" },
-                .{ .path = "./b.kup", .source = "v = 2\ndef get_b\n  v\nend\nexport get_b" },
+                .{ .path = "a.kup", .source = "v = 1\ndef get_a\n  v\nend\nexport get_a" },
+                .{ .path = "b.kup", .source = "v = 2\ndef get_b\n  v\nend\nexport get_b" },
             },
             .main = "import { get_a } from \"./a.kup\"\nimport { get_b } from \"./b.kup\"\nr = get_a() * 10 + get_b()",
             .expected = 12,
         },
         // Builtins stay reachable from module code.
-        .{ .files = &.{.{ .path = "./mk.kup", .source = "def make\n  cube(2).volume\nend\nexport make" }}, .main = "import { make } from \"./mk.kup\"\nr = make()", .expected = 8 },
+        .{ .files = &.{.{ .path = "mk.kup", .source = "def make\n  cube(2).volume\nend\nexport make" }}, .main = "import { make } from \"./mk.kup\"\nr = make()", .expected = 8 },
         // A module importing another sees only what it imported, not the inner module's privates.
         .{
             .files = &.{
-                .{ .path = "./inner.kup", .source = "secret = 9\ndef twice(x)\n  x * 2\nend\nexport twice" },
-                .{ .path = "./outer.kup", .source = "import { twice } from \"./inner.kup\"\ndef go\n  r = twice(5)\n  r + (defined?(secret) ? 100 : 0)\nend\nexport go" },
+                .{ .path = "inner.kup", .source = "secret = 9\ndef twice(x)\n  x * 2\nend\nexport twice" },
+                .{ .path = "outer.kup", .source = "import { twice } from \"./inner.kup\"\ndef go\n  r = twice(5)\n  r + (defined?(secret) ? 100 : 0)\nend\nexport go" },
             },
             .main = "import { go } from \"./outer.kup\"\nr = go()",
             .expected = 10,
@@ -1190,7 +1190,7 @@ test "VM: imported modules keep their top-level names to themselves" {
 test "VM: a module still sees a builtin the main script shadowed" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("./lib.kup", "def read\n  helper_val\nend\nexport read");
+    try mem_vfs.vfs().writeFile("lib.kup", "def read\n  helper_val\nend\nexport read");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1209,7 +1209,7 @@ test "VM: a module still sees a builtin the main script shadowed" {
 test "VM: module namespace values survive GC" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("./lib.kup", "s = \"str\" + \"ing\"\nparts = [s, s + \"!\"]\ndef get\n  parts[1]\nend\nexport get");
+    try mem_vfs.vfs().writeFile("lib.kup", "s = \"str\" + \"ing\"\nparts = [s, s + \"!\"]\ndef get\n  parts[1]\nend\nexport get");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1228,7 +1228,7 @@ test "VM: module namespace values survive GC" {
 test "VM: importing a module that fails to compile names where and why" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("./bad.kup", "x = 1\ncube = 5\nexport x");
+    try mem_vfs.vfs().writeFile("bad.kup", "x = 1\ncube = 5\nexport x");
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -1255,5 +1255,31 @@ test "VM: importing a module that fails to compile names where and why" {
 
     // It used to say only "Compilation failed for './bad.kup'".
     const r = vm.globals.get("r") orelse return error.MissingResult;
-    try testing.expectEqualStrings("could not compile './bad.kup': 2:1: 'cube' is a built-in and can't be assigned", r.asString().chars);
+    try testing.expectEqualStrings("could not compile 'bad.kup': 2:1: 'cube' is a built-in and can't be assigned", r.asString().chars);
+}
+
+test "VM: a relative import is read next to the file that imports it" {
+    // Relative imports were read from the project root, so `kupcad build parts/main.kup`
+    // couldn't import parts/hw.kup, and a module couldn't import its own neighbours.
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("parts/hw.kup", "import { unit } from \"../lib/units.kup\"\ndef bolt\n  unit * 3\nend\nexport bolt");
+    try mem_vfs.vfs().writeFile("lib/units.kup", "unit = 2\nexport unit");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    vm.vfs = mem_vfs.vfs();
+
+    var doc = try Document.parse(testing.allocator, "import { bolt } from \"./hw.kup\"\nr = bolt()");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    comp.module_path = "parts/main.kup";
+    try comp.compile(doc.tree.root);
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try testing.expectEqual(@as(f64, 6), vm.globals.get("r").?.asNumber());
 }

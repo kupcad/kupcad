@@ -38,6 +38,7 @@ test {
     _ = @import("core/params/params_test.zig");
     _ = @import("core/text_test.zig");
     _ = @import("core/semver_test.zig");
+    _ = @import("core/import_path_test.zig");
 
     // Daemon
     _ = @import("daemon/session_manager_test.zig");
