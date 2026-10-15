@@ -3,7 +3,8 @@ const testing = std.testing;
 const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const GarbageCollector = @import("gc.zig").GarbageCollector;
+const gc_mod = @import("gc.zig");
+const GarbageCollector = gc_mod.GarbageCollector;
 const countRows = @import("test_helpers.zig").countRows;
 
 const Fixture = struct {
@@ -147,4 +148,40 @@ test "GarbageCollector: prune binds blob names as SQL parameters" {
     try gc.prune(true);
 
     try testing.expectEqual(@as(i64, 1), try countRows(&fx.store, "SELECT COUNT(*) FROM files WHERE hash = 'keep'"));
+}
+
+/// Sets a blob's modification time `seconds` in the past.
+fn age(path: []const u8, seconds: i64) !void {
+    var f = try std.Io.Dir.cwd().openFile(testing.io, path, .{ .mode = .read_write });
+    defer f.close(testing.io);
+    const now = std.Io.Clock.real.now(testing.io);
+    const then: std.Io.Timestamp = .{ .nanoseconds = now.nanoseconds - @as(i96, seconds) * std.time.ns_per_s };
+    try f.setTimestamps(testing.io, .{ .modify_timestamp = .{ .new = then } });
+}
+
+test "GarbageCollector: prune(false) keeps the blobs of a package an install just used" {
+    // A project on another device holds copies, so the store's blobs keep one link: an
+    // install that reused old blobs had its package pruned and evicted right after.
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    const path = try fx.writeBlob("copied", "content");
+    defer testing.allocator.free(path);
+    try age(path, gc_mod.RETENTION_SECONDS + 60);
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("main.kup", "copied");
+    try fx.store.registerPackage("pkg", "c1", "github", "sha256-x", &files);
+
+    var gc = fx.gc();
+    try gc.prune(false);
+    try expectExists(path);
+    try testing.expect(try fx.store.hasPackage("pkg", "c1"));
+
+    // Once no install has used the package for the retention period, it goes.
+    try fx.store.db.exec("UPDATE packages SET last_used = 0", .{}, .{});
+    try gc.prune(false);
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, path, .{}));
+    try testing.expect(!try fx.store.hasPackage("pkg", "c1"));
 }

@@ -4,6 +4,10 @@ const Store = @import("store.zig").Store;
 
 const log = std.log.scoped(.pkg);
 
+/// How long the store keeps what no project links: a blob written, or a package an
+/// install used, this recently stays; lazyPrune runs at most this often.
+pub const RETENTION_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 pub const GarbageCollector = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -19,7 +23,11 @@ pub const GarbageCollector = struct {
         };
     }
 
-    /// Prunes unused blobs from the CAFS and the SQLite index
+    /// Prunes unused blobs from the CAFS and the SQLite index. A blob stays while a project
+    /// hard-links it; unless `force`, also while it, or a package an install used, is
+    /// younger than RETENTION_SECONDS. Where a project holds a copy instead (the store on
+    /// another device), the link count can't show the use: a package installed a moment
+    /// ago from old blobs used to be pruned, and evicted, right after.
     pub fn prune(self: *GarbageCollector, force: bool) !void {
         const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
@@ -32,7 +40,8 @@ pub const GarbageCollector = struct {
         defer dir.close(self.io);
 
         const now_ts = std.Io.Clock.real.now(self.io);
-        const seven_days_ns: i64 = 7 * 24 * 60 * 60 * std.time.ns_per_s;
+        const now_sec: i64 = @intCast(@divFloor(now_ts.nanoseconds, std.time.ns_per_s));
+        const retention_ns: i96 = @as(i96, RETENTION_SECONDS) * std.time.ns_per_s;
         var pruned_count: usize = 0;
         var bytes_freed: u64 = 0;
 
@@ -45,9 +54,10 @@ pub const GarbageCollector = struct {
             // If nlink > 1, the file is currently used by a project
             if (stat.nlink > 1) continue;
 
-            // Direct nanosecond duration check between stat.mtime and now_ts
-            const age_ns = stat.mtime.durationTo(now_ts).nanoseconds;
-            if (!force and age_ns < seven_days_ns) continue;
+            if (!force) {
+                if (stat.mtime.durationTo(now_ts).nanoseconds < retention_ns) continue;
+                if (try self.store.blobUsedSince(entry.name, now_sec - RETENTION_SECONDS)) continue;
+            }
 
             // Delete physical file
             try dir.deleteFile(self.io, entry.name);
@@ -63,7 +73,6 @@ pub const GarbageCollector = struct {
         log.info("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
 
         // Update last_prune_time in meta table (Unix epoch seconds)
-        const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
         var now_buf: [32]u8 = undefined;
         const now_str = try std.fmt.bufPrint(&now_buf, "{d}", .{now_sec});
         try self.store.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{now_str}, .{});
@@ -81,9 +90,8 @@ pub const GarbageCollector = struct {
 
         const now_ts = std.Io.Clock.real.now(self.io);
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
-        const seven_days_sec: i64 = 7 * 24 * 60 * 60;
 
-        if (now_sec - last_prune > seven_days_sec) {
+        if (now_sec - last_prune > RETENTION_SECONDS) {
             log.info("Running scheduled background cleanup...\n", .{});
             try self.prune(false);
         }

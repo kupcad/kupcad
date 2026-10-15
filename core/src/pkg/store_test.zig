@@ -16,7 +16,7 @@ test "Store: initializes and runs SQLite migrations in-memory" {
     const row = try stmt.one(struct { user_version: i32 }, .{}, .{});
 
     try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 3), row.?.user_version); // Expect V3 (composite packages key)
+    try testing.expectEqual(store_mod.SCHEMA_VERSION, row.?.user_version);
 }
 
 test "Store: registerPackage records metadata and file hashes for lookup" {
@@ -211,7 +211,9 @@ test "Store: migrates v2 databases to the composite package key" {
 
     var store = try Store.init(testing.io, db_path);
     defer store.deinit();
-    try testing.expectEqual(@as(i64, 3), try countRows(&store, "SELECT user_version AS n FROM pragma_user_version"));
+    try testing.expectEqual(@as(i64, store_mod.SCHEMA_VERSION), try countRows(&store, "SELECT user_version AS n FROM pragma_user_version"));
+    // v4: an existing package was last used when it was registered.
+    try testing.expectEqual(@as(i64, 7), try countRows(&store, "SELECT last_used AS n FROM packages WHERE id = 'pkg'"));
 
     // Existing rows survive the table rebuild with all columns intact.
     {

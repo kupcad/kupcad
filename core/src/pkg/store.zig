@@ -7,6 +7,9 @@ const log = std.log.scoped(.pkg);
 /// How long a statement waits for another process's lock on the index (two installs at
 /// once, an install while `pkg prune` runs) before failing with SQLITE_BUSY.
 pub const BUSY_TIMEOUT_MS: c_int = 5000;
+/// The index's schema (`PRAGMA user_version`); runMigrations brings older ones up to it.
+/// v4: packages.last_used, when an install last used the package (see GarbageCollector).
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Deletes package_files rows whose (package_id, commit_sha) has no packages row.
 const ORPHAN_PACKAGE_FILES_SQL =
@@ -199,10 +202,8 @@ pub const Store = struct {
             break :blk if (current_version_row) |row| row.user_version else 0;
         };
 
-        const TARGET_VERSION: i32 = 3;
-
-        if (current_version < TARGET_VERSION) {
-            log.info("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, TARGET_VERSION });
+        if (current_version < SCHEMA_VERSION) {
+            log.info("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, SCHEMA_VERSION });
 
             try self.db.exec("BEGIN TRANSACTION", .{}, .{});
             errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
@@ -265,7 +266,11 @@ pub const Store = struct {
                 // File mappings for commits that the old schema dropped are unreachable.
                 try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
             }
-            const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{TARGET_VERSION});
+            if (current_version < 4) {
+                try self.db.exec("ALTER TABLE packages ADD COLUMN last_used INTEGER NOT NULL DEFAULT 0", .{}, .{});
+                try self.db.exec("UPDATE packages SET last_used = created_at", .{}, .{});
+            }
+            const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{SCHEMA_VERSION});
             defer std.heap.page_allocator.free(update_pragma);
             try self.db.exec(update_pragma, .{}, .{});
             try self.db.exec("COMMIT", .{}, .{});
@@ -371,6 +376,19 @@ pub const Store = struct {
         try self.db.exec("COMMIT", .{}, .{});
     }
 
+    /// Whether a package that an install used at or after `since` (Unix seconds) has the
+    /// blob `hash`.
+    pub fn blobUsedSince(self: *Store, hash: []const u8, since: i64) !bool {
+        const stmt_sql =
+            \\SELECT 1 FROM package_files pf
+            \\JOIN packages p ON p.id = pf.package_id AND p.commit_sha = pf.commit_sha
+            \\WHERE pf.file_hash = ? AND p.last_used >= ? LIMIT 1
+        ;
+        var stmt = try self.db.prepare(stmt_sql);
+        defer stmt.deinit();
+        return (try stmt.one(struct { val: i32 }, .{ hash, since }, .{})) != null;
+    }
+
     /// Checks whether a package commit_sha exists in the offline store
     pub fn hasPackage(self: *Store, pkg_id: []const u8, commit_sha: []const u8) !bool {
         const stmt_sql =
@@ -436,12 +454,13 @@ pub const Store = struct {
 
         // Upsert keyed by (id, commit_sha): a new commit of an existing package must
         // be recorded, and re-registering the same commit refreshes its metadata.
+        // Registering is also how an install uses a cached package, so it is the last use.
         const pkg_stmt =
-            \\INSERT INTO packages (id, commit_sha, provider, integrity, created_at)
-            \\VALUES (?, ?, ?, ?, ?)
-            \\ON CONFLICT(id, commit_sha) DO UPDATE SET provider = excluded.provider, integrity = excluded.integrity
+            \\INSERT INTO packages (id, commit_sha, provider, integrity, created_at, last_used)
+            \\VALUES (?, ?, ?, ?, ?, ?)
+            \\ON CONFLICT(id, commit_sha) DO UPDATE SET provider = excluded.provider, integrity = excluded.integrity, last_used = excluded.last_used
         ;
-        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now }, .{});
+        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now, now }, .{});
 
         // Replace (not merge) the file mapping so it exactly matches the verified content.
         try self.db.exec("DELETE FROM package_files WHERE package_id = ? AND commit_sha = ?", .{ pkg_id, commit_sha }, .{});
