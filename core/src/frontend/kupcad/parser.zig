@@ -1810,6 +1810,14 @@ pub const Parser = struct {
             .tilde => .bitwise_not,
             else => .not,
         };
+        // `-2.abs` is (-2).abs, as in Ruby: a minus written against a number makes a negative
+        // literal, and method calls apply to it (it was -(2.abs), so `-1.negative?` negated a
+        // boolean). Only `**` binds tighter: `-2 ** 2` is -(2 ** 2), -4, in Ruby too.
+        if (t == .minus and self.tag(0) == .number and !self.spaceBefore(self.tok_idx)) {
+            var literal = try self.parseExpression(.call);
+            if (self.tag(0) == .star_star) literal = try self.parseBinary(literal);
+            return self.b.unary(.negate, literal, tok_idx) catch ParseError.OutOfMemory;
+        }
         return self.b.unary(op, try self.parseExpression(.unary), tok_idx) catch ParseError.OutOfMemory;
     }
 

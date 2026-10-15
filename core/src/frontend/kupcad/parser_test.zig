@@ -3642,23 +3642,34 @@ test "KupCAD: Default Import for 3D Assets" {
 }
 
 test "KupCAD: Unary Minus vs Method Call Precedence" {
-    const source = "-10.abs";
-    var pt = try KTest.init(source);
-    defer pt.deinit();
-    const tree = &pt.parser.b.tree;
-
-    const stmt_idx = try pt.parser.parseExpression(.none);
-    const stmt = pt.getNode(stmt_idx);
-
-    // Root should be negate (-)
-    try testing.expectEqual(ast.Tag.unary_op, stmt.tag);
-    const unary = tree.unaryExpr(stmt);
-    try testing.expectEqual(ast.UnaryOp.negate, unary.op);
-
-    // Operand should be the method call (10.abs())
-    const operand = pt.getNode(unary.operand);
-    try testing.expectEqual(ast.Tag.method_call, operand.tag);
-    try testing.expectEqualStrings("abs", tree.getString(tree.methodCall(operand).method_name));
+    // As in Ruby, `-10.abs` is (-10).abs: a minus against a number makes a negative literal
+    // (it used to be -(10.abs)). With a space, or on a name, the minus applies last.
+    const cases = [_]struct { src: []const u8, root: ast.Tag }{
+        .{ .src = "-10.abs", .root = .method_call },
+        .{ .src = "- 10.abs", .root = .unary_op },
+        .{ .src = "-x.abs", .root = .unary_op },
+        .{ .src = "-2 ** 2", .root = .unary_op }, // -(2 ** 2), as in Ruby
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        const root = pt.getNode(try pt.parser.parseExpression(.none));
+        try testing.expectEqual(case.root, root.tag);
+        switch (root.tag) {
+            .method_call => {
+                const receiver = pt.getNode(tree.methodCall(root).receiver);
+                try testing.expectEqual(ast.Tag.unary_op, receiver.tag);
+                try testing.expectEqual(ast.Tag.number, pt.getNode(tree.unaryExpr(receiver).operand).tag);
+            },
+            else => try testing.expectEqual(ast.UnaryOp.negate, tree.unaryExpr(root).op),
+        }
+    }
+    var pow = try KTest.init("-2 ** 2");
+    defer pow.deinit();
+    const neg = pow.getNode(try pow.parser.parseExpression(.none));
+    try testing.expectEqual(ast.Tag.binary_op, pow.getNode(pow.parser.b.tree.unaryExpr(neg).operand).tag);
 }
 
 test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
