@@ -6,6 +6,7 @@ const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const diagnostic_report = @import("diagnostic_report.zig");
 const session_mod = @import("../daemon/session.zig");
+const debug = @import("../stdlib/debug.zig");
 const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 
@@ -207,6 +208,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     };
 
     try session.setParams(cli_params.unmanaged);
+    session.vm.debugger_handler = debug.terminalDebugger(io);
 
     // Force exact analytical representations if STEP export is requested
     if (format == .step) {

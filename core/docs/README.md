@@ -366,7 +366,11 @@ benchmark { heavy_csg_operation() }
 GC.collect
 puts(GC.bytes_allocated)
 
+# Stop here and inspect variables (.step, .continue, .locals, .help)
+debugger()
 ```
+
+`puts` and `print` write to stderr. `debugger()` opens an interactive prompt, also on stderr, when `kupcad build` or `kupcad watch` runs from a terminal; anywhere no one could answer it (piped input, the LSP, the viewport, the browser) it does nothing, so a forgotten breakpoint never stalls a build or an editor.
 
 KupCAD also provides non-destructive inline modifiers to alter visibility in the viewport and inject metadata:
 

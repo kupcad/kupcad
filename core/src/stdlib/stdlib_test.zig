@@ -2069,3 +2069,21 @@ test "Stdlib: Sketch transforms stay in the XY plane" {
         .{ .src = comptime rescued("square(2).mirror(0, 0, 1)"), .expected = .{ .str = "ValueError: a Sketch can only mirror across a line in the XY plane, got a normal with z 1" } },
     });
 }
+
+var debugger_opened: usize = 0;
+
+fn countDebuggerOpen(_: *VM) void {
+    debugger_opened += 1;
+}
+
+test "Stdlib: debugger() opens the host's debugger, and does nothing without one" {
+    // Without a handler (the LSP, the viewport) it must not touch stdin or stdout.
+    try testing.expectEqual(.ok, try runScript("debugger()\nr = 1"));
+
+    var vm = try initVm();
+    defer vm.deinit();
+    debugger_opened = 0;
+    vm.debugger_handler = countDebuggerOpen;
+    try testing.expectEqual(.ok, try runOn(&vm, "debugger()\nKernel.debugger\nr = 1"));
+    try testing.expectEqual(@as(usize, 2), debugger_opened);
+}

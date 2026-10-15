@@ -104,6 +104,10 @@ pub const VM = struct {
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
     debugger_step_handler: ?*const fn (vm: *VM) void = null,
+    /// Opens the interactive debugger when a script calls `debugger()`. Null (the default)
+    /// where no one is at a terminal to answer it, such as the LSP, whose stdin and stdout
+    /// carry the protocol: there `debugger()` does nothing.
+    debugger_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
     // Owned copies of the global names defined by bytecode (see defineGlobal); keys

@@ -3,6 +3,7 @@ const Watcher = @import("../daemon/watcher.zig").Watcher;
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
+const debug = @import("../stdlib/debug.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const log_helpers = @import("../log.zig");
 const diagnostic_report = @import("diagnostic_report.zig");
@@ -29,6 +30,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const lease = try manager.acquireSession(file_path);
     defer manager.release(lease);
     const session = lease.session;
+    session.vm.debugger_handler = debug.terminalDebugger(init.io);
 
     const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
         log_helpers.printStderr(init.io, "Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
