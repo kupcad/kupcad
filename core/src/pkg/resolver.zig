@@ -59,12 +59,20 @@ pub const Resolver = struct {
         self.visited.deinit(self.allocator);
     }
 
+    /// Installs the manifest's dependency tree. Returns only once every worker has
+    /// finished, on success and on every error, so none outlives the resolver.
     pub fn resolve(self: *Resolver) !void {
+        // Checked before anything is spawned: an invalid alias used to return from here
+        // while the workers for the aliases before it were still running.
+        var alias_it = self.manifest.dependencies.keyIterator();
+        while (alias_it.next()) |alias| try validate.validateAlias(alias.*);
+
+        // From the first spawn on, an error (out of memory) still waits for the group.
+        errdefer self.group.cancel(self.io);
         var manifest_it = self.manifest.dependencies.iterator();
 
         // Spawn the initial top-level manifest dependencies into the concurrent worker pool
         while (manifest_it.next()) |entry| {
-            try validate.validateAlias(entry.key_ptr.*);
             const alias = try self.allocator.dupe(u8, entry.key_ptr.*);
             const pkg_url = self.allocator.dupe(u8, entry.value_ptr.*) catch |err| {
                 self.allocator.free(alias);

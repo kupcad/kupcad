@@ -365,3 +365,31 @@ test "Resolver: forbidden or malformed transitive deps fail the install" {
         };
     }
 }
+
+test "Resolver: an invalid alias fails before any package is fetched" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "-bad"), try testing.allocator.dupe(u8, "github.com/u/r"));
+    // Valid ones until one comes before "-bad" in iteration order, which the old code
+    // would have spawned before reaching the invalid alias.
+    var ids: [16][]const u8 = undefined;
+    var count: usize = 0;
+    defer for (ids[0..count]) |id| testing.allocator.free(id);
+    while (count < ids.len) {
+        var name_buf: [16]u8 = undefined;
+        ids[count] = try fx.addLocalDep(try std.fmt.bufPrint(&name_buf, "good{d}", .{count}), &SAMPLE_PKG);
+        count += 1;
+        var it = fx.manifest.dependencies.keyIterator();
+        if (!std.mem.eql(u8, it.next().?.*, "-bad")) break;
+    } else return error.TestSetupFailed;
+
+    var resolver = Resolver.init(testing.allocator, testing.io, &fx.cafs, &fx.store, &fx.manifest, &fx.lockfile);
+    defer resolver.deinit();
+    // It used to validate while spawning, returning with "good"'s worker still running
+    // on a resolver about to be freed.
+    try testing.expectError(error.InvalidAlias, resolver.resolve());
+    try testing.expectEqual(@as(u32, 0), resolver.visited.count());
+    try testing.expectEqual(@as(u32, 0), fx.lockfile.packages.count());
+}
