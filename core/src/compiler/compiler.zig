@@ -410,8 +410,11 @@ pub const Compiler = struct {
         const is_upvalue = (try self.resolveUpvalue(name_id)) != null;
         const is_script_global = self.isScriptGlobal(name_id);
 
-        // Check the VM's active runtime memory for REPL
-        const vm_global = self.vm.globals.get(name_str);
+        // What the name means at run time (REPL state included). Module code never sees
+        // the main script's variables: with `size = 10` there, a module's bare `size` was
+        // a variable that read nil, and a `cube = 5` there turned its bare `cube` from a
+        // call into the shadowed builtin itself.
+        const vm_global = if (self.rootModuleNamespace() != null) self.vm.builtinGlobal(name_str) else self.vm.globals.get(name_str);
 
         const is_special_or_const = name_str.len == 0 or
             std.mem.startsWith(u8, name_str, "@") or

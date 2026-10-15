@@ -126,6 +126,9 @@ pub const VM = struct {
     // Everything else in `globals` was registered by the host (builtins, natives), and
     // only those are visible to imported modules.
     script_defined_globals: std.StringHashMapUnmanaged(void) = .empty,
+    /// Paths of the imports in progress, each keyed by its importer's constant, which
+    /// outlives the import (see op_import).
+    loading_modules: std.StringHashMapUnmanaged(void) = .empty,
     // Builtin values the main script shadowed (e.g. `cube = 5`), so modules still see
     // the original builtin rather than the main script's variable.
     shadowed_builtins: std.StringHashMapUnmanaged(value.Value) = .empty,
@@ -308,6 +311,7 @@ pub const VM = struct {
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
         self.script_defined_globals.deinit(self.allocator);
+        self.loading_modules.deinit(self.allocator);
         self.shadowed_builtins.deinit(self.allocator);
         for (self.module_namespaces.items) |ns| {
             ns.deinit(self.allocator);
@@ -893,11 +897,11 @@ pub const VM = struct {
 
                     // 1. Check Module Cache
                     if (self.modules.get(path_str)) |cached_mod| {
-                        if (cached_mod.isNil()) {
-                            if (self.raiseError(.ImportError, "Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
                         self.push(cached_mod);
+                        continue;
+                    }
+                    if (self.loading_modules.contains(path_str)) {
+                        if (self.raiseError(.ImportError, "Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     }
 
@@ -979,15 +983,15 @@ pub const VM = struct {
                     const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
                     _ = self.pop();
 
-                    // --- CIRCULAR DEPENDENCY: Register Sentinel ---
-                    self.cacheModule(path_str, value.Value.initNil()) catch return .runtime_error;
+                    // --- CIRCULAR DEPENDENCY: the import in progress. (A nil in the cache
+                    // used to mark it, so a module whose value is nil, one ending in a def or
+                    // a puts, was "circular" the second time it was imported.)
+                    self.loading_modules.put(self.allocator, path_str, {}) catch return .runtime_error;
+                    defer _ = self.loading_modules.remove(path_str);
 
                     // 6. Execute synchronously
                     const import_depth = self.frames.items.len;
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
-                        // Clean up the sentinel on failure so it can be retried later if caught
-                        self.forgetModule(path_str);
-
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.Unwind) {
                             // Stack unwound by an exception raised inside the module; resume at the handler
@@ -1681,6 +1685,12 @@ pub const VM = struct {
     fn lookupGlobal(self: *VM, frame: *const CallFrame, name: []const u8) ?value.Value {
         const ns = frame.closure.function.namespace orelse return self.globals.get(name);
         if (ns.globals.get(name)) |val| return val;
+        return self.builtinGlobal(name);
+    }
+
+    /// A top-level name as module code sees it: the builtin, also when the main script
+    /// has shadowed it (`cube = 5`), and never the main script's own variables.
+    pub fn builtinGlobal(self: *const VM, name: []const u8) ?value.Value {
         if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.get(name);
         return self.globals.get(name);
     }

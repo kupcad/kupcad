@@ -215,3 +215,32 @@ test "Language: break leaves the method the block was given to, however it got c
         .{ .src = "log = []\ndef m(log)\n  [1, 2].each { |i| yield i }\n  log.push(:after)\nend\nm(log) { |i| log.push(i); break if i == 1 }\nr = log.length", .expected = .{ .num = 1 } },
     });
 }
+
+/// Runs `source` with `files` ({ path, content } pairs) available to `import`; checks `r`.
+fn expectImported(files: []const [2][]const u8, source: []const u8, expected: support.Expected) !void {
+    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    for (files) |file| try mem_vfs.vfs().writeFile(file[0], file[1]);
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+    errdefer std.debug.print("script:\n{s}\n", .{source});
+    try testing.expectEqual(.ok, try support.runOn(&vm, source));
+    try support.expectValue(expected, vm.globals.get("r") orelse return error.MissingGlobal);
+}
+
+test "Language: a module sees builtins, never the importing script's variables" {
+    // The compiler decides whether a bare name is a variable or a call from what the VM
+    // knows; for a module that is the builtins only (what lookupGlobal gives it), not the
+    // main script's `size = 10` or `def plate`, which stay out of reach either way.
+    try expectImported(&.{.{ "lib.kup", "def read\n  size\nend\nexport read" }}, comptime ("size = 10\nimport { read } from \"./lib.kup\"\n" ++ rescued("read")), .{ .str = "NameError: Undefined variable 'size'" });
+    try expectImported(&.{.{ "lib.kup", "def read\n  plate\nend\nexport read" }}, comptime ("def plate\n  1\nend\nimport { read } from \"./lib.kup\"\n" ++ rescued("read")), .{ .str = "NameError: Undefined variable 'plate'" });
+}
+
+test "Language: a module whose value is nil can be imported again" {
+    // A nil in the module cache marked an import in progress, so the second import of a
+    // module ending in an assignment of nil, a def or a puts was a circular dependency.
+    try expectImported(&.{.{ "lib.kup", "x = nil" }}, "import \"./lib.kup\"\nimport \"./lib.kup\"\nr = 1", .{ .num = 1 });
+    try expectImported(&.{ .{ "a.kup", "import \"./b.kup\"\nx = 1\nexport x" }, .{ "b.kup", "import \"./a.kup\"" } }, rescued("import \"./a.kup\""), .{ .str = "ImportError: Circular dependency detected for 'a.kup'" });
+}
