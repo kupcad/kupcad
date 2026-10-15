@@ -51,9 +51,9 @@ pub const ParamOrderRule = struct {
         const is_setter = args.len > 1 or args[0].name != .none;
 
         if (is_setter) {
-            // Warn if defined inside a nested scope (functions, blocks, etc.)
-            // Note: Root scope = 1, Top-level script block = 2, Nested scope > 2
-            if (engine.scopes.items.len > 2) {
+            // Static UI extraction reads the script's own statements, so a definition inside
+            // any body (a def, a block, an if) is out of its reach.
+            if (engine.body_depth > 0) {
                 try engine.addDiagnostic(
                     engine.getLoc(node.main_token),
                     .warning,

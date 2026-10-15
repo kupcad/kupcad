@@ -87,3 +87,39 @@ test "Linter Rule: UnusedVarsRule handles arbitrary nested destructuring in bloc
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'b'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }
+
+test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts as a use" {
+    // Each of these used to report a variable that is read (or is the model).
+    const clean = [_][]const u8{
+        "box = cube(10)\npart = box - cube(2)", // the script's last statement is the model
+        "if ok\n  y = 1\nend\nputs y", // if, while and for bodies open no scope
+        "for i in [1]\nend\nputs i",
+        "n = 0\nwhile n < 1\n  z = 5\n  n += 1\nend\nputs z", // n += 1 reads n
+        "x = 1\nexport x",
+        "def f\n  r = 1\nend\nputs f", // a method's last statement is its result
+        "puts [1].map { |v| w = v * 2 }",
+    };
+    for (clean) |src| {
+        errdefer std.debug.print("source:\n{s}\n", .{src});
+        var engine = try runRule(testing.allocator, src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+    }
+
+    // Still reported: assigned and never read.
+    const unused = [_]struct { src: []const u8, name: []const u8 }{
+        .{ .src = "unused = 1\nputs 2", .name = "unused" },
+        .{ .src = "def f(a)\n  t = a\n  1\nend\nputs f(1)", .name = "t" },
+        .{ .src = "[1].each { |v| q = v\n  puts 1 }", .name = "q" },
+        .{ .src = "if ok\n  y = 1\nend\nputs 2", .name = "y" },
+    };
+    for (unused) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var engine = try runRule(testing.allocator, case.src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+        const expected = try std.fmt.allocPrint(testing.allocator, "Unused variable '{s}'. Prefix with '_' if intentional.", .{case.name});
+        defer testing.allocator.free(expected);
+        try testing.expectEqualStrings(expected, engine.diagnostics.items[0].message);
+    }
+}

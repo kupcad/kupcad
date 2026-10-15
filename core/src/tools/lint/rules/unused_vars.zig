@@ -26,18 +26,39 @@ pub const UnusedVarsRule = struct {
         switch (node.tag) {
             .assignment => {
                 const a = tree.assignment(node);
-                try engine.declareVar(tree.getString(a.name), engine.getLoc(node.main_token));
+                const var_name = tree.getString(a.name);
+                // `n += 1` reads n as well as writing it.
+                if (a.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token));
             },
             .multiple_assignment => {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
-                    try engine.declareVar(tree.getString(lhs.name), engine.getLoc(node.main_token));
+                    const var_name = tree.getString(lhs.name);
+                    if (ma.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token));
+                }
+            },
+            .for_stmt => {
+                // The loop opens no scope: its variables belong to the enclosing one.
+                const fs = tree.forStmt(node);
+                for (tree.getLhsExprs(fs.targets)) |t| {
+                    try engine.declareAssigned(tree.getString(t.name), engine.getLoc(node.main_token));
+                }
+            },
+            .export_stmt => {
+                for (tree.getAliasPairs(tree.exportStmt(node).symbols)) |pair| {
+                    try engine.markUsed(tree.getString(pair.original));
                 }
             },
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 // Function names belong to the scope they are declared in
                 try engine.declareVar(tree.getString(ds.name), engine.getLoc(node.main_token));
+                try markResultUsed(engine, tree, ds.body);
+            },
+            .lambda_expr => try markResultUsed(engine, tree, tree.lambdaExpr(node).body),
+            .block => {
+                // The script's last statement is the model, and a call block's is its value.
+                if (node_idx == engine.root or engine.closure_blocks.contains(node_idx)) try markResultUsed(engine, tree, node_idx);
             },
             .identifier => {
                 try engine.markUsed(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))));
@@ -48,6 +69,21 @@ pub const UnusedVarsRule = struct {
             },
             else => {},
         }
+    }
+
+    /// A body whose last statement is `name = value` hands that value back (the script's
+    /// model, a method's or a block's result), so `name` is used: `part = box - drill` at
+    /// the end of a script was reported unused.
+    fn markResultUsed(engine: *linter.Linter, tree: *const ast.Tree, body_idx: ast.NodeIndex) !void {
+        const body = tree.getNode(body_idx) orelse return;
+        if (body.tag != .block) return;
+        const stmts = tree.getNodes(tree.block(body).stmts);
+        if (stmts.len == 0) return;
+        const last = tree.getNode(stmts[stmts.len - 1]).?;
+        if (last.tag != .assignment) return;
+        const var_name = tree.getString(tree.assignment(last).name);
+        try engine.declareAssigned(var_name, engine.getLoc(last.main_token));
+        try engine.markUsed(var_name);
     }
 
     fn declareLhsBindings(engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
@@ -88,12 +124,6 @@ pub const UnusedVarsRule = struct {
 
         // Variables declared here belong specifically to the newly pushed inner scope
         switch (node.tag) {
-            .for_stmt => {
-                const fs = tree.forStmt(node);
-                for (tree.getLhsExprs(fs.targets)) |t| {
-                    try engine.declareVar(tree.getString(t.name), engine.getLoc(node.main_token));
-                }
-            },
             .def_stmt => {
                 const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |p| {

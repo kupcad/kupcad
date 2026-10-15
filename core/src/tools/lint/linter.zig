@@ -45,24 +45,26 @@ pub const Scope = struct {
     }
 };
 
-pub fn isScopeNode(tag: ast.Tag) bool {
-    return switch (tag) {
-        .block, .lambda_expr, .for_stmt, .while_stmt, .def_stmt, .class_stmt, .module_stmt => true,
-        else => false,
-    };
-}
-
 const LintContext = struct {
     linter: *Linter,
 
     pub fn enterNode(self: *LintContext, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx).?;
 
+        // A call's block is a scope; an `if` or `while` body, also a block, is not.
+        const call_block: ast.NodeIndex = switch (node.tag) {
+            .method_call => tree.methodCall(node).block,
+            .super_call => tree.superCall(node).block,
+            else => .none,
+        };
+        if (call_block != .none) try self.linter.closure_blocks.put(self.linter.allocator, call_block, {});
+        if (node.tag == .block and node_idx != self.linter.root) self.linter.body_depth += 1;
+
         // 1. Trigger general lint rules
         for (self.linter.rules.items) |rule| try rule.checkNode(self.linter, tree, node_idx);
 
         // 2. Open a new scope if we entered a block or function
-        if (isScopeNode(node.tag)) {
+        if (self.linter.opensScope(node.tag, node_idx)) {
             try self.linter.pushScope();
             for (self.linter.rules.items) |rule| try rule.enterScope(self.linter, tree, node_idx);
         }
@@ -72,8 +74,12 @@ const LintContext = struct {
         const node = tree.getNode(node_idx).?;
 
         // Close the scope now that all children have been traversed
-        if (isScopeNode(node.tag)) {
+        if (self.linter.opensScope(node.tag, node_idx)) {
             try self.linter.popScope();
+        }
+        if (node.tag == .block) {
+            _ = self.linter.closure_blocks.remove(node_idx);
+            if (node_idx != self.linter.root) self.linter.body_depth -= 1;
         }
     }
 };
@@ -84,6 +90,13 @@ pub const Linter = struct {
     diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
     rules: std.ArrayListUnmanaged(LintRule) = .empty,
     scopes: std.ArrayListUnmanaged(Scope) = .empty,
+    /// The blocks given to calls being walked: those open a scope, other blocks don't.
+    closure_blocks: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
+    /// How many bodies (def, block, if, while, ...) enclose the node being checked; 0 for a
+    /// statement of the script itself. Unlike `scopes`, every body counts.
+    body_depth: usize = 0,
+    /// The script's own block, as passed to `check`.
+    root: ast.NodeIndex = .none,
 
     // Token location lookup
     token_starts: []const u32 = &.{},
@@ -107,6 +120,7 @@ pub const Linter = struct {
     pub fn deinit(self: *Linter) void {
         for (self.scopes.items) |*s| s.deinit(self.allocator);
         self.scopes.deinit(self.allocator);
+        self.closure_blocks.deinit(self.allocator);
         self.rules.deinit(self.allocator);
         for (self.diagnostics.items) |d| self.allocator.free(d.message);
         self.diagnostics.deinit(self.allocator);
@@ -156,6 +170,27 @@ pub const Linter = struct {
         self.scopes.items.len -= 1;
     }
 
+    /// Whether the node opens a variable scope. These match the language: a def, lambda,
+    /// call block, class or module body; not an `if`, `while` or `for` body, whose
+    /// variables stay after it (they used to be reported unused when read afterwards).
+    pub fn opensScope(self: *const Linter, tag: ast.Tag, node_idx: ast.NodeIndex) bool {
+        return switch (tag) {
+            .def_stmt, .lambda_expr, .class_stmt, .module_stmt, .singleton_class => true,
+            .block => self.closure_blocks.contains(node_idx),
+            else => false,
+        };
+    }
+
+    /// Declares a variable an assignment binds, unless an enclosing scope already has it:
+    /// then the assignment writes that one (`n = 0; while ... n = n + 1`).
+    pub fn declareAssigned(self: *Linter, name: []const u8, loc: token.Location) !void {
+        for (self.scopes.items) |*scope| {
+            if (scope.declared_vars.contains(name)) return;
+        }
+        try self.declareVar(name, loc);
+    }
+
+    /// Declares a new binding in the innermost scope (a parameter, a method name).
     pub fn declareVar(self: *Linter, name: []const u8, loc: token.Location) !void {
         if (self.scopes.items.len > 0) {
             const scope = &self.scopes.items[self.scopes.items.len - 1];
@@ -188,6 +223,7 @@ pub const Linter = struct {
         }
 
         if (root == .none) return;
+        self.root = root;
 
         // Establish the global scope
         try self.pushScope();

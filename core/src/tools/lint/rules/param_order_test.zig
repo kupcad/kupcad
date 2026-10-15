@@ -60,3 +60,9 @@ test "Linter Rule: ParamOrderRule passes on clean top-level definitions" {
 
     try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
 }
+
+test "Linter Rule: ParamOrderRule warns on a definition in any body, an if's included" {
+    var engine = try runRule(testing.allocator, "if ok\n  param(:height, default: 10)\nend");
+    defer engine.deinit();
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+}
