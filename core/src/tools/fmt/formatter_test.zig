@@ -617,9 +617,9 @@ test "Formatter: comments above end or else stay inside their block" {
     );
 }
 
-test "Formatter: comments stay with the list row or call they follow, and move after an operator" {
-    // A list the author broke keeps its rows, so the comments stay on theirs (they used
-    // to move after the statement). An operator isn't broken, so a comment inside one does.
+test "Formatter: comments stay with the list row, call or operator line they follow" {
+    // A list the author broke keeps its rows, and an operator expression its lines, so the
+    // comments stay on theirs (they used to move after the statement).
     try expectStableFormat(
         \\pts = [
         \\  1, # first
@@ -635,7 +635,9 @@ test "Formatter: comments stay with the list row or call they follow, and move a
         \\  # own line
         \\  2,
         \\]
-        \\total = 1 + 2 # why two
+        \\total = 1 +
+        \\  # why two
+        \\  2
         \\
     );
 }
@@ -862,6 +864,40 @@ test "Formatter: a long last list argument opens up in place" {
         \\  "Bounds:",
         \\  [a, b],
         \\)
+        \\
+    );
+}
+
+test "Formatter: an operator expression keeps the author's line breaks" {
+    // The names are variables: an unknown `first_part +` followed by `second_part`
+    // would be a call, first_part(+second_part), as in Ruby.
+    try expectStableFormat(
+        \\first_part = 1
+        \\second_part = 2
+        \\third_part = 3
+        \\wide = first_part +
+        \\  second_part + # middle
+        \\  third_part
+        \\body = cube(10) -
+        \\  cylinder(r: 2, h: 20).translate(
+        \\    1,
+        \\    2,
+        \\  )
+        \\flat = a + b
+        \\
+    ,
+        \\first_part = 1
+        \\second_part = 2
+        \\third_part = 3
+        \\wide = first_part +
+        \\  second_part + # middle
+        \\  third_part
+        \\body = cube(10) -
+        \\  cylinder(r: 2, h: 20).translate(
+        \\    1,
+        \\    2,
+        \\  )
+        \\flat = a + b
         \\
     );
 }

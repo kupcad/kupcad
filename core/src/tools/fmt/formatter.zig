@@ -954,7 +954,25 @@ pub const Formatter = struct {
         try self.formatOperand(tree, b.left, if (right_assoc) prec.tighter() else prec);
         try self.out.append(self.allocator, ' ');
         try self.out.appendSlice(self.allocator, getBinaryOpStr(b.op));
-        try self.out.append(self.allocator, ' ');
+
+        // A line ends after the operator where the author ended it (a line can't start with
+        // one), with the comments there kept: they used to move after the statement.
+        const op_line = self.lastLine(tree, b.left);
+        const right_line = self.lineOf(token_span.first(tree, b.right));
+        const broken = right_line > op_line;
+        if (broken) {
+            try self.flushTrailingComments(op_line, op_line);
+            try self.ensureNewline();
+            self.indent_level += 1;
+            try self.flushCommentsBefore(right_line, op_line, false);
+            try self.writeIndent();
+        } else {
+            try self.out.append(self.allocator, ' ');
+        }
+        // The continuation indent holds for all of the right operand, however many lines.
+        defer if (broken) {
+            self.indent_level -= 1;
+        };
         try self.formatOperand(tree, b.right, if (right_assoc) prec else prec.tighter());
     }
 
