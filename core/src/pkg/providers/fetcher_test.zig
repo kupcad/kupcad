@@ -8,7 +8,8 @@ test "Fetcher: commitApiUrl dispatches per provider and never uses the ref as a 
     const cases = [_]struct { spec: []const u8, url: []const u8 }{
         .{ .spec = "github.com/u/r@main", .url = "https://api.github.com/repos/u/r/commits/main" },
         .{ .spec = "gitlab.com/u/r@v1.0", .url = "https://gitlab.com/api/v4/projects/u%2Fr/repository/commits/v1.0" },
-        .{ .spec = "git.example.org/u/r@main", .url = "https://git.example.org/api/v1/repos/u/r/commits/main" },
+        .{ .spec = "gitea:git.example.org/u/r@main", .url = "https://git.example.org/api/v1/repos/u/r/commits/main" },
+        .{ .spec = "gitlab:git.example.org/u/r@main", .url = "https://git.example.org/api/v4/projects/u%2Fr/repository/commits/main" },
     };
     for (cases) |c| {
         const url = try Fetcher.commitApiUrl(testing.allocator, try ParsedPackage.parse(c.spec));

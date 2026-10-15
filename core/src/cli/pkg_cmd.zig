@@ -6,7 +6,8 @@ const Resolver = @import("../pkg/resolver.zig").Resolver;
 const Cafs = @import("../pkg/cafs.zig").Cafs;
 const Store = @import("../pkg/store.zig").Store;
 const GC = @import("../pkg/gc.zig").GarbageCollector;
-const ParsedPackage = @import("../pkg/providers/provider.zig").ParsedPackage;
+const provider = @import("../pkg/providers/provider.zig");
+const ParsedPackage = provider.ParsedPackage;
 const paths = @import("../pkg/paths.zig");
 const log_helpers = @import("../log.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
@@ -124,8 +125,8 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         };
 
         // Eagerly validate the URL and print the detected SemVer constraint
-        const parsed = ParsedPackage.parse(url) catch {
-            log_helpers.printStderr(init.io, "Error: Invalid package URL format '{s}'\n", .{url});
+        const parsed = ParsedPackage.parse(url) catch |err| {
+            log_helpers.printStderr(init.io, "Error: Invalid package URL '{s}': {s}\n", .{ url, provider.describeParseError(err) });
             return .failure;
         };
 

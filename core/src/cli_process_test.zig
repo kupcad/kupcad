@@ -251,6 +251,12 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     const after = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(after);
     try testing.expectEqualStrings(before, after);
+
+    // A self-hosted server must say which API it speaks; it used to be taken for Gitea.
+    const unknown = try kupcadIn(sb.path, &.{ "pkg", "add", "parts=git.example.com/team/parts" }, &env);
+    defer unknown.deinit();
+    try testing.expectEqual(@as(u8, 1), unknown.code);
+    try testing.expect(std.mem.indexOf(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
 test "kupcad: check --fix rewrites what it can fix and reports the rest" {

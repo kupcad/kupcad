@@ -338,8 +338,11 @@ test "Resolver: forbidden or malformed transitive deps fail the install" {
         \\{"dependencies":{"x":"file:/etc/passwd"}}
         , .err = error.ForbiddenTransitiveDependency },
         .{ .manifest =
-        \\{"dependencies":{"x":"127.0.0.1/u/r"}}
+        \\{"dependencies":{"x":"gitea:127.0.0.1/u/r"}}
         , .err = error.ForbiddenTransitiveDependency },
+        .{ .manifest =
+        \\{"dependencies":{"x":"127.0.0.1/u/r"}}
+        , .err = error.UnknownPackageHost },
         // Alias from an untrusted kupcad.json is used as a symlink name
         .{ .manifest =
         \\{"dependencies":{"../../../../evil":"github.com/a/b"}}

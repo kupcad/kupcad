@@ -402,6 +402,7 @@ KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache
 ### Packages (`kupcad pkg`)
 
 * The global store (`~/.kupcad`, or `KUPCAD_HOME`) is shared by every project and every `kupcad` process: a write to its index waits up to 5 seconds for another process's lock rather than failing with "database is locked".
+* A dependency is `<host>/<user>/<repo>[@ref]` on github.com, gitlab.com, codeberg.org or gitea.com. A self-hosted server is written with the API it speaks, `gitlab:git.example.com/team/parts` or `gitea:git.example.com/team/parts`, since its name doesn't tell; an unknown host without one is an error (it used to be taken for Gitea). `file:<path>` and an `http(s)://` URL of a `.tar.gz` name an archive directly.
 * `kupcad pkg add <alias>=<url>` writes the dependency to `kupcad.json` only once it has installed and linked: a failed `add` leaves the project as it was.
 
 ```ruby

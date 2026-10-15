@@ -17,7 +17,7 @@ test "Validate: transitive deps may only reference public git hosts" {
     for (allowed) |spec| try testing.expect((try ParsedPackage.parse(spec)).isAllowedTransitive());
 
     const forbidden = [_][]const u8{
-        "127.0.0.1/u/r", "localhost/u/r", "2130706433/u/r", "file:/etc/passwd", "https://evil.example/p.tar.gz",
+        "gitea:127.0.0.1/u/r", "gitea:localhost/u/r", "gitlab:2130706433/u/r", "file:/etc/passwd", "https://evil.example/p.tar.gz",
     };
     for (forbidden) |spec| {
         testing.expect(!(try ParsedPackage.parse(spec)).isAllowedTransitive()) catch |err| {
@@ -42,4 +42,22 @@ test "Validate: validateAlias restricts dependency aliases to a safe charset" {
             return err;
         };
     }
+}
+
+test "Validate: a self-hosted git server says which API it speaks" {
+    // Unknown hosts used to be taken for Gitea, so a self-hosted GitLab got Gitea API calls.
+    try testing.expectError(error.UnknownPackageHost, ParsedPackage.parse("git.example.com/team/parts"));
+    try testing.expectEqual(.gitlab, (try ParsedPackage.parse("gitlab:git.example.com/team/parts@v1")).provider);
+    try testing.expectEqual(.gitea, (try ParsedPackage.parse("gitea:git.example.com/team/parts")).provider);
+    try testing.expectEqual(.gitea, (try ParsedPackage.parse("codeberg.org/team/parts")).provider);
+    // A prefix that contradicts a known host is a mistake, not an override.
+    try testing.expectError(error.ProviderMismatch, ParsedPackage.parse("gitea:github.com/team/parts"));
+    try testing.expectEqual(.github, (try ParsedPackage.parse("github.com/team/parts")).provider);
+
+    // The prefixed and the bare form of one package are the same package.
+    const a = try (try ParsedPackage.parse("gitlab:gitlab.com/team/parts")).pkgId(testing.allocator);
+    defer testing.allocator.free(a);
+    const b = try (try ParsedPackage.parse("gitlab.com/team/parts")).pkgId(testing.allocator);
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings(a, b);
 }

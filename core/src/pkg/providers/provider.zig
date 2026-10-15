@@ -5,6 +5,21 @@ const validate = @import("../validate.zig");
 /// Length of the hex digest prefix used to derive ids for URL/path based packages.
 const URL_ID_HEX_LEN = 16;
 
+/// The public git hosts a bare `host/user/repo` may name, and the API each speaks.
+const KNOWN_HOSTS = [_]struct { []const u8, ProviderType }{
+    .{ "github.com", .github },
+    .{ "gitlab.com", .gitlab },
+    .{ "codeberg.org", .gitea },
+    .{ "gitea.com", .gitea },
+};
+
+/// What a self-hosted git server is written with to say which API it speaks
+/// (`gitlab:git.example.com/team/parts`): its API can't be told from its name.
+const HOST_PREFIXES = [_]struct { []const u8, ProviderType }{
+    .{ "gitlab:", .gitlab },
+    .{ "gitea:", .gitea },
+};
+
 pub const ProviderType = enum {
     github,
     gitlab,
@@ -44,13 +59,22 @@ pub const ParsedPackage = struct {
             return .{ .provider = .http, .domain = "", .user = "", .repo = requested_url, .ref = "" };
         }
 
-        var base_url = requested_url;
+        var spec = requested_url;
+        var declared: ?ProviderType = null;
+        for (HOST_PREFIXES) |prefix| {
+            if (std.mem.startsWith(u8, spec, prefix[0])) {
+                spec = spec[prefix[0].len..];
+                declared = prefix[1];
+            }
+        }
+
+        var base_url = spec;
         var ref: []const u8 = "main";
         var constraint: ?semver.Constraint = null;
 
-        if (std.mem.indexOfScalar(u8, requested_url, '@')) |idx| {
-            base_url = requested_url[0..idx];
-            ref = requested_url[idx + 1 ..];
+        if (std.mem.indexOfScalar(u8, spec, '@')) |idx| {
+            base_url = spec[0..idx];
+            ref = spec[idx + 1 ..];
 
             // Attempt to parse the reference as a strict SemVer constraint
             if (semver.Constraint.parse(ref)) |parsed| {
@@ -71,14 +95,7 @@ pub const ParsedPackage = struct {
         // query string or path traversal.
         try validate.validateRef(ref);
 
-        const provider_type: ProviderType = if (std.mem.eql(u8, domain, "github.com"))
-            .github
-        else if (std.mem.eql(u8, domain, "gitlab.com"))
-            .gitlab
-        else if (std.mem.eql(u8, domain, "codeberg.org"))
-            .gitea
-        else
-            .gitea;
+        const provider_type = try providerFor(domain, declared);
 
         return .{
             .provider = provider_type,
@@ -110,6 +127,28 @@ pub const ParsedPackage = struct {
         return validate.isPublicRegistryHost(self.domain);
     }
 };
+
+/// What is wrong with a specifier `ParsedPackage.parse` rejected, for a person.
+pub fn describeParseError(err: anyerror) []const u8 {
+    return switch (err) {
+        error.UnknownPackageHost => "unknown git host; for a self-hosted server write gitlab:<host>/<user>/<repo> or gitea:<host>/<user>/<repo>",
+        error.ProviderMismatch => "the prefix names another API than that host's",
+        error.InvalidHost => "the host must be a plain name such as github.com (no port, no IP address)",
+        error.InvalidRef => "the part after @ must be a branch, tag, commit or version",
+        else => "expected <host>/<user>/<repo>[@ref], file:<path>, or an http(s) URL of a .tar.gz",
+    };
+}
+
+/// The API `domain` speaks: a known host's, or the one its prefix declares. Unknown hosts
+/// were taken for Gitea, so a self-hosted GitLab failed with a puzzling 404.
+fn providerFor(domain: []const u8, declared: ?ProviderType) !ProviderType {
+    for (KNOWN_HOSTS) |known| {
+        if (!std.ascii.eqlIgnoreCase(known[0], domain)) continue;
+        if (declared) |d| if (d != known[1]) return error.ProviderMismatch;
+        return known[1];
+    }
+    return declared orelse error.UnknownPackageHost;
+}
 
 /// Direct archive URLs must be absolute http(s) URLs with a plain hostname.
 fn validateArchiveUrl(url: []const u8) !void {
