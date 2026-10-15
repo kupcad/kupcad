@@ -82,21 +82,19 @@ benchmark("Total Generation Time") do
   interference_zone = cylinder(d: 40, h: 50).center("XY").align(hex_mount, "Z", "center").ghost
   sensor_node = sphere(r: 1.5).align(flat_bumper, "X", "min", "max").center("YZ").highlight
 
-  drone_arm_assembly = assemble(
-    name: "DroneArm",
-    parts: [final_part, interference_zone, sensor_node],
-  )
+  drone_arm_assembly = assemble(name: "DroneArm", parts: [
+    final_part,
+    interference_zone,
+    sensor_node,
+  ])
 
   # --- 11. Spatial Inspection API ---
   puts("--- Drone Arm Diagnostics ---")
-  inspect(
-    "Bounds (X, Y, Z):",
-    [
-      final_part.bbox.x_size.round(2),
-      final_part.bbox.y_size.round(2),
-      final_part.bbox.z_size.round(2),
-    ],
-  )
+  inspect("Bounds (X, Y, Z):", [
+    final_part.bbox.x_size.round(2),
+    final_part.bbox.y_size.round(2),
+    final_part.bbox.z_size.round(2),
+  ])
   inspect("Total Volume:", final_part.volume.round(1))
   inspect("Surface Area:", final_part.surface_area.round(1))
   inspect("Topology Holes (Genus):", final_part.genus)

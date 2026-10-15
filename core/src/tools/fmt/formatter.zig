@@ -454,6 +454,9 @@ pub const Formatter = struct {
         close: []const u8,
         /// A space inside the brackets on one line: `{ a: 1 }`.
         padded: bool = false,
+        /// A last item that is a list or a lambda may open up in place instead of moving to
+        /// its own line: `inspect("Bounds:", [` ... `])` (call arguments, as Prettier does).
+        hug_last: bool = false,
     };
 
     fn arrayItems(self: *Formatter, tree: *const ast.Tree, elements: []const ast.NodeIndex) Error![]ListItem {
@@ -507,6 +510,7 @@ pub const Formatter = struct {
             }
 
             fn broken(l: @This(), f: *Formatter) Error!void {
+                if (l.shape.hug_last and !l.author_rows and try l.hugged(f)) return;
                 try f.out.appendSlice(f.allocator, l.shape.open);
                 f.indent_level += 1;
                 var prev_line: ?u32 = null;
@@ -535,6 +539,51 @@ pub const Formatter = struct {
                 if (l.close_token) |close| try f.flushCommentsBefore(f.lineOf(close), prev_line, false);
                 try f.writeIndent();
                 try f.out.appendSlice(f.allocator, l.shape.close);
+            }
+
+            /// The items before the last on the opening line, and the last opening up there.
+            /// False (and nothing written) when they don't fit, or the last would stay on one
+            /// line anyway, so hugging saves nothing.
+            fn hugged(l: @This(), f: *Formatter) Error!bool {
+                const last = l.items[l.items.len - 1];
+                if (!huggable(l.tree, last)) return false;
+                const mark = f.out.items.len;
+                const comment_mark = f.comment_idx;
+                try f.out.appendSlice(f.allocator, l.shape.open);
+                f.flat = true;
+                for (l.items[0 .. l.items.len - 1]) |item| {
+                    f.formatListItem(l.tree, item) catch |err| {
+                        f.flat = false;
+                        return err;
+                    };
+                    try f.out.appendSlice(f.allocator, ", ");
+                }
+                f.flat = false;
+                const prefix_fits = std.mem.indexOfScalar(u8, f.out.items[mark..], '\n') == null and f.column() < f.config.line_width;
+                if (prefix_fits) {
+                    const last_start = f.out.items.len;
+                    try f.formatListItem(l.tree, last);
+                    if (std.mem.indexOfScalar(u8, f.out.items[last_start..], '\n') != null) {
+                        try f.out.appendSlice(f.allocator, l.shape.close);
+                        return true;
+                    }
+                }
+                f.out.shrinkRetainingCapacity(mark);
+                f.comment_idx = comment_mark;
+                return false;
+            }
+
+            fn huggable(t: *const ast.Tree, item: ListItem) bool {
+                const value = switch (item.value) {
+                    .arg => |arg| if (arg.modifier == null) arg.value else return false,
+                    .element => |e| e,
+                    .entry => return false,
+                };
+                const node = t.getNode(value) orelse return false;
+                return switch (node.tag) {
+                    .array_literal, .hash_literal, .lambda_expr => true,
+                    else => false,
+                };
             }
         };
         const broke = self.authorBroke(items, open_token);
@@ -589,7 +638,7 @@ pub const Formatter = struct {
     fn formatArgs(self: *Formatter, tree: *const ast.Tree, args: []const ast.NamedArg, close_token: ?u32) Error!void {
         const items = try self.argItems(tree, args);
         defer self.allocator.free(items);
-        try self.formatList(tree, items, .{ .open = "(", .close = ")" }, items[0].first -| 1, close_token);
+        try self.formatList(tree, items, .{ .open = "(", .close = ")", .hug_last = true }, items[0].first -| 1, close_token);
     }
 
     fn formatIfStmt(self: *Formatter, tree: *const ast.Tree, ifs: ast.IfStmt, start_line: u32) Error!void {

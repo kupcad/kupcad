@@ -836,3 +836,32 @@ test "Formatter: a brace block stays a brace block, on one line when it fits" {
         \\
     );
 }
+
+test "Formatter: a long last list argument opens up in place" {
+    // It used to move to a line of its own, nested a level deeper.
+    try expectStableFormat(
+        \\inspect("Bounds (X, Y, Z):", [final_part.bbox.x_size.round(2), final_part.bbox.y_size.round(2), final_part.bbox.z_size.round(2)])
+        \\
+    ,
+        \\inspect("Bounds (X, Y, Z):", [
+        \\  final_part.bbox.x_size.round(2),
+        \\  final_part.bbox.y_size.round(2),
+        \\  final_part.bbox.z_size.round(2),
+        \\])
+        \\
+    );
+    // Arguments the author broke over lines stay one per line.
+    try expectStableFormat(
+        \\inspect(
+        \\  "Bounds:",
+        \\  [a, b],
+        \\)
+        \\
+    ,
+        \\inspect(
+        \\  "Bounds:",
+        \\  [a, b],
+        \\)
+        \\
+    );
+}
