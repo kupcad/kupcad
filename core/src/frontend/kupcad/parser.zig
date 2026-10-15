@@ -1164,7 +1164,7 @@ pub const Parser = struct {
 
         const suffix = try self.parseCallSuffix();
 
-        return self.b.methodCall(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), suffix.args, suffix.block, is_safe, suffix.end_token, rec_main_token) catch ParseError.OutOfMemory;
+        return self.b.methodCallAt(receiver, try self.b.intern(self.tokens.lexeme(self.source, method_idx)), suffix.args, suffix.block, is_safe, suffix.end_token, rec_main_token, method_idx) catch ParseError.OutOfMemory;
     }
 
     fn parseIdentifierOrCall(self: *Parser) ParseError!ast.NodeIndex {
@@ -1870,9 +1870,10 @@ pub const Parser = struct {
         const s_len = self.scratch_hash_entries.items.len;
         defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);
         const entries = try self.parseCommaSeparated(ast.HashEntry, &self.scratch_hash_entries, parseHashEntry, .r_brace);
+        const end_tok = self.tok_idx;
         _ = try self.expect(.r_brace);
         const span = try self.b.addHashEntries(entries);
-        return self.b.hashLiteral(span, start_tok) catch ParseError.OutOfMemory;
+        return self.b.hashLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseBlockParam(self: *Parser) ParseError!ast.NodeIndex {
@@ -1915,7 +1916,7 @@ pub const Parser = struct {
                     self.scratch_hash_entries.append(self.allocator, .{ .key = sym_node, .value = default_val }) catch return ParseError.OutOfMemory;
 
                     const span = try self.b.addHashEntries(self.scratch_hash_entries.items[s_len..]);
-                    return self.b.hashLiteral(span, ident_tok) catch ParseError.OutOfMemory;
+                    return self.b.hashLiteral(span, self.tok_idx - 1, ident_tok) catch ParseError.OutOfMemory;
                 }
                 // Keyword without default: a:
                 return self.b.createNode(.symbol, ident_tok, @backingInt(name_id)) catch return ParseError.OutOfMemory;

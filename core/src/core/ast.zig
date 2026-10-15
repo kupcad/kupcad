@@ -201,6 +201,9 @@ pub const MethodCall = struct {
     block: NodeIndex = .none,
     is_safe: bool = false,
     end_token: u32 = 0,
+    /// The token of the method's name: after the `.` for a call on a receiver (whose main
+    /// token is the receiver's), so the formatter can tell where the author broke a chain.
+    name_token: u32 = 0,
 };
 
 pub const SuperCall = struct {
@@ -546,6 +549,7 @@ pub const Tree = struct {
             .block = @fromBackingInt(self.extra_data.items[base + 4]),
             .is_safe = self.extra_data.items[base + 5] != 0,
             .end_token = self.extra_data.items[base + 6],
+            .name_token = self.extra_data.items[base + 7],
         };
     }
 
@@ -679,6 +683,11 @@ pub const Tree = struct {
             .stmts = .{ .start = self.extra_data.items[base + 2], .end = self.extra_data.items[base + 3] },
             .end_token = self.extra_data.items[base + 4],
         };
+    }
+
+    /// The `}` that closes a hash literal (its entries are `nodeSpan`).
+    pub fn hashEndToken(self: *const Tree, node: *const Node) u32 {
+        return self.extra_data.items[node.data + 2];
     }
 
     pub fn arrayLiteral(self: *const Tree, node: *const Node) ArrayLiteral {
@@ -1069,7 +1078,12 @@ pub const Builder = struct {
     }
 
     pub fn methodCall(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, end_token: u32, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe, end_token });
+        return self.methodCallAt(receiver, name, args, block_idx, is_safe, end_token, main_token, main_token);
+    }
+
+    /// `methodCall` for a call whose name isn't at its main token (`a.b`).
+    pub fn methodCallAt(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, end_token: u32, main_token: u24, name_token: u32) !NodeIndex {
+        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe, end_token, name_token });
         return self.createNode(.method_call, main_token, data_idx);
     }
 
@@ -1163,8 +1177,8 @@ pub const Builder = struct {
         return self.createNode(.singleton_class, main_token, data_idx);
     }
 
-    pub fn hashLiteral(self: *Builder, entries: Span, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{entries});
+    pub fn hashLiteral(self: *Builder, entries: Span, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ entries, end_token });
         return self.createNode(.hash_literal, main_token, data_idx);
     }
 

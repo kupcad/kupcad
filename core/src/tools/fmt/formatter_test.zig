@@ -67,15 +67,43 @@ test "Formatter: Empty Collections" {
     try expectFormat(source, expected);
 }
 
-test "Formatter: Multi-line fluent method chains" {
-    const source = "part = Box.new(10, 20).chamfer(2).translate(z: 5)";
-    const expected =
-        \\part = Box.new(10, 20)
+test "Formatter: a chain stays on one line when it fits, and breaks a call per line when not" {
+    // Every chain used to be broken, `cube(10).translate(1, 2, 3)` included.
+    try expectStableFormat("part = Box.new(10, 20).chamfer(2).translate(z: 5)\n", "part = Box.new(10, 20).chamfer(2).translate(z: 5)\n");
+    try expectStableFormat("a = cube(10).translate(1, 2, 3)\n", "a = cube(10).translate(1, 2, 3)\n");
+    // Too long: a call per line, the first staying with a bare name.
+    try expectStableFormat(
+        \\bracket = Box.new(width: 120, depth: 40).chamfer(2).translate(x: 10, y: 20, z: 30).rotate(z: 45).mirror(1, 0, 0)
+    ,
+        \\bracket = Box.new(width: 120, depth: 40)
         \\  .chamfer(2)
-        \\  .translate(z: 5)
+        \\  .translate(x: 10, y: 20, z: 30)
+        \\  .rotate(z: 45)
+        \\  .mirror(1, 0, 0)
         \\
-    ;
-    try expectFormat(source, expected);
+    );
+    // Broken by the author: kept as written, calls on one line together.
+    try expectStableFormat(
+        \\part = cube(10).center
+        \\  .translate(1, 2, 3).rotate(z: 5)
+        \\  .mirror(1, 0, 0)
+    ,
+        \\part = cube(10).center
+        \\  .translate(1, 2, 3).rotate(z: 5)
+        \\  .mirror(1, 0, 0)
+        \\
+    );
+    // One call that won't fit breaks its arguments instead of the chain.
+    try expectStableFormat(
+        \\plate = cube(10).translate(x: plate_offset_from_origin, y: other_plate_offset, z: vertical_plate_offset_value)
+    ,
+        \\plate = cube(10).translate(
+        \\  x: plate_offset_from_origin,
+        \\  y: other_plate_offset,
+        \\  z: vertical_plate_offset_value,
+        \\)
+        \\
+    );
 }
 
 test "Formatter: Control flow block indentation" {
@@ -542,8 +570,8 @@ test "Formatter: keeps one blank line where the source had any, never at the sta
 }
 
 test "Formatter: a comment trailing any line of a statement stays with it" {
-    // A chain is laid out over new lines, and the comment used to move below it on the
-    // next run; one inside the chain was written mid-call: `.rotate(z: # note` / `5)`.
+    // The comment used to move below the chain on the next run, then to its last call; one
+    // inside the chain was written mid-call: `.rotate(z: # note` / `5)`.
     try expectStableFormat(
         \\hole = circle(d: 12).translate(22, 17.5) # moved
         \\chain = cube(1)
@@ -551,11 +579,10 @@ test "Formatter: a comment trailing any line of a statement stays with it" {
         \\  .rotate(z: 5)
         \\last = 1 # same line
     ,
-        \\hole = circle(d: 12)
-        \\  .translate(22, 17.5) # moved
+        \\hole = circle(d: 12).translate(22, 17.5) # moved
         \\chain = cube(1)
-        \\  .translate(1, 2, 3)
-        \\  .rotate(z: 5) # on line two
+        \\  .translate(1, 2, 3) # on line two
+        \\  .rotate(z: 5)
         \\last = 1 # same line
         \\
     );
@@ -590,7 +617,9 @@ test "Formatter: comments above end or else stay inside their block" {
     );
 }
 
-test "Formatter: comments inside an expression move after it, never into it" {
+test "Formatter: comments stay with the list row or call they follow, and move after an operator" {
+    // A list the author broke keeps its rows, so the comments stay on theirs (they used
+    // to move after the statement). An operator isn't broken, so a comment inside one does.
     try expectStableFormat(
         \\pts = [
         \\  1, # first
@@ -601,9 +630,47 @@ test "Formatter: comments inside an expression move after it, never into it" {
         \\  # why two
         \\  2
     ,
-        \\pts = [1, 2] # first
-        \\# own line
+        \\pts = [
+        \\  1, # first
+        \\  # own line
+        \\  2,
+        \\]
         \\total = 1 + 2 # why two
+        \\
+    );
+}
+
+test "Formatter: a list the author broke keeps its rows; one too long goes an item per line" {
+    // A matrix written in rows used to be flattened into one line.
+    try expectStableFormat(
+        \\m = [
+        \\  1.0, 0.0, 0.0,
+        \\  0.0, 1.0, 0.0,
+        \\  0.0, 0.0, 10.0
+        \\]
+        \\opts = { a: 1,
+        \\  b: 2 }
+        \\short = [1, 2, 3]
+        \\long = [first_value_name, second_value_name, third_value_name, fourth_value_name, fifth_value_name, sixth]
+    ,
+        \\m = [
+        \\  1.0, 0.0, 0.0,
+        \\  0.0, 1.0, 0.0,
+        \\  0.0, 0.0, 10.0,
+        \\]
+        \\opts = {
+        \\  a: 1,
+        \\  b: 2,
+        \\}
+        \\short = [1, 2, 3]
+        \\long = [
+        \\  first_value_name,
+        \\  second_value_name,
+        \\  third_value_name,
+        \\  fourth_value_name,
+        \\  fifth_value_name,
+        \\  sixth,
+        \\]
         \\
     );
 }
@@ -649,4 +716,46 @@ test "Formatter: keeps the parentheses the author wrote, and adds the ones the m
         \\g = cube(10)
         \\
     );
+}
+
+test "Formatter: comments between and after the calls of a chain stay there" {
+    try expectStableFormat(
+        \\part = cube(10)
+        \\  # centre it first
+        \\  .center
+        \\  .translate(0, 0, 5) # lift
+        \\  .rotate(z: 45)
+        \\
+    ,
+        \\part = cube(10)
+        \\  # centre it first
+        \\  .center
+        \\  .translate(0, 0, 5) # lift
+        \\  .rotate(z: 45)
+        \\
+    );
+}
+
+test "Formatter: arguments break inside a broken chain, indented under their call" {
+    try expectStableFormat(
+        \\body = cube(10)
+        \\  .translate(x: first_long_offset_name, y: second_long_offset_name, z: third_long_offset_name_here_too)
+        \\  .rotate(z: 45)
+    ,
+        \\body = cube(10)
+        \\  .translate(
+        \\    x: first_long_offset_name,
+        \\    y: second_long_offset_name,
+        \\    z: third_long_offset_name_here_too,
+        \\  )
+        \\  .rotate(z: 45)
+        \\
+    );
+}
+
+test "Formatter: line_width is a setting" {
+    const allocator = testing.allocator;
+    const formatted = try formatCodeLocal(allocator, "p = cube(10).translate(1, 2, 3).rotate(z: 5)\n", .{ .sort_imports = false, .line_width = 30 });
+    defer allocator.free(formatted);
+    try testing.expectEqualStrings("p = cube(10)\n  .translate(1, 2, 3)\n  .rotate(z: 5)\n", formatted);
 }

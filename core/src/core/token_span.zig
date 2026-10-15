@@ -42,6 +42,7 @@ const Last = struct {
             .module_stmt => tree.moduleStmt(node).end_token,
             .block => tree.block(node).end_token,
             .array_literal => tree.arrayLiteral(node).end_token,
+            .hash_literal => tree.hashEndToken(node),
             else => 0,
         };
         self.token = @max(self.token, node.main_token, end);

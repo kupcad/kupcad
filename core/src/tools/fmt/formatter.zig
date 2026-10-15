@@ -25,6 +25,9 @@ pub const Formatter = struct {
 
     comment_idx: usize = 0,
     indent_level: usize = 0,
+    /// Set while a construct is printed on one line to measure it (layOut): everything
+    /// inside it is then printed flat too, and decides nothing on its own.
+    flat: bool = false,
 
     sort_imports_rule: SortImportsRule = .{},
 
@@ -59,6 +62,40 @@ pub const Formatter = struct {
     }
 
     // --- State & Spacing Helpers ---
+
+    fn lineOf(self: *const Formatter, tok: u32) u32 {
+        if (tok >= self.token_starts.len) return std.math.maxInt(u32);
+        return self.line_index.getLine(self.token_starts[tok]);
+    }
+
+    /// The column the next character lands in, counting characters, not bytes.
+    fn column(self: *const Formatter) usize {
+        const line = self.out.items[if (std.mem.lastIndexOfScalar(u8, self.out.items, '\n')) |nl| nl + 1 else 0..];
+        return std.unicode.utf8CountCodepoints(line) catch line.len;
+    }
+
+    /// Prints a construct on one line if it fits within `line_width` and the author didn't
+    /// break it over lines, else over lines: `layout` has `flat` and `broken` methods. A
+    /// construct that can't be one line (it holds a body, a comment, or one of its own the
+    /// author broke) is laid out over lines, so the author's breaks carry outward.
+    fn layOut(self: *Formatter, author_broke: bool, layout: anytype) Error!void {
+        if (author_broke) return layout.broken(self);
+        // Inside a construct being measured, everything is flat: the outer one decides.
+        if (self.flat) return layout.flat(self);
+
+        const mark = self.out.items.len;
+        const comment_mark = self.comment_idx;
+        self.flat = true;
+        layout.flat(self) catch |err| {
+            self.flat = false;
+            return err;
+        };
+        self.flat = false;
+        if (std.mem.indexOfScalar(u8, self.out.items[mark..], '\n') == null and self.column() <= self.config.line_width) return;
+        self.out.shrinkRetainingCapacity(mark);
+        self.comment_idx = comment_mark;
+        return layout.broken(self);
+    }
 
     fn tokenText(self: *const Formatter, tok: u32) []const u8 {
         const start = self.token_starts[tok];
@@ -234,12 +271,14 @@ pub const Formatter = struct {
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(node.data))),
             .array_literal => {
-                const arr = tree.nodeSpan(node);
-                try self.formatArray(tree, tree.getNodes(arr));
+                const items = try self.arrayItems(tree, tree.getNodes(tree.nodeSpan(node)));
+                defer self.allocator.free(items);
+                try self.formatList(tree, items, .{ .open = "[", .close = "]" }, node.main_token, tree.arrayLiteral(node).end_token);
             },
             .hash_literal => {
-                const entries = tree.nodeSpan(node);
-                try self.formatHash(tree, tree.getHashEntries(entries));
+                const items = try self.hashItems(tree, tree.getHashEntries(tree.nodeSpan(node)));
+                defer self.allocator.free(items);
+                try self.formatList(tree, items, .{ .open = "{", .close = "}", .padded = true }, node.main_token, tree.hashEndToken(node));
             },
             .if_stmt => try self.formatIfStmt(tree, tree.ifStmt(node), node_line),
             .while_stmt => try self.formatWhileStmt(tree, tree.whileStmt(node), node_line),
@@ -276,7 +315,7 @@ pub const Formatter = struct {
                 if (std.mem.eql(u8, method_name, "yield") and mc.receiver == .none) {
                     try self.formatYield(tree, mc);
                 } else {
-                    try self.formatMethodCall(tree, mc, node_line);
+                    try self.formatMethodCall(tree, node_idx);
                 }
             },
             .super_call => try self.formatSuperCall(tree, tree.superCall(node), node_line),
@@ -392,41 +431,160 @@ pub const Formatter = struct {
         try self.out.append(self.allocator, '"');
     }
 
-    fn formatArray(self: *Formatter, tree: *const ast.Tree, arr: []const ast.NodeIndex) Error!void {
-        if (arr.len == 0) return self.out.appendSlice(self.allocator, "[]");
-        try self.out.append(self.allocator, '[');
-        for (arr, 0..) |elem, idx| {
-            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            try self.formatNode(tree, elem);
-        }
-        try self.out.append(self.allocator, ']');
+    // --- Lists: arrays, maps, call arguments ---
+
+    /// One item of a list, with the tokens it spans in the source.
+    const ListItem = struct {
+        first: u32,
+        last: u32,
+        value: union(enum) {
+            element: ast.NodeIndex,
+            entry: ast.HashEntry,
+            arg: ast.NamedArg,
+        },
+    };
+
+    const ListShape = struct {
+        open: []const u8,
+        close: []const u8,
+        /// A space inside the brackets on one line: `{ a: 1 }`.
+        padded: bool = false,
+    };
+
+    fn arrayItems(self: *Formatter, tree: *const ast.Tree, elements: []const ast.NodeIndex) Error![]ListItem {
+        const items = try self.allocator.alloc(ListItem, elements.len);
+        for (elements, items) |e, *item| item.* = .{ .first = token_span.first(tree, e), .last = token_span.last(tree, e), .value = .{ .element = e } };
+        return items;
     }
 
-    fn formatHash(self: *Formatter, tree: *const ast.Tree, entries: []const ast.HashEntry) Error!void {
-        if (entries.len == 0) return self.out.appendSlice(self.allocator, "{}");
-        try self.out.appendSlice(self.allocator, "{ ");
-        for (entries, 0..) |entry, idx| {
-            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            const key_node = tree.getNode(entry.key).?;
-            const val_node = tree.getNode(entry.value).?;
+    fn hashItems(self: *Formatter, tree: *const ast.Tree, entries: []const ast.HashEntry) Error![]ListItem {
+        const items = try self.allocator.alloc(ListItem, entries.len);
+        for (entries, items) |e, *item| item.* = .{ .first = token_span.first(tree, e.key), .last = token_span.last(tree, e.value), .value = .{ .entry = e } };
+        return items;
+    }
 
-            if (key_node.tag == .double_splat_expr) {
-                try self.formatNode(tree, entry.key);
-            } else if (key_node.tag == .symbol and val_node.tag == .identifier and std.mem.eql(u8, tree.getString(@fromBackingInt(key_node.data)), tree.getString(@fromBackingInt(val_node.data)))) {
-                try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
-                try self.out.append(self.allocator, ':');
-            } else {
-                if (key_node.tag == .symbol) {
-                    try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
-                    try self.out.appendSlice(self.allocator, ": ");
-                } else {
-                    try self.formatNode(tree, entry.key);
-                    try self.out.appendSlice(self.allocator, " => ");
-                }
-                try self.formatNode(tree, entry.value);
-            }
+    fn argItems(self: *Formatter, tree: *const ast.Tree, args: []const ast.NamedArg) Error![]ListItem {
+        const items = try self.allocator.alloc(ListItem, args.len);
+        for (args, items) |arg, *item| {
+            var first = token_span.first(tree, arg.value);
+            // The keyword (`size:` is two tokens) and a modifier (`*`) come before the value.
+            if (arg.name != .none and first >= 2) first -= 2;
+            if (arg.modifier != null and first >= 1) first -= 1;
+            item.* = .{ .first = first, .last = token_span.last(tree, arg.value), .value = .{ .arg = arg } };
         }
-        try self.out.appendSlice(self.allocator, " }");
+        return items;
+    }
+
+    /// Prints a list on one line if it fits, else one item per line; a list the author
+    /// broke over lines keeps the author's rows (a matrix written row by row stays so; it
+    /// used to be flattened). `open_token` and `close_token` are its brackets.
+    fn formatList(self: *Formatter, tree: *const ast.Tree, items: []const ListItem, shape: ListShape, open_token: u32, close_token: ?u32) Error!void {
+        if (items.len == 0) {
+            try self.out.appendSlice(self.allocator, shape.open);
+            return self.out.appendSlice(self.allocator, shape.close);
+        }
+        const Layout = struct {
+            tree: *const ast.Tree,
+            items: []const ListItem,
+            shape: ListShape,
+            close_token: ?u32,
+            author_rows: bool,
+
+            fn flat(l: @This(), f: *Formatter) Error!void {
+                try f.out.appendSlice(f.allocator, l.shape.open);
+                if (l.shape.padded) try f.out.append(f.allocator, ' ');
+                for (l.items, 0..) |item, i| {
+                    if (i > 0) try f.out.appendSlice(f.allocator, ", ");
+                    try f.formatListItem(l.tree, item);
+                }
+                if (l.shape.padded) try f.out.append(f.allocator, ' ');
+                try f.out.appendSlice(f.allocator, l.shape.close);
+            }
+
+            fn broken(l: @This(), f: *Formatter) Error!void {
+                try f.out.appendSlice(f.allocator, l.shape.open);
+                f.indent_level += 1;
+                var prev_line: ?u32 = null;
+                var i: usize = 0;
+                while (i < l.items.len) {
+                    // The author's row: the items that start on the line the one before ends.
+                    var end = i + 1;
+                    if (l.author_rows) {
+                        while (end < l.items.len and f.lineOf(l.items[end].first) == f.lineOf(l.items[end - 1].last)) end += 1;
+                    }
+                    const first_line = f.lineOf(l.items[i].first);
+                    try f.ensureNewline();
+                    try f.flushCommentsBefore(first_line, prev_line, false);
+                    try f.writeIndent();
+                    for (l.items[i..end], 0..) |item, k| {
+                        if (k > 0) try f.out.appendSlice(f.allocator, ", ");
+                        try f.formatListItem(l.tree, item);
+                    }
+                    try f.out.append(f.allocator, ',');
+                    prev_line = f.lineOf(l.items[end - 1].last);
+                    try f.flushTrailingComments(first_line, prev_line.?);
+                    i = end;
+                }
+                f.indent_level -= 1;
+                try f.ensureNewline();
+                if (l.close_token) |close| try f.flushCommentsBefore(f.lineOf(close), prev_line, false);
+                try f.writeIndent();
+                try f.out.appendSlice(f.allocator, l.shape.close);
+            }
+        };
+        const broke = self.authorBroke(items, open_token);
+        try self.layOut(broke, Layout{ .tree = tree, .items = items, .shape = shape, .close_token = close_token, .author_rows = broke });
+    }
+
+    /// Whether an item starts on a later line than the bracket or the item before it ends.
+    fn authorBroke(self: *const Formatter, items: []const ListItem, open_token: u32) bool {
+        var prev = self.lineOf(open_token);
+        for (items) |item| {
+            if (self.lineOf(item.first) != prev) return true;
+            prev = self.lineOf(item.last);
+        }
+        return false;
+    }
+
+    fn formatListItem(self: *Formatter, tree: *const ast.Tree, item: ListItem) Error!void {
+        switch (item.value) {
+            .element => |e| try self.formatNode(tree, e),
+            .arg => |arg| {
+                if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+                if (arg.name != .none) {
+                    try self.out.appendSlice(self.allocator, tree.getString(arg.name));
+                    try self.out.appendSlice(self.allocator, ": ");
+                }
+                // The call's parentheses already hold it: `f((x))` is `f(x)`.
+                try self.formatUngrouped(tree, arg.value);
+            },
+            .entry => |entry| {
+                const key_node = tree.getNode(entry.key).?;
+                const val_node = tree.getNode(entry.value).?;
+                if (key_node.tag == .double_splat_expr) {
+                    try self.formatNode(tree, entry.key);
+                } else if (key_node.tag == .symbol and val_node.tag == .identifier and std.mem.eql(u8, tree.getString(@fromBackingInt(key_node.data)), tree.getString(@fromBackingInt(val_node.data)))) {
+                    try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
+                    try self.out.append(self.allocator, ':');
+                } else {
+                    if (key_node.tag == .symbol) {
+                        try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
+                        try self.out.appendSlice(self.allocator, ": ");
+                    } else {
+                        try self.formatNode(tree, entry.key);
+                        try self.out.appendSlice(self.allocator, " => ");
+                    }
+                    try self.formatNode(tree, entry.value);
+                }
+            },
+        }
+    }
+
+    /// A call's arguments in parentheses (its `(` is the token before the first argument).
+    fn formatArgs(self: *Formatter, tree: *const ast.Tree, args: []const ast.NamedArg, close_token: ?u32) Error!void {
+        const items = try self.argItems(tree, args);
+        defer self.allocator.free(items);
+        try self.formatList(tree, items, .{ .open = "(", .close = ")" }, items[0].first -| 1, close_token);
     }
 
     fn formatIfStmt(self: *Formatter, tree: *const ast.Tree, ifs: ast.IfStmt, start_line: u32) Error!void {
@@ -755,43 +913,108 @@ pub const Formatter = struct {
         try self.formatOperand(tree, rm.rescue_expr, Precedence.rescue_mod.tighter());
     }
 
-    fn formatMethodCall(self: *Formatter, tree: *const ast.Tree, mc: ast.MethodCall, start_line: u32) Error!void {
-        if (mc.receiver != .none) {
-            try self.formatOperand(tree, mc.receiver, .call);
-            // Multi-line indentation alignment for fluent method chains
-            const r_node = tree.getNode(mc.receiver).?;
-            if (r_node.tag == .method_call) {
-                try self.ensureNewline();
-                self.indent_level += 1;
-                try self.writeIndent();
-                self.indent_level -= 1;
-            }
-            try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
+    /// A call, and the chain of calls it ends (`cube(10).translate(...).rotate(...)`). A
+    /// chain is kept on one line when it fits, else broken one call per line; the author's
+    /// breaks are kept. A single call on a receiver stays with it (its arguments break
+    /// instead): every chain used to be broken, `cube(10).translate(1, 2, 3)` included.
+    fn formatMethodCall(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
+        // The calls on receivers, outermost first; the chain stops at a parenthesized one.
+        var links: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+        defer links.deinit(self.allocator);
+        var root = node_idx;
+        while (true) {
+            const node = tree.getNode(root).?;
+            if (node.tag != .method_call) break;
+            const mc = tree.methodCall(node);
+            if (mc.receiver == .none or (root != node_idx and tree.isGrouped(root))) break;
+            try links.append(self.allocator, root);
+            root = mc.receiver;
         }
-        try self.out.appendSlice(self.allocator, tree.getString(mc.method_name));
+        std.mem.reverse(ast.NodeIndex, links.items);
+        if (links.items.len == 0) return self.formatCallTail(tree, node_idx);
 
+        const Chain = struct {
+            tree: *const ast.Tree,
+            root: ast.NodeIndex,
+            links: []const ast.NodeIndex,
+            /// Keep the calls the author put on one line together.
+            author_lines: bool,
+
+            fn flat(c: @This(), f: *Formatter) Error!void {
+                try f.formatOperand(c.tree, c.root, .call);
+                for (c.links) |link| try f.formatLink(c.tree, link);
+            }
+
+            fn broken(c: @This(), f: *Formatter) Error!void {
+                try f.formatOperand(c.tree, c.root, .call);
+                f.indent_level += 1;
+                var prev_line = f.lastLine(c.tree, c.root);
+                for (c.links, 0..) |link, i| {
+                    const link_line = f.lineOf(c.tree.methodCall(c.tree.getNode(link).?).name_token);
+                    // A call stays on the line before where the author put it there, and the
+                    // first call stays with a bare name (`Box.new(...)`, `self.part(...)`).
+                    const joins = if (c.author_lines) link_line == prev_line else i == 0 and isBareName(c.tree, c.root);
+                    if (joins) {
+                        try f.formatLink(c.tree, link);
+                        prev_line = f.lastLine(c.tree, link);
+                        continue;
+                    }
+                    try f.ensureNewline();
+                    // A comment between the calls stays there, and one after a call on its line.
+                    try f.flushCommentsBefore(link_line, prev_line, false);
+                    try f.writeIndent();
+                    try f.formatLink(c.tree, link);
+                    prev_line = f.lastLine(c.tree, link);
+                    try f.flushTrailingComments(link_line, prev_line);
+                }
+                f.indent_level -= 1;
+            }
+        };
+        const broke = self.chainBroken(tree, root, links.items);
+        const chain: Chain = .{ .tree = tree, .root = root, .links = links.items, .author_lines = broke };
+        if (links.items.len == 1 and !broke) return chain.flat(self);
+        try self.layOut(broke, chain);
+    }
+
+    fn isBareName(tree: *const ast.Tree, idx: ast.NodeIndex) bool {
+        const node = tree.getNode(idx) orelse return false;
+        return switch (node.tag) {
+            .identifier, .namespace_access, .self_expr => true,
+            else => false,
+        };
+    }
+
+    /// Whether a call of the chain starts on a later line than its receiver ends.
+    fn chainBroken(self: *Formatter, tree: *const ast.Tree, root: ast.NodeIndex, links: []const ast.NodeIndex) bool {
+        var prev_end = self.lastLine(tree, root);
+        for (links) |link| {
+            if (self.lineOf(tree.methodCall(tree.getNode(link).?).name_token) > prev_end) return true;
+            prev_end = self.lastLine(tree, link);
+        }
+        return false;
+    }
+
+    /// `.name(args) block` of a call on a receiver.
+    fn formatLink(self: *Formatter, tree: *const ast.Tree, link: ast.NodeIndex) Error!void {
+        const mc = tree.methodCall(tree.getNode(link).?);
+        try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
+        try self.formatCallTail(tree, link);
+    }
+
+    /// A call's name, arguments and block (its receiver is printed by the caller).
+    fn formatCallTail(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
+        const node = tree.getNode(node_idx).?;
+        const mc = tree.methodCall(node);
+        try self.out.appendSlice(self.allocator, tree.getString(mc.method_name));
         const args = tree.getNamedArgs(mc.args);
         if (args.len > 0) {
-            try self.out.append(self.allocator, '(');
-            for (args, 0..) |arg, idx| {
-                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-
-                const arg_name = tree.getString(arg.name);
-                if (arg_name.len > 0) {
-                    try self.out.appendSlice(self.allocator, arg_name);
-                    try self.out.appendSlice(self.allocator, ": ");
-                }
-                // The call's parentheses already hold it: `f((x))` is `f(x)`.
-                try self.formatUngrouped(tree, arg.value);
-            }
-            try self.out.append(self.allocator, ')');
+            try self.formatArgs(tree, args, if (mc.end_token != 0) mc.end_token else null);
         } else if (mc.receiver == .none and mc.block == .none) {
             try self.out.appendSlice(self.allocator, "()");
         }
         if (mc.block != .none) {
             try self.out.append(self.allocator, ' ');
-            try self.formatBlockClosure(tree, mc.block, start_line);
+            try self.formatBlockClosure(tree, mc.block, self.getNodeLine(node));
         }
     }
 
@@ -818,20 +1041,7 @@ pub const Formatter = struct {
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "super");
         const args = tree.getNamedArgs(sc.args);
-        if (args.len > 0) {
-            try self.out.append(self.allocator, '(');
-            for (args, 0..) |arg, idx| {
-                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                const arg_name = tree.getString(arg.name);
-                if (arg_name.len > 0) {
-                    try self.out.appendSlice(self.allocator, arg_name);
-                    try self.out.appendSlice(self.allocator, ": ");
-                }
-                // The call's parentheses already hold it: `f((x))` is `f(x)`.
-                try self.formatUngrouped(tree, arg.value);
-            }
-            try self.out.append(self.allocator, ')');
-        }
+        if (args.len > 0) try self.formatArgs(tree, args, null);
         if (sc.block != .none) {
             try self.out.append(self.allocator, ' ');
             try self.formatBlockClosure(tree, sc.block, start_line);
@@ -862,22 +1072,7 @@ pub const Formatter = struct {
         try self.out.appendSlice(self.allocator, "yield");
 
         const args = tree.getNamedArgs(mc.args);
-        if (args.len > 0) {
-            try self.out.append(self.allocator, '(');
-            for (args, 0..) |arg, idx| {
-                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                if (arg.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-
-                const arg_name = tree.getString(arg.name);
-                if (arg_name.len > 0) {
-                    try self.out.appendSlice(self.allocator, arg_name);
-                    try self.out.appendSlice(self.allocator, ": ");
-                }
-                // The call's parentheses already hold it: `f((x))` is `f(x)`.
-                try self.formatUngrouped(tree, arg.value);
-            }
-            try self.out.append(self.allocator, ')');
-        }
+        if (args.len > 0) try self.formatArgs(tree, args, if (mc.end_token != 0) mc.end_token else null);
     }
 
     fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.StringId, path: []const u8, attrs: ast.NodeIndex) Error!void {
@@ -923,42 +1118,6 @@ pub const Formatter = struct {
                 try self.writeIndent();
                 try self.out.appendSlice(self.allocator, "#   ");
                 try self.out.appendSlice(self.allocator, line);
-            }
-        }
-    }
-
-    fn formatWrappedText(self: *Formatter, text: []const u8, current_line_len: *usize) Error!void {
-        var line_iter = std.mem.splitScalar(u8, text, '\n');
-        var first_line = true;
-        while (line_iter.next()) |line| {
-            if (!first_line) {
-                try self.ensureNewline();
-                try self.writeIndent();
-                try self.out.appendSlice(self.allocator, "#   ");
-                current_line_len.* = self.indent_level * self.config.indent_width + 4;
-            } else {
-                try self.out.append(self.allocator, ' ');
-                current_line_len.* += 1;
-            }
-            first_line = false;
-
-            var word_iter = std.mem.tokenizeAny(u8, line, " \t\r");
-            var first_word = true;
-            while (word_iter.next()) |word| {
-                if (!first_word) {
-                    if (current_line_len.* + 1 + word.len > self.config.max_line_length) {
-                        try self.ensureNewline();
-                        try self.writeIndent();
-                        try self.out.appendSlice(self.allocator, "#   ");
-                        current_line_len.* = self.indent_level * self.config.indent_width + 4;
-                    } else {
-                        try self.out.append(self.allocator, ' ');
-                        current_line_len.* += 1;
-                    }
-                }
-                try self.out.appendSlice(self.allocator, word);
-                current_line_len.* += word.len;
-                first_word = false;
             }
         }
     }

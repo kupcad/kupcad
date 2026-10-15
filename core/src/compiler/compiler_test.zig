@@ -399,7 +399,7 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
 
     // {}
     const empty_hash_span = try b.addHashEntries(&.{});
-    const hash_node = try b.hashLiteral(empty_hash_span, 0);
+    const hash_node = try b.hashLiteral(empty_hash_span, 0, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1620,7 +1620,7 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     }
 
     const span = try b.addHashEntries(entries.items);
-    const map_node = try b.hashLiteral(span, 0);
+    const map_node = try b.hashLiteral(span, 0, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
