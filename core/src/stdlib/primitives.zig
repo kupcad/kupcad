@@ -31,7 +31,7 @@ pub const SQUARE = Signature{
 };
 pub const CYLINDER = Signature{
     .positional = &.{ "r", "h", "center" },
-    .keywords = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments" },
+    .keywords = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments", "sides" },
     .sizes = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h" },
 };
 pub const SPHERE = Signature{
@@ -39,7 +39,11 @@ pub const SPHERE = Signature{
     .keywords = &.{ "r", "d", "radius", "segments" },
     .sizes = &.{ "r", "d", "radius" },
 };
-pub const CIRCLE = SPHERE;
+pub const CIRCLE = Signature{
+    .positional = &.{"r"},
+    .keywords = &.{ "r", "d", "radius", "segments", "sides" },
+    .sizes = &.{ "r", "d", "radius" },
+};
 pub const REGULAR_POLYGON = Signature{
     .positional = &.{ "sides", "r" },
     .keywords = &.{ "sides", "r", "d", "radius" },
@@ -78,7 +82,9 @@ const GeomOptions = struct {
     chamfer: ?f64 = null,
     segments: i32 = 0,
     center: bool = false,
-    /// regular_polygon's side count.
+    /// A faceted shape: a circle with this many straight sides is a regular polygon, a
+    /// cylinder a prism. Unlike `segments` (how finely a curve is drawn, which the B-Rep
+    /// engine keeps exact), it is the shape itself, so it is the same on both engines.
     sides: ?i32 = null,
     // Aliases, folded into the fields above by parseGeomOptions.
     size: ?f64 = null,
@@ -118,6 +124,34 @@ fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: 
         _ = vm.raiseError(.ValueError, "{s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
         return error.RuntimeError;
     }
+}
+
+/// `sides` as a side count, or an error if it isn't one (or comes with `segments`, which
+/// would ask for a smooth curve and a faceted one at once).
+fn requireSides(vm: *VM, opts: GeomOptions, method: []const u8) !i32 {
+    const sides = opts.sides.?;
+    if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
+        _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
+        return error.RuntimeError;
+    }
+    if (opts.segments != 0) {
+        _ = vm.raiseError(.ArgumentError, "{s} takes sides: (a faceted shape) or segments: (how smooth a round one is), not both", .{method});
+        return error.RuntimeError;
+    }
+    return sides;
+}
+
+/// A regular polygon centred on the origin, its first corner on +x (as Manifold's circles).
+fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
+    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    const alloc = vm.scratch_arena.allocator();
+    defer pts.deinit(alloc);
+    const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
+    for (0..@as(usize, @intCast(sides))) |i| {
+        const ang = @as(f64, @floatFromInt(i)) * step;
+        try pts.append(alloc, .{ r * @cos(ang), r * @sin(ang) });
+    }
+    return vm.dag_builder.addPolygon(pts.items);
 }
 
 // --- Filleting Math Helpers ---
@@ -243,6 +277,19 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try util.requirePositive(vm, r2, "cylinder", "radius 2");
     try util.requirePositive(vm, opts.h, "cylinder", "height");
 
+    if (opts.sides != null) {
+        const sides = try requireSides(vm, opts, "cylinder");
+        if (opts.round_r != null or opts.chamfer != null) {
+            _ = vm.raiseError(.ArgumentError, "cylinder takes sides: or round_r:/chamfer:, not both yet", .{});
+            return error.RuntimeError;
+        }
+        // A prism (a frustum when r2 differs): the polygon swept up, narrowing to r2.
+        const outline = try addRegularPolygon(vm, sides, r1);
+        var prism = try vm.dag_builder.addExtrude(outline, opts.h, 0, 0.0, r2 / r1, r2 / r1);
+        if (opts.center) prism = try vm.dag_builder.addTranslate(prism, 0.0, 0.0, -opts.h / 2.0);
+        return try vm.allocateGeometry(.{ .symbolic = prism });
+    }
+
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, @max(r1, r2));
 
     var dag_idx: u32 = 0;
@@ -307,6 +354,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "circle", "r");
     var opts = (try parseGeomOptions(CIRCLE.keywords, base, vm, args, "circle")).opts;
     try util.requirePositive(vm, opts.r, "circle", "radius");
+    if (opts.sides != null) return try vm.allocateCrossSection(try addRegularPolygon(vm, try requireSides(vm, opts, "circle"), opts.r));
 
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
 
@@ -386,27 +434,9 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     if (pos.len > 0) base.sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[0], "regular_polygon", "sides"), "sides");
     if (pos.len > 1) base.r = try util.requireNumber(vm, pos[1], "regular_polygon", "r");
     const opts = (try parseGeomOptions(REGULAR_POLYGON.keywords, base, vm, args, "regular_polygon")).opts;
-    const sides = opts.sides.?;
-
-    if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
-        _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
-        return error.RuntimeError;
-    }
+    const sides = try requireSides(vm, opts, "regular_polygon");
     try util.requirePositive(vm, opts.r, "regular_polygon", "radius");
-
-    var pts = std.ArrayListUnmanaged([2]f64).empty;
-    const alloc = vm.scratch_arena.allocator();
-    defer pts.deinit(alloc);
-
-    // Generate points around the circle
-    const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
-    for (0..@as(usize, @intCast(sides))) |i| {
-        const ang = @as(f64, @floatFromInt(i)) * step;
-        try pts.append(alloc, .{ opts.r * @cos(ang), opts.r * @sin(ang) });
-    }
-
-    const dag_idx = try vm.dag_builder.addPolygon(pts.items);
-    return try vm.allocateCrossSection(dag_idx);
+    return try vm.allocateCrossSection(try addRegularPolygon(vm, sides, opts.r));
 }
 
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {

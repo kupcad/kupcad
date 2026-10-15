@@ -54,7 +54,7 @@ end
 
 # Standoff Holes (Octagons for friction)
 [-1, 1].each do |i|
-  hole = cylinder(d: standoff_dia + fit_tolerance, h: standoff_height + 2.0, segments: 8)
+  hole = cylinder(d: standoff_dia + fit_tolerance, h: standoff_height + 2.0, sides: 8)
     .translate(i * standoff_dist / 2.0, 0.0, -1.0)
   main_body = main_body - hole
 end
@@ -62,7 +62,7 @@ end
 # SMA Connector Stack
 hex_size = sma_hex_flat / 0.866025
 thread_hole = cylinder(d: sma_hole_dia, h: 55.0).translate(0.0, 0.0, -50.0)
-hex_trap = cylinder(d: hex_size, h: 50.0 - shoulder_thick, segments: 6).translate(0.0, 0.0, -50.0)
+hex_trap = cylinder(d: hex_size, h: 50.0 - shoulder_thick, sides: 6).translate(0.0, 0.0, -50.0)
 
 sma_stack = (thread_hole + hex_trap)
   .translate(0.0, platform_offset, 0.0)

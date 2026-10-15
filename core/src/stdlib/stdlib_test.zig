@@ -1279,6 +1279,36 @@ fn rescued(comptime src: []const u8) []const u8 {
     return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
 
+test "Stdlib: sides: is a faceted shape, segments: only how smooth a round one is" {
+    const hex_prism = 1.5 * @sqrt(3.0) * 25.0 * 10.0; // a hexagon of radius 5, 10 high
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "r = cylinder(r: 5, h: 10, sides: 6).volume", .expected = hex_prism },
+        // On the mesh engine, 6 segments draw the same prism; on B-Rep they wouldn't.
+        .{ .src = "r = cylinder(r: 5, h: 10, segments: 6).volume", .expected = hex_prism },
+        .{ .src = "r = circle(r: 5, sides: 6).extrude(10).volume", .expected = hex_prism },
+        .{ .src = "r = regular_polygon(6, r: 5).extrude(10).volume", .expected = hex_prism },
+        // A frustum when r2 differs: squares of area 50 and 8, 10 apart.
+        .{ .src = "r = cylinder(r1: 5, r2: 2, h: 10, sides: 4).volume", .expected = 10.0 / 3.0 * (50.0 + 8.0 + 20.0) },
+        .{ .src = "r = cylinder(r: 5, h: 10, sides: 6, center: true).bbox.min[2]", .expected = -5 },
+        .{ .src = "r = cylinder(d: 10, h: 10, sides: 6).bbox.max[0]", .expected = 5 }, // first corner on +x
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectApproxEqAbs(case.expected, vm.globals.get("r").?.asNumber(), 1e-9);
+    }
+
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 2)"), .expected = .{ .str = "ValueError: 'sides' must be between 3 and 2048, got 2" } },
+        .{ .src = comptime rescued("circle(r: 5, sides: 6, segments: 32)"), .expected = .{ .str = "ArgumentError: circle takes sides: (a faceted shape) or segments: (how smooth a round one is), not both" } },
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6, round_r: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes sides: or round_r:/chamfer:, not both yet" } },
+        // A sphere has no flat sides to count.
+        .{ .src = comptime rescued("sphere(r: 5, sides: 6)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'sides' (it accepts: r, d, radius, segments)" } },
+    });
+}
+
 test "Stdlib: the hull of one shape is its hull, not the shape" {
     // A 10 mm cube with a 5 mm corner cut out (875) hulls to the cube less the corner
     // tetrahedron its three cut edges span (125 / 6); with the corner given back, the cube.
@@ -1320,6 +1350,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = brepLacks(.extrude) }, // a prism is an extrusion
         .{ .src = comptime rescued("sphere(r: 5).simplify"), .expected = brepLacks(.sphere) }, // was 16-sided whatever the resolution
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
@@ -1900,9 +1931,9 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
     const cases = [_]struct { src: []const u8, method: []const u8, accepted: []const u8 }{
         .{ .src = "cube(1, bogus: 1)", .method = "cube", .accepted = "x, y, z, size, center, round_r, chamfer, segments" },
         .{ .src = "square(1, bogus: 1)", .method = "square", .accepted = "x, y, size, center, round_r, chamfer, segments" },
-        .{ .src = "cylinder(r: 1, bogus: 1)", .method = "cylinder", .accepted = "r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments" },
+        .{ .src = "cylinder(r: 1, bogus: 1)", .method = "cylinder", .accepted = "r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments, sides" },
         .{ .src = "sphere(r: 1, bogus: 1)", .method = "sphere", .accepted = "r, d, radius, segments" },
-        .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments" },
+        .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments, sides" },
         .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius" },
         .{ .src = "torus(bogus: 1)", .method = "torus", .accepted = "major_r, minor_r, segments" },
         .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths" },
