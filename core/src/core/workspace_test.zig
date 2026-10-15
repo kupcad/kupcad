@@ -110,3 +110,25 @@ test "Workspace: addModule rejects duplicates; upsertModule replaces source and 
     try testing.expectEqual(@as(usize, 1), deps.len);
     try testing.expectEqual(lib_id, deps[0]);
 }
+
+test "Workspace: removeModule forgets a module and keeps the other ids valid" {
+    var ws = workspace.Workspace.init(testing.allocator);
+    defer ws.deinit();
+    _ = try ws.addModule("math.kup", "def add(a, b) a + b end");
+    _ = try ws.addModule("closed.kup", "x = 1");
+    _ = try ws.addModule("main.kup", "import \"math.kup\"");
+    try ws.linkDependencies();
+
+    try testing.expect(try ws.removeModule("closed.kup"));
+    try testing.expect(!try ws.removeModule("closed.kup"));
+
+    try testing.expectEqual(@as(usize, 2), ws.modules.items.len);
+    try testing.expect(ws.path_to_id.get("closed.kup") == null);
+    for (ws.modules.items, 0..) |mod, i| {
+        try testing.expectEqual(@as(u32, @intCast(i)), @backingInt(mod.id));
+        try testing.expectEqual(mod.id, ws.path_to_id.get(mod.path).?);
+    }
+    // main's import still points at math, whose id did not move, and main's did.
+    const main = ws.modules.items[@backingInt(ws.path_to_id.get("main.kup").?)];
+    try testing.expectEqualSlices(workspace.ModuleId, &.{ws.path_to_id.get("math.kup").?}, main.deps.items);
+}

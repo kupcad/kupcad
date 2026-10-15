@@ -40,6 +40,22 @@ pub const MemoryVfs = struct {
         self.nodes.deinit();
     }
 
+    /// Removes the file at `path` (the LSP drops a document the editor closed); false if
+    /// there is none. Content a hard link still shares is kept for it.
+    pub fn deleteFile(self: *MemoryVfs, path: []const u8) bool {
+        const entry = self.nodes.fetchRemove(path) orelse return false;
+        if (entry.value.content) |c| {
+            var shared = false;
+            var it = self.nodes.valueIterator();
+            while (it.next()) |node| {
+                if (node.content) |other| shared = shared or other.ptr == c.ptr;
+            }
+            if (!shared) self.allocator.free(c);
+        }
+        self.allocator.free(entry.key);
+        return true;
+    }
+
     pub fn vfs(self: *MemoryVfs) Vfs {
         return .{
             .ptr = self,

@@ -247,6 +247,18 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
     return ctx;
 }
 
+/// A diagnostic as `textDocument/publishDiagnostics` sends it.
+const PublishedDiagnostic = struct {
+    const Position = struct { line: u32, character: u32 };
+
+    range: struct { start: Position, end: Position },
+    severity: u32,
+    source: []const u8,
+    message: []const u8,
+    /// The lint rule's id, which editors show beside the message.
+    code: ?[]const u8 = null,
+};
+
 pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -453,12 +465,16 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidCloseParams,
     ) !void {
-        _ = arena;
-        logger.debug("Closed {s}", .{params.textDocument.uri});
-        if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
+        const uri = params.textDocument.uri;
+        logger.debug("Closed {s}", .{uri});
+        if (self.files.fetchRemove(uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
         }
+        // The editor keeps the last diagnostics it was sent for a file until told otherwise.
+        try self.publishDiagnostics(arena, uri, &.{});
+        try self.session.removeModule(uri);
+        _ = self.mem_vfs.deleteFile(uri);
     }
 
     pub fn @"textDocument/formatting"(
@@ -824,23 +840,8 @@ pub const Handler = struct {
         };
         defer api.freeDiagnostics(self.allocator, diags);
 
-        const Position = struct { line: u32, character: u32 };
-        const Range = struct { start: Position, end: Position };
-        const Diagnostic = struct {
-            range: Range,
-            severity: u32,
-            source: []const u8,
-            message: []const u8,
-            /// The lint rule's id, which editors show beside the message.
-            code: ?[]const u8 = null,
-        };
-        const PublishDiagnosticsParams = struct {
-            uri: []const u8,
-            diagnostics: []const Diagnostic,
-        };
-
         var line_index = try api.LineIndex.init(arena, source);
-        var lsp_diags: std.ArrayListUnmanaged(Diagnostic) = .empty;
+        var lsp_diags: std.ArrayListUnmanaged(PublishedDiagnostic) = .empty;
 
         for (diags) |d| {
             const start_line = line_index.getLine(d.loc.offset);
@@ -875,18 +876,16 @@ pub const Handler = struct {
                 .code = d.rule,
             });
         }
+        try self.publishDiagnostics(arena, uri, lsp_diags.items);
+    }
 
-        try self.transport.writeNotification(
-            self.io,
-            arena,
-            "textDocument/publishDiagnostics",
-            PublishDiagnosticsParams,
-            .{
-                .uri = uri,
-                .diagnostics = lsp_diags.items,
-            },
-            .{},
-        );
+    /// Replaces the diagnostics the editor shows for `uri` (none clears them).
+    fn publishDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, diagnostics: []const PublishedDiagnostic) !void {
+        const Params = struct { uri: []const u8, diagnostics: []const PublishedDiagnostic };
+        try self.transport.writeNotification(self.io, arena, "textDocument/publishDiagnostics", Params, .{
+            .uri = uri,
+            .diagnostics = diagnostics,
+        }, .{});
     }
 
     pub fn onResponse(

@@ -361,3 +361,37 @@ test "ScriptSession: params reach param() on every evaluation" {
     try session.evaluateModule(mod_id);
     try testing.expectApproxEqAbs(@as(f64, 125.0), kernel.volume(node.cached_handle.?), 1e-4);
 }
+
+test "ScriptSession: removeModule drops its output and the modules after it keep theirs" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    _ = try session.workspace.addModule("closed.kup", "cube(1)");
+    _ = try session.workspace.addModule("open.kup", "cube(2)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    try session.removeModule("closed.kup");
+    try session.removeModule("closed.kup"); // already gone
+
+    try testing.expectEqual(@as(usize, 1), session.nodes.items.len);
+    try testing.expectEqual(@as(usize, 1), session.workspace.modules.items.len);
+    const kept = session.nodes.items[0].cached_handle.?;
+    try testing.expectApproxEqAbs(@as(f64, 8.0), kernel.volume(kept), 1e-9);
+    try session.evaluateWorkspace();
+}
+
+test "ScriptSession: removing the module that failed clears the failure" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    _ = try session.workspace.addModule("ok.kup", "cube(1)");
+    _ = try session.workspace.addModule("broken.kup", "cube(");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    try testing.expect(session.failure != null);
+
+    try session.removeModule("broken.kup");
+    try testing.expect(session.failure == null);
+    try session.evaluateWorkspace();
+}

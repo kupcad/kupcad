@@ -104,3 +104,20 @@ test "MemoryVfs: symLink stores target path in content" {
     try testing.expectEqual(.symlink, node.kind);
     try testing.expectEqualStrings(target, node.content.?);
 }
+
+test "MemoryVfs: deleteFile removes the file, and keeps content a hard link shares" {
+    var mem = MemoryVfs.init(testing.allocator);
+    defer mem.deinit();
+    const fs = mem.vfs();
+
+    try fs.writeFile("a.kup", "cube(1)");
+    try fs.hardLink("a.kup", "b.kup");
+    try testing.expect(mem.deleteFile("a.kup"));
+    try testing.expect(!mem.deleteFile("a.kup"));
+    try testing.expectError(error.FileNotFound, fs.readFile(testing.allocator, "a.kup"));
+
+    const kept = try fs.readFile(testing.allocator, "b.kup");
+    defer testing.allocator.free(kept);
+    try testing.expectEqualStrings("cube(1)", kept);
+    try testing.expect(mem.deleteFile("b.kup"));
+}

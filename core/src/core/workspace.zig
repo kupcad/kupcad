@@ -93,6 +93,21 @@ pub const Workspace = struct {
         return self.addModule(path, source);
     }
 
+    /// Forgets the module at `path` (an editor closed it); false if it isn't known. The ids
+    /// after it shift down by one, and dependencies are re-linked, so every id stays valid.
+    pub fn removeModule(self: *Workspace, path: []const u8) !bool {
+        const entry = self.path_to_id.fetchRemove(path) orelse return false;
+        const index = @backingInt(entry.value);
+        var removed = self.modules.orderedRemove(index);
+        removed.deinit(self.allocator); // frees the path, which was the map's key
+        for (self.modules.items[index..], index..) |*mod, i| {
+            mod.id = @fromBackingInt(@as(u32, @intCast(i)));
+            self.path_to_id.getPtr(mod.path).?.* = mod.id;
+        }
+        try self.linkDependencies();
+        return true;
+    }
+
     /// O(N) Flat-array scan to extract dependencies natively from the AST
     pub fn linkDependencies(self: *Workspace) !void {
         for (self.modules.items) |*mod| {

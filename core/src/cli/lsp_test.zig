@@ -98,3 +98,27 @@ test "LSP: editing a document logs nothing above debug" {
     try server.change(URI, "cube(20)\n");
     try server.close(URI);
 }
+
+test "LSP: closing a document clears its diagnostics and forgets its module" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+
+    try server.open(URI, "cube(-1)\n"); // nonpositive-size
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "nonpositive-size") != null);
+    try testing.expectEqual(@as(usize, 1), server.session.workspace.modules.items.len);
+
+    try server.close(URI);
+    // An editor keeps showing what it was last sent for a closed file.
+    try testing.expectEqualStrings(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"" ++ URI ++ "\",\"diagnostics\":[]}}",
+        server.outbox.last(),
+    );
+    try testing.expectEqual(@as(usize, 0), server.session.workspace.modules.items.len);
+    try testing.expectEqual(@as(usize, 0), server.session.nodes.items.len);
+    try testing.expectError(error.FileNotFound, server.mem_vfs.vfs().readFile(testing.allocator, URI));
+
+    // Opening it again starts over.
+    try server.open(URI, "cube(1)\n");
+    try testing.expectEqual(@as(usize, 1), server.session.workspace.modules.items.len);
+}

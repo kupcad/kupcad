@@ -166,6 +166,23 @@ pub const ScriptSession = struct {
         }
     }
 
+    /// Forgets the module at `path` (an editor closed it): its cached output and its place in
+    /// the import graph. Modules that imported it are evaluated again next time.
+    pub fn removeModule(self: *ScriptSession, path: []const u8) !void {
+        const id = self.workspace.path_to_id.get(path) orelse return;
+        try self.markFileEdited(path);
+
+        const index = @backingInt(id);
+        var node = self.nodes.orderedRemove(index);
+        node.deinit();
+        if (self.failure) |*failure| {
+            const failed = @backingInt(failure.module);
+            if (failed == index) self.clearFailure() else if (failed > index) failure.module = @fromBackingInt(failed - 1);
+        }
+        _ = try self.workspace.removeModule(path);
+        try self.buildReverseGraph();
+    }
+
     /// Step 3: Lazy Re-evaluation & Early Cutoff (Pull Phase)
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
         // Reset cancellation token at the start of a fresh evaluation
