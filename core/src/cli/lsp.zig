@@ -791,6 +791,8 @@ pub const Handler = struct {
             severity: u32,
             source: []const u8,
             message: []const u8,
+            /// The lint rule's id, which editors show beside the message.
+            code: ?[]const u8 = null,
         };
         const PublishDiagnosticsParams = struct {
             uri: []const u8,
@@ -830,6 +832,7 @@ pub const Handler = struct {
                 },
                 .message = d.message,
                 .source = "kupcad",
+                .code = d.rule,
             });
         }
 

@@ -2,7 +2,8 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");
 const common_errors = @import("../../core/errors.zig");
-const Config = @import("config.zig").Config;
+const config_mod = @import("config.zig");
+const Config = config_mod.Config;
 const LintRule = @import("rules/rule.zig").LintRule;
 const visitor = @import("../../core/visitor.zig");
 
@@ -33,6 +34,38 @@ pub const LinterDiagnostic = struct {
     loc: token.Location,
     severity: LinterSeverity,
     message: []const u8,
+    /// The id of the rule that reported it; null for syntax and compile errors.
+    rule: ?[]const u8 = null,
+};
+
+/// Every rule, each field named by its id; `.kupcad.json` sets each one's level by the same
+/// name (config.Config).
+pub const RuleSet = struct {
+    @"nonpositive-size": NegativeDimRule = .{},
+    @"unused-variable": UnusedVarsRule = .{},
+    @"unreachable-code": UnreachableCodeRule = .{},
+    @"self-subtraction": SelfSubtractionRule = .{},
+    @"param-order": ParamOrderRule = .{},
+
+    pub const ids = std.meta.fieldNames(RuleSet);
+
+    comptime {
+        for (ids) |rule_id| {
+            if (!std.mem.eql(u8, @FieldType(RuleSet, rule_id).id, rule_id)) @compileError("rule '" ++ rule_id ++ "' is stored under another id");
+            if (!@hasField(Config, rule_id)) @compileError("lint.Config has no level for rule '" ++ rule_id ++ "'");
+        }
+        for (std.meta.fieldNames(Config)) |rule_id| {
+            if (!@hasField(RuleSet, rule_id)) @compileError("lint.Config sets '" ++ rule_id ++ "', which is no rule");
+        }
+    }
+
+    /// The description of the rule with this id, or null if there is none.
+    pub fn describe(rule_id: []const u8) ?[]const u8 {
+        inline for (ids) |known| {
+            if (std.mem.eql(u8, known, rule_id)) return @FieldType(RuleSet, known).description;
+        }
+        return null;
+    }
 };
 
 pub const Scope = struct {
@@ -103,12 +136,7 @@ pub const Linter = struct {
     token_lengths: []const u32 = &.{},
     file_id: u32 = 0,
 
-    // Rule instances
-    rule_negative_dim: NegativeDimRule = .{},
-    rule_unused_vars: UnusedVarsRule = .{},
-    rule_unreachable_code: UnreachableCodeRule = .{},
-    rule_self_subtraction: SelfSubtractionRule = .{},
-    rule_param_order: ParamOrderRule = .{},
+    rule_set: RuleSet = .{},
 
     pub fn init(allocator: std.mem.Allocator, config: Config) Linter {
         return .{
@@ -126,12 +154,11 @@ pub const Linter = struct {
         self.diagnostics.deinit(self.allocator);
     }
 
+    /// Every rule the config doesn't turn off.
     pub fn registerDefaultRules(self: *Linter) !void {
-        if (self.config.check_negative_dims) try self.rules.append(self.allocator, self.rule_negative_dim.rule());
-        if (self.config.check_unused_vars) try self.rules.append(self.allocator, self.rule_unused_vars.rule());
-        if (self.config.check_unreachable_code) try self.rules.append(self.allocator, self.rule_unreachable_code.rule());
-        if (self.config.check_self_subtraction) try self.rules.append(self.allocator, self.rule_self_subtraction.rule());
-        if (self.config.check_param_order) try self.rules.append(self.allocator, self.rule_param_order.rule());
+        inline for (RuleSet.ids) |rule_id| {
+            if (@field(self.config, rule_id) != .off) try self.rules.append(self.allocator, @field(self.rule_set, rule_id).rule());
+        }
     }
 
     pub fn getLoc(self: *const Linter, main_token: u24) token.Location {
@@ -143,12 +170,21 @@ pub const Linter = struct {
         };
     }
 
-    pub fn addDiagnostic(self: *Linter, loc: token.Location, severity: LinterSeverity, comptime fmt: []const u8, args: anytype) !void {
+    /// Reports a finding of rule `rule_id`, at the level the config gives that rule.
+    pub fn report(self: *Linter, comptime rule_id: []const u8, loc: token.Location, comptime fmt: []const u8, args: anytype) !void {
+        const severity: LinterSeverity = switch (@field(self.config, rule_id)) {
+            .off => return,
+            .info => .info,
+            .warning => .warning,
+            .@"error" => .@"error",
+        };
         const msg = try self.allocator.print(fmt, args);
+        errdefer self.allocator.free(msg);
         try self.diagnostics.append(self.allocator, .{
             .loc = loc,
             .severity = severity,
             .message = msg,
+            .rule = rule_id,
         });
     }
 

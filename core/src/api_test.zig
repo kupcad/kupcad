@@ -22,23 +22,12 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
 
     // Unused 'unused_var', unused 'check_flow', self-subtraction, unreachable code.
     try testing.expectEqual(@as(usize, 4), diags.len);
-
-    var found_csg = false;
-    var found_unreachable = false;
-    var found_unused_var = false;
-    var found_unused_flow = false;
-
-    for (diags) |d| {
-        if (std.mem.indexOf(u8, d.message, "Self-difference") != null) found_csg = true;
-        if (std.mem.indexOf(u8, d.message, "Unreachable code") != null) found_unreachable = true;
-        if (std.mem.indexOf(u8, d.message, "Unused variable 'unused_var'") != null) found_unused_var = true;
-        if (std.mem.indexOf(u8, d.message, "Unused variable 'check_flow'") != null) found_unused_flow = true;
-    }
-
-    try testing.expect(found_csg);
-    try testing.expect(found_unreachable);
-    try testing.expect(found_unused_var);
-    try testing.expect(found_unused_flow);
+    var found: std.StringHashMapUnmanaged(usize) = .empty;
+    defer found.deinit(allocator);
+    for (diags) |d| (try found.getOrPutValue(allocator, d.rule.?, 0)).value_ptr.* += 1;
+    try testing.expectEqual(@as(?usize, 2), found.get("unused-variable"));
+    try testing.expectEqual(@as(?usize, 1), found.get("self-subtraction"));
+    try testing.expectEqual(@as(?usize, 1), found.get("unreachable-code"));
 }
 
 test "API: benchmarkScript completes successfully on valid code" {

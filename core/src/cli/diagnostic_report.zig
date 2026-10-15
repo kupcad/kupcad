@@ -49,6 +49,8 @@ pub const Report = struct {
     length: u32,
     severity: Severity,
     message: []const u8,
+    /// The lint rule that reported it, shown after the message (`[unused-variable]`).
+    rule: ?[]const u8 = null,
 };
 
 pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!void {
@@ -56,7 +58,9 @@ pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!voi
     const col = r.line_index.getUtf8Column(r.offset) + 1;
     const sev_color = style.severity(r.severity);
 
-    try w.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}\n", .{ style.cyan, r.file_path, line, col, style.reset, sev_color, r.severity.toChar(), style.reset, r.message });
+    try w.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}", .{ style.cyan, r.file_path, line, col, style.reset, sev_color, r.severity.toChar(), style.reset, r.message });
+    if (r.rule) |rule| try w.print(" [{s}]", .{rule});
+    try w.writeAll("\n");
     try w.print("{s}\n", .{sourceLine(r.source, line)});
     try w.splatByteAll(' ', col - 1);
     try w.writeAll(sev_color);

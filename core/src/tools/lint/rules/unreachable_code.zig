@@ -3,18 +3,17 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const UnreachableCodeRule = struct {
+    pub const id = "unreachable-code";
+    pub const description = "Statements after a return, break or next";
+
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
             },
         };
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Unreachable Code Check";
     }
 
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
@@ -28,7 +27,7 @@ pub const UnreachableCodeRule = struct {
                 const stmt_node = tree.getNode(stmt_idx).?;
 
                 if (found_terminal) {
-                    try engine.addDiagnostic(engine.getLoc(stmt_node.main_token), .warning, "Unreachable code detected after explicit control flow return/break.", .{});
+                    try engine.report(id, engine.getLoc(stmt_node.main_token), "Unreachable code detected after explicit control flow return/break.", .{});
                 }
 
                 if (stmt_node.tag == .return_stmt or stmt_node.tag == .break_stmt or stmt_node.tag == .next_stmt) {

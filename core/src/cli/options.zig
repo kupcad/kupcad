@@ -74,8 +74,12 @@ pub fn CommandSetup(comptime Flags: type) type {
             };
             errdefer options.deinit(allocator);
 
-            const config = ProjectConfig.load(io, allocator, options.config_path) catch |err| {
-                log_helpers.printStderr(io, "Error: Could not load the configuration file: {s}\n", .{@errorName(err)});
+            var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
+            const config = ProjectConfig.load(io, allocator, options.config_path, &where) catch |err| {
+                const path = options.config_path orelse ".kupcad.json";
+                if (where.line > 0) {
+                    log_helpers.printStderr(io, "Error: {s}:{d}:{d}: {s}\n", .{ path, where.line, where.column, configProblem(err) });
+                } else log_helpers.printStderr(io, "Error: Could not load {s}: {s}\n", .{ path, @errorName(err) });
                 return err;
             };
             return .{ .options = options, .config = config };
@@ -84,5 +88,15 @@ pub fn CommandSetup(comptime Flags: type) type {
         pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
             self.options.deinit(allocator);
         }
+    };
+}
+
+/// What a `.kupcad.json` parse error means.
+fn configProblem(err: anyerror) []const u8 {
+    return switch (err) {
+        error.UnknownField => "unknown setting (see the lint rules with `kupcad check --help`)",
+        error.InvalidEnumTag => "unknown value (a lint rule's level is off, info, warning or error)",
+        error.SyntaxError, error.UnexpectedEndOfInput => "invalid JSON",
+        else => @errorName(err),
     };
 }

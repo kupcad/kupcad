@@ -3,18 +3,17 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const SelfSubtractionRule = struct {
+    pub const id = "self-subtraction";
+    pub const description = "A shape subtracted from itself, which is always empty";
+
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
             },
         };
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Self Subtraction Check";
     }
 
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
@@ -30,7 +29,7 @@ pub const SelfSubtractionRule = struct {
                 if (left.tag == .identifier and right.tag == .identifier) {
                     if (left.data == right.data) {
                         const var_name = tree.getString(@as(ast.StringId, @fromBackingInt(left.data)));
-                        try engine.addDiagnostic(engine.getLoc(node.main_token), .warning, "CSG Warning: Self-difference operation ('{s} - {s}') will result in empty geometry.", .{ var_name, var_name });
+                        try engine.report(id, engine.getLoc(node.main_token), "'{s} - {s}' subtracts a shape from itself, which leaves nothing", .{ var_name, var_name });
                     }
                 }
             }

@@ -4,13 +4,16 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const ParamOrderRule = struct {
+    pub const id = "param-order";
+    pub const description = "A param read before it is defined, or defined where the UI can't find it";
+
     defined_params: std.StringHashMapUnmanaged(void) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
                 .checkEOF = checkEOF,
             },
@@ -19,10 +22,6 @@ pub const ParamOrderRule = struct {
 
     pub fn deinit(self: *ParamOrderRule, allocator: std.mem.Allocator) void {
         self.defined_params.deinit(allocator);
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Parameter Order & Scope Check";
     }
 
     fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
@@ -54,9 +53,9 @@ pub const ParamOrderRule = struct {
             // Static UI extraction reads the script's own statements, so a definition inside
             // any body (a def, a block, an if) is out of its reach.
             if (engine.body_depth > 0) {
-                try engine.addDiagnostic(
+                try engine.report(
+                    id,
                     engine.getLoc(node.main_token),
-                    .warning,
                     "Parameter ':{s}' definition should be placed at the top level for static UI extraction.",
                     .{param_name},
                 );
@@ -66,9 +65,9 @@ pub const ParamOrderRule = struct {
         } else {
             // Getter mode: warn if invoked before its top-level definition
             if (!self.defined_params.contains(param_name)) {
-                try engine.addDiagnostic(
+                try engine.report(
+                    id,
                     engine.getLoc(node.main_token),
-                    .warning,
                     "Parameter ':{s}' used before definition.",
                     .{param_name},
                 );

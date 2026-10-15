@@ -11,18 +11,17 @@ const LintRule = @import("rule.zig").LintRule;
 /// The sizes come from each primitive's Signature, so a coordinate (`translate(-5)`) or
 /// a parameter that may be negative is never flagged.
 pub const NegativeDimRule = struct {
+    pub const id = "nonpositive-size";
+    pub const description = "A primitive's size written as zero or a negative number";
+
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
             },
         };
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Negative Dimension Check";
     }
 
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
@@ -43,7 +42,7 @@ pub const NegativeDimRule = struct {
             const n = literalNumber(tree, arg.value) orelse continue;
             if (n > 0) continue;
             const at = tree.getNode(arg.value).?.main_token;
-            try engine.addDiagnostic(engine.getLoc(at), .warning, "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
+            try engine.report(id, engine.getLoc(at), "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
         }
     }
 

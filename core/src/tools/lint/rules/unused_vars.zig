@@ -3,20 +3,19 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const UnusedVarsRule = struct {
+    pub const id = "unused-variable";
+    pub const description = "A variable assigned and never read";
+
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
                 .enterScope = enterScope,
                 .exitScope = exitScope,
             },
         };
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Unused Variable Check";
     }
 
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
@@ -156,7 +155,7 @@ pub const UnusedVarsRule = struct {
 
             // Flag if not used and doesn't start with an underscore (which marks intentional disuse)
             if (!scope.used_vars.contains(var_name) and (var_name.len == 0 or var_name[0] != '_')) {
-                try engine.addDiagnostic(loc, .warning, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
+                try engine.report(id, loc, "Unused variable '{s}'. Prefix with '_' if intentional.", .{var_name});
             }
         }
     }

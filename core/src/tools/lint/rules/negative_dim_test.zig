@@ -2,32 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const linter_mod = @import("../linter.zig");
 const NegativeDimRule = @import("negative_dim.zig").NegativeDimRule;
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+const lint_testing = @import("../testing.zig");
 
 fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
-    var engine = linter_mod.Linter.init(allocator, .{});
-    errdefer engine.deinit();
-    var rule_impl = NegativeDimRule{};
-    try engine.rules.append(allocator, rule_impl.rule());
-
-    // Tokens and AST are scratch; only the engine (and its diagnostics) is returned
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-
-    // Lex everything upfront to SoA tokens
-    const tokens = try lexer.lexAll(arena.allocator());
-
-    // Initialize parser with tokens and source
-    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
-    const root = try parser.parseProgram();
-
-    // Pass token bounds to the linter engine for diagnostic locations
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
-
-    return engine;
+    return lint_testing.lint(allocator, source, lint_testing.only(NegativeDimRule.id));
 }
 
 test "Linter Rule: NegativeDimRule flags a primitive's size given as zero or a negative literal" {

@@ -2,34 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const linter_mod = @import("../linter.zig");
 const UnusedVarsRule = @import("unused_vars.zig").UnusedVarsRule;
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+const lint_testing = @import("../testing.zig");
 
 fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
-    // Disable all default rules to strictly isolate the environment to just what we append below
-    var engine = linter_mod.Linter.init(allocator, .{
-        .check_negative_dims = false,
-        .check_unused_vars = false,
-        .check_unreachable_code = false,
-        .check_self_subtraction = false,
-    });
-    errdefer engine.deinit();
-
-    var rule_impl = UnusedVarsRule{};
-    try engine.rules.append(allocator, rule_impl.rule());
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-    const tokens = try lexer.lexAll(arena.allocator());
-
-    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
-
-    const root = try parser.parseProgram();
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
-
-    return engine;
+    return lint_testing.lint(allocator, source, lint_testing.only(UnusedVarsRule.id));
 }
 
 test "Linter Rule: UnusedVarsRule catches unused variables" {

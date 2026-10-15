@@ -54,6 +54,10 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "syntax_error.kup", .data = "x = )\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "compile_error.kup", .data = "cube = 5\n" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "class.kup", .data = "class Foo\n  BAR = 7\nend\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "unused.kup", .data = "x = 1\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "strict.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "quiet.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "typo.json", .data = "{\n  \"lint\": {\n    \"unused-variabel\": \"off\"\n  }\n}" });
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -193,4 +197,15 @@ test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for th
     const forced = try kupcadIn(sb.path, &.{ "check", "semantic_error.kup" }, &env);
     defer forced.deinit();
     try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 error") != null);
+}
+
+test "kupcad: check names each finding's rule, at the level .kupcad.json gives it" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "unused.kup" }, .code = 0, .contains = "Unused variable 'x'. Prefix with '_' if intentional. [unused-variable]" },
+        .{ .args = &.{ "check", "--config", "strict.json", "unused.kup" }, .code = 1, .contains = "unused.kup:1:1: E: Unused variable 'x'" },
+        .{ .args = &.{ "check", "--config", "quiet.json", "unused.kup" }, .code = 0, .contains = "Success" },
+        // A mistyped rule used to be ignored, leaving it on.
+        .{ .args = &.{ "check", "--config", "typo.json", "unused.kup" }, .code = 1, .contains = "Error: typo.json:3:" },
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "  unused-variable    A variable assigned and never read" },
+    });
 }

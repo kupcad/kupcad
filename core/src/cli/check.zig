@@ -1,6 +1,7 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const LintConfig = @import("../tools/lint/config.zig").Config;
+const RuleSet = @import("../tools/lint/linter.zig").RuleSet;
 const walker = @import("walker.zig");
 const LimitAllocator = @import("../core/limit_allocator.zig").LimitAllocator;
 const report = @import("diagnostic_report.zig");
@@ -19,7 +20,17 @@ pub const USAGE =
     \\  --config <file>  Read lint settings from <file> instead of .kupcad.json
     \\  -h, --help       Show this help
     \\
-;
+    \\Rules. Set a rule's level (off, info, warning or error) under "lint" in .kupcad.json,
+    \\for example "unused-variable": "off".
+    \\
+++ ruleList() ++ "\n";
+
+/// One line per lint rule: its id and what it finds.
+fn ruleList() []const u8 {
+    comptime var list: []const u8 = "";
+    inline for (RuleSet.ids) |id| list = list ++ std.fmt.comptimePrint("  {s:<18} {s}\n", .{ id, @FieldType(RuleSet, id).description });
+    return list;
+}
 
 const Totals = struct {
     files: usize = 0,
@@ -111,6 +122,7 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
                 .length = d.loc.length,
                 .severity = d.severity,
                 .message = d.message,
+                .rule = d.rule,
             }, c);
         }
         totals.reporter.err("{s}", .{rendered.written()});
