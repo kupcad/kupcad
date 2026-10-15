@@ -138,3 +138,14 @@ test "Manifest: strings are JSON-escaped on save" {
     try testing.expectEqual(@as(usize, 1), m2.dependencies.count());
     try testing.expectEqualStrings("github.com/a/b@v\"1", m2.dependencies.get("dep").?);
 }
+
+test "Manifest: setDependency adds an alias or replaces what it named" {
+    // `put` with fresh copies leaked the old key and value when the alias existed.
+    var manifest = Manifest.init(testing.allocator, "p");
+    defer manifest.deinit();
+    try manifest.setDependency("std", "github.com/kupcad/std@v1");
+    try manifest.setDependency("std", "github.com/kupcad/std@v2");
+    try manifest.setDependency("bolts", "github.com/kupcad/bolts");
+    try testing.expectEqual(@as(u32, 2), manifest.dependencies.count());
+    try testing.expectEqualStrings("github.com/kupcad/std@v2", manifest.dependencies.get("std").?);
+}

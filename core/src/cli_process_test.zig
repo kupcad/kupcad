@@ -229,6 +229,30 @@ test "kupcad: check run in a subfolder uses the project's .kupcad.json above it"
     try testing.expect(std.mem.indexOf(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
 }
 
+test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+
+    const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
+    defer created.deinit();
+    try testing.expectEqual(@as(u8, 0), created.code);
+    const before = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(before);
+
+    // It used to save the dependency first, so every later install failed on it too.
+    const added = try kupcadIn(sb.path, &.{ "pkg", "add", "missing=file:/nonexistent-kupcad-test/pkg.tar.gz" }, &env);
+    defer added.deinit();
+    try testing.expectEqual(@as(u8, 1), added.code);
+    const after = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(after);
+    try testing.expectEqualStrings(before, after);
+}
+
 test "kupcad: check --fix rewrites what it can fix and reports the rest" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .contains = "Fixed 1 problem in fixme.kup" },

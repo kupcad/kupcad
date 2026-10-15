@@ -129,8 +129,8 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
             return .failure;
         };
 
-        try manifest.dependencies.put(try allocator.dupe(u8, alias), try allocator.dupe(u8, url));
-        try manifest.save(fs);
+        // Saved only once the install succeeds, so a failed `add` leaves kupcad.json as it was.
+        try manifest.setDependency(alias, url);
 
         if (parsed.constraint) |c| {
             log_helpers.printStdout(init.io, "Added {s} with constraint {s}{d}.{d}.{d}. Running concurrent install...\n", .{ alias, @tagName(c.op), c.version.major, c.version.minor, c.version.patch });
@@ -152,6 +152,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         return .failure;
     };
 
+    if (command == .add) try manifest.save(fs);
     try lockfile.save(fs);
     log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});
 

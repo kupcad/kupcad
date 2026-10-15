@@ -402,6 +402,7 @@ KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache
 ### Packages (`kupcad pkg`)
 
 * The global store (`~/.kupcad`, or `KUPCAD_HOME`) is shared by every project and every `kupcad` process: a write to its index waits up to 5 seconds for another process's lock rather than failing with "database is locked".
+* `kupcad pkg add <alias>=<url>` writes the dependency to `kupcad.json` only once it has installed and linked: a failed `add` leaves the project as it was.
 
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope

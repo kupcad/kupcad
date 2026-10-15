@@ -80,6 +80,22 @@ pub const Manifest = struct {
         return manifest;
     }
 
+    /// Records `alias` as depending on `url`, replacing what the alias named before.
+    pub fn setDependency(self: *Manifest, alias: []const u8, url: []const u8) !void {
+        const url_copy = try self.allocator.dupe(u8, url);
+        errdefer self.allocator.free(url_copy);
+        const gop = try self.dependencies.getOrPut(alias);
+        if (gop.found_existing) {
+            self.allocator.free(gop.value_ptr.*);
+        } else {
+            gop.key_ptr.* = self.allocator.dupe(u8, alias) catch |err| {
+                self.dependencies.removeByPtr(gop.key_ptr);
+                return err;
+            };
+        }
+        gop.value_ptr.* = url_copy;
+    }
+
     /// Saves the current state back to kupcad.json deterministically
     pub fn save(self: *Manifest, fs: @import("../vfs/vfs.zig").Vfs) !void {
         var out_str: std.ArrayListUnmanaged(u8) = .empty;
