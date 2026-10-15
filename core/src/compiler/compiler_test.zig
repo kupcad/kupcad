@@ -2173,3 +2173,47 @@ test "Compiler: a failed compile reports where and why" {
     };
     try expectCompileError(many_args, error.TooManyArguments, 1, 1, "a call takes at most 255 arguments");
 }
+
+/// Compiles the single expression `build` makes and returns the compile error's message.
+fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex) ![]const u8 {
+    var b = ast.Builder.init(testing.allocator);
+    defer b.deinit();
+    const root = try build(&b);
+    const symbols = try testing.allocator.alloc(resolver.ResolvedSymbol, b.tree.nodes.items.len);
+    defer testing.allocator.free(symbols);
+    @memset(symbols, .{ .kind = .unresolved, .index = 0 });
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols, &.{0}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.UnknownNode, comp.compile(root));
+    return testing.allocator.dupe(u8, comp.errorDiagnostic().?.message);
+}
+
+fn strayEach(b: *ast.Builder) anyerror!ast.NodeIndex {
+    return b.eachExpr(try b.number("1", 0), 0);
+}
+
+fn straySplat(b: *ast.Builder) anyerror!ast.NodeIndex {
+    return b.splatExpr(try b.number("1", 0), 0);
+}
+
+test "Compiler: a node it can't compile is an error, not nil" {
+    // Unhandled nodes used to compile to nil: a half-built `for` parsed and did nothing.
+    const each_msg = try compileFailure(strayEach);
+    defer testing.allocator.free(each_msg);
+    try testing.expectEqualStrings("OpenSCAD's 'each' isn't supported", each_msg);
+    const splat_msg = try compileFailure(straySplat);
+    defer testing.allocator.free(splat_msg);
+    try testing.expectEqualStrings("'*' and '**' only spread values inside an array, a hash or a call's arguments", splat_msg);
+
+    // nil and doc comments still compile, now on purpose.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, "## @label size\nx = nil");
+    try testing.expectEqual(.ok, res.status);
+}

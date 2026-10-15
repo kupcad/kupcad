@@ -361,10 +361,17 @@ pub const Compiler = struct {
             .property_assignment => try self.compilePropertyAssignment(node),
             .defined_expr => try self.compileDefinedExpr(node),
             .block => try self.compileBlock(node),
+            .nil => try self.emitOp(.op_nil),
+            // A `##` doc comment is a statement whose value is nil.
+            .docstring => try self.emitOp(.op_nil),
 
-            else => {
-                try self.emitOp(.op_nil); // Push dummy value for unknown AST nodes
-            },
+            // Every tag is listed: an unhandled node used to compile to nil, which is how a
+            // half-built `for` parsed and then did nothing. A new tag is a Zig compile error.
+            // Arrays, calls and hashes compile their splats themselves.
+            .splat_expr, .double_splat_expr => return self.fail(error.UnknownNode, "'*' and '**' only spread values inside an array, a hash or a call's arguments", .{}),
+            .each_expr => return self.fail(error.UnknownNode, "OpenSCAD's 'each' isn't supported", .{}),
+            // Documents with parse errors are never compiled.
+            .invalid => return error.UnknownNode,
         }
 
         // Every compiled node is an expression in KupCAD.
