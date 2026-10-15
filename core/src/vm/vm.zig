@@ -980,7 +980,7 @@ pub const VM = struct {
                     const import_depth = self.frames.items.len;
                     const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
                         // Clean up the sentinel on failure so it can be retried later if caught
-                        self.uncacheModule(path_str);
+                        self.forgetModule(path_str);
 
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.Unwind) {
@@ -1652,7 +1652,9 @@ pub const VM = struct {
         gop.value_ptr.* = val;
     }
 
-    fn uncacheModule(self: *VM, path: []const u8) void {
+    /// Drops the module imported from `path`, so the next import of it runs its new
+    /// source (the session, when that file was edited).
+    pub fn forgetModule(self: *VM, path: []const u8) void {
         if (self.modules.fetchRemove(path)) |kv| self.allocator.free(kv.key);
     }
 

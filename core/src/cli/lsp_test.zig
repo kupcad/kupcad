@@ -56,7 +56,7 @@ const Server = struct {
         self.session = try ScriptSession.init(testing.allocator, testing.io);
         self.session.vm.vfs = self.sandbox.vfs();
         self.outbox = .{};
-        self.handler = Handler.init(testing.allocator, testing.io, &self.outbox.transport, &self.session, null, &self.mem_vfs, &self.sandbox);
+        self.handler = Handler.init(testing.allocator, testing.io, &self.outbox.transport, &self.session, null, &self.mem_vfs, &self.sandbox, null);
         self.arena = std.heap.ArenaAllocator.init(testing.allocator);
     }
 
@@ -208,4 +208,26 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
         .textDocument = .{ .uri = URI },
         .position = .{ .line = 1, .character = 0 },
     });
+}
+
+test "LSP: open documents import each other, and editing one re-evaluates its importers" {
+    // Documents were known by their URIs, which no import names: an import read the file
+    // from wherever the server started, never the open (unsaved) one, and editing it
+    // left the files importing it stale.
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+
+    try server.open("file:///work/parts/hw.kup", "def bolt\n  cube(2)\nend\nexport bolt\n");
+    try server.open("file:///work/parts/main.kup", "import { bolt } from \"./hw.kup\"\nbolt()\n");
+    server.settle();
+    const main_id = server.session.workspace.path_to_id.get("parts/main.kup") orelse return error.TestExpectedModule;
+    const hw_id = server.session.workspace.path_to_id.get("parts/hw.kup") orelse return error.TestExpectedModule;
+    try testing.expectEqualSlices(@TypeOf(hw_id), &.{hw_id}, server.session.workspace.modules.items[@backingInt(main_id)].deps.items);
+    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+
+    try server.change("file:///work/parts/hw.kup", "def bolt\n  cube(3)\nend\nexport bolt\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(server.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
 }

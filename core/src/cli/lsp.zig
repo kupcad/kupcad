@@ -49,11 +49,14 @@ pub fn preferredViewportPort(environ: *const std.process.Environ.Map) u16 {
 
 pub const DocumentBuffer = struct {
     uri: []const u8,
+    /// What the session and imports call it (Handler.modulePath), owned.
+    module_path: []const u8,
     source: []const u8,
     doc: ?api.Document = null,
 
     pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
         allocator.free(self.uri);
+        allocator.free(self.module_path);
         allocator.free(self.source);
         if (self.doc) |*d| d.deinit();
     }
@@ -94,7 +97,7 @@ fn getReturnTypeHint(method_name: []const u8) ?[]const u8 {
 }
 
 /// `sandbox` must be a non-writing VFS (see ReadOnlyVfs): the document is untrusted.
-pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
+pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, target_node: ast.NodeIndex, writer: anytype) !void {
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
     // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
@@ -111,6 +114,7 @@ pub fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs,
 
     var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
     defer comp.deinit();
+    comp.module_path = module_path;
     comp.compile(doc.tree.root) catch |err| {
         // A chunk that didn't compile is incomplete, and running it broke the VM's
         // invariants; the error is the document's diagnostic.
@@ -253,8 +257,16 @@ pub const Handler = struct {
     mem_vfs: *MemoryVfs,
     /// Read-only VFS every LSP-run VM uses (session + hover).
     sandbox: *ReadOnlyVfs,
-    /// The document last edited, whose mesh the viewport shows (owned).
-    preview_uri: ?[]u8 = null,
+    /// The project's files on disk, as imports read them: rooted at `root` once the editor
+    /// names it. Null when there are none to read (tests).
+    workspace_fs: ?*NativeVfs,
+    /// The workspace folder the editor opened (absolute, owned): documents are known by
+    /// their path relative to it, so their relative imports find each other.
+    root: ?[]u8 = null,
+    /// The directory `workspace_fs` was re-rooted at, closed with the handler.
+    root_dir: ?std.Io.Dir = null,
+    /// The module path of the document last edited, whose mesh the viewport shows (owned).
+    preview_module: ?[]u8 = null,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
 
@@ -266,6 +278,7 @@ pub const Handler = struct {
         ws_server: ?*ViewportWsServer,
         mem_vfs: *MemoryVfs,
         sandbox: *ReadOnlyVfs,
+        workspace_fs: ?*NativeVfs,
     ) Handler {
         session.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
         return .{
@@ -278,6 +291,7 @@ pub const Handler = struct {
             .ws_server = ws_server,
             .mem_vfs = mem_vfs,
             .sandbox = sandbox,
+            .workspace_fs = workspace_fs,
         };
     }
 
@@ -285,25 +299,59 @@ pub const Handler = struct {
     /// editor goes quiet (`evaluatePreview`, run by the inbox), not on every keystroke.
     /// Uses upsertModule: addModule returns error.DuplicateModule for known paths, and the old
     /// "catch -> patch source" path never ran, so the viewport kept rendering stale code.
-    fn syncSession(self: *Handler, uri: []const u8, source: []const u8) !void {
-        try self.mem_vfs.vfs().writeFile(uri, source);
+    /// The module is named by its path in the project (modulePath), and its unsaved text
+    /// is what imports of it read; the modules importing it are evaluated again with it.
+    fn syncSession(self: *Handler, module_path: []const u8, source: []const u8) !void {
+        try self.mem_vfs.vfs().writeFile(module_path, source);
 
-        _ = try self.session.workspace.upsertModule(uri, source);
+        _ = try self.session.workspace.upsertModule(module_path, source);
         try self.session.workspace.linkDependencies();
         try self.session.buildReverseGraph();
-        try self.session.markFileEdited(uri);
+        try self.session.markFileEdited(module_path);
 
-        const previewed = try self.allocator.dupe(u8, uri);
-        if (self.preview_uri) |old| self.allocator.free(old);
-        self.preview_uri = previewed;
+        const previewed = try self.allocator.dupe(u8, module_path);
+        if (self.preview_module) |old| self.allocator.free(old);
+        self.preview_module = previewed;
         self.preview_pending = true;
+    }
+
+    /// What the session and imports call the document at `uri`: its path relative to the
+    /// workspace root (as `./hw.kup` in another file resolves), else its absolute path, else
+    /// the URI itself (an unsaved buffer). They used to know it by its URI, which no import
+    /// names, so open documents never linked. Caller owns the result.
+    fn modulePath(self: *const Handler, allocator: std.mem.Allocator, uri: []const u8) ![]u8 {
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+        const path = try documentPath(scratch.allocator(), uri) orelse return allocator.dupe(u8, uri);
+        if (self.root) |root| {
+            if (path.len > root.len and std.mem.startsWith(u8, path, root) and path[root.len] == '/') {
+                return allocator.dupe(u8, path[root.len + 1 ..]);
+            }
+        }
+        return allocator.dupe(u8, path);
+    }
+
+    /// Takes the workspace folder from `initialize`: its first folder, else its root URI.
+    fn setRoot(self: *Handler, request: lsp.types.InitializeParams) !void {
+        const uri = if (request.workspaceFolders) |folders| (if (folders.len > 0) folders[0].uri else null) else null;
+        const root_uri = uri orelse request.rootUri orelse return;
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        const path = try documentPath(scratch.allocator(), root_uri) orelse return;
+        const trimmed = std.mem.trimEnd(u8, path, "/");
+        self.root = try self.allocator.dupe(u8, trimmed);
+        if (self.workspace_fs) |fs| {
+            const dir = try std.Io.Dir.cwd().openDir(self.io, trimmed, .{});
+            self.root_dir = dir;
+            fs.root_dir = dir;
+        }
     }
 
     /// Evaluates the session and streams the edited document's mesh to the viewport. An edit
     /// that arrives meanwhile cancels it (the inbox sets the VM's cancel token).
     pub fn evaluatePreview(self: *Handler) void {
         self.preview_pending = false;
-        const uri = self.preview_uri orelse return;
+        const uri = self.preview_module orelse return;
         // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
         self.session.evaluateUntilCancelled() catch |err| switch (err) {
             error.ParseError, error.CompileError, error.RuntimeError, error.Cancelled => {
@@ -336,7 +384,9 @@ pub const Handler = struct {
     }
 
     pub fn deinit(self: *Handler) void {
-        if (self.preview_uri) |uri| self.allocator.free(uri);
+        if (self.preview_module) |m| self.allocator.free(m);
+        if (self.root) |r| self.allocator.free(r);
+        if (self.root_dir) |d| d.close(self.io);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -350,6 +400,7 @@ pub const Handler = struct {
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
         logger.info("Initializing server", .{});
+        self.setRoot(request) catch |err| logger.warn("Could not open the workspace folder: {}; imports are read from the current directory", .{err});
 
         if (request.capabilities.general) |general| {
             for (general.positionEncodings orelse &.{}) |encoding| {
@@ -441,16 +492,18 @@ pub const Handler = struct {
         }
 
         const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        const module_path = try self.modulePath(self.allocator, params.textDocument.uri);
         const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
 
         const parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
         try self.files.put(self.allocator, uri_dup, .{
             .uri = uri_dup,
+            .module_path = module_path,
             .source = source_dup,
             .doc = parsed_doc,
         });
 
-        try self.syncSession(uri_dup, source_dup);
+        try self.syncSession(module_path, source_dup);
 
         try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
     }
@@ -471,7 +524,7 @@ pub const Handler = struct {
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
-                        try self.syncSession(params.textDocument.uri, buf.source);
+                        try self.syncSession(buf.module_path, buf.source);
                     }
                     try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
@@ -487,14 +540,12 @@ pub const Handler = struct {
     ) !void {
         const uri = params.textDocument.uri;
         logger.debug("Closed {s}", .{uri});
-        if (self.files.fetchRemove(uri)) |kv| {
-            var old_doc = kv.value;
-            old_doc.deinit(self.allocator);
-        }
         // The editor keeps the last diagnostics it was sent for a file until told otherwise.
         try self.publishDiagnostics(arena, uri, &.{});
-        try self.session.removeModule(uri);
-        _ = self.mem_vfs.deleteFile(uri);
+        var closed = (self.files.fetchRemove(uri) orelse return).value;
+        defer closed.deinit(self.allocator);
+        try self.session.removeModule(closed.module_path);
+        _ = self.mem_vfs.deleteFile(closed.module_path);
     }
 
     pub fn @"textDocument/formatting"(
@@ -583,7 +634,7 @@ pub const Handler = struct {
 
         // LIVE SPATIAL EVALUATION
         // Silently execute and append live Markdown traits
-        writeSpatialHover(arena, self.io, self.sandbox.vfs(), &doc, found_node_idx, &out.writer) catch |err| {
+        writeSpatialHover(arena, self.io, self.sandbox.vfs(), &doc, buf.module_path, found_node_idx, &out.writer) catch |err| {
             logger.debug("Hover: no value to show: {}", .{err});
         };
 
@@ -958,7 +1009,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("o
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox);
+    var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox, &workspace_ro);
     defer handler.deinit();
 
     // Messages come through the inbox, which evaluates the preview when the editor goes

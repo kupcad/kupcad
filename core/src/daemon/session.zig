@@ -259,6 +259,9 @@ pub const ScriptSession = struct {
         var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &self.vm);
         defer comp.deinit();
         comp.module_path = mod.path;
+        // Modules importing this one read it through the VM's import cache, which would
+        // keep serving its old exports.
+        self.vm.forgetModule(mod.path);
 
         comp.compile(doc.tree.root) catch |err| {
             const diagnostic = comp.errorDiagnostic() orelse return err;
