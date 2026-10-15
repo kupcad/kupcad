@@ -4,6 +4,10 @@ const sqlite = @import("sqlite");
 
 const log = std.log.scoped(.pkg);
 
+/// How long a statement waits for another process's lock on the index (two installs at
+/// once, an install while `pkg prune` runs) before failing with SQLITE_BUSY.
+pub const BUSY_TIMEOUT_MS: c_int = 5000;
+
 /// Deletes package_files rows whose (package_id, commit_sha) has no packages row.
 const ORPHAN_PACKAGE_FILES_SQL =
     \\DELETE FROM package_files WHERE NOT EXISTS (
@@ -156,6 +160,11 @@ pub const Store = struct {
         var handle: ?*sqlite.sqlite3 = null;
         const rc = sqlite.sqlite3_open(db_path_z, &handle);
         if (rc != sqlite.SQLITE_OK or handle == null) return error.DatabaseCorrupted;
+        // Without it a locked index fails at once ("database is locked").
+        if (sqlite.sqlite3_busy_timeout(handle, BUSY_TIMEOUT_MS) != sqlite.SQLITE_OK) {
+            _ = sqlite.sqlite3_close(handle);
+            return error.SqliteError;
+        }
 
         const db = Db{ .handle = handle };
         var store = Store{ .db = db, .io = io };

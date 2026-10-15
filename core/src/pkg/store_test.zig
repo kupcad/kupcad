@@ -261,3 +261,35 @@ test "Store: computeIntegrity input is unambiguous" {
     defer testing.allocator.free(legacy);
     try Store.verifyIntegrity(testing.allocator, &m2, legacy, .legacy);
 }
+
+test "Store: a write waits for another connection's lock instead of failing" {
+    // Two processes share the global index (two installs, or an install during `pkg
+    // prune`); without a busy timeout the second failed at once with SQLITE_BUSY.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(dir);
+    const db_path = try std.fs.path.join(testing.allocator, &.{ dir, "index.db" });
+    defer testing.allocator.free(db_path);
+
+    var holder = try Store.init(testing.io, db_path);
+    defer holder.deinit();
+    var writer = try Store.init(testing.io, db_path);
+    defer writer.deinit();
+
+    try holder.db.exec("BEGIN IMMEDIATE", .{}, .{});
+    const Release = struct {
+        fn run(store: *Store) void {
+            testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
+            store.db.exec("COMMIT", .{}, .{}) catch @panic("COMMIT failed");
+        }
+    };
+    const releaser = try std.Thread.spawn(.{}, Release.run, .{&holder});
+    defer releaser.join();
+
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("kupcad.json", "hash_json");
+    try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);
+    try testing.expect(try writer.hasPackage("github.com-u-r", "commit-a"));
+}

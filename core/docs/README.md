@@ -399,6 +399,10 @@ part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
 
 KupCAD uses a Content Addressable File System (CAFS) paired with an SQLite cache for dependency management. Dependencies are declared in `kupcad.json` and pinned in `kupcad.lock` (format 2.0.0) to a commit plus a content integrity hash; `kupcad pkg install` verifies every cached or downloaded package against that hash and fails loudly on a mismatch. Package archives are streamed straight into the CAFS with symlink entries, path escapes and oversized archives rejected (see `architecture.md` §9). External solid files are parsed and injected directly into the VM.
 
+### Packages (`kupcad pkg`)
+
+* The global store (`~/.kupcad`, or `KUPCAD_HOME`) is shared by every project and every `kupcad` process: a write to its index waits up to 5 seconds for another process's lock rather than failing with "database is locked".
+
 ```ruby
 # 1. Importing native KupCAD modules via isolated lexical scope
 import { Screw } from "github.com/kupcad-libs/hardware"
