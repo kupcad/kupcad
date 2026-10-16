@@ -12,9 +12,9 @@ const string_map = @import("string_map.zig");
 pub const StringMap = string_map.StringMap;
 
 /// 3.0.0: a git host package's files are recorded without its archive's top folder.
-/// 2.0.0: integrity uses length-prefixed hashing (see Store.computeIntegrity).
+/// 2.0.0: integrity uses length-prefixed hashing (see integrity.zig).
 pub const LOCKFILE_VERSION = "3.0.0";
-/// 1.x: integrity uses the ambiguous v1 hashing (Store.IntegrityAlgo.legacy).
+/// 1.x: integrity uses the ambiguous v1 hashing (integrity.Algo.legacy).
 const LEGACY_HASH_MAJOR = 1;
 /// The last major that recorded git host archives under their top folder.
 const WRAPPED_ARCHIVES_MAJOR = 2;
@@ -151,7 +151,7 @@ pub const Lockfile = struct {
 
     /// How a lockfile's version took its integrities, so older ones can still be checked.
     pub const Format = struct {
-        /// 1.x: the ambiguous v1 path hashing (Store.IntegrityAlgo.legacy).
+        /// 1.x: the ambiguous v1 path hashing (integrity.Algo.legacy).
         legacy_hash: bool,
         /// Before 3.0.0: a git host package's files kept its archive's top folder.
         wrapped_git_archives: bool,

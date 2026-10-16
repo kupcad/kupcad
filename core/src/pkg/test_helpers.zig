@@ -4,6 +4,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Store = @import("store.zig").Store;
+const string_map = @import("string_map.zig");
 
 // ---------------------------------------------------------------------------
 // In-memory tar / gzip builders (hand-rolled ustar + stored-deflate gzip)
@@ -94,7 +95,7 @@ pub fn writeAbs(path: []const u8, data: []const u8) !void {
 }
 
 pub fn freeMap(map: *std.StringHashMap([]const u8)) void {
-    Store.freeFileMap(testing.allocator, map);
+    string_map.deinitOwned(testing.allocator, map);
 }
 
 /// Runs a single-row `SELECT ... AS n` / `COUNT(*)` query.

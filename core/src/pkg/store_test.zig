@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const store_mod = @import("store.zig");
 const Store = store_mod.Store;
+const integrity = @import("integrity.zig");
 const sqlite = @import("sqlite");
 const helpers = @import("test_helpers.zig");
 const freeMap = helpers.freeMap;
@@ -94,7 +95,7 @@ test "Store: gracefully handles packages with zero files" {
     try testing.expectEqualStrings("meta-pkg", row.?.id);
 }
 
-test "Store: computeIntegrity generates deterministic hashes regardless of map iteration order" {
+test "Integrity: compute generates deterministic hashes regardless of map iteration order" {
     var files1 = std.StringHashMap([]const u8).init(testing.allocator);
     defer files1.deinit();
     try files1.put("file_b.kup", "hash-b");
@@ -108,10 +109,10 @@ test "Store: computeIntegrity generates deterministic hashes regardless of map i
     try files2.put("file_b.kup", "hash-b");
     try files2.put("file_a.kup", "hash-a");
 
-    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    const hash1 = try integrity.compute(testing.allocator, &files1);
     defer testing.allocator.free(hash1);
 
-    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    const hash2 = try integrity.compute(testing.allocator, &files2);
     defer testing.allocator.free(hash2);
 
     // The Merkle-style hash must perfectly match across both instances
@@ -119,7 +120,7 @@ test "Store: computeIntegrity generates deterministic hashes regardless of map i
     try testing.expect(std.mem.startsWith(u8, hash1, "sha256-"));
 }
 
-test "Store: computeIntegrity detects file tampering" {
+test "Integrity: compute detects file tampering" {
     var files1 = std.StringHashMap([]const u8).init(testing.allocator);
     defer files1.deinit();
     try files1.put("main.kup", "hash-clean");
@@ -128,21 +129,21 @@ test "Store: computeIntegrity detects file tampering" {
     defer files2.deinit();
     try files2.put("main.kup", "hash-tampered");
 
-    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    const hash1 = try integrity.compute(testing.allocator, &files1);
     defer testing.allocator.free(hash1);
 
-    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    const hash2 = try integrity.compute(testing.allocator, &files2);
     defer testing.allocator.free(hash2);
 
     // Hashes must deviate if the underlying file contents (represented by their hashes) change
     try testing.expect(!std.mem.eql(u8, hash1, hash2));
 }
 
-test "Store: computeIntegrity handles empty packages" {
+test "Integrity: compute handles empty packages" {
     var empty_files = std.StringHashMap([]const u8).init(testing.allocator);
     defer empty_files.deinit();
 
-    const hash = try Store.computeIntegrity(testing.allocator, &empty_files);
+    const hash = try integrity.compute(testing.allocator, &empty_files);
     defer testing.allocator.free(hash);
 
     // Empty packages should still generate a valid, reproducible sha256 checksum (the hash of nothing)
@@ -248,7 +249,7 @@ test "Store: migrates v2 databases to the composite package key" {
 
 // Audit fix: path and hash were concatenated without separators, so different
 // file maps ("ab"->"c" vs "a"->"bc") produced the same integrity.
-test "Store: computeIntegrity input is unambiguous" {
+test "Integrity: compute input is unambiguous" {
     var m1 = std.StringHashMap([]const u8).init(testing.allocator);
     defer m1.deinit();
     try m1.put("ab", "c");
@@ -256,18 +257,18 @@ test "Store: computeIntegrity input is unambiguous" {
     defer m2.deinit();
     try m2.put("a", "bc");
 
-    const h1 = try Store.computeIntegrity(testing.allocator, &m1);
+    const h1 = try integrity.compute(testing.allocator, &m1);
     defer testing.allocator.free(h1);
-    const h2 = try Store.computeIntegrity(testing.allocator, &m2);
+    const h2 = try integrity.compute(testing.allocator, &m2);
     defer testing.allocator.free(h2);
     try testing.expect(!std.mem.eql(u8, h1, h2));
-    try Store.verifyIntegrity(testing.allocator, &m1, h1, .{});
-    try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &m2, h1, .{}));
+    try integrity.verify(testing.allocator, &m1, h1, .{});
+    try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &m2, h1, .{}));
 
     // The legacy (lockfile 1.x) algorithm is kept, ambiguity included, to verify old lockfiles.
-    const legacy = try Store.computeIntegrityWith(testing.allocator, &m1, .{ .algo = .legacy });
+    const legacy = try integrity.computeWith(testing.allocator, &m1, .{ .algo = .legacy });
     defer testing.allocator.free(legacy);
-    try Store.verifyIntegrity(testing.allocator, &m2, legacy, .{ .algo = .legacy });
+    try integrity.verify(testing.allocator, &m2, legacy, .{ .algo = .legacy });
 }
 
 test "Store: a write waits for another connection's lock instead of failing" {
@@ -314,11 +315,11 @@ test "Store: an integrity under a root folder is that of the paths with it" {
     try prefixed.put("r-c1/main.kup", "h1");
     try prefixed.put("r-c1/lib/bolt.kup", "h2");
 
-    inline for (.{ Store.IntegrityAlgo.current, Store.IntegrityAlgo.legacy }) |algo| {
-        const old = try Store.computeIntegrityWith(testing.allocator, &prefixed, .{ .algo = algo });
+    inline for (.{ integrity.Algo.current, integrity.Algo.legacy }) |algo| {
+        const old = try integrity.computeWith(testing.allocator, &prefixed, .{ .algo = algo });
         defer testing.allocator.free(old);
-        try Store.verifyIntegrity(testing.allocator, &stripped, old, .{ .algo = algo, .root = "r-c1" });
-        try testing.expectError(error.IntegrityMismatch, Store.verifyIntegrity(testing.allocator, &stripped, old, .{ .algo = algo }));
+        try integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo, .root = "r-c1" });
+        try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo }));
     }
 }
 

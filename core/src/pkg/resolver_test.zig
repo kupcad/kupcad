@@ -8,6 +8,7 @@ const Lockfile = lockfile_mod.Lockfile;
 const LockedPackage = lockfile_mod.LockedPackage;
 const StringMap = lockfile_mod.StringMap;
 const Store = @import("store.zig").Store;
+const integrity = @import("integrity.zig");
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const ParsedPackage = @import("providers/provider.zig").ParsedPackage;
@@ -317,7 +318,7 @@ test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as c
     const legacy = blk: {
         var files = (try fx.store.getPackageFiles(testing.allocator, pkg_id, (try fx.entry(pkg_id)).resolved)).?;
         defer helpers.freeMap(&files);
-        break :blk try Store.computeIntegrityWith(testing.allocator, &files, .{ .algo = .legacy });
+        break :blk try integrity.computeWith(testing.allocator, &files, .{ .algo = .legacy });
     };
     defer testing.allocator.free(legacy);
     try testing.expect(!std.mem.eql(u8, current, legacy));

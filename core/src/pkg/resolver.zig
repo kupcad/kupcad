@@ -12,6 +12,7 @@ const provider = @import("providers/provider.zig");
 const cafs_mod = @import("cafs.zig");
 const Cafs = cafs_mod.Cafs;
 const Store = @import("store.zig").Store;
+const integrity = @import("integrity.zig");
 const Fetcher = @import("providers/fetcher.zig").Fetcher;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const git_host = @import("providers/git_host.zig");
@@ -235,7 +236,7 @@ pub const Resolver = struct {
         const files = &archive.files;
 
         // 3. Integrity: must match the lockfile for both cached and fresh content
-        const integrity_hash = try Store.computeIntegrity(self.allocator, files);
+        const integrity_hash = try integrity.compute(self.allocator, files);
         var integrity_owned = true;
         defer if (integrity_owned) self.allocator.free(integrity_hash);
 
@@ -245,11 +246,11 @@ pub const Resolver = struct {
                 log.warn("kupcad.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
                 return error.LockfileMissingIntegrity;
             }
-            const scheme: Store.IntegrityScheme = .{
+            const scheme: integrity.Scheme = .{
                 .algo = if (format.legacy_hash) .legacy else .current,
                 .root = if (pinned_wrapped) archive.root else "",
             };
-            Store.verifyIntegrity(self.allocator, files, expected, scheme) catch |err| {
+            integrity.verify(self.allocator, files, expected, scheme) catch |err| {
                 log.warn("Integrity mismatch for {s}@{s}: kupcad.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
                 return err;
             };
