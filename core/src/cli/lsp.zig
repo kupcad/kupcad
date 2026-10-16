@@ -120,12 +120,8 @@ pub const HoverRun = struct {
         const node = doc.tree.getNode(target_node) orelse return error.NoValue;
         var val: value.Value = value.Value.initNil();
 
-        if (node.tag == .identifier) {
-            const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
-            val = self.vm.globals.get(name) orelse return error.NoValue;
-        } else if (node.tag == .assignment) {
-            const assign = doc.tree.assignment(node);
-            const name = doc.tree.getString(assign.name);
+        if (node.tag == .identifier or node.tag == .assignment) {
+            const name = if (node.tag == .identifier) doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) else doc.tree.getString(doc.tree.assignment(node).name);
             val = self.vm.globals.get(name) orelse return error.NoValue;
         } else if (node.tag == .method_call) {
             // The call alone, in the run's VM, so it sees the run's variables.
@@ -421,13 +417,15 @@ pub const Handler = struct {
         logger.info("Initializing server", .{});
         self.setRoot(request) catch |err| logger.warn("Could not open the workspace folder: {}; imports are read from the current directory", .{err});
 
+        // The client's preferred encoding among the two columns are computed in: UTF-8 or
+        // UTF-16 (the default every client supports). UTF-32 was announced when offered
+        // first, while every column was still counted in UTF-16.
         if (request.capabilities.general) |general| {
             for (general.positionEncodings orelse &.{}) |encoding| {
                 self.offset_encoding = switch (encoding) {
                     .@"utf-8" => .@"utf-8",
                     .@"utf-16" => .@"utf-16",
-                    .@"utf-32" => .@"utf-32",
-                    .custom_value => continue,
+                    .@"utf-32", .custom_value => continue,
                 };
                 break;
             }
@@ -652,12 +650,21 @@ pub const Handler = struct {
             out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
         }
 
-        // What running the document says about it (bounds, volume, ...).
-        if (self.hoverRun(buf, &doc)) |maybe_run| {
-            if (maybe_run) |run| run.writeFacts(&doc, found_node_idx, &out.writer) catch |err| {
-                logger.debug("Hover: no value to show: {}", .{err});
-            };
-        } else |err| logger.warn("Hover: could not run the document: {}", .{err});
+        // What running the document says about it (bounds, volume, ...). A variable's value
+        // is in the run's globals only for a script-level variable: one outside any def
+        // (the resolver leaves the script's own unresolved or local), or a top-level one
+        // read inside a def (resolved as a global there). A def's parameter or local of
+        // the same name used to show the global's facts.
+        const sym_kind = doc.symbols[@backingInt(found_node_idx)].kind;
+        const is_variable = target_node.tag == .identifier or target_node.tag == .assignment;
+        const script_variable = sym_kind == .global or (scope.def_name == null and (sym_kind == .local or sym_kind == .unresolved));
+        if (!is_variable or script_variable) {
+            if (self.hoverRun(buf, &doc)) |maybe_run| {
+                if (maybe_run) |run| run.writeFacts(&doc, found_node_idx, &out.writer) catch |err| {
+                    logger.debug("Hover: no value to show: {}", .{err});
+                };
+            } else |err| logger.warn("Hover: could not run the document: {}", .{err});
+        }
 
         // Add scope footer
         if (scope.def_name) |dn| {

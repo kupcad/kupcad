@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const api = @import("../api.zig");
+const suppressions = @import("../tools/lint/suppressions.zig");
 
 pub const Position = struct { line: u32, character: u32 };
 pub const TextEdit = struct { start: Position, end: Position, text: []const u8 };
@@ -39,6 +40,9 @@ pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, conf
             };
             try actions.append(arena, .{ .title = fix.title, .preferred = fix.safe, .edits = edits });
         }
+        // A suppression comment that suppresses nothing isn't silenced by another one
+        // above it (that one would warn too), so no disable action for it.
+        if (std.mem.eql(u8, rule, suppressions.RULE)) continue;
         try actions.append(arena, try disableAction(arena, source, &line_index, line, rule));
     }
     return actions.toOwnedSlice(arena);

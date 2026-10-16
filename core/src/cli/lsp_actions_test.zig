@@ -46,3 +46,12 @@ test "LSP actions: a suggestion is offered but not preferred" {
     try testing.expectEqualStrings("Use 'size'", found[0].title);
     try testing.expect(!found[0].preferred);
 }
+
+test "LSP actions: a stray suppression comment gets no disable action" {
+    // The quick fix inserted a disable comment above it, which itself warned.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "# kupcad:disable-next-line unused-variable\nx = 1\nx\n";
+    const found = try actionsOn(arena.allocator(), source, 0, .utf8);
+    try testing.expectEqual(@as(usize, 0), found.len);
+}

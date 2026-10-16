@@ -285,3 +285,35 @@ test "LSP: a preview a message stopped runs again once the editor is quiet" {
     try testing.expect(!server.handler.preview_pending);
     try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
 }
+
+test "LSP: hovering a parameter or local doesn't show a same-named global's facts" {
+    // Facts were looked up by name in the run's globals, so `x` inside a def showed the
+    // script's `x`.
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "x = cube(10)\ndef f(x)\n  x\nend\n");
+    server.settle();
+    const global = server.hover(URI, 0, 0) orelse return error.NoHover;
+    try testing.expect(std.mem.indexOf(u8, global, "3D Solid") != null);
+    const param = server.hover(URI, 2, 2) orelse return error.NoHover;
+    try testing.expect(std.mem.indexOf(u8, param, "3D Solid") == null);
+}
+
+test "LSP: positions are UTF-8 or UTF-16, never UTF-32, whatever the client offers first" {
+    // UTF-32 was announced when offered first, while every column was counted in UTF-16.
+    const General = std.meta.Child(@FieldType(@FieldType(lsp.types.InitializeParams, "capabilities"), "general"));
+    const PositionEncoding = std.meta.Child(std.meta.Child(@FieldType(General, "positionEncodings")));
+    const Offer = struct { offered: []const PositionEncoding, chosen: lsp.offsets.Encoding };
+    for ([_]Offer{
+        .{ .offered = &.{ .@"utf-32", .@"utf-16" }, .chosen = .@"utf-16" },
+        .{ .offered = &.{ .@"utf-32", .@"utf-8" }, .chosen = .@"utf-8" },
+        .{ .offered = &.{.@"utf-32"}, .chosen = .@"utf-16" },
+    }) |offer| {
+        var server: Server = undefined;
+        try server.init();
+        defer server.deinit();
+        _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{ .general = .{ .positionEncodings = offer.offered } }, .rootUri = "file:///work" });
+        try testing.expectEqual(offer.chosen, server.handler.offset_encoding);
+    }
+}
