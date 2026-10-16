@@ -5,16 +5,21 @@ const common = @import("common.zig");
 const iteration = @import("iteration.zig");
 
 pub fn numberRound(vm: *VM, receiver: value.Value, decimals_opt: ?f64) !value.Value {
-    _ = vm;
     const num = receiver.asNumber();
     const decimals = decimals_opt orelse 0.0;
-
-    if (decimals == 0.0) {
-        return value.Value.initNumber(@round(num));
-    } else {
-        const multiplier = std.math.pow(f64, 10.0, decimals);
-        return value.Value.initNumber(@round(num * multiplier) / multiplier);
+    if (!std.math.isFinite(decimals)) {
+        _ = vm.raiseError(.ValueError, "round: the number of decimals must be finite, got {f}", .{value.fmtNumber(decimals)});
+        return error.RuntimeError;
     }
+    if (decimals == 0.0) return value.Value.initNumber(@round(num));
+
+    const multiplier = std.math.pow(f64, 10.0, decimals);
+    // Rounding to the nearest 10^400 leaves nothing; to more decimals than a Number holds
+    // (the multiplier or the product overflows) changes nothing. Both gave NaN.
+    if (multiplier == 0.0) return value.Value.initNumber(0.0);
+    const scaled = num * multiplier;
+    if (!std.math.isFinite(multiplier) or !std.math.isFinite(scaled)) return receiver;
+    return value.Value.initNumber(@round(scaled) / multiplier);
 }
 
 pub fn numberCeil(vm: *VM, receiver: value.Value) !value.Value {

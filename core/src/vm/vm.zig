@@ -569,7 +569,7 @@ pub const VM = struct {
                     const res = self.executeBinaryArithmetic(op);
                     if (res != .ok) return res;
                 },
-                .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater => {
+                .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => {
                     const res = self.executeNumericBinary(op);
                     if (res != .ok) return res;
                 },
@@ -2234,7 +2234,7 @@ pub const VM = struct {
             },
             .op_modulo => {
                 if (nums[1] == 0.0) return self.raiseError(.ZeroDivisionError, "Modulo by zero.", .{});
-                const res = @mod(nums[0], nums[1]);
+                const res = value.flooredMod(nums[0], nums[1]);
                 if (std.math.isNan(res)) return self.raiseError(.MathError, "Operation resulted in NaN.", .{});
                 self.push(value.Value.initNumber(res));
             },
@@ -2246,6 +2246,8 @@ pub const VM = struct {
             },
             .op_less => self.push(value.Value.initBool(nums[0] < nums[1])),
             .op_greater => self.push(value.Value.initBool(nums[0] > nums[1])),
+            .op_less_equal => self.push(value.Value.initBool(nums[0] <= nums[1])),
+            .op_greater_equal => self.push(value.Value.initBool(nums[0] >= nums[1])),
             else => unreachable,
         }
         return .ok;
@@ -3336,6 +3338,8 @@ pub const VM = struct {
             .op_exponent => "**",
             .op_less => "<",
             .op_greater => ">",
+            .op_less_equal => "<=",
+            .op_greater_equal => ">=",
             .op_bitwise_and => "&",
             .op_bitwise_or => "|",
             .op_bitwise_xor => "^",

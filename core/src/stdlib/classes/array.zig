@@ -270,43 +270,55 @@ pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
 
 /// Array#max
 pub fn arrayMax(vm: *VM, arr: *value.ObjArray) !value.Value {
-    _ = vm;
-    if (arr.items.items.len == 0) return value.Value.initNil();
-
-    var max_val = if (arr.items.items[0].isNumber()) arr.items.items[0].asNumber() else -std.math.inf(f64);
-
-    for (arr.items.items[1..]) |item| {
-        if (item.isNumber() and item.asNumber() > max_val) {
-            max_val = item.asNumber();
-        }
-    }
-    return value.Value.initNumber(max_val);
+    return arrayExtreme(vm, arr, "max", .gt);
 }
 
 /// Array#min
 pub fn arrayMin(vm: *VM, arr: *value.ObjArray) !value.Value {
-    _ = vm;
-    if (arr.items.items.len == 0) return value.Value.initNil();
-
-    var min_val = if (arr.items.items[0].isNumber()) arr.items.items[0].asNumber() else std.math.inf(f64);
-
-    for (arr.items.items[1..]) |item| {
-        if (item.isNumber() and item.asNumber() < min_val) {
-            min_val = item.asNumber();
-        }
-    }
-    return value.Value.initNumber(min_val);
+    return arrayExtreme(vm, arr, "min", .lt);
 }
 
-/// Array#sum
-pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
-    _ = vm;
-    var sum: f64 = 0.0;
+/// The greatest (`wanted` = .gt) or least element of an Array of Numbers, or of Strings
+/// (ordered bytewise); nil for an empty one. Anything else is a TypeError, and a NaN a
+/// MathError: elements that weren't Numbers used to be skipped, so `["a"].max` was
+/// -Infinity and `[1, NaN].max` whatever NaN compared as.
+fn arrayExtreme(vm: *VM, arr: *value.ObjArray, comptime name: []const u8, comptime wanted: std.math.Order) !value.Value {
+    const items = arr.items.items;
+    if (items.len == 0) return value.Value.initNil();
+    var best = items[0];
+    if (!best.isNumber() and !best.isString()) return typeError(vm, name ++ " needs Numbers or Strings, got {s} at index 0", .{vm.typeName(best)});
+    for (items, 0..) |item, i| {
+        if (item.isNumber() != best.isNumber()) return typeError(vm, name ++ " can't compare {s} with {s}", .{ vm.typeName(best), vm.typeName(item) });
+        if (item.isNumber() and std.math.isNan(item.asNumber())) {
+            _ = vm.raiseError(.MathError, name ++ ": the Array holds NaN at index {d}", .{i});
+            return error.RuntimeError;
+        }
+        const order = if (item.isNumber()) std.math.order(item.asNumber(), best.asNumber()) else std.mem.order(u8, item.asString().chars, best.asString().chars);
+        if (order == wanted) best = item;
+    }
+    return best;
+}
 
-    for (arr.items.items) |item| {
-        if (item.isNumber()) sum += item.asNumber();
+/// Array#sum: the Numbers added up (0 for an empty Array). Anything else is a TypeError
+/// (it used to be skipped), and a total beyond the Number range a RangeError.
+pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
+    var sum: f64 = 0.0;
+    var all_finite = true;
+    for (arr.items.items, 0..) |item, i| {
+        if (!item.isNumber()) return typeError(vm, "sum needs Numbers, got {s} at index {d}", .{ vm.typeName(item), i });
+        if (!std.math.isFinite(item.asNumber())) all_finite = false;
+        sum += item.asNumber();
+    }
+    if (all_finite and !std.math.isFinite(sum)) {
+        _ = vm.raiseError(.RangeError, "sum overflowed the Number range", .{});
+        return error.RuntimeError;
     }
     return value.Value.initNumber(sum);
+}
+
+fn typeError(vm: *VM, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
+    _ = vm.raiseError(.TypeError, fmt, args);
+    return error.RuntimeError;
 }
 
 /// How Array#sort orders two values: natively for Numbers or Strings, else by the block,

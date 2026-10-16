@@ -297,3 +297,35 @@ test "Language: a def takes the arguments it declares" {
         .{ .src = "def y\n  yield 1, b: 5\nend\nr = y { |a, b: 2| a + b }", .expected = .{ .num = 6 } },
     });
 }
+
+test "Language: <= and >= are false against NaN; % is floored, folded or not" {
+    // `a <= b` was `not (a > b)`, true for NaN; `%` is floored (the divisor's sign) in both
+    // the VM and the compiler's constant folding, where Zig's @mod gave 7 % -3 = 1.
+    try expectScripts(&.{
+        .{ .src = "r = \"#{[Number::NAN <= 1, Number::NAN >= 1, 1 <= Number::NAN, 2 <= 2, 2 >= 3, 3 >= 3]}\"", .expected = .{ .str = "[false, false, false, true, false, true]" } },
+        .{ .src = "x = -7\nr = [-7 % 3, x % 3, 7 % -3, x % -3, -7.5 % 2, x - 0.5 - (-7.5 % 2), 6 % 3, x % -7]", .expected = .{ .nums = &.{ 2, 2, -2, -1, 0.5, -8, 0, 0 } } },
+        .{ .src = rescued("\"a\" <= 1"), .expected = .{ .str = "TypeError: '<=' can't combine String and Number" } },
+    });
+}
+
+test "Language: round survives extreme decimal counts" {
+    // round(400) overflowed the multiplier and gave NaN; round(-400) divided 0 by 0.
+    try expectScripts(&.{
+        .{ .src = "r = [2.5.round(400), 1234.5678.round(2), 1234.5678.round(-2), 5.round(-400), 2.5.round, 1e300.round(10)]", .expected = .{ .nums = &.{ 2.5, 1234.57, 1200, 0, 3, 1e300 } } },
+        .{ .src = rescued("1.5.round(Number::INFINITY)"), .expected = .{ .str = "ValueError: round: the number of decimals must be finite, got Infinity" } },
+    });
+}
+
+test "Language: Array#max, #min and #sum reject what they can't add or compare" {
+    // Elements that weren't Numbers were skipped: ["a"].max was -Infinity, [1, nil].sum 1.
+    try expectScripts(&.{
+        .{ .src = "r = [[3, 9, 2].max, [3, 9, 2].min, [1, 2.5].sum, [].sum, [\"pear\", \"fig\"].max.length, [\"pear\", \"fig\"].min.length]", .expected = .{ .nums = &.{ 9, 2, 3.5, 0, 4, 3 } } },
+        .{ .src = "r = [].max", .expected = .nil },
+        .{ .src = rescued("[1, \"a\"].max"), .expected = .{ .str = "TypeError: max can't compare Number with String" } },
+        .{ .src = rescued("[nil].min"), .expected = .{ .str = "TypeError: min needs Numbers or Strings, got nil at index 0" } },
+        .{ .src = rescued("[1, nil].sum"), .expected = .{ .str = "TypeError: sum needs Numbers, got nil at index 1" } },
+        .{ .src = rescued("[1, Number::NAN].max"), .expected = .{ .str = "MathError: max: the Array holds NaN at index 1" } },
+        .{ .src = rescued("[1e308, 1e308].sum"), .expected = .{ .str = "RangeError: sum overflowed the Number range" } },
+        .{ .src = "r = [Number::INFINITY, 1].sum", .expected = .{ .num = std.math.inf(f64) } },
+    });
+}

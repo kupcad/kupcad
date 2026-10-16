@@ -885,7 +885,7 @@ pub const Compiler = struct {
                 .subtract => left - right,
                 .multiply => left * right,
                 .divide => if (right != 0.0) left / right else return null,
-                .modulo => if (right != 0.0) @mod(left, right) else return null,
+                .modulo => if (right != 0.0) value.flooredMod(left, right) else return null,
                 .exponent => std.math.pow(f64, left, right),
                 else => return null,
             };

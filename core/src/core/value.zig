@@ -230,6 +230,14 @@ pub fn fmtNumber(n: f64) NumberFormat {
     return .{ .n = n };
 }
 
+/// `%` as in Ruby: floored, so the result takes the divisor's sign (7 % -3 is -2, -7 % 3
+/// is 2). Shared by the VM and the compiler's constant folding. Zig's @mod on floats
+/// gave 7 % -3 = 1.
+pub fn flooredMod(a: f64, b: f64) f64 {
+    const r = @rem(a, b);
+    return if (r != 0 and (r < 0) != (b < 0)) r + b else r;
+}
+
 pub const NumberFormat = struct {
     n: f64,
 

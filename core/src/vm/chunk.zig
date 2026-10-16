@@ -113,6 +113,9 @@ pub const OpCode = enum(u8) {
     op_case_equal,
     op_greater,
     op_less,
+    /// `<=` and `>=` of their own: as `not >` and `not <` they were true against NaN.
+    op_less_equal,
+    op_greater_equal,
     op_cmp,
 
     // Control Flow
