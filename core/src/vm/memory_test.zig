@@ -382,8 +382,13 @@ test "GC: a script past its memory limit stops with an OutOfMemoryError" {
         defer vm.deinit();
         vm.setMemoryLimit(case.limit);
         try std.testing.expectEqual(case.outcome, try support.runOn(&vm, "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\nr = a.length"));
-        // The error itself: it used to be a "Sandbox Error" the GC logged first.
-        if (case.limit != null) try std.testing.expect(std.mem.startsWith(u8, vm.last_error orelse "", "OutOfMemoryError: "));
+        // The error itself, naming the limit: it used to be a "Sandbox Error" the GC logged
+        // first, and "Array#push ran out of memory" where a built-in's allocation failed.
+        if (case.limit) |limit| {
+            var buf: [96]u8 = undefined;
+            const expected = try std.fmt.bufPrint(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes", .{limit});
+            try std.testing.expect(std.mem.startsWith(u8, vm.last_error orelse "", expected));
+        }
     }
 }
 
@@ -401,9 +406,11 @@ test "GC: a heap filled by small allocations still raises an OutOfMemoryError it
         const limit = vm.gc.bytes_allocated + 256 * 1024;
         vm.setMemoryLimit(limit);
         var buf: [256]u8 = undefined;
-        const source = try std.fmt.bufPrint(&buf, "r = begin\n  {s}\nrescue OutOfMemoryError => e\n  \"rescued\"\nend\na = nil\nafter = \"ran on\"", .{body});
+        const source = try std.fmt.bufPrint(&buf, "r = begin\n  {s}\nrescue OutOfMemoryError => e\n  e.message\nend\na = nil\nafter = \"ran on\"", .{body});
         try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
-        try support.expectValue(.{ .str = "rescued" }, vm.globals.get("r").?);
+        var message: [96]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&message, "the script exceeded its memory limit of {d} bytes", .{limit});
+        try std.testing.expect(std.mem.startsWith(u8, vm.globals.get("r").?.asString().chars, expected));
         try support.expectValue(.{ .str = "ran on" }, vm.globals.get("after").?);
     }
 }

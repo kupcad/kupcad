@@ -723,7 +723,7 @@ pub const VM = struct {
                     const val = self.stack[self.stack_top - 1];
                     const arr = self.stack[self.stack_top - 2].asArray();
                     arr.items.append(self.gc.trackingAllocator(), val) catch {
-                        if (ended(self.raiseError(.OutOfMemoryError, "Array push failed", .{}))) |res| return res;
+                        if (ended(self.raiseOutOfMemory("building an Array", .{}))) |res| return res;
                         continue;
                     };
                     // Pop only the pushed value; the array stays on top
@@ -736,7 +736,7 @@ pub const VM = struct {
                     const key = self.stack[self.stack_top - 2];
                     const map = self.stack[self.stack_top - 3].asMap();
                     self.mapSet(map, key, val) catch {
-                        if (ended(self.raiseError(.OutOfMemoryError, "Map insert failed", .{}))) |res| return res;
+                        if (ended(self.raiseOutOfMemory("building a Map", .{}))) |res| return res;
                         continue;
                     };
                     // Pop both key and val; the map stays on top
@@ -935,7 +935,7 @@ pub const VM = struct {
             const idx = self.resolveArrayIndex(arr.items.items.len, index) catch return self.indexError("Array", index, arr.items.items.len);
             arr.items.items[idx] = val;
         } else if (target.isMap()) {
-            self.mapSet(target.asMap(), index, val) catch return self.raiseError(.OutOfMemoryError, "Map set failed", .{});
+            self.mapSet(target.asMap(), index, val) catch return self.raiseOutOfMemory("Map#[]=", .{});
         } else {
             return self.raiseError(.TypeError, "{s} doesn't support index assignment ([]=)", .{self.typeName(target)});
         }
@@ -952,7 +952,7 @@ pub const VM = struct {
         // Root the array BEFORE allocating internal capacity to prevent GC sweeps
         self.push(arr_val);
         arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch {
-            return self.raiseError(.OutOfMemoryError, "Failed to build array", .{});
+            return self.raiseOutOfMemory("building an Array", .{});
         };
 
         // The elements were pushed before arr_val, so they sit below it
@@ -977,7 +977,7 @@ pub const VM = struct {
         // Root the map BEFORE allocating internal capacity to prevent GC sweeps
         self.push(map_val);
         map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
-            return self.raiseError(.OutOfMemoryError, "Failed to build map", .{});
+            return self.raiseOutOfMemory("building a Map", .{});
         };
 
         const start_idx = self.stack_top - 1 - (pair_count * 2);
@@ -987,7 +987,7 @@ pub const VM = struct {
             const val = self.stack[start_idx + i + 1];
 
             self.mapSet(map_obj, key, val) catch {
-                return self.raiseError(.OutOfMemoryError, "Failed to insert map key", .{});
+                return self.raiseOutOfMemory("building a Map", .{});
             };
         }
 
@@ -1006,7 +1006,7 @@ pub const VM = struct {
         const target_arr = self.stack[self.stack_top - 2].asArray();
         if (!source_val.isArray()) return self.raiseError(.TypeError, "only an Array can be spread with *", .{});
         const source_arr = source_val.asArray();
-        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseError(.OutOfMemoryError, "Array spread failed", .{});
+        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseOutOfMemory("spreading an Array with *", .{});
         target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
         // Pop only the spread source; the array stays on top
         _ = self.pop();
@@ -1022,9 +1022,9 @@ pub const VM = struct {
         const source_map = source_val.asMap();
         const keys = source_map.map.keys();
         const values = source_map.map.values();
-        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
+        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
         for (keys, values) |key, val| {
-            self.mapSet(target_map, key, val) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
+            self.mapSet(target_map, key, val) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
         }
         // Pop only the spread source; the map stays on top
         _ = self.pop();
@@ -2474,7 +2474,7 @@ pub const VM = struct {
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat unpack failed", .{});
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseOutOfMemory("gathering the rest into *", .{});
                 splat_arr.items.appendSliceAssumeCapacity(arr.items.items[pre_count .. pre_count + splat_size]);
             }
 
@@ -2540,7 +2540,7 @@ pub const VM = struct {
         const arr_val = value.Value.initObj(&arr_obj.obj);
 
         self.push(arr_val);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat pack failed", .{});
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseOutOfMemory("gathering arguments into *", .{});
         _ = self.pop();
 
         const start_idx = frame.base_slot + 1 + fixed_arity;
@@ -2905,7 +2905,7 @@ pub const VM = struct {
         return switch (err) {
             error.InvalidBlock => self.raiseError(.TypeError, "a block argument (&blk) must be a lambda or a block", .{}),
             error.TooManyArguments => self.raiseError(.ArgumentError, "too many arguments after spreading: a call takes at most {d}", .{limits.MAX_ARGS}),
-            error.OutOfMemory => self.raiseError(.OutOfMemoryError, "out of memory spreading call arguments", .{}),
+            error.OutOfMemory => self.raiseOutOfMemory("spreading call arguments", .{}),
         };
     }
 
@@ -2987,7 +2987,7 @@ pub const VM = struct {
     /// below them); `has_block`: the last of them is the call's block.
     inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, has_block: bool) InterpretResult {
         // Natives push GC roots without growing the stack themselves (see NATIVE_STACK_RESERVE).
-        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{native_obj.name});
+        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseOutOfMemory("{s}", .{native_obj.name});
         // Depth of the calling frame, captured before an unwind can pop it
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
@@ -3083,7 +3083,7 @@ pub const VM = struct {
                     return .ok;
                 },
                 error.ExecutionLimitExceeded => return .execution_limit_exceeded,
-                error.OutOfMemory, error.WriteFailed => return self.raiseError(.OutOfMemoryError, "out of memory building a String", .{}),
+                error.OutOfMemory, error.WriteFailed => return self.raiseOutOfMemory("building a String", .{}),
                 else => return self.alreadyThrown(throw_seq, depth) orelse .runtime_error,
             };
         }
@@ -3455,7 +3455,7 @@ pub const VM = struct {
     /// it): the error names the native and the failure. These used to be the generic
     /// "Native Execution Error" / "CAD Kernel / Method Error".
     fn nativeFailed(self: *VM, name: []const u8, err: anyerror) InterpretResult {
-        if (err == error.OutOfMemory) return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{name});
+        if (err == error.OutOfMemory) return self.raiseOutOfMemory("{s}", .{name});
         return self.raiseError(.RuntimeError, "{s} failed ({s})", .{ name, @errorName(err) });
     }
 
@@ -3689,6 +3689,14 @@ pub const VM = struct {
         }
         if (self.gc.max_memory_limit) |limit| return self.raiseError(.OutOfMemoryError, "the script exceeded its memory limit of {d} bytes", .{limit});
         return self.raiseError(.OutOfMemoryError, "out of memory", .{});
+    }
+
+    /// The same, saying what ran out (`what`, a format with `args`): "the script exceeded its
+    /// memory limit of N bytes (building an Array)". Each site used to word it its own way,
+    /// and only this one named the limit.
+    fn raiseOutOfMemory(self: *VM, comptime what: []const u8, args: anytype) InterpretResult {
+        if (self.gc.max_memory_limit) |limit| return self.raiseError(.OutOfMemoryError, "the script exceeded its memory limit of {d} bytes (" ++ what ++ ")", .{limit} ++ args);
+        return self.raiseError(.OutOfMemoryError, "out of memory (" ++ what ++ ")", args);
     }
 
     /// The same while an error is being raised or reported, where raising one would recurse.
