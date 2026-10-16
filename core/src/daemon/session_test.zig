@@ -395,3 +395,49 @@ test "ScriptSession: removing the module that failed clears the failure" {
     try testing.expect(session.failure == null);
     try session.evaluateWorkspace();
 }
+
+/// Evaluates `source` as the module `name`, then `changed` as its next version; returns
+/// the two output hashes.
+fn hashesOf(session: *ScriptSession, name: []const u8, source: []const u8, changed: []const u8) ![2]u64 {
+    const mod_id = try session.workspace.addModule(name, source);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    const first = session.nodes.items[@backingInt(mod_id)].output_hash;
+    try session.workspace.updateModuleSource(mod_id, changed);
+    try session.markFileEdited(name);
+    try session.evaluateModule(mod_id);
+    return .{ first, session.nodes.items[@backingInt(mod_id)].output_hash };
+}
+
+test "ScriptSession: the output fingerprint sees a colour change and a hole moved inside the part" {
+    // It was the bounding box and volume alone, so neither reached the viewport.
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    const coloured = try hashesOf(&session, "colour.kup", "c = cube(10)", "c = cube(10).material(color: \"#FF0000\")");
+    try testing.expect(coloured[0] != coloured[1]);
+    const moved = try hashesOf(&session, "hole.kup", "c = cube(10) - cube(2).translate(2, 2, 2)", "c = cube(10) - cube(2).translate(5, 5, 5)");
+    try testing.expect(moved[0] != moved[1]);
+    const same = try hashesOf(&session, "same.kup", "c = cube(10)", "box = cube(10)");
+    try testing.expectEqual(same[0], same[1]);
+}
+
+test "ScriptSession: materials and ghosts don't accumulate across runs" {
+    // The session's VM kept every material and ghost of every run, so each viewport
+    // export carried all of them.
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    const src = "ghost { cube(1) }\nc = cube(10).material(color: \"#FF0000\")";
+    const mod_id = try session.workspace.addModule("m.kup", src);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    // The ghost's material and the red one; one ghost.
+    try testing.expectEqual(@as(usize, 2), session.vm.materials.items.len);
+    try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
+    try session.workspace.updateModuleSource(mod_id, src ++ "\n");
+    try session.markFileEdited("m.kup");
+    try session.evaluateModule(mod_id);
+    try testing.expectEqual(@as(usize, 2), session.vm.materials.items.len);
+    try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
+}

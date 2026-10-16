@@ -333,9 +333,8 @@ pub const VM = struct {
         self.param_lookup.deinit(self.allocator);
         self.config_stack.deinit(self.allocator);
         self.unwind_stack.deinit(self.allocator);
+        self.resetRunOutput();
         self.materials.deinit(self.allocator);
-        // display_list owns its handles (clones taken by ghost()), see materials.zig.
-        for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();
@@ -1685,6 +1684,16 @@ pub const VM = struct {
     pub fn resetStack(self: *VM) void {
         self.shrinkStack(0);
         self.clearUnwindState();
+    }
+
+    /// Forgets what a run put on display: the ghosts (display_list owns its handles,
+    /// clones taken by ghost(), see materials.zig) and the materials. A session running
+    /// a script again and again kept them all, so every viewport export carried every
+    /// material ever made and every ghost ever shown.
+    pub fn resetRunOutput(self: *VM) void {
+        for (self.display_list.items) |h| kernel.destruct(h);
+        self.display_list.clearRetainingCapacity();
+        self.materials.clearRetainingCapacity();
     }
 
     /// Destroys every cached result (GC eviction drops only those no geometry still uses).

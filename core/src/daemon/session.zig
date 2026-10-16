@@ -271,6 +271,7 @@ pub const ScriptSession = struct {
             return error.CompileError;
         };
 
+        self.vm.resetRunOutput();
         const result = self.vm.interpret(&out_chunk);
         if (result != .ok) return error.RuntimeError;
 
@@ -291,22 +292,7 @@ pub const ScriptSession = struct {
             null;
         errdefer if (new_handle) |h| kernel.destruct(h);
 
-        var hasher = std.hash.Wyhash.init(0);
-        // An engine that can't measure the result answers zeros, which would hide every
-        // change, so its output is fingerprinted by the source instead.
-        const measurable = if (new_handle) |h| kernel.supports(h.engine, .bounding_box) and kernel.supports(h.engine, .volume) else false;
-        if (new_handle != null and measurable) {
-            const h = new_handle.?;
-            if (kernel.boundingBox(h)) |bbox| {
-                hasher.update(std.mem.asBytes(&bbox.min));
-                hasher.update(std.mem.asBytes(&bbox.max));
-            }
-            const vol = kernel.volume(h);
-            hasher.update(std.mem.asBytes(&vol));
-        } else {
-            hasher.update(mod.source);
-        }
-        const new_hash = hasher.final();
+        const new_hash = try self.fingerprintOutput(new_handle, mod.source);
 
         if (new_hash == node.output_hash and node.output_hash != 0) {
             // Output unchanged: keep the existing copy, drop the fresh one.
@@ -326,6 +312,41 @@ pub const ScriptSession = struct {
         node.changed_at = self.global_revision;
         node.verified_at = self.global_revision;
         node.is_stale = false;
+    }
+
+    /// What the viewport would show for this output: the mesh of the result and of
+    /// every ghost (positions and material slots), and the materials. The fingerprint
+    /// was the bounding box and volume alone, so a colour change, a hole moved inside
+    /// the part or a symmetric rotation never reached the viewport. An engine that
+    /// can't mesh yet is fingerprinted by the source instead, which hides nothing.
+    fn fingerprintOutput(self: *ScriptSession, handle: ?geom.GeometryHandle, source: []const u8) !u64 {
+        var hasher = std.hash.Wyhash.init(0);
+        var meshed = false;
+        if (handle) |h| meshed = try hashMesh(&hasher, self.allocator, h);
+        for (self.vm.display_list.items) |ghost| {
+            if (try hashMesh(&hasher, self.allocator, ghost)) meshed = true;
+        }
+        if (!meshed) hasher.update(source);
+        for (self.vm.materials.items) |mat| {
+            hasher.update(&mat.rgb);
+            hasher.update(std.mem.asBytes(&mat.alpha));
+            hasher.update(std.mem.asBytes(&mat.roughness));
+            hasher.update(std.mem.asBytes(&mat.metallic));
+            hasher.update(std.mem.asBytes(&mat.transmission));
+            hasher.update(std.mem.asBytes(&mat.role));
+        }
+        return hasher.final();
+    }
+
+    /// Feeds a handle's mesh to `hasher`; false when the engine can't mesh it.
+    fn hashMesh(hasher: *std.hash.Wyhash, allocator: std.mem.Allocator, handle: geom.GeometryHandle) !bool {
+        if (!kernel.supports(handle.engine, .mesh)) return false;
+        const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+        defer allocator.free(mesh.vert_props);
+        defer allocator.free(mesh.tri_verts);
+        hasher.update(std.mem.sliceAsBytes(mesh.vert_props));
+        hasher.update(std.mem.sliceAsBytes(mesh.tri_verts));
+        return true;
     }
 
     pub fn cancel(self: *ScriptSession) void {
