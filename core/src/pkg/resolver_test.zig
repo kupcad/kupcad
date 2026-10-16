@@ -149,6 +149,22 @@ test "Resolver: linkWorkspace links locked packages (flat and nested files) into
     try fx.expectFile(store_dir ++ "/src/deep/nested/b.kup", "mock content");
 }
 
+test "Resolver: linkWorkspace refuses a locked package the store doesn't have" {
+    // It linked an empty folder: the files query simply found no rows.
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    // Locked and in the manifest, as addPackage does, but never registered in the store.
+    try fx.lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-user-gone"), .{
+        .resolved = try testing.allocator.dupe(u8, "commit1"),
+        .ref = try testing.allocator.dupe(u8, "main"),
+        .integrity = try testing.allocator.dupe(u8, "sha256-mock"),
+        .dependencies = StringMap.init(testing.allocator),
+    });
+    try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "gone"), try testing.allocator.dupe(u8, "github.com/user/gone"));
+    try testing.expectError(error.PackageNotInStore, fx.link());
+}
+
 // Lockfile and store values are joined into filesystem paths; a tampered
 // kupcad.lock or index must not be able to place files outside the store.
 test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {

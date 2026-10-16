@@ -82,20 +82,12 @@ pub const GarbageCollector = struct {
         self.printer.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
 
         // Update last_prune_time in meta table (Unix epoch seconds)
-        var now_buf: [32]u8 = undefined;
-        const now_str = try std.fmt.bufPrint(&now_buf, "{d}", .{now_sec});
-        try self.store.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{now_str});
+        try self.store.setLastPruneTime(now_sec);
     }
 
     /// Executed post-install. Only runs if 7 days have passed since the last prune.
     pub fn lazyPrune(self: *GarbageCollector) !void {
-        const stmt = try self.store.db.prepare("SELECT value FROM meta WHERE key = 'last_prune_time'");
-        defer stmt.deinit();
-
-        var last_prune: i64 = 0;
-        if (try stmt.one(struct { value: []const u8 }, .{})) |row| {
-            last_prune = std.fmt.parseInt(i64, row.value, 10) catch 0;
-        }
+        const last_prune = try self.store.lastPruneTime();
 
         const now_sec = clock.nowSeconds(self.io);
 

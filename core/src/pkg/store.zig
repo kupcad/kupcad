@@ -360,6 +360,58 @@ pub const Store = struct {
     /// Removes a blob from the index *and* invalidates every package that referenced
     /// it, so a later install re-downloads the package instead of treating a
     /// partially-deleted package as cached.
+    /// When the store was last pruned, in seconds since the epoch; 0 if never.
+    pub fn lastPruneTime(self: *Store) !i64 {
+        const stmt = try self.db.prepare("SELECT value FROM meta WHERE key = 'last_prune_time'");
+        defer stmt.deinit();
+        const row = (try stmt.one(struct { value: []const u8 }, .{})) orelse return 0;
+        return std.fmt.parseInt(i64, row.value, 10) catch 0;
+    }
+
+    pub fn setLastPruneTime(self: *Store, seconds: i64) !void {
+        var buf: [32]u8 = undefined;
+        const text = try std.fmt.bufPrint(&buf, "{d}", .{seconds});
+        try self.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{text});
+    }
+
+    /// Whether SQLite's quick check finds the database sound.
+    pub fn quickCheck(self: *Store) !bool {
+        const stmt = try self.db.prepare("PRAGMA quick_check");
+        defer stmt.deinit();
+        const row = (try stmt.one(struct { result: []const u8 }, .{})) orelse return false;
+        return std.mem.eql(u8, row.result, "ok");
+    }
+
+    /// The hash of every blob the index holds, each owned by `allocator` with the slice.
+    pub fn blobHashes(self: *Store, allocator: std.mem.Allocator) ![][]u8 {
+        const stmt = try self.db.prepare("SELECT hash FROM files");
+        defer stmt.deinit();
+        var hashes: std.ArrayListUnmanaged([]u8) = .empty;
+        errdefer {
+            for (hashes.items) |h| allocator.free(h);
+            hashes.deinit(allocator);
+        }
+        var rows = try stmt.iterator(struct { hash: []const u8 }, .{});
+        while (try rows.next()) |row| {
+            const copy = try allocator.dupe(u8, row.hash);
+            errdefer allocator.free(copy);
+            try hashes.append(allocator, copy);
+        }
+        return hashes.toOwnedSlice(allocator);
+    }
+
+    /// Whether the index holds a blob named `hash`.
+    pub fn hasBlob(self: *Store, hash: []const u8) !bool {
+        const stmt = try self.db.prepare("SELECT 1 FROM files WHERE hash = ?");
+        defer stmt.deinit();
+        return try stmt.one(struct { found: i32 }, .{hash}) != null;
+    }
+
+    /// Indexes a blob that is on disk but missing from the index.
+    pub fn indexBlob(self: *Store, hash: []const u8, size: i64, created_at: i64) !void {
+        try self.db.exec("INSERT INTO files (hash, size, created_at) VALUES (?, ?, ?)", .{ hash, size, created_at });
+    }
+
     pub fn evictBlob(self: *Store, hash: []const u8) !void {
         try self.db.exec("BEGIN TRANSACTION", .{});
         errdefer self.db.exec("ROLLBACK", .{}) catch |err| log.err("Rollback failed: {}", .{err});

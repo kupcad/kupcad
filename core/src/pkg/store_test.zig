@@ -351,3 +351,23 @@ test "Store: an argument with no placeholder to bind to is an error, not ignored
     const row = (try stmt.one(struct { sum: i64 }, .{ 2, 3 })) orelse return error.MissingRow;
     try testing.expectEqual(@as(i64, 5), row.sum);
 }
+
+test "Store: the prune time, the quick check and the blob index" {
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    try testing.expectEqual(@as(i64, 0), try store.lastPruneTime());
+    try store.setLastPruneTime(1_700_000_000);
+    try testing.expectEqual(@as(i64, 1_700_000_000), try store.lastPruneTime());
+    try testing.expect(try store.quickCheck());
+
+    try testing.expect(!try store.hasBlob("abc"));
+    try store.indexBlob("abc", 12, 1);
+    try testing.expect(try store.hasBlob("abc"));
+    const hashes = try store.blobHashes(testing.allocator);
+    defer {
+        for (hashes) |h| testing.allocator.free(h);
+        testing.allocator.free(hashes);
+    }
+    try testing.expectEqual(@as(usize, 1), hashes.len);
+    try testing.expectEqualStrings("abc", hashes[0]);
+}

@@ -360,14 +360,9 @@ pub const Resolver = struct {
 
             try fs.makePath(versioned_folder);
 
-            const query =
-                \\SELECT file_path, file_hash FROM package_files
-                \\WHERE package_id = ? AND commit_sha = ?
-            ;
-            var stmt = try self.store.db.prepare(query);
-            defer stmt.deinit();
-
-            var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ pkg_id, locked.resolved });
+            // A locked package missing from the store linked as an empty folder.
+            var files = try self.store.getPackageFiles(self.allocator, pkg_id, locked.resolved) orelse return error.PackageNotInStore;
+            defer string_map.deinitOwned(self.allocator, &files);
 
             // Track created directories to minimize redundant VFS syscalls
             var created_dirs: std.StringHashMapUnmanaged(void) = .empty;
@@ -378,12 +373,14 @@ pub const Resolver = struct {
             }
 
             var sanitize_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
-            while (try rows.next()) |row| {
+            var file_it = files.iterator();
+            while (file_it.next()) |row| {
+                const file_path = row.key_ptr.*;
                 // Defense in depth: indexed paths must already be normalized relative paths.
-                const clean = try cafs_mod.sanitizeEntryPath(&sanitize_buf, row.file_path);
-                if (!std.mem.eql(u8, clean, row.file_path)) return error.UnsafeArchivePath;
+                const clean = try cafs_mod.sanitizeEntryPath(&sanitize_buf, file_path);
+                if (!std.mem.eql(u8, clean, file_path)) return error.UnsafeArchivePath;
 
-                const dest_path = try self.allocator.print("{s}/{s}", .{ versioned_folder, row.file_path });
+                const dest_path = try self.allocator.print("{s}/{s}", .{ versioned_folder, file_path });
                 defer self.allocator.free(dest_path);
 
                 if (std.fs.path.dirname(dest_path)) |parent_dir| {
@@ -393,7 +390,7 @@ pub const Resolver = struct {
                     }
                 }
 
-                try self.cafs.linkBlob(row.file_hash, dest_path);
+                try self.cafs.linkBlob(row.value_ptr.*, dest_path);
             }
 
             if (locked.dependencies.count() > 0) {
