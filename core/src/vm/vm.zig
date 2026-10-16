@@ -224,6 +224,8 @@ pub const VM = struct {
 
     const STACK_GROW_FACTOR: usize = 2;
     pub const MAX_IMPORT_DEPTH: u8 = 64;
+    /// How deep `==` follows nested Arrays and Maps before calling them unequal.
+    pub const MAX_EQUALITY_DEPTH: usize = 64;
     pub const MAX_STACK_STRING_LEN: usize = 1024;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
@@ -2078,15 +2080,44 @@ pub const VM = struct {
     }
 
     // --- Shared Execution Helpers ---
+    /// `==`, also behind `contains?` and `case`/`when`: Numbers by value, Arrays, Maps and
+    /// Ranges by content (a Map's order doesn't matter), everything else by identity
+    /// (Strings and Symbols are interned, so identity is content). Arrays and Maps
+    /// compared by identity before, so `[1] == [1]` was false.
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
-        _ = self;
-        if (a.isNumber() and b.isNumber()) return a.asNumber() == b.asNumber();
+        return self.valuesEqualWithin(a, b, MAX_EQUALITY_DEPTH);
+    }
 
-        if (a.isObject() and b.isObject()) {
-            if (a.asObj() == b.asObj()) return true;
+    fn valuesEqualWithin(self: *VM, a: value.Value, b: value.Value, depth: usize) bool {
+        if (a.isEqual(b)) return true;
+        if (!a.isObject() or !b.isObject()) return false;
+        // Two structures nesting (or referring to themselves) deeper than this aren't equal.
+        if (depth == 0) return false;
+        if (a.isArray() and b.isArray()) {
+            const xs = a.asArray().items.items;
+            const ys = b.asArray().items.items;
+            if (xs.len != ys.len) return false;
+            for (xs, ys) |x, y| {
+                if (!self.valuesEqualWithin(x, y, depth - 1)) return false;
+            }
+            return true;
         }
-
-        return a.isEqual(b);
+        if (a.isMap() and b.isMap()) {
+            const xm = a.asMap().map;
+            const ym = b.asMap().map;
+            if (xm.count() != ym.count()) return false;
+            for (xm.keys(), xm.values()) |key, x| {
+                const y = ym.get(key) orelse return false;
+                if (!self.valuesEqualWithin(x, y, depth - 1)) return false;
+            }
+            return true;
+        }
+        if (a.isRange() and b.isRange()) {
+            const x = a.asRange();
+            const y = b.asRange();
+            return x.start == y.start and x.end == y.end and x.step == y.step and x.is_exclusive == y.is_exclusive;
+        }
+        return false;
     }
 
     pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {

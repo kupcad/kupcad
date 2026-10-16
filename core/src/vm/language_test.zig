@@ -354,3 +354,16 @@ test "Language: defined?(@x) is about this instance" {
         .{ .src = "class P\n  def set\n    @x = 1\n  end\n  def has\n    [1].map { defined?(@x) != nil }.first\n  end\nend\na = P.new\nb = P.new\na.set\nr = \"#{a.has} #{b.has}\"", .expected = .{ .str = "true false" } },
     });
 }
+
+test "Language: == compares Arrays, Maps and Ranges by content" {
+    // They compared by identity, so [1] == [1] was false, as was [[1, 2]].contains?([1, 2]).
+    try expectScripts(&.{
+        .{ .src = "r = \"#{[1, [2, 3]] == [1, [2, 3]]} #{[1] == [1, 2]} #{[1, 2] != [1, 2]} #{[] == []}\"", .expected = .{ .str = "true false false true" } },
+        .{ .src = "r = \"#{{ a: 1, b: [2] } == { b: [2], a: 1 }} #{{ a: 1 } == { a: 2 }} #{{ a: 1 } == { a: 1, b: 2 }}\"", .expected = .{ .str = "true false false" } },
+        .{ .src = "r = \"#{(1..3) == (1..3)} #{(1..3) == (1...3)} #{[1, 2].contains?(2)} #{[[1, 2]].contains?([1, 2])}\"", .expected = .{ .str = "true false true true" } },
+        .{ .src = "r = case [1, 2]\nwhen [1] then \"one\"\nwhen [1, 2] then \"two\"\nelse \"none\"\nend", .expected = .{ .str = "two" } },
+        // A structure containing itself: equal to itself, not to another such structure.
+        .{ .src = "a = []\na.push(a)\nb = []\nb.push(b)\nr = \"#{a == a} #{a == b}\"", .expected = .{ .str = "true false" } },
+        .{ .src = "r = \"#{[1] == 1} #{\"a\" == [\"a\"]}\"", .expected = .{ .str = "false false" } },
+    });
+}
