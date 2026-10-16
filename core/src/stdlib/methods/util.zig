@@ -346,6 +346,23 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
     return .{ .opts = opts, .positional = args[0 .. args.len - 1] };
 }
 
+/// Fails when the call's keywords name one option twice (`r:` and `d:`): which one won was
+/// an accident of the order they were read in.
+pub fn requireOneOf(vm: *VM, args: []const value.Value, comptime names: []const []const u8, method: []const u8) !void {
+    const map = trailingKwargs(args) orelse return;
+    var first: ?[]const u8 = null;
+    var it = map.map.iterator();
+    while (it.next()) |entry| {
+        const name = keyName(entry.key_ptr.*) orelse continue;
+        inline for (names) |alias| {
+            if (std.mem.eql(u8, name, alias)) {
+                if (first) |earlier| return vm.fail(.ArgumentError, "{s} takes {s} or {s}, not both", .{ method, earlier, name });
+                first = name;
+            }
+        }
+    }
+}
+
 fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name: []const u8) !F {
     // Raw values come through as passed, nil included; null means "not passed".
     if (F == value.Value or F == ?value.Value) return v;

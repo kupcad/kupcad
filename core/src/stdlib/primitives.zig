@@ -10,6 +10,17 @@ const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 
+/// The names of one option. Two of a group in one call are an error: `d:` silently beat
+/// `r:`, `radius:` both, `size:` an `x:`.
+const ALIAS_GROUPS = [_][]const []const u8{
+    &.{ "r", "d", "radius" },
+    &.{ "r1", "d1" },
+    &.{ "r2", "d2" },
+    &.{ "size", "x" },
+    &.{ "size", "y" },
+    &.{ "size", "z" },
+};
+
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
@@ -105,6 +116,9 @@ const GeomOptions = struct {
 /// The primitives share GeomOptions; each accepts only the keywords it lists.
 /// `base` holds what the positional arguments set; keywords override it.
 fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
+    inline for (ALIAS_GROUPS) |group| {
+        if (comptime acceptsAll(accepted, group)) try util.requireOneOf(vm, args, group, method);
+    }
     var parsed = try util.parseKwargsOver(GeomOptions, base, accepted, vm, args, method);
     const opts = &parsed.opts;
     if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
@@ -114,6 +128,15 @@ fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm
     if (opts.radius) |radius| opts.r = radius;
     try util.requireSegmentCount(vm, opts.segments, "segments");
     return parsed;
+}
+
+fn acceptsAll(comptime accepted: []const []const u8, comptime names: []const []const u8) bool {
+    for (names) |name| {
+        for (accepted) |a| {
+            if (std.mem.eql(u8, a, name)) break;
+        } else return false;
+    }
+    return true;
 }
 
 /// Validates a user-supplied index into an array of length `len`.

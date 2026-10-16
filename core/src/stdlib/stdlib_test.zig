@@ -1305,6 +1305,18 @@ test "Stdlib: a keyword wins over the same option given positionally" {
     });
 }
 
+test "Stdlib: two keywords for one option are an error, not one silently ignored" {
+    // `d:` beat `r:` and `radius:` both, and `size:` an `x:`, whatever their order: found
+    // by the engine parity test. A keyword still overrides a positional value.
+    try expectGlobalR(&.{
+        .{ .src = test_support.rescued("cylinder(r: 1, d: 6, h: 2)"), .expected = .{ .str = "ArgumentError: cylinder takes r or d, not both" } },
+        .{ .src = test_support.rescued("cylinder(r1: 1, d1: 2, r2: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes r1 or d1, not both" } },
+        .{ .src = test_support.rescued("sphere(radius: 1, r: 2)"), .expected = .{ .str = "ArgumentError: sphere takes radius or r, not both" } },
+        .{ .src = test_support.rescued("cube(size: 3, x: 1)"), .expected = .{ .str = "ArgumentError: cube takes size or x, not both" } },
+        .{ .src = "r = cylinder(2, d: 6, h: 1, segments: 64).bbox.max[0]", .expected = .{ .num = 3 } },
+    });
+}
+
 test "Stdlib: revolve takes segments and sizes them to the profile" {
     // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
     const seg8 = "v = nil\nCAD.with_config(resolution: { min_angle: 1, min_length: 1 }) do\n  v = ";

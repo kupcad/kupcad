@@ -407,6 +407,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 `zig build test -Dgc-stress` builds every VM collecting at every object allocation (`GC.stress` defaults to `build_info.gc_stress`), so a value a native or the VM forgot to root is swept at once and the test that uses it fails there; the nightly job runs the whole suite this way on Linux. The first run found no unrooted value in the VM or the natives, only tests that build bytecode by hand without registering the chunk (`vm.gc.trackChunk`) as the compiler registers its own, and tests that count objects between their own collections (`collectOnlyWhenAsked` in `vm/memory_test.zig`). A test can still set `vm.gc.stress` (or `vm.zealous_gc`, a collection before every instruction) for a script of its own.
 
+## 17. Engine Parity
+
+`src/kernel/parity_test.zig` runs each primitive and keyword the B-Rep engine takes on both engines and requires the same box (a cylinder with sides in a multiple of 4, so Manifold's polygon reaches the circle's extremes), and runs arguments one engine refuses on the other, requiring the same error. B-Rep measures nothing yet, so its box is read from its STEP export: every `VERTEX_POINT`, and each `CIRCLE` by its centre, normal and radius (along an axis it reaches its radius times the sine of the angle to its normal). A shape B-Rep can't make is a `NotImplementedError` (see Engine features), never a different shape. It found `d:` silently beating `r:` (and `radius:` both, `size:` an `x:`) whatever their order, on both engines; two keywords for one option are now an `ArgumentError` (`ALIAS_GROUPS` in `stdlib/primitives.zig`).
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |

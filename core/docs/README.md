@@ -12,7 +12,7 @@ KupCAD (`.kup`) is a high-level, expression-based parametric CAD language execut
 
 ### 3D Primitives & Assemblies
 
-Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored. A keyword overrides the same option given positionally: `cube(5, z: 3)` is 5 × 5 × 3.
+Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored. A keyword overrides the same option given positionally: `cube(5, z: 3)` is 5 × 5 × 3. Two keywords for one option are an `ArgumentError`, not one silently ignored: `r:`, `d:` and `radius:` (`cylinder takes r or d, not both`), `r1:` and `d1:`, `r2:` and `d2:`, and `size:` with `x:`, `y:` or `z:`.
 
 ```ruby
 # Native 3D primitives with built-in filleting
