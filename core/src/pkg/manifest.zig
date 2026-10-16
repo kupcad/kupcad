@@ -6,7 +6,8 @@ const std = @import("std");
 const validate = @import("validate.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 
-pub const StringMap = std.StringHashMap([]const u8);
+const string_map = @import("string_map.zig");
+pub const StringMap = string_map.StringMap;
 
 const SortUtil = struct {
     pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
@@ -33,12 +34,7 @@ pub const Manifest = struct {
     pub fn deinit(self: *Manifest) void {
         self.allocator.free(self.name);
         self.allocator.free(self.version);
-        var it = self.dependencies.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.dependencies.deinit();
+        string_map.deinitOwned(self.allocator, &self.dependencies);
     }
 
     /// Loads and parses kupcad.json from disk

@@ -6,6 +6,7 @@ const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
 const Printer = @import("../log.zig").Printer;
+const clock = @import("clock.zig");
 
 const log = std.log.scoped(.pkg);
 
@@ -48,7 +49,7 @@ pub const GarbageCollector = struct {
         defer dir.close(self.io);
 
         const now_ts = std.Io.Clock.real.now(self.io);
-        const now_sec: i64 = @intCast(@divFloor(now_ts.nanoseconds, std.time.ns_per_s));
+        const now_sec = clock.unixSeconds(now_ts);
         const retention_ns: i96 = @as(i96, RETENTION_SECONDS) * std.time.ns_per_s;
         var pruned_count: usize = 0;
         var bytes_freed: u64 = 0;
@@ -96,8 +97,7 @@ pub const GarbageCollector = struct {
             last_prune = std.fmt.parseInt(i64, row.value, 10) catch 0;
         }
 
-        const now_ts = std.Io.Clock.real.now(self.io);
-        const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
+        const now_sec = clock.nowSeconds(self.io);
 
         if (now_sec - last_prune > RETENTION_SECONDS) {
             self.printer.print("Running scheduled background cleanup...\n", .{});

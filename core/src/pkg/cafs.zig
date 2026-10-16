@@ -6,6 +6,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const limits = @import("limits.zig");
+const string_map = @import("string_map.zig");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const log = std.log.scoped(.pkg);
@@ -31,12 +32,7 @@ pub const Archive = struct {
     root: []const u8,
 
     pub fn deinit(self: *Archive, allocator: std.mem.Allocator) void {
-        var it = self.files.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        self.files.deinit();
+        string_map.deinitOwned(allocator, &self.files);
         allocator.free(self.root);
     }
 

@@ -8,7 +8,8 @@ const semver = @import("../core/semver.zig");
 
 const log = std.log.scoped(.pkg);
 
-pub const StringMap = std.StringHashMap([]const u8);
+const string_map = @import("string_map.zig");
+pub const StringMap = string_map.StringMap;
 
 /// 3.0.0: a git host package's files are recorded without its archive's top folder.
 /// 2.0.0: integrity uses length-prefixed hashing (see Store.computeIntegrity).
@@ -42,12 +43,7 @@ pub const LockedPackage = struct {
         allocator.free(self.resolved);
         allocator.free(self.ref);
         allocator.free(self.integrity);
-        var it = self.dependencies.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        self.dependencies.deinit();
+        string_map.deinitOwned(allocator, &self.dependencies);
     }
 };
 

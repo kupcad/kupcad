@@ -5,6 +5,8 @@
 const std = @import("std");
 
 const sqlite = @import("sqlite");
+const string_map = @import("string_map.zig");
+const clock = @import("clock.zig");
 
 const log = std.log.scoped(.pkg);
 
@@ -356,12 +358,7 @@ pub const Store = struct {
 
     /// Frees a `[path -> hash]` map whose keys and values are owned by `allocator`.
     pub fn freeFileMap(allocator: std.mem.Allocator, map: *std.StringHashMap([]const u8)) void {
-        var it = map.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        map.deinit();
+        string_map.deinitOwned(allocator, map);
     }
 
     /// Removes a blob from the index *and* invalidates every package that referenced
@@ -424,14 +421,7 @@ pub const Store = struct {
         defer stmt.deinit();
 
         var map = std.StringHashMap([]const u8).init(allocator);
-        errdefer {
-            var it = map.iterator();
-            while (it.next()) |entry| {
-                allocator.free(entry.key_ptr.*);
-                allocator.free(entry.value_ptr.*);
-            }
-            map.deinit();
-        }
+        errdefer string_map.deinitOwned(allocator, &map);
 
         var iter = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ pkg_id, commit_sha });
         while (try iter.next()) |row| {
@@ -456,8 +446,7 @@ pub const Store = struct {
         try self.db.exec("BEGIN TRANSACTION", .{});
         errdefer self.db.exec("ROLLBACK", .{}) catch |err| log.err("Rollback failed: {}", .{err});
 
-        const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
-        const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
+        const now = clock.nowSeconds(self.io);
 
         // Upsert keyed by (id, commit_sha): a new commit of an existing package must
         // be recorded, and re-registering the same commit refreshes its metadata.

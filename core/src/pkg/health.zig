@@ -6,6 +6,7 @@ const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
 const Printer = @import("../log.zig").Printer;
+const clock = @import("clock.zig");
 
 const log = std.log.scoped(.pkg);
 
@@ -109,8 +110,7 @@ pub const Doctor = struct {
 
         var it = dir.iterate();
         var orphan_count: usize = 0;
-        const now_ts = std.Io.Clock.real.now(self.io);
-        const now = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
+        const now = clock.nowSeconds(self.io);
 
         while (try it.next(self.io)) |entry| {
             if (entry.kind != .file) continue;
