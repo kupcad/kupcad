@@ -38,6 +38,7 @@ test {
     _ = @import("pkg/providers/git_host_test.zig");
     _ = @import("pkg/clock_test.zig");
     _ = @import("core/owned_keys_test.zig");
+    _ = @import("pkg/string_map_test.zig");
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");

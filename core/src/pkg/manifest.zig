@@ -7,7 +7,6 @@ const validate = @import("validate.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 const string_map = @import("string_map.zig");
-const owned_keys = @import("../core/owned_keys.zig");
 pub const StringMap = string_map.StringMap;
 
 pub const Manifest = struct {
@@ -93,11 +92,7 @@ pub const Manifest = struct {
 
     /// Records `alias` as depending on `url`, replacing what the alias named before.
     pub fn setDependency(self: *Manifest, alias: []const u8, url: []const u8) !void {
-        const url_copy = try self.allocator.dupe(u8, url);
-        errdefer self.allocator.free(url_copy);
-        const gop = try owned_keys.getOrPutOwned(&self.dependencies, self.allocator, alias);
-        if (gop.found_existing) self.allocator.free(gop.value_ptr.*);
-        gop.value_ptr.* = url_copy;
+        try string_map.putOwned(self.allocator, &self.dependencies, alias, url);
     }
 
     /// Saves the current state back to kupcad.json deterministically
