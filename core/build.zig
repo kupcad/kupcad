@@ -602,6 +602,8 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        // It reaches the VM through relative imports, which read the build's options.
+        gen_grammar_exe.root_module.addOptions("build_info", build_info);
 
         const run_gen_grammar = b.addRunArtifact(gen_grammar_exe);
         run_gen_grammar.addArg("../packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json");
