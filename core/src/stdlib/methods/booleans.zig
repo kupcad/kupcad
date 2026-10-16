@@ -1,3 +1,7 @@
+//! `union`, `difference` and `intersection` on solids and sketches: each adds one balanced
+//! chain of boolean nodes to the DAG over the receiver and its operands (shapes or arrays of
+//! them), checking that every operand is of the receiver's kind.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

@@ -1,3 +1,7 @@
+//! Bytecode: the `OpCode` set and its `CallFlags`, `Chunk` (code, constants, source offsets
+//! and inline caches), the `InlineCache` of a property or invoke site, and the
+//! `ChunkRegistry` that keeps a chunk's constants alive while it is compiled.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 

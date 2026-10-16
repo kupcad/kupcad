@@ -1,3 +1,8 @@
+//! `VM`: the bytecode interpreter. It verifies a chunk and runs it (`interpret`), with call
+//! frames, rescue frames and inline caches; keeps the globals, modules and classes; records
+//! geometry as DAG nodes and evaluates them on demand (`ensureConcrete`); and raises runtime
+//! errors (`raiseError`).
+
 const std = @import("std");
 const builtin = @import("builtin");
 const chunk = @import("chunk.zig");

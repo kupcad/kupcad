@@ -1,3 +1,6 @@
+//! The Range class's methods (`each`, `map`, `to_a`, `step`, `include?` and the rest), as a
+//! `methods` table of `common.MethodDef`; iteration itself is in iteration.zig.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

@@ -1,3 +1,7 @@
+//! `Formatter`: prints a parsed script back as source in the house style, keeping its
+//! comments and literals as written, and laying out a call, list or chain over several lines
+//! when it won't fit the configured line width. Used by api.zig's `formatDocument`.
+
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");

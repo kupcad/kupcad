@@ -1,3 +1,6 @@
+//! `kupcad fmt`: formats .kup files with `api.formatCode`, printing them, listing the ones
+//! that aren't formatted (`--check`) or rewriting them in place (`--write`).
+
 const std = @import("std");
 const api = @import("../api.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;

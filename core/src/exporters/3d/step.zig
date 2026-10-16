@@ -1,3 +1,7 @@
+//! STEP export for scripts: `export_step` (`meshExportStep`) writes the parts of a solid or
+//! assembly through the kernel, refusing any part that isn't B-Rep geometry; `import_step`
+//! is not implemented yet and raises.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

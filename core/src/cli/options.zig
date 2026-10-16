@@ -1,3 +1,7 @@
+//! Argument parsing shared by the commands that take files or directories (`check`, `fmt`):
+//! `CommandOptions` turns a flags struct into `--name` options, and `CommandSetup` parses
+//! them and loads the project configuration, reporting failures with the command's usage.
+
 const std = @import("std");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const log_helpers = @import("../log.zig");

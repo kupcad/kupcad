@@ -1,3 +1,7 @@
+//! The `CAD` object's methods, which read and change the VM's engine settings
+//! (`EngineConfig`): `CAD.config`, `CAD.with_config` for the length of a block, and
+//! `CAD.current_config`, which returns them as nested Maps.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

@@ -1,3 +1,8 @@
+//! `Parser`: builds the AST from the lexer's tokens by recursive descent, with operator
+//! precedence for expressions (`Precedence`, `binaryPrecedence`, shared with the formatter).
+//! It reports an error and resynchronises at the next statement, and bounds the AST's depth.
+//! Driven by document.zig (`parseProgram`).
+
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
 const limits = @import("../core/limits.zig");

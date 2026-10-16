@@ -1,3 +1,6 @@
+//! The methods that make a solid from a sketch: `extrude`, `revolve`, `helix` and `loft`,
+//! each checking its arguments and adding a DAG node. Exported through methods.zig.
+
 const util = @import("util.zig");
 const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");

@@ -1,3 +1,7 @@
+//! The methods `attr_reader`, `attr_writer` and `attr_accessor` define: `emitAttrReader` and
+//! `emitAttrWriter` compile a getter or setter of an instance variable as its own function
+//! and emit the bytecode that binds it to the class. Called by `compiler.zig`.
+
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");

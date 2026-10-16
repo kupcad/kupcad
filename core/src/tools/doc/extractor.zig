@@ -1,3 +1,6 @@
+//! `extractSchema`: reads a script's `@title`, `@description` and `@author` comments and
+//! its `param` calls into a `UiSchema` without running it (`kupcad doc`, through api.zig).
+
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../core/document.zig").Document;

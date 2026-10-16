@@ -1,3 +1,7 @@
+//! The WebSocket server the editor's viewport connects to on 127.0.0.1: the HTTP upgrade
+//! handshake with its origin check, frame encoding, and `ViewportWsServer`, which sends every
+//! client the session's model as GLB (`broadcastSessionMesh`). Started by cli/lsp.zig.
+
 const std = @import("std");
 const gltf = @import("../exporters/3d/gltf.zig");
 const ScriptSession = @import("session.zig").ScriptSession;

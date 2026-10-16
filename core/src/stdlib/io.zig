@@ -1,3 +1,7 @@
+//! The global functions `puts`, `print` and `inspect`: they write through the host's print
+//! handler, and `inspect` prefixes its output with the calling line and column and returns
+//! its last argument.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");

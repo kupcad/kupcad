@@ -1,3 +1,7 @@
+//! The VM's runtime values: `Value`, a NaN-boxed 8-byte number, nil, boolean or object
+//! pointer, and the heap objects it points to (`ObjString`, `ObjArray`, `ObjClosure`,
+//! `ObjClass`, `ObjGeometry`, ...), with number formatting and `Value.stringify` printing.
+
 const std = @import("std");
 const dag = @import("../vm/dag.zig");
 const geom = @import("../kernel/geometry_handle.zig");

@@ -1,3 +1,6 @@
+//! File helpers for the CLI commands: `readFileLimit` reads a file under a size cap and
+//! `replaceFileAtomic` replaces a file's contents without ever leaving it half-written.
+
 const std = @import("std");
 
 /// Reads a file with a maximum size limit.

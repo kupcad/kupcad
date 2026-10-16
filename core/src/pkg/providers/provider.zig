@@ -1,3 +1,8 @@
+//! Dependency specifiers: `ParsedPackage.parse` reads a `host/user/repo[@ref]`, `file:<path>`
+//! or `.tar.gz` URL, validating every part, and says which `ProviderType` fetches it.
+//! `pkgId` names the package in the lockfile and store, and `isAllowedTransitive` limits
+//! what downloaded packages may depend on to public git hosts.
+
 const std = @import("std");
 const semver = @import("../../core/semver.zig");
 const validate = @import("../validate.zig");

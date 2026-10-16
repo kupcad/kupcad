@@ -1,3 +1,6 @@
+//! The `segments-as-sides` lint rule (`SegmentsAsSidesRule`): a few `segments:` on a
+//! cylinder or circle, meant as a polygon, that only the mesh engine draws as one.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const token = @import("../../../core/token.zig");

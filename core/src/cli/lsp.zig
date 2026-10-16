@@ -1,3 +1,8 @@
+//! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
+//! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints)
+//! and runs the last edited document in a sandboxed VM (`ReadOnlyVfs`) to send its mesh to
+//! the viewport WebSocket server (daemon/viewport_ws.zig).
+
 const std = @import("std");
 const builtin = @import("builtin");
 const lsp = @import("lsp");

@@ -1,3 +1,6 @@
+//! `LintRule`: the interface every lint rule implements for `linter.zig`, an id and a vtable
+//! of hooks called per node, at the end of the script, and on entering and leaving a scope.
+
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 

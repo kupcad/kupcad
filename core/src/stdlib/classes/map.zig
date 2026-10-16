@@ -1,10 +1,13 @@
+//! The Map class's methods (`keys`, `each`, `merge`, `get`, `symbolize_keys` and the rest),
+//! as a `methods` table of `common.MethodDef`, and `mapNew`, which registry.zig binds as
+//! `Map.new`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 const callBlock = @import("iteration.zig").callBlock;
 
-/// Map#keys
 /// Map.new -> an empty Map
 pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
     _ = class;
@@ -12,6 +15,7 @@ pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
     return value.Value.initObj(&map.obj);
 }
 
+/// Map#keys -> its keys, in insertion order
 pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();

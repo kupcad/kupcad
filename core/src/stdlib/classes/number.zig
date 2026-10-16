@@ -1,3 +1,6 @@
+//! The natives of Number (`round`, `times`, `upto`, `clamp`, `odd?`, ...) and their
+//! dispatch table, `methods`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

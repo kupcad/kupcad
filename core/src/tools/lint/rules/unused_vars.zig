@@ -1,3 +1,7 @@
+//! The `unused-variable` lint rule (`UnusedVarsRule`): tracks the variables each scope
+//! declares and reads, reports those never read when the scope closes (unless named with a
+//! leading `_`), and offers a fix that renames every binding to `_name`.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");

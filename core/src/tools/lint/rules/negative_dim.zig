@@ -1,3 +1,7 @@
+//! The `nonpositive-size` lint rule (`NegativeDimRule`): flags a primitive's size argument
+//! written as a literal zero or negative number, using the primitive's `Signature` to tell
+//! sizes from other arguments.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const value = @import("../../../core/value.zig");

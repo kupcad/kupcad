@@ -1,3 +1,7 @@
+//! The package manager's HTTP: `request` connects with a timeout and default headers, and
+//! `Get` follows redirects itself, only those `redirectAllowed` permits. Used by
+//! providers/fetcher.zig.
+
 const std = @import("std");
 const validate = @import("validate.zig");
 

@@ -1,3 +1,6 @@
+//! The token types the lexer and parser share: `Location`, `Comment`, the generic
+//! `Token(Tag)` the lexer produces and `TokenList(Tag)`, the struct-of-arrays they are packed in.
+
 const std = @import("std");
 
 pub const Location = struct {

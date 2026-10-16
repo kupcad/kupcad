@@ -1,3 +1,7 @@
+//! The `param-order` lint rule: flags a top-level `param` read before its definition, and a
+//! definition inside a body (a def, a block, an if), where the UI's static extraction can't
+//! find it.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");

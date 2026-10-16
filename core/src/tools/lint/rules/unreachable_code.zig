@@ -1,3 +1,6 @@
+//! The `unreachable-code` lint rule (`UnreachableCodeRule`); its `alwaysLeaves` tells whether
+//! a statement leaves its body on every path through it.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");

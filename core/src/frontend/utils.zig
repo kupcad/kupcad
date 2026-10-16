@@ -1,3 +1,6 @@
+//! `LexerUtils`, the scanning helpers lexer.zig reads its source with: whitespace, numbers,
+//! identifiers, quoted strings, and a `/` that may be division or start a comment.
+
 const std = @import("std");
 
 pub const SlashKind = enum {

@@ -1,3 +1,6 @@
+//! The `self-subtraction` lint rule (`SelfSubtractionRule`): flags `a - a`, a variable
+//! subtracted from itself, which always leaves an empty shape.
+
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;

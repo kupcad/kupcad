@@ -1,3 +1,6 @@
+//! The natives of Array (`Array.new`, `push`, `map`, `reduce`, `slice`, `sort`, ...) and
+//! their dispatch table, `methods`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const limits = @import("../../core/limits.zig");
@@ -12,7 +15,6 @@ pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
     return value.Value.initNumber(@floatFromInt(arr.items.items.len));
 }
 
-/// Array#push(val)
 /// Array.new(size = 0, fill = nil) -> an Array of `size` copies of `fill`
 pub fn arrayNew(vm: *VM, class: value.Value, size_num: ?f64, fill: ?value.Value) !value.Value {
     _ = class;

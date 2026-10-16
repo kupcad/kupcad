@@ -1,3 +1,7 @@
+//! Zig bindings to Manifold's C API (manifoldc): the opaque types and `extern` declarations,
+//! and wrappers such as `cube`, `boolean`, `extrude` and `rayCast` that allocate each result's
+//! memory and take Zig slices and bools in place of C pointers and ints.
+
 const std = @import("std");
 const geom = @import("../kernel/geometry_handle.zig");
 

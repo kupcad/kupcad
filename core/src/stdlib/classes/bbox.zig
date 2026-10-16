@@ -1,3 +1,6 @@
+//! The methods of `BoundingBox`: its corners, center and size as `[x, y, z]` arrays, each
+//! axis's bounds and extent (`x_min`, `z_size`, ...), and `to_s`. Bound by `core_classes.zig`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");

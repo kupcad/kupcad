@@ -1,3 +1,7 @@
+//! Semantic versions for the package manager: `Version` parses and compares "1.2.3", and
+//! `Constraint` parses "^1.2", "~1.2", ">=2.0" or an exact version and tells whether a
+//! version satisfies it.
+
 const std = @import("std");
 
 pub const Version = struct {

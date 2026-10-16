@@ -1,3 +1,7 @@
+//! `Cafs`: the content-addressed file store of installed packages, one blob per SHA-256 of a
+//! file's contents. `extractTarball` streams a package archive into it with path and size
+//! checks, and `linkBlob` hard-links a blob into a project.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const Vfs = @import("../vfs/vfs.zig").Vfs;

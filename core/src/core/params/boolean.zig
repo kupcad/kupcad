@@ -1,3 +1,6 @@
+//! Reads a boolean parameter value: true or false, the numbers 1 and 0, or the strings
+//! "true", "false", "1" and "0"; anything else is error.InvalidType. Used by stdlib/params.zig.
+
 const std = @import("std");
 const value = @import("../value.zig");
 

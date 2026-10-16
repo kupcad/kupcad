@@ -1,3 +1,6 @@
+//! `SortImportsRule`: the formatter rule that sorts each run of imports by path, leaving a
+//! run with a comment on or between its imports in the author's order.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const FormatRule = @import("rule.zig").FormatRule;

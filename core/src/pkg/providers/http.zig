@@ -1,3 +1,6 @@
+//! The package provider for a plain HTTP archive URL: the archive to download is the URL
+//! itself, whatever the commit.
+
 const std = @import("std");
 const ParsedPackage = @import("provider.zig").ParsedPackage;
 

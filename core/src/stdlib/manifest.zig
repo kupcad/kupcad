@@ -1,3 +1,8 @@
+//! The table of built-ins: the global functions (`global_functions`) and the Solid, Sketch
+//! and assembly methods (`mesh_methods`, `assembly_methods`), each with its category,
+//! signature and result kind, from which the compiler's intrinsics, the LSP's completions and
+//! the lint's lookups are derived; and `cadBinaryHandler`, which turns `+ - &` into booleans.
+
 const std = @import("std");
 const common = @import("classes/common.zig");
 const value = @import("../core/value.zig");

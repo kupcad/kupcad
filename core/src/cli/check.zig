@@ -1,3 +1,7 @@
+//! `kupcad check`: reports syntax errors, compile errors and lint findings in .kup files as
+//! text, JSON or SARIF (through `api.checkCode`), and with `--fix` applies the safe fixes
+//! (`api.fixCode`) and rewrites the files.
+
 const std = @import("std");
 const api = @import("../api.zig");
 const LintConfig = @import("../tools/lint/config.zig").Config;

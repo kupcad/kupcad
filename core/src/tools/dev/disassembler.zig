@@ -1,3 +1,7 @@
+//! Prints a bytecode chunk as readable text, one instruction per line with its offset,
+//! operands and constants: `disassembleChunk` for a whole chunk, `disassembleInstruction`
+//! for one. Used by `kupcad dev disasm`.
+
 const std = @import("std");
 const chunk = @import("../../vm/chunk.zig");
 const value = @import("../../core/value.zig");

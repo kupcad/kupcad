@@ -1,3 +1,6 @@
+//! The root of the `kupcad` module (build.zig): what it exports to the CLI and other users,
+//! and the `test` block that pulls in every test file.
+
 pub const api = @import("api.zig");
 pub const wasm = @import("wasm.zig");
 pub const vm = @import("vm/vm.zig");

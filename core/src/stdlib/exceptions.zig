@@ -1,3 +1,7 @@
+//! The exception classes: `registerExceptions` defines Exception (with `message` and
+//! `backtrace`), StandardError below it, and one class per runtime `ErrorKind`, which the
+//! VM keeps for `raiseError`.
+
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");

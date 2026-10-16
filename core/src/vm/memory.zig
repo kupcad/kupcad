@@ -1,3 +1,8 @@
+//! `GC`: the VM's mark-and-sweep collector and object allocator. It keeps each object type
+//! in its own list, counts the bytes it hands out to trigger collections and enforce the
+//! sandbox's memory limit, and holds the natives and names that live as long as the VM in
+//! an arena.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");

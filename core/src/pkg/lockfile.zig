@@ -1,3 +1,7 @@
+//! `Lockfile`: reads and writes a project's `kupcad.lock`, the resolved source, ref,
+//! integrity and dependencies of every installed package (`LockedPackage`), and tells which
+//! integrity scheme an older lockfile version used.
+
 const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const semver = @import("../core/semver.zig");

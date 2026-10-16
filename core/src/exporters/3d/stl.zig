@@ -1,3 +1,7 @@
+//! STL export and import: `buildStlBuffer` writes a solid as binary STL, `meshExportStl` backs
+//! `export_stl` on solids and assemblies, and `parseStlBuffer` reads binary or ASCII STL into
+//! a mesh with repeated vertices merged, for `nativeImportStl`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

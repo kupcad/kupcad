@@ -1,3 +1,7 @@
+//! The executable's logging and console output: `std_options` sets the log level per build
+//! mode, `printStderr` and `printStdout` print user-facing text, and `Printer` prints a
+//! command's results to stdout or into a capture buffer under test.
+
 const std = @import("std");
 const builtin = @import("builtin");
 

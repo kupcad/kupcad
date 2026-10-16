@@ -1,3 +1,7 @@
+//! `Manifest`: a project's kupcad.json, its name, version and dependencies (alias to URL),
+//! loaded and validated (`load`), changed (`setDependency`), and written back with sorted
+//! keys (`save`).
+
 const std = @import("std");
 const validate = @import("validate.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;

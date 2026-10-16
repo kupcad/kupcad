@@ -1,3 +1,7 @@
+//! `Linter`: walks a parsed script once (`check`) and runs every enabled rule of `RuleSet` on
+//! each node, keeping the scopes and bindings the rules ask about, and collects their findings
+//! and fixes (`LinterDiagnostic`, `Fix`) along with the parser's errors.
+
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");

@@ -1,3 +1,7 @@
+//! The String class's methods (`methods`): `length`, case changes, `split`, `replace`,
+//! conversions such as `to_f` and `to_sym`, `trim` and prefix and suffix tests. Each returns
+//! a new String, as Strings are immutable values.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

@@ -1,3 +1,7 @@
+//! The library's entry points for the CLI, the LSP and the WASM build: format, lint and fix
+//! source (`formatDocument`, `checkDocument`, `fixCode`), extract the parameter schema
+//! (`extractSchema`), and run a script and export its model (`buildModel`, `exportModelFromVm`).
+
 const std = @import("std");
 const builtin = @import("builtin");
 const VM = @import("vm/vm.zig").VM;
@@ -245,7 +249,8 @@ pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, c
     return checkDocument(allocator, io, &doc, config);
 }
 
-/// Scans a parsed document and extracts all parameter definitions and docstrings.
+/// The parameters a parsed document declares (`param(:name, default:, validate:)`) and its
+/// `# @title`, `# @description` and `# @author` comments, as `kupcad doc` prints them.
 pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source: []const u8) !UiSchema {
     return extractor.extractSchema(allocator, doc, source);
 }

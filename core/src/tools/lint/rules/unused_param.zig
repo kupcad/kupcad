@@ -1,3 +1,6 @@
+//! The `unused-param` lint rule (`UnusedParamRule`): a parameter defined on its own line
+//! and never read.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const token = @import("../../../core/token.zig");

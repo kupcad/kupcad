@@ -1,3 +1,7 @@
+//! The exports of the WebAssembly build, over `api.zig`: `format_code_wasm`, `check_code_wasm`,
+//! `extract_params_wasm` and `build_model_wasm`, a build reading files from an in-memory VFS
+//! filled with `put_file_wasm`, plus `wasm_alloc`/`wasm_free` and `get_last_error`.
+
 const std = @import("std");
 const api = @import("api.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;

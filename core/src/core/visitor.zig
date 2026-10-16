@@ -1,3 +1,6 @@
+//! `walk`: a depth-first AST traversal that visits every child of every node, calling the
+//! context's optional `enterNode` and `leaveNode` around each.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 

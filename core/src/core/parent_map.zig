@@ -1,3 +1,6 @@
+//! `ParentMap`: the parent of every AST node, in an array indexed by node, filled by one
+//! visitor walk of the tree; document.zig builds it when it parses a source.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 const visitor = @import("visitor.zig");

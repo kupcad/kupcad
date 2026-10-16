@@ -1,3 +1,6 @@
+//! Number parameters, for stdlib/params.zig: `normalize` reads a value as a number (a string
+//! from `--param` is parsed) and `validate` checks it against the parameter's min and max.
+
 const std = @import("std");
 const value = @import("../value.zig");
 

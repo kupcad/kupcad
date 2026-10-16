@@ -1,3 +1,7 @@
+//! Built-ins for checking and timing a script: `assert` (`nativeAssert`) raises an
+//! AssertionError, or the given class, through the VM's rescue machinery; `warn` prints a
+//! warning through the host; `benchmark` times its block.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;

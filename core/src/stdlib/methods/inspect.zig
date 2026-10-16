@@ -1,3 +1,7 @@
+//! The methods that measure a shape rather than make one: `bbox`, `volume`, `surface_area`,
+//! `min_gap`, `contains?`, `ray_cast` and `genus`. Each evaluates the shape first and checks
+//! that its engine supports the query.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");

@@ -1,3 +1,6 @@
+//! `kupcad pkg`: the package manager's subcommands, `init`, `add`, `install`, `prune` and
+//! `doctor`, over kupcad.json, kupcad.lock and the global package store.
+
 const std = @import("std");
 const Doctor = @import("../pkg/health.zig").Doctor;
 const Manifest = @import("../pkg/manifest.zig").Manifest;

@@ -1,3 +1,6 @@
+//! `LocalProvider`: a package on the local disk, whose "archive URL" is the absolute path of
+//! its directory; used by pkg/resolver.zig.
+
 const std = @import("std");
 const ParsedPackage = @import("provider.zig").ParsedPackage;
 

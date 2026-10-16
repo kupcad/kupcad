@@ -1,3 +1,8 @@
+//! Compiles a parsed and resolved AST into a bytecode chunk for the VM. `Compiler.compile`
+//! walks the tree, with local and upvalue bookkeeping from `scope.zig` and bytecode emission
+//! from `emitter.zig`, and the root compiler runs the verifier over the finished chunk. The
+//! first error is kept as a `CompileFailure` for `errorDiagnostic` to report.
+
 const std = @import("std");
 const import_path = @import("../core/import_path.zig");
 const macros = @import("macros.zig");

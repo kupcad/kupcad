@@ -1,3 +1,6 @@
+//! `HandleScope`: keeps values a native function pushes on the VM stack rooted for the GC
+//! until the scope ends, then restores the stack top.
+
 const VM = @import("vm.zig").VM;
 
 pub const HandleScope = struct {

@@ -1,3 +1,7 @@
+//! Helpers for the lexer and parser tests: `expectTokens` checks the tokens a lexer yields
+//! against a list built with `t`, and `ParserTest` parses a source and gives access to its
+//! nodes.
+
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");

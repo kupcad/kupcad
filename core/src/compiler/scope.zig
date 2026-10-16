@@ -1,3 +1,7 @@
+//! The compiler's view of variables: locals, upvalues, loop and unwind state, and the
+//! functions on `Compiler` that resolve a name to a local slot, an upvalue or a global
+//! (`classifyVariable`, `resolveLocal`, `resolveUpvalue`, `addLocal`).
+
 const std = @import("std");
 const ast = @import("../core/ast.zig");
 const resolver = @import("../core/resolver.zig");

@@ -1,3 +1,6 @@
+//! Syntax errors: `ParseError`, and the `Diagnostic` list (`Diagnostics`) the parser and
+//! the resolver add located messages to.
+
 const std = @import("std");
 const token = @import("token.zig");
 const LineIndex = @import("line_index.zig").LineIndex;

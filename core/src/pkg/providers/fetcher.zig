@@ -1,3 +1,7 @@
+//! `Fetcher`: what the package manager asks of a package host: a ref's commit, the highest
+//! tag that satisfies a version range (`resolveRange`), and the package's archive,
+//! downloaded into the content-addressed store or opened from a local `file:` path.
+
 const std = @import("std");
 const provider = @import("provider.zig");
 const cafs_mod = @import("../cafs.zig");

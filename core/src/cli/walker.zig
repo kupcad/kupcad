@@ -1,3 +1,6 @@
+//! `walkPaths`: runs a callback on every `.kup` file under the files and directories given to
+//! `kupcad fmt` and `kupcad check`, skipping hidden directories and reporting unreadable paths.
+
 const std = @import("std");
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;

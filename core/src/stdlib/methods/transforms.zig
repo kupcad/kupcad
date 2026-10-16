@@ -1,3 +1,7 @@
+//! The transform methods of solids and sketches: `translate`, `rotate`, `scale`, `resize`,
+//! `center`, `align`, `mirror`, `transform` (a flat affine matrix), `repeat_linear` and
+//! `repeat_polar`. Listed in `manifest.zig`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

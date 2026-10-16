@@ -1,3 +1,7 @@
+//! Argument checking for the geometry methods: `require*` for single values, `parsePoint`,
+//! `parseNumberArray` and `parseVec3` for coordinates, `parseKwargs` and its variants for
+//! keyword arguments, all raising a script error that names the method and the argument.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

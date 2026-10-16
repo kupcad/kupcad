@@ -1,3 +1,6 @@
+//! `ReadOnlyVfs`: a VFS that reads through up to two layers and discards every write, for
+//! the VMs the language server runs (cli/lsp.zig).
+
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
 

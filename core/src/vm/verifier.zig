@@ -1,3 +1,8 @@
+//! Checks a bytecode chunk before the VM runs it: `verifyChunk` decodes every instruction,
+//! checking its opcode, that its operands lie inside the code, that constant, inline cache
+//! and slot indices are in range and that jumps land on an instruction, and verifies the
+//! chunks of nested functions too. Called by the compiler and by `vm.zig`.
+
 const std = @import("std");
 const chunk = @import("chunk.zig");
 const value = @import("../core/value.zig");

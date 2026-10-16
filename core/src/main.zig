@@ -1,3 +1,6 @@
+//! The `kupcad` executable: dispatches the first argument to a subcommand from `COMMANDS`
+//! (build, watch, check, fmt, doc, pkg, lsp, dev) and answers `--help` and `--version`.
+
 const std = @import("std");
 const build_info = @import("build_info");
 const build_cmd = @import("cli/build_cmd.zig");

@@ -1,3 +1,7 @@
+//! `registerCoreClasses`: binds the native methods of the built-in classes (Array, Map,
+//! String, Number, Range, Symbol, Boolean, BoundingBox) and of the `GC`, `Math` and `CAD`
+//! objects, from the method tables under `classes/`.
+
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 

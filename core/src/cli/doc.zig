@@ -1,3 +1,6 @@
+//! `kupcad doc`: prints a script's parameters and docstrings as JSON, the schema
+//! `api.extractSchema` builds, or reports its syntax errors and fails.
+
 const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");

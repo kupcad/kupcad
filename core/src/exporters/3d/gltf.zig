@@ -1,3 +1,8 @@
+//! glTF export: `buildGltfBuffer` meshes each part into one primitive per part and material,
+//! optionally Draco-compressed, as a `.glb` or a self-contained `.gltf` (`Container`), with
+//! the scene turned Z-up to Y-up and scaled to metres. `meshExportGltf` is the script's
+//! `export_gltf`, writing through the VM's file system.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

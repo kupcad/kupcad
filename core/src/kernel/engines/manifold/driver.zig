@@ -1,3 +1,7 @@
+//! The Manifold mesh engine behind `kernel.zig`: `driver` maps each kernel operation
+//! (primitives, booleans, transforms, extrusions, queries, reading out the mesh) onto the
+//! Manifold C bindings, and `supports` says it has every `kernel.Feature`.
+
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");

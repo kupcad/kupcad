@@ -1,3 +1,7 @@
+//! Generates the VS Code TextMate grammar (`zig build grammar`): `generateTextMateJson` takes
+//! the keywords from the lexer and the function and method names from the stdlib manifest and
+//! classes, so highlighting follows the language, and `main` writes it to the given path.
+
 const std = @import("std");
 const kupcad_lexer = @import("frontend/lexer.zig");
 const manifest = @import("stdlib/manifest.zig");

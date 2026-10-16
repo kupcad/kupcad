@@ -1,3 +1,6 @@
+//! `MemoryVfs`: a `Vfs` held in memory (files, directories, symlinks and hard links), for
+//! the LSP's open documents, the WASM build and tests.
+
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
 

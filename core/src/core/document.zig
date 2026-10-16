@@ -1,3 +1,7 @@
+//! `Document`: one parsed source file, with its tokens, comments, diagnostics, line index and,
+//! from `parse`, the resolver's symbols and the parent map; all owned by one arena.
+//! `parseRaw` stops after the parser.
+
 const std = @import("std");
 const lexer_mod = @import("../frontend/lexer.zig");
 const parser_mod = @import("../frontend/parser.zig");

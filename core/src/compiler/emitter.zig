@@ -1,3 +1,8 @@
+//! Writes bytecode into the chunk being compiled: opcodes and their operands, constants
+//! (shared by equal values, `makeConstant`), jumps and loops and their patching, and the
+//! stack depth tracked for each op (`getStaticStackEffect`). Its functions are re-exported
+//! as methods of `Compiler` in compiler.zig.
+
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");

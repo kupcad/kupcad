@@ -1,3 +1,7 @@
+//! `kupcad build`: runs a script with its `--param` values and the project's memory limit,
+//! then exports its final geometry as STL, GLB, glTF or STEP (B-Rep kernel for STEP), the
+//! format picked from `--format` or the `-o` extension. Entry points `execute` and `run`.
+
 const std = @import("std");
 const api = @import("../api.zig");
 const kernel = @import("../kernel/kernel.zig");

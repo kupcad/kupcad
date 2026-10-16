@@ -1,3 +1,8 @@
+//! The terminal debugger a script's `debugger` call opens: `debuggerLoop` reads commands
+//! (`.step`, `.continue`, `.locals`, `.stack`, `.globals`) or expressions to evaluate in
+//! the paused frame, with line editing and history. `terminalDebugger` picks it when stdin
+//! is a terminal; `nativeDebugger` is the built-in that calls the VM's handler.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");

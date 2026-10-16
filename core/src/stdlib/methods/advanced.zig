@@ -1,3 +1,8 @@
+//! Geometry methods beyond the primitives and booleans: `hull`, `minkowski`, `trim_by_plane`,
+//! `split_by_plane`, `slice`, `project`, `offset`, `on_face`, `decompose`, `fillet_edges` and
+//! `simplify`. Most add a node to the geometry DAG; `on_face`, `decompose` and `simplify`
+//! evaluate the shape at once. Exported through methods.zig.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

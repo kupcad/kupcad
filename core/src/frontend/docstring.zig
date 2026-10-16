@@ -1,3 +1,7 @@
+//! `DocstringParser`, used by parser.zig: turns a run of `#` comment lines into a docstring
+//! node, its tag (`@label` -> "label") and its text, where a line continues the previous one
+//! only when indented by two spaces or more after the `#`, as in YARD.
+
 const std = @import("std");
 const ast = @import("../core/ast.zig");
 

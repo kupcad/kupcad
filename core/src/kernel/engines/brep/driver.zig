@@ -1,3 +1,7 @@
+//! The Locus B-Rep engine's kernel driver: `driver` maps each kernel operation onto Locus
+//! (solids as `BrepSolid`), and `supports` says which ones Locus implements so far, so the
+//! others become errors instead of wrong geometry. Also writes STEP (`exportStep`).
+
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");

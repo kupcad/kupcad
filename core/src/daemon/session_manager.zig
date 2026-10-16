@@ -1,3 +1,7 @@
+//! `SessionManager`: keeps a `ScriptSession` per script (keyed by its canonical path), evicts
+//! the least recently used past a limit and never one that is pinned by a `SessionLease`.
+//! Used by `kupcad watch` and `kupcad build`.
+
 const std = @import("std");
 const ScriptSession = @import("session.zig").ScriptSession;
 

@@ -1,3 +1,6 @@
+//! The `unknown-keyword` lint rule: flags a keyword a built-in doesn't take
+//! (`cube(sise: 3)`) and offers renaming it to the nearest one its Signature accepts.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const manifest = @import("../../../stdlib/manifest.zig");

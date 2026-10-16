@@ -1,3 +1,7 @@
+//! What the native classes share: `MethodDef`, an entry of a class's method table, and
+//! `wrapMethod`/`wrapGlobal`, which turn a typed Zig function into a `value.NativeFn` that
+//! checks and unboxes the call's arguments.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

@@ -1,3 +1,5 @@
+//! The natives of Symbol, `to_s` and `to_sym`, and their dispatch table, `methods`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");

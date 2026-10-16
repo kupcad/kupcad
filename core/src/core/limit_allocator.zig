@@ -1,3 +1,7 @@
+//! `LimitAllocator`: wraps another allocator and fails any allocation, resize or remap that
+//! would take the bytes it has handed out past `max_bytes`. `kupcad check` uses it for the
+//! project's compiler memory limit.
+
 const std = @import("std");
 
 pub const LimitAllocator = struct {

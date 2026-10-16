@@ -1,3 +1,6 @@
+//! The methods every value has, bound on the root `Object` class by `registry.zig`: `class`,
+//! `inspect`, `is_a?`, `respond_to?`, `nil?`, `empty?`, `method`, `tap`, `into`, `dup`/`clone`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

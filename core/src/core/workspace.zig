@@ -1,3 +1,8 @@
+//! The set of parsed modules a session evaluates: `Workspace` stores each `Module`'s source
+//! and parsed document (the caller does the file I/O), `linkDependencies` reads their imports
+//! and exports from the AST, and `sortModules` orders them dependencies first, failing on a
+//! cycle.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 const Document = @import("document.zig").Document;

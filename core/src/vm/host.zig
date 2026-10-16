@@ -1,3 +1,6 @@
+//! `Host`: the optional callbacks the embedder gives the VM for binary operators and method
+//! calls it doesn't handle itself, freeing meshes, imports and printing. Held by `vm.zig`.
+
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;

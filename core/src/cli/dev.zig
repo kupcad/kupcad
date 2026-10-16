@@ -1,3 +1,7 @@
+//! `kupcad dev`: tools for working on the compiler and VM. `ast-dump`, `disasm` and
+//! `lex-dump` write a script's AST, bytecode or token stream to a file next to it; `bench`
+//! times its phases (tools/bench.zig). `execute` dispatches on the subcommand.
+
 const std = @import("std");
 const api = @import("../api.zig");
 const ast_dumper = @import("../tools/dev/ast_dumper.zig");

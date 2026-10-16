@@ -1,3 +1,7 @@
+//! `Resolver`: walks the AST once and records, per node, whether a name is a local, an
+//! upvalue, a global or an instance variable (`ResolvedSymbol`), and which variables each
+//! closure captures; it also reports `break` and `next` outside a loop. Run by `document.zig`.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 const visitor = @import("visitor.zig");

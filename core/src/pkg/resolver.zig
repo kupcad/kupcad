@@ -1,3 +1,7 @@
+//! `Resolver`: installs a manifest's dependency tree, fetching packages concurrently,
+//! verifying them against kupcad.lock, recording their lock entries and dropping stale ones,
+//! then links them into the project (`linkWorkspace`).
+
 const std = @import("std");
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");

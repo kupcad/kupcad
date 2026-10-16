@@ -1,3 +1,6 @@
+//! The types of a script's `param(...)` entries: `ParamRegistry` holds one parameter's name,
+//! type, current value, range and choices, and the VM keeps them in a `ParamList`.
+
 const std = @import("std");
 const value = @import("value.zig");
 

@@ -1,3 +1,6 @@
+//! The `brep-unsupported` lint rule (`BrepUnsupportedRule`): what a script asks of the
+//! B-Rep engine that it can't do yet.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const kernel = @import("../../../kernel/kernel.zig");

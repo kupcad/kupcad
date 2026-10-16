@@ -1,3 +1,7 @@
+//! `Store`: the SQLite index of the global package store, which package commits are installed
+//! and which blobs their files are, with schema migrations and the packages' integrity hashes
+//! (`computeIntegrity`, `verifyIntegrity`). `Db` and `Stmt` wrap the SQLite calls.
+
 const std = @import("std");
 
 const sqlite = @import("sqlite");

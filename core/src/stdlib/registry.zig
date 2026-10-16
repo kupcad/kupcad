@@ -1,3 +1,8 @@
+//! `registerStandardLibrary`: sets up a VM's built-in environment: the global functions of
+//! `manifest.zig`, the `Object` class and its methods, the exceptions, the value classes,
+//! `Kernel`, `Solid` and `Sketch2D`, the `GC`, `Math` and `CAD` objects, `params`, and the
+//! host hooks.
+
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");

@@ -1,3 +1,8 @@
+//! The syntax tree the parser builds: a `Tree` of 8-byte `Node`s whose payloads live in flat
+//! side arrays (`extra_data`, interned strings, numbers, typed spans), read back as typed
+//! structs by accessors such as `Tree.methodCall`. `Builder` creates the nodes and interns
+//! their strings.
+
 const std = @import("std");
 const string_escape = @import("string_escape.zig");
 pub const Location = @import("token.zig").Location;

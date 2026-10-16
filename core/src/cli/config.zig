@@ -1,3 +1,7 @@
+//! A project's `.kupcad.json` settings: the formatter and linter configuration and the memory
+//! limits. `ProjectConfig.forScript` finds the file that governs a script (the nearest one in
+//! its folder or above) and parses it.
+
 const std = @import("std");
 const fs = @import("fs.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;

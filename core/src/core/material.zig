@@ -1,3 +1,6 @@
+//! How a model is shaded: `MaterialDef` (color, alpha, roughness, metallic, transmission and
+//! a display role) and `parseHexColor` for the "#RRGGBB" / "#RGB" colors scripts give.
+
 const std = @import("std");
 
 pub const MaterialRole = enum { standard, ghost, highlight };

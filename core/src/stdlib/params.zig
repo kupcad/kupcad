@@ -1,3 +1,8 @@
+//! The `param` built-in (`nativeParam`): `param(:name)` reads a parameter, and with
+//! `default:` and `validate:` declares it, taking the host's injected value over the default,
+//! checking its type, range and choices with `core/params/`, and recording it in the VM's
+//! parameter registry.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;

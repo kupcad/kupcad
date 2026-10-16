@@ -1,3 +1,6 @@
+//! `LineIndex`: the start offset of every line of a source, for turning byte offsets into
+//! lines and columns, in UTF-8 and in the UTF-16 units LSP clients count.
+
 const std = @import("std");
 
 /// The LineIndex provides O(log N) lookups for converting flat byte offsets

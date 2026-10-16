@@ -1,3 +1,7 @@
+//! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
+//! fonts (`FontKey`, `getFace`), flattens their curves into closed contours scaled to the
+//! given size in mm, and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
+
 const std = @import("std");
 const tatfi = @import("tatfi");
 const bezier = @import("bezier.zig");

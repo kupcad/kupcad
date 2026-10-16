@@ -1,3 +1,7 @@
+//! Built-ins that group Solids: `assemble` (`nativeAssemble`) and an assembly's `name` and
+//! `parts`, and `union([...])` and `batch_hull([...])`, which add one balanced DAG chain over
+//! every part of an Array.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;

@@ -1,3 +1,7 @@
+//! Bindings to the Draco mesh encoder's C functions: `encodeMesh` compresses positions and
+//! triangle indices into a Draco buffer, copied into Zig memory. Used by the glTF exporter
+//! (`exporters/3d/gltf.zig`) for Draco-compressed meshes.
+
 const std = @import("std");
 
 // ==========================================

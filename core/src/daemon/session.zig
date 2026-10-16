@@ -1,3 +1,8 @@
+//! `ScriptSession`: evaluates a workspace of modules incrementally. It keeps each module's
+//! output and the reverse import graph, marks an edited file and its importers stale, and
+//! evaluates only those again, stopping early where an output's hash is unchanged. Used by
+//! the LSP, `kupcad watch` and `kupcad build`.
+
 const std = @import("std");
 const workspace = @import("../core/workspace.zig");
 const api = @import("../api.zig");

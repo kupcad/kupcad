@@ -1,3 +1,7 @@
+//! `FormatRule`: the interface of a formatter rule, a pointer and vtable whose optional
+//! `processBlockStmts` may reorder a block's statements before `formatter.zig` prints them
+//! (as `sort_imports.zig` does).
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 

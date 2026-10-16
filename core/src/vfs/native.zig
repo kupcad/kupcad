@@ -1,3 +1,7 @@
+//! `NativeVfs`: the `Vfs` over a real directory, confining every path to it (no absolute
+//! paths, no `..` above it, symlink targets kept inside); `hardLinkTrusted` links in a file
+//! from the package store outside it.
+
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
 

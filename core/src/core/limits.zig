@@ -1,3 +1,7 @@
+//! The fixed limits of the language and its runtime: bytecode operand widths, AST depth,
+//! instruction and memory budgets for interactive runs, and caps on user-supplied geometry
+//! counts, source size and B-Rep solver iterations.
+
 const std = @import("std");
 const builtin = @import("builtin");
 

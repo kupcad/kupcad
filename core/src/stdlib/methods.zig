@@ -1,3 +1,7 @@
+//! Re-exports the Solid methods from the files under `methods/` (booleans, transforms,
+//! sweeps, advanced operations, inspection, materials) under one namespace, for
+//! `manifest.zig` to bind to script names.
+
 const booleans = @import("methods/booleans.zig");
 const sweeps = @import("methods/sweeps.zig");
 const advanced = @import("methods/advanced.zig");

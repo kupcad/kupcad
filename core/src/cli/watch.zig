@@ -1,3 +1,6 @@
+//! `kupcad watch`: builds a script, then rebuilds it through a pinned `ScriptSession`
+//! whenever the `Watcher` sees it or a module it imports change.
+
 const std = @import("std");
 const watcher_mod = @import("../daemon/watcher.zig");
 const Watcher = watcher_mod.Watcher;

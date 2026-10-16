@@ -1,3 +1,7 @@
+//! Splits KupCAD source into tokens: `Lexer.next` returns one `Token` at a time (tags in
+//! `Tag`, reserved words in `keywords`), tracking string interpolation on a stack of
+//! `InterpState`s, and `lexAll` collects the whole buffer into a token list for the parser.
+
 const std = @import("std");
 const common_token = @import("../core/token.zig");
 const utils = @import("utils.zig");

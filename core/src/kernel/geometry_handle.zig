@@ -1,3 +1,7 @@
+//! The types shared by both geometry engines and the code above them: `EngineType`, the
+//! engine-tagged `GeometryHandle` and `CrossSectionHandle`, and plain results such as
+//! `BoundingBox`, `Mesh` and `RayHit`.
+
 const std = @import("std");
 
 pub const EngineType = enum {

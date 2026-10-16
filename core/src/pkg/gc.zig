@@ -1,3 +1,7 @@
+//! `GarbageCollector`: removes from the global package store the blobs no project links
+//! and none used within `RETENTION_SECONDS`, with their index rows (`prune`), and runs that
+//! after an install when the last prune is older than the retention (`lazyPrune`).
+
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;

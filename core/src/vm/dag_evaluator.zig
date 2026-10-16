@@ -1,3 +1,8 @@
+//! Evaluates the geometry DAG the VM builds into kernel shapes: a post-order walk on an
+//! explicit stack that reuses results from `vm.dag_cache`, batches chains of unions into one
+//! kernel call, and keeps the shapes it makes within the vertex budget. Entry points
+//! `evaluateDAG` and `evaluateCrossSectionDAG`, called from vm.zig.
+
 const std = @import("std");
 const dag = @import("dag.zig");
 const error_kind = @import("error_kind.zig");

@@ -1,3 +1,8 @@
+//! The `Math` object's methods (`methods`): the usual functions, degree versions of the trig
+//! functions that are exact at simple angles (`Math.cosd(90)` is 0), and modelling helpers
+//! such as `snap`, `remap`, `smoothstep` and `close?`. A result that would be NaN or
+//! Infinity from finite arguments raises instead.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

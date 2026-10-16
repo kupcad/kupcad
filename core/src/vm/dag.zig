@@ -1,3 +1,8 @@
+//! The geometry DAG a script builds: `DAGBuilder` appends `DAGNode`s (primitives, booleans,
+//! transforms, extrusions, ...) with their payloads in side tables, reuses an identical node
+//! instead of adding it twice, and records the settings each node was made under. The DAG is
+//! evaluated later, by `dag_evaluator.zig`.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");

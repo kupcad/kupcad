@@ -1,3 +1,7 @@
+//! The primitive constructors (`cube`, `cylinder`, `sphere`, `torus`, `polyhedron`,
+//! `square`, `circle`, `polygon`, `regular_polygon`, `text`): each one's `Signature`, its
+//! argument checks, and the `native*` function that adds the shape to the geometry DAG.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");

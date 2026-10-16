@@ -1,3 +1,7 @@
+//! `Vfs`: the file system interface the VM and package manager write through, a pointer and
+//! vtable for reading, writing, making directories and linking. Implemented by `native.zig`,
+//! `memory.zig` and `readonly.zig`.
+
 const std = @import("std");
 
 pub const Vfs = struct {

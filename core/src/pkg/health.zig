@@ -1,3 +1,7 @@
+//! `kupcad pkg doctor`: `Doctor.run` checks the package database's SQLite integrity, evicts
+//! index entries whose blob file is gone from the content-addressed store, and re-registers
+//! blob files the index doesn't list, printing each step.
+
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
