@@ -62,9 +62,10 @@ const Primitive = struct {
     material: u32,
     extensions: ?PrimitiveExtensions = null,
 };
+/// Each starts where its buffer view does, glTF's default, so no byteOffset is written: a
+/// Draco accessor has no buffer view, and a byteOffset without one is invalid glTF.
 const Accessor = struct {
     bufferView: ?u32 = null,
-    byteOffset: u32,
     componentType: u32,
     count: u32,
     type: []const u8,
@@ -230,7 +231,6 @@ pub fn buildGltfBuffer(
             const position_accessor: u32 = @intCast(accessors.items.len);
             try accessors.append(allocator, .{
                 .bufferView = null,
-                .byteOffset = 0,
                 .componentType = GLTF_COMPONENT_TYPE_FLOAT,
                 .count = @intCast(compact.positions.items.len / 3),
                 .type = "VEC3",
@@ -240,7 +240,6 @@ pub fn buildGltfBuffer(
             const accessor_id: u32 = @intCast(accessors.items.len);
             try accessors.append(allocator, .{
                 .bufferView = null,
-                .byteOffset = 0,
                 .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
                 .count = @intCast(prim.indices.items.len),
                 .type = "SCALAR",
@@ -265,7 +264,6 @@ pub fn buildGltfBuffer(
         // own material.
         try accessors.append(allocator, .{
             .bufferView = 0,
-            .byteOffset = 0,
             .componentType = GLTF_COMPONENT_TYPE_FLOAT,
             .count = total_vertices,
             .type = "VEC3",
@@ -295,7 +293,6 @@ pub fn buildGltfBuffer(
             const idx_accessor_idx: u32 = @intCast(accessors.items.len);
             try accessors.append(allocator, .{
                 .bufferView = idx_bv_idx,
-                .byteOffset = 0,
                 .componentType = GLTF_COMPONENT_TYPE_UNSIGNED_INT,
                 .count = @intCast(prim.indices.items.len),
                 .type = "SCALAR",

@@ -83,6 +83,7 @@ test {
 
     // Kernels
     _ = @import("kernel/kernel_test.zig");
+    _ = @import("kernel/mesh_check_test.zig");
 
     // Package Manager & Registry
     _ = @import("pkg/manifest_test.zig");

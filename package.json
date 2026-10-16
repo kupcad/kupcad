@@ -8,9 +8,13 @@
     "build:core:grammar": "cd core && zig build grammar -Doptimize=fast",
     "test:core": "cd core && zig build test -Doptimize=debug --summary all",
     "test:core:safe": "cd core && zig build test -Doptimize=safe --summary all",
+    "check:gltf": "cd core && zig build && node scripts/validate-gltf.mjs",
     "check:examples": "cd core && zig build && ./zig-out/bin/kupcad fmt --check ../examples && ./zig-out/bin/kupcad check --max-warnings 0 ../examples",
     "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug --summary all",
     "test:wasm:safe": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=safe --summary all",
     "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all"
+  },
+  "devDependencies": {
+    "gltf-validator": "2.0.0-dev.3.10"
   }
 }

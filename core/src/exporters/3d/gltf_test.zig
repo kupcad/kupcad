@@ -4,6 +4,8 @@ const registry = @import("../../stdlib/registry.zig");
 const dag_evaluator = @import("../../vm/dag_evaluator.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const draco = @import("../../bindings/draco.zig");
+const mesh_check = @import("../../kernel/mesh_check.zig");
 
 const GLB_HEADER_LEN = 12;
 const CHUNK_HEADER_LEN = 8;
@@ -97,7 +99,8 @@ fn expectValidLayout(glb: *const Glb) !void {
         const elem = componentBytes(a.object);
         const stride = if (view.get("byteStride")) |s| int(s) else elem;
         const count = int(a.object.get("count").?);
-        const needed = int(a.object.get("byteOffset").?) + (count - 1) * stride + elem;
+        const needed = (count - 1) * stride + elem; // accessors start at their view (byteOffset 0)
+        try std.testing.expect(a.object.get("byteOffset") == null);
         try std.testing.expect(needed <= int(view.get("byteLength").?));
     }
     const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
@@ -286,4 +289,138 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
 
     const handles = [_]geom.GeometryHandle{ mesh_part, brep_part };
     try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false, .glb));
+}
+
+/// The bytes of buffer view `index`.
+fn viewBytes(glb: *const Glb, index: usize) []const u8 {
+    const view = glb.array("bufferViews")[index].object;
+    const offset = if (view.get("byteOffset")) |o| int(o) else 0;
+    return glb.bin[offset..][0..int(view.get("byteLength").?)];
+}
+
+const PARTS_SOURCE =
+    \\[cube(2), sphere(1).translate(x: 5).material(color: "#FF0000"),
+    \\ (cube(2).material(color: "#00FF00") + cylinder(r: 1, h: 4).translate(x: 1)).translate(y: 10)]
+;
+
+test "GLTF: the primitives of an export close every part" {
+    // A part split by material is several primitives over its one set of vertices.
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, PARTS_SOURCE, .{ .format = .glb });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    const accessors = glb.array("accessors");
+    const positions = std.mem.bytesAsSlice(f32, viewBytes(&glb, int(accessors[0].object.get("bufferView").?)));
+    var indices: std.ArrayListUnmanaged(u32) = .empty;
+    defer indices.deinit(std.testing.allocator);
+    for (glb.array("meshes")[0].object.get("primitives").?.array.items) |p| {
+        const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);
+        for (std.mem.bytesAsSlice(u32, viewBytes(&glb, view))) |i| try indices.append(std.testing.allocator, i);
+    }
+    const triangles = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
+    defer std.testing.allocator.free(triangles);
+    try mesh_check.expectClosed(std.testing.allocator, triangles);
+}
+
+test "GLTF: each Draco primitive decodes to the mesh its accessors describe" {
+    // Only the JSON around the compressed buffers was checked; nothing decoded them.
+    const plain_bytes = try api.buildModel(std.testing.allocator, std.testing.io, PARTS_SOURCE, .{ .format = .glb });
+    defer std.testing.allocator.free(plain_bytes);
+    var plain = try parseGlb(plain_bytes);
+    defer plain.deinit();
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, PARTS_SOURCE, .{ .format = .glb, .draco = true });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+
+    const accessors = glb.array("accessors");
+    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
+    const plain_prims = plain.array("meshes")[0].object.get("primitives").?.array.items;
+    try std.testing.expectEqual(plain_prims.len, prims.len);
+    for (prims, plain_prims, 0..) |p, plain_p, n| {
+        errdefer std.debug.print("primitive {d}\n", .{n});
+        const ext = p.object.get("extensions").?.object.get("KHR_draco_mesh_compression").?.object;
+        const mesh = try draco.decodeMesh(std.testing.allocator, viewBytes(&glb, int(ext.get("bufferView").?)));
+        defer mesh.deinit(std.testing.allocator);
+
+        const position = accessors[int(p.object.get("attributes").?.object.get("POSITION").?)].object;
+        try std.testing.expectEqual(int(position.get("count").?), mesh.positions.len / 3);
+        try std.testing.expectEqual(int(accessors[int(p.object.get("indices").?)].object.get("count").?), mesh.indices.len);
+        // As many triangles as the uncompressed primitive.
+        try std.testing.expectEqual(int(plain.array("accessors")[int(plain_p.object.get("indices").?)].object.get("count").?), mesh.indices.len);
+        for (mesh.indices) |i| try std.testing.expect(i < mesh.positions.len / 3);
+        // Within the bounds the accessor declares, give or take the quantization step.
+        const min = position.get("min").?.array.items;
+        const max = position.get("max").?.array.items;
+        for (0..mesh.positions.len / 3) |v| {
+            for (0..3) |k| {
+                const c: f64 = mesh.positions[v * 3 + k];
+                const slack = (number(max[k]) - number(min[k])) * 1e-3 + 1e-6;
+                try std.testing.expect(c >= number(min[k]) - slack and c <= number(max[k]) + slack);
+            }
+        }
+    }
+    // The first two parts are a primitive each, whole, so each decodes closed.
+    for (prims[0..2]) |p| {
+        const ext = p.object.get("extensions").?.object.get("KHR_draco_mesh_compression").?.object;
+        const mesh = try draco.decodeMesh(std.testing.allocator, viewBytes(&glb, int(ext.get("bufferView").?)));
+        defer mesh.deinit(std.testing.allocator);
+        const triangles = try mesh_check.weld(std.testing.allocator, mesh.positions, mesh.indices);
+        defer std.testing.allocator.free(triangles);
+        try mesh_check.expectClosed(std.testing.allocator, triangles);
+    }
+}
+
+test "GLTF: each material keeps its colour, finish, transparency and role" {
+    const source =
+        \\shiny = cube(2).material(color: "#FF0000", metallic: 0.5, roughness: 0.2)
+        \\clear = sphere(1).translate(x: 5).material(color: "#00FF00", alpha: 0.5)
+        \\glass = cylinder(r: 1, h: 2).translate(x: 10).material(color: "#FFFFFF", transmission: 0.8)
+        \\lit = cube(1).translate(y: 5).highlight
+        \\cube(1).translate(y: 10).ghost
+        \\[shiny, clear, glass, lit]
+    ;
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .glb });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    const materials = glb.array("materials");
+    // The default first, then one per material(...), highlight and ghost, in call order.
+    try std.testing.expectEqual(@as(usize, 6), materials.len);
+
+    const shiny = materials[1].object;
+    try expectNumbers(&.{ 1, 0, 0, 1 }, pbr(shiny).get("baseColorFactor").?);
+    try std.testing.expectEqual(@as(f64, 0.5), number(pbr(shiny).get("metallicFactor").?));
+    try std.testing.expectEqual(@as(f64, 0.2), number(pbr(shiny).get("roughnessFactor").?));
+    try std.testing.expectEqualStrings("OPAQUE", shiny.get("alphaMode").?.string);
+
+    const clear = materials[2].object;
+    try expectNumbers(&.{ 0, 1, 0, 0.5 }, pbr(clear).get("baseColorFactor").?);
+    try std.testing.expectEqualStrings("BLEND", clear.get("alphaMode").?.string);
+
+    const glass = materials[3].object;
+    const ext = glass.get("extensions").?.object;
+    try std.testing.expectEqual(@as(f64, 0.8), number(ext.get("KHR_materials_transmission").?.object.get("transmissionFactor").?));
+    try std.testing.expectEqual(@as(f64, 1.5), number(ext.get("KHR_materials_ior").?.object.get("ior").?));
+    try std.testing.expectEqualStrings("OPAQUE", glass.get("alphaMode").?.string);
+    var used: usize = 0;
+    for (glb.array("extensionsUsed")) |name| {
+        if (std.mem.startsWith(u8, name.string, "KHR_materials_")) used += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), used);
+
+    try std.testing.expectEqualStrings("highlight", materials[4].object.get("extras").?.object.get("kupcad_role").?.string);
+    const ghost = materials[5].object;
+    try std.testing.expectEqualStrings("ghost", ghost.get("extras").?.object.get("kupcad_role").?.string);
+    try std.testing.expectEqualStrings("BLEND", ghost.get("alphaMode").?.string);
+}
+
+fn pbr(material: std.json.ObjectMap) std.json.ObjectMap {
+    return material.get("pbrMetallicRoughness").?.object;
+}
+
+fn expectNumbers(expected: []const f64, actual: std.json.Value) !void {
+    const items = actual.array.items;
+    try std.testing.expectEqual(expected.len, items.len);
+    for (expected, items) |e, a| try std.testing.expectApproxEqAbs(e, number(a), 1e-12);
 }
