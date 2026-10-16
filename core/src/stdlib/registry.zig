@@ -120,6 +120,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Bind CAD methods natively to the classes
     try vm.geometry_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
     try vm.cross_section_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.assembly_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
+    for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.assembly_class.?, def.name, def.func);
     for (manifest.mesh_methods) |def| {
         try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
         try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);

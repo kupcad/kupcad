@@ -2333,6 +2333,70 @@ test "Stdlib: export_step refuses a mesh part by name, and writes an exact one" 
     try testing.expect(std.mem.startsWith(u8, written, "ISO-10303-21;"));
 }
 
+test "Stdlib: an Assembly answers its name and parts, and keeps its own list" {
+    // It had no methods: every call on it was a NoMethodError.
+    try expectGlobalR(&.{
+        .{ .src = "a = assemble(name: \"kit\", parts: [cube(1), cube(2)])\nr = \"#{a.name} #{a.class} #{a.parts.length}\"", .expected = .{ .str = "kit Assembly 2" } },
+        // Changing the Array it was made from, or the one `parts` gives, changes nothing.
+        .{ .src = "p = [cube(1)]\na = assemble(name: \"k\", parts: p)\np.push(cube(2))\na.parts.push(cube(3))\nr = a.parts.length", .expected = .{ .num = 1 } },
+        .{ .src = "a = assemble(name: \"k\", parts: [cube(1), cube(1).translate(5, 0, 0)])\nr = a.parts[1].bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
+    });
+}
+
+test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
+    // Anything else was accepted and then left out of every export without a word.
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Number at index 1" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got CrossSection at index 0" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got nil at index 0; leave out the nils with .compact" } },
+        .{ .src = comptime rescued("s = assemble(name: \"s\", parts: [cube(1)])\nassemble(name: \"k\", parts: [s])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Assembly at index 0; to nest an assembly, give its .parts" } },
+    });
+}
+
+test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const kit = "a = assemble(name: \"kit\", parts: [cube(1), cube(1).translate(3, 0, 0)])\n";
+    const cases = [_]IterCase{
+        .{ .src = kit ++ "r = \"#{a.export_stl(\"kit.stl\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
+        .{ .src = "CAD.config(engine: :brep)\na = assemble(name: \"b\", parts: [cube(1), cylinder(r: 1, h: 2)])\nr = \"#{a.export_step(\"b.step\").class}\"", .expected = .{ .str = "Assembly" } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.vfs = mem_vfs.vfs();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectEqualStrings(case.expected.str, (vm.globals.get("r") orelse return error.MissingGlobal).asString().chars);
+    }
+    // The STL is the parts' union: two unit cubes, apart, are 24 triangles.
+    const stl = try mem_vfs.vfs().readFile(testing.allocator, "kit.stl");
+    defer testing.allocator.free(stl);
+    try testing.expectEqual(@as(u32, 24), std.mem.readInt(u32, stl[80..84], .little));
+    const glb = try mem_vfs.vfs().readFile(testing.allocator, "kit.glb");
+    defer testing.allocator.free(glb);
+    try testing.expectEqualStrings("glTF", glb[0..4]);
+    const step_file = try mem_vfs.vfs().readFile(testing.allocator, "b.step");
+    defer testing.allocator.free(step_file);
+    try testing.expect(std.mem.startsWith(u8, step_file, "ISO-10303-21;"));
+    try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "kit.step"));
+}
+
+test "Stdlib: each Assembly method gives back what the manifest says it does" {
+    const manifest = @import("manifest.zig");
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    inline for (manifest.assembly_methods) |m| {
+        if (comptime isOneOf(m.name, &writes_files)) {
+            try testing.expectEqual(manifest.Result.receiver, m.result);
+        } else {
+            const expected = comptime m.result.className().?;
+            try expectGlobalR(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
+        }
+    }
+}
+
 test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform takes a vector" {
     // One number used to stretch x alone (every CAD tool reads it as uniform) and to turn
     // a Solid about x but a Sketch about z.

@@ -4,6 +4,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
+const error_kind = @import("../../vm/error_kind.zig");
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
 // a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
@@ -172,14 +173,37 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     return out;
 }
 
-pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "export_stl", receiver);
-    const handle = try vm.ensureConcrete(receiver);
-    try vm.requireFeature(handle.engine, .mesh);
+/// The STL of `parts`: STL holds one mesh, so several parts are written as their union.
+pub fn buildStlOfParts(allocator: std.mem.Allocator, vm: *VM, parts: []const geom.GeometryHandle) ![]const u8 {
+    for (parts) |h| try vm.requireFeature(h.engine, .mesh);
+    switch (parts.len) {
+        0 => return error.NoGeometry,
+        1 => return buildStlBuffer(allocator, parts[0]),
+        else => {
+            try vm.requireFeature(parts[0].engine, .boolean);
+            const united = kernel.batchBoolean(allocator, parts, .union_op) orelse {
+                _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
+                return error.RuntimeError;
+            };
+            defer kernel.destruct(united);
+            return buildStlBuffer(allocator, united);
+        },
+    }
+}
 
-    const stl_bytes = buildStlBuffer(vm.allocator, handle) catch |err| switch (err) {
+/// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
+pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    defer parts.deinit(vm.allocator);
+    if (receiver.isGeometry()) {
+        try parts.append(vm.allocator, try vm.ensureConcrete(receiver));
+    } else if (receiver.isAssembly()) {
+        for (receiver.asAssembly().parts.items.items) |part| try parts.append(vm.allocator, try vm.ensureConcrete(part));
+    } else return util.notDefinedFor(vm, "export_stl", receiver);
+
+    const stl_bytes = buildStlOfParts(vm.allocator, vm, parts.items) catch |err| switch (err) {
         error.NoGeometry => {
-            _ = vm.raiseError(.GeometryError, "export_stl: the Solid is empty, there is nothing to write to '{s}'", .{filepath});
+            _ = vm.raiseError(.GeometryError, "export_stl: the model is empty, there is nothing to write to '{s}'", .{filepath});
             return error.RuntimeError;
         },
         else => return err,

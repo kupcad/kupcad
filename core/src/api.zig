@@ -5,7 +5,6 @@ const value = @import("core/value.zig");
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
-const error_kind = @import("vm/error_kind.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const geom = @import("kernel/geometry_handle.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
@@ -326,19 +325,7 @@ pub fn exportModelFromVm(
     }
 
     // STL holds one mesh: the model's parts are united, the ghosts left out.
-    switch (parts.len) {
-        0 => return error.NoGeometry,
-        1 => return stl_exporter.buildStlBuffer(allocator, parts[0]),
-        else => {
-            try vm.requireFeature(parts[0].engine, .boolean);
-            const united = kernel.batchBoolean(allocator, parts, .union_op) orelse {
-                _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
-                return error.RuntimeError;
-            };
-            defer kernel.destruct(united);
-            return stl_exporter.buildStlBuffer(allocator, united);
-        },
-    }
+    return stl_exporter.buildStlOfParts(allocator, vm, parts);
 }
 
 /// Why a build failed, in words a script author can act on. Filled by

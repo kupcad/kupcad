@@ -342,6 +342,7 @@ KupCAD exposes an exhaustive list of native mesh manipulation methods attached t
 * **Arrays**: `.repeat_linear`, `.repeat_polar`.
 * **Sweeps**: `.extrude`, `.revolve` (`deg:`, `segments:`; without `segments:` the count follows the profile's distance from the axis and the active config), `.helix`, `.loft`. `loft` currently joins two *convex* profiles (it is the exact convex hull of their outlines, the base at z = 0 and the top at the height); a concave profile or one with holes raises `NotImplementedError` rather than being filled in.
 * **Advanced**: `.hull`, `.minkowski`, `.trim_by_plane`, `.split_by_plane`, `.offset`, `.slice`, `.project`, `.fillet_edges`, `.simplify`, `.decompose`. (`on_face` and the `Workplane` it returned are withheld until the sketching-on-a-face API exists.)
+* **Assemblies**: `assemble(name: "Housing", parts: [housing, ring])` groups Solids under a name for export. Every part must be a Solid (a `TypeError` names the first that isn't: an Array of nils from `.ghost` or a nested assembly used to vanish from every export); the assembly keeps its own copy of the list. It answers `.name` and `.parts` (a new Array each time) and exports with `.export_stl(path)` (the parts united, as STL holds one mesh), `.export_gltf(path)` (the parts kept apart) and `.export_step(path)` (every part must be B-Rep). A ghost isn't a part: `.ghost` returns nil and shows and exports the shape beside the model.
 
 ---
 

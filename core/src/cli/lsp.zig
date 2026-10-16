@@ -763,6 +763,12 @@ pub const Handler = struct {
                     .kind = .Method,
                 });
             }
+            // An assembly's own (its exports are a solid's too, already listed).
+            for (manifest.assembly_methods) |am| {
+                for (manifest.mesh_methods) |mm| {
+                    if (std.mem.eql(u8, mm.name, am.name)) break;
+                } else try items.append(arena, .{ .label = am.name, .kind = .Method });
+            }
         } else {
             // CONTEXT: Standard Scope
             // Suggest Classes, Global Functions, and Primitives

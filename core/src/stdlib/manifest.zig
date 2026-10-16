@@ -39,6 +39,7 @@ pub const Result = enum {
     sketch,
     number,
     boolean,
+    string,
     bounding_box,
     array,
     workplane,
@@ -55,6 +56,7 @@ pub const Result = enum {
             .sketch => "CrossSection",
             .number => "Number",
             .boolean => "Boolean",
+            .string => "String",
             .bounding_box => "BoundingBox",
             .array => "Array",
             .workplane => "Workplane",
@@ -183,6 +185,17 @@ pub const mesh_methods = [_]MeshMethod{
     method("export_gltf", .file_io, gltf.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
 };
 
+/// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
+/// for export, so it answers what it holds and writes its parts as one file. It had no
+/// methods at all: `assemble(...).export_step(...)` was a NoMethodError.
+pub const assembly_methods = [_]MeshMethod{
+    method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
+    method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
+    method("export_stl", .file_io, stl.meshExportStl, &sig.EXPORT, .receiver),
+    method("export_step", .file_io, step.meshExportStep, &sig.EXPORT, .receiver),
+    method("export_gltf", .file_io, gltf.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+};
+
 /// A primitive whose calls are checked against `signature` (common.checkArguments).
 fn primitive(comptime name: []const u8, comptime category: Category, comptime func: anytype, comptime signature: *const Signature) GlobalFunction {
     const result: Result = switch (category) {
@@ -214,18 +227,24 @@ pub fn resultOf(name: []const u8) ?Result {
     return null;
 }
 
-/// What the method `name` of a solid or a sketch gives back.
+/// What the method `name` of a solid, a sketch or an assembly gives back.
 pub fn methodResultOf(name: []const u8) ?Result {
-    for (mesh_methods) |m| {
-        if (std.mem.eql(u8, m.name, name)) return m.result;
-    }
-    return null;
+    return if (methodNamed(name)) |m| m.result else null;
 }
 
-/// The signature of the method `name` of a solid or a sketch.
+/// The signature of the method `name` of a solid, a sketch or an assembly.
 pub fn methodSignatureOf(name: []const u8) ?*const Signature {
-    for (mesh_methods) |m| {
-        if (std.mem.eql(u8, m.name, name)) return m.signature;
+    return if (methodNamed(name)) |m| m.signature else null;
+}
+
+/// A shape method named `name`: a solid's or a sketch's, else an assembly's (the exports
+/// they share are declared alike).
+fn methodNamed(name: []const u8) ?*const MeshMethod {
+    for (&mesh_methods) |*m| {
+        if (std.mem.eql(u8, m.name, name)) return m;
+    }
+    for (&assembly_methods) |*m| {
+        if (std.mem.eql(u8, m.name, name)) return m;
     }
     return null;
 }
