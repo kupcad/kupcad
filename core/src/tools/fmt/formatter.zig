@@ -6,6 +6,7 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const token = @import("../../core/token.zig");
 const LineIndex = @import("../../core/line_index.zig").LineIndex;
+const Document = @import("../../core/document.zig").Document;
 const Config = @import("config.zig").Config;
 const parser = @import("../../frontend/parser.zig");
 const Precedence = parser.Precedence;
@@ -35,6 +36,11 @@ pub const Formatter = struct {
     flat: bool = false,
 
     sort_imports_rule: SortImportsRule = .{},
+
+    /// A formatter for a parsed document: its source, tokens, line index and comments.
+    pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, config: Config) Formatter {
+        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, &doc.line_index, doc.comments, config);
+    }
 
     pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{

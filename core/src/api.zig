@@ -46,7 +46,7 @@ const MAX_MODEL_NESTING = 64;
 pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config: FormatterConfig) ![]const u8 {
     if (doc.diagnostics.len > 0) return error.SyntaxError;
     if (doc.tree.root == .none) return error.SyntaxError;
-    var formatter = Formatter.init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, &doc.line_index, doc.comments, config);
+    var formatter = Formatter.forDocument(allocator, doc, config);
     defer formatter.deinit();
     try formatter.registerDefaultRules();
     const formatted = try formatter.format(&doc.tree, doc.tree.root);
@@ -80,7 +80,7 @@ pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Docum
     var linter = Linter.init(allocator, config);
     defer linter.deinit();
     try linter.registerDefaultRules();
-    try linter.check(&doc.tree, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
+    try linter.checkDocument(doc);
     try suppressions.apply(allocator, &linter.diagnostics, doc.comments, &doc.line_index, config);
     if (doc.diagnostics.len == 0) {
         if (try compileError(allocator, io, doc)) |compile_error| {
@@ -349,7 +349,7 @@ pub fn exportModelFromVm(
 }
 
 /// Why a build failed, in words a script author can act on. Filled by
-/// `buildModelWithDiagnostic`; `message` is owned by the allocator passed to it.
+/// `buildModel` (BuildOptions.diagnostic); `message` is owned by the allocator passed to it.
 pub const BuildDiagnostic = struct {
     /// "line:col: message" for a syntax error, or the error as the CLI prints it
     /// (e.g. "RuntimeError: ...") when running or exporting the script failed.

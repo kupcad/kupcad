@@ -10,6 +10,7 @@ const config_mod = @import("config.zig");
 const Config = config_mod.Config;
 const LintRule = @import("rules/rule.zig").LintRule;
 const visitor = @import("../../core/visitor.zig");
+const Document = @import("../../core/document.zig").Document;
 
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;
@@ -377,6 +378,11 @@ pub const Linter = struct {
                 return;
             }
         }
+    }
+
+    /// check, for a parsed document: its tree, source, tokens and syntax errors.
+    pub fn checkDocument(self: *Linter, doc: *const Document) !void {
+        return self.check(&doc.tree, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tree.root, doc.diagnostics);
     }
 
     pub fn check(self: *Linter, tree: *const ast.Tree, source: []const u8, token_starts: []const u32, token_lengths: []const u32, root: ast.NodeIndex, parser_diagnostics: []const common_errors.Diagnostic) !void {
