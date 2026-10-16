@@ -884,105 +884,7 @@ pub const VM = struct {
                     frame.ip -= offset; // Jump backwards
                 },
                 .op_import, .op_import_wide => {
-                    const path_idx = self.readOperand(exec_chunk, frame, op == .op_import_wide);
-                    const path_val = exec_chunk.constants.items[path_idx];
-                    const path_str = path_val.asString().chars;
-
-                    // 1. Check Module Cache
-                    if (self.modules.get(path_str)) |cached_mod| {
-                        self.push(cached_mod);
-                        continue;
-                    }
-                    if (self.loading_modules.contains(path_str)) {
-                        if (self.raiseError(.ImportError, "Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    // 2. Fetch from VFS
-                    const source = self.vfs.readFile(self.allocator, path_str) catch {
-                        if (self.raiseError(.ImportError, "Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
-                        continue;
-                    };
-                    defer self.allocator.free(source);
-
-                    // --- IMPORT DEPTH LIMIT ---
-                    if (self.import_depth >= MAX_IMPORT_DEPTH) {
-                        if (self.raiseError(.ImportError, "Maximum import depth of 64 exceeded", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    self.import_depth += 1;
-                    defer self.import_depth -= 1;
-
-                    // 3. Compile it into its own top-level scope: its variables, defs and
-                    // classes live there, and only exported names reach the importer.
-                    const namespace = self.newModuleNamespace() catch return .runtime_error;
-                    const compile_module = self.host.compile_module orelse {
-                        if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
-                        continue;
-                    };
-                    const caller_depth = self.frames.items.len;
-                    const throw_seq = self.throw_seq;
-                    const heap_chunk = compile_module(self, path_str, source, namespace) catch {
-                        if (self.alreadyThrown(throw_seq, caller_depth)) |res| {
-                            if (res != .ok) return res;
-                            continue;
-                        }
-                        return .runtime_error;
-                    };
-                    // `errdefer` never fires here (this function returns InterpretResult, not an
-                    // error union), so ownership is tracked explicitly until a function owns the chunk.
-                    var chunk_owned_by_func = false;
-                    defer if (!chunk_owned_by_func) {
-                        heap_chunk.free(self.allocator);
-                        self.allocator.destroy(heap_chunk);
-                    };
-
-                    if (!self.verifyBytecode(heap_chunk)) {
-                        if (self.raiseError(.ImportError, "Invalid bytecode for '{s}'", .{path_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    // 5. Setup Closure
-                    const func = self.gc.allocateFunction(self) catch return .runtime_error;
-                    func.chunk = heap_chunk;
-                    func.owns_chunk = true;
-                    func.local_count = heap_chunk.local_count;
-                    func.namespace = namespace;
-                    chunk_owned_by_func = true; // freed with func by the GC from here on
-
-                    // Root func while allocateClosure may collect
-                    self.push(value.Value.initObj(&func.obj));
-                    const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
-                    _ = self.pop();
-
-                    // --- CIRCULAR DEPENDENCY: the import in progress. (A nil in the cache
-                    // used to mark it, so a module whose value is nil, one ending in a def or
-                    // a puts, was "circular" the second time it was imported.)
-                    self.loading_modules.put(self.allocator, path_str, {}) catch return .runtime_error;
-                    defer _ = self.loading_modules.remove(path_str);
-
-                    // 6. Execute synchronously
-                    const import_depth = self.frames.items.len;
-                    const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
-                        if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-                        if (err == error.Unwind) {
-                            // Stack unwound by an exception raised inside the module; resume at the handler
-                            self.restoreAfterUnwind(import_depth);
-                            continue;
-                        }
-                        return .runtime_error;
-                    };
-
-                    // Extract the __exports__ module if built by export statements
-                    var final_res = res;
-                    if (namespace.globals.get("__exports__")) |exp_mod| {
-                        final_res = exp_mod;
-                        namespace.remove(self.allocator, "__exports__");
-                    }
-
-                    // 7. Cache the actual finalized module and yield result
-                    self.cacheModule(path_str, final_res) catch return .runtime_error;
-                    self.push(final_res);
+                    if (self.executeImport(frame, exec_chunk, op == .op_import_wide)) |out| return out;
                 },
                 .op_get_upvalue => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -1157,78 +1059,7 @@ pub const VM = struct {
                         value.Value.initNil();
                 },
                 .op_get_property, .op_get_property_wide => {
-                    const is_wide = op == .op_get_property_wide;
-                    const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
-                    const name_str = name_val.asString().chars;
-                    const ic = self.readInlineCache(exec_chunk, frame);
-                    const receiver = self.stack[self.stack_top - 1];
-
-                    if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-
-                        // --- 1. Property Fast/Slow Path ---
-                        if (self.getPropertyCached(instance, name_val, ic)) |prop_val| {
-                            self.stack[self.stack_top - 1] = prop_val;
-                            continue;
-                        }
-
-                        // --- 2. Method Fallback: a reader is called (`q.p ||= 6` read the
-                        // attr_accessor's reader as a value, a truthy method object, and kept it).
-                        // The site's cache remembers the method, as a call site's does: without
-                        // it every read walked the class chain and tried the private name.
-                        if (self.findMethodWithPrivacy(instance.class, name_val, ic).method) |method_val| {
-                            if (method_val.isNative()) {
-                                const res = self.executeNative(method_val.asNative(), 0, self.stack.ptr + self.stack_top, false);
-                                if (res != .ok) return res;
-                                continue;
-                            }
-                            if (!method_val.isClosure()) {
-                                if (self.raiseError(.TypeError, "'{s}' is not callable", .{name_str}) != .ok) return .runtime_error;
-                                continue;
-                            }
-                            const depth = self.frames.items.len;
-                            const read = self.callMethodSync(receiver, method_val.asClosure(), &.{}) catch |err| {
-                                if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-                                if (err == error.Unwind) {
-                                    self.restoreAfterUnwind(depth);
-                                    continue;
-                                }
-                                return .runtime_error;
-                            };
-                            self.stack[self.stack_top - 1] = read;
-                            continue;
-                        }
-
-                        // Gracefully return nil for uninitialized variables instead of crashing
-                        self.stack[self.stack_top - 1] = value.Value.initNil();
-                        continue;
-                    } else if (receiver.isModule()) {
-                        const mod = receiver.asModule();
-                        if (mod.methods.get(name_val)) |val| {
-                            self.stack[self.stack_top - 1] = val;
-                            continue;
-                        }
-                        if (self.raiseError(.NameError, "Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                        continue;
-                    } else if (receiver.isClass()) {
-                        const cls = receiver.asClass();
-                        if (cls.class_fields.get(name_val)) |val| {
-                            self.stack[self.stack_top - 1] = val;
-                            continue;
-                        }
-                        if (self.raiseError(.NameError, "Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                        continue;
-                    } else if (self.getClass(receiver)) |class| {
-                        if (self.findMethodWithPrivacy(class, name_val, null).method) |method_val| {
-                            self.stack[self.stack_top - 1] = method_val;
-                            continue;
-                        }
-                        if (self.raiseError(.NoMethodError, "Method '{s}' not found on receiver.", .{name_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    if (self.raiseError(.TypeError, "Only instances have properties.", .{}) != .ok) return .runtime_error;
-                    continue;
+                    if (self.executeGetProperty(frame, exec_chunk, op == .op_get_property_wide)) |out| return out;
                 },
                 .op_set_property, .op_set_property_wide => {
                     const is_wide = op == .op_set_property_wide;
@@ -1292,105 +1123,10 @@ pub const VM = struct {
                     if (res != .ok) return res;
                 },
                 .op_super_invoke => {
-                    const raw_count = exec_chunk.code.items[frame.ip];
-                    const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
-                    frame.ip += 2;
-
-                    const base_slot = self.stack_top - 1 - raw_count;
-                    const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| {
-                        if (self.callArgsError(err) != .ok) return .runtime_error;
-                        continue;
-                    };
-                    const arg_count = call.count;
-
-                    // The method this code belongs to, through blocks (the compiler rejects super
-                    // outside a def, so it exists).
-                    const home = homeMethod(frame) orelse return self.raiseError(.TypeError, "super can only be called inside a method", .{});
-                    const method_name_str = if (home.function.name) |n| n.chars else "";
-                    const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
-
-                    const receiver = self.stack[base_slot];
-
-                    if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-                        // From above the class that defines the running method, not the receiver's
-                        // class: with C < B < A, B#foo's super on a C found B#foo again, forever.
-                        const defining = home.home_class orelse instance.class;
-                        const superclass = defining.superclass orelse {
-                            return self.raiseError(.RuntimeError, "No superclass exists for receiver.", .{});
-                        };
-
-                        // Use new Privacy Resolution Helper
-                        const resolved = self.findMethodWithPrivacy(superclass, method_name_val, null);
-
-                        if (resolved.method) |m_val| {
-                            if (m_val.isClosure()) {
-                                const res = self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block, call.has_kwargs);
-                                if (res != .ok) return res;
-                                continue;
-                            } else if (m_val.isNative()) {
-                                const args_ptr = self.stack.ptr + base_slot + 1;
-                                const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
-                                if (self.afterCall(res, target_depth)) |out| return out;
-                                continue;
-                            } else {
-                                if (self.raiseError(.RuntimeError, "Superclass method '{s}' is not callable.", .{method_name_str}) != .ok) return .runtime_error;
-                                continue;
-                            }
-                        }
-
-                        if (self.raiseError(.NoMethodError, "Superclass method '{s}' not found.", .{method_name_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    if (self.raiseError(.TypeError, "super can only be called on instances.", .{}) != .ok) return .runtime_error;
-                    continue;
+                    if (self.executeSuperInvoke(frame, exec_chunk, target_depth)) |out| return out;
                 },
                 .op_yield => {
-                    const raw_count = exec_chunk.code.items[frame.ip];
-                    const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
-                    frame.ip += 2;
-                    const yield_call = self.prepareCallArgs(self.stack_top - 1 - raw_count, raw_count, flags) catch |err| {
-                        if (self.callArgsError(err) != .ok) return .runtime_error;
-                        continue;
-                    };
-                    const yield_arg_count = yield_call.count;
-
-                    const block_val = self.frameBlock(frame);
-                    if (!block_val.isClosure()) {
-                        if (self.raiseError(.ArgumentError, "No block given to yield.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    const block_closure = block_val.asClosure();
-                    const args_ptr = self.stack.ptr + self.stack_top - yield_arg_count;
-                    const yield_args = args_ptr[0..yield_arg_count];
-
-                    // Safely propagate limits through native yields
-                    const yield_depth = self.frames.items.len;
-                    const result = self.callClosureWith(block_closure, value.Value.initObj(&block_closure.obj), yield_args, yield_call.has_kwargs) catch |err| {
-                        if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
-                        if (err == error.BlockBreak) {
-                            self.popAndRelease(yield_arg_count);
-                            // A block yielded to sits in its method's block slot, so the break
-                            // found that frame; should the slot have been reassigned, this
-                            // frame is the one to leave.
-                            if (self.pending_break.?.target == null) self.pending_break.?.target = self.frames.items.len - 1;
-                            if (self.carryBreak(target_depth)) |res| return res;
-                            continue;
-                        }
-                        if (err == error.Unwind) {
-                            // The stack has been forcefully unwound past this frame.
-                            // Continue the run loop to either execute the rescue handler or terminate natively.
-                            self.restoreAfterUnwind(yield_depth);
-                            continue;
-                        }
-                        return .runtime_error;
-                    };
-
-                    // Pop yielded args off stack
-                    self.popAndRelease(yield_arg_count);
-                    self.push(result);
+                    if (self.executeYield(frame, exec_chunk, target_depth)) |out| return out;
                 },
                 .op_block_given => {
                     self.push(value.Value.initBool(self.frameBlock(frame).isClosure()));
@@ -2290,6 +2026,295 @@ pub const VM = struct {
             else => unreachable,
         }
         return .ok;
+    }
+
+    /// Imports a module: from the cache, or read, compiled by the host (Host.compile_module), verified, run and cached.
+    /// Null to go on to the next instruction; a result is runUntil's to return.
+    fn executeImport(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) ?InterpretResult {
+        const path_idx = self.readOperand(exec_chunk, frame, is_wide);
+        const path_val = exec_chunk.constants.items[path_idx];
+        const path_str = path_val.asString().chars;
+
+        // 1. Check Module Cache
+        if (self.modules.get(path_str)) |cached_mod| {
+            self.push(cached_mod);
+            return null;
+        }
+        if (self.loading_modules.contains(path_str)) {
+            if (self.raiseError(.ImportError, "Circular dependency detected for '{s}'", .{path_str}) != .ok) return .runtime_error;
+            return null;
+        }
+
+        // 2. Fetch from VFS
+        const source = self.vfs.readFile(self.allocator, path_str) catch {
+            if (self.raiseError(.ImportError, "Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
+            return null;
+        };
+        defer self.allocator.free(source);
+
+        // --- IMPORT DEPTH LIMIT ---
+        if (self.import_depth >= MAX_IMPORT_DEPTH) {
+            if (self.raiseError(.ImportError, "Maximum import depth of 64 exceeded", .{}) != .ok) return .runtime_error;
+            return null;
+        }
+        self.import_depth += 1;
+        defer self.import_depth -= 1;
+
+        // 3. Compile it into its own top-level scope: its variables, defs and
+        // classes live there, and only exported names reach the importer.
+        const namespace = self.newModuleNamespace() catch return .runtime_error;
+        const compile_module = self.host.compile_module orelse {
+            if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
+            return null;
+        };
+        const caller_depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        const heap_chunk = compile_module(self, path_str, source, namespace) catch {
+            if (self.alreadyThrown(throw_seq, caller_depth)) |res| {
+                if (res != .ok) return res;
+                return null;
+            }
+            return .runtime_error;
+        };
+        // `errdefer` never fires here (this function returns InterpretResult, not an
+        // error union), so ownership is tracked explicitly until a function owns the chunk.
+        var chunk_owned_by_func = false;
+        defer if (!chunk_owned_by_func) {
+            heap_chunk.free(self.allocator);
+            self.allocator.destroy(heap_chunk);
+        };
+
+        if (!self.verifyBytecode(heap_chunk)) {
+            if (self.raiseError(.ImportError, "Invalid bytecode for '{s}'", .{path_str}) != .ok) return .runtime_error;
+            return null;
+        }
+
+        // 5. Setup Closure
+        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        func.chunk = heap_chunk;
+        func.owns_chunk = true;
+        func.local_count = heap_chunk.local_count;
+        func.namespace = namespace;
+        chunk_owned_by_func = true; // freed with func by the GC from here on
+
+        // Root func while allocateClosure may collect
+        self.push(value.Value.initObj(&func.obj));
+        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+        _ = self.pop();
+
+        // --- CIRCULAR DEPENDENCY: the import in progress. (A nil in the cache
+        // used to mark it, so a module whose value is nil, one ending in a def or
+        // a puts, was "circular" the second time it was imported.)
+        self.loading_modules.put(self.allocator, path_str, {}) catch return .runtime_error;
+        defer _ = self.loading_modules.remove(path_str);
+
+        // 6. Execute synchronously
+        const import_depth = self.frames.items.len;
+        const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+            if (err == error.Unwind) {
+                // Stack unwound by an exception raised inside the module; resume at the handler
+                self.restoreAfterUnwind(import_depth);
+                return null;
+            }
+            return .runtime_error;
+        };
+
+        // Extract the __exports__ module if built by export statements
+        var final_res = res;
+        if (namespace.globals.get("__exports__")) |exp_mod| {
+            final_res = exp_mod;
+            namespace.remove(self.allocator, "__exports__");
+        }
+
+        // 7. Cache the actual finalized module and yield result
+        self.cacheModule(path_str, final_res) catch return .runtime_error;
+        self.push(final_res);
+        return null;
+    }
+
+    /// `receiver.name`: an instance field, a reader method called, a module or class member, or a method of a value class.
+    /// Null to go on to the next instruction; a result is runUntil's to return.
+    inline fn executeGetProperty(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) ?InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const name_str = name_val.asString().chars;
+        const ic = self.readInlineCache(exec_chunk, frame);
+        const receiver = self.stack[self.stack_top - 1];
+
+        if (receiver.isInstance()) {
+            const instance = receiver.asInstance();
+
+            // --- 1. Property Fast/Slow Path ---
+            if (self.getPropertyCached(instance, name_val, ic)) |prop_val| {
+                self.stack[self.stack_top - 1] = prop_val;
+                return null;
+            }
+
+            // --- 2. Method Fallback: a reader is called (`q.p ||= 6` read the
+            // attr_accessor's reader as a value, a truthy method object, and kept it).
+            // The site's cache remembers the method, as a call site's does: without
+            // it every read walked the class chain and tried the private name.
+            if (self.findMethodWithPrivacy(instance.class, name_val, ic).method) |method_val| {
+                if (method_val.isNative()) {
+                    const res = self.executeNative(method_val.asNative(), 0, self.stack.ptr + self.stack_top, false);
+                    if (res != .ok) return res;
+                    return null;
+                }
+                if (!method_val.isClosure()) {
+                    if (self.raiseError(.TypeError, "'{s}' is not callable", .{name_str}) != .ok) return .runtime_error;
+                    return null;
+                }
+                const depth = self.frames.items.len;
+                const read = self.callMethodSync(receiver, method_val.asClosure(), &.{}) catch |err| {
+                    if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                    if (err == error.Unwind) {
+                        self.restoreAfterUnwind(depth);
+                        return null;
+                    }
+                    return .runtime_error;
+                };
+                self.stack[self.stack_top - 1] = read;
+                return null;
+            }
+
+            // Gracefully return nil for uninitialized variables instead of crashing
+            self.stack[self.stack_top - 1] = value.Value.initNil();
+            return null;
+        } else if (receiver.isModule()) {
+            const mod = receiver.asModule();
+            if (mod.methods.get(name_val)) |val| {
+                self.stack[self.stack_top - 1] = val;
+                return null;
+            }
+            if (self.raiseError(.NameError, "Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+            return null;
+        } else if (receiver.isClass()) {
+            const cls = receiver.asClass();
+            if (cls.class_fields.get(name_val)) |val| {
+                self.stack[self.stack_top - 1] = val;
+                return null;
+            }
+            if (self.raiseError(.NameError, "Undefined class member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+            return null;
+        } else if (self.getClass(receiver)) |class| {
+            if (self.findMethodWithPrivacy(class, name_val, null).method) |method_val| {
+                self.stack[self.stack_top - 1] = method_val;
+                return null;
+            }
+            if (self.raiseError(.NoMethodError, "Method '{s}' not found on receiver.", .{name_str}) != .ok) return .runtime_error;
+            return null;
+        }
+
+        if (self.raiseError(.TypeError, "Only instances have properties.", .{}) != .ok) return .runtime_error;
+        return null;
+    }
+
+    /// `super(...)`: the running method of the class above the one that defines it, on the same receiver.
+    /// Null to go on to the next instruction; a result is runUntil's to return.
+    inline fn executeSuperInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, target_depth: usize) ?InterpretResult {
+        const raw_count = exec_chunk.code.items[frame.ip];
+        const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+        frame.ip += 2;
+
+        const base_slot = self.stack_top - 1 - raw_count;
+        const call = self.prepareCallArgs(base_slot, raw_count, flags) catch |err| {
+            if (self.callArgsError(err) != .ok) return .runtime_error;
+            return null;
+        };
+        const arg_count = call.count;
+
+        // The method this code belongs to, through blocks (the compiler rejects super
+        // outside a def, so it exists).
+        const home = homeMethod(frame) orelse return self.raiseError(.TypeError, "super can only be called inside a method", .{});
+        const method_name_str = if (home.function.name) |n| n.chars else "";
+        const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
+
+        const receiver = self.stack[base_slot];
+
+        if (receiver.isInstance()) {
+            const instance = receiver.asInstance();
+            // From above the class that defines the running method, not the receiver's
+            // class: with C < B < A, B#foo's super on a C found B#foo again, forever.
+            const defining = home.home_class orelse instance.class;
+            const superclass = defining.superclass orelse {
+                return self.raiseError(.RuntimeError, "No superclass exists for receiver.", .{});
+            };
+
+            // Use new Privacy Resolution Helper
+            const resolved = self.findMethodWithPrivacy(superclass, method_name_val, null);
+
+            if (resolved.method) |m_val| {
+                if (m_val.isClosure()) {
+                    const res = self.dispatchClosure(m_val.asClosure(), arg_count, base_slot, false, call.has_block, call.has_kwargs);
+                    if (res != .ok) return res;
+                    return null;
+                } else if (m_val.isNative()) {
+                    const args_ptr = self.stack.ptr + base_slot + 1;
+                    const res = self.executeNative(m_val.asNative(), arg_count, args_ptr, call.has_block);
+                    if (self.afterCall(res, target_depth)) |out| return out;
+                    return null;
+                } else {
+                    if (self.raiseError(.RuntimeError, "Superclass method '{s}' is not callable.", .{method_name_str}) != .ok) return .runtime_error;
+                    return null;
+                }
+            }
+
+            if (self.raiseError(.NoMethodError, "Superclass method '{s}' not found.", .{method_name_str}) != .ok) return .runtime_error;
+            return null;
+        }
+
+        if (self.raiseError(.TypeError, "super can only be called on instances.", .{}) != .ok) return .runtime_error;
+        return null;
+    }
+
+    /// `yield(...)`: calls the block of the method the code is in.
+    /// Null to go on to the next instruction; a result is runUntil's to return.
+    inline fn executeYield(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, target_depth: usize) ?InterpretResult {
+        const raw_count = exec_chunk.code.items[frame.ip];
+        const flags: chunk.CallFlags = @bitCast(exec_chunk.code.items[frame.ip + 1]);
+        frame.ip += 2;
+        const yield_call = self.prepareCallArgs(self.stack_top - 1 - raw_count, raw_count, flags) catch |err| {
+            if (self.callArgsError(err) != .ok) return .runtime_error;
+            return null;
+        };
+        const yield_arg_count = yield_call.count;
+
+        const block_val = self.frameBlock(frame);
+        if (!block_val.isClosure()) {
+            if (self.raiseError(.ArgumentError, "No block given to yield.", .{}) != .ok) return .runtime_error;
+            return null;
+        }
+
+        const block_closure = block_val.asClosure();
+        const args_ptr = self.stack.ptr + self.stack_top - yield_arg_count;
+        const yield_args = args_ptr[0..yield_arg_count];
+
+        // Safely propagate limits through native yields
+        const yield_depth = self.frames.items.len;
+        const result = self.callClosureWith(block_closure, value.Value.initObj(&block_closure.obj), yield_args, yield_call.has_kwargs) catch |err| {
+            if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+            if (err == error.BlockBreak) {
+                self.popAndRelease(yield_arg_count);
+                // A block yielded to sits in its method's block slot, so the break
+                // found that frame; should the slot have been reassigned, this
+                // frame is the one to leave.
+                if (self.pending_break.?.target == null) self.pending_break.?.target = self.frames.items.len - 1;
+                if (self.carryBreak(target_depth)) |res| return res;
+                return null;
+            }
+            if (err == error.Unwind) {
+                // The stack has been forcefully unwound past this frame.
+                // Continue the run loop to either execute the rescue handler or terminate natively.
+                self.restoreAfterUnwind(yield_depth);
+                return null;
+            }
+            return .runtime_error;
+        };
+
+        // Pop yielded args off stack
+        self.popAndRelease(yield_arg_count);
+        self.push(result);
+        return null;
     }
 
     inline fn executeInvoke(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
