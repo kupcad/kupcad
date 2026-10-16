@@ -11,6 +11,14 @@ pub const GC = struct {
     // Explicit Grey Stack to prevent C-Stack Overflow
     gray_stack: std.ArrayListUnmanaged(*value.Obj) = .empty,
 
+    /// Objects that live as long as the VM: every native (they come from the standard
+    /// library's tables) and the static names the library registers things under
+    /// (internStatic). They are allocated from this arena, freed with the GC, and never
+    /// swept: they are created marked and kept out of the lists the sweep walks, so the mark
+    /// phase passes over them (they reference no other object). One allocation each, and
+    /// its free at teardown, made a VM cost about 850 allocations before it ran anything.
+    builtins: std.heap.ArenaAllocator,
+
     // --- Segregated Object Tracking Arrays (Data-Oriented Design) ---
     strings: std.ArrayListUnmanaged(*value.ObjString) = .empty,
     symbols: std.ArrayListUnmanaged(*value.ObjSymbol) = .empty,
@@ -23,7 +31,6 @@ pub const GC = struct {
     closures: std.ArrayListUnmanaged(*value.ObjClosure) = .empty,
     upvalues: std.ArrayListUnmanaged(*value.ObjUpvalue) = .empty,
     bound_methods: std.ArrayListUnmanaged(*value.ObjBoundMethod) = .empty,
-    natives: std.ArrayListUnmanaged(*value.ObjNative) = .empty,
     ranges: std.ArrayListUnmanaged(*value.ObjRange) = .empty,
     bboxes: std.ArrayListUnmanaged(*value.ObjBBox) = .empty,
 
@@ -54,6 +61,7 @@ pub const GC = struct {
     pub fn init(allocator: std.mem.Allocator) GC {
         return .{
             .allocator = allocator,
+            .builtins = std.heap.ArenaAllocator.init(allocator),
             .bytes_allocated = 0,
             .is_gc_running = false,
             .next_gc_threshold = 1024 * 1024, // 1MB starting threshold
@@ -77,13 +85,13 @@ pub const GC = struct {
         self.closures.deinit(self.allocator);
         self.upvalues.deinit(self.allocator);
         self.bound_methods.deinit(self.allocator);
-        self.natives.deinit(self.allocator);
         self.ranges.deinit(self.allocator);
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
+        self.builtins.deinit();
     }
 
     /// Registers a chunk's constant pool as a GC root until the chunk is freed.
@@ -175,7 +183,7 @@ pub const GC = struct {
                 self.arrays.items.len + self.maps.items.len + self.functions.items.len +
                 self.classes.items.len + self.modules.items.len + self.instances.items.len +
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
-                self.natives.items.len + self.ranges.items.len +
+                self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
                 self.assemblies.items.len + self.workplanes.items.len;
 
@@ -295,10 +303,10 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateNative(self: *GC, vm: *VM, name: []const u8, function: value.NativeFn) !*value.ObjNative {
-        const ptr = try self.allocateObject(vm, value.ObjNative, &self.natives, .native);
-        ptr.function = function;
-        ptr.name = name;
+    /// A native, alive as long as the VM (see `builtins`); `name` must live as long.
+    pub fn allocateNative(self: *GC, name: []const u8, function: value.NativeFn) !*value.ObjNative {
+        const ptr = try self.builtins.allocator().create(value.ObjNative);
+        ptr.* = .{ .obj = .{ .obj_type = .native, .is_marked = true }, .function = function, .name = name };
         return ptr;
     }
 
@@ -356,6 +364,17 @@ pub const GC = struct {
         ptr.chars = owned_chars;
 
         try vm.symbols.put(self.allocator, ptr.chars, ptr);
+        return ptr;
+    }
+
+    /// `chars`, a name that outlives the VM (a literal of the standard library), as an
+    /// interned string alive as long as the VM (see `builtins`): no copy, never swept. The
+    /// string already interned under that text, if there is one.
+    pub fn internStatic(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| return existing;
+        const ptr = try self.builtins.allocator().create(value.ObjString);
+        ptr.* = .{ .obj = .{ .obj_type = .string, .is_marked = true }, .chars = chars };
+        try vm.strings.put(self.allocator, chars, ptr);
         return ptr;
     }
 
@@ -635,7 +654,6 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjArray, &self.arrays);
         self.sweepList(vm, value.ObjMap, &self.maps);
         self.sweepList(vm, value.ObjUpvalue, &self.upvalues);
-        self.sweepList(vm, value.ObjNative, &self.natives);
         self.sweepList(vm, value.ObjRange, &self.ranges);
         self.sweepList(vm, value.ObjBBox, &self.bboxes);
         self.sweepList(vm, value.ObjString, &self.strings);
@@ -726,7 +744,7 @@ pub const GC = struct {
                 self.trackingAllocator().free(sym_obj.chars);
                 self.destroyObject(value.ObjSymbol, sym_obj);
             },
-            .native => self.destroyObject(value.ObjNative, @alignCast(@fieldParentPtr("obj", obj))),
+            .native => {}, // in no sweep list: natives live in `builtins`
             .array => {
                 const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
                 arr_obj.items.deinit(self.trackingAllocator());

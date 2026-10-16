@@ -1621,13 +1621,17 @@ pub const VM = struct {
         return value.Value.initWorkplane(wp_obj);
     }
 
+    /// Defines the global `name` (which must outlive the VM) as a native. Natives are
+    /// never collected, so the value needs no rooting while the global is added.
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
-        const native_obj = try self.gc.allocateNative(self, name, function);
-        const native_val = value.Value.initObj(&native_obj.obj);
-        try self.ensureStackCapacity(self.stack_top + 1);
-        self.push(native_val);
-        try self.globals.put(self.allocator, name, native_val);
-        _ = self.pop();
+        const native_obj = try self.gc.allocateNative(name, function);
+        try self.globals.put(self.allocator, name, value.Value.initObj(&native_obj.obj));
+    }
+
+    /// `name` (a literal, outliving the VM) as an interned string that is never collected;
+    /// the standard library registers its methods and constants under these.
+    pub fn staticString(self: *VM, name: []const u8) !value.Value {
+        return value.Value.initObj(&(try self.gc.internStatic(self, name)).obj);
     }
 
     pub inline fn shrinkStack(self: *VM, target_slot: usize) void {

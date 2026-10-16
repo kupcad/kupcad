@@ -58,45 +58,38 @@ pub fn exceptionBacktrace(vm: *VM, receiver: value.Value) !value.Value {
 // --- Bootstrap Hierarchy ---
 
 pub fn registerExceptions(vm: *VM) !void {
-    // Base Exception
-    // Use allocateString directly, which internally uses the trackingAllocator!
-    const exc_name = try vm.allocateString("Exception");
-    vm.push(exc_name);
-
+    // Base Exception. The class names are static strings, never collected, so nothing
+    // needs rooting while the classes are made.
+    const exc_name = try vm.staticString("Exception");
     const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exc_name.asObj()))), vm.object_class);
 
     // Note: vm.globals.put safely stays vm.allocator because globals are tied to VM lifetime, not sandbox GC
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
-    _ = vm.pop();
 
-    const init_fn = try vm.gc.allocateNative(vm, "Exception#initialize", common.wrapMethod(exceptionInit));
-    const init_key = try vm.allocateString("initialize");
+    const init_fn = try vm.gc.allocateNative("Exception#initialize", common.wrapMethod(exceptionInit));
+    const init_key = try vm.staticString("initialize");
     try exc_class.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
 
-    const msg_fn = try vm.gc.allocateNative(vm, "Exception#message", common.wrapMethod(exceptionMessage));
-    const msg_key = try vm.allocateString("message");
-    const tos_key = try vm.allocateString("to_s");
+    const msg_fn = try vm.gc.allocateNative("Exception#message", common.wrapMethod(exceptionMessage));
+    const msg_key = try vm.staticString("message");
+    const tos_key = try vm.staticString("to_s");
     try exc_class.methods.put(vm.gc.trackingAllocator(), msg_key, value.Value.initObj(&msg_fn.obj));
     try exc_class.methods.put(vm.gc.trackingAllocator(), tos_key, value.Value.initObj(&msg_fn.obj));
 
-    const bt_fn = try vm.gc.allocateNative(vm, "Exception#backtrace", common.wrapMethod(exceptionBacktrace));
-    const bt_key = try vm.allocateString("backtrace");
+    const bt_fn = try vm.gc.allocateNative("Exception#backtrace", common.wrapMethod(exceptionBacktrace));
+    const bt_key = try vm.staticString("backtrace");
     try exc_class.methods.put(vm.gc.trackingAllocator(), bt_key, value.Value.initObj(&bt_fn.obj));
 
     // StandardError < Exception
-    const std_name = try vm.allocateString("StandardError");
-    vm.push(std_name);
+    const std_name = try vm.staticString("StandardError");
     const std_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", std_name.asObj()))), exc_class);
     try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
-    _ = vm.pop();
 
     // One class per runtime error kind; the VM keeps them for raiseError.
     inline for (comptime std.meta.fieldNames(ErrorKind)) |err_name| {
-        const name_val = try vm.allocateString(err_name);
-        vm.push(name_val);
+        const name_val = try vm.staticString(err_name);
         const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))), std_class);
         try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));
         vm.error_classes.set(@field(ErrorKind, err_name), err_class);
-        _ = vm.pop();
     }
 }

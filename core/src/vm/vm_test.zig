@@ -3102,7 +3102,7 @@ test "VM: super correctly resolves and executes Native C++ methods" {
             return value.Value.initNumber(42.0);
         }
     }.run;
-    const native_obj = try vm.gc.allocateNative(&vm, "native_func", native_func);
+    const native_obj = try vm.gc.allocateNative("native_func", native_func);
 
     // --- Allocate a Value key for the method name ---
     const get_val_key = try vm.allocateString("get_val");
@@ -10683,7 +10683,7 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
         }
     }.run;
 
-    const native_obj = try vm.gc.allocateNative(&vm, "run_closure", native_runner);
+    const native_obj = try vm.gc.allocateNative("run_closure", native_runner);
     try vm.globals.put(vm.allocator, "run_closure", value.Value.initObj(&native_obj.obj));
 
     // Script with nested native boundary re-entrancy:
@@ -10792,7 +10792,7 @@ test "VM: handled exceptions do not accumulate unwind entries" {
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
 
-    const native_obj = try vm.gc.allocateNative(&vm, "probe_unwind_len", probeUnwindLen);
+    const native_obj = try vm.gc.allocateNative("probe_unwind_len", probeUnwindLen);
     try vm.globals.put(vm.allocator, "probe_unwind", value.Value.initObj(&native_obj.obj));
     probed_unwind_len = 0;
 
@@ -10869,7 +10869,7 @@ fn defineRaisingInitClass(vm: *VM) !void {
     const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
     try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
 
-    const init_fn = try vm.gc.allocateNative(vm, "raise_then_fail", raiseThenFail);
+    const init_fn = try vm.gc.allocateNative("raise_then_fail", raiseThenFail);
     const init_key = try vm.allocateString("initialize");
     try class_obj.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
 }

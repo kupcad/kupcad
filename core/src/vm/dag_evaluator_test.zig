@@ -582,17 +582,16 @@ test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {
 
     // Ensure we don't accidentally trip the RAM budget during the stress test
     try vm.setConfig(.{ .max_vertices = 50_000_000 });
-    for (0..count) |i| {
-        // Use `i` in dimension to prevent CSE deduplication from collapsing the branch count
-        targets[i] = try vm.dag_builder.addCube(1.0 + @as(f64, @floatFromInt(i)), 1.0, 1.0, true);
-    }
+    // Unit cubes in a row, apart: each is its own node (CSE can't merge them), and the
+    // kernel has no overlaps to cut, so the test is about the stacks, not the boolean (5000
+    // nested cubes of growing width made it the slowest test of the suite).
+    const cube = try vm.dag_builder.addCube(1.0, 1.0, 1.0, false);
+    for (0..count) |i| targets[i] = try vm.dag_builder.addTranslate(cube, 2.0 * @as(f64, @floatFromInt(i)), 0, 0);
 
     const batch_idx = try vm.dag_builder.addBatchUnion(targets);
-
     const handle = try dag_evaluator.evaluateDAG(&vm, batch_idx);
-
-    // If it reaches this line and the engine resolves, dynamic scaling succeeded perfectly
     try testing.expectEqual(geom.EngineType.manifold, handle.engine);
+    try testing.expectApproxEqAbs(@as(f64, count), kernel.volume(handle), 1e-6);
 }
 
 test "DAG Builder: Polyhedron CSE uses O(1) precomputed hash correctly" {

@@ -17,9 +17,10 @@ const common = @import("classes/common.zig");
 /// Binds `defs` as methods of `class`. Errors name each one `prefix ++ name`, such as
 /// "String#split" or "Math.sin".
 fn bindMethods(vm: *VM, class: *value.ObjClass, comptime prefix: []const u8, comptime defs: []const common.MethodDef) !void {
+    try class.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), defs.len);
     inline for (defs) |def| {
-        const native_obj = try vm.gc.allocateNative(vm, prefix ++ def.name, def.func);
-        const name_val = try vm.allocateString(def.name);
+        const native_obj = try vm.gc.allocateNative(prefix ++ def.name, def.func);
+        const name_val = try vm.staticString(def.name);
         try class.methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_obj.obj));
     }
 }

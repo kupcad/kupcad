@@ -24,7 +24,6 @@ fn countObjects(gc: *GC) usize {
     count += gc.closures.items.len;
     count += gc.upvalues.items.len;
     count += gc.bound_methods.items.len;
-    count += gc.natives.items.len;
     count += gc.ranges.items.len;
     count += gc.geometries.items.len;
     count += gc.cross_sections.items.len;
@@ -374,4 +373,48 @@ test "GC: a script past its memory limit stops with a Sandbox Error" {
         vm.setMemoryLimit(case.limit);
         try std.testing.expectEqual(case.outcome, try support.runOn(&vm, "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\nr = a.length"));
     }
+}
+
+test "GC: the standard library's natives and names live with the VM, outside the sweep" {
+    // Each native and each name was its own GC allocation, freed at teardown: a VM cost about
+    // 850 allocations before running anything, and the test suite most of its time.
+    var counting = std.testing.FailingAllocator.init(testing.allocator, .{});
+    var vm = try VM.init(counting.allocator(), testing.io);
+    defer vm.deinit();
+    const before = counting.allocations;
+    try registry.registerStandardLibrary(&vm);
+    try testing.expect(counting.allocations - before < 200);
+
+    // None of them is in a list the sweep walks, so a collection keeps every one.
+    const strings_before = vm.gc.strings.items.len;
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(strings_before, vm.gc.strings.items.len);
+    try testing.expect(vm.globals.get("cube").?.isNative());
+
+    // A script string with a built-in name's text is that static string, unharmed by
+    // collections (a freed string's bytes are overwritten).
+    const union_name = try vm.allocateString("union");
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(union_name.asObj(), (try vm.allocateString("union")).asObj());
+    try testing.expectEqualStrings("union", union_name.asString().chars);
+}
+
+test "GC: a script runs as before on a VM collected after registering the library" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.gc.collectGarbage(&vm, false);
+
+    var doc = try Document.parse(testing.allocator, "r = [3, 1, 2].sort.map { |v| v * cube(1).volume }\nm = Math::PI.round(2)\n");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    vm.gc.stress = true; // collect on every allocation while it runs
+    defer vm.gc.stress = false;
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try testing.expectEqual(@as(usize, 3), vm.globals.get("r").?.asArray().items.items.len);
+    try testing.expectApproxEqAbs(@as(f64, 3.14), vm.globals.get("m").?.asNumber(), 1e-9);
 }

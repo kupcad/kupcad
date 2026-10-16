@@ -16,7 +16,7 @@ fn defaultPrintHandler(vm: *VM, message: []const u8) void {
 // --- Bootstrap Helpers ---
 
 fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !*value.ObjClass {
-    const name_str = try vm.gc.allocateString(vm, name);
+    const name_str = try vm.gc.internStatic(vm, name);
     const class_obj = try vm.gc.allocateClass(vm, name_str, superclass);
     try vm.globals.put(vm.allocator, name, value.Value.initObj(&class_obj.obj));
     return class_obj;
@@ -31,19 +31,19 @@ fn defineValueClass(vm: *VM, name: []const u8) !*value.ObjClass {
 
 /// A class's own `new`, named `display_name` in errors.
 fn bindNew(vm: *VM, class: *value.ObjClass, display_name: []const u8, func: value.NativeFn) !void {
-    const native_fn = try vm.gc.allocateNative(vm, display_name, func);
-    try class.class_methods.put(vm.gc.trackingAllocator(), try vm.allocateString("new"), value.Value.initObj(&native_fn.obj));
+    const native_fn = try vm.gc.allocateNative(display_name, func);
+    try class.class_methods.put(vm.gc.trackingAllocator(), try vm.staticString("new"), value.Value.initObj(&native_fn.obj));
 }
 
 fn bindNativeClassMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_fn = try vm.gc.allocateNative(vm, name, func);
-    const name_val = try vm.allocateString(name);
+    const native_fn = try vm.gc.allocateNative(name, func);
+    const name_val = try vm.staticString(name);
     try class.class_methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_fn.obj));
 }
 
 fn bindNativeMethod(vm: *VM, class: *value.ObjClass, name: []const u8, func: value.NativeFn) !void {
-    const native_obj = try vm.gc.allocateNative(vm, name, func);
-    const name_val = try vm.allocateString(name);
+    const native_obj = try vm.gc.allocateNative(name, func);
+    const name_val = try vm.staticString(name);
     try class.methods.put(vm.gc.trackingAllocator(), name_val, value.Value.initObj(&native_obj.obj));
 }
 
@@ -73,10 +73,10 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.number_class = try defineValueClass(vm, "Number");
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("NAN"), value.Value.initNumber(std.math.nan(f64)));
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("INFINITY"), value.Value.initNumber(std.math.inf(f64)));
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("NAN"), value.Value.initNumber(std.math.nan(f64)));
     // The gap between 1 and the next number, Ruby's Float::EPSILON: a scale for tolerances.
-    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.allocateString("EPSILON"), value.Value.initNumber(std.math.floatEps(f64)));
+    try vm.number_class.?.class_fields.put(vm.gc.trackingAllocator(), try vm.staticString("EPSILON"), value.Value.initNumber(std.math.floatEps(f64)));
     vm.range_class = try defineValueClass(vm, "Range");
     vm.symbol_class = try defineValueClass(vm, "Symbol");
     vm.boolean_class = try defineValueClass(vm, "Boolean");
@@ -118,6 +118,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     }
 
     // Bind CAD methods natively to the classes
+    try vm.geometry_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.cross_section_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
     for (manifest.mesh_methods) |def| {
         try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
         try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);
@@ -133,7 +135,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     const math_class = try defineBuiltinClass(vm, "Math", vm.object_class);
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
     const math_constants = [_]struct { []const u8, f64 }{ .{ "PI", std.math.pi }, .{ "TAU", std.math.tau }, .{ "E", std.math.e } };
-    for (math_constants) |c| try vm.setInstanceField(math_inst, try vm.allocateString(c[0]), value.Value.initNumber(c[1]), null);
+    for (math_constants) |c| try vm.setInstanceField(math_inst, try vm.staticString(c[0]), value.Value.initNumber(c[1]), null);
     try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
