@@ -10,6 +10,7 @@ const ast = @import("../core/ast.zig");
 const common_token = @import("../core/token.zig");
 const common_errors = @import("../core/errors.zig");
 const docstring = @import("docstring.zig");
+const string_escape = @import("../core/string_escape.zig");
 
 const Tag = lexer_mod.Tag;
 const Diagnostics = common_errors.Diagnostics;
@@ -195,6 +196,35 @@ pub const Parser = struct {
             .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => true,
             else => false,
         };
+    }
+
+    /// The node of the string piece `raw` (token `tok`), its escapes decoded. An invalid
+    /// escape is reported where it is and leaves an invalid node.
+    fn stringNode(self: *Parser, raw: []const u8, tok: u24) ParseError!ast.NodeIndex {
+        var problem: string_escape.Problem = undefined;
+        return self.b.stringNodeUnescaped(raw, tok, &problem) catch |err| switch (err) {
+            error.InvalidEscape => {
+                self.reportEscape(tok, problem);
+                return self.b.invalidNode(tok) catch ParseError.OutOfMemory;
+            },
+            error.OutOfMemory => ParseError.OutOfMemory,
+        };
+    }
+
+    /// Reports the invalid escape `problem` found in the string token `tok`, at the escape.
+    fn reportEscape(self: *Parser, tok: u24, problem: string_escape.Problem) void {
+        var loc = self.getLoc(tok);
+        loc.offset += @intCast(problem.offset);
+        loc.length = @intCast(problem.len);
+        switch (problem.kind) {
+            .unknown => if (problem.value > 0 and problem.value < 0x80 and std.ascii.isPrint(@intCast(problem.value)))
+                self.reportError(loc, "Unknown escape '\\{c}' in a string; write '\\\\' for a backslash", .{@as(u8, @intCast(problem.value))})
+            else
+                self.reportError(loc, "A backslash in a string must start an escape (\\n, \\t, \\u{{...}} and the like); write '\\\\' for a backslash", .{}),
+            .malformed_unicode => self.reportError(loc, "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{{1F600}})", .{}),
+            .surrogate => self.reportError(loc, "U+{X:0>4} is a UTF-16 surrogate, not a character", .{problem.value}),
+            .beyond_unicode => self.reportError(loc, "U+{X} is past the last Unicode character, U+10FFFF", .{problem.value}),
+        }
     }
 
     /// Reports what the lexer couldn't read at token `idx`. Every such token used to be
@@ -1533,7 +1563,7 @@ pub const Parser = struct {
                 self.advance();
                 self.skipComments();
 
-                left = try self.b.stringNodeUnescaped(raw_lexeme, str_tok);
+                left = try self.stringNode(raw_lexeme, str_tok);
             },
             .symbol => {
                 self.advance();
@@ -1640,7 +1670,7 @@ pub const Parser = struct {
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
 
         const raw_start = self.lexeme(0);
-        try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_start, start_tok));
+        try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_start, start_tok));
         self.advance();
 
         while (true) {
@@ -1662,7 +1692,7 @@ pub const Parser = struct {
 
             if (self.tag(0) == .string_end or self.tag(0) == .string_mid) {
                 const raw_part = self.lexeme(0);
-                try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_part, self.tok_idx));
+                try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_part, self.tok_idx));
                 const is_end = (self.tag(0) == .string_end);
                 self.advance();
                 if (is_end) break;

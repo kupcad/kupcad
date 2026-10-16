@@ -94,7 +94,7 @@
       "name": "string.quoted.double.kupcad",
       "patterns": [
         {
-          "match": "\\\\.",
+          "match": "\\\\(?:u\\{[0-9A-Fa-f]{1,6}\\}|u[0-9A-Fa-f]{4}|.)",
           "name": "constant.character.escape.kupcad"
         },
         {

@@ -4484,6 +4484,29 @@ test "KupCAD Parser: an unclosed literal or a stray character is reported for wh
     try expectSingleDiagnostic("x = 1\n`\n", "Unexpected character '`'");
 }
 
+test "KupCAD Parser: an escape a string can't hold is a syntax error at the escape" {
+    // `\q` stood for `q`, so "C:\data" was "C:data" without a word; `\u` wasn't an escape.
+    const cases = [_]struct { src: []const u8, message: []const u8, at: []const u8 }{
+        .{ .src = "x = \"C:\\data\"", .message = "Unknown escape '\\d' in a string; write '\\\\' for a backslash", .at = "\\d" },
+        .{ .src = "x = 'it\\qs'", .message = "Unknown escape '\\q'", .at = "\\q" },
+        .{ .src = "x = \"#{1} and \\z\"", .message = "Unknown escape '\\z'", .at = "\\z" },
+        .{ .src = "x = <<~EOS\n  a\\1\nEOS\n", .message = "Unknown escape '\\1'", .at = "\\1" },
+        .{ .src = "x = %q(a \\w)", .message = "Unknown escape '\\w'", .at = "\\w" },
+        .{ .src = "x = \"\\u12\"", .message = "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{1F600})", .at = "\\u12" },
+        .{ .src = "x = \"\\u{}\"", .message = "'\\u' takes 4 hex digits", .at = "\\u{}" },
+        .{ .src = "x = \"\\uDBFF\"", .message = "U+DBFF is a UTF-16 surrogate, not a character", .at = "\\uDBFF" },
+        .{ .src = "x = \"\\u{110000}\"", .message = "U+110000 is past the last Unicode character, U+10FFFF", .at = "\\u{110000}" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        try expectSingleDiagnostic(case.src, case.message);
+        var doc = try Document.parse(testing.allocator, case.src);
+        defer doc.deinit();
+        const loc = doc.diagnostics[0].loc;
+        try testing.expectEqualStrings(case.at, case.src[loc.offset..][0..loc.length]);
+    }
+}
+
 test "Parser: an assignment in an argument or an element takes one value" {
     // `f(b = 5, 6)` made b the array [5, 6] and passed one argument, and `f(b = 5,)` an
     // array with an invalid element, unreported. A statement still takes the list.

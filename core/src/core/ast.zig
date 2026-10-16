@@ -843,8 +843,9 @@ pub const Builder = struct {
         return id;
     }
 
-    /// Processes Ruby-style escape sequences (\n, \t, \", etc.) before interning
-    pub fn internUnescaped(self: *Builder, input: []const u8) !StringId {
+    /// Interns `input` with its escape sequences (\n, \", \u{...}) decoded; an invalid one
+    /// fails with error.InvalidEscape, described in `problem` (string_escape.zig).
+    pub fn internUnescaped(self: *Builder, input: []const u8, problem: *string_escape.Problem) string_escape.Error!StringId {
         // Fast path: if no backslashes exist, intern directly
         if (std.mem.indexOfScalar(u8, input, '\\') == null) {
             return try self.intern(input);
@@ -852,7 +853,7 @@ pub const Builder = struct {
 
         var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, input.len);
         defer buf.deinit(self.allocator);
-        try string_escape.unescapeInto(&buf, self.allocator, input);
+        try string_escape.unescapeInto(&buf, self.allocator, input, problem);
         return try self.intern(buf.items);
     }
 
@@ -978,8 +979,8 @@ pub const Builder = struct {
         return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
-    pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        const str_id = try self.internUnescaped(lexeme_str);
+    pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24, problem: *string_escape.Problem) string_escape.Error!NodeIndex {
+        const str_id = try self.internUnescaped(lexeme_str, problem);
         return self.createNode(.string, main_token, @backingInt(str_id));
     }
 

@@ -1159,6 +1159,17 @@ test "Stdlib: raising a value that isn't an exception keeps all of it as the mes
     });
 }
 
+test "Stdlib: \\u escapes give the character, and a backslash before punctuation gives it" {
+    try expectScripts(&.{
+        .{ .src = "r = \"\\u00d8 5 mm\"", .expected = .{ .str = "Ø 5 mm" } },
+        .{ .src = "r = \"\\u{1F600}\".length", .expected = .{ .num = 1 } },
+        .{ .src = "r = \"\\u{2300}\" == \"⌀\"", .expected = .{ .boolean = true } },
+        .{ .src = "r = 'it\\'s'", .expected = .{ .str = "it's" } },
+        .{ .src = "r = %q(a \\) b)", .expected = .{ .str = "a ) b" } },
+        .{ .src = "x = 1\nr = \"\\#{x} is #{x}\"", .expected = .{ .str = "#{x} is 1" } },
+    });
+}
+
 test "Stdlib: Strings index by character and Arrays and Strings by Range, as in Ruby" {
     try expectScripts(&.{
         // `"abc"[0]` used to be "TypeError: Cannot index target."

@@ -497,7 +497,12 @@ pub const Formatter = struct {
         const raw = self.tokenText(node.main_token);
         var decoded: std.ArrayListUnmanaged(u8) = .empty;
         defer decoded.deinit(self.allocator);
-        try string_escape.unescapeInto(&decoded, self.allocator, raw);
+        var problem: string_escape.Problem = undefined;
+        string_escape.unescapeInto(&decoded, self.allocator, raw, &problem) catch |err| switch (err) {
+            // The parser refused it already; there is nothing to reuse
+            error.InvalidEscape => return null,
+            error.OutOfMemory => |e| return e,
+        };
         return if (std.mem.eql(u8, decoded.items, tree.getString(@fromBackingInt(node.data)))) raw else null;
     }
 

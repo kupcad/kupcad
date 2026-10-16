@@ -35,6 +35,7 @@ The Lexer scans raw source text and converts character streams into tokens using
 
 
 * **Compile-Time Keyword Hashing:** Identifiers are evaluated via `std.StaticStringMap` at compile time, yielding $O(1)$ keyword resolution without heap allocations or string branching.
+* **Escapes:** string tokens keep their escapes as written; the parser decodes each string piece through `core/string_escape.zig` when it builds the node, which also gives the formatter its rules for writing a value back. A backslash before a letter or digit must start a known escape (`\n`, `\t`, `\0`, `\u00e9`, `\u{1F600}`; a `\u` becomes UTF-8), and before other printable ASCII it stands for the character. Anything else, a surrogate or a code point past U+10FFFF is a `Problem` the parser reports at the escape itself; `\q` used to stand for `q`.
 
 ```zig
 // Data layout inside TokenList
