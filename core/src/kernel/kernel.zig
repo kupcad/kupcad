@@ -78,7 +78,7 @@ pub const Feature = enum {
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
             .extrude_scale => "taper an extrusion (extrude scale:)",
             .offset => "offset sketches",
-            .minkowski => "take Minkowski sums (minkowski, fillet_edges)",
+            .minkowski => "take Minkowski sums (minkowski, a solid's offset)",
             .trim_by_plane => "cut solids by a plane (trim_by_plane, split_by_plane)",
             .slice => "slice solids",
             .project => "project solids",
@@ -99,7 +99,8 @@ pub const Feature = enum {
 
     /// The script methods that need the feature, for `kupcad check` to warn before a
     /// B-Rep script runs. Features that depend on the values (a cone, a curved hull) or
-    /// come from operators (`a - b`) have none.
+    /// come from operators (`a - b`) have none; `offset` is listed for sketches, and a
+    /// solid's (a Minkowski sum) is told apart by the lint, which knows the receiver.
     pub fn methods(self: Feature) []const []const u8 {
         return switch (self) {
             .transform => &.{ "translate", "rotate", "scale", "mirror", "transform", "align", "center", "resize" },
@@ -109,7 +110,7 @@ pub const Feature = enum {
             .loft => &.{"loft"},
             .sphere => &.{"sphere"},
             .offset => &.{"offset"},
-            .minkowski => &.{ "minkowski", "fillet_edges" },
+            .minkowski => &.{"minkowski"},
             .trim_by_plane => &.{ "trim_by_plane", "split_by_plane" },
             .slice => &.{"slice"},
             .project => &.{"project"},

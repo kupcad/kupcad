@@ -1995,16 +1995,16 @@ test "VM CAD: loft skins two 2D profiles into a 3D solid" {
     try testing.expectApproxEqAbs(@as(f64, 10.0 / 3.0 * 175.0), result.asNumber(), 1e-9);
 }
 
-test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
+test "VM CAD: a Solid's offset grows it by a Minkowski sum with a sphere" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.host.print_handler = null;
 
-    // Apply a 2mm fillet to a 10x10x10 cube
+    // Grow a 10x10x10 cube by 2 mm, rounding its edges
     const source =
         \\c = cube(10, center: true)
-        \\part = c.fillet_edges(2)
+        \\part = c.offset(2)
         \\part.volume
     ;
 

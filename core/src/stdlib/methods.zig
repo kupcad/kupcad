@@ -38,7 +38,6 @@ pub const meshProject = advanced.meshProject;
 pub const meshOnFace = advanced.meshOnFace;
 pub const meshSplitByPlane = advanced.meshSplitByPlane;
 pub const meshDecompose = advanced.meshDecompose;
-pub const meshFilletEdges = advanced.meshFilletEdges;
 pub const meshSimplify = advanced.meshSimplify;
 // inspect
 pub const meshBBox = inspect.meshBBox;

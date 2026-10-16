@@ -1,6 +1,5 @@
 //! Geometry methods beyond the primitives and booleans: `hull`, `minkowski`, `trim_by_plane`,
-//! `split_by_plane`, `slice`, `project`, `offset`, `on_face`, `decompose`, `fillet_edges` and
-//! `simplify`. Most add a node to the geometry DAG; `on_face`, `decompose` and `simplify`
+//! `split_by_plane`, `slice`, `project`, `offset`, `on_face`, `decompose` and `simplify`. Most add a node to the geometry DAG; `on_face`, `decompose` and `simplify`
 //! evaluate the shape at once. Exported through methods.zig.
 
 const std = @import("std");
@@ -49,15 +48,34 @@ pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, n
 /// Offset corner styles; the values are the kernel's join_type codes.
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
 
-pub fn meshOffset(vm: *VM, receiver: *value.ObjCrossSection, args: []const value.Value) !value.Value {
+/// `offset(delta, join:)`. A Sketch grows by `delta` (shrinks, when it is negative), its
+/// corners joined as `join` says. A Solid grows by `delta` in every direction: a Minkowski
+/// sum with a sphere of that radius, the 3D form of a round join, so its edges and corners
+/// come out rounded. A Solid can't shrink (that is an erosion, which the kernel lacks) and
+/// has no other join.
+pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round };
     const pos = util.positionalArgs(args);
     var base = OffsetOpts{};
     if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
     const opts = (try util.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
 
-    const new_idx = try vm.dag_builder.addOffset(receiver.dag_idx, opts.delta, @backingInt(opts.join));
-    return try vm.allocateCrossSection(new_idx);
+    if (receiver.isCrossSection()) {
+        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join));
+        return try vm.allocateCrossSection(new_idx);
+    }
+    if (receiver.isGeometry()) {
+        if (!std.math.isFinite(opts.delta) or opts.delta <= 0.0) {
+            return vm.fail(.ValueError, "a Solid's offset only grows it: delta must be a finite number greater than zero, got {f}", .{value.fmtNumber(opts.delta)});
+        }
+        if (opts.join != .round) {
+            return vm.fail(.ValueError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :{s}", .{@tagName(opts.join)});
+        }
+        const sphere_idx = try vm.dag_builder.addSphere(opts.delta, util.autoSegments(vm, opts.delta));
+        const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
+        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    }
+    return util.notDefinedFor(vm, "offset", receiver);
 }
 
 pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !value.Value {
@@ -206,20 +224,6 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
 
     _ = vm.pop();
     return value.Value.initObj(&arr_obj.obj);
-}
-
-pub fn meshFilletEdges(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargsSubset(struct { r: ?f64 = null }, sig.FILLET_EDGES.keywords, vm, args, "fillet_edges");
-    var radius: f64 = 1.0;
-    if (parsed.positional.len > 0) radius = try util.requireNumber(vm, args[0], "fillet_edges", "r");
-    if (parsed.opts.r) |r| radius = r;
-    try util.requirePositive(vm, radius, "fillet_edges", "r");
-
-    // Generate tool and sum
-    const sphere_idx = try vm.dag_builder.addSphere(radius, util.autoSegments(vm, radius));
-    const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.dag_idx, sphere_idx);
-
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
 pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {

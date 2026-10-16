@@ -32,7 +32,7 @@ const SHAPES = [_][]const u8{
     "square(1, center: true).extrude(4, twist: 90)",
     "cube(1).hull(sphere(1).translate(x: 3))",
     "cube(4).minkowski(sphere(0.5, segments: 16))",
-    "cube(2).fillet_edges(0.2)",
+    "cube(2).offset(0.2)",
     "cube(2).mirror([1, 0, 0])",
     "cube(2).scale(2)",
     "text(\"Hi\", size: 5).extrude(1)",

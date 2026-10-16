@@ -983,7 +983,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 15), checked);
+    try std.testing.expectEqual(@as(usize, 14), checked);
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -1292,8 +1292,9 @@ test "Stdlib: numbers print plainly only while their digits are exact" {
 
 test "Stdlib: a keyword wins over the same option given positionally" {
     // Primitives and sweeps used to let the positional value win, while translate, polygon,
-    // fillet_edges and repeat_polar let the keyword win.
+    // fillet_edges (now a Solid's offset) and repeat_polar let the keyword win.
     try expectGlobalR(&.{
+        .{ .src = "r = cube(1).offset(5, delta: 0.1).volume < 2", .expected = .{ .boolean = true } },
         .{ .src = "r = cube(5, z: 3).bbox.max", .expected = .{ .nums = &.{ 5, 5, 3 } } },
         .{ .src = "r = square(2, x: 4).extrude(1).bbox.max", .expected = .{ .nums = &.{ 4, 2, 1 } } },
         .{ .src = "r = cylinder(1, 5, h: 2).bbox.max[2]", .expected = .{ .num = 2 } },
@@ -1563,7 +1564,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
-        .{ .src = comptime rescued("cube(10).fillet_edges(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
+        .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
         .{ .src = comptime rescued("cube(10).slice(5).extrude(1).simplify"), .expected = brepLacks(.slice) },
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
@@ -1687,8 +1688,8 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
         "cube(1).split_by_plane(0, 0, \"1\", 0)",
         "cube(1).split_by_plane(nz: \"1\")",
         "cube(1).split_by_plane(0, 0)",
-        "cube(1).fillet_edges(\"1\")",
-        "cube(1).fillet_edges(r: \"1\")",
+        "cube(1).offset(\"1\")",
+        "cube(1).offset(delta: \"1\")",
         "cube(1).simplify(\"0.1\")",
         "cube(1).contains?([0, \"0\", 0])",
         "cube(1).contains?([0, 0])",
@@ -1753,7 +1754,7 @@ test "Stdlib: geometry coordinates reject NaN and inf" {
         "cube(1).trim_by_plane(0, 0, 1, Number::INFINITY)",
         "cube(1).slice(Number::INFINITY - Number::INFINITY)",
         "cube(1).split_by_plane(0, 0, 1, Number::NAN)",
-        "cube(1).fillet_edges(Number::INFINITY)",
+        "cube(1).offset(Number::INFINITY)",
         "cube(1).simplify(Number::INFINITY - Number::INFINITY)",
         "cube(1).contains?([0, Number::INFINITY, 0])",
         "cube(1).ray_cast([0, 0, Number::NAN], [0, 0, -5])",
@@ -1783,8 +1784,12 @@ test "Stdlib: degenerate vectors and matrices are rejected" {
         "cube(1).split_by_plane(nx: 0)",
         "cube(1).ray_cast([1, 2, 3], [1, 2, 3])",
         "cube(1).min_gap(cube(1), 0)",
-        "cube(1).fillet_edges(0)",
-        "cube(1).fillet_edges(r: -1)",
+        // A Solid's offset only grows it, and only with round edges.
+        "cube(1).offset(0)",
+        "cube(1).offset(delta: -1)",
+        "cube(1).offset(1, join: :miter)",
+        "cube(1).offset(1, join: :square)",
+        "cube(1).offset(1, join: :bevel)",
     });
 }
 
@@ -1918,8 +1923,8 @@ test "Stdlib: valid coordinates and vector arguments still build" {
         "cube(1).split_by_plane(0, 0, 1)",
         "cube(1).split_by_plane(nz: 1, offset: 0.5)",
         "cube(1).split_by_plane(offset: 0.5)",
-        "cube(1).fillet_edges(0.5)",
-        "cube(1).fillet_edges(r: 1)",
+        "cube(1).offset(0.5)",
+        "cube(1).offset(delta: 1, join: :round)",
         "cube(1).simplify(0.01)",
         "cube(1).simplify()",
         "cube(1).contains?([0.5, 0.5, 0.5])",
@@ -2118,8 +2123,8 @@ test "Stdlib: sphere resolution follows segments and the active config" {
         // Both used to be Manifold's built-in default, whatever was asked for.
         .{ .src = "r = sphere(r: 1, segments: 8).volume < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
         .{ .src = with_8_segments ++ "sphere(r: 1).volume\nend\nr = v == sphere(r: 1, segments: 8).volume && v < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
-        // fillet_edges rounds with a sphere, so its corners follow the config too.
-        .{ .src = with_8_segments ++ "cube(1).fillet_edges(r: 0.5).volume\nend\nr = v == cube(1).minkowski(sphere(r: 0.5, segments: 8)).volume && v < cube(1).minkowski(sphere(r: 0.5, segments: 64)).volume", .expected = .{ .boolean = true } },
+        // A Solid's offset rounds with a sphere, so its corners follow the config too.
+        .{ .src = with_8_segments ++ "cube(1).offset(0.5).volume\nend\nr = v == cube(1).minkowski(sphere(r: 0.5, segments: 8)).volume && v < cube(1).minkowski(sphere(r: 0.5, segments: 64)).volume", .expected = .{ .boolean = true } },
     });
 }
 
@@ -2148,7 +2153,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
         .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
         .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
-        .{ .src = "cube(1).fillet_edges(bogus: 1)", .method = "fillet_edges", .accepted = "r" },
+        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission" },
     };
@@ -2188,7 +2193,7 @@ test "Stdlib: accepted keywords and aliases still build" {
         .{ .src = "r = square(2).revolve(deg: 90).volume > 0", .expected = .{ .boolean = true } },
         .{ .src = "r = cube(1).repeat_polar(4, angle: 90).volume > 1", .expected = .{ .boolean = true } },
         .{ .src = "r = cube(2).project(cut: true).extrude(1).volume", .expected = .{ .num = 4 } },
-        .{ .src = "r = cube(1).fillet_edges(r: 0.1).volume > 1", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(1).offset(delta: 0.1).volume > 1", .expected = .{ .boolean = true } },
         .{ .src = "r = polyhedron(points: " ++ TETRA_PTS ++ ", faces: " ++ TETRA_FACES ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
     });
 }
@@ -2331,25 +2336,24 @@ test "Stdlib: each method gives back what the manifest says it does" {
     // the method really returns. `c` is a Solid, `s` a Sketch.
     const manifest = @import("manifest.zig");
     const calls = [_]struct { []const u8, []const u8 }{
-        .{ "union", "c.union(cube(1))" },                                      .{ "difference", "c.difference(cube(1))" },
-        .{ "intersection", "c.intersection(cube(1))" },                        .{ "translate", "c.translate(1, 0, 0)" },
-        .{ "rotate", "c.rotate(0, 0, 90)" },                                   .{ "scale", "c.scale(2)" },
-        .{ "resize", "c.resize([4, 4, 4])" },                                  .{ "project", "c.project" },
-        .{ "slice", "c.slice(1)" },                                            .{ "center", "c.center" },
-        .{ "align", "c.align(cube(1), \"x\", \"min\")" },                      .{ "mirror", "c.mirror(1, 0, 0)" },
-        .{ "split_by_plane", "c.split_by_plane(0, 0, 1, 1)" },                 .{ "decompose", "c.decompose" },
-        .{ "genus", "c.genus" },                                               .{ "simplify", "c.simplify" },
-        .{ "bbox", "c.bbox" },                                                 .{ "volume", "c.volume" },
-        .{ "surface_area", "c.surface_area" },                                 .{ "extrude", "s.extrude(1)" },
-        .{ "revolve", "s.translate(5, 0).revolve(90)" },                       .{ "hull", "c.hull(cube(1).translate(3, 0, 0))" },
-        .{ "helix", "s.helix(5, 90)" },                                        .{ "loft", "s.loft(square(1), 5)" },
-        .{ "fillet_edges", "c.fillet_edges(0.5)" },                            .{ "trim_by_plane", "c.trim_by_plane(0, 0, 1)" },
-        .{ "minkowski", "c.minkowski(sphere(0.5))" },                          .{ "offset", "s.offset(1)" },
-        .{ "transform", "c.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])" }, .{ "min_gap", "c.min_gap(cube(1).translate(5, 0, 0))" },
-        .{ "contains?", "c.contains?([1, 1, 1])" },                            .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },
-        .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },                   .{ "repeat_polar", "c.repeat_polar(3)" },
-        .{ "material", "c.material(color: \"#ff0000\")" },                     .{ "highlight", "c.highlight" },
-        .{ "ghost", "c.ghost" },
+        .{ "union", "c.union(cube(1))" },                        .{ "difference", "c.difference(cube(1))" },
+        .{ "intersection", "c.intersection(cube(1))" },          .{ "translate", "c.translate(1, 0, 0)" },
+        .{ "rotate", "c.rotate(0, 0, 90)" },                     .{ "scale", "c.scale(2)" },
+        .{ "resize", "c.resize([4, 4, 4])" },                    .{ "project", "c.project" },
+        .{ "slice", "c.slice(1)" },                              .{ "center", "c.center" },
+        .{ "align", "c.align(cube(1), \"x\", \"min\")" },        .{ "mirror", "c.mirror(1, 0, 0)" },
+        .{ "split_by_plane", "c.split_by_plane(0, 0, 1, 1)" },   .{ "decompose", "c.decompose" },
+        .{ "genus", "c.genus" },                                 .{ "simplify", "c.simplify" },
+        .{ "bbox", "c.bbox" },                                   .{ "volume", "c.volume" },
+        .{ "surface_area", "c.surface_area" },                   .{ "extrude", "s.extrude(1)" },
+        .{ "revolve", "s.translate(5, 0).revolve(90)" },         .{ "hull", "c.hull(cube(1).translate(3, 0, 0))" },
+        .{ "helix", "s.helix(5, 90)" },                          .{ "loft", "s.loft(square(1), 5)" },
+        .{ "trim_by_plane", "c.trim_by_plane(0, 0, 1)" },        .{ "minkowski", "c.minkowski(sphere(0.5))" },
+        .{ "offset", "s.offset(1)" },                            .{ "transform", "c.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0])" },
+        .{ "min_gap", "c.min_gap(cube(1).translate(5, 0, 0))" }, .{ "contains?", "c.contains?([1, 1, 1])" },
+        .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },    .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },
+        .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
+        .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };

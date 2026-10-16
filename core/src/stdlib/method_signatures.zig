@@ -37,7 +37,6 @@ pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta"
 pub const SLICE = Signature{ .positional = &.{"height"} };
 pub const PROJECT = Signature{ .keywords = &.{"cut"} };
 pub const ON_FACE = Signature{ .positional = &.{"direction"} };
-pub const FILLET_EDGES = Signature{ .positional = &.{"r"}, .keywords = &.{"r"}, .sizes = &.{"r"} };
 pub const SIMPLIFY = Signature{ .positional = &.{"tolerance"} };
 
 // --- Inspection ---
