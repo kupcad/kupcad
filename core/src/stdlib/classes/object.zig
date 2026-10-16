@@ -86,8 +86,33 @@ fn objectMethod(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Va
 }
 
 /// Object#dup / Object#clone -> values are immutable or shared, so the receiver itself
+/// Object#dup / #clone -> a shallow copy of an Array, Map or instance: its own elements,
+/// entries or fields, holding the same values. Everything else is immutable (or a
+/// handle, like a Solid) and is returned as it is. It used to return the receiver
+/// itself, so `copy = parts.dup; copy.push(x)` changed `parts`.
 fn objectDup(vm: *VM, receiver: value.Value) !value.Value {
-    _ = vm;
+    if (receiver.isArray()) {
+        const copy = try vm.gc.allocateArray(vm);
+        vm.push(value.Value.initObj(&copy.obj)); // rooted while its storage is allocated
+        defer _ = vm.pop();
+        try copy.items.appendSlice(vm.gc.trackingAllocator(), receiver.asArray().items.items);
+        return value.Value.initObj(&copy.obj);
+    }
+    if (receiver.isMap()) {
+        const copy = try vm.gc.allocateMap(vm);
+        vm.push(value.Value.initObj(&copy.obj));
+        defer _ = vm.pop();
+        copy.map = try receiver.asMap().map.clone(vm.gc.trackingAllocator());
+        return value.Value.initObj(&copy.obj);
+    }
+    if (receiver.isInstance()) {
+        const source = receiver.asInstance();
+        const copy = try vm.gc.allocateInstance(vm, source.class);
+        vm.push(value.Value.initObj(&copy.obj));
+        defer _ = vm.pop();
+        try copy.fields.appendSlice(vm.gc.trackingAllocator(), source.fields.items);
+        return value.Value.initObj(&copy.obj);
+    }
     return receiver;
 }
 

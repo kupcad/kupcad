@@ -46,9 +46,11 @@ pub fn mapKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
 }
 
 /// Map#delete(key)
+/// Map#delete(key) -> the removed value, nil when absent. The other entries keep their
+/// order (a swap-remove moved the last entry into the hole).
 pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     _ = vm;
-    if (map.map.fetchSwapRemove(key)) |kv| {
+    if (map.map.fetchOrderedRemove(key)) |kv| {
         return kv.value;
     }
     return value.Value.initNil();

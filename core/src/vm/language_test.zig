@@ -329,3 +329,19 @@ test "Language: Array#max, #min and #sum reject what they can't add or compare" 
         .{ .src = "r = [Number::INFINITY, 1].sum", .expected = .{ .num = std.math.inf(f64) } },
     });
 }
+
+test "Language: dup and clone copy Arrays, Maps and instances; Map#delete keeps the order" {
+    // dup returned the receiver itself, so pushing to the copy changed the original; delete
+    // swapped the last entry into the hole.
+    try expectScripts(&.{
+        .{ .src = "a = [1, 2]\nb = a.dup\nb.push(3)\nr = [a.length, b.length]", .expected = .{ .nums = &.{ 2, 3 } } },
+        .{ .src = "m = { x: 1 }\nn = m.clone\nn[:y] = 2\nr = [m.keys.length, n.keys.length, n[:x]]", .expected = .{ .nums = &.{ 1, 2, 1 } } },
+        .{ .src = "class P\n  attr_accessor :v\n  def initialize(v)\n    @v = v\n  end\nend\na = P.new(1)\nb = a.dup\nb.v = 5\nr = [a.v, b.v]", .expected = .{ .nums = &.{ 1, 5 } } },
+        // Shallow: the copy holds the same inner Array.
+        .{ .src = "a = [[1]]\nb = a.dup\nb[0].push(2)\nr = a[0].length", .expected = .{ .num = 2 } },
+        .{ .src = "r = \"#{5.dup} #{\"s\".clone} #{nil.dup.nil?}\"", .expected = .{ .str = "5 s true" } },
+        .{ .src = "m = { a: 1, b: 2, c: 3, d: 4 }\nr = [m.delete(:b), m.keys.length]", .expected = .{ .nums = &.{ 2, 3 } } },
+        .{ .src = "m = { a: 1, b: 2, c: 3, d: 4 }\nm.delete(:a)\nr = \"#{m.keys}\"", .expected = .{ .str = "[:b, :c, :d]" } },
+        .{ .src = "m = { a: 1 }\nr = m.delete(:zz).nil?", .expected = .{ .boolean = true } },
+    });
+}
