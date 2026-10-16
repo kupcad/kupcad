@@ -31,7 +31,7 @@ test "Disassembler: decodes inline-cache operands, 32-bit jumps, switch tables a
     try registry.registerStandardLibrary(&vm);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 

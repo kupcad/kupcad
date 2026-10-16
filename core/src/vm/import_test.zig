@@ -42,7 +42,7 @@ test "VM: op_import correctly evaluates and destructures modules" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -90,7 +90,7 @@ test "VM: op_import resolves transitive dependencies securely via Modules" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -126,7 +126,7 @@ test "VM: op_import caches evaluated modules to prevent redundant execution" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -154,7 +154,7 @@ test "VM: op_import safely halts on package runtime errors" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -184,7 +184,7 @@ test "VM: op_import safely returns empty modules for blank files" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -208,7 +208,7 @@ test "VM: op_import destructuring throws RuntimeError for missing exports" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -232,7 +232,7 @@ test "VM: op_import safely aborts on missing package files" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -261,7 +261,7 @@ test "VM: op_import destructuring a primitive export throws RuntimeError" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -289,7 +289,7 @@ test "VM: op_import safely aborts on infinite circular dependencies" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -333,7 +333,7 @@ test "VM: op_import caches by reference allowing cross-file state sharing" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -371,7 +371,7 @@ test "VM: op_import supports destructuring multiple exports perfectly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -419,7 +419,7 @@ test "VM: op_import supports exporting Classes and Modules securely" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -463,7 +463,7 @@ test "VM: op_import closures maintain upvalues to private package state" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -507,7 +507,7 @@ test "VM: op_import merges multiple sequential export statements" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -544,7 +544,7 @@ test "VM: op_import allows exporting aliased primitives and references" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -586,7 +586,7 @@ test "VM: op_import resolves non-relative package imports from workspace" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -624,7 +624,7 @@ test "VM: op_import routes STL asset imports to native handler" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -671,7 +671,7 @@ test "VM: op_import supports nested namespace re-exports" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -701,7 +701,7 @@ test "VM: op_import detects multi-level circular dependencies (A -> B -> C -> A)
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -753,7 +753,7 @@ test "VM: op_import supports cross-file class inheritance hierarchy" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -792,7 +792,7 @@ test "VM: op_import supports barrel re-exports from multiple files" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -822,7 +822,7 @@ test "VM: op_import supports symbol aliasing via 'as'" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -847,7 +847,7 @@ test "Compiler: op_import rejects symbol collisions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // Compilation MUST fail natively with the new VariableAlreadyDeclared error
@@ -870,7 +870,7 @@ test "VM: op_import catches self-import cycles gracefully" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -904,7 +904,7 @@ test "VM: op_import supports aliased exports (export { internal as public })" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -939,7 +939,7 @@ test "VM: op_import supports multiple aliases in a single import statement" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -964,7 +964,7 @@ test "Compiler: op_import rejects symbol collisions in top-level scope" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     const result = comp.compile(doc.tree.root);
@@ -996,7 +996,7 @@ test "VM: op_import supports chained aliased re-exports across modules" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1015,7 +1015,7 @@ fn compileAndRun(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !Interpre
     defer doc.deinit();
     try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, out_chunk, vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     return vm.interpret(out_chunk);
@@ -1248,7 +1248,7 @@ test "VM: importing a module that fails to compile names where and why" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
@@ -1276,7 +1276,7 @@ test "VM: a relative import is read next to the file that imports it" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     comp.module_path = "parts/main.kup";
     try comp.compile(doc.tree.root);

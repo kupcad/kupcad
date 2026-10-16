@@ -263,7 +263,7 @@ pub const ScriptSession = struct {
         try registry.registerStandardLibrary(&self.vm);
         try api.injectParamsIntoVm(&self.vm, self.params);
 
-        var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &self.vm);
+        var comp = Compiler.forDocument(self.allocator, &doc, &out_chunk, &self.vm);
         defer comp.deinit();
         comp.module_path = mod.path;
         // Modules importing this one read it through the VM's import cache, which would

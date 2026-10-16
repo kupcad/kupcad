@@ -329,7 +329,7 @@ test "GC: string constants survive collections triggered during compilation" {
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -409,7 +409,7 @@ test "GC: a script runs as before on a VM collected after registering the librar
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     vm.gc.stress = true; // collect on every allocation while it runs

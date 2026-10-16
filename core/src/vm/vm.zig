@@ -948,7 +948,7 @@ pub const VM = struct {
                     // here, and only exported names reach the importer.
                     const namespace = self.newModuleNamespace() catch return .runtime_error;
 
-                    var comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, heap_chunk, self);
+                    var comp = Compiler.forDocument(self.allocator, &doc, heap_chunk, self);
                     defer comp.deinit();
                     comp.module_namespace = namespace;
                     comp.module_path = path_str; // its own imports are its neighbours

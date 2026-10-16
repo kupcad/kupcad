@@ -24,7 +24,7 @@ fn run(vm: *VM, source: []const u8) !RunResult {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -52,7 +52,7 @@ fn compileOnly(source: []const u8) !void {
     try registry.registerStandardLibrary(&vm);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 }
@@ -732,7 +732,7 @@ test "Compiler: Method blocks accurately extract local_count for the VM" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -777,7 +777,7 @@ test "Compiler: Short-circuit AND/OR operands pop cleanly before loop jumps" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -808,7 +808,7 @@ test "Compiler: Block closures calculate total local slots accurately" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1081,7 +1081,7 @@ test "Compiler: Local variable names are exported to chunk metadata for REPL int
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1120,7 +1120,7 @@ test "Compiler: Multiple assignment optimization skips heap allocation for stati
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1149,7 +1149,7 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1530,7 +1530,7 @@ test "Compiler Guardrail: Inline-cache indexes past 16 bits are a compile error"
     try registry.registerStandardLibrary(&vm);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try testing.expectError(error.TooManyInlineCaches, comp.compile(doc.tree.root));
 }
@@ -1665,7 +1665,7 @@ test "Compiler: Deep namespace constant resolution does not leak memory" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // The testing allocator will automatically panic if `emitVariableLoad` fails to free
@@ -1802,7 +1802,7 @@ test "Compiler: Constant Folding optimizer" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1831,7 +1831,7 @@ fn compiledConstants(allocator: std.mem.Allocator, source: []const u8, out: *std
     defer doc.deinit();
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(allocator);
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     for (main_chunk.constants.items) |c| if (c.isNumber()) try out.append(allocator, c.asNumber());
@@ -1867,7 +1867,7 @@ test "Compiler: equal literals share one constant slot" {
     defer doc.deinit();
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     var strings: usize = 0;
@@ -1957,7 +1957,7 @@ test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2117,7 +2117,7 @@ test "Compiler: functions stay rooted while def/attr macros allocate under stres
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // Collect on every allocation: the function's name string and the child
@@ -2205,7 +2205,7 @@ fn expectCompileError(source: []const u8, expected: anyerror, line: u32, col: u3
     try registry.registerStandardLibrary(&vm);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try testing.expectError(expected, comp.compile(doc.tree.root));

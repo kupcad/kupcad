@@ -17,6 +17,7 @@ const VM = @import("../vm/vm.zig").VM;
 const manifest = @import("../stdlib/manifest.zig");
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
+const Document = @import("../core/document.zig").Document;
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
@@ -196,6 +197,11 @@ pub const Compiler = struct {
     pub const makeSymbolConstant = emitter_mod.makeSymbolConstant;
     pub const emitOpWithOperand = emitter_mod.emitOpWithOperand;
     pub const writeJumpOffset = emitter_mod.writeJumpOffset;
+
+    /// A compiler for a parsed document: its tree, resolved symbols and token offsets.
+    pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, output_chunk: *chunk.Chunk, vm: *VM) Compiler {
+        return init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, output_chunk, vm);
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,

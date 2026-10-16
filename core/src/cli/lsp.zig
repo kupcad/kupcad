@@ -100,7 +100,7 @@ pub const HoverRun = struct {
         self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
         try registry.registerStandardLibrary(&self.vm);
 
-        var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &self.program, &self.vm);
+        var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
         defer comp.deinit();
         comp.module_path = module_path;
         comp.compile(doc.tree.root) catch |err| {
@@ -134,7 +134,7 @@ pub const HoverRun = struct {
             // The call alone, in the run's VM, so it sees the run's variables.
             var expr_chunk = chunk.Chunk.init();
             defer expr_chunk.free(self.allocator);
-            var expr_comp = Compiler.init(self.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &expr_chunk, &self.vm);
+            var expr_comp = Compiler.forDocument(self.allocator, doc, &expr_chunk, &self.vm);
             defer expr_comp.deinit();
             expr_comp.compile(target_node) catch return error.NoValue;
             const res = self.vm.interpret(&expr_chunk);

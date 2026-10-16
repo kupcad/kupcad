@@ -3738,7 +3738,7 @@ fn expectDepthRejected(source: []const u8) !void {
     defer vm.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| try testing.expectEqual(error.AstTooDeep, err);
 }
@@ -3753,7 +3753,7 @@ fn compileOnly(source: []const u8) !void {
     try registry.registerStandardLibrary(&vm);
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 }

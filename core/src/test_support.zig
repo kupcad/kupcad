@@ -44,7 +44,7 @@ pub fn runOn(vm: *VM, source: []const u8) !InterpretResult {
     }
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     return vm.interpret(&out_chunk);

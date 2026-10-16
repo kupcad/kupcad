@@ -266,7 +266,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     var eval_chunk = chunk.Chunk.init();
     defer eval_chunk.free(vm.allocator);
 
-    var comp = Compiler.init(vm.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &eval_chunk, vm);
+    var comp = Compiler.forDocument(vm.allocator, &doc, &eval_chunk, vm);
     defer comp.deinit();
 
     // By index: `vm.frames` grows below (the REPL's own frame), which can move its items.

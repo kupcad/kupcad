@@ -107,7 +107,7 @@ fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) 
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(allocator, doc, &out_chunk, &vm);
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
         if (err == error.OutOfMemory) return err;
@@ -195,7 +195,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
 
     var program = chunk.Chunk.init();
     defer program.free(allocator);
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &program, &vm);
+    var compiler = Compiler.forDocument(allocator, &doc, &program, &vm);
     defer compiler.deinit();
     compiler.compile(doc.tree.root) catch return null;
     if (vm.interpret(&program) != .ok) return null;
@@ -414,7 +414,7 @@ pub fn buildModelWithDiagnostic(
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
 
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
         // Reported like a syntax error: `cube = 5` used to give only "error.ProtectedSymbol".

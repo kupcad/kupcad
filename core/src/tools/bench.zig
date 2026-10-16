@@ -119,7 +119,7 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     try registry.registerStandardLibrary(&vm);
     var program = chunk.Chunk.init();
     defer program.free(allocator);
-    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &program, &vm);
+    var compiler = Compiler.forDocument(allocator, &doc, &program, &vm);
     defer compiler.deinit();
     compiler.compile(doc.tree.root) catch return error.CompileError;
     ns.set(.compile, clock.lap());

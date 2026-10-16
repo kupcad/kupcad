@@ -55,7 +55,7 @@ test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive
     var chunk_3d = chunk.Chunk.init();
     defer chunk_3d.free(alloc);
 
-    var comp_3d = Compiler.init(alloc, &doc_3d.tree, doc_3d.symbols, doc_3d.tokens.starts, &chunk_3d, &vm_3d);
+    var comp_3d = Compiler.forDocument(alloc, &doc_3d, &chunk_3d, &vm_3d);
     defer comp_3d.deinit();
 
     try comp_3d.compile(doc_3d.tree.root);
@@ -83,7 +83,7 @@ test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive
     var chunk_2d = chunk.Chunk.init();
     defer chunk_2d.free(alloc);
 
-    var comp_2d = Compiler.init(alloc, &doc_2d.tree, doc_2d.symbols, doc_2d.tokens.starts, &chunk_2d, &vm_2d);
+    var comp_2d = Compiler.forDocument(alloc, &doc_2d, &chunk_2d, &vm_2d);
     defer comp_2d.deinit();
 
     try comp_2d.compile(doc_2d.tree.root);
@@ -116,7 +116,7 @@ test "Stdlib: Instance export methods allow fluent method chaining and return re
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -151,7 +151,7 @@ test "Stdlib: global union() processes arrays into batch DAG nodes" {
     var chunk_out = chunk.Chunk.init();
     defer chunk_out.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &chunk_out, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &chunk_out, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -193,7 +193,7 @@ test "Stdlib: variadic instance booleans flatten arguments and balance trees" {
     var chunk_out = chunk.Chunk.init();
     defer chunk_out.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &chunk_out, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &chunk_out, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -244,7 +244,7 @@ test "Stdlib: meshHull dynamically gathers direct arguments and arrays into batc
     var chunk_out = chunk.Chunk.init();
     defer chunk_out.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &chunk_out, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &chunk_out, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -283,7 +283,7 @@ fn runOn(vm: *VM, source: []const u8) !InterpretResult {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
