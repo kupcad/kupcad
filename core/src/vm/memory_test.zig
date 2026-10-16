@@ -32,9 +32,17 @@ fn countObjects(gc: *GC) usize {
     return count;
 }
 
+/// For a test that counts objects between the collections it makes itself: none at an
+/// allocation, whatever the build (-Dgc-stress collects at every one) or the heap's growth.
+fn collectOnlyWhenAsked(vm: *VM) void {
+    vm.gc.stress = false;
+    vm.gc.next_gc_threshold = std.math.maxInt(usize);
+}
+
 test "GC: Mark and Sweep reclaims unreferenced primitive objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
     try registry.registerStandardLibrary(&vm);
 
     _ = try vm.allocateString("I am dead");
@@ -77,6 +85,7 @@ test "GC: allocateRange correctly registers and sweeps" {
 test "GC: Basic sweep of unrooted objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
 
     _ = try vm.gc.allocateString(&vm, "unrooted1");
     _ = try vm.gc.allocateArray(&vm);
@@ -112,6 +121,7 @@ test "GC: Rooted objects survive the sweep" {
 test "GC Stress: High volume allocations and segmented sweeps" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
 
     // We will allocate 10,000 Arrays and 10,000 Strings (20,000 total objects)
     const total_allocs = 10_000;

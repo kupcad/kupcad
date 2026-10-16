@@ -209,6 +209,9 @@ test "VM: Closures correctly capture and return upvalues" {
 
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks: under -Dgc-stress the
+    // values it holds were swept before the run began.
+    try vm.gc.trackChunk(&main_chunk);
 
     const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try main_chunk.writeOp(testing.allocator, .op_constant, 0);
@@ -283,6 +286,9 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks: under -Dgc-stress the
+    // values it holds were swept before the run began.
+    try vm.gc.trackChunk(&out_chunk);
 
     try out_chunk.writeOp(testing.allocator, .op_setup_rescue, 0);
     const jump_idx = out_chunk.code.items.len;
@@ -359,6 +365,9 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks: under -Dgc-stress the
+    // values it holds were swept before the run began.
+    try vm.gc.trackChunk(&out_chunk);
 
     const num_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(5.0));
 
@@ -653,6 +662,9 @@ test "VM: String Native Methods (split, replace)" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks: under -Dgc-stress the
+    // values it holds were swept before the run began.
+    try vm.gc.trackChunk(&out_chunk);
 
     // Prove "hello world".split(" ")
     const str_val = try out_chunk.addConstant(testing.allocator, try vm.allocateString("hello world"));
@@ -742,6 +754,12 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    // The main script's chunk, registered and given each function as it is made: built by
+    // hand, the functions were swept before the run began under -Dgc-stress.
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(testing.allocator);
+    try vm.gc.trackChunk(&main_chunk);
+
     // 1. Build the child Block Closure: { |x| x * 2 }
     var block_chunk = try testing.allocator.create(chunk.Chunk);
     block_chunk.* = chunk.Chunk.init();
@@ -765,6 +783,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     block_func.owns_chunk = false;
     block_func.arity = 1;
     block_func.local_count = 2; // slot 0: the closure, slot 1: x
+    const b_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&block_func.obj));
 
     // 2. Build the Parent Function: def do_yield() yield(21) end
     var parent_chunk = try testing.allocator.create(chunk.Chunk);
@@ -789,13 +808,9 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     parent_func.owns_chunk = false;
     parent_func.arity = 0; // Expects 0 positional args
     parent_func.is_method = true; // a def: yield reads its own block slot
+    const p_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&parent_func.obj));
 
     // 3. Main script: do_yield() { |x| x * 2 }
-    var main_chunk = chunk.Chunk.init();
-    defer main_chunk.free(testing.allocator);
-
-    const p_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&parent_func.obj));
-    const b_const = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&block_func.obj));
 
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
     try main_chunk.write(testing.allocator, @intCast(p_const), 0);

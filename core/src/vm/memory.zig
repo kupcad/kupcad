@@ -10,6 +10,7 @@ const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
+const build_info = @import("build_info");
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
@@ -55,9 +56,10 @@ pub const GC = struct {
     // --- GC State ---
     is_gc_running: bool = false,
 
-    /// Test-only: collect on every object allocation so unrooted temporaries
-    /// are swept deterministically instead of only past the byte threshold.
-    stress: bool = false,
+    /// Collect on every object allocation, so unrooted temporaries are swept at once
+    /// instead of only past the byte threshold: set by a test, or for every VM by a
+    /// `-Dgc-stress` build.
+    stress: bool = build_info.gc_stress,
 
     /// Chunks whose constant pools are roots (see chunk.ChunkRegistry).
     live_chunks: chunk.ChunkRegistry = .{},

@@ -455,6 +455,11 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
 test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
     var vm = try initVm();
     defer vm.deinit(); // the cached cube used to be freed twice here
+    // Nothing in a script holds the cube, so a collection would rightly evict its cached
+    // handle; this checks the cache across an error, with no collection (not even under
+    // -Dgc-stress, whose collections also leave the growth threshold low).
+    vm.gc.stress = false;
+    vm.gc.next_gc_threshold = std.math.maxInt(usize);
 
     // Cache the cube, then make a sphere under a vertex budget it blows.
     const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);

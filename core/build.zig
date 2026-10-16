@@ -301,6 +301,9 @@ pub fn build(b: *std.Build) void {
     // language server's serverInfo and the package client's User-Agent read it.
     const build_info = b.addOptions();
     build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
+    // Every VM collects at every object allocation, so a value a native or the VM forgot to
+    // root is swept at once wherever a test runs a script (the nightly job; slow).
+    build_info.addOption(bool, "gc_stress", b.option(bool, "gc-stress", "Collect garbage at every allocation in every VM, to find unrooted values (slow)") orelse false);
     mod.addOptions("build_info", build_info);
 
     // The C and C++ libraries (Clipper2, Manifold, oneTBB, SQLite, Draco) and KupCAD's
