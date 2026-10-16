@@ -163,11 +163,18 @@ pub fn allSameEngine(engine: geom.EngineType, handles: []const geom.GeometryHand
     return true;
 }
 
+/// Calls `fn_name` of `engine`'s driver with `args`: both drivers declare every function
+/// with the same parameters, so each entry point here is one call, not a switch per engine.
+inline fn dispatchOn(comptime fn_name: []const u8, engine: geom.EngineType, args: anytype) ReturnType(@TypeOf(@field(manifold_driver.driver, fn_name))) {
+    return switch (engine) {
+        .manifold => @call(.auto, @field(manifold_driver.driver, fn_name), args),
+        .brep_native => @call(.auto, @field(brep_driver.driver, fn_name), args),
+    };
+}
+
+/// dispatchOn for a function whose first parameter is `handle`, on `handle`'s engine.
 inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype) ReturnType(@TypeOf(@field(manifold_driver.driver, fn_name))) {
-    switch (handle.engine) {
-        .manifold => return @call(.auto, @field(manifold_driver.driver, fn_name), .{handle} ++ args),
-        .brep_native => return @call(.auto, @field(brep_driver.driver, fn_name), .{handle} ++ args),
-    }
+    return dispatchOn(fn_name, handle.engine, .{handle} ++ args);
 }
 
 // Solids are created under the active config (`CAD.config`); everything derived from one
@@ -175,73 +182,43 @@ inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype)
 
 /// The solid with nothing in it. Only Manifold has one (kernel.supports(engine, .empty)).
 pub inline fn empty(config: *const EngineConfig) ?geom.GeometryHandle {
-    return switch (config.engine) {
-        .manifold => manifold_driver.driver.emptyFn(),
-        .brep_native => null,
-    };
+    return dispatchOn("emptyFn", config.engine, .{config});
 }
 
 pub inline fn emptySketch(config: *const EngineConfig) ?geom.CrossSectionHandle {
-    return switch (config.engine) {
-        .manifold => manifold_driver.driver.emptySketchFn(),
-        .brep_native => null,
-    };
+    return dispatchOn("emptySketchFn", config.engine, .{config});
 }
 
 pub inline fn cube(config: *const EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.cubeFn(x, y, z, center),
-        .brep_native => return brep_driver.driver.cubeFn(config, x, y, z, center),
-    }
+    return dispatchOn("cubeFn", config.engine, .{ config, x, y, z, center });
 }
 
 pub inline fn cylinder(config: *const EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.cylinderFn(r1, r2, height, center, segments),
-        .brep_native => return brep_driver.driver.cylinderFn(config, r1, r2, height, center, segments),
-    }
+    return dispatchOn("cylinderFn", config.engine, .{ config, r1, r2, height, center, segments });
 }
 
 pub inline fn sphere(config: *const EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.sphereFn(radius, segments),
-        .brep_native => return brep_driver.driver.sphereFn(config, radius, segments),
-    }
+    return dispatchOn("sphereFn", config.engine, .{ config, radius, segments });
 }
 
 pub inline fn square(config: *const EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.squareFn(x, y, center),
-        .brep_native => return brep_driver.driver.squareFn(config, x, y, center),
-    }
+    return dispatchOn("squareFn", config.engine, .{ config, x, y, center });
 }
 
 pub inline fn circle(config: *const EngineConfig, radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.circleFn(radius, segments),
-        .brep_native => return brep_driver.driver.circleFn(config, radius, segments),
-    }
+    return dispatchOn("circleFn", config.engine, .{ config, radius, segments });
 }
 
 pub inline fn polygon(config: *const EngineConfig, allocator: std.mem.Allocator, pts: [][2]f64) ?geom.CrossSectionHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.polygonFn(allocator, pts),
-        .brep_native => return brep_driver.driver.polygonFn(config, allocator, pts),
-    }
+    return dispatchOn("polygonFn", config.engine, .{ config, allocator, pts });
 }
 
 pub inline fn polyhedron(config: *const EngineConfig, allocator: std.mem.Allocator, points: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.polyhedronFn(allocator, points, faces),
-        .brep_native => return brep_driver.driver.polyhedronFn(config, allocator, points, faces),
-    }
+    return dispatchOn("polyhedronFn", config.engine, .{ config, allocator, points, faces });
 }
 
 pub inline fn polygonsEvenOdd(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
-    switch (config.engine) {
-        .manifold => return manifold_driver.driver.polygonsEvenOddFn(allocator, contours),
-        .brep_native => return brep_driver.driver.polygonsEvenOddFn(config, allocator, contours),
-    }
+    return dispatchOn("polygonsEvenOddFn", config.engine, .{ config, allocator, contours });
 }
 
 pub inline fn translate(handle: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
@@ -411,10 +388,7 @@ pub inline fn batchBoolean(allocator: std.mem.Allocator, objs: []const geom.Geom
     if (objs.len == 1) return clone(objs[0]);
     if (!allSameEngine(objs[0].engine, objs)) return null;
 
-    switch (objs[0].engine) {
-        .manifold => return manifold_driver.driver.batchBooleanFn(allocator, objs, op),
-        .brep_native => return brep_driver.driver.batchBooleanFn(allocator, objs, op),
-    }
+    return dispatchOn("batchBooleanFn", objs[0].engine, .{ allocator, objs, op });
 }
 
 pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle) ?geom.GeometryHandle {
@@ -422,25 +396,16 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
     if (objs.len == 1) return hull(objs[0]);
     if (!allSameEngine(objs[0].engine, objs)) return null;
 
-    switch (objs[0].engine) {
-        .manifold => return manifold_driver.driver.batchHullFn(allocator, objs),
-        .brep_native => return brep_driver.driver.batchHullFn(allocator, objs),
-    }
+    return dispatchOn("batchHullFn", objs[0].engine, .{ allocator, objs });
 }
 
 pub inline fn loft(engine: geom.EngineType, allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != engine or b.engine != engine) return null;
-    switch (engine) {
-        .manifold => return manifold_driver.driver.loftFn(allocator, a, b, height),
-        .brep_native => return brep_driver.driver.loftFn(allocator, a, b, height),
-    }
+    return dispatchOn("loftFn", engine, .{ allocator, a, b, height });
 }
 
 pub inline fn decompose(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.driver.decomposeFn(allocator, handle),
-        .brep_native => return brep_driver.driver.decomposeFn(allocator, handle),
-    }
+    return dispatchOn("decomposeFn", handle.engine, .{ allocator, handle });
 }
 
 /// Returns a new simplified handle, falling back to a copy of the input if
@@ -450,24 +415,15 @@ pub inline fn simplify(handle: geom.GeometryHandle, tolerance: f64) ?geom.Geomet
 }
 
 pub inline fn queryFaces(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.driver.queryFacesFn(allocator, handle, direction, tolerance),
-        .brep_native => return brep_driver.driver.queryFacesFn(allocator, handle, direction, tolerance),
-    }
+    return dispatchOn("queryFacesFn", handle.engine, .{ allocator, handle, direction, tolerance });
 }
 
 pub inline fn rayCast(alloc: std.mem.Allocator, handle: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.driver.rayCastFn(alloc, handle, o, e),
-        .brep_native => return brep_driver.driver.rayCastFn(alloc, handle, o, e),
-    }
+    return dispatchOn("rayCastFn", handle.engine, .{ alloc, handle, o, e });
 }
 
 pub inline fn getMesh(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
-    switch (handle.engine) {
-        .manifold => return manifold_driver.driver.getMeshFn(allocator, handle),
-        .brep_native => return brep_driver.driver.getMeshFn(allocator, handle),
-    }
+    return dispatchOn("getMeshFn", handle.engine, .{ allocator, handle });
 }
 
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {

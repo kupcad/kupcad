@@ -57,7 +57,7 @@ test "Math3D: computeCentroid averages vertices exactly" {
 
 test "Manifold Driver: cube generates exact volume and surface area" {
     // 10x10x10 cube
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     const vol = driver.driver.volumeFn(handle);
@@ -71,7 +71,7 @@ test "Manifold Driver: cube generates exact volume and surface area" {
 
 test "Manifold Driver: cylinder generates valid geometry" {
     // Generate a cylinder with r=5, h=10. Volume = pi * r^2 * h = ~785.4
-    const handle = driver.driver.cylinderFn(5.0, 5.0, 10.0, true, 0) orelse return error.CylFailed;
+    const handle = driver.driver.cylinderFn(&.{}, 5.0, 5.0, 10.0, true, 0) orelse return error.CylFailed;
     defer driver.driver.destructFn(handle);
 
     const vol = driver.driver.volumeFn(handle);
@@ -79,7 +79,7 @@ test "Manifold Driver: cylinder generates valid geometry" {
 }
 
 test "Manifold Driver: sphere generates valid geometry" {
-    const handle = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
+    const handle = driver.driver.sphereFn(&.{}, 5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(handle);
 
     const vol = driver.driver.volumeFn(handle);
@@ -89,7 +89,7 @@ test "Manifold Driver: sphere generates valid geometry" {
 
 test "Manifold Driver: extrude creates 3D solid from 2D profile" {
     // 1. Create a 10x10 2D square
-    const sq = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    const sq = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(sq);
 
     // 2. Extrude by 10 units (creates a 10x10x10 cube equivalent)
@@ -102,7 +102,7 @@ test "Manifold Driver: extrude creates 3D solid from 2D profile" {
 }
 
 test "Manifold Driver: mirror reflects geometry correctly across plane" {
-    const c = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c);
 
     // Shift to X = +10. (Bounds are now X: [5, 15])
@@ -121,7 +121,7 @@ test "Manifold Driver: mirror reflects geometry correctly across plane" {
 }
 
 test "Manifold Driver: rayCast finds intersections and distance correctly" {
-    const c = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c);
 
     // Cast a ray starting at Z=10 straight down to Z=-10 through the center [0,0]
@@ -141,10 +141,10 @@ test "Manifold Driver: rayCast finds intersections and distance correctly" {
 }
 
 test "Manifold Driver: minGap accurately calculates shortest distance between solids" {
-    const c1 = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c1 = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c1);
 
-    const c2_base = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c2_base = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c2_base);
 
     // Translate c2 so its minimum X is at 15.0 (c1 max X is at 5.0)
@@ -158,7 +158,7 @@ test "Manifold Driver: minGap accurately calculates shortest distance between so
 }
 
 test "Manifold Driver: getMesh securely extracts flat vertex arrays" {
-    const c = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c);
 
     const mesh = driver.driver.getMeshFn(testing.allocator, c) orelse return error.MeshFailed;
@@ -175,7 +175,7 @@ test "Manifold Driver: getMesh securely extracts flat vertex arrays" {
 }
 
 test "Manifold Driver: translate updates bounding box correctly" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     const translated = driver.driver.translateFn(handle, 5.0, 10.0, 15.0) orelse return error.TranslateFailed;
@@ -196,10 +196,10 @@ test "Manifold Driver: translate updates bounding box correctly" {
 }
 
 test "Manifold Driver: boolean difference calculates correct subtracted volume" {
-    const c1 = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c1 = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c1);
 
-    const c2 = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const c2 = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c2);
 
     // Shift c2 exactly halfway out of c1 on the X axis
@@ -218,7 +218,7 @@ test "Manifold Driver: boolean difference calculates correct subtracted volume" 
 }
 
 test "Manifold Driver: containsPoint evaluates spatial inclusion correctly" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Origin is dead-center of the cube
@@ -233,7 +233,7 @@ test "Manifold Driver: containsPoint evaluates spatial inclusion correctly" {
 }
 
 test "Manifold Driver: scale modifies geometry and volume non-uniformly" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Scale X by 2, Y by 3, Z by 0.5
@@ -254,7 +254,7 @@ test "Manifold Driver: scale modifies geometry and volume non-uniformly" {
 
 test "Manifold Driver: queryFaces extracts exact centroid and normal for Top face" {
     // Create a 10x10x10 cube, centered at the origin
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Query the "Top" face (Direction: [0, 0, 1]) with a standard tolerance
@@ -276,7 +276,7 @@ test "Manifold Driver: queryFaces extracts exact centroid and normal for Top fac
 
 test "Manifold Driver: queryFaces extracts exact centroid for uncentered Right face" {
     // Create an off-center 20x10x10 cube (origin at 0,0,0 stretching into +X,+Y,+Z)
-    const handle = driver.driver.cubeFn(20.0, 10.0, 10.0, false) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 20.0, 10.0, 10.0, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Query the "Right" face (Direction: [1, 0, 0])
@@ -298,7 +298,7 @@ test "Manifold Driver: queryFaces extracts exact centroid for uncentered Right f
 }
 
 test "Manifold Driver: rotate rotates geometry around origin" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     const translated = driver.driver.translateFn(handle, 10.0, 0.0, 0.0) orelse return error.TransFailed;
@@ -317,7 +317,7 @@ test "Manifold Driver: rotate rotates geometry around origin" {
 
 test "Manifold Driver: trimByPlane cuts solid exactly in half" {
     // 10x10x10 cube from [-5, -5, -5] to [5, 5, 5]
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Normal [0, 0, 1] at offset 0 retains Z >= 0
@@ -335,10 +335,10 @@ test "Manifold Driver: trimByPlane cuts solid exactly in half" {
 }
 
 test "Manifold Driver: hull wraps disjoint geometry securely" {
-    const s1 = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
+    const s1 = driver.driver.sphereFn(&.{}, 5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(s1);
 
-    const s2_base = driver.driver.sphereFn(5.0, 0) orelse return error.SphereFailed;
+    const s2_base = driver.driver.sphereFn(&.{}, 5.0, 0) orelse return error.SphereFailed;
     defer driver.driver.destructFn(s2_base);
 
     const s2 = driver.driver.translateFn(s2_base, 20.0, 0.0, 0.0) orelse return error.TransFailed;
@@ -364,7 +364,7 @@ test "Manifold Driver: hull wraps disjoint geometry securely" {
 }
 
 test "Manifold Driver: revolve sweeps 2D profile into 3D shape" {
-    const sq = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    const sq = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(sq);
 
     // Translate the square 20 units away from origin
@@ -386,7 +386,7 @@ test "Manifold Driver: revolve sweeps 2D profile into 3D shape" {
 }
 
 test "Manifold Driver: slice extracts 2D cross section from 3D geometry" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
 
     // Slice the cube directly through the middle (Z=0)
@@ -409,7 +409,7 @@ test "Manifold Driver: slice extracts 2D cross section from 3D geometry" {
 
 test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes" {
     // Create a 10x10 2D square
-    const sq = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    const sq = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(sq);
 
     // Extrude by 10 units with 10 height slices (generates multi-segmented coplanar side walls)
@@ -440,7 +440,7 @@ test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes
 
 test "Manifold Driver: crossSectionArea and crossSectionBounds evaluate 2D profile metrics" {
     // Create a 10x20 centered square
-    const sq = driver.driver.squareFn(10.0, 20.0, true) orelse return error.SqFailed;
+    const sq = driver.driver.squareFn(&.{}, 10.0, 20.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(sq);
 
     const area = driver.driver.crossSectionAreaFn(sq);
@@ -458,7 +458,7 @@ test "Manifold Driver: crossSectionArea and crossSectionBounds evaluate 2D profi
 
 test "Manifold Driver: crossSectionArea calculates circle area" {
     // Circle with radius 5. Area = pi * 5^2 = ~78.5398
-    const circ = driver.driver.circleFn(5.0, 32) orelse return error.CircFailed;
+    const circ = driver.driver.circleFn(&.{}, 5.0, 32) orelse return error.CircFailed;
     defer driver.driver.destructCrossSectionFn(circ);
 
     const area = driver.driver.crossSectionAreaFn(circ);
@@ -473,21 +473,21 @@ test "Manifold Driver: polygonsEvenOdd survives partial allocation failure" {
     var fail_index: usize = 0;
     while (fail_index < 4) : (fail_index += 1) {
         var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
-        if (driver.driver.polygonsEvenOddFn(failing.allocator(), &contours)) |cs| driver.driver.destructCrossSectionFn(cs);
+        if (driver.driver.polygonsEvenOddFn(&.{}, failing.allocator(), &contours)) |cs| driver.driver.destructCrossSectionFn(cs);
     }
 }
 
 test "Manifold Driver: problem reports why a mesh is invalid, and nothing for a valid solid" {
     // Manifold flags bad input through a status, not a null pointer; nothing read it before,
     // so a non-manifold polyhedron became an empty mesh and later a bare "NoGeometry".
-    const cube = driver.driver.cubeFn(10, 10, 10, false) orelse return error.KernelFailed;
+    const cube = driver.driver.cubeFn(&.{}, 10, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructFn(cube);
     try std.testing.expect(driver.driver.problemFn(cube) == null);
 
     const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
     // The last face is wound the same way as its neighbour, so two edges are shared inconsistently.
     const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 2, 3 } };
-    const bad = driver.driver.polyhedronFn(std.testing.allocator, &pts, &faces) orelse return error.KernelFailed;
+    const bad = driver.driver.polyhedronFn(&.{}, std.testing.allocator, &pts, &faces) orelse return error.KernelFailed;
     defer driver.driver.destructFn(bad);
     const reason = driver.driver.problemFn(bad) orelse return error.ExpectedProblem;
     try std.testing.expect(std.mem.indexOf(u8, reason, "not a closed manifold") != null);
@@ -495,9 +495,9 @@ test "Manifold Driver: problem reports why a mesh is invalid, and nothing for a 
 
 test "Manifold Driver: a sketch's area counts its holes, and its bounds follow it off the origin" {
     // Both are read from the sketch itself; they used to come from a throwaway extrusion.
-    const outer = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;
+    const outer = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(outer);
-    const hole = driver.driver.squareFn(4.0, 4.0, true) orelse return error.SqFailed;
+    const hole = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;
     defer driver.driver.destructCrossSectionFn(hole);
     const ring = driver.driver.crossSectionBooleanFn(outer, hole, .difference_op) orelse return error.Failed;
     defer driver.driver.destructCrossSectionFn(ring);
@@ -519,7 +519,7 @@ test "Manifold Driver: the C++ keeps its asserts only in Debug builds" {
 
 test "Manifold Driver: getMesh leaves nothing allocated when an allocation fails" {
     // The vertices used to leak when allocating the triangles failed.
-    const c = driver.driver.cubeFn(1, 1, 1, false) orelse return error.CubeFailed;
+    const c = driver.driver.cubeFn(&.{}, 1, 1, 1, false) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c);
     var fail_index: usize = 0;
     while (fail_index < 2) : (fail_index += 1) {
@@ -531,7 +531,7 @@ test "Manifold Driver: getMesh leaves nothing allocated when an allocation fails
 test "Manifold Driver: the empty solid's mesh is copied out as nothing, not from a null pointer" {
     // The C binding memcpy's from the vector's data pointer, null for an empty vector on
     // Linux; UBSan aborted the export of the empty Solid there.
-    const e = driver.driver.emptyFn() orelse return error.EmptyFailed;
+    const e = driver.driver.emptyFn(&.{}) orelse return error.EmptyFailed;
     defer driver.driver.destructFn(e);
     const mesh = driver.driver.getMeshFn(testing.allocator, e) orelse return error.MeshFailed;
     defer testing.allocator.free(mesh.vert_props);

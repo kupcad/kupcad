@@ -259,6 +259,17 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     }
 }
 
+/// B-Rep has no empty shape yet (supports(.empty) is false, so this is never reached).
+fn emptyImpl(config: *const engine_config.EngineConfig) ?geom.GeometryHandle {
+    _ = config;
+    return null;
+}
+
+fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSectionHandle {
+    _ = config;
+    return null;
+}
+
 fn cubeImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
     solid.solid_id = locus_gen.generateCube(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, z, center) catch {
@@ -893,6 +904,8 @@ pub fn supports(feature: kernel.Feature) bool {
 
 pub const driver = struct {
     pub const problemFn = problemImpl;
+    pub const emptyFn = emptyImpl;
+    pub const emptySketchFn = emptySketchImpl;
     pub const cubeFn = cubeImpl;
     pub const cylinderFn = cylinderImpl;
     pub const sphereFn = sphereImpl;
