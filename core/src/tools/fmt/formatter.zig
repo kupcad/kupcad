@@ -6,6 +6,7 @@ const Config = @import("config.zig").Config;
 const parser = @import("../../frontend/kupcad/parser.zig");
 const Precedence = parser.Precedence;
 const token_span = @import("../../core/token_span.zig");
+const string_escape = @import("../../core/string_escape.zig");
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -112,7 +113,70 @@ pub const Formatter = struct {
     fn lastLine(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) u32 {
         const last = token_span.last(tree, node_idx);
         if (last >= self.token_starts.len) return 0;
-        return self.line_index.getLine(self.token_starts[last]);
+        return self.tokenEndLine(last);
+    }
+
+    /// The line a token ends on: a string may run over several (its start line was taken,
+    /// so the statement after a multi-line string got a blank line it never had), and a
+    /// heredoc body is followed by its terminator line.
+    fn tokenEndLine(self: *const Formatter, tok: u32) u32 {
+        const start = self.token_starts[tok];
+        const len = self.token_lengths[tok];
+        if (len == 0) return self.line_index.getLine(start);
+        const end = start + len - 1;
+        const is_heredoc = start > 0 and self.source[start - 1] == '\n' and self.source[end] == '\n' and end + 1 < self.source.len;
+        return self.line_index.getLine(if (is_heredoc) end + 1 else end);
+    }
+
+    /// The line a block body starts on: its first statement's, or its closing keyword's
+    /// when it is empty.
+    fn blockFirstLine(self: *const Formatter, tree: *const ast.Tree, body: ast.NodeIndex) u32 {
+        const node = tree.getNode(body) orelse return std.math.maxInt(u32);
+        if (node.tag != .block) return self.line_index.getLine(self.token_starts[token_span.first(tree, body)]);
+        const b = tree.block(node);
+        const stmts = tree.getNodes(b.stmts);
+        if (stmts.len > 0) return self.line_index.getLine(self.token_starts[token_span.first(tree, stmts[0])]);
+        return if (b.end_token < self.token_starts.len) self.line_index.getLine(self.token_starts[b.end_token]) else std.math.maxInt(u32);
+    }
+
+    /// Whether a comment follows code on its line (`when 1 # one`), as opposed to
+    /// standing on a line of its own.
+    fn isInlineComment(self: *const Formatter, c: token.Comment) bool {
+        const before = self.source[0..c.loc.offset];
+        const line_start = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
+        return std.mem.trim(u8, before[line_start..], " \t\r").len > 0;
+    }
+
+    /// For each statement: whether a comment sits on its lines or between it and the
+    /// statement before it (what a rule that reorders statements must leave alone).
+    fn commentedStatements(self: *Formatter, allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) Error![]const bool {
+        const commented = try allocator.alloc(bool, stmts.len);
+        var ci = self.comment_idx;
+        var prev_last: ?u32 = null;
+        for (stmts, commented) |stmt, *flag| {
+            const first = self.line_index.getLine(self.token_starts[token_span.first(tree, stmt)]);
+            const last = self.lastLine(tree, stmt);
+            flag.* = false;
+            while (ci < self.comments.len and self.getCommentLine(self.comments[ci]) <= last) : (ci += 1) {
+                const line = self.getCommentLine(self.comments[ci]);
+                if (line >= first or (prev_last != null and line > prev_last.?)) flag.* = true;
+            }
+            prev_last = last;
+        }
+        return commented;
+    }
+
+    /// The comment written after a clause keyword (`when 1 # one`, `rescue => e # oops`,
+    /// `else # other`): the next comment, when it follows code on a line before `body`
+    /// starts. It used to open the body on a line of its own.
+    fn flushHeaderComment(self: *Formatter, tree: *const ast.Tree, body: ast.NodeIndex) Error!void {
+        if (self.comment_idx >= self.comments.len) return;
+        const c = self.comments[self.comment_idx];
+        if (self.getCommentLine(c) >= self.blockFirstLine(tree, body) or !self.isInlineComment(c)) return;
+        try self.out.append(self.allocator, ' ');
+        try self.out.appendSlice(self.allocator, c.lexeme);
+        try self.out.append(self.allocator, '\n');
+        self.comment_idx += 1;
     }
 
     inline fn getCommentLine(self: *Formatter, comment: token.Comment) u32 {
@@ -261,12 +325,12 @@ pub const Formatter = struct {
             // As written: `20.0` stays `20.0` (it used to print as `20`), `1_000` and `1e3` keep
             // their form. The value can't change: equivalence checks it.
             .number => try self.out.appendSlice(self.allocator, self.tokenText(node.main_token)),
-            .string => try self.formatWrappedString(tree.getString(@fromBackingInt(node.data)), '"'),
+            .string => try self.formatString(tree, node),
             .interpolated_string => {
                 const parts = tree.nodeSpan(node);
                 try self.formatInterpolatedString(tree, tree.getNodes(parts));
             },
-            .symbol => try self.formatWrappedString(tree.getString(@fromBackingInt(node.data)), ':'),
+            .symbol => try self.formatSymbol(tree, node),
             .boolean => {
                 const b = tree.boolean(node);
                 try self.out.appendSlice(self.allocator, if (b) "true" else "false");
@@ -329,22 +393,11 @@ pub const Formatter = struct {
             .next_stmt => try self.formatFlowControl(tree, "next", tree.nodeIndex(node)),
             .import_stmt => {
                 const is_stmt = tree.importStmt(node);
-                const pairs = tree.getAliasPairs(is_stmt.symbols);
-                // We temporarily adapt the AliasPair slice back into an array of StringIds for the formatter
-                var string_ids = std.ArrayListUnmanaged(ast.StringId).empty;
-                defer string_ids.deinit(self.allocator);
-                for (pairs) |p| try string_ids.append(self.allocator, p.original);
-
-                try self.formatImportExport(tree, "import", string_ids.items, tree.getString(is_stmt.path), is_stmt.attributes);
+                try self.formatImportExport(tree, "import", tree.getAliasPairs(is_stmt.symbols), tree.getString(is_stmt.path), is_stmt.attributes);
             },
             .export_stmt => {
                 const es_stmt = tree.exportStmt(node);
-                const pairs = tree.getAliasPairs(es_stmt.symbols);
-                var string_ids = std.ArrayListUnmanaged(ast.StringId).empty;
-                defer string_ids.deinit(self.allocator);
-                for (pairs) |p| try string_ids.append(self.allocator, p.original);
-
-                try self.formatImportExport(tree, "export", string_ids.items, tree.getString(es_stmt.path), es_stmt.attributes);
+                try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), tree.getString(es_stmt.path), es_stmt.attributes);
             },
             .defined_expr => {
                 try self.out.appendSlice(self.allocator, "defined?(");
@@ -366,15 +419,20 @@ pub const Formatter = struct {
         var temp_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer temp_arena.deinit();
 
+        const commented = try self.commentedStatements(temp_arena.allocator(), tree, stmts);
         var print_stmts = stmts;
         for (self.rules.items) |rule| {
-            print_stmts = rule.processBlockStmts(temp_arena.allocator(), tree, print_stmts);
+            print_stmts = rule.processBlockStmts(temp_arena.allocator(), tree, print_stmts, commented);
         }
 
+        // Lines come from the statement at the same position in the source: a rule may
+        // have swapped statements (sorted imports), and the comments and blank lines
+        // between positions are the source's. (The sorted import's own line was used, so
+        // a header comment got a blank line below it.)
         var prev_last_line: u32 = 0;
         for (print_stmts, 0..) |stmt_idx, idx| {
             const stmt = tree.getNode(stmt_idx).?;
-            const stmt_line = self.getNodeLine(stmt);
+            const stmt_line = self.getNodeLine(tree.getNode(stmts[idx]).?);
 
             if (idx > 0) {
                 const prev_stmt = tree.getNode(print_stmts[idx - 1]).?;
@@ -402,7 +460,7 @@ pub const Formatter = struct {
             // A comment ends its line, so it forces a newline. Every comment trailing a line
             // of the statement belongs to it: one after `.translate(...)` on the second line
             // of a chain used to move below it on each run.
-            prev_last_line = self.lastLine(tree, stmt_idx);
+            prev_last_line = self.lastLine(tree, stmts[idx]);
             try self.flushTrailingComments(stmt_line, prev_last_line);
         }
 
@@ -414,11 +472,52 @@ pub const Formatter = struct {
         }
     }
 
-    fn formatWrappedString(self: *Formatter, s: []const u8, wrapper: u8) Error!void {
-        if (wrapper == '"') try self.out.append(self.allocator, '"');
-        if (wrapper == ':') try self.out.append(self.allocator, ':');
-        try self.out.appendSlice(self.allocator, s);
-        if (wrapper == '"') try self.out.append(self.allocator, '"');
+    /// The source text of a string piece (the token is the content between its
+    /// delimiters, escapes as written) when it still decodes to the node's value; null
+    /// when there is none to reuse (a `%w[a b]` word shares the whole literal's token).
+    fn rawStringText(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!?[]const u8 {
+        if (node.main_token >= self.token_starts.len) return null;
+        const raw = self.tokenText(node.main_token);
+        var decoded: std.ArrayListUnmanaged(u8) = .empty;
+        defer decoded.deinit(self.allocator);
+        try string_escape.unescapeInto(&decoded, self.allocator, raw);
+        return if (std.mem.eql(u8, decoded.items, tree.getString(@fromBackingInt(node.data)))) raw else null;
+    }
+
+    /// The quote that opened a string or symbol token, if one did: the byte before it.
+    fn openingQuote(self: *const Formatter, tok: u32) ?u8 {
+        const start = self.token_starts[tok];
+        if (start == 0) return null;
+        const before = self.source[start - 1];
+        return if (before == '"' or before == '\'') before else null;
+    }
+
+    /// A string literal as the author wrote it, in its own quotes, escapes included. The
+    /// decoded value used to be printed, so `"x\ty"` came out with a real TAB in it and
+    /// `'a'` as `"a"`. One with no source text to reuse (a heredoc body, a `%w` word) is
+    /// written as a double-quoted literal with the value escaped.
+    fn formatString(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!void {
+        if (try self.rawStringText(tree, node)) |raw| {
+            if (self.openingQuote(node.main_token)) |quote| {
+                try self.out.append(self.allocator, quote);
+                try self.out.appendSlice(self.allocator, raw);
+                try self.out.append(self.allocator, quote);
+                return;
+            }
+        }
+        try self.out.append(self.allocator, '"');
+        try string_escape.appendEscaped(&self.out, self.allocator, tree.getString(@fromBackingInt(node.data)));
+        try self.out.append(self.allocator, '"');
+    }
+
+    /// `:name`, or a quoted symbol (`:"with space"`) in its quotes; it used to lose them.
+    fn formatSymbol(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!void {
+        const name = tree.getString(@fromBackingInt(node.data));
+        try self.out.append(self.allocator, ':');
+        const quote: ?u8 = if (node.main_token < self.token_starts.len and std.mem.eql(u8, self.tokenText(node.main_token), name)) self.openingQuote(node.main_token) else null;
+        if (quote) |q| try self.out.append(self.allocator, q);
+        try self.out.appendSlice(self.allocator, name);
+        if (quote) |q| try self.out.append(self.allocator, q);
     }
 
     fn formatInterpolatedString(self: *Formatter, tree: *const ast.Tree, parts: []const ast.NodeIndex) Error!void {
@@ -426,7 +525,12 @@ pub const Formatter = struct {
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
             if (part.tag == .string) {
-                try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(part.data)));
+                // The piece between the delimiters, `}` and `#{`, as written (it was decoded)
+                if (try self.rawStringText(tree, part)) |raw| {
+                    try self.out.appendSlice(self.allocator, raw);
+                } else {
+                    try string_escape.appendEscaped(&self.out, self.allocator, tree.getString(@fromBackingInt(part.data)));
+                }
             } else {
                 try self.out.appendSlice(self.allocator, "#{");
                 try self.formatNode(tree, part_idx);
@@ -674,7 +778,9 @@ pub const Formatter = struct {
 
         if (else_branch != .none) {
             try self.writeIndent();
-            try self.out.appendSlice(self.allocator, "else\n");
+            try self.out.appendSlice(self.allocator, "else");
+            try self.flushHeaderComment(tree, else_branch);
+            try self.ensureNewline();
             self.indent_level += 1;
             try self.formatNode(tree, else_branch);
             self.indent_level -= 1;
@@ -712,7 +818,7 @@ pub const Formatter = struct {
             try self.formatNode(tree, cs.condition);
         }
         try self.flushInlineComments(start_line);
-        try self.out.append(self.allocator, '\n');
+        try self.ensureNewline(); // (an unconditional newline after the comment's left a blank line)
 
         for (tree.getWhenBranches(cs.when_branches)) |wb| {
             try self.writeIndent();
@@ -721,6 +827,7 @@ pub const Formatter = struct {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 try self.formatNode(tree, cond);
             }
+            try self.flushHeaderComment(tree, wb.body);
             try self.ensureNewline();
             self.indent_level += 1;
             try self.formatNode(tree, wb.body);
@@ -730,7 +837,9 @@ pub const Formatter = struct {
 
         if (cs.else_branch != .none) {
             try self.writeIndent();
-            try self.out.appendSlice(self.allocator, "else\n");
+            try self.out.appendSlice(self.allocator, "else");
+            try self.flushHeaderComment(tree, cs.else_branch);
+            try self.ensureNewline();
             self.indent_level += 1;
             try self.formatNode(tree, cs.else_branch);
             self.indent_level -= 1;
@@ -744,7 +853,7 @@ pub const Formatter = struct {
     fn formatBeginStmt(self: *Formatter, tree: *const ast.Tree, bs: ast.BeginStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "begin");
         try self.flushInlineComments(start_line);
-        try self.out.append(self.allocator, '\n');
+        try self.ensureNewline();
 
         self.indent_level += 1;
         try self.formatNode(tree, bs.body);
@@ -767,6 +876,7 @@ pub const Formatter = struct {
                 try self.out.appendSlice(self.allocator, " => ");
                 try self.out.appendSlice(self.allocator, tree.getString(r.variable));
             }
+            try self.flushHeaderComment(tree, r.body);
             try self.ensureNewline();
             self.indent_level += 1;
             try self.formatNode(tree, r.body);
@@ -776,7 +886,9 @@ pub const Formatter = struct {
 
         if (bs.ensure_body != .none) {
             try self.writeIndent();
-            try self.out.appendSlice(self.allocator, "ensure\n");
+            try self.out.appendSlice(self.allocator, "ensure");
+            try self.flushHeaderComment(tree, bs.ensure_body);
+            try self.ensureNewline();
             self.indent_level += 1;
             try self.formatNode(tree, bs.ensure_body);
             self.indent_level -= 1;
@@ -796,24 +908,44 @@ pub const Formatter = struct {
         if (def.is_class_method) try self.out.appendSlice(self.allocator, "self.");
         try self.out.appendSlice(self.allocator, tree.getString(def.name));
 
-        const params = tree.getParams(def.params);
-        if (params.len > 0) {
-            try self.out.append(self.allocator, '(');
-            for (params, 0..) |p, idx| {
-                if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
-
-                try self.out.appendSlice(self.allocator, tree.getString(p.name));
-                if (p.is_keyword) try self.out.append(self.allocator, ':');
-                if (p.default_value != .none) {
-                    try self.out.appendSlice(self.allocator, if (p.is_keyword) " " else " = ");
-                    try self.formatNode(tree, p.default_value);
-                }
-            }
-            try self.out.append(self.allocator, ')');
-        }
+        try self.formatParams(tree, tree.getParams(def.params));
         try self.flushInlineComments(start_line);
         try self.formatBodyWithEnd(tree, def.body);
+    }
+
+    /// `(a, b = 2, *rest, key: 1, **opts, &blk)` of a def or a lambda; nothing when
+    /// there are no parameters. (A lambda's lost its defaults and modifiers, so the
+    /// formatter refused any lambda that had them.)
+    fn formatParams(self: *Formatter, tree: *const ast.Tree, params: []const ast.Param) Error!void {
+        if (params.len == 0) return;
+        try self.out.append(self.allocator, '(');
+        for (params, 0..) |p, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            if (p.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
+            try self.out.appendSlice(self.allocator, tree.getString(p.name));
+            if (p.is_keyword) try self.out.append(self.allocator, ':');
+            if (p.default_value != .none) {
+                try self.out.appendSlice(self.allocator, if (p.is_keyword) " " else " = ");
+                try self.formatNode(tree, p.default_value);
+            }
+        }
+        try self.out.append(self.allocator, ')');
+    }
+
+    /// Whether an array literal was written as a list without brackets (`return 1, 2`,
+    /// `a, b = 1, 2`): the parser packs one, with the first element's token as its own.
+    fn isPackedList(self: *const Formatter, node: *const ast.Node) bool {
+        if (node.main_token >= self.token_starts.len) return true;
+        const text = self.tokenText(node.main_token);
+        return !(text.len > 0 and (text[0] == '[' or text[0] == '%'));
+    }
+
+    /// The elements of a packed list, comma-separated.
+    fn formatPackedList(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!void {
+        for (tree.getNodes(tree.nodeSpan(node)), 0..) |elem, idx| {
+            if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
+            try self.formatNode(tree, elem);
+        }
     }
 
     fn formatClassStmt(self: *Formatter, tree: *const ast.Tree, cls: ast.ClassStmt, start_line: u32) Error!void {
@@ -843,15 +975,7 @@ pub const Formatter = struct {
 
     fn formatLambda(self: *Formatter, tree: *const ast.Tree, l: ast.LambdaExpr, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "->");
-        const params = tree.getParams(l.params);
-        if (params.len > 0) {
-            try self.out.append(self.allocator, '(');
-            for (params, 0..) |p, i| {
-                if (i > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.out.appendSlice(self.allocator, tree.getString(p.name));
-            }
-            try self.out.append(self.allocator, ')');
-        }
+        try self.formatParams(tree, tree.getParams(l.params));
 
         const body_node = tree.getNode(l.body).?;
         if (body_node.tag == .block) {
@@ -916,8 +1040,15 @@ pub const Formatter = struct {
             if (item.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
             try self.out.appendSlice(self.allocator, tree.getString(item.name));
         }
-        try self.out.appendSlice(self.allocator, " = ");
-        try self.formatNode(tree, ma.value);
+        try self.out.append(self.allocator, ' ');
+        if (ma.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op)); // `a, b += 1` (the operator was dropped)
+        try self.out.appendSlice(self.allocator, "= ");
+        const value_node = tree.getNode(ma.value).?;
+        if (value_node.tag == .array_literal and self.isPackedList(value_node)) {
+            try self.formatPackedList(tree, value_node); // `a, b = 1, 2`, as written, not `[1, 2]`
+        } else {
+            try self.formatNode(tree, ma.value);
+        }
     }
 
     fn formatPropertyAssignment(self: *Formatter, tree: *const ast.Tree, pa: ast.PropertyAssignment) Error!void {
@@ -1175,7 +1306,11 @@ pub const Formatter = struct {
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "super");
         const args = tree.getNamedArgs(sc.args);
-        if (args.len > 0) try self.formatArgs(tree, args, null);
+        if (args.len > 0) {
+            try self.formatArgs(tree, args, null);
+        } else if (!sc.implicit_args) {
+            try self.out.appendSlice(self.allocator, "()"); // passes nothing; bare `super` passes the method's arguments
+        }
         if (sc.block != .none) {
             try self.out.append(self.allocator, ' ');
             try self.formatBlockClosure(tree, sc.block, start_line);
@@ -1188,14 +1323,10 @@ pub const Formatter = struct {
             try self.out.append(self.allocator, ' ');
 
             const val_node = tree.getNode(val).?;
-            if (val_node.tag == .array_literal) {
-                // If multiple values were returned, they are packed in an Array.
-                // Format them as comma-separated values without the brackets.
-                const arr_elems = tree.getNodes(tree.nodeSpan(val_node));
-                for (arr_elems, 0..) |elem, idx| {
-                    if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                    try self.formatNode(tree, elem);
-                }
+            if (val_node.tag == .array_literal and self.isPackedList(val_node)) {
+                // `return 1, 2` packs its values into an Array; a written `return []` or
+                // `return [a]` keeps its brackets (they were dropped: `return []` lost its value).
+                try self.formatPackedList(tree, val_node);
             } else {
                 try self.formatNode(tree, val);
             }
@@ -1209,14 +1340,19 @@ pub const Formatter = struct {
         if (args.len > 0) try self.formatArgs(tree, args, if (mc.end_token != 0) mc.end_token else null);
     }
 
-    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.StringId, path: []const u8, attrs: ast.NodeIndex) Error!void {
+    /// `import { a, b as c } from "path"`; an alias used to be dropped.
+    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, path: []const u8, attrs: ast.NodeIndex) Error!void {
         try self.out.appendSlice(self.allocator, kw);
         try self.out.append(self.allocator, ' ');
         if (symbols.len > 0) {
             try self.out.appendSlice(self.allocator, "{ ");
-            for (symbols, 0..) |sym_id, idx| {
+            for (symbols, 0..) |pair, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-                try self.out.appendSlice(self.allocator, tree.getString(sym_id));
+                try self.out.appendSlice(self.allocator, tree.getString(pair.original));
+                if (pair.alias != pair.original and pair.alias != .none) {
+                    try self.out.appendSlice(self.allocator, " as ");
+                    try self.out.appendSlice(self.allocator, tree.getString(pair.alias));
+                }
             }
             try self.out.appendSlice(self.allocator, " } from ");
         }

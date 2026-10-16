@@ -1,4 +1,5 @@
 const std = @import("std");
+const string_escape = @import("string_escape.zig");
 pub const Location = @import("token.zig").Location;
 
 // --- AST Builder ---
@@ -850,36 +851,7 @@ pub const Builder = struct {
 
         var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, input.len);
         defer buf.deinit(self.allocator);
-
-        var i: usize = 0;
-        while (i < input.len) : (i += 1) {
-            if (input[i] == '\\' and i + 1 < input.len) {
-                const next = input[i + 1];
-                const escaped_byte: ?u8 = switch (next) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    'f' => 12, // Form feed (\f)
-                    'v' => 11, // Vertical tab (\v)
-                    'b' => 8, // Backspace (\b)
-                    'a' => 7, // Bell (\a)
-                    'e' => 27, // Escape (\e)
-                    '"' => '"',
-                    '\\' => '\\',
-                    '#' => '#',
-                    '0' => 0,
-                    else => next,
-                };
-
-                if (escaped_byte) |b| {
-                    try buf.append(self.allocator, b);
-                    i += 1;
-                    continue;
-                }
-            }
-            try buf.append(self.allocator, input[i]);
-        }
-
+        try string_escape.unescapeInto(&buf, self.allocator, input);
         return try self.intern(buf.items);
     }
 

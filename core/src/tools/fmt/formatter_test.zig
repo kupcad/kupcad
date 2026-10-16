@@ -901,3 +901,84 @@ test "Formatter: an operator expression keeps the author's line breaks" {
         \\
     );
 }
+
+test "Formatter: string and symbol literals are printed as written" {
+    // The decoded value was printed: `"x\ty\n"` came out with a real TAB and line break,
+    // `'a'` as `"a"`, `"say \"hi\""` and `:"with space"` as programs that didn't parse.
+    try expectStableFormat("s = \"x\\ty\\n\"\nt = 'raw\\n'\nu = \"say \\\"hi\\\"\"\nv = :\"with space\"\nw = \"a#{1}b\\tc\"\nx = :plain", "s = \"x\\ty\\n\"\nt = 'raw\\n'\nu = \"say \\\"hi\\\"\"\nv = :\"with space\"\nw = \"a#{1}b\\tc\"\nx = :plain\n");
+    // A heredoc has no text to reuse in place: it becomes one double-quoted literal, and
+    // the statement after it gets no blank line (its last line used to be the body's first).
+    try expectStableFormat("x = <<~EOS\n  hello \"there\"\n  world\nEOS\ny = 1\n", "x = \"  hello \\\"there\\\"\\n  world\\n\"\ny = 1\n");
+    try expectStableFormat("y = \"line1\nline2\"\nz = 2\n", "y = \"line1\nline2\"\nz = 2\n");
+    try expectStableFormat("w = %w[a b]\n", "w = [\"a\", \"b\"]\n");
+}
+
+test "Formatter: lambda parameters, bracketed returns, super(), aliases and multi-assignment keep their form" {
+    // Each of these made the formatter refuse the whole file (it would have changed the
+    // program): a lambda lost its defaults and splat, `return []` its brackets, `super()`
+    // its parentheses, `import { a as b }` its alias; `a, b = 1, 2` became `a, b = [1, 2]`.
+    try expectStableFormat("f = ->(a, b = 2, *rest, k: 1, &blk) { a }\n", "f = ->(a, b = 2, *rest, k: 1, &blk) { a }\n");
+    try expectStableFormat("def r\n  return []\nend\n", "def r\n  return []\nend\n");
+    try expectStableFormat("def r\n  return 1, 2\nend\n", "def r\n  return 1, 2\nend\n");
+    try expectStableFormat("class B < A\n  def f\n    super()\n  end\n  def g\n    super\n  end\nend\n", "class B < A\n  def f\n    super()\n  end\n\n  def g\n    super\n  end\nend\n");
+    try expectStableFormat("import { a as b, c } from \"./x.kup\"\n", "import { a as b, c } from \"./x.kup\"\n");
+    try expectStableFormat("a, b = 1, 2\nc, d = [3, 4]\na, b += 1\n", "a, b = 1, 2\nc, d = [3, 4]\na, b += 1\n");
+}
+
+test "Formatter: comments on case, when, else, begin, rescue and ensure lines stay there" {
+    // `case x # c` and `begin # c` gained a blank line below; a comment on a `when`,
+    // `else`, `rescue` or `ensure` line moved into the body.
+    const source =
+        \\case x # c
+        \\when 1 # one
+        \\  puts(1)
+        \\else # other
+        \\  puts(2)
+        \\end
+        \\begin # c
+        \\  cube(1)
+        \\rescue => e # oops
+        \\  nil
+        \\ensure # done
+        \\  nil
+        \\end
+        \\if a # yes
+        \\  1
+        \\else # no
+        \\  2
+        \\end
+        \\
+    ;
+    try expectStableFormat(source, source);
+}
+
+test "Formatter: imports with comments keep their order" {
+    // Sorting moved the imports away from their comments: `# bee` ended up above `a`.
+    const commented = "import \"./b.kup\" # bee\nimport \"./a.kup\" # ay\n\ncube(1)\n";
+    const formatted = try formatCodeLocal(testing.allocator, commented, .{});
+    defer testing.allocator.free(formatted);
+    try testing.expectEqualStrings(commented, formatted);
+    // Without comments in the run, the imports are sorted; a header above them is fine.
+    const sorted = try formatCodeLocal(testing.allocator, "# header\nimport \"./b.kup\"\nimport \"./a.kup\"\n\ncube(1)\n", .{});
+    defer testing.allocator.free(sorted);
+    try testing.expectEqualStrings("# header\nimport \"./a.kup\"\nimport \"./b.kup\"\n\ncube(1)\n", sorted);
+}
+
+test "Formatter: the checked API accepts the constructs it used to refuse" {
+    const api = @import("../../api.zig");
+    for ([_][]const u8{
+        "u = \"say \\\"hi\\\"\"\n",
+        "v = :\"with space\"\n",
+        "f = ->(a, b = 2) { a + b }\n",
+        "g = ->(*xs) { xs }\n",
+        "def r\n  return []\nend\n",
+        "import { a as b } from \"./x.kup\"\n",
+        "class B < A\n  def f\n    super()\n  end\nend\n",
+        "a, b += 1\n",
+    }) |source| {
+        errdefer std.debug.print("source:\n{s}\n", .{source});
+        const formatted = try api.formatCode(testing.allocator, source, .{});
+        defer testing.allocator.free(formatted);
+        try testing.expectEqualStrings(source, formatted);
+    }
+}
