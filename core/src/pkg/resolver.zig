@@ -17,9 +17,12 @@ const HttpProvider = @import("providers/http.zig").HttpProvider;
 const LocalProvider = @import("providers/local.zig").LocalProvider;
 const validate = @import("validate.zig");
 const limits = @import("limits.zig");
+const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
 
 /// Hex chars of the content integrity used as the pseudo-commit of http/local archives.
 const CONTENT_COMMIT_LEN = 40;
+/// Where installed packages live, by content: PACKAGE_DIR/<alias> links into it.
+const STORE_DIR = PACKAGE_DIR ++ "/.store";
 
 const log = std.log.scoped(.resolver);
 
@@ -352,7 +355,7 @@ pub const Resolver = struct {
 
     // Linking happens sequentially *after* resolve
     pub fn linkWorkspace(self: *Resolver, fs: Vfs) !void {
-        try fs.makePath(".kupcad/pkg/.store");
+        try fs.makePath(STORE_DIR);
 
         var pkg_it = self.lockfile.packages.iterator();
         while (pkg_it.next()) |entry| {
@@ -363,7 +366,7 @@ pub const Resolver = struct {
             try validate.validatePathSegment(pkg_id);
             try validate.validatePathSegment(locked.resolved);
 
-            const versioned_folder = try self.allocator.print(".kupcad/pkg/.store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+            const versioned_folder = try self.allocator.print(STORE_DIR ++ "/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
             defer self.allocator.free(versioned_folder);
 
             try fs.makePath(versioned_folder);
@@ -405,7 +408,7 @@ pub const Resolver = struct {
             }
 
             if (locked.dependencies.count() > 0) {
-                const nested_pkg_dir_path = try self.allocator.print(".kupcad/pkg/.store/{s}-{s}/.kupcad/pkg", .{ pkg_id, locked.resolved });
+                const nested_pkg_dir_path = try self.allocator.print(STORE_DIR ++ "/{s}-{s}/" ++ PACKAGE_DIR, .{ pkg_id, locked.resolved });
                 defer self.allocator.free(nested_pkg_dir_path);
                 try fs.makePath(nested_pkg_dir_path);
 
@@ -446,7 +449,7 @@ pub const Resolver = struct {
             defer self.allocator.free(pkg_id);
 
             if (self.lockfile.packages.get(pkg_id)) |locked| {
-                const link_name = try self.allocator.print(".kupcad/pkg/{s}", .{alias});
+                const link_name = try self.allocator.print(PACKAGE_DIR ++ "/{s}", .{alias});
                 defer self.allocator.free(link_name);
 
                 const target_path = try self.allocator.print(".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });

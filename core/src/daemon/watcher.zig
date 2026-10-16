@@ -9,8 +9,8 @@ const import_path = @import("../core/import_path.zig");
 
 /// Poll interval for mtime checks.
 pub const POLL_INTERVAL_MS: i64 = 500;
-/// Upper bound on a watched source file; mirrors cli/config.zig MAX_FILE_SIZE.
-pub const MAX_WATCHED_FILE_SIZE: usize = 10 * 1024 * 1024;
+/// Upper bound on a watched source file: the largest source a document takes.
+pub const MAX_WATCHED_FILE_SIZE = @import("../core/limits.zig").MAX_SOURCE_BYTES;
 
 /// What a watcher tells its host. (It logged at info level, which release builds hide,
 /// and a failed build after a change printed no diagnostics at all.)
