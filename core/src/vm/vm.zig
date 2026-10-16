@@ -1501,12 +1501,14 @@ pub const VM = struct {
                             }
                         }
                     } else if (std.mem.startsWith(u8, name_str, "@")) {
-                        // Instance Variable Check: Strip `@` and check layout map
-                        const self_val = self.getLocal(frame, 0);
+                        // An instance variable this instance has been given. The class layout
+                        // alone said yes once any instance of the class had set it, and a
+                        // block's frame slot 0 (the block) stood in for self.
+                        const self_val = self.frameSelf(frame);
                         if (self_val.isInstance()) {
-                            const clean_name = name_str[1..];
-                            const clean_val = self.allocateString(clean_name) catch return .runtime_error;
-                            is_def = self_val.asInstance().class.instance_layout.contains(clean_val);
+                            const inst = self_val.asInstance();
+                            const clean_val = self.allocateString(name_str[1..]) catch return .runtime_error;
+                            if (inst.class.instance_layout.get(clean_val)) |idx| is_def = idx < inst.fields.items.len;
                         }
                     } else {
                         // Global / Native Check (Globals still use string keys)

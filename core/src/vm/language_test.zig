@@ -345,3 +345,12 @@ test "Language: dup and clone copy Arrays, Maps and instances; Map#delete keeps 
         .{ .src = "m = { a: 1 }\nr = m.delete(:zz).nil?", .expected = .{ .boolean = true } },
     });
 }
+
+test "Language: defined?(@x) is about this instance" {
+    // It consulted the class's field layout, which another instance's assignment fills,
+    // and read self from the block's own frame.
+    try expectScripts(&.{
+        .{ .src = "class P\n  def set\n    @x = 1\n  end\n  def has\n    defined?(@x) != nil\n  end\nend\na = P.new\nb = P.new\na.set\nr = \"#{a.has} #{b.has}\"", .expected = .{ .str = "true false" } },
+        .{ .src = "class P\n  def set\n    @x = 1\n  end\n  def has\n    [1].map { defined?(@x) != nil }.first\n  end\nend\na = P.new\nb = P.new\na.set\nr = \"#{a.has} #{b.has}\"", .expected = .{ .str = "true false" } },
+    });
+}
