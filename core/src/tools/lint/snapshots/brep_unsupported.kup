@@ -38,4 +38,17 @@ cut = box - hole
 joined = box + cube(2).extrude(1)   # a solid on either side is enough
 profile = square(4) - circle(r: 1)
 count = 2 - 1                       # numbers: not a boolean
-[cut, joined, profile, count, holder, scoped_part]
+
+# A class of the script's own may name its methods like the kernel's: nothing to report.
+class Gear
+  def volume
+    42
+  end
+
+  def translate(dx)
+    dx
+  end
+end
+gear = Gear.new
+teeth = gear.volume + gear.translate(1)
+[cut, joined, profile, count, holder, scoped_part, teeth]

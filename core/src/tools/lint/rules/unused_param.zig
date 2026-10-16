@@ -16,6 +16,8 @@ pub const UnusedParamRule = struct {
     /// Definitions whose value is dropped, by name, with where each is.
     dropped: std.StringArrayHashMapUnmanaged(token.Location) = .empty,
     read: std.StringHashMapUnmanaged(void) = .empty,
+    /// A read whose name is computed (`param(name)`): any parameter may be the one read.
+    read_dynamically: bool = false,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -49,7 +51,7 @@ pub const UnusedParamRule = struct {
                 if (!literals.isCall(tree, node, null, "param")) return;
                 const call = tree.methodCall(node);
                 if (isDefinition(tree, call)) return;
-                if (paramName(tree, call)) |name| try self.read.put(engine.allocator, name, {});
+                if (paramName(tree, call)) |name| try self.read.put(engine.allocator, name, {}) else if (tree.getNamedArgs(call.args).len == 1) self.read_dynamically = true;
             },
             .index_access => {
                 const access = tree.indexAccess(node);
@@ -68,6 +70,7 @@ pub const UnusedParamRule = struct {
             self.read.deinit(engine.allocator);
             self.* = .{};
         }
+        if (self.read_dynamically) return;
         var it = self.dropped.iterator();
         while (it.next()) |entry| {
             if (self.read.contains(entry.key_ptr.*)) continue;

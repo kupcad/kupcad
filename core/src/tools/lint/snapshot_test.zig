@@ -28,6 +28,7 @@ const CASES = [_][]const u8{
     "unknown_keyword",
     "unreachable_code",
     "unused_param",
+    "unused_param_dynamic",
     "unused_variable",
 };
 

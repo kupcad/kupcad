@@ -6,3 +6,14 @@ def body
 end
 
 cube(thickness + wall).scale(body)
+
+# A read inside a def runs when the def is called, after the definition below it.
+def side_len
+  param(:side)
+end
+side = param(:side, default: 3)
+
+# A name computed at run time names no parameter in particular.
+key = :side
+chosen = param(key)
+[side_len, side, chosen]

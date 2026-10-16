@@ -63,8 +63,10 @@ pub const ParamOrderRule = struct {
 
             try self.defined_params.put(engine.allocator, param_name, {});
         } else {
-            // Getter mode: warn if invoked before its top-level definition
-            if (!self.defined_params.contains(param_name)) {
+            // Getter mode: warn if invoked before its top-level definition. A read inside a
+            // def or block runs when that is called, which may be after the definition
+            // below it, so only a top-level read is judged by its position.
+            if (engine.body_depth == 0 and !self.defined_params.contains(param_name)) {
                 try engine.report(
                     id,
                     engine.getLoc(node.main_token),
@@ -75,10 +77,12 @@ pub const ParamOrderRule = struct {
         }
     }
 
+    /// The name a `param` call gives as a literal; null for one computed at run time
+    /// (`param(name)` with a variable used to be taken for a parameter called "name").
     fn extractParamName(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
         const node = tree.getNode(node_idx) orelse return null;
         return switch (node.tag) {
-            .symbol, .string, .identifier => tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
+            .symbol, .string => tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
             else => null,
         };
     }

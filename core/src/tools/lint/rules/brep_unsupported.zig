@@ -122,13 +122,18 @@ pub const BrepUnsupportedRule = struct {
     }
 
     /// What a call needs: its method's feature, a cylinder whose two radii are different
-    /// literals (a cone), or the need of a method of the script it calls.
+    /// literals (a cone), or the need of a method of the script it calls. A kernel method's
+    /// name counts only on a shape (or as a bare builtin): `gear.volume` on a class of the
+    /// script's own used to be reported too.
     fn needOf(self: *BrepUnsupportedRule, tree: *const ast.Tree, node: *const ast.Node, call: ast.MethodCall) ?Need {
         const name = tree.getString(call.method_name);
         if (literals.isCall(tree, node, null, "cylinder") and isCone(tree, call)) return .{ .feature = .cone, .what = "cylinder(r1:, r2:)" };
-        inline for (comptime std.enums.values(kernel.Feature)) |feature| {
-            for (comptime feature.methods()) |method| {
-                if (std.mem.eql(u8, method, name)) return .{ .feature = feature, .what = method };
+        const on_shape = call.receiver == .none or self.shapes.of(tree, call.receiver) != null;
+        if (on_shape) {
+            inline for (comptime std.enums.values(kernel.Feature)) |feature| {
+                for (comptime feature.methods()) |method| {
+                    if (std.mem.eql(u8, method, name)) return .{ .feature = feature, .what = method };
+                }
             }
         }
         if (call.receiver != .none) return null;
