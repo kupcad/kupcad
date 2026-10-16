@@ -117,6 +117,9 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     vm.line_index = &doc.line_index;
     defer vm.line_index = null;
     try registry.registerStandardLibrary(&vm);
+    // The script's own output (puts, print, inspect, benchmark) went into the report,
+    // once per run; the timings don't depend on it being shown.
+    vm.host.print_handler = null;
     var program = chunk.Chunk.init();
     defer program.free(allocator);
     var compiler = Compiler.forDocument(allocator, &doc, &program, &vm);

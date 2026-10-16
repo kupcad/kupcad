@@ -234,6 +234,29 @@ test "kupcad: check --fix doesn't print what the script prints" {
     try testing.expect(std.mem.startsWith(u8, fixed, "_spare = 1\n"));
 }
 
+test "kupcad: dev bench prints its report, not what the script prints" {
+    // Each timed run (and the profiled one) printed the script's puts, inspect and
+    // benchmark output into the report, once per run.
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "chatty.kup", .data = "puts(\"from the script\")\ninspect(cube(1))\nbenchmark(\"inner\") { cube(2) }\ncube(1)\n" });
+    inline for (.{ &[_][]const u8{ "dev", "bench", "chatty.kup", "--repeat", "2" }, &[_][]const u8{ "dev", "bench", "chatty.kup", "--json", "--no-profile" } }) |args| {
+        const run = try kupcad(sb.path, args);
+        defer run.deinit();
+        errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+        try testing.expectEqual(@as(u8, 0), run.code);
+        for ([_][]const u8{ "from the script", "Geometry", "inner" }) |noise| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, noise) == null and std.mem.indexOf(u8, run.stderr, noise) == null);
+        }
+    }
+    // The JSON report is the whole of stdout, so it parses.
+    const json_run = try kupcad(sb.path, &.{ "dev", "bench", "chatty.kup", "--json", "--no-profile" });
+    defer json_run.deinit();
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json_run.stdout, .{});
+    defer parsed.deinit();
+    try testing.expect(parsed.value.object.get("evaluated").?.bool);
+}
+
 test "kupcad: check run in a subfolder uses the project's .kupcad.json above it" {
     var sb = try Sandbox.init();
     defer sb.deinit();
