@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// The example models in ../examples, built and fingerprinted by src/examples_test.zig
 /// (which also checks that every example there is listed here).
-const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "robot_mount_bracket", "standoff", "text" };
+const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "standoff", "text" };
 
 const clipper_sources = &[_][]const u8{
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp",
