@@ -1,3 +1,6 @@
+//! `dump`: prints a parsed document's AST as an indented tree, each node's tag with its
+//! payload, for `kupcad dev ast-dump` (cli/dev.zig).
+
 const std = @import("std");
 const api = @import("../../api.zig");
 const ast = @import("../../core/ast.zig");

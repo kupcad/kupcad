@@ -108,3 +108,38 @@ test "Value: ValueContext hash diffuses bits and correctly hashes edge cases" {
     try testing.expect(hash_zero != hash_one);
     try testing.expect(hash_one != hash_two);
 }
+
+test "Value: fmtNumber spells non-finite numbers the same on every platform" {
+    var buf: [64]u8 = undefined;
+    const Case = struct { n: f64, text: []const u8 };
+    const cases = [_]Case{
+        .{ .n = std.math.nan(f64), .text = "NaN" },
+        // x86 produces this sign-bit-set NaN for `inf - inf`; {d} prints it as "-nan".
+        .{ .n = -std.math.nan(f64), .text = "NaN" },
+        .{ .n = std.math.inf(f64), .text = "Infinity" },
+        .{ .n = -std.math.inf(f64), .text = "-Infinity" },
+        .{ .n = 1.5, .text = "1.5" },
+        .{ .n = -2, .text = "-2" },
+    };
+    for (cases) |case| {
+        try testing.expectEqualStrings(case.text, try std.fmt.bufPrint(&buf, "{f}", .{value.fmtNumber(case.n)}));
+        var w: std.Io.Writer = .fixed(&buf);
+        try value.Value.initNumber(case.n).stringify(false, &w);
+        try testing.expectEqualStrings(case.text, w.buffered());
+    }
+}
+
+test "Value: a NaN of any payload is a number, never a tag or a pointer" {
+    // QNAN covers bit 50, so a NaN with that payload bit set read as a tagged value: a
+    // positive one as nil or a boolean, a negative one as an object pointer. Such a NaN
+    // comes from an f32 NaN widened to f64 (f32 bit 21 lands on bit 50), as in an STL.
+    const payloads = [_]u64{ 0x7FFC000000000001, 0x7FFC000000000002, 0x7FFC000000000003, 0xFFFC000000001234, 0xFFFFFFFFFFFFFFFF, 0x7FF8000000000000 };
+    for (payloads) |bits| {
+        const v = value.Value.initNumber(@bitCast(bits));
+        try testing.expect(v.isNumber());
+        try testing.expect(!v.isNil() and !v.isBool() and !v.isObject());
+        try testing.expect(std.math.isNan(v.asNumber()));
+    }
+    const widened: f64 = @floatCast(@as(f32, @bitCast(@as(u32, 0x7FE00001))));
+    try testing.expect(value.Value.initNumber(widened).isNumber());
+}

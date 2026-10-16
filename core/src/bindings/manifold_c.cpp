@@ -5,6 +5,16 @@
 // More info: https://github.com/ziglang/zig/issues/22515
 
 extern "C" {
+    // Whether this C++ was compiled with its asserts: only Debug builds are (build.zig's
+    // cxxFlags adds -DNDEBUG otherwise, for Manifold, Clipper2, Draco and these bindings).
+    bool kupcad_cpp_asserts_enabled() {
+#ifdef NDEBUG
+        return false;
+#else
+        return true;
+#endif
+    }
+
     // Passes the 12-element matrix as a single pointer to bypass ABI register exhaustion
     ManifoldManifold* manifold_transform_array(void* mem, ManifoldManifold* m, const double* mat) {
         return manifold_transform(mem, m,

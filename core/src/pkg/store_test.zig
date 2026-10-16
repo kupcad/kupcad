@@ -1,6 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
-const Store = @import("store.zig").Store;
+const store_mod = @import("store.zig");
+const Store = store_mod.Store;
+const integrity = @import("integrity.zig");
+const sqlite = @import("sqlite");
+const helpers = @import("test_helpers.zig");
+const freeMap = helpers.freeMap;
+const countRows = helpers.countRows;
 
 test "Store: initializes and runs SQLite migrations in-memory" {
     var store = try Store.init(testing.io, ":memory:");
@@ -8,55 +14,68 @@ test "Store: initializes and runs SQLite migrations in-memory" {
 
     const stmt = try store.db.prepare("PRAGMA user_version");
     defer stmt.deinit();
-    const row = try stmt.one(struct { user_version: i32 }, .{}, .{});
+    const row = try stmt.one(struct { user_version: i32 }, .{});
 
     try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 2), row.?.user_version); // Expect V2
+    try testing.expectEqual(store_mod.SCHEMA_VERSION, row.?.user_version);
 }
 
-test "Store: registers package and maps associated file hashes" {
+test "Store: registerPackage records metadata and file hashes for lookup" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
+    try testing.expect(!try store.hasPackage("github.com-kupcad-std", "commit-abc"));
+    try testing.expect((try store.getPackageFiles(testing.allocator, "github.com-kupcad-std", "commit-abc")) == null);
+
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
-    try files.put("math.kup", "aabbccddeeff");
+    try files.put("lib/main.kup", "hash_main_123");
+    try files.put("kupcad.json", "hash_json_456");
+    try store.registerPackage("github.com-kupcad-std", "commit-abc", "github", "sha256-mockhash", &files);
 
-    try store.registerPackage("test-pkg", "commit123", "github", "sha256-mockhash", &files);
+    try testing.expect(try store.hasPackage("github.com-kupcad-std", "commit-abc"));
+    try testing.expect(!try store.hasPackage("github.com-kupcad-std", "commit-other"));
 
-    const pkg_stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'test-pkg'");
+    const pkg_stmt = try store.db.prepare("SELECT provider, integrity FROM packages WHERE id = 'github.com-kupcad-std'");
     defer pkg_stmt.deinit();
-    const pkg_row = try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{});
+    const pkg_row = (try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8 }, .{})) orelse return error.MissingRow;
+    try testing.expectEqualStrings("github", pkg_row.provider);
+    try testing.expectEqualStrings("sha256-mockhash", pkg_row.integrity);
 
-    try testing.expect(pkg_row != null);
-    try testing.expectEqualStrings("github", pkg_row.?.provider);
-    try testing.expectEqualStrings("sha256-mockhash", pkg_row.?.integrity);
-
-    const file_stmt = try store.db.prepare("SELECT file_hash FROM package_files WHERE file_path = 'math.kup'");
-    defer file_stmt.deinit();
-    const file_row = try file_stmt.one(struct { file_hash: []const u8 }, .{}, .{});
-
-    try testing.expect(file_row != null);
-    try testing.expectEqualStrings("aabbccddeeff", file_row.?.file_hash);
+    var cached = (try store.getPackageFiles(testing.allocator, "github.com-kupcad-std", "commit-abc")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 2), cached.count());
+    try testing.expectEqualStrings("hash_main_123", cached.get("lib/main.kup").?);
+    try testing.expectEqualStrings("hash_json_456", cached.get("kupcad.json").?);
 }
 
-test "Store: registerPackage is idempotent and safely ignores duplicates" {
+// Audit fix: re-registering used INSERT OR IGNORE (stale integrity kept) and
+// merged file mappings instead of replacing them with the verified content.
+test "Store: re-registering a commit refreshes metadata and replaces the file mapping" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
-    var files = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files.deinit();
-    try files.put("main.kup", "hash123");
+    var old_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer old_files.deinit();
+    try old_files.put("main.kup", "hash-old");
+    try old_files.put("removed.kup", "hash-removed");
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-old", &old_files);
 
-    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
-    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-mock", &files);
+    var new_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer new_files.deinit();
+    try new_files.put("main.kup", "hash-new");
+    try store.registerPackage("pkg-a", "commit-a", "git", "sha256-new", &new_files);
 
-    const stmt = try store.db.prepare("SELECT COUNT(*) as count FROM packages WHERE id = 'pkg-a'");
+    const stmt = try store.db.prepare("SELECT COUNT(*) AS count, MAX(integrity) AS integrity FROM packages WHERE id = 'pkg-a'");
     defer stmt.deinit();
+    const row = (try stmt.one(struct { count: i64, integrity: []const u8 }, .{})) orelse return error.MissingRow;
+    try testing.expectEqual(@as(i64, 1), row.count);
+    try testing.expectEqualStrings("sha256-new", row.integrity);
 
-    const row = try stmt.one(struct { count: i32 }, .{}, .{});
-    try testing.expect(row != null);
-    try testing.expectEqual(@as(i32, 1), row.?.count);
+    var cached = (try store.getPackageFiles(testing.allocator, "pkg-a", "commit-a")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 1), cached.count());
+    try testing.expectEqualStrings("hash-new", cached.get("main.kup").?);
 }
 
 test "Store: gracefully handles packages with zero files" {
@@ -70,13 +89,13 @@ test "Store: gracefully handles packages with zero files" {
 
     const stmt = try store.db.prepare("SELECT id FROM packages WHERE id = 'meta-pkg'");
     defer stmt.deinit();
-    const row = try stmt.one(struct { id: []const u8 }, .{}, .{});
+    const row = try stmt.one(struct { id: []const u8 }, .{});
 
     try testing.expect(row != null);
     try testing.expectEqualStrings("meta-pkg", row.?.id);
 }
 
-test "Store: computeIntegrity generates deterministic hashes regardless of map iteration order" {
+test "Integrity: compute generates deterministic hashes regardless of map iteration order" {
     var files1 = std.StringHashMap([]const u8).init(testing.allocator);
     defer files1.deinit();
     try files1.put("file_b.kup", "hash-b");
@@ -90,10 +109,10 @@ test "Store: computeIntegrity generates deterministic hashes regardless of map i
     try files2.put("file_b.kup", "hash-b");
     try files2.put("file_a.kup", "hash-a");
 
-    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    const hash1 = try integrity.compute(testing.allocator, &files1);
     defer testing.allocator.free(hash1);
 
-    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    const hash2 = try integrity.compute(testing.allocator, &files2);
     defer testing.allocator.free(hash2);
 
     // The Merkle-style hash must perfectly match across both instances
@@ -101,7 +120,7 @@ test "Store: computeIntegrity generates deterministic hashes regardless of map i
     try testing.expect(std.mem.startsWith(u8, hash1, "sha256-"));
 }
 
-test "Store: computeIntegrity detects file tampering" {
+test "Integrity: compute detects file tampering" {
     var files1 = std.StringHashMap([]const u8).init(testing.allocator);
     defer files1.deinit();
     try files1.put("main.kup", "hash-clean");
@@ -110,21 +129,21 @@ test "Store: computeIntegrity detects file tampering" {
     defer files2.deinit();
     try files2.put("main.kup", "hash-tampered");
 
-    const hash1 = try Store.computeIntegrity(testing.allocator, &files1);
+    const hash1 = try integrity.compute(testing.allocator, &files1);
     defer testing.allocator.free(hash1);
 
-    const hash2 = try Store.computeIntegrity(testing.allocator, &files2);
+    const hash2 = try integrity.compute(testing.allocator, &files2);
     defer testing.allocator.free(hash2);
 
     // Hashes must deviate if the underlying file contents (represented by their hashes) change
     try testing.expect(!std.mem.eql(u8, hash1, hash2));
 }
 
-test "Store: computeIntegrity handles empty packages" {
+test "Integrity: compute handles empty packages" {
     var empty_files = std.StringHashMap([]const u8).init(testing.allocator);
     defer empty_files.deinit();
 
-    const hash = try Store.computeIntegrity(testing.allocator, &empty_files);
+    const hash = try integrity.compute(testing.allocator, &empty_files);
     defer testing.allocator.free(hash);
 
     // Empty packages should still generate a valid, reproducible sha256 checksum (the hash of nothing)
@@ -133,7 +152,9 @@ test "Store: computeIntegrity handles empty packages" {
     try testing.expectEqualStrings("sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hash);
 }
 
-test "Store: statement tuple bindings correctly filter query results" {
+// Audit fix: the v1 schema keyed `packages` by id, silently dropping every
+// commit of a package after the first.
+test "Store: keeps several commits of one package with separate file maps" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
@@ -145,24 +166,209 @@ test "Store: statement tuple bindings correctly filter query results" {
     defer files_b.deinit();
     try files_b.put("utils.kup", "hashB");
 
-    // Register two different commits for the same package
     try store.registerPackage("pkg-test", "commit1", "git", "sha256-1", &files_a);
     try store.registerPackage("pkg-test", "commit2", "git", "sha256-2", &files_b);
 
-    const query =
-        \\SELECT file_path, file_hash FROM package_files
-        \\WHERE package_id = ? AND commit_sha = ?
-    ;
-    var stmt = try store.db.prepare(query);
+    try testing.expect(try store.hasPackage("pkg-test", "commit1"));
+    try testing.expect(try store.hasPackage("pkg-test", "commit2"));
+
+    var cached = (try store.getPackageFiles(testing.allocator, "pkg-test", "commit2")).?;
+    defer freeMap(&cached);
+    try testing.expectEqual(@as(usize, 1), cached.count());
+    try testing.expectEqualStrings("hashB", cached.get("utils.kup").?);
+}
+
+// Audit fix: databases left by the v2 schema (id-only packages key) must be
+// migrated in place, keeping their rows.
+test "Store: migrates v2 databases to the composite package key" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const db_path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/index.db", .{root}, 0);
+    defer testing.allocator.free(db_path);
+
+    {
+        // A database exactly as the v2 code left it (id-only primary key), with data.
+        var handle: ?*sqlite.sqlite3 = null;
+        try testing.expectEqual(sqlite.SQLITE_OK, sqlite.sqlite3_open(db_path, &handle));
+        var db = store_mod.Db{ .handle = handle };
+        defer db.deinit();
+        const v2_schema = [_][]const u8{
+            "CREATE TABLE packages (id TEXT PRIMARY KEY, commit_sha TEXT NOT NULL, provider TEXT NOT NULL, created_at INTEGER NOT NULL, integrity TEXT NOT NULL DEFAULT '')",
+            "CREATE TABLE files (hash TEXT PRIMARY KEY, size INTEGER NOT NULL, created_at INTEGER NOT NULL)",
+            "CREATE TABLE package_files (package_id TEXT NOT NULL, commit_sha TEXT NOT NULL, file_path TEXT NOT NULL, file_hash TEXT NOT NULL, PRIMARY KEY (package_id, commit_sha, file_path), FOREIGN KEY (file_hash) REFERENCES files(hash))",
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            "INSERT INTO packages VALUES ('pkg', 'old', 'http', 7, 'sha256-old')",
+            // Indexed under its archive's top folder, which v5 no longer keeps.
+            "INSERT INTO packages VALUES ('gh', 'c1', 'github', 7, 'sha256-gh')",
+            "INSERT INTO package_files VALUES ('gh', 'c1', 'r-c1/main.kup', 'h1')",
+            "INSERT INTO files VALUES ('h1', 3, 7)",
+            "INSERT INTO package_files VALUES ('pkg', 'old', 'main.kup', 'h1')",
+            // Mapping of a commit the v2 schema silently dropped from `packages`
+            "INSERT INTO package_files VALUES ('pkg', 'lost', 'main.kup', 'h1')",
+            "INSERT INTO meta VALUES ('last_prune_time', '42')",
+            "PRAGMA user_version = 2",
+        };
+        for (v2_schema) |sql| try db.exec(sql, .{});
+    }
+
+    var store = try Store.init(testing.io, db_path);
+    defer store.deinit();
+    try testing.expectEqual(@as(i64, store_mod.SCHEMA_VERSION), try countRows(&store, "SELECT user_version AS n FROM pragma_user_version"));
+    // v4: an existing package was last used when it was registered.
+    try testing.expectEqual(@as(i64, 7), try countRows(&store, "SELECT last_used AS n FROM packages WHERE id = 'pkg'"));
+
+    // Existing rows survive the table rebuild with all columns intact.
+    {
+        const stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'pkg' AND commit_sha = 'old'");
+        defer stmt.deinit();
+        const row = (try stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{})) orelse return error.TestMissingRow;
+        try testing.expectEqualStrings("http", row.provider);
+        try testing.expectEqualStrings("sha256-old", row.integrity);
+        try testing.expectEqual(@as(i64, 7), row.created_at);
+    }
+    var files = (try store.getPackageFiles(testing.allocator, "pkg", "old")).?;
+    defer freeMap(&files);
+    try testing.expectEqualStrings("h1", files.get("main.kup").?);
+    try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM files"));
+    try testing.expectEqual(@as(i64, 1), try countRows(&store, "SELECT COUNT(*) FROM meta"));
+    // Unreachable mappings are cleaned up.
+    try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE commit_sha = 'lost'"));
+    // v5: a git host package is fetched again rather than linked with its top folder.
+    try testing.expect(!try store.hasPackage("gh", "c1"));
+    try testing.expectEqual(@as(i64, 0), try countRows(&store, "SELECT COUNT(*) FROM package_files WHERE package_id = 'gh'"));
+
+    // A second commit of the same package can now be recorded alongside the first.
+    var new_files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer new_files.deinit();
+    try store.registerPackage("pkg", "new", "github", "sha256-new", &new_files);
+    try testing.expect(try store.hasPackage("pkg", "new"));
+    try testing.expect(try store.hasPackage("pkg", "old"));
+}
+
+// Audit fix: path and hash were concatenated without separators, so different
+// file maps ("ab"->"c" vs "a"->"bc") produced the same integrity.
+test "Integrity: compute input is unambiguous" {
+    var m1 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer m1.deinit();
+    try m1.put("ab", "c");
+    var m2 = std.StringHashMap([]const u8).init(testing.allocator);
+    defer m2.deinit();
+    try m2.put("a", "bc");
+
+    const h1 = try integrity.compute(testing.allocator, &m1);
+    defer testing.allocator.free(h1);
+    const h2 = try integrity.compute(testing.allocator, &m2);
+    defer testing.allocator.free(h2);
+    try testing.expect(!std.mem.eql(u8, h1, h2));
+    try integrity.verify(testing.allocator, &m1, h1, .{});
+    try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &m2, h1, .{}));
+
+    // The legacy (lockfile 1.x) algorithm is kept, ambiguity included, to verify old lockfiles.
+    const legacy = try integrity.computeWith(testing.allocator, &m1, .{ .algo = .legacy });
+    defer testing.allocator.free(legacy);
+    try integrity.verify(testing.allocator, &m2, legacy, .{ .algo = .legacy });
+}
+
+test "Store: a write waits for another connection's lock instead of failing" {
+    // Two processes share the global index (two installs, or an install during `pkg
+    // prune`); without a busy timeout the second failed at once with SQLITE_BUSY.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(dir);
+    const db_path = try std.fs.path.join(testing.allocator, &.{ dir, "index.db" });
+    defer testing.allocator.free(db_path);
+
+    var holder = try Store.init(testing.io, db_path);
+    defer holder.deinit();
+    var writer = try Store.init(testing.io, db_path);
+    defer writer.deinit();
+
+    try holder.db.exec("BEGIN IMMEDIATE", .{});
+    const Release = struct {
+        fn run(store: *Store) void {
+            testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
+            store.db.exec("COMMIT", .{}) catch @panic("COMMIT failed");
+        }
+    };
+    const releaser = try std.Thread.spawn(.{}, Release.run, .{&holder});
+    defer releaser.join();
+
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("kupcad.json", "hash_json");
+    try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);
+    try testing.expect(try writer.hasPackage("github.com-u-r", "commit-a"));
+}
+
+test "Store: an integrity under a root folder is that of the paths with it" {
+    // Lockfiles before 3.0.0 hashed a git host archive's files with its top folder; they
+    // are checked by hashing the stripped files under that folder.
+    var stripped = std.StringHashMap([]const u8).init(testing.allocator);
+    defer stripped.deinit();
+    try stripped.put("main.kup", "h1");
+    try stripped.put("lib/bolt.kup", "h2");
+    var prefixed = std.StringHashMap([]const u8).init(testing.allocator);
+    defer prefixed.deinit();
+    try prefixed.put("r-c1/main.kup", "h1");
+    try prefixed.put("r-c1/lib/bolt.kup", "h2");
+
+    inline for (.{ integrity.Algo.current, integrity.Algo.legacy }) |algo| {
+        const old = try integrity.computeWith(testing.allocator, &prefixed, .{ .algo = algo });
+        defer testing.allocator.free(old);
+        try integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo, .root = "r-c1" });
+        try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo }));
+    }
+}
+
+test "Store: a database that can't be opened is an open error, and its handle is closed" {
+    // It was reported as DatabaseCorrupted (which is what quick_check finds), and the
+    // handle SQLite hands back for a failed open was never closed.
+    try testing.expectError(error.SqliteOpenFailed, Store.init(testing.io, "/nonexistent-kupcad-dir/index.db"));
+}
+
+test "Store: a query step that fails is an error, not the end of the rows" {
+    // SQLITE_ERROR and friends read as "no more rows": linkWorkspace could link a partial
+    // package and report success. abs() of the smallest integer fails at step time.
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    const stmt = try store.db.prepare("SELECT abs(-9223372036854775808) AS v");
     defer stmt.deinit();
+    try testing.expectError(error.SqliteError, stmt.one(struct { v: i64 }, .{}));
+    var rows = try stmt.iterator(struct { v: i64 }, .{});
+    try testing.expectError(error.SqliteError, rows.next());
+}
 
-    // Query specifically for commit2
-    var rows = try stmt.iterator(struct { file_path: []const u8, file_hash: []const u8 }, .{ "pkg-test", "commit2" });
+test "Store: an argument with no placeholder to bind to is an error, not ignored" {
+    // Binding returned codes nobody read: a value SQLite refused left its `?` NULL and the
+    // statement ran anyway.
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    try testing.expectError(error.SqliteError, store.db.exec("SELECT ?", .{ "one", "two" }));
+    const stmt = try store.db.prepare("SELECT ? + ?");
+    defer stmt.deinit();
+    const row = (try stmt.one(struct { sum: i64 }, .{ 2, 3 })) orelse return error.MissingRow;
+    try testing.expectEqual(@as(i64, 5), row.sum);
+}
 
-    const row = (try rows.next()) orelse return error.MissingRow;
-    try testing.expectEqualStrings("utils.kup", row.file_path);
-    try testing.expectEqualStrings("hashB", row.file_hash);
+test "Store: the prune time, the quick check and the blob index" {
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    try testing.expectEqual(@as(i64, 0), try store.lastPruneTime());
+    try store.setLastPruneTime(1_700_000_000);
+    try testing.expectEqual(@as(i64, 1_700_000_000), try store.lastPruneTime());
+    try testing.expect(try store.quickCheck());
 
-    // Ensure it strictly bound the arguments and didn't bleed into commit1
-    try testing.expect((try rows.next()) == null);
+    try testing.expect(!try store.hasBlob("abc"));
+    try store.indexBlob("abc", 12, 1);
+    try testing.expect(try store.hasBlob("abc"));
+    const hashes = try store.blobHashes(testing.allocator);
+    defer {
+        for (hashes) |h| testing.allocator.free(h);
+        testing.allocator.free(hashes);
+    }
+    try testing.expectEqual(@as(usize, 1), hashes.len);
+    try testing.expectEqualStrings("abc", hashes[0]);
 }

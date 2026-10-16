@@ -1,3 +1,6 @@
+//! The methods of the script's `GC` object: `GC.collect` runs a collection and
+//! `GC.bytes_allocated` reports the bytes the collector holds. Bound by `core_classes.zig`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");

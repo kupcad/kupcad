@@ -1,8 +1,32 @@
+//! The geometry DAG a script builds: `DAGBuilder` appends `DAGNode`s (primitives, booleans,
+//! transforms, extrusions, ...) with their payloads in side tables, reuses an identical node
+//! instead of adding it twice, and records the settings each node was made under. The DAG is
+//! evaluated later, by `dag_evaluator.zig`.
+
 const std = @import("std");
+const builtin = @import("builtin");
+const kernel = @import("../kernel/kernel.zig");
+const dag_verifier = @import("dag_verifier.zig");
+const geom = @import("../kernel/geometry_handle.zig");
+const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 pub const DAGNodeIndex = u32;
 
+/// Every node is checked as it is added (dag_verifier.zig) where a check costs nothing
+/// that matters: Debug and test builds.
+const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
+
+/// Index of a node's settings in DAGBuilder.settings_table; 0 is the default settings.
+pub const SettingsId = u16;
+
+/// Legacy marker for an ObjGeometry that has no DAG node (raw concrete handle).
+/// Never a valid node index: appendNodeWithRollback refuses to grow that far.
+pub const CONCRETE_NODE_SENTINEL: DAGNodeIndex = std.math.maxInt(u32);
+
 pub const DAGTag = enum(u8) {
+    /// A shape with nothing in it (no payload): `union([])`, `a.intersection([])`.
+    empty_solid,
+    empty_sketch,
     cube,
     cylinder,
     sphere,
@@ -35,13 +59,36 @@ pub const DAGTag = enum(u8) {
     polygon,
     polygons_even_odd,
     set_material,
+    /// Leaf wrapping an already-evaluated handle (decompose/simplify results).
+    /// `data` indexes `concrete_handles`, which owns the handle.
+    concrete,
 };
+
+/// The name a script uses for the operation, for error messages ("difference failed: ...").
+pub fn scriptName(tag: DAGTag) []const u8 {
+    return switch (tag) {
+        .cube, .cylinder, .sphere, .translate, .rotate, .scale, .square, .circle, .extrude, .revolve, .mirror, .hull, .loft, .minkowski, .trim_by_plane, .offset, .polygon => @tagName(tag),
+        .union_op, .batch_union_op, .cs_union_op => "union",
+        .difference_op, .cs_difference_op => "difference",
+        .intersection_op, .cs_intersection_op => "intersection",
+        .polyhedron_op => "polyhedron",
+        .batch_hull_op => "hull",
+        .slice_op => "slice",
+        .project_op => "project",
+        .transform_matrix, .cs_transform => "transform",
+        .polygons_even_odd => "polygon",
+        .set_material => "material",
+        .empty_solid, .empty_sketch => "empty",
+        .concrete => "geometry",
+    };
+}
 
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
 pub const DAGNode = struct {
     tag: DAGTag,
     flags: u8 = 0, // e.g., bit 0 = center boolean
-    _padding: u16 = 0,
+    /// The settings (CAD.config) the node was created under, which it is built with.
+    settings: SettingsId = 0,
     data: u32 = 0, // Payload index into extra_data or numbers
 };
 
@@ -51,33 +98,69 @@ pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
 pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
 pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
-pub const RotatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
-pub const ScalePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
 pub const DAGBuilder = struct {
-    arena: std.heap.ArenaAllocator,
+    /// The tables below grow as the script builds geometry; they were in an arena, which
+    /// keeps every outgrown buffer until the end, so a DAG held about twice its size.
+    gpa: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(DAGNode) = .empty,
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
     numbers: std.ArrayListUnmanaged(f64) = .empty,
     poly_points: std.ArrayListUnmanaged([3]f64) = .empty,
     poly_faces: std.ArrayListUnmanaged([3]u32) = .empty,
+    /// Handles owned by `.concrete` leaves. They cannot be recomputed from the DAG,
+    /// so they live as long as the builder (not in the evictable dag_cache).
+    concrete_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty,
 
     // CSE Deduplication
     node_hashes: std.ArrayListUnmanaged(u64) = .empty,
     dedup_map: std.AutoHashMapUnmanaged(u64, DAGNodeIndex) = .empty,
 
-    pub fn init(child_allocator: std.mem.Allocator) DAGBuilder {
-        return .{ .arena = std.heap.ArenaAllocator.init(child_allocator) };
+    /// Every distinct non-default settings nodes were created under (SettingsId n is entry
+    /// n - 1). Geometry is evaluated lazily, so a node made inside CAD.with_config must
+    /// carry its settings: it used to be built with whatever was active when evaluated.
+    settings_table: std.ArrayListUnmanaged(EngineConfig) = .empty,
+    /// The settings new nodes get; the VM sets it whenever its config changes.
+    current_settings: SettingsId = 0,
+
+    pub fn init(gpa: std.mem.Allocator) DAGBuilder {
+        return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *DAGBuilder) void {
-        self.arena.deinit(); // Instant O(1) bulk free of all DAG memory!
+        for (self.concrete_handles.items) |h| kernel.destruct(h);
+        self.nodes.deinit(self.gpa);
+        self.extra_data.deinit(self.gpa);
+        self.numbers.deinit(self.gpa);
+        self.poly_points.deinit(self.gpa);
+        self.poly_faces.deinit(self.gpa);
+        self.concrete_handles.deinit(self.gpa);
+        self.node_hashes.deinit(self.gpa);
+        self.dedup_map.deinit(self.gpa);
+        self.settings_table.deinit(self.gpa);
     }
 
     inline fn allocator(self: *DAGBuilder) std.mem.Allocator {
-        return self.arena.allocator();
+        return self.gpa;
+    }
+
+    // --- Settings ---
+
+    /// The id of `config`, added to the table if it is new.
+    pub fn internSettings(self: *DAGBuilder, config: EngineConfig) !SettingsId {
+        if (std.meta.eql(config, EngineConfig{})) return 0;
+        for (self.settings_table.items, 1..) |known, id| {
+            if (std.meta.eql(known, config)) return @intCast(id);
+        }
+        if (self.settings_table.items.len == std.math.maxInt(SettingsId)) return error.TooManySettings;
+        try self.settings_table.append(self.allocator(), config);
+        return @intCast(self.settings_table.items.len);
+    }
+
+    pub fn settings(self: *const DAGBuilder, id: SettingsId) EngineConfig {
+        return if (id == 0) .{} else self.settings_table.items[id - 1];
     }
 
     // --- Allocation & Rollback Infrastructure ---
@@ -111,19 +194,38 @@ pub const DAGBuilder = struct {
     }
 
     /// Primary internal entry point to register nodes with common subexpression elimination (CSE)
-    fn appendNodeWithRollback(self: *DAGBuilder, new_node: DAGNode, snap: StateSnapshot) !DAGNodeIndex {
+    fn appendNodeWithRollback(self: *DAGBuilder, node: DAGNode, snap: StateSnapshot) !DAGNodeIndex {
         errdefer self.rollback(snap);
+        var new_node = node;
+        new_node.settings = self.current_settings;
 
-        // SAFETY: Prevents the DAG index from reaching the maxInt(u32) sentinel used by Concrete Geometry
-        if (self.nodes.items.len >= std.math.maxInt(u32) - 1) {
+        // SAFETY: Prevents the DAG index from reaching CONCRETE_NODE_SENTINEL
+        if (self.nodes.items.len >= CONCRETE_NODE_SENTINEL - 1) {
             return error.ExecutionLimitExceeded;
         }
 
-        const hash = self.computeNodeHash(new_node);
-        if (self.dedup_map.get(hash)) |existing_idx| {
-            // Roll back array mutations if CSE found an existing identical node
-            self.rollback(snap);
-            return existing_idx;
+        // Rejects an operand that is no node, in every build (childHash).
+        var hash = try self.computeNodeHash(new_node);
+        // Anything else malformed is a bug in the native that built the node: stop there,
+        // with its trace, where checking is cheap enough.
+        if (VERIFY_NODES) if (dag_verifier.problem(self, new_node)) |why| {
+            std.debug.panic("DAG builder bug: a {s} node is malformed: {s}", .{ @tagName(new_node.tag), why });
+        };
+        var probe: u64 = 0;
+        while (self.dedup_map.get(hash)) |existing_idx| {
+            // A hash hit alone is not proof of identity: verify structurally before reusing.
+            if (self.nodesEqual(self.nodes.items[existing_idx], new_node)) {
+                // Roll back array mutations if CSE found an existing identical node
+                self.rollback(snap);
+                return existing_idx;
+            }
+            // Genuine collision between different nodes. Derive a fresh deterministic
+            // hash so the new node gets its own dedup slot AND its own dag_cache key
+            // (the evaluator caches handles by node hash).
+            probe += 1;
+            var rehasher = std.hash.Wyhash.init(probe);
+            rehasher.update(std.mem.asBytes(&hash));
+            hash = rehasher.final();
         }
 
         const alloc = self.allocator();
@@ -184,6 +286,12 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .batch_union_op, .flags = 0, .data = extra_idx }, snap);
     }
 
+    /// The empty Solid (`is_3d`) or Sketch.
+    pub fn addEmpty(self: *DAGBuilder, is_3d: bool) !DAGNodeIndex {
+        const snap = self.snapshot();
+        return try self.appendNodeWithRollback(.{ .tag = if (is_3d) .empty_solid else .empty_sketch, .flags = 0, .data = 0 }, snap);
+    }
+
     pub fn addCube(self: *DAGBuilder, x: f64, y: f64, z: f64, center: bool) !DAGNodeIndex {
         const snap = self.snapshot();
         const num_idx = try self.appendNumbers(&.{ x, y, z });
@@ -196,9 +304,9 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .cylinder, .flags = if (center) 1 else 0, .data = num_idx }, snap);
     }
 
-    pub fn addSphere(self: *DAGBuilder, radius: f64) !DAGNodeIndex {
+    pub fn addSphere(self: *DAGBuilder, radius: f64, segments: i32) !DAGNodeIndex {
         const snap = self.snapshot();
-        const num_idx = try self.appendNumbers(&.{radius});
+        const num_idx = try self.appendNumbers(&.{ radius, @floatFromInt(segments) });
         return try self.appendNodeWithRollback(.{ .tag = .sphere, .flags = 0, .data = num_idx }, snap);
     }
 
@@ -222,7 +330,13 @@ pub const DAGBuilder = struct {
         // We hash the raw bytes of the vertices and faces exactly ONCE upon creation.
         // This prevents the CSE engine from re-hashing millions of floats every time this node is evaluated.
         var hasher = std.hash.Wyhash.init(0);
+        // Hash the lengths too, otherwise moving bytes between the pts/faces
+        // streams (same concatenation) would collide.
+        const pts_len: u64 = pts.len;
+        const faces_len: u64 = faces.len;
+        hasher.update(std.mem.asBytes(&pts_len));
         hasher.update(std.mem.sliceAsBytes(pts));
+        hasher.update(std.mem.asBytes(&faces_len));
         hasher.update(std.mem.sliceAsBytes(faces));
         const geom_hash = hasher.final();
 
@@ -258,6 +372,16 @@ pub const DAGBuilder = struct {
         }
 
         return try self.appendNodeWithRollback(.{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset }, snap);
+    }
+
+    /// Registers an evaluated handle as a DAG leaf. On success the builder takes
+    /// ownership of `handle`; on error the caller still owns it.
+    pub fn addConcrete(self: *DAGBuilder, handle: geom.GeometryHandle) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const slot: u32 = @intCast(self.concrete_handles.items.len);
+        try self.concrete_handles.append(self.allocator(), handle);
+        errdefer self.concrete_handles.items.len = slot;
+        return try self.appendNodeWithRollback(.{ .tag = .concrete, .flags = 0, .data = slot }, snap);
     }
 
     pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
@@ -399,8 +523,11 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64 } {
-        return .{ .radius = self.numbers.items[node.data] };
+    pub inline fn getSpherePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, segments: i32 } {
+        return .{
+            .radius = self.numbers.items[node.data],
+            .segments = @intFromFloat(self.numbers.items[node.data + 1]),
+        };
     }
 
     pub inline fn getSquarePayload(self: *const DAGBuilder, node: DAGNode) struct { x: f64, y: f64, center: bool } {
@@ -436,8 +563,6 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub const getRotatePayload = getTranslatePayload;
-    pub const getScalePayload = getTranslatePayload;
     pub const getMirrorPayload = getTranslatePayload;
 
     pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
@@ -534,12 +659,23 @@ pub const DAGBuilder = struct {
 
     // --- Deterministic Wyhash CSE Node Hashing ---
 
-    fn computeNodeHash(self: *const DAGBuilder, node: DAGNode) u64 {
+    /// Hash of an existing child node. Rejects out-of-range indices (e.g. the
+    /// CONCRETE_NODE_SENTINEL of a legacy concrete geometry) with a real error,
+    /// since an OOB slice index is UB in ReleaseFast.
+    inline fn childHash(self: *const DAGBuilder, idx: DAGNodeIndex) !u64 {
+        if (idx >= self.node_hashes.items.len) return error.InvalidDAGNode;
+        return self.node_hashes.items[idx];
+    }
+
+    fn computeNodeHash(self: *const DAGBuilder, node: DAGNode) !u64 {
         var hasher = std.hash.Wyhash.init(0);
         hasher.update(std.mem.asBytes(&node.tag));
         hasher.update(std.mem.asBytes(&node.flags));
+        // By content, not id: the hash keys the result cache, which outlives the table.
+        hasher.update(std.mem.asBytes(&self.settings(node.settings).resultHash()));
 
         switch (node.tag) {
+            .empty_solid, .empty_sketch => {}, // the tag says it all
             .cube => {
                 const p = self.getCubeDimensions(node);
                 hasher.update(std.mem.asBytes(&p.x));
@@ -556,6 +692,7 @@ pub const DAGBuilder = struct {
             .sphere => {
                 const p = self.getSpherePayload(node);
                 hasher.update(std.mem.asBytes(&p.radius));
+                hasher.update(std.mem.asBytes(&p.segments));
             },
             .square => {
                 const p = self.getSquarePayload(node);
@@ -570,6 +707,7 @@ pub const DAGBuilder = struct {
             .polygon => {
                 const num_idx = self.extra_data.items[node.data];
                 const pt_count = self.extra_data.items[node.data + 1];
+                hasher.update(std.mem.asBytes(&pt_count));
                 for (0..pt_count) |i| {
                     hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2)]));
                     hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2) + 1]));
@@ -581,6 +719,8 @@ pub const DAGBuilder = struct {
                 for (0..num_contours) |i| {
                     const pts_start = self.extra_data.items[node.data + 1 + (i * 2)];
                     const pts_len = self.extra_data.items[node.data + 1 + (i * 2) + 1];
+                    // Per-contour length: [3 pts][5 pts] must not hash like [4 pts][4 pts].
+                    hasher.update(std.mem.asBytes(&pts_len));
                     for (0..pts_len) |pt_idx| {
                         hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2)]));
                         hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2) + 1]));
@@ -594,25 +734,27 @@ pub const DAGBuilder = struct {
             },
             .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
                 const p = self.getBinaryPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.left]));
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.right]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.left))));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.right))));
             },
             .batch_union_op, .batch_hull_op => {
                 const targets = self.getBatchUnionPayload(node);
+                const count: u64 = targets.len;
+                hasher.update(std.mem.asBytes(&count));
                 for (targets) |t_idx| {
-                    hasher.update(std.mem.asBytes(&self.node_hashes.items[t_idx]));
+                    hasher.update(std.mem.asBytes(&(try self.childHash(t_idx))));
                 }
             },
             .translate, .rotate, .scale, .mirror => {
                 const p = self.getTranslatePayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.x));
                 hasher.update(std.mem.asBytes(&p.y));
                 hasher.update(std.mem.asBytes(&p.z));
             },
             .extrude => {
                 const p = self.getExtrudePayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.height));
                 hasher.update(std.mem.asBytes(&p.slices));
                 hasher.update(std.mem.asBytes(&p.twist_degrees));
@@ -621,13 +763,13 @@ pub const DAGBuilder = struct {
             },
             .revolve => {
                 const p = self.getRevolvePayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.segments));
                 hasher.update(std.mem.asBytes(&p.degrees));
             },
             .trim_by_plane => {
                 const p = self.getTrimByPlanePayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.nx));
                 hasher.update(std.mem.asBytes(&p.ny));
                 hasher.update(std.mem.asBytes(&p.nz));
@@ -635,41 +777,116 @@ pub const DAGBuilder = struct {
             },
             .offset => {
                 const p = self.getOffsetPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.delta));
                 hasher.update(std.mem.asBytes(&p.join_type));
             },
             .loft => {
                 const p = self.getLoftPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.base]));
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.top]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.base))));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.top))));
                 hasher.update(std.mem.asBytes(&p.height));
             },
             .slice_op => {
                 const p = self.getSlicePayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.height));
             },
             .project_op, .hull => {
                 const p = self.getProjectPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
             },
             .transform_matrix, .cs_transform => {
                 const p = self.getTransformPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
 
                 const count: u32 = if (node.tag == .transform_matrix) 12 else 6;
                 for (0..count) |i| {
                     hasher.update(std.mem.asBytes(&self.numbers.items[p.num_idx + i]));
                 }
             },
+            .concrete => {
+                // Each wrapped handle is unique; its table slot identifies it.
+                hasher.update(std.mem.asBytes(&node.data));
+            },
             .set_material => {
                 const p = self.getMaterialPayload(node);
-                hasher.update(std.mem.asBytes(&self.node_hashes.items[p.target]));
+                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
                 hasher.update(std.mem.asBytes(&p.material_id));
             },
         }
         return hasher.final();
+    }
+
+    // --- Structural Equality (CSE verification) ---
+
+    inline fn numbersEql(self: *const DAGBuilder, a_idx: u32, b_idx: u32, count: u32) bool {
+        const a = self.numbers.items[a_idx .. a_idx + count];
+        const b = self.numbers.items[b_idx .. b_idx + count];
+        // Bitwise, to match the byte-wise hashing (and so NaN payloads compare equal).
+        return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
+    }
+
+    inline fn extraEql(self: *const DAGBuilder, a_idx: u32, b_idx: u32, count: u32) bool {
+        return std.mem.eql(u32, self.extra_data.items[a_idx .. a_idx + count], self.extra_data.items[b_idx .. b_idx + count]);
+    }
+
+    /// Compares tag, flags and every side-table payload. Child references are
+    /// compared by index: children are themselves deduplicated exactly, so equal
+    /// sub-DAGs always share one index.
+    fn nodesEqual(self: *const DAGBuilder, a: DAGNode, b: DAGNode) bool {
+        if (a.tag != b.tag or a.flags != b.flags or a.settings != b.settings) return false;
+        const ex = self.extra_data.items;
+
+        return switch (a.tag) {
+            .empty_solid, .empty_sketch => true,
+            .cube => self.numbersEql(a.data, b.data, 3),
+            .cylinder => self.numbersEql(a.data, b.data, 4),
+            .sphere, .square, .circle => self.numbersEql(a.data, b.data, 2),
+            .polygon => blk: {
+                const count = ex[a.data + 1];
+                if (count != ex[b.data + 1]) break :blk false;
+                break :blk self.numbersEql(ex[a.data], ex[b.data], count * 2);
+            },
+            .polygons_even_odd => blk: {
+                const n = ex[a.data];
+                if (n != ex[b.data]) break :blk false;
+                for (0..n) |i| {
+                    const off: u32 = @intCast(1 + i * 2);
+                    const len = ex[a.data + off + 1];
+                    if (len != ex[b.data + off + 1]) break :blk false;
+                    if (!self.numbersEql(ex[a.data + off], ex[b.data + off], len * 2)) break :blk false;
+                }
+                break :blk true;
+            },
+            .polyhedron_op => blk: {
+                const pa = self.getPolyhedronPayload(a);
+                const pb = self.getPolyhedronPayload(b);
+                break :blk std.mem.eql(u8, std.mem.sliceAsBytes(pa.pts), std.mem.sliceAsBytes(pb.pts)) and
+                    std.mem.eql(u8, std.mem.sliceAsBytes(pa.faces), std.mem.sliceAsBytes(pb.faces));
+            },
+            .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => self.extraEql(a.data, b.data, 2),
+            .batch_union_op, .batch_hull_op => std.mem.eql(DAGNodeIndex, self.getBatchUnionPayload(a), self.getBatchUnionPayload(b)),
+            .project_op, .hull => ex[a.data] == ex[b.data],
+            .concrete => a.data == b.data,
+            .set_material => self.extraEql(a.data, b.data, 2),
+            .loft => self.extraEql(a.data, b.data, 2) and self.numbersEql(ex[a.data + 2], ex[b.data + 2], 1),
+            // Remaining unary ops: [target, num_idx] in extra_data plus N numbers.
+            .translate, .rotate, .scale, .mirror, .transform_matrix, .cs_transform, .extrude, .revolve, .trim_by_plane, .offset, .slice_op => blk: {
+                if (ex[a.data] != ex[b.data]) break :blk false;
+                const count: u32 = switch (a.tag) {
+                    .translate, .rotate, .scale, .mirror => 3,
+                    .transform_matrix => 12,
+                    .cs_transform => 6,
+                    .extrude => 5,
+                    .revolve => 2,
+                    .trim_by_plane => 4,
+                    .offset, .slice_op => 1,
+                    else => unreachable,
+                };
+                break :blk self.numbersEql(ex[a.data + 1], ex[b.data + 1], count);
+            },
+        };
     }
 
     // --- Hybrid CSG Tree Balancing ---
@@ -678,7 +895,9 @@ pub const DAGBuilder = struct {
     /// or a Balanced Binary Tree depending on the operation type.
     pub fn addBalancedChain(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) !DAGNodeIndex {
         if (targets.len == 0) return error.EmptyChain;
-        if (targets.len == 1) return targets[0];
+        // A union of one shape is that shape, but its hull is not: `part.hull` with no
+        // arguments used to return `part` itself, concave or not.
+        if (targets.len == 1) return if (tag == .hull or tag == .batch_hull_op) self.addHull(targets[0]) else targets[0];
 
         // 1. Homogeneous Chain Flattening (Spatial $O(N \log N)$ acceleration in Manifold)
         // Commutative associative ops are best sent to the C++ kernel as a single array.
@@ -689,8 +908,15 @@ pub const DAGBuilder = struct {
             return self.addBatchHull(targets);
         }
 
+        // A difference isn't associative: a - b - c is a - (b ∪ c). The balanced tree
+        // below made (a - b) - (c - d) of it, putting back whatever c cut out of d.
+        if (tag == .difference_op or tag == .cs_difference_op) {
+            const cutters = try self.addBalancedChain(if (tag == .difference_op) .union_op else .cs_union_op, targets[1..]);
+            return self.addBinary(tag, targets[0], cutters);
+        }
+
         // 2. Heterogeneous/Non-Batchable Chain Balancing
-        // For Differences, Intersections, or 2D ops, we reduce the DAG depth
+        // For Intersections or 2D ops, we reduce the DAG depth
         // from $O(N)$ to $O(\log N)$ by building a balanced binary tree `(a+b) + (c+d)`.
         // This is critical for interactive memoization (Sliders) so a change in `d`
         // doesn't invalidate `a+b`.

@@ -1,3 +1,6 @@
+//! Flattens quadratic and cubic Bézier curves into line segments by De Casteljau
+//! subdivision (`flattenQuadratic`, `flattenCubic`); used by text.zig for glyph outlines.
+
 const std = @import("std");
 
 inline fn midpoint(a: [2]f64, b: [2]f64) [2]f64 {

@@ -1,5 +1,16 @@
+//! The syntax tree the parser builds: a `Tree` of 8-byte `Node`s whose payloads live in flat
+//! side arrays (`extra_data`, interned strings, numbers, typed spans), read back as typed
+//! structs by accessors such as `Tree.methodCall`. `Builder` creates the nodes and interns
+//! their strings.
+
 const std = @import("std");
+const string_escape = @import("string_escape.zig");
 pub const Location = @import("token.zig").Location;
+
+// --- AST Builder ---
+/// Longest number literal accepted (underscores excluded): longer ones are errors, not
+/// silently cut short.
+pub const MAX_NUMBER_LITERAL_LEN = 128;
 
 pub const UnaryOp = enum {
     negate, // -
@@ -80,7 +91,6 @@ pub const Tag = enum(u8) {
     singleton_class,
     begin_stmt,
     return_stmt,
-    yield_stmt,
     break_stmt,
     next_stmt,
     docstring,
@@ -93,7 +103,6 @@ pub const Tag = enum(u8) {
     splat_expr,
     double_splat_expr,
     defined_expr,
-    each_expr,
     rescue_modifier,
     interpolated_string,
 };
@@ -122,11 +131,6 @@ pub const NamedArg = struct {
 pub const HashEntry = struct {
     key: NodeIndex,
     value: NodeIndex,
-};
-
-pub const ForBinding = struct {
-    name: StringId,
-    range: NodeIndex,
 };
 
 pub const WhenBranch = struct {
@@ -202,6 +206,9 @@ pub const MethodCall = struct {
     block: NodeIndex = .none,
     is_safe: bool = false,
     end_token: u32 = 0,
+    /// The token of the method's name: after the `.` for a call on a receiver (whose main
+    /// token is the receiver's), so the formatter can tell where the author broke a chain.
+    name_token: u32 = 0,
 };
 
 pub const SuperCall = struct {
@@ -246,10 +253,12 @@ pub const WhileStmt = struct {
     is_until: bool = false,
 };
 
+/// `for a, *rest in iterable ... end`: each element of `iterable` is assigned to `targets`
+/// as a multiple assignment would (one target takes the element whole).
 pub const ForStmt = struct {
-    bindings: Span, // Span of ForBinding
+    targets: Span, // Span of LhsExpr
+    iterable: NodeIndex,
     body: NodeIndex,
-    is_intersection: bool = false,
 };
 
 pub const CaseStmt = struct {
@@ -341,11 +350,15 @@ pub const Tree = struct {
     named_args: std.ArrayListUnmanaged(NamedArg) = .empty,
     params: std.ArrayListUnmanaged(Param) = .empty,
     hash_entries: std.ArrayListUnmanaged(HashEntry) = .empty,
-    for_bindings: std.ArrayListUnmanaged(ForBinding) = .empty,
     when_branches: std.ArrayListUnmanaged(WhenBranch) = .empty,
     lhs_exprs: std.ArrayListUnmanaged(LhsExpr) = .empty,
     rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
     alias_pairs: std.ArrayListUnmanaged(AliasPair) = .empty,
+
+    /// The expressions written in parentheses, `(a + b)`. Nothing else is kept about
+    /// grouping (the nodes say what it means); the formatter uses this to print the
+    /// parentheses the author wrote.
+    grouped: std.AutoHashMapUnmanaged(NodeIndex, void) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Tree {
         _ = allocator;
@@ -365,11 +378,15 @@ pub const Tree = struct {
         self.named_args.deinit(allocator);
         self.params.deinit(allocator);
         self.hash_entries.deinit(allocator);
-        self.for_bindings.deinit(allocator);
         self.when_branches.deinit(allocator);
         self.lhs_exprs.deinit(allocator);
         self.rescue_clauses.deinit(allocator);
         self.alias_pairs.deinit(allocator);
+        self.grouped.deinit(allocator);
+    }
+
+    pub fn isGrouped(self: *const Tree, idx: NodeIndex) bool {
+        return self.grouped.contains(idx);
     }
 
     /// Safely extracts the StringId payload from a node
@@ -412,10 +429,6 @@ pub const Tree = struct {
 
     pub fn getHashEntries(self: *const Tree, span: Span) []const HashEntry {
         return self.hash_entries.items[span.start..span.end];
-    }
-
-    pub fn getForBindings(self: *const Tree, span: Span) []const ForBinding {
-        return self.for_bindings.items[span.start..span.end];
     }
 
     pub fn getWhenBranches(self: *const Tree, span: Span) []const WhenBranch {
@@ -539,6 +552,7 @@ pub const Tree = struct {
             .block = @fromBackingInt(self.extra_data.items[base + 4]),
             .is_safe = self.extra_data.items[base + 5] != 0,
             .end_token = self.extra_data.items[base + 6],
+            .name_token = self.extra_data.items[base + 7],
         };
     }
 
@@ -600,9 +614,9 @@ pub const Tree = struct {
     pub fn forStmt(self: *const Tree, node: *const Node) ForStmt {
         const base = node.data;
         return .{
-            .bindings = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .body = @fromBackingInt(self.extra_data.items[base + 2]),
-            .is_intersection = self.extra_data.items[base + 3] != 0,
+            .targets = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
+            .iterable = @fromBackingInt(self.extra_data.items[base + 2]),
+            .body = @fromBackingInt(self.extra_data.items[base + 3]),
         };
     }
 
@@ -673,6 +687,11 @@ pub const Tree = struct {
         };
     }
 
+    /// The `}` that closes a hash literal (its entries are `nodeSpan`).
+    pub fn hashEndToken(self: *const Tree, node: *const Node) u32 {
+        return self.extra_data.items[node.data + 2];
+    }
+
     pub fn arrayLiteral(self: *const Tree, node: *const Node) ArrayLiteral {
         const base = node.data;
         return .{
@@ -708,7 +727,33 @@ pub const Tree = struct {
     }
 };
 
-// --- AST Builder ---
+/// The value of a number literal (`1_000`, `2.5e3`, `0xff`, `0b101`, `0o17`), or null when
+/// it is malformed, too long, or out of range (an integer beyond i64, or a value beyond
+/// ±1.8e308). Each used to become 0 or Infinity silently.
+pub fn parseNumberLiteral(lexeme: []const u8) ?f64 {
+    var buf: [MAX_NUMBER_LITERAL_LEN]u8 = undefined;
+    var len: usize = 0;
+    for (lexeme) |c| {
+        if (c == '_') continue;
+        if (len == buf.len) return null;
+        buf[len] = c;
+        len += 1;
+    }
+    const digits = buf[0..len];
+
+    const radix: ?u8 = if (digits.len > 2 and digits[0] == '0') switch (digits[1]) {
+        'x', 'X' => 16,
+        'b', 'B' => 2,
+        'o', 'O' => 8,
+        else => null,
+    } else null;
+    const val: f64 = if (radix) |r|
+        @floatFromInt(std.fmt.parseInt(i64, digits[2..], r) catch return null)
+    else
+        std.fmt.parseFloat(f64, digits) catch return null;
+    return if (std.math.isFinite(val)) val else null;
+}
+
 pub const Builder = struct {
     allocator: std.mem.Allocator,
     tree: Tree,
@@ -807,36 +852,7 @@ pub const Builder = struct {
 
         var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, input.len);
         defer buf.deinit(self.allocator);
-
-        var i: usize = 0;
-        while (i < input.len) : (i += 1) {
-            if (input[i] == '\\' and i + 1 < input.len) {
-                const next = input[i + 1];
-                const escaped_byte: ?u8 = switch (next) {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    'f' => 12, // Form feed (\f)
-                    'v' => 11, // Vertical tab (\v)
-                    'b' => 8, // Backspace (\b)
-                    'a' => 7, // Bell (\a)
-                    'e' => 27, // Escape (\e)
-                    '"' => '"',
-                    '\\' => '\\',
-                    '#' => '#',
-                    '0' => 0,
-                    else => next,
-                };
-
-                if (escaped_byte) |b| {
-                    try buf.append(self.allocator, b);
-                    i += 1;
-                    continue;
-                }
-            }
-            try buf.append(self.allocator, input[i]);
-        }
-
+        try string_escape.unescapeInto(&buf, self.allocator, input);
         return try self.intern(buf.items);
     }
 
@@ -917,12 +933,6 @@ pub const Builder = struct {
         return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
     }
 
-    pub fn addForBindings(self: *Builder, items: []const ForBinding) !Span {
-        const start: u32 = @intCast(self.tree.for_bindings.items.len);
-        try self.tree.for_bindings.appendSlice(self.allocator, items);
-        return Span{ .start = start, .end = start + @as(u32, @intCast(items.len)) };
-    }
-
     pub fn addHashEntries(self: *Builder, items: []const HashEntry) !Span {
         const start: u32 = @intCast(self.tree.hash_entries.items.len);
         try self.tree.hash_entries.appendSlice(self.allocator, items);
@@ -936,28 +946,8 @@ pub const Builder = struct {
     }
 
     pub fn number(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        var clean_buf: [128]u8 = undefined;
-        var clean_len: usize = 0;
-        for (lexeme_str) |c| {
-            if (c != '_') {
-                if (clean_len < clean_buf.len) {
-                    clean_buf[clean_len] = c;
-                    clean_len += 1;
-                }
-            }
-        }
-        const cleaned = clean_buf[0..clean_len];
-
-        var val: f64 = 0.0;
-        if (std.mem.startsWith(u8, cleaned, "0x") or std.mem.startsWith(u8, cleaned, "0X")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 16) catch 0));
-        } else if (std.mem.startsWith(u8, cleaned, "0b") or std.mem.startsWith(u8, cleaned, "0B")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 2) catch 0));
-        } else if (std.mem.startsWith(u8, cleaned, "0o") or std.mem.startsWith(u8, cleaned, "0O")) {
-            val = @as(f64, @floatFromInt(std.fmt.parseInt(i64, cleaned[2..], 8) catch 0));
-        } else {
-            val = std.fmt.parseFloat(f64, cleaned) catch 0.0;
-        }
+        // The parser reports a literal that doesn't parse; 0 keeps the tree well-formed.
+        const val = parseNumberLiteral(lexeme_str) orelse 0.0;
 
         // --- Float Deduplication Logic ---
         const bits: u64 = @bitCast(val);
@@ -1008,6 +998,11 @@ pub const Builder = struct {
         return self.createNode(.boolean, main_token, if (val) 1 else 0);
     }
 
+    /// Records that `idx` was written in parentheses (see Tree.grouped).
+    pub fn markGrouped(self: *Builder, idx: NodeIndex) !void {
+        try self.tree.grouped.put(self.allocator, idx, {});
+    }
+
     pub fn nilNode(self: *Builder, main_token: u24) !NodeIndex {
         return self.createNode(.nil, main_token, 0);
     }
@@ -1056,7 +1051,12 @@ pub const Builder = struct {
     }
 
     pub fn methodCall(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, end_token: u32, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe, end_token });
+        return self.methodCallAt(receiver, name, args, block_idx, is_safe, end_token, main_token, main_token);
+    }
+
+    /// `methodCall` for a call whose name isn't at its main token (`a.b`).
+    pub fn methodCallAt(self: *Builder, receiver: NodeIndex, name: StringId, args: Span, block_idx: NodeIndex, is_safe: bool, end_token: u32, main_token: u24, name_token: u32) !NodeIndex {
+        const data_idx = try self.addExtra(.{ receiver, name, args, block_idx, is_safe, end_token, name_token });
         return self.createNode(.method_call, main_token, data_idx);
     }
 
@@ -1090,8 +1090,8 @@ pub const Builder = struct {
         return self.createNode(.while_stmt, main_token, data_idx);
     }
 
-    pub fn forStmt(self: *Builder, bindings: Span, body: NodeIndex, is_intersection: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ bindings, body, is_intersection });
+    pub fn forStmt(self: *Builder, targets: Span, iterable: NodeIndex, body: NodeIndex, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ targets, iterable, body });
         return self.createNode(.for_stmt, main_token, data_idx);
     }
 
@@ -1150,8 +1150,8 @@ pub const Builder = struct {
         return self.createNode(.singleton_class, main_token, data_idx);
     }
 
-    pub fn hashLiteral(self: *Builder, entries: Span, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{entries});
+    pub fn hashLiteral(self: *Builder, entries: Span, end_token: u32, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ entries, end_token });
         return self.createNode(.hash_literal, main_token, data_idx);
     }
 
@@ -1163,11 +1163,6 @@ pub const Builder = struct {
     pub fn interpolatedString(self: *Builder, parts: Span, main_token: u24) !NodeIndex {
         const data_idx = try self.addExtra(.{parts});
         return self.createNode(.interpolated_string, main_token, data_idx);
-    }
-
-    pub fn yieldStmt(self: *Builder, args: Span, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{args});
-        return self.createNode(.yield_stmt, main_token, data_idx);
     }
 
     pub fn returnStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {
@@ -1188,10 +1183,6 @@ pub const Builder = struct {
 
     pub fn doubleSplatExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
         return self.createNode(.double_splat_expr, main_token, @backingInt(expr));
-    }
-
-    pub fn eachExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.each_expr, main_token, @backingInt(expr));
     }
 
     pub fn addDocString(self: *Builder, doc: DocString) !u32 {

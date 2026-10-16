@@ -147,6 +147,7 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     func.chunk = closure_chunk;
     func.owns_chunk = false;
     func.arity = 2; // EXPECTS 2 ARGS!
+    func.local_count = 3; // slot 0: the closure, slots 1-2: the parameters
 
     // 2. Call it with only ONE argument
     var main_chunk = chunk.Chunk.init();
@@ -164,6 +165,7 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     // Execute with arg_count = 1
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.write(testing.allocator, 0, 0); // CallFlags
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 5;
 
@@ -292,4 +294,80 @@ test "WASM Math: Pure-Zig Non-Linear LM Solver (Circle-Line Intersection)" {
     const expected = 5.0 / @sqrt(2.0);
     try testing.expectApproxEqAbs(expected, vars[0], 1e-4);
     try testing.expectApproxEqAbs(expected, vars[1], 1e-4);
+}
+
+test "WASM Interop: build_model_wasm supports benchmark blocks (vm.io must be a real Io)" {
+    // Audit regression: buildModel used to receive `io = undefined`, so Clock.now in
+    // `benchmark` dereferenced garbage and trapped the instance.
+    const src =
+        \\b = benchmark("t") do
+        \\  1 + 1
+        \\end
+        \\cube(1)
+    ;
+    const fmt = "stl";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len);
+    try testing.expect(res != null);
+    try testing.expect(out_len > 84);
+    wasm.wasm_free(@constCast(res.?), out_len);
+}
+
+/// Runs build_model_wasm on `src`, expecting it to fail, and returns get_last_error().
+fn expectBuildFailure(src: []const u8) ![]const u8 {
+    const fmt = "stl";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len);
+    if (res) |ptr| {
+        wasm.wasm_free(@constCast(ptr), out_len);
+        return error.TestUnexpectedResult;
+    }
+    try testing.expectEqual(@as(usize, 0), out_len);
+    return std.mem.sliceTo(wasm.get_last_error(), 0);
+}
+
+test "WASM Interop: build_model_wasm rejects syntax errors with their line:col" {
+    // The parser drops `y = )` and recovers; this used to export the cube anyway.
+    const src =
+        \\x = 1
+        \\y = )
+        \\cube(x)
+    ;
+    try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", try expectBuildFailure(src));
+}
+
+test "WASM Interop: build_model_wasm reports the runtime error message" {
+    const src =
+        \\raise "Plate too thin"
+        \\cube(1)
+    ;
+    try testing.expectEqualStrings("RuntimeError: Plate too thin", try expectBuildFailure(src));
+
+    // A native that reports and fails: its own message, not the generic one raised after it
+    const native_msg = try expectBuildFailure("Math.sign(\"x\")");
+    try testing.expect(std.mem.indexOf(u8, native_msg, "Math.sign expects a number") != null);
+    try testing.expect(std.mem.indexOf(u8, native_msg, "Native Execution Error") == null);
+}
+
+test "WASM Interop: build_model_wasm names the error when there is no message" {
+    // The script runs fine but leaves nothing to export
+    try testing.expectEqualStrings("Build Error: NoGeometry", try expectBuildFailure("x = 1"));
+}
+
+test "WASM Interop: get_last_error truncates long messages on a UTF-8 boundary" {
+    // "RuntimeError: x" is 15 bytes, so the 2-byte 'é' sequences straddle the byte limit.
+    const src =
+        \\s = "x"
+        \\i = 0
+        \\while i < 800
+        \\  s = s + "é"
+        \\  i += 1
+        \\end
+        \\raise s
+    ;
+    const msg = try expectBuildFailure(src);
+    try testing.expect(std.mem.startsWith(u8, msg, "RuntimeError: xé"));
+    try testing.expect(msg.len <= wasm.MAX_ERROR_MSG_LEN);
+    try testing.expect(msg.len > wasm.MAX_ERROR_MSG_LEN - "é".len);
+    try testing.expect(std.unicode.utf8ValidateSlice(msg));
 }

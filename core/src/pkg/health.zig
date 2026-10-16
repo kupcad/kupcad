@@ -1,6 +1,12 @@
+//! `kupcad pkg doctor`: `Doctor.run` checks the package database's SQLite integrity, evicts
+//! index entries whose blob file is gone from the content-addressed store, and re-registers
+//! blob files the index doesn't list, printing each step.
+
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
+const Printer = @import("../log.zig").Printer;
+const clock = @import("clock.zig");
 
 const log = std.log.scoped(.pkg);
 
@@ -9,37 +15,35 @@ pub const Doctor = struct {
     io: std.Io,
     cafs: *Cafs,
     store: *Store,
+    /// Where the report goes (each check and what was healed).
+    printer: Printer,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store) Doctor {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store, printer: Printer) Doctor {
         return .{
             .allocator = allocator,
             .io = io,
             .cafs = cafs,
             .store = store,
+            .printer = printer,
         };
     }
 
     /// Audits and heals the CAFS and database state
     pub fn run(self: *Doctor) !void {
-        log.info("Running KupCAD Doctor...\n", .{});
+        self.printer.print("Running KupCAD Doctor...\n", .{});
 
         try self.checkDbIntegrity();
         try self.healMissingBlobs();
         try self.healOrphanedBlobs();
 
-        log.info("System health check complete.\n", .{});
+        self.printer.print("System health check complete.\n", .{});
     }
 
     fn checkDbIntegrity(self: *Doctor) !void {
-        log.info("[1/3] Checking SQLite integrity... ", .{});
-        const stmt = try self.store.db.prepare("PRAGMA quick_check");
-        defer stmt.deinit();
-
-        if (try stmt.one(struct { result: []const u8 }, .{}, .{})) |row| {
-            if (std.mem.eql(u8, row.result, "ok")) {
-                log.info("OK\n", .{});
-                return;
-            }
+        self.printer.print("[1/3] Checking SQLite integrity... ", .{});
+        if (try self.store.quickCheck()) {
+            self.printer.print("OK\n", .{});
+            return;
         }
 
         log.err("CORRUPTED!\n", .{});
@@ -47,48 +51,38 @@ pub const Doctor = struct {
     }
 
     fn healMissingBlobs(self: *Doctor) !void {
-        log.info("[2/3] Scanning for missing physical files... ", .{});
+        self.printer.print("[2/3] Scanning for missing physical files... ", .{});
 
-        const query = "SELECT hash FROM files";
-        var stmt = try self.store.db.prepare(query);
-        defer stmt.deinit();
-
-        var rows = try stmt.iterator(struct { hash: []const u8 }, .{});
+        // Listed first, as evicting while stepping a SELECT over the same table is unsafe.
+        const hashes = try self.store.blobHashes(self.allocator);
+        defer {
+            for (hashes) |h| self.allocator.free(h);
+            self.allocator.free(hashes);
+        }
         const cwd = std.Io.Dir.cwd();
         var missing_count: usize = 0;
-
-        while (try rows.next()) |row| {
-            const final_path = try self.allocator.print("{s}/files/{s}", .{ self.cafs.global_dir_path, row.hash });
+        for (hashes) |hash| {
+            const final_path = try self.allocator.print("{s}/files/{s}", .{ self.cafs.global_dir_path, hash });
             defer self.allocator.free(final_path);
-
             const file_exists = if (cwd.openFile(self.io, final_path, .{})) |f| blk: {
                 f.close(self.io);
                 break :blk true;
             } else |_| false;
-
-            if (!file_exists) {
-                // Delete from DB so it gets re-downloaded next install
-                const del_files = try self.allocator.print("DELETE FROM files WHERE hash = '{s}'", .{row.hash});
-                defer self.allocator.free(del_files);
-                try self.store.db.exec(del_files, .{}, .{});
-
-                const del_pkg = try self.allocator.print("DELETE FROM package_files WHERE file_hash = '{s}'", .{row.hash});
-                defer self.allocator.free(del_pkg);
-                try self.store.db.exec(del_pkg, .{}, .{});
-
-                missing_count += 1;
-            }
+            if (file_exists) continue;
+            // Evict blob + dependent packages so they get re-downloaded next install
+            try self.store.evictBlob(hash);
+            missing_count += 1;
         }
 
         if (missing_count > 0) {
             log.warn("Evicted {d} missing blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
         } else {
-            log.info("OK\n", .{});
+            self.printer.print("OK\n", .{});
         }
     }
 
     fn healOrphanedBlobs(self: *Doctor) !void {
-        log.info("[3/3] Scanning for orphaned physical files... ", .{});
+        self.printer.print("[3/3] Scanning for orphaned physical files... ", .{});
 
         const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
@@ -99,27 +93,16 @@ pub const Doctor = struct {
 
         var it = dir.iterate();
         var orphan_count: usize = 0;
-        const now_ts = std.Io.Clock.real.now(self.io);
-        const now = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
+        const now = clock.nowSeconds(self.io);
 
         while (try it.next(self.io)) |entry| {
             if (entry.kind != .file) continue;
 
-            // Check if hash exists in DB
-            const query = try self.allocator.print("SELECT 1 FROM files WHERE hash = '{s}'", .{entry.name});
-            defer self.allocator.free(query);
-
-            var stmt = try self.store.db.prepare(query);
-            defer stmt.deinit();
-
-            if (try stmt.one(struct { val: i32 }, .{}, .{}) == null) {
+            // File names are bound as parameters: they are not trusted SQL.
+            if (!try self.store.hasBlob(entry.name)) {
                 // File exists physically but not in DB. Re-register it.
                 const stat = try dir.statFile(self.io, entry.name, .{});
-
-                const insert_stmt = try self.allocator.print("INSERT INTO files (hash, size, created_at) VALUES ('{s}', {d}, {d})", .{ entry.name, stat.size, now });
-                defer self.allocator.free(insert_stmt);
-
-                try self.store.db.exec(insert_stmt, .{}, .{});
+                try self.store.indexBlob(entry.name, @intCast(stat.size), now);
                 orphan_count += 1;
             }
         }
@@ -127,7 +110,7 @@ pub const Doctor = struct {
         if (orphan_count > 0) {
             log.warn("Re-indexed {d} orphaned blobs.\n", .{orphan_count});
         } else {
-            log.info("OK\n", .{});
+            self.printer.print("OK\n", .{});
         }
     }
 };

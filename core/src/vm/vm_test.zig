@@ -1,4 +1,5 @@
 const std = @import("std");
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
@@ -114,6 +115,7 @@ test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     try out_chunk.write(testing.allocator, @intCast(name_idx), 0);
     try out_chunk.writeOp(testing.allocator, .op_call, 0);
     try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
     try out_chunk.writeOp(testing.allocator, .op_return, 0);
 
     out_chunk.max_stack_slots = 2;
@@ -211,6 +213,10 @@ test "VM: Closures correctly capture and return upvalues" {
     const const_42 = try main_chunk.addConstant(testing.allocator, value.Value.initNumber(42.0));
     try main_chunk.writeOp(testing.allocator, .op_constant, 0);
     try main_chunk.write(testing.allocator, @intCast(const_42), 0);
+    // Store it in local slot 1, the variable the closure captures
+    try main_chunk.writeOp(testing.allocator, .op_set_local, 0);
+    try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.writeOp(testing.allocator, .op_pop, 0);
 
     const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
@@ -222,8 +228,10 @@ test "VM: Closures correctly capture and return upvalues" {
 
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 0, 0); // 0 arguments
+    try main_chunk.write(testing.allocator, 0, 0); // CallFlags
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 4;
+    main_chunk.local_count = 2; // slot 0: the script closure, slot 1: the captured 42
 
     const final_val = try executeAndAssertStack(&vm, &main_chunk, 1);
     try testing.expect(final_val.isNumber());
@@ -301,6 +309,7 @@ test "VM: cleanly unwinds stack and jumps to rescue block on throw" {
     try out_chunk.writeOp(testing.allocator, .op_jump, 0);
     try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 0, 0);
+    try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 4, 0);
 
     // --- RESCUE HANDLER ---
@@ -364,6 +373,7 @@ test "VM Edge Case: Gracefully handles method calls on raw primitives" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(m_idx), 0);
     try out_chunk.write(testing.allocator, 0, 0); // 0 args
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -623,6 +633,7 @@ test "VM: Math module namespace and functions" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0); // Invoke method on receiver
     try out_chunk.write(testing.allocator, @intCast(sin_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx2 = try out_chunk.addInlineCache(testing.allocator);
@@ -656,6 +667,7 @@ test "VM: String Native Methods (split, replace)" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(split_str), 0);
     try out_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -706,6 +718,7 @@ test "VM: Array and Map Native Methods (slice, keys)" {
     try out_chunk.writeOp(testing.allocator, .op_invoke, 0);
     try out_chunk.write(testing.allocator, @intCast(slice_str), 0);
     try out_chunk.write(testing.allocator, 2, 0); // 2 args
+    try out_chunk.write(testing.allocator, 0, 0); // CallFlags
 
     // --- MANUAL INLINE CACHE ---
     const ic_idx = try out_chunk.addInlineCache(testing.allocator);
@@ -751,6 +764,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     block_func.chunk = block_chunk;
     block_func.owns_chunk = false;
     block_func.arity = 1;
+    block_func.local_count = 2; // slot 0: the closure, slot 1: x
 
     // 2. Build the Parent Function: def do_yield() yield(21) end
     var parent_chunk = try testing.allocator.create(chunk.Chunk);
@@ -766,6 +780,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try parent_chunk.write(testing.allocator, @intCast(const_21), 0);
     try parent_chunk.writeOp(testing.allocator, .op_yield, 0);
     try parent_chunk.write(testing.allocator, 1, 0); // 1 arg
+    try parent_chunk.write(testing.allocator, 0, 0); // CallFlags
     try parent_chunk.writeOp(testing.allocator, .op_return, 0);
     parent_chunk.max_stack_slots = 5;
 
@@ -773,6 +788,7 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     parent_func.chunk = parent_chunk;
     parent_func.owns_chunk = false;
     parent_func.arity = 0; // Expects 0 positional args
+    parent_func.is_method = true; // a def: yield reads its own block slot
 
     // 3. Main script: do_yield() { |x| x * 2 }
     var main_chunk = chunk.Chunk.init();
@@ -787,9 +803,10 @@ test "VM: Native yield instruction seamlessly calls implicitly passed block" {
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
     try main_chunk.write(testing.allocator, @intCast(b_const), 0);
 
-    // Call Parent with 1 argument (the block counts as +1 in the raw arg_count before padding!)
+    // Call Parent with 1 argument: the block, flagged as such
     try main_chunk.writeOp(testing.allocator, .op_call, 0);
     try main_chunk.write(testing.allocator, 1, 0);
+    try main_chunk.write(testing.allocator, @bitCast(chunk.CallFlags{ .has_block = true }), 0);
     try main_chunk.writeOp(testing.allocator, .op_return, 0);
     main_chunk.max_stack_slots = 5;
 
@@ -824,6 +841,7 @@ test "Compiler: compiles block_given? and yield intrinsics natively" {
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
+    comp.is_method = true; // both intrinsics are only valid inside a def
     try comp.compile(bg_call);
     try comp.compile(yield_call);
 
@@ -927,7 +945,7 @@ test "VM: Compiles and executes class variables (@@var)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -955,7 +973,7 @@ test "VM: Compiles and executes class methods (def self.method)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -987,7 +1005,7 @@ test "VM: Standard exceptions are caught in rescue blocks natively" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1080,7 +1098,7 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
 
     const source =
         \\def run_block(&b)
-        \\  b(42)
+        \\  b.call(42)
         \\end
         \\run_block { |x| x * 2 }
     ;
@@ -1093,7 +1111,7 @@ test "VM: Explicit block capturing (&block) and first-class invocation" {
 
     // We intentionally DO NOT override doc.symbols here, so `x` stays a clean local!
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1117,7 +1135,7 @@ test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1245,7 +1263,7 @@ test "VM: Modules and Mixins (include)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1281,7 +1299,7 @@ test "VM: executes while loops with break and next" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1306,7 +1324,7 @@ test "VM: executes ternary operator with short-circuiting" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1334,7 +1352,7 @@ test "VM Edge Case: Out of bounds array indexing returns runtime error" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1376,7 +1394,7 @@ test "VM: Module mixin method resolution order" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1408,7 +1426,7 @@ test "VM: Array utility methods (max, min, sum, flatten)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1441,7 +1459,7 @@ test "VM: Symbol conversion and Map key manipulation" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1474,7 +1492,7 @@ test "VM: Type coercion and Number methods" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1509,7 +1527,7 @@ test "VM: Negative array indexing" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1547,7 +1565,7 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1617,7 +1635,7 @@ test "VM: JIT materialization cascades through DAG and ARC safely cleans up" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1656,7 +1674,7 @@ test "VM: Primitives support flexible keyword arguments and shortcuts" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1674,12 +1692,11 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
 
     try registry.registerStandardLibrary(&vm);
 
+    // The export lands in memory, never in the working directory.
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
     const test_stl_path = "test_export_cube.stl";
-
-    // Clean up the output file if it already exists before running the test
-    const cwd = std.Io.Dir.cwd();
-    cwd.deleteFile(testing.io, test_stl_path) catch {};
-    defer cwd.deleteFile(testing.io, test_stl_path) catch {};
 
     // 1. Run script exporting a 10x10x10 cube
     const source =
@@ -1693,7 +1710,7 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1701,13 +1718,8 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
 
     try testing.expectEqual(.ok, result);
 
-    // 2. Read the generated STL file back using @fromBackingInt for std.Io.Limit
-    const file_contents = try cwd.readFileAlloc(
-        testing.io,
-        test_stl_path,
-        testing.allocator,
-        @fromBackingInt(10 * 1024 * 1024),
-    );
+    // 2. Read the generated STL file back
+    const file_contents = try mem_vfs.vfs().readFile(testing.allocator, test_stl_path);
     defer testing.allocator.free(file_contents);
 
     // Header must be at least 84 bytes (80-byte header + 4-byte triangle count)
@@ -1748,7 +1760,7 @@ test "VM: Inspection methods (volume, bbox) and inspect() work in KupCAD scripts
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1789,7 +1801,7 @@ test "VM: 2D primitives, sweeps, and Bitwise AND (Intersection) work seamlessly"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1832,7 +1844,7 @@ test "VM: 2D Boolean Operations (Union, Difference, Intersection) work seamlessl
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1874,7 +1886,7 @@ test "VM: Minkowski sums and 2D Offsets evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1919,7 +1931,7 @@ test "VM: Affine transformations via multmatrix evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1969,7 +1981,7 @@ test "VM: Spatial Queries (min_gap, contains?, ray_cast) evaluate safely" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2022,7 +2034,7 @@ test "VM: Custom Polygons and Fixed Matrix Transforms evaluate seamlessly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2054,7 +2066,7 @@ test "VM: Native string and array addition (+ operator)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2073,7 +2085,7 @@ test "VM: Native string and array addition (+ operator)" {
     try testing.expectEqual(@as(f64, 4.0), inner_arr[3].asNumber());
 }
 
-test "VM: Object Reflection (is_a? and responds_to?)" {
+test "VM: Object Reflection (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -2092,10 +2104,10 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
         \\  d.is_a?(Animal),
         \\  d.is_a?(String),
         \\  "test".is_a?(String),
-        \\  d.responds_to?(:bark),
-        \\  d.responds_to?("speak"),
-        \\  d.responds_to?(:meow),
-        \\  [1, 2, 3].responds_to?(:push)
+        \\  d.respond_to?(:bark),
+        \\  d.respond_to?("speak"),
+        \\  d.respond_to?(:meow),
+        \\  [1, 2, 3].respond_to?(:push)
         \\]
     ;
 
@@ -2105,7 +2117,7 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2125,13 +2137,13 @@ test "VM: Object Reflection (is_a? and responds_to?)" {
     // "test".is_a?(String) -> true (Testing primitive class tracking)
     try testing.expectEqual(true, arr_obj.items.items[3].asBool());
 
-    // d.responds_to?(:bark) -> true
+    // d.respond_to?(:bark) -> true
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
-    // d.responds_to?("speak") -> true (Testing superclass method tracking and String arg)
+    // d.respond_to?("speak") -> true (Testing superclass method tracking and String arg)
     try testing.expectEqual(true, arr_obj.items.items[5].asBool());
-    // d.responds_to?(:meow) -> false
+    // d.respond_to?(:meow) -> false
     try testing.expectEqual(false, arr_obj.items.items[6].asBool());
-    // [1, 2, 3].responds_to?(:push) -> true (Testing primitive methods)
+    // [1, 2, 3].respond_to?(:push) -> true (Testing primitive methods)
     try testing.expectEqual(true, arr_obj.items.items[7].asBool());
 }
 
@@ -2140,17 +2152,17 @@ test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Create an array nested 2,000 levels deep.
-    // A recursive markObject would blow the C call stack here.
-    const source =
+    // Deep enough that a recursive markObject would overflow the C stack
+    const nesting_depth = 2000;
+    const source = std.fmt.comptimePrint(
         \\arr = []
         \\i = 0
-        \\while (i < 2000)
+        \\while (i < {d})
         \\  arr = [arr]
         \\  i = i + 1
         \\end
         \\arr
-    ;
+    , .{nesting_depth});
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
@@ -2158,7 +2170,7 @@ test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2166,11 +2178,14 @@ test "VM: GC Grey Stack handles deeply nested objects without C-stack overflow" 
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.ok, result);
 
-    // Full garbage collection sweep right now
     vm.gc.collectGarbage(&vm, false);
 
-    // If we reach this line, the iterative grey stack successfully prevented a stack overflow!
-    try testing.expect(true);
+    // Every nesting level survived the collection
+    try testing.expectEqual(@as(usize, 1), vm.stack_top);
+    var depth: usize = 0;
+    var cur = vm.stack[0];
+    while (cur.asArray().items.items.len == 1) : (depth += 1) cur = cur.asArray().items.items[0];
+    try testing.expectEqual(@as(usize, nesting_depth), depth);
 }
 
 test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
@@ -2190,7 +2205,7 @@ test "VM Edge Case: Safe casting prevents panics on invalid CAD arguments" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2224,7 +2239,7 @@ test "VM Edge Case: Native C++ FFI failures are safely caught by rescue blocks" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2277,7 +2292,7 @@ test "VM: Closure stack frame safely pre-allocates local variables" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2294,7 +2309,7 @@ test "VM: Reflection methods safely pop implicit blocks without corrupting stack
     const source =
         \\val = "hello"
         \\check1 = val.is_a?(String)
-        \\check2 = val.responds_to?("split")
+        \\check2 = val.respond_to?("split")
         \\[check1, check2]
     ;
 
@@ -2304,7 +2319,7 @@ test "VM: Reflection methods safely pop implicit blocks without corrupting stack
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2352,7 +2367,7 @@ test "VM: OOP Inheritance, instance fields, and super() expressions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2385,7 +2400,7 @@ test "VM: Object properties and compound assignments" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2427,7 +2442,7 @@ test "VM: Fluent method chaining" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2519,7 +2534,7 @@ test "VM: Comprehensive Ruby-like language features integration" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2561,7 +2576,7 @@ test "VM: Map indexing and compound assignment" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2596,7 +2611,7 @@ test "VM: Ensure block executes and applies side effects" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2629,7 +2644,7 @@ test "VM: Class variables (@@var) are shared globally across instances" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2659,7 +2674,7 @@ test "VM: Advanced Math (exponent, modulo) and nested String Interpolation" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2679,7 +2694,7 @@ test "VM: String interpolation supports Numbers and Booleans" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2735,7 +2750,7 @@ test "VM: Logical OR (||) short-circuiting and Unary NOT (!) truthiness" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2767,7 +2782,7 @@ test "VM: Map literal spreading (**kwargs) executes seamlessly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2800,7 +2815,7 @@ test "VM: Lexical block scopes isolate shadowed variables" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2823,7 +2838,7 @@ test "VM: Relational operators (<=, >=, <, >, !=) evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2855,7 +2870,7 @@ test "VM: Consolidated numeric operations (*, /, %, **) evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2886,7 +2901,7 @@ test "VM: Optimized String methods operate safely without leaks" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2922,7 +2937,7 @@ test "VM Edge Case: CSG operations across mixed 2D/3D types throw runtime error"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -2951,7 +2966,7 @@ test "VM: Script globals are correctly updated from within blocks without shadow
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -2977,7 +2992,7 @@ test "VM: Global assignments maintain strict stack equilibrium" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3010,7 +3025,7 @@ test "VM: Stack does not leak on local variable assignments inside loops" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -3029,7 +3044,9 @@ test "VM: GC correctly marks executing closures and primitive classes" {
 
     // Bind a native function to aggressively force a GC cycle mid-execution
     const force_gc = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = arg_count;
             _ = args;
             const v: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -3051,7 +3068,7 @@ test "VM: GC correctly marks executing closures and primitive classes" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3076,14 +3093,16 @@ test "VM: super correctly resolves and executes Native C++ methods" {
 
     // Bind a native method to it that returns 42
     const native_func = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = vm_opaque;
             _ = arg_count;
             _ = args;
             return value.Value.initNumber(42.0);
         }
     }.run;
-    const native_obj = try vm.gc.allocateNative(&vm, native_func);
+    const native_obj = try vm.gc.allocateNative("native_func", native_func);
 
     // --- Allocate a Value key for the method name ---
     const get_val_key = try vm.allocateString("get_val");
@@ -3106,7 +3125,7 @@ test "VM: super correctly resolves and executes Native C++ methods" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3135,7 +3154,7 @@ test "Compiler/VM: Splat parameters calculate trailing arity correctly alongside
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -3184,7 +3203,7 @@ test "VM: Positional parameters properly evaluate default values" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -3213,50 +3232,6 @@ test "VM: Positional parameters properly evaluate default values" {
     try testing.expectEqual(@as(f64, 60.0), call3.items.items[2].asNumber());
 }
 
-test "VM: ARC references are safely released when receivers are discarded" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    const baseline_memory = vm.gc.bytes_allocated;
-
-    // By wrapping this in a Lambda, we prevent global namespace pollution.
-    // When `f` is reassigned to `nil`, the closure and the error variable `e`
-    // are unreferenced, allowing the GC to cleanly sweep the entire test from memory!
-    const source =
-        \\f = ->() do
-        \\  begin
-        \\    cube(10).invalid_property = 42
-        \\  rescue => e
-        \\    nil
-        \\  end
-        \\end
-        \\f
-        \\f = nil
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.ok, result);
-
-    // The stack contains exactly 1 item (the `nil` from `f = nil`)
-    try testing.expectEqual(@as(usize, 1), vm.stack_top);
-
-    // Force a GC cycle to sweep the closure and the rescued error string
-    vm.gc.collectGarbage(&vm, false);
-
-    // Memory footprint returns to exactly the baseline
-    try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
-}
-
 test "VM: Unified Exception hierarchy with native methods" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -3269,7 +3244,7 @@ test "VM: Unified Exception hierarchy with native methods" {
         \\begin
         \\  [1, 2][5]
         \\rescue StandardError => e
-        \\  [e.is_a?(RuntimeError), e.is_a?(Exception), e.message()]
+        \\  [e.is_a?(IndexError), e.is_a?(Exception), e.message()]
         \\end
     ;
 
@@ -3279,7 +3254,7 @@ test "VM: Unified Exception hierarchy with native methods" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3289,16 +3264,16 @@ test "VM: Unified Exception hierarchy with native methods" {
     const arr_obj = arr_val.asArray();
     try testing.expectEqual(@as(usize, 3), arr_obj.items.items.len);
 
-    // Prove `e` is an instance of RuntimeError natively wrapped by throwDynamicError
+    // Prove `e` is the IndexError raiseError created for the bad index
     try testing.expectEqual(true, arr_obj.items.items[0].asBool());
 
-    // Prove `RuntimeError` successfully inherits from `Exception`
+    // Prove `IndexError` successfully inherits from `Exception`
     try testing.expectEqual(true, arr_obj.items.items[1].asBool());
 
     // Prove `e.message()` evaluates successfully to the VM's formatted array bounds error
     const msg_val = arr_obj.items.items[2];
     const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", msg_val.asObj()));
-    try testing.expectEqualStrings("Runtime Error: Array index out of bounds.", str_obj.chars);
+    try testing.expectEqualStrings("Array index 5 is out of bounds (size 2)", str_obj.chars);
 }
 
 test "VM: Custom exceptions inherit properly and rescue block ordering is respected" {
@@ -3329,7 +3304,7 @@ test "VM: Custom exceptions inherit properly and rescue block ordering is respec
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3372,7 +3347,7 @@ test "VM: defined? operator works dynamically on globals, instance, and class va
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3413,7 +3388,7 @@ test "VM: DOD param registry getter and setter overloading" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3427,54 +3402,29 @@ test "VM: DOD param registry getter and setter overloading" {
     try testing.expectEqual(@as(f64, 42.5), vm.param_registry.items(.current_value)[0].asNumber());
 }
 
-test "VM: param validation halts execution on max bounds violation" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+test "VM: param validation halts execution on bounds violations" {
+    const sources = [_][]const u8{
+        "param(:width, default: 200, validate: { max: 100 })",
+        "param(:width, default: 5, validate: { min: 10 })",
+        "param(:width, default: 150, validate: { min: 10, max: 100 })",
+    };
+    for (sources) |source| {
+        errdefer std.debug.print("failing source: {s}\n", .{source});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
 
-    // Mute the console error output so it doesn't clutter the test runner
+        var doc = try Document.parse(testing.allocator, source);
+        defer doc.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    // The default is 200, but the max is strictly 100!
-    const source =
-        \\param(:width, default: 200, validate: { max: 100 })
-    ;
+        var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
 
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-
-    // The VM must intercept the bound violation and throw a runtime error!
-    try testing.expectEqual(.runtime_error, result);
-}
-
-test "VM: param validation halts execution on min bounds violation" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // The default is 5, but the min is strictly 10!
-    const source =
-        \\param(:width, default: 5, validate: { min: 10 })
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
+        try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+    }
 }
 
 test "VM: param getter halts execution if parameter is undefined" {
@@ -3492,7 +3442,7 @@ test "VM: param getter halts execution if parameter is undefined" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3525,7 +3475,7 @@ test "VM: Universal Object Protocol (nil?, empty?, tap, into, dup)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3559,7 +3509,7 @@ test "VM: Parameter definition, bounds validation, and getter retrieval" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3567,30 +3517,6 @@ test "VM: Parameter definition, bounds validation, and getter retrieval" {
     const arr_obj = result.asArray();
     try testing.expectEqual(@as(f64, 50.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 20.0), arr_obj.items.items[1].asNumber());
-}
-
-test "VM: Parameter validation failure halts script execution with runtime_error" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Default value 150 exceeds max of 100
-    const source =
-        \\param(:width, default: 150, validate: { min: 10, max: 100 })
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
 }
 
 test "VM: CLI parameter injection overrides default script parameter values" {
@@ -3621,7 +3547,7 @@ test "VM: CLI parameter injection overrides default script parameter values" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3645,7 +3571,7 @@ test "VM: Parameter choice validation (in: [...]) enforces allowed discrete opti
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3684,7 +3610,7 @@ test "VM Edge Case: Robot Mount Bracket execution safely resolves Spatial Querie
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3713,7 +3639,7 @@ test "VM: Global variable re-assignment inside block closures updates global sco
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3740,7 +3666,7 @@ test "VM: inspect() formats Instance objects using native inspect/to_s methods" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3769,7 +3695,7 @@ test "VM: Block closure local variables do not collide with implicit block slot"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3806,7 +3732,7 @@ test "VM: Complex loops with variables, break, and next maintain perfect equilib
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3841,7 +3767,7 @@ test "VM: Nested block execution isolates local variables without colliding" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3856,7 +3782,7 @@ test "VM: Closure block executes local return back to caller frame" {
 
     const source =
         \\def run_block(&b)
-        \\  b(42)
+        \\  b.call(42)
         \\end
         \\run_block do |x|
         \\  return x * 2
@@ -3868,7 +3794,7 @@ test "VM: Closure block executes local return back to caller frame" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3906,7 +3832,7 @@ test "VM: Closed upvalues inside loops migrate to heap without slot corruption" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3925,7 +3851,7 @@ test "VM: Block closures support splat (*args) parameters natively" {
 
     const source =
         \\def yield_splat(&b)
-        \\  b(10, 20, 30, 40)
+        \\  b.call(10, 20, 30, 40)
         \\end
         \\yield_splat do |first, *rest|
         \\  [first, rest]
@@ -3938,7 +3864,7 @@ test "VM: Block closures support splat (*args) parameters natively" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3961,7 +3887,7 @@ test "VM: Block closures support array destructuring |(x, y)| natively" {
 
     const source =
         \\def yield_array(&b)
-        \\  b([100, 200])
+        \\  b.call([100, 200])
         \\end
         \\yield_array do |(x, y)|
         \\  x + y
@@ -3974,7 +3900,7 @@ test "VM: Block closures support array destructuring |(x, y)| natively" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -3989,7 +3915,7 @@ test "VM: Block closures support keyword arguments (**kwargs) cleanly" {
 
     const source =
         \\def yield_kwargs(&b)
-        \\  b(50, width: 10, height: 20)
+        \\  b.call(50, width: 10, height: 20)
         \\end
         \\yield_kwargs do |val, **opts|
         \\  [val, opts[:width], opts[:height]]
@@ -4002,7 +3928,7 @@ test "VM: Block closures support keyword arguments (**kwargs) cleanly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4022,7 +3948,7 @@ test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|"
 
     const source =
         \\def yield_complex(&b)
-        \\  b([10, 20], 30, 40, a: 1, c: 2)
+        \\  b.call([10, 20], 30, 40, a: 1, c: 2)
         \\end
         \\yield_complex do |(x, y), *args, **kw|
         \\  [x, y, args, kw[:a]]
@@ -4035,7 +3961,7 @@ test "VM: Block closures handle extreme complex arguments |(x, y), *args, **kw|"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4063,7 +3989,7 @@ test "VM: Block closures support default parameter assignments" {
     // Yields multiple times with varying arguments to test default fallbacks
     const source =
         \\def yield_defaults(&b)
-        \\  [b(), b(5), b(5, 50)]
+        \\  [b.call, b.call(5), b.call(5, 50)]
         \\end
         \\yield_defaults do |x = 10, y = 20|
         \\  x + y
@@ -4076,7 +4002,7 @@ test "VM: Block closures support default parameter assignments" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4115,7 +4041,7 @@ test "VM: Deeply nested blocks modifying top-level upvalues securely" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4134,7 +4060,7 @@ test "VM: Block arguments gracefully pad with nil when missing" {
     // Yields 0 arguments, but block expects 2.
     const source =
         \\def call_empty(&b)
-        \\  b()
+        \\  b.call
         \\end
         \\call_empty do |x, y|
         \\  [x.nil?, y.nil?]
@@ -4146,7 +4072,7 @@ test "VM: Block arguments gracefully pad with nil when missing" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4166,7 +4092,7 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
     // Block expects |a:, b:|, caller provides (b: 20, a: 10)
     const source =
         \\def test_kw(&block)
-        \\  block(b: 20, a: 10)
+        \\  block.call(b: 20, a: 10)
         \\end
         \\test_kw do |a:, b:|
         \\  [a, b]
@@ -4178,7 +4104,7 @@ test "VM: Keyword arguments extract correctly regardless of passing order" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4198,7 +4124,7 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     // Yields an array with only 1 element, but the block destructs 3!
     const source =
         \\def yield_short(&b)
-        \\  b([42])
+        \\  b.call([42])
         \\end
         \\yield_short do |(x, y, z)|
         \\  [x, y.nil?, z.nil?]
@@ -4210,7 +4136,7 @@ test "VM: Block array destructuring safely pads missing elements with nil" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4231,7 +4157,7 @@ test "VM: Block silently trims extraneous yielded arguments" {
     // Yields 5 arguments, but the block only takes 1
     const source =
         \\def yield_many(&b)
-        \\  b(99, 2, 3, 4, 5)
+        \\  b.call(99, 2, 3, 4, 5)
         \\end
         \\yield_many do |first|
         \\  first
@@ -4243,7 +4169,7 @@ test "VM: Block silently trims extraneous yielded arguments" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4301,7 +4227,7 @@ test "VM: Ensure block executes on successful (non-raising) path without corrupt
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4335,7 +4261,7 @@ test "VM: Rescue handles multiple comma-separated exception types in one clause"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4363,7 +4289,7 @@ test "VM: Array indexing compound assignment (arr[idx] += val)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4381,7 +4307,7 @@ test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
         \\  i = 0
         \\  acc = 0
         \\  while i < count
-        \\    acc += b(i)
+        \\    acc += b.call(i)
         \\    i += 1
         \\  end
         \\  acc
@@ -4396,7 +4322,7 @@ test "VM: Repeated block yields in loops maintain frame and stack equilibrium" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4423,7 +4349,7 @@ test "VM: Shorthand hash syntax evaluates in runtime scope" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4460,7 +4386,7 @@ test "VM: Class re-opening preserves existing methods and field layout map" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4484,7 +4410,7 @@ test "VM: Inline rescue modifier traps soft exceptions during assignment" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4499,7 +4425,7 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
 
     const source =
         \\calc = ->(x, y = 10, scale: 2) { (x + y) * scale }
-        \\[calc(5), calc(5, 20), calc(5, scale: 3)]
+        \\[calc.call(5), calc.call(5, 20), calc.call(5, scale: 3)]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -4507,7 +4433,7 @@ test "VM: Stabby lambdas compile and execute with default and keyword parameters
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4546,7 +4472,7 @@ test "VM: Block parameter shadowing isolates outer local upvalues" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4570,7 +4496,7 @@ test "VM: Safe navigation chaining on nil short-circuits without stack leak" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4597,7 +4523,7 @@ test "VM: GC sweep during dynamic map and array splat expansion" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4626,7 +4552,7 @@ test "VM: GC module collect and bytes_allocated methods" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -4662,7 +4588,7 @@ test "VM ARC: Arrays containing Geometry objects do not leak on GC sweep" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4692,7 +4618,7 @@ test "VM ARC: Stack unwinds and frees Geometry safely during Exceptions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4721,7 +4647,7 @@ test "VM ARC: Native Operator exceptions prevent double-free and leaks" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4750,7 +4676,7 @@ test "VM: Dynamic call stack growth supports deep recursion" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4851,7 +4777,7 @@ test "VM: Inline Caching correctly populates and accelerates property getters an
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4897,7 +4823,7 @@ test "VM: Inline Caching correctly populates and accelerates method invocations"
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4914,6 +4840,50 @@ test "VM: Inline Caching correctly populates and accelerates method invocations"
 
     // `tool.calc` should have definitively cached the closure pointer
     try testing.expect(populated_method_caches >= 1);
+}
+
+test "VM: a reader read as a property is cached at its site like a call" {
+    // `b.width` with `def width` found no field, then looked the method up from scratch
+    // on every read (class chain, then the private name).
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Box
+        \\  def initialize(w)
+        \\    @w = w
+        \\  end
+        \\  def width
+        \\    @w
+        \\  end
+        \\end
+        \\b = Box.new(3)
+        \\total = 0
+        \\i = 0
+        \\while i < 3
+        \\  total = total + b.width
+        \\  i = i + 1
+        \\end
+        \\total
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 9.0), result.asNumber());
+
+    // The read site caches Box's `width` closure.
+    const box = vm.globals.get("Box").?.asClass();
+    var cached_reader = false;
+    for (out_chunk.inline_caches.items) |ic| if (ic.cachedMethod(box)) |m| {
+        if (m.isClosure() and std.mem.eql(u8, m.asClosure().function.name.?.chars, "width")) cached_reader = true;
+    };
+    try testing.expect(cached_reader);
 }
 
 test "VM: Polymorphic inline cache correctly overwrites when receiver class changes" {
@@ -4943,7 +4913,7 @@ test "VM: Polymorphic inline cache correctly overwrites when receiver class chan
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -4974,7 +4944,7 @@ test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" 
     try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
 }
 
-test "VM: Geometries and CrossSections are First-Class Objects (is_a? and responds_to?)" {
+test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -4984,8 +4954,8 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
         \\[
         \\  cube(10).is_a?(Geometry),
         \\  square(10).is_a?(CrossSection),
-        \\  cube(10).responds_to?(:translate),
-        \\  square(10).responds_to?(:extrude),
+        \\  cube(10).respond_to?(:translate),
+        \\  square(10).respond_to?(:extrude),
         \\  cube(10).is_a?(Object)
         \\]
     ;
@@ -4994,7 +4964,7 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5039,7 +5009,7 @@ test "VM: Exception objects capture first-class error backtraces" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -5063,65 +5033,6 @@ test "VM: Exception objects capture first-class error backtraces" {
     const frame3 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars;
     try testing.expect(std.mem.startsWith(u8, frame3, "    from script:"));
     try testing.expect(std.mem.indexOf(u8, frame3, "in 'script'") != null);
-}
-
-test "VM: step_mode safely pauses execution across line boundaries" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    const source =
-        \\x = 10
-        \\y = 20
-        \\x + y
-    ;
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    // Line index is required for step boundaries
-    vm.line_index = &doc.line_index;
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    // Manual execution setup (bypassing vm.interpret to control stepping)
-    vm.frames.ensureTotalCapacity(vm.allocator, 64) catch unreachable;
-
-    const func = vm.gc.allocateFunction(&vm) catch unreachable;
-    func.chunk = &out_chunk;
-    func.owns_chunk = false;
-    func.local_count = out_chunk.local_count;
-
-    const closure = vm.gc.allocateClosure(&vm, func) catch unreachable;
-    vm.push(value.Value.initObj(&closure.obj));
-
-    if (func.local_count > 1) {
-        for (0..func.local_count - 1) |_| vm.push(value.Value.initNil());
-    }
-
-    vm.frames.appendAssumeCapacity(.{ .closure = closure, .ip = 0, .base_slot = 0 });
-
-    // --- ENABLE DEBUGGER ---
-    vm.step_mode = true;
-
-    // Run Line 1: `x = 10`
-    var res = vm.run();
-    try testing.expectEqual(.paused, res);
-
-    // Run Line 2: `y = 20`
-    res = vm.run();
-    try testing.expectEqual(.paused, res);
-
-    // Run Line 3: `x + y` and exit
-    vm.step_mode = false; // Disable to let it finish
-    res = vm.run();
-    try testing.expectEqual(.ok, res);
-
-    // Verify the math resolved perfectly after resuming
-    try testing.expectEqual(@as(f64, 30.0), vm.stack[vm.stack_top - 1].asNumber());
 }
 
 test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing false op_call(0)" {
@@ -5273,7 +5184,7 @@ test "VM/Compiler: Deeply nested closures correctly resolve and capture upvalues
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // If there was an infinite loop vulnerability in resolveUpvalue, it would hang right here.
@@ -5312,7 +5223,7 @@ test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preve
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // The compiler will not hang because AST traversal is purely acyclic
@@ -5350,7 +5261,7 @@ test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5380,7 +5291,7 @@ test "VM Syntax: Trailing statement modifiers (if, unless, while, until) execute
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5411,7 +5322,7 @@ test "VM Syntax: Parenthesis-less method defs and command-syntax invocation" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5445,7 +5356,7 @@ test "VM Syntax: Case statement handles multiple comma-separated conditions per 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5472,7 +5383,7 @@ test "VM Syntax: Chained assignments evaluate with right-associativity" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5501,7 +5412,7 @@ test "VM Syntax: Percent word (%w) and symbol (%i) array literals compile to val
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5528,7 +5439,7 @@ test "VM Syntax: Keyword logical operators (and, or, not) evaluate with proper p
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5560,7 +5471,7 @@ test "VM Syntax: Namespaced class declaration and scope resolution method invoca
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5586,7 +5497,7 @@ test "VM Syntax: Return with multiple comma-separated values returns an Array" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5622,7 +5533,7 @@ test "VM Syntax: Safe navigation (&.) on nil receiver short-circuits block execu
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5654,7 +5565,7 @@ test "VM Syntax: Map compound index assignment (map[:key] += val)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5688,7 +5599,7 @@ test "VM Syntax: Multiple assignment handles array padding and trimming accurate
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5724,7 +5635,7 @@ test "VM Syntax: Module nested class declaration and scope resolution lookup" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5767,7 +5678,7 @@ test "VM Syntax: Subclasses inherit, share, and mutate parent class variables (@
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5798,7 +5709,7 @@ test "VM Syntax: Negative array index compound assignment (arr[-1] += val)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5818,7 +5729,7 @@ test "VM Syntax: super call accurately forwards keyword arguments and blocks" {
     const source =
         \\class BaseShape
         \\  def render(scale:, &block)
-        \\    block(scale * 10)
+        \\    block.call(scale * 10)
         \\  end
         \\end
         \\
@@ -5841,7 +5752,7 @@ test "VM Syntax: super call accurately forwards keyword arguments and blocks" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5875,7 +5786,7 @@ test "VM CAD: Geometry processing inside functional array iterators (.map)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5911,7 +5822,7 @@ test "VM Syntax: Safe navigation (&.) short-circuits argument evaluation when re
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5945,7 +5856,7 @@ test "VM Syntax: break statement with value inside while loop yields value to ca
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5971,7 +5882,7 @@ test "VM Syntax: Array literal splats (*[]) expand empty arrays without corrupti
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -5980,38 +5891,6 @@ test "VM Syntax: Array literal splats (*[]) expand empty arrays without corrupti
 
     try testing.expectEqual(@as(f64, 3.0), arr_obj.items.items[0].asNumber());
     try testing.expectEqual(@as(f64, 60.0), arr_obj.items.items[1].asNumber());
-}
-
-test "VM CAD: Workplane projection and extruded feature chaining via on_face" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    vm.host.print_handler = null;
-
-    const source =
-        \\base = cube(10, 10, 10, true)
-        \\wp = base.on_face(:top)
-        \\hole = circle(r: 2).extrude(5)
-        \\part = base - hole
-        \\part.bbox
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-
-    // Assert it returned a native BBox struct
-    try testing.expect(result.isBBox());
 }
 
 test "VM Syntax: break statement inside block unwinds iterator and yields value directly" {
@@ -6037,7 +5916,7 @@ test "VM Syntax: break statement inside block unwinds iterator and yields value 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6068,7 +5947,7 @@ test "VM Syntax: next statement inside block skips iteration and returns value t
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6106,7 +5985,7 @@ test "VM: Condition-less case statements execute as sequential boolean checks" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6124,7 +6003,7 @@ test "VM: Implicit bare super forwards blocks and keyword arguments natively" {
     const source =
         \\class BaseShape
         \\  def run(scale:, &block)
-        \\    block(scale * 10)
+        \\    block.call(scale * 10)
         \\  end
         \\end
         \\
@@ -6146,7 +6025,7 @@ test "VM: Implicit bare super forwards blocks and keyword arguments natively" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6180,7 +6059,7 @@ test "VM: Modules accurately namespace nested classes and prevent global leaks" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6218,7 +6097,7 @@ test "VM: Singleton Class blocks (class << self) define class methods seamlessly
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6254,7 +6133,7 @@ test "VM: Private inline modifiers encapsulate methods correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6283,7 +6162,7 @@ test "VM: Direct external access to private methods throws runtime error" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6325,7 +6204,7 @@ test "VM: attr_accessor, attr_reader, attr_writer macro expansion" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6337,15 +6216,17 @@ test "VM: attr_accessor, attr_reader, attr_writer macro expansion" {
     try testing.expectEqualStrings("shh", @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars);
 }
 
-test "VM: Private method called on different instance of same class fails" {
+test "VM: Private method called on another instance of the same class is allowed" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
+    // Inside the class, a private method may be called on any instance of it (it used to
+    // require the receiver to be `self`, which the docs never promised).
     const source =
         \\class Account
         \\  def initialize(bal) @bal = bal end
         \\  def compare(other)
-        \\    other.balance # Calling private method on another instance!
+        \\    other.balance
         \\  end
         \\  private def balance() @bal end
         \\end
@@ -6360,12 +6241,12 @@ test "VM: Private method called on different instance of same class fails" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
-    try testing.expectEqual(.runtime_error, result);
+    try testing.expectEqual(.ok, result);
 }
 
 test "VM: Private class methods encapsulated on class object" {
@@ -6390,7 +6271,7 @@ test "VM: Private class methods encapsulated on class object" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6417,7 +6298,7 @@ test "VM: Direct external call to private class method throws error" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6447,7 +6328,7 @@ test "VM: Subclass inherits and executes parent private method via self" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6484,7 +6365,7 @@ test "VM: attr_accessor multiple attributes and compound assignment" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6523,7 +6404,7 @@ test "VM: attr_accessor defined in included module" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6554,7 +6435,7 @@ test "VM: attr_accessor inside singleton class (class << self)" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6590,7 +6471,7 @@ test "VM Syntax:A - Uninitialized instance variables gracefully return nil" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6628,7 +6509,7 @@ test "VM: Lexical Constant Resolution Hierarchies" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6664,7 +6545,7 @@ test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6702,7 +6583,7 @@ test "VM: Destructuring assignments route correctly to Class Variables via emitV
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6742,7 +6623,7 @@ test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6755,7 +6636,7 @@ test "VM: Profiler traces scripts, closures, and native calls seamlessly" {
     // Validate that all three function scopes were intercepted and recorded
     try testing.expect(profiler.stats.contains("script"));
     try testing.expect(profiler.stats.contains("math_heavy"));
-    try testing.expect(profiler.stats.contains("sin"));
+    try testing.expect(profiler.stats.contains("Math.sin")); // natives profile under their qualified name
 
     // Verify execution metrics were collected
     const math_stats = profiler.stats.get("math_heavy").?;
@@ -6785,7 +6666,7 @@ test "VM: Fluent CSG method chaining on 3D geometry" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6812,7 +6693,7 @@ test "VM: Fluent CSG method chaining on 2D cross sections" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6839,7 +6720,7 @@ test "VM: polyhedron generates custom 3D mesh from multidimensional arrays" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6870,7 +6751,7 @@ test "VM: text() primitive generates a valid 2D CrossSection" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6905,7 +6786,7 @@ test "VM: Extruded text has mathematically correct bounding box and mass propert
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6934,25 +6815,33 @@ test "VM: Extruded text has mathematically correct bounding box and mass propert
     try testing.expectApproxEqAbs(7.5, dz, 0.0001);
 }
 
-test "VM: Tapered cylinder with r1 and r2 generates valid solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
+test "VM: Primitive shape options generate valid 3D solids" {
+    const sources = [_][]const u8{
+        "cylinder(r1: 5.0, r2: 2.0, h: 10.0)", // tapered
+        "cube(size: 10.0, chamfer: 1.0)", // chamfered profile, extruded
+        "cylinder(r: 5.0, h: 10.0, round_r: 1.0)", // rounded profile, revolved
+    };
+    for (sources) |source| {
+        errdefer std.debug.print("failing source: {s}\n", .{source});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
 
-    const source = "cylinder(r1: 5.0, r2: 2.0, h: 10.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
+        var doc = try Document.parse(testing.allocator, source);
+        defer doc.deinit();
 
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
+        var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
 
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    const handle = try vm.ensureConcrete(result);
-    try testing.expect(kernel.volume(handle) > 0.0);
+        const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+        try testing.expect(result.isGeometry());
+        const handle = try vm.ensureConcrete(result);
+        try testing.expect(kernel.volume(handle) > 0.0);
+    }
 }
 
 test "VM: Extrude with center: true positions geometry symmetrically along Z" {
@@ -6967,7 +6856,7 @@ test "VM: Extrude with center: true positions geometry symmetrically along Z" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -6995,7 +6884,7 @@ test "VM: Text alignment with halign and valign centers bounding box" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7024,62 +6913,12 @@ test "VM: Square with round_r generates valid 2D cross-section" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isCrossSection());
-}
-
-test "VM: Cube with chamfer generates extruded 3D solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // 10x10x10 cube with 1mm chamfered edges
-    const source = "cube(size: 10.0, chamfer: 1.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isGeometry());
-
-    const handle = try vm.ensureConcrete(result);
-    // Ensure the extruded chamfered polygon resulted in a valid 3D volume
-    try testing.expect(kernel.volume(handle) > 0.0);
-}
-
-test "VM: Cylinder with round_r generates revolved 3D solid" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Cylinder with 5mm radius, 10mm height, and 1mm rounded caps
-    const source = "cylinder(r: 5.0, h: 10.0, round_r: 1.0)";
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isGeometry());
-
-    const handle = try vm.ensureConcrete(result);
-    // Ensure the revolved profile resulted in a valid 3D volume
-    try testing.expect(kernel.volume(handle) > 0.0);
 }
 
 test "VM: Resize calculates bbox and scales geometry automatically" {
@@ -7095,7 +6934,7 @@ test "VM: Resize calculates bbox and scales geometry automatically" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7128,7 +6967,7 @@ test "VM: Polygon with multiple paths uses Even-Odd cutout routing" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7147,7 +6986,7 @@ test "VM: Project handles cut kwargs and slice extracts 2D cross sections" {
     defer doc1.deinit();
     var chunk1 = chunk.Chunk.init();
     defer chunk1.free(testing.allocator);
-    var comp1 = Compiler.init(testing.allocator, &doc1.tree, doc1.symbols, doc1.tokens.starts, &chunk1, &vm);
+    var comp1 = Compiler.forDocument(testing.allocator, &doc1, &chunk1, &vm);
     defer comp1.deinit();
     try comp1.compile(doc1.tree.root);
     const res1 = try executeAndAssertStack(&vm, &chunk1, 1);
@@ -7161,7 +7000,7 @@ test "VM: Project handles cut kwargs and slice extracts 2D cross sections" {
     defer doc2.deinit();
     var chunk2 = chunk.Chunk.init();
     defer chunk2.free(testing.allocator);
-    var comp2 = Compiler.init(testing.allocator, &doc2.tree, doc2.symbols, doc2.tokens.starts, &chunk2, &vm);
+    var comp2 = Compiler.forDocument(testing.allocator, &doc2, &chunk2, &vm);
     defer comp2.deinit();
     try comp2.compile(doc2.tree.root);
     const res2 = try executeAndAssertStack(&vm, &chunk2, 1);
@@ -7180,7 +7019,7 @@ test "VM: Material DSL registers properties and injects ID into mesh property ch
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7190,7 +7029,7 @@ test "VM: Material DSL registers properties and injects ID into mesh property ch
     // 1. Verify material definition was saved in VM registry
     try testing.expectEqual(@as(usize, 1), vm.materials.items.len);
     const mat = vm.materials.items[0];
-    try testing.expectEqualStrings("#FF0000", mat.color_hex);
+    try testing.expectEqual([3]u8{ 0xFF, 0x00, 0x00 }, mat.rgb);
     try testing.expectApproxEqAbs(0.2, mat.roughness, 0.001);
     try testing.expectApproxEqAbs(0.8, mat.metallic, 0.001);
     try testing.expectApproxEqAbs(0.5, mat.transmission, 0.001);
@@ -7204,8 +7043,8 @@ test "VM: Material DSL registers properties and injects ID into mesh property ch
     try testing.expect(mesh.num_prop >= 4);
 
     // Check first vertex: channel 4 must equal Material ID 0
-    const mat_id: u32 = @intFromFloat(mesh.vert_props[3]);
-    try testing.expectEqual(@as(u32, 0), mat_id);
+    const slot: u32 = @intFromFloat(mesh.vert_props[3]);
+    try testing.expectEqual(kernel.materialSlot(0), slot);
 }
 
 test "VM: CSG Booleans preserve face material IDs across cuts" {
@@ -7224,7 +7063,7 @@ test "VM: CSG Booleans preserve face material IDs across cuts" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7242,9 +7081,9 @@ test "VM: CSG Booleans preserve face material IDs across cuts" {
 
     var v: usize = 0;
     while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
-        const id: u32 = @intFromFloat(mesh.vert_props[v + 3]);
-        if (id == 0) found_mat0 = true;
-        if (id == 1) found_mat1 = true;
+        const slot: u32 = @intFromFloat(mesh.vert_props[v + 3]);
+        if (slot == kernel.materialSlot(0)) found_mat0 = true;
+        if (slot == kernel.materialSlot(1)) found_mat1 = true;
     }
 
     try testing.expect(found_mat0);
@@ -7256,6 +7095,9 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
     const test_path = "test_output.glb";
 
     const source = "sphere(5).material(color: \"#0000FF\", transmission: 0.9).export_gltf(\"test_output.glb\")";
@@ -7265,22 +7107,17 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const cwd = std.Io.Dir.cwd();
-    const file = try cwd.openFile(vm.io, test_path, .{});
-    defer file.close(vm.io);
-    defer cwd.deleteFile(vm.io, test_path) catch {};
+    const written = try mem_vfs.vfs().readFile(testing.allocator, test_path);
+    defer testing.allocator.free(written);
+    try testing.expect(written.len >= 12);
 
-    var header_bytes: [24]u8 = undefined;
-    const bytes_read = try file.readStreaming(vm.io, &.{&header_bytes});
-    try testing.expect(bytes_read >= 12);
-
-    const magic = std.mem.readInt(u32, header_bytes[0..4], .little);
+    const magic = std.mem.readInt(u32, written[0..4], .little);
     try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
 }
 
@@ -7289,7 +7126,9 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const test_path = "import_test.stl";
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
 
     // Export a 10x10x10 cube (Volume = 1000)
     const export_source = "cube(10).export_stl(\"import_test.stl\")";
@@ -7299,17 +7138,11 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     var chunk_export = chunk.Chunk.init();
     defer chunk_export.free(testing.allocator);
 
-    var comp_export = Compiler.init(testing.allocator, &doc_export.tree, doc_export.symbols, doc_export.tokens.starts, &chunk_export, &vm);
+    var comp_export = Compiler.forDocument(testing.allocator, &doc_export, &chunk_export, &vm);
     defer comp_export.deinit();
     try comp_export.compile(doc_export.tree.root);
 
     _ = try executeAndAssertStack(&vm, &chunk_export, 1);
-
-    // Clean up file on exit
-    defer {
-        const cwd = std.Io.Dir.cwd();
-        cwd.deleteFile(testing.io, test_path) catch {};
-    }
 
     // Now import the STL and check its volume
     const import_source =
@@ -7322,7 +7155,7 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     var chunk_import = chunk.Chunk.init();
     defer chunk_import.free(testing.allocator);
 
-    var comp_import = Compiler.init(testing.allocator, &doc_import.tree, doc_import.symbols, doc_import.tokens.starts, &chunk_import, &vm);
+    var comp_import = Compiler.forDocument(testing.allocator, &doc_import, &chunk_import, &vm);
     defer comp_import.deinit();
     try comp_import.compile(doc_import.tree.root);
 
@@ -7353,7 +7186,7 @@ test "VM: Advanced and Variadic Math methods evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7395,7 +7228,7 @@ test "VM: Parameter registry uses O(1) lookup and respects validation limits" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7416,18 +7249,17 @@ test "VM: CAD.with_config safely applies and pops engine settings block-scoped" 
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Updated keys to match nested EngineConfig (`fixed_segments` under `manifold`)
     const source =
-        \\CAD.config(manifold: { fixed_segments: 16 })
+        \\CAD.config(resolution: { segments: 16 })
         \\conf1 = CAD.current_config
         \\
         \\conf2 = nil
-        \\CAD.with_config(manifold: { fixed_segments: 64 }, engine: :brep) do
+        \\CAD.with_config(resolution: { segments: 64 }, engine: :brep) do
         \\  conf2 = CAD.current_config
         \\end
         \\
         \\conf3 = CAD.current_config
-        \\[conf1[:manifold][:fixed_segments], conf2[:manifold][:fixed_segments], conf3[:manifold][:fixed_segments], conf2[:engine]]
+        \\[conf1[:resolution][:segments], conf2[:resolution][:segments], conf3[:resolution][:segments], conf2[:engine]]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -7436,7 +7268,7 @@ test "VM: CAD.with_config safely applies and pops engine settings block-scoped" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7470,7 +7302,7 @@ test "VM: ghost and highlight modifiers tag materials and route geometry correct
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7508,7 +7340,7 @@ test "VM: Block modifiers ghost do and highlight do apply to inner CSG" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7520,96 +7352,6 @@ test "VM: Block modifiers ghost do and highlight do apply to inner CSG" {
     // VM caught the ghost
     try testing.expectEqual(@as(usize, 1), vm.display_list.items.len);
     try testing.expectEqual(.ghost, vm.materials.items[0].role);
-}
-
-test "VM CAD: on_face safely evaluates DAG and resolves directional vectors via Manifold feature recognition" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Mute print_handler during unit tests
-    vm.host.print_handler = null;
-
-    // We construct a 10x10x10 cube, centered.
-    // - The :top face should resolve via [0, 0, 1]
-    // - The [1.0, 0.0, 0.0] array should resolve exactly to the right face
-    const source =
-        \\c = cube(size: 10.0, center: true)
-        \\
-        \\# Test Symbol shortcut resolution
-        \\wp_top = c.on_face(:top)
-        \\
-        \\# Test raw vector resolution
-        \\wp_right = c.on_face([1.0, 0.0, 0.0])
-        \\
-        \\[!wp_top.nil?, !wp_right.nil?]
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(arr_val.isArray());
-
-    const arr_obj = arr_val.asArray();
-    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
-
-    // Prove that both calls successfully evaluated the DAG, ran the scratch-arena DOD loop,
-    // and successfully allocated valid Workplane instances (not nil).
-    try testing.expectEqual(true, arr_obj.items.items[0].asBool());
-    try testing.expectEqual(true, arr_obj.items.items[1].asBool());
-}
-
-test "VM CAD Edge Case: on_face gracefully throws RuntimeError on missing faces and unwinds stack safely" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    try registry.registerStandardLibrary(&vm);
-
-    // Mute errors to prevent test console clutter
-
-    // 1. Vector [1, 1, 1] on a standard cube will not match any single face normal.
-    // 2. Symbol :invalid_dir is not a valid predefined shortcut.
-    // Both should safely abort the native execution, throw an error, and be caught by the rescue block.
-    const source =
-        \\begin
-        \\  c = cube(10)
-        \\  c.on_face([1.0, 1.0, 1.0])
-        \\rescue => e1
-        \\  begin
-        \\    c.on_face(:invalid_dir)
-        \\  rescue => e2
-        \\    [1, 1]
-        \\  end
-        \\end
-    ;
-
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len); //
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    // The rescue blocks should safely consume the kernel errors and return our [1, 1] array
-    const arr_val = try executeAndAssertStack(&vm, &out_chunk, 1); //
-    try testing.expect(arr_val.isArray());
-
-    const arr_obj = arr_val.asArray();
-    try testing.expectEqual(@as(usize, 2), arr_obj.items.items.len);
-    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[0].asNumber());
-    try testing.expectEqual(@as(f64, 1.0), arr_obj.items.items[1].asNumber());
 }
 
 test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operations" {
@@ -7630,7 +7372,7 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
     defer doc1.deinit();
     var chunk1 = chunk.Chunk.init();
     defer chunk1.free(testing.allocator);
-    var comp1 = Compiler.init(testing.allocator, &doc1.tree, doc1.symbols, doc1.tokens.starts, &chunk1, &vm);
+    var comp1 = Compiler.forDocument(testing.allocator, &doc1, &chunk1, &vm);
     defer comp1.deinit();
     try comp1.compile(doc1.tree.root);
 
@@ -7643,9 +7385,7 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
     }
 
     // clear cache
-    var it = vm.dag_cache.valueIterator();
-    while (it.next()) |handle| kernel.destruct(handle.*);
-    vm.dag_cache.clearRetainingCapacity();
+    vm.clearDagCache();
 
     // 2. Evaluate with simplify_coplanar: true
     const source_simplified =
@@ -7659,7 +7399,7 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
     defer doc2.deinit();
     var chunk2 = chunk.Chunk.init();
     defer chunk2.free(testing.allocator);
-    var comp2 = Compiler.init(testing.allocator, &doc2.tree, doc2.symbols, doc2.tokens.starts, &chunk2, &vm);
+    var comp2 = Compiler.forDocument(testing.allocator, &doc2, &chunk2, &vm);
     defer comp2.deinit();
     try comp2.compile(doc2.tree.root);
 
@@ -7692,7 +7432,7 @@ test "VM: .simplify() script method decimates mesh on demand" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -7738,7 +7478,7 @@ test "VM: warn and benchmark utilities execute safely and transparently" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7798,7 +7538,7 @@ test "VM Syntax: Endless methods evaluate correctly without 'end' keyword" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7873,7 +7613,7 @@ test "VM: assert validates conditions, evaluates lazy blocks, and throws specifi
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7908,7 +7648,7 @@ test "VM: assemble() creates a valid ObjAssembly with name and parts" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7946,7 +7686,7 @@ test "VM: union() performs a batch CSG union on an array of geometries" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -7977,7 +7717,7 @@ test "VM: batch_hull() wraps multiple shapes in a convex hull" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8006,7 +7746,7 @@ test "VM: split_by_plane() returns an array of two geometries" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8039,7 +7779,7 @@ test "VM: decompose() splits disjoint bodies into an array" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8071,7 +7811,7 @@ test "VM: genus() calculates topological holes" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8109,7 +7849,7 @@ test "VM: fmtScratch dynamically allocates strings exceeding 256 bytes without t
     try testing.expect(std.mem.endsWith(u8, result, "AAAAA"));
 }
 
-test "VM: throwDynamicError does not truncate massive error messages" {
+test "VM: raiseError does not truncate massive error messages" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -8120,7 +7860,7 @@ test "VM: throwDynamicError does not truncate massive error messages" {
     @memset(&massive_buf, 'E');
 
     // Throw an error using the massive string
-    const res = vm.throwDynamicError("Failure: {s}", .{&massive_buf});
+    const res = vm.raiseError(.RuntimeError, "Failure: {s}", .{&massive_buf});
 
     // Since there are no rescue frames, it should halt with runtime_error.
     // The fact that this succeeds without an OutOfBounds panic or buffer overflow
@@ -8151,7 +7891,7 @@ test "VM CAD: BoundingBox explicit axis getters return precise dimensions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8200,7 +7940,7 @@ test "VM CAD: align and center mesh methods correctly translate geometry" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8237,7 +7977,7 @@ test "VM CAD: repeat_linear duplicates and translates geometry" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8271,7 +8011,7 @@ test "VM CAD: repeat_polar duplicates and rotates geometry radially" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8305,7 +8045,7 @@ test "VM CAD: regular_polygon creates 2D cross sections" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8339,7 +8079,7 @@ test "VM CAD: torus synthesizes properly via revolve" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8373,7 +8113,7 @@ test "VM: Evaluates static multiple assignment optimization (Deficit and Excess)
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8394,7 +8134,7 @@ test "VM: Evaluates nested spatial tuple destructuring inside blocks" {
     // Sends an array containing `[[10, 20], 30]` into the block
     const source =
         \\def call_it(&b)
-        \\  b([[10, 20], 30])
+        \\  b.call([[10, 20], 30])
         \\end
         \\call_it do |((x, y), z)|
         \\  x + y + z
@@ -8405,7 +8145,7 @@ test "VM: Evaluates nested spatial tuple destructuring inside blocks" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8436,7 +8176,7 @@ test "VM: Inline Caching correctly populates monomorphic and polymorphic slots" 
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8499,7 +8239,7 @@ test "VM: Property assignments and invoke fallbacks trigger Polymorphic Inline C
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8563,7 +8303,7 @@ test "VM: op_get_property gracefully falls back to method lookup on compound ass
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8605,7 +8345,7 @@ test "VM CAD: 2D CrossSection bounding boxes map correctly to Z=0 dimensions" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8634,7 +8374,7 @@ test "VM: Solid and Sketch2D static class method execution" {
     var exec_chunk = chunk.Chunk.init();
     defer exec_chunk.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &exec_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -8681,7 +8421,7 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     var exec_chunk = chunk.Chunk.init();
     defer exec_chunk.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &exec_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -8727,7 +8467,7 @@ test "VM: Method dispatch fails gracefully on unknown class methods" {
     var exec_chunk = chunk.Chunk.init();
     defer exec_chunk.free(alloc);
 
-    var comp = Compiler.init(alloc, &doc.tree, doc.symbols, doc.tokens.starts, &exec_chunk, &vm);
+    var comp = Compiler.forDocument(alloc, &doc, &exec_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -8736,7 +8476,7 @@ test "VM: Method dispatch fails gracefully on unknown class methods" {
     try testing.expectEqual(.runtime_error, result);
 }
 
-test "VM: Bound methods evaluate direct calls and .call() natively" {
+test "VM: Bound methods are called with .call()" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -8749,14 +8489,14 @@ test "VM: Bound methods evaluate direct calls and .call() natively" {
         \\end
         \\calc = Calculator.new
         \\m = calc.method(:add)
-        \\[m(10, 20), m.call(15, 25)]
+        \\[m.call(10, 20), m.call(15, 25)]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8775,7 +8515,7 @@ test "VM: Bound CAD methods retain ARC geometry correctly" {
     const source =
         \\c = cube(10)
         \\trans = c.method(:translate)
-        \\shifted = trans(5, 0, 0)
+        \\shifted = trans.call(5, 0, 0)
         \\shifted.volume
     ;
 
@@ -8783,7 +8523,7 @@ test "VM: Bound CAD methods retain ARC geometry correctly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8818,7 +8558,7 @@ test "VM: Bound methods support inheritance and super" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8844,15 +8584,15 @@ test "VM: Bound methods retain receiver instance state" {
         \\c = Counter.new
         \\c.set(10)
         \\m = c.method(:inc)
-        \\m(5)
-        \\m(5)
+        \\m.call(5)
+        \\m.call(5)
     ;
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8884,7 +8624,7 @@ test "VM: Bound methods can be passed as arguments" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8909,7 +8649,7 @@ test "VM CAD: helix sweeps a 2D profile with a twist" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8939,7 +8679,7 @@ test "VM CAD: loft skins two 2D profiles into a 3D solid" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -8948,8 +8688,8 @@ test "VM CAD: loft skins two 2D profiles into a 3D solid" {
 
     // Exact volume of a square frustum: V = (h/3) * (A1 + A2 + sqrt(A1*A2))
     // (10/3) * (100 + 25 + 50) = 583.33
-    const vol = result.asNumber();
-    try testing.expect(vol > 580.0 and vol < 590.0);
+    // Exact: it used to be the hull of two 1e-3 thick sheets, a little larger.
+    try testing.expectApproxEqAbs(@as(f64, 10.0 / 3.0 * 175.0), result.asNumber(), 1e-9);
 }
 
 test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
@@ -8969,7 +8709,7 @@ test "VM CAD: fillet_edges rounds 3D geometry via Minkowski sum" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9004,7 +8744,7 @@ test "VM: Spaceship Operator (<=>) natively compares types" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9039,7 +8779,7 @@ test "VM: Array#sort natively evaluates iterative QuickSort" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9084,7 +8824,7 @@ test "VM: Array#reduce evaluates block cleanly via block-aware wrapMethod" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9113,7 +8853,7 @@ test "VM: Heredoc strings evaluate and assign correctly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9140,7 +8880,7 @@ test "VM: Array#sort and Array#reduce handle empty and single-element arrays saf
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9167,7 +8907,7 @@ test "VM Edge Case: Array#sort safely throws if block yields non-number" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9188,7 +8928,7 @@ test "VM: String#length and String#size evaluate correctly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9218,7 +8958,7 @@ test "VM: Heredoc strings act as raw strings (no interpolation)" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9248,7 +8988,7 @@ test "VM: Augmented assignments (%=, **=, &=) evaluate correctly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9278,7 +9018,7 @@ test "VM: yield securely passes keyword arguments to blocks" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9307,7 +9047,7 @@ test "VM: Parentheses gracefully ignore internal newlines" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9334,7 +9074,7 @@ test "VM: Bitwise and shift operators evaluate correctly" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9376,7 +9116,7 @@ test "VM Edge Case: Exceptions inside blocks passed to Native methods safely unw
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9435,7 +9175,7 @@ test "VM: Deep inheritance chain properly shares and mutates class variables" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9463,7 +9203,7 @@ test "VM: raise auto-wraps primitive types in RuntimeError" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9497,7 +9237,7 @@ test "VM Edge Case: raise auto-wraps Array primitives into RuntimeError with str
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9542,7 +9282,7 @@ test "VM Edge Case: raise auto-wraps Map primitives into RuntimeError with strin
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9592,7 +9332,7 @@ test "VM Edge Case: Exception raised inside a rescue block is caught by outer re
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9629,7 +9369,7 @@ test "VM Edge Case: Exception raised inside a constructor unwinds safely" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9669,7 +9409,7 @@ test "VM Edge Case: Exception unwinds cleanly through multiple closure call fram
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9706,7 +9446,7 @@ test "VM Edge Case: Raising and rescuing a custom non-Exception object" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9728,7 +9468,7 @@ test "VM: Array Concatenation roots operands safely" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9756,7 +9496,7 @@ test "VM: Splat unpacking roots arrays safely" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9779,7 +9519,7 @@ test "VM: String ranges root boundary strings safely" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9836,7 +9576,7 @@ test "VM: Case statement executes fast-path jump table for primitives" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9865,7 +9605,9 @@ test "VM: Open upvalues do not dangle after stack reallocation" {
 
     // Bind a native function that artificially forces the VM stack to move in memory
     const force_realloc = struct {
-        fn run(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(vm_opaque: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             _ = arg_count;
             _ = args;
             const v: *VM = @ptrCast(@alignCast(vm_opaque));
@@ -9882,14 +9624,14 @@ test "VM: Open upvalues do not dangle after stack reallocation" {
         \\x = 42
         \\closure = ->() { x }
         \\force_realloc() # BOOM: Stack moves, closure's upvalue pointer is now dangling!
-        \\closure()       # Read from freed memory
+        \\closure.call    # Read from freed memory
     ;
 
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9920,7 +9662,7 @@ test "VM: DAG Evaluator prevents C-stack overflow on deep recursion" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9965,7 +9707,7 @@ test "VM: Stack underflow during rescue unwinding shrinks safely without panic" 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -9989,7 +9731,7 @@ test "VM: op_interpolate resets scratch arena memory and maintains stack equilib
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10003,11 +9745,24 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Warm up VM and capture baseline
+    // The first rescued RuntimeError grows its class's field layout once; warm that up
+    // in a separate chunk so the baseline only excludes the objects under test.
+    {
+        var doc = try Document.parse(testing.allocator, "begin\n  cube(10).warmup = 1\nrescue => w\n  nil\nend");
+        defer doc.deinit();
+        var warmup_chunk = chunk.Chunk.init();
+        defer warmup_chunk.free(testing.allocator);
+        var comp = Compiler.forDocument(testing.allocator, &doc, &warmup_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(doc.tree.root);
+        try testing.expectEqual(.ok, vm.interpret(&warmup_chunk));
+    }
+    vm.resetStack();
     vm.gc.collectGarbage(&vm, false);
     const baseline_memory = vm.gc.bytes_allocated;
 
-    // Use an anonymous lambda and clear 'f' so no global function remains rooted
+    // An anonymous lambda, cleared afterwards, so neither the closure, the exceptions
+    // nor the discarded cube receivers stay rooted
     const source =
         \\f = ->() do
         \\  begin
@@ -10022,7 +9777,7 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
         \\    nil
         \\  end
         \\end
-        \\f
+        \\f.call
         \\f = nil
     ;
 
@@ -10031,16 +9786,14 @@ test "VM: Sequential rescued exceptions do not accumulate un-swept memory" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // Verify unwind state was cleared
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
-
     // Collect garbage and verify all temporary exception objects were swept
+    vm.resetStack();
     vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(baseline_memory, vm.gc.bytes_allocated);
 }
@@ -10056,15 +9809,17 @@ test "VM: Uncaught exception state is purged on resetStack" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
 
-    // State should be completely cleared by interpret's exit or resetStack
+    // A pending native-boundary unwind entry must not survive into the next run
+    try vm.unwind_stack.append(vm.allocator, .{ .err_val = value.Value.initNil(), .stack_top = vm.stack_top });
     vm.resetStack();
+    try testing.expectEqual(@as(usize, 0), vm.stack_top);
     try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
 }
 
@@ -10086,7 +9841,7 @@ test "VM: Repeated string interpolation loop recycles scratch arena" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10094,7 +9849,7 @@ test "VM: Repeated string interpolation loop recycles scratch arena" {
     try testing.expectEqual(@as(f64, 1000.0), result.asNumber());
 }
 
-test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
+test "VM: Kernel error raised in a nested call frame unwinds to the rescue target" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -10120,14 +9875,15 @@ test "VM: Nested native FFI unwinding clears unwind_err_val at rescue target" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
-    _ = try executeAndAssertStack(&vm, &out_chunk, 1);
-
-    // Unwind state must be cleared after successfully reaching rescue block
-    try testing.expectEqual(@as(usize, 0), vm.unwind_stack.items.len);
+    // The kernel error raised two frames deep reaches the top-level handler
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.isString());
+    // The real cause, no longer the generic "CAD Kernel / Method Error"
+    try testing.expectEqualStrings("undefined method 'invalid_method' for Geometry", result.asString().chars);
 }
 
 test "VM: Repeated string addition (+ operator) recycles scratch arena" {
@@ -10150,7 +9906,7 @@ test "VM: Repeated string addition (+ operator) recycles scratch arena" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10189,7 +9945,7 @@ test "VM: op_switch binary search correctly matches first, middle, last, and mis
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -10239,7 +9995,7 @@ test "VM: op_switch binary search handles mixed numbers and strings safely" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -10277,7 +10033,7 @@ test "VM: Native memory allocation strictly respects limits and refuses to grow 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10306,7 +10062,7 @@ test "VM: Mid-expression throw safely unwinds without stack underflow" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10343,7 +10099,7 @@ test "VM: Map#to_a, Map#map, and Array#to_h convert seamlessly" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10376,7 +10132,7 @@ test "VM: Array#to_h safely throws ArgumentError on invalid structure" {
     defer doc.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10402,7 +10158,7 @@ test "VM: Array concatenation via op_add" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10436,7 +10192,7 @@ test "VM: Catches NaN in math operations and throws" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10470,7 +10226,7 @@ test "VM: GC gray stack accurately sizes capacity without panicking" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10509,7 +10265,7 @@ test "VM: Constant Folding evaluates all arithmetic operations correctly" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10548,7 +10304,7 @@ test "VM: Scratch Arena is preserved during complex nested string formatting" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10576,7 +10332,7 @@ test "VM: DOD array operations (build, spread, pack, unpack) transfer memory los
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10609,7 +10365,7 @@ test "VM: DOD map operations (build, insert, spread) transfer memory losslessly"
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10656,7 +10412,7 @@ test "VM: DOD method splat packing and unpacking transfer memory losslessly" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10691,11 +10447,13 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
 
     // Mock C++ boundary function matching the exact NativeFn prototype
     const MockKernel = struct {
-        fn translate(ctx_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) !value.Value {
+        fn translate(ctx_opaque: *anyopaque, call: value.NativeArgs) !value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
 
             if (arg_count != 1) {
-                _ = ctx.throwDynamicError("ArgumentError: expected 1 arg", .{});
+                _ = ctx.raiseError(.ArgumentError, "expected 1 arg", .{});
                 return error.RuntimeError;
             }
 
@@ -10703,7 +10461,7 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
 
             // DOD FFI DEFENSE: Explicit type guard before operating on native memory
             if (!vec_arg.isNumber()) {
-                _ = ctx.throwDynamicError("TypeError: kernel_translate expects a Number, got invalid type", .{});
+                _ = ctx.raiseError(.TypeError, "kernel_translate expects a Number, got invalid type", .{});
                 return error.RuntimeError;
             }
 
@@ -10719,7 +10477,7 @@ test "VM: FFI Boundary - Exhaustive type checking prevents kernel segfaults" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10748,7 +10506,7 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
     vm.instruction_limit = 1_000_000;
 
     const MockKernel = struct {
-        fn shape(ctx_opaque: *anyopaque, _: u8, _: [*]value.Value) !value.Value {
+        fn shape(ctx_opaque: *anyopaque, _: value.NativeArgs) !value.Value {
             const ctx: *VM = @ptrCast(@alignCast(ctx_opaque));
             // Return a generic map so '-' bypasses standard math and triggers binary_handler
             const map_obj = try ctx.gc.allocateMap(ctx);
@@ -10777,7 +10535,7 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10792,8 +10550,6 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
 }
 
 test "VM Edge Case: Import depth limit prevents host stack overflow" {
-    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
@@ -10828,7 +10584,7 @@ test "VM Edge Case: Import depth limit prevents host stack overflow" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10862,7 +10618,7 @@ test "VM: op_add gracefully falls back to heap for strings exceeding 1KB" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10898,7 +10654,7 @@ test "VM: op_interpolate gracefully falls back to heap for strings exceeding 1KB
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -10916,7 +10672,9 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
 
     // Native trampoline that executes a closure passed as argument 0
     const native_runner = struct {
-        fn run(v_ptr: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
+        fn run(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+            const arg_count = call.count;
+            const args = call.ptr;
             const vm_ptr = @as(*VM, @ptrCast(@alignCast(v_ptr)));
             if (arg_count < 1) return error.RuntimeError;
             const closure_val = args[0];
@@ -10925,8 +10683,8 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
         }
     }.run;
 
-    const native_obj = try vm.gc.allocateNative(&vm, native_runner);
-    try vm.globals.put(vm.gc.trackingAllocator(), "run_closure", value.Value.initObj(&native_obj.obj));
+    const native_obj = try vm.gc.allocateNative("run_closure", native_runner);
+    try vm.globals.put(vm.allocator, "run_closure", value.Value.initObj(&native_obj.obj));
 
     // Script with nested native boundary re-entrancy:
     // Outer script -> Native run_closure -> Closure -> Native run_closure -> Closure -> raise
@@ -10948,7 +10706,7 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -10960,4 +10718,662 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
     const rescued_val = vm.stack[0];
     try testing.expect(rescued_val.isString());
     try testing.expectEqualStrings("nested error", rescued_val.asString().chars);
+}
+
+// --- Unwinding, native boundaries, globals and conversions (Oct 2026 audit) ---
+
+/// Parses + compiles `source` into `out_chunk` and interprets it.
+fn compileAndRun(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var comp = Compiler.forDocument(testing.allocator, &doc, out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    return vm.interpret(out_chunk);
+}
+
+fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
+    const val = vm.globals.get(name) orelse return error.MissingGlobal;
+    try testing.expect(val.isString());
+    try testing.expectEqualStrings(expected, val.asString().chars);
+}
+
+// unwind_stack protocol
+
+test "VM: stale unwind entry is not restored by an outer native boundary" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // The first exception is handled without crossing a native and used to leave
+    // its entry behind; the outer `each` then restored "stale" instead of "inner".
+    const source =
+        \\def deep(a, b, c, d, e, f)
+        \\  g = 1
+        \\  h = 2
+        \\  begin
+        \\    raise "stale"
+        \\  rescue => err
+        \\    nil
+        \\  end
+        \\  42
+        \\end
+        \\deep(1, 2, 3, 4, 5, 6)
+        \\result = begin
+        \\  [1].each { |a| [2].each { |b| raise "inner" } }
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "result", "inner");
+}
+
+var probed_unwind_len: usize = 0;
+fn probeUnwindLen(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+    const arg_count = call.count;
+    const args = call.ptr;
+    _ = arg_count;
+    _ = args;
+    const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
+    probed_unwind_len = @max(probed_unwind_len, vm_ptr.unwind_stack.items.len);
+    return value.Value.initNil();
+}
+
+test "VM: handled exceptions do not accumulate unwind entries" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    const native_obj = try vm.gc.allocateNative("probe_unwind_len", probeUnwindLen);
+    try vm.globals.put(vm.allocator, "probe_unwind", value.Value.initObj(&native_obj.obj));
+    probed_unwind_len = 0;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const source =
+        \\i = 0
+        \\while i < 200
+        \\  begin
+        \\    raise "x"
+        \\  rescue => e
+        \\  end
+        \\  i = i + 1
+        \\end
+        \\probe_unwind()
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    // Previously one entry per raise (200), each pinning its exception as a GC root.
+    // Probed mid-run: interpret() clears the stack on exit, so checking afterwards proves nothing.
+    try testing.expect(probed_unwind_len <= 1);
+}
+
+// Bound native methods must use the unwind protocol
+
+test "VM: exception raised in a block passed to a bound native method is rescuable" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    const source =
+        \\m = [1, 2].method(:each)
+        \\result = begin
+        \\  m.call { |x| raise "from bound" }
+        \\  "not rescued"
+        \\rescue => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "result", "from bound");
+}
+
+// Double throw: a native that raised must not get a second "Native ... Error"
+
+const native_raise_message = "raised by native";
+
+/// Raises a rescuable exception, then fails with an ordinary error as stdlib natives do.
+fn raiseThenFail(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value {
+    const arg_count = call.count;
+    const args = call.ptr;
+    _ = arg_count;
+    _ = args;
+    const vm_ptr: *VM = @ptrCast(@alignCast(v_ptr));
+    _ = vm_ptr.raiseError(.RuntimeError, native_raise_message, .{});
+    return error.RuntimeError;
+}
+
+/// Defines `RaisingInit`, a class whose native `initialize` raises.
+fn defineRaisingInitClass(vm: *VM) !void {
+    const name_val = try vm.allocateString("RaisingInit");
+    vm.push(name_val);
+    defer _ = vm.pop();
+    const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
+    try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
+
+    const init_fn = try vm.gc.allocateNative("raise_then_fail", raiseThenFail);
+    const init_key = try vm.allocateString("initialize");
+    try class_obj.methods.put(vm.gc.trackingAllocator(), init_key, value.Value.initObj(&init_fn.obj));
+}
+
+test "VM: exception raised by a native is thrown once and execution continues" {
+    // Each native boundary that raises: a stdlib method (Array#reduce without a block),
+    // a native constructor, and a method nothing answers.
+    const cases = [_]struct { expr: []const u8, message: []const u8 }{
+        .{ .expr = "[].reduce", .message = "reduce requires a block" },
+        .{ .expr = "RaisingInit.new", .message = native_raise_message },
+        .{ .expr = "5.not_a_method", .message = "undefined method 'not_a_method' for Number" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        try defineRaisingInitClass(&vm);
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\inner = 0
+            \\outer = 0
+            \\msg = nil
+            \\begin
+            \\  begin
+            \\    {s}
+            \\  rescue => e
+            \\    inner = inner + 1
+            \\    msg = e.message
+            \\  end
+            \\rescue => e2
+            \\  outer = outer + 1
+            \\end
+            \\after = "continued"
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        try testing.expectEqual(@as(f64, 1), vm.globals.get("inner").?.asNumber());
+        try testing.expectEqual(@as(f64, 0), vm.globals.get("outer").?.asNumber());
+        const msg = vm.globals.get("msg").?;
+        try testing.expect(msg.isString());
+        try testing.expect(std.mem.indexOf(u8, msg.asString().chars, case.message) != null);
+        try expectGlobalString(&vm, "after", "continued");
+    }
+}
+
+// Global keys must outlive the chunk whose constant named them
+
+test "VM: redefining a global on a reused VM after its defining chunk was freed" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    // Each run gets its own chunk, freed afterwards, as the daemon and LSP do
+    const runs = [_][]const u8{
+        "shared_global = \"first run\"",
+        "padding = \"0123456789abcdef0123456789abcdef\"\nshared_global = \"second run\"",
+        "result = shared_global",
+    };
+    var global_count: ?u32 = null;
+    for (runs) |source| {
+        {
+            var run_chunk = chunk.Chunk.init();
+            defer run_chunk.free(testing.allocator);
+            try testing.expectEqual(.ok, try compileAndRun(&vm, &run_chunk, source));
+        }
+        vm.resetStack();
+        // Sweeps the run's constants, including the string naming `shared_global`
+        vm.gc.collectGarbage(&vm, false);
+        if (global_count == null) global_count = vm.globals.count();
+    }
+    try expectGlobalString(&vm, "result", "second run");
+    // A dangling key no longer matches its name, so redefining it used to add a duplicate
+    try testing.expectEqual(global_count.? + 2, vm.globals.count());
+}
+
+// Calling a class directly runs a native initialize
+
+test "VM: class with a native initialize can be called directly" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    // Exception's initialize is a native; the call-syntax path used to cast it to a
+    // closure. A closure initialize must yield the instance there too, as with `.new`.
+    const source =
+        \\class Box
+        \\  def initialize(w)
+        \\    @w = w
+        \\  end
+        \\  def width
+        \\    @w
+        \\  end
+        \\end
+        \\box_width = Box(7).width
+        \\err = ArgumentError("bad width")
+        \\direct = err.message
+        \\is_instance = err.is_a?(ArgumentError)
+        \\raised = begin
+        \\  raise ArgumentError("bad height")
+        \\rescue ArgumentError => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try testing.expectEqual(@as(f64, 7), vm.globals.get("box_width").?.asNumber());
+    try expectGlobalString(&vm, "direct", "bad width");
+    try testing.expect(vm.globals.get("is_instance").?.asBool());
+    try expectGlobalString(&vm, "raised", "bad height");
+}
+
+// Number -> integer conversions: NaN, inf and out-of-range operands
+
+test "VM: bitwise operands and array indexes reject non-integral numbers" {
+    // `message` set: the expression must raise that; otherwise it evaluates to `number`.
+    // Each case used to reach @intFromFloat unchecked (a panic in Debug, UB in release).
+    const cases = [_]struct { expr: []const u8, number: f64 = 0, message: ?[]const u8 = null }{
+        // Addition shared the bitwise path and converted its operands too
+        .{ .expr = "1e300 + huge", .number = 2e300 },
+        .{ .expr = "inf_v - 1", .number = std.math.inf(f64) },
+        .{ .expr = "inf_v | 1", .message = "RangeError" },
+        // inf - inf is the NaN that reaches bytecode (multiply/divide raise on NaN)
+        .{ .expr = "(inf_v - inf_v) ^ 1", .message = "RangeError" },
+        .{ .expr = "1 & huge", .message = "RangeError" },
+        .{ .expr = "1 << 64", .message = "Shift count" },
+        .{ .expr = "1 >> -1", .message = "Shift count" },
+        .{ .expr = "1 << inf_v", .message = "RangeError" },
+        // In-range behaviour is unchanged: truncation, wrapping `<<`, arithmetic `>>`
+        .{ .expr = "6 & 3", .number = 2 },
+        .{ .expr = "5.9 | 0", .number = 5 },
+        .{ .expr = "-8 >> 1", .number = -4 },
+        .{ .expr = "1 << 63", .number = -0x1p63 },
+        .{ .expr = "[1, 2][inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-inf_v]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][huge]", .message = "out of bounds" },
+        .{ .expr = "[1, 2][-1]", .number = 2 },
+        .{ .expr = "a = [1, 2]\n  a[inf_v] = 3", .message = "out of bounds" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing case: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        // Scripts can't make Infinity (arithmetic raises RangeError), but a host can pass
+        // one in, as `--param x=inf` does.
+        try vm.globals.put(vm.allocator, "inf_v", value.Value.initNumber(std.math.inf(f64)));
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        // Operands come from variables so the compiler cannot constant-fold them
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\huge = 1e300
+            \\result = begin
+            \\  {s}
+            \\rescue RangeError => e
+            \\  "RangeError: " + e.message
+            \\rescue IndexError => e
+            \\  "IndexError: " + e.message
+            \\end
+        , .{case.expr});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        const result = vm.globals.get("result") orelse return error.MissingGlobal;
+        if (case.message) |message| {
+            try testing.expect(result.isString());
+            try testing.expect(std.mem.indexOf(u8, result.asString().chars, message) != null);
+        } else {
+            try testing.expect(result.isNumber());
+            try testing.expectEqual(case.number, result.asNumber());
+        }
+    }
+}
+
+// Exception construction under a collecting GC
+
+/// compileAndRun with a collection on every allocation. Stress is switched off
+/// again before returning so the test's `vm.deinit` runs normally.
+fn compileAndRunStressed(vm: *VM, out_chunk: *chunk.Chunk, source: []const u8) !InterpretResult {
+    vm.gc.stress = true;
+    defer vm.gc.stress = false;
+    return compileAndRun(vm, out_chunk, source);
+}
+
+test "VM: raise of a non-exception payload wraps it in a RuntimeError that survives collection" {
+    // executeThrow allocated the wrapping RuntimeError, then the payload's message
+    // string, and only rooted the instance afterwards: that collection freed it.
+    const cases = [_]struct { payload: []const u8, message: []const u8 }{
+        .{ .payload = "42", .message = "42" },
+        .{ .payload = "1.5", .message = "1.5" },
+        .{ .payload = "[1]", .message = "[1]" },
+        .{ .payload = "{a: 1}", .message = "{a: 1}" }, // Value.stringify's map format
+        .{ .payload = "true", .message = "true" },
+        .{ .payload = "false", .message = "false" },
+        .{ .payload = "nil", .message = "nil" },
+        .{ .payload = ":sym", .message = "sym" }, // a Symbol's text, as its to_s
+        .{ .payload = "1..3", .message = "1..3" },
+        // A String payload is the message as-is
+        .{ .payload = "\"bo\" + \"om\"", .message = "boom" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("failing payload: {s}\n", .{case.payload});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\result = begin
+            \\  raise({s})
+            \\rescue RuntimeError => e
+            \\  trace = e.backtrace[0]
+            \\  e.message
+            \\end
+            \\after = "continued"
+        , .{case.payload});
+        defer testing.allocator.free(source);
+
+        try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+        try expectGlobalString(&vm, "result", case.message);
+        try expectGlobalString(&vm, "after", "continued");
+        const trace = vm.globals.get("trace") orelse return error.MissingGlobal;
+        try testing.expect(trace.isString());
+        try testing.expect(std.mem.indexOf(u8, trace.asString().chars, "from script") != null);
+    }
+}
+
+test "VM: uncaught raise of a number is a runtime error under stress GC" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    try testing.expectEqual(.runtime_error, try compileAndRunStressed(&vm, &out_chunk, "x = 1\nraise 42\nx = 2"));
+    try testing.expectEqual(@as(f64, 1), vm.globals.get("x").?.asNumber());
+}
+
+test "VM: repeated raise and rescue of numbers under stress GC keeps every message" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Each iteration collects several times while a fresh exception is being built
+    const source =
+        \\matched = 0
+        \\200.times do |i|
+        \\  m = begin
+        \\    raise i
+        \\  rescue RuntimeError => e
+        \\    e.message
+        \\  end
+        \\  if m == i.to_s
+        \\    matched = matched + 1
+        \\  end
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+    try testing.expectEqual(@as(f64, 200), vm.globals.get("matched").?.asNumber());
+}
+
+test "VM: assert keeps its message rooted while it allocates the exception" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Both the default message and a block's result were only held in a Zig
+    // local while the AssertionError instance was allocated.
+    const source =
+        \\default_msg = begin
+        \\  assert(false)
+        \\rescue AssertionError => e
+        \\  e.message
+        \\end
+        \\block_msg = begin
+        \\  assert(nil) { "lazy " + "msg" }
+        \\rescue AssertionError => e
+        \\  e.message
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "default_msg", "Assertion failed.");
+    try expectGlobalString(&vm, "block_msg", "lazy msg");
+}
+
+// --- Typed runtime errors ---
+
+const ErrorKind = @import("error_kind.zig").ErrorKind;
+
+test "VM: every runtime error kind is a registered StandardError subclass" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const standard_error = (vm.globals.get("StandardError") orelse return error.MissingGlobal).asClass();
+    inline for (comptime std.meta.fieldNames(ErrorKind)) |name| {
+        const class = vm.error_classes.get(@field(ErrorKind, name)) orelse return error.MissingClass;
+        try testing.expectEqualStrings(name, class.name.chars);
+        try testing.expectEqual(class, (vm.globals.get(name) orelse return error.MissingGlobal).asClass());
+        try testing.expect(VM.isSubclassOf(class, standard_error));
+    }
+}
+
+test "VM: runtime errors have their own class and a message without a class prefix" {
+    // Every native error used to be a RuntimeError whose message began with its "kind"
+    // ("ValueError: ...", "Runtime Error: ..."), often with a trailing newline, so
+    // `rescue ValueError` caught nothing and uncaught errors printed two prefixes.
+    const cases = [_]struct { expr: []const u8, kind: []const u8, message: []const u8 }{
+        .{ .expr = "[1, 2][5]", .kind = "IndexError", .message = "Array index 5 is out of bounds (size 2)" },
+        .{ .expr = "nope_undefined", .kind = "NameError", .message = "Undefined variable 'nope_undefined'" },
+        .{ .expr = "5[0]", .kind = "TypeError", .message = "Number can't be indexed with []" },
+        .{ .expr = "1 / 0", .kind = "ZeroDivisionError", .message = "Division by zero." },
+        .{ .expr = "1 | Number::INFINITY", .kind = "RangeError", .message = "Bitwise operand Infinity is not a finite 64-bit integer." },
+        .{ .expr = "polygon([[0, 0], [1, \"x\"], [0, 1]])", .kind = "TypeError", .message = "polygon expects a number for a coordinate (point 1, component 1), got String" },
+        .{ .expr = "cube(Number::INFINITY - Number::INFINITY)", .kind = "ValueError", .message = "cube expects a finite number for x, got NaN" },
+        .{ .expr = "3.times", .kind = "ArgumentError", .message = "times requires a block" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("expr: {s}\n", .{case.expr});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        vm.mute_errors = true;
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+        // Rescued by its own class: StandardError comes second, so a wrong class shows up as "other".
+        const source = try std.fmt.allocPrint(testing.allocator,
+            \\r = begin
+            \\  {s}
+            \\  "no error"
+            \\rescue {s} => e
+            \\  e.message
+            \\rescue StandardError => e
+            \\  "other: " + e.message
+            \\end
+        , .{ case.expr, case.kind });
+        defer testing.allocator.free(source);
+        try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+        try expectGlobalString(&vm, "r", case.message);
+    }
+}
+
+test "VM: an uncaught runtime error is reported with one class prefix" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.runtime_error, try compileAndRun(&vm, &out_chunk, "x = [1, 2][5]"));
+    try testing.expectEqualStrings("IndexError: Array index 5 is out of bounds (size 2)", vm.last_error orelse return error.MissingError);
+}
+
+test "VM: rescuing one error class does not catch another" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    const source =
+        \\r = begin
+        \\  begin
+        \\    cube(-1)
+        \\  rescue TypeError => e
+        \\    "wrong handler"
+        \\  end
+        \\rescue ValueError => e
+        \\  "outer ValueError handler"
+        \\end
+    ;
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "r", "outer ValueError handler");
+}
+
+/// A native that keeps scratch memory across a backtrace and a nested run of its block,
+/// then reports whether the memory still holds what it wrote.
+fn holdScratch(vm_opaque: *anyopaque, args: value.NativeArgs) anyerror!value.Value {
+    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
+    const held = try vm.fmtScratch("{s}", .{"held by the native"});
+    _ = try vm.buildBacktrace();
+    if (args.block()) |block| _ = try vm.callClosureSync(block, &.{});
+    // Fresh scratch allocations would reuse `held` if the arena had been reset under it.
+    _ = try vm.fmtScratch("{s}", .{"overwrites a reset arena"});
+    return value.Value.initBool(std.mem.eql(u8, held, "held by the native"));
+}
+
+test "VM: a native's scratch memory survives a backtrace and a nested run of its block" {
+    // Both used to reset the shared scratch arena while the native was still using it.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    try vm.defineNative("hold_scratch", holdScratch);
+
+    var doc = try Document.parse(testing.allocator, "hold_scratch { [1, 2].map { |x| \"#{x}\" } }");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expect(result.asBool());
+}
+
+test "VM: running out of memory for the stack is an error, not a panic" {
+    // `push` grew the stack itself and panicked when it couldn't; frames now reserve their
+    // compiled stack depth up front, where a failure is reported.
+    var limit = @import("../core/limit_allocator.zig").LimitAllocator.init(testing.allocator, 4 * 1024 * 1024);
+    var vm = try VM.init(limit.allocator(), testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+    try registry.registerStandardLibrary(&vm);
+
+    var doc = try Document.parse(testing.allocator, "def f(n, a, b, c)\n  f(n + 1, a, b, c) + 1\nend\nf(0, 1, 2, 3)");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(limit.allocator());
+    var comp = Compiler.forDocument(limit.allocator(), &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+}
+
+/// A host's debugger for the tests below: on its first call it starts stepping, counts the
+/// line boundaries it is shown, and resumes after two of them, as `.step`, `.step`,
+/// `.continue` would at the prompt.
+var stepping_debugger_calls: usize = 0;
+fn steppingDebugger(vm: *VM) void {
+    stepping_debugger_calls += 1;
+    vm.step_mode = stepping_debugger_calls <= 2;
+}
+
+test "VM Debugger: debugger() steps the following lines, then continues, and the run completes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+    vm.debugger_handler = steppingDebugger;
+    stepping_debugger_calls = 0;
+
+    const source =
+        \\a = 1
+        \\debugger()
+        \\b = 2
+        \\c = 3
+        \\d = 4
+        \\r = a + b + c + d
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    vm.line_index = &doc.line_index;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    // The breakpoint, then two line steps (b = 2, c = 3); `.continue` ran the rest unseen.
+    try testing.expectEqual(@as(usize, 3), stepping_debugger_calls);
+    try testing.expect(!vm.step_mode);
+    try testing.expectEqual(@as(f64, 10), vm.globals.get("r").?.asNumber());
+}
+
+test "VM Debugger: stepping with no one to answer runs the script to the end" {
+    // step_mode without a step handler ended the run with a `paused` result no caller
+    // could resume; nobody is there to pause for, so the run goes on.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.step_mode = true;
+    const source =
+        \\x = 10
+        \\y = 20
+        \\z = x + y
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    vm.line_index = &doc.line_index;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try testing.expect(!vm.step_mode);
+    try testing.expectEqual(@as(f64, 30), vm.globals.get("z").?.asNumber());
 }

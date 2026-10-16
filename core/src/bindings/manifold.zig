@@ -1,3 +1,7 @@
+//! Zig bindings to Manifold's C API (manifoldc): the opaque types and `extern` declarations,
+//! and wrappers such as `cube`, `boolean`, `extrude` and `rayCast` that allocate each result's
+//! memory and take Zig slices and bools in place of C pointers and ints.
+
 const std = @import("std");
 const geom = @import("../kernel/geometry_handle.zig");
 
@@ -30,10 +34,8 @@ pub const ManifoldManifoldPair = extern struct {
     second: ?*ManifoldObj,
 };
 
-pub const ManifoldRect = extern struct {
-    min: ManifoldVec2,
-    max: ManifoldVec2,
-};
+/// Opaque in manifoldc: read through manifold_rect_min / manifold_rect_max.
+pub const ManifoldRect = opaque {};
 
 pub const ManifoldRayHitVec = opaque {};
 pub const ManifoldRayHit = extern struct {
@@ -53,15 +55,25 @@ extern fn manifold_alloc_cross_section() ?*ManifoldCrossSection;
 extern fn manifold_delete_cross_section(cs: ?*ManifoldCrossSection) void;
 extern fn manifold_alloc_polygons() ?*ManifoldPolygons;
 extern fn manifold_delete_polygons(p: ?*ManifoldPolygons) void;
+extern fn manifold_polygons_length(ps: ?*ManifoldPolygons) usize;
+extern fn manifold_polygons_simple_length(ps: ?*ManifoldPolygons, idx: usize) usize;
+extern fn manifold_polygons_get_point(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize) ManifoldVec2;
 extern fn manifold_alloc_manifold_vec() ?*ManifoldVecObj;
-extern fn manifold_destruct_manifold_vec(ms: ?*ManifoldVecObj) void;
+// NOTE: manifold_destruct_manifold_vec only runs ~vector() on memory from
+// manifold_alloc_manifold_vec; manifold_delete_manifold_vec also frees it.
+extern fn manifold_delete_manifold_vec(ms: ?*ManifoldVecObj) void;
 extern fn manifold_manifold_vec_push_back(ms: ?*ManifoldVecObj, m: ?*ManifoldObj) void;
 extern fn manifold_manifold_vec_length(ms: ?*ManifoldVecObj) usize;
 extern fn manifold_manifold_vec_get(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj, idx: usize) ?*ManifoldObj;
 
+extern fn manifold_copy(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_cross_section_copy(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection) ?*ManifoldCrossSection;
+
 extern fn manifold_alloc_rect() ?*ManifoldRect;
 extern fn manifold_delete_rect(r: ?*ManifoldRect) void;
 extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
+extern fn manifold_empty(mem: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_cross_section_empty(mem: ?*ManifoldCrossSection) ?*ManifoldCrossSection;
 extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
 extern fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
 extern fn manifold_boolean(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj;
@@ -74,6 +86,7 @@ extern fn manifold_scale(mem: ?*ManifoldObj, m: ?*ManifoldObj, x: f64, y: f64, z
 extern fn manifold_mirror(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64) ?*ManifoldObj;
 extern fn manifold_hull(mem: ?*ManifoldObj, m: ?*ManifoldObj) ?*ManifoldObj;
 extern fn manifold_batch_hull(mem: ?*ManifoldObj, ms: ?*ManifoldVecObj) ?*ManifoldObj;
+extern fn manifold_hull_pts(mem: ?*ManifoldObj, ps: [*]const ManifoldVec3, length: usize) ?*ManifoldObj;
 extern fn manifold_trim_by_plane(mem: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ?*ManifoldObj;
 extern fn manifold_split_by_plane(mem_first: ?*ManifoldObj, mem_second: ?*ManifoldObj, m: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset: f64) ManifoldManifoldPair;
 extern fn manifold_cross_section_boolean(mem: ?*ManifoldCrossSection, a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection;
@@ -84,8 +97,11 @@ extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: 
 extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
-extern fn manifold_cross_section_area(cs: ?*const anyopaque) f64;
-extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*const anyopaque) ?*ManifoldRect;
+extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
+extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
+extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
+extern fn manifold_cross_section_num_vert(cs: ?*ManifoldCrossSection) usize;
+extern fn manifold_rect_max(r: ?*ManifoldRect) ManifoldVec2;
 
 extern fn manifold_transform(mem: ?*ManifoldObj, m: ?*ManifoldObj, x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64, x3: f64, y3: f64, z3: f64, x4: f64, y4: f64, z4: f64) ?*ManifoldObj;
 extern fn manifold_cross_section_transform(mem: ?*ManifoldCrossSection, cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64) ?*ManifoldCrossSection;
@@ -133,9 +149,40 @@ extern fn manifold_manifold_empty_vec(mem: ?*ManifoldVecObj) ?*ManifoldVecObj;
 extern fn manifold_set_properties(mem: ?*ManifoldObj, m: ?*ManifoldObj, newNumProp: c_int, propFunc: *const fn ([*]f64, ManifoldVec3, [*]const f64, ?*anyopaque) callconv(.c) void, ctx: ?*anyopaque) ?*ManifoldObj;
 
 extern fn manifold_transform_array(mem: ?*ManifoldObj, m: ?*ManifoldObj, mat: [*]const f64) ?*ManifoldObj;
+extern fn kupcad_cpp_asserts_enabled() bool;
 
-extern fn manifold_num_vert(m: ?*ManifoldObj) c_int;
-extern fn manifold_num_tri(m: ?*ManifoldObj) c_int;
+/// Whether the C++ was compiled with its asserts (Debug builds only).
+pub fn cppAssertsEnabled() bool {
+    return kupcad_cpp_asserts_enabled();
+}
+
+extern fn manifold_num_vert(m: ?*ManifoldObj) usize;
+extern fn manifold_status(m: ?*ManifoldObj) Status;
+
+/// manifoldc's ManifoldError: why Manifold rejected or could not build a mesh.
+pub const Status = enum(c_int) {
+    no_error,
+    non_finite_vertex,
+    not_manifold,
+    vertex_index_out_of_bounds,
+    properties_wrong_length,
+    missing_position_properties,
+    merge_vectors_different_lengths,
+    merge_index_out_of_bounds,
+    transform_wrong_length,
+    run_index_wrong_length,
+    face_id_wrong_length,
+    invalid_construction,
+    result_too_large,
+    invalid_tangents,
+    cancelled,
+    _,
+};
+
+pub fn status(m: ?*ManifoldObj) Status {
+    return manifold_status(m);
+}
+extern fn manifold_num_tri(m: ?*ManifoldObj) usize;
 
 // ==========================================
 // Zig Idiomatic Wrappers
@@ -145,12 +192,21 @@ pub fn cube(x: f64, y: f64, z: f64, center: bool) ?*ManifoldObj {
     return manifold_cube(manifold_alloc_manifold(), x, y, z, if (center) 1 else 0);
 }
 
+/// The solid with nothing in it: what a union of nothing or an intersection with nothing is.
+pub fn empty() ?*ManifoldObj {
+    return manifold_empty(manifold_alloc_manifold());
+}
+
+pub fn emptyCrossSection() ?*ManifoldCrossSection {
+    return manifold_cross_section_empty(manifold_alloc_cross_section());
+}
+
 pub fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?*ManifoldObj {
     return manifold_cylinder(manifold_alloc_manifold(), height, r1, r2, @intCast(segments), if (center) 1 else 0);
 }
 
-pub fn sphere(radius: f64) ?*ManifoldObj {
-    return manifold_sphere(manifold_alloc_manifold(), radius, 0);
+pub fn sphere(radius: f64, segments: i32) ?*ManifoldObj {
+    return manifold_sphere(manifold_alloc_manifold(), radius, @intCast(segments));
 }
 
 pub fn boolean(a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj {
@@ -166,7 +222,7 @@ pub fn batchBoolean(objs: []const ?*ManifoldObj, op: OpType) ?*ManifoldObj {
 
     // Initialize C++ std::vector placement new
     const vec = manifold_manifold_empty_vec(raw_mem);
-    defer manifold_destruct_manifold_vec(vec);
+    defer manifold_delete_manifold_vec(vec);
 
     for (objs) |obj| {
         if (obj) |valid_ptr| {
@@ -199,6 +255,11 @@ pub fn hull(obj: ?*ManifoldObj) ?*ManifoldObj {
     return manifold_hull(manifold_alloc_manifold(), obj);
 }
 
+/// The convex hull of a point set.
+pub fn hullPoints(pts: []const ManifoldVec3) ?*ManifoldObj {
+    return manifold_hull_pts(manifold_alloc_manifold(), pts.ptr, pts.len);
+}
+
 pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
     if (objs.len == 0) return null;
 
@@ -208,7 +269,7 @@ pub fn batchHull(objs: []const ?*ManifoldObj) ?*ManifoldObj {
 
     // Initialize C++ std::vector placement new
     const vec = manifold_manifold_empty_vec(raw_mem);
-    defer manifold_destruct_manifold_vec(vec);
+    defer manifold_delete_manifold_vec(vec);
 
     for (objs) |obj| {
         if (obj) |valid_ptr| {
@@ -235,11 +296,6 @@ pub fn decompose(obj: ?*ManifoldObj) ?*ManifoldVecObj {
 
 pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?*ManifoldObj {
     return manifold_trim_by_plane(manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
-}
-
-pub fn splitByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) [2]?*ManifoldObj {
-    const pair = manifold_split_by_plane(manifold_alloc_manifold(), manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
-    return .{ pair.first, pair.second };
 }
 
 pub fn crossSectionBoolean(a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
@@ -299,19 +355,42 @@ pub fn crossSectionTransform(cs: ?*ManifoldCrossSection, x1: f64, y1: f64, x2: f
     return manifold_cross_section_transform(manifold_alloc_cross_section(), cs, x1, y1, x2, y2, x3, y3);
 }
 
-pub fn crossSectionArea(cs: ?*const anyopaque) f64 {
+/// The contours of a cross section (outer contours counter-clockwise, holes clockwise).
+/// Free with deletePolygons.
+pub fn crossSectionToPolygons(cs: ?*ManifoldCrossSection) ?*ManifoldPolygons {
+    return manifold_cross_section_to_polygons(manifold_alloc_polygons(), cs);
+}
+
+pub fn deletePolygons(ps: ?*ManifoldPolygons) void {
+    manifold_delete_polygons(ps);
+}
+
+pub fn polygonsLength(ps: ?*ManifoldPolygons) usize {
+    return manifold_polygons_length(ps);
+}
+
+pub fn polygonsSimpleLength(ps: ?*ManifoldPolygons, idx: usize) usize {
+    return manifold_polygons_simple_length(ps, idx);
+}
+
+pub fn polygonsGetPoint(ps: ?*ManifoldPolygons, simple_idx: usize, pt_idx: usize) ManifoldVec2 {
+    return manifold_polygons_get_point(ps, simple_idx, pt_idx);
+}
+
+pub fn crossSectionArea(cs: ?*ManifoldCrossSection) f64 {
     return manifold_cross_section_area(cs);
 }
 
-pub fn crossSectionBounds(cs: ?*const anyopaque) ManifoldRect {
-    const rect_mem = manifold_alloc_rect();
-    defer manifold_delete_rect(rect_mem);
+pub fn crossSectionNumVert(cs: ?*ManifoldCrossSection) usize {
+    return manifold_cross_section_num_vert(cs);
+}
 
-    const ptr = manifold_cross_section_bounds(rect_mem, cs);
-    if (ptr == null) {
-        return .{ .min = .{ .x = 0.0, .y = 0.0 }, .max = .{ .x = 0.0, .y = 0.0 } };
-    }
-    return ptr.*;
+pub const Bounds2D = struct { min: ManifoldVec2, max: ManifoldVec2 };
+
+pub fn crossSectionBounds(cs: ?*ManifoldCrossSection) Bounds2D {
+    const rect = manifold_cross_section_bounds(manifold_alloc_rect(), cs);
+    defer manifold_delete_rect(rect);
+    return .{ .min = manifold_rect_min(rect), .max = manifold_rect_max(rect) };
 }
 
 pub fn extrude(cs: ?*ManifoldCrossSection, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?*ManifoldObj {
@@ -432,10 +511,12 @@ pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
     return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
 }
 
-pub fn numVert(m: ?*ManifoldObj) i32 {
+// manifoldc returns size_t; these were declared c_int, which read past 2^31 as negative
+// and so slipped under the vertex limit.
+pub fn numVert(m: ?*ManifoldObj) usize {
     return manifold_num_vert(m);
 }
-pub fn numTri(m: ?*ManifoldObj) i32 {
+pub fn numTri(m: ?*ManifoldObj) usize {
     return manifold_num_tri(m);
 }
 
@@ -446,5 +527,17 @@ pub fn destructCrossSection(cs: ?*ManifoldCrossSection) void {
     if (cs != null) manifold_delete_cross_section(cs);
 }
 pub fn destructManifoldVec(ms: ?*ManifoldVecObj) void {
-    if (ms != null) manifold_destruct_manifold_vec(ms);
+    if (ms != null) manifold_delete_manifold_vec(ms);
+}
+
+/// Deep-copies a manifold into a freshly allocated, caller-owned object.
+pub fn copy(m: ?*ManifoldObj) ?*ManifoldObj {
+    if (m == null) return null;
+    return manifold_copy(manifold_alloc_manifold(), m);
+}
+
+/// Copies a cross-section into a freshly allocated, caller-owned object.
+pub fn crossSectionCopy(cs: ?*ManifoldCrossSection) ?*ManifoldCrossSection {
+    if (cs == null) return null;
+    return manifold_cross_section_copy(manifold_alloc_cross_section(), cs);
 }

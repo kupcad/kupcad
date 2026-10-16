@@ -1,0 +1,2 @@
+# A compile error has no rule, so no directive hides it.
+cube = 5 # kupcad:disable-line unused-variable

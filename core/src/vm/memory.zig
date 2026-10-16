@@ -1,15 +1,29 @@
+//! `GC`: the VM's mark-and-sweep collector and object allocator. It keeps each object type
+//! in its own list, counts the bytes it hands out to trigger collections and enforce the
+//! sandbox's memory limit, and holds the natives and names that live as long as the VM in
+//! an arena.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
+const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
 
     // Explicit Grey Stack to prevent C-Stack Overflow
     gray_stack: std.ArrayListUnmanaged(*value.Obj) = .empty,
+
+    /// Objects that live as long as the VM: every native (they come from the standard
+    /// library's tables) and the static names the library registers things under
+    /// (internStatic). They are allocated from this arena, freed with the GC, and never
+    /// swept: they are created marked and kept out of the lists the sweep walks, so the mark
+    /// phase passes over them (they reference no other object). One allocation each, and
+    /// its free at teardown, made a VM cost about 850 allocations before it ran anything.
+    builtins: std.heap.ArenaAllocator,
 
     // --- Segregated Object Tracking Arrays (Data-Oriented Design) ---
     strings: std.ArrayListUnmanaged(*value.ObjString) = .empty,
@@ -23,9 +37,7 @@ pub const GC = struct {
     closures: std.ArrayListUnmanaged(*value.ObjClosure) = .empty,
     upvalues: std.ArrayListUnmanaged(*value.ObjUpvalue) = .empty,
     bound_methods: std.ArrayListUnmanaged(*value.ObjBoundMethod) = .empty,
-    natives: std.ArrayListUnmanaged(*value.ObjNative) = .empty,
     ranges: std.ArrayListUnmanaged(*value.ObjRange) = .empty,
-    breps: std.ArrayListUnmanaged(*value.ObjBrep) = .empty,
     bboxes: std.ArrayListUnmanaged(*value.ObjBBox) = .empty,
 
     geometries: std.ArrayListUnmanaged(*value.ObjGeometry) = .empty,
@@ -43,11 +55,19 @@ pub const GC = struct {
     // --- GC State ---
     is_gc_running: bool = false,
 
+    /// Test-only: collect on every object allocation so unrooted temporaries
+    /// are swept deterministically instead of only past the byte threshold.
+    stress: bool = false,
+
+    /// Chunks whose constant pools are roots (see chunk.ChunkRegistry).
+    live_chunks: chunk.ChunkRegistry = .{},
+
     const HEAP_GROW_FACTOR: usize = 2;
 
     pub fn init(allocator: std.mem.Allocator) GC {
         return .{
             .allocator = allocator,
+            .builtins = std.heap.ArenaAllocator.init(allocator),
             .bytes_allocated = 0,
             .is_gc_running = false,
             .next_gc_threshold = 1024 * 1024, // 1MB starting threshold
@@ -57,6 +77,7 @@ pub const GC = struct {
 
     pub fn deinit(self: *GC) void {
         self.gray_stack.deinit(self.allocator);
+        self.live_chunks.deinit(self.allocator);
 
         // Clean up tracking arrays
         self.strings.deinit(self.allocator);
@@ -70,14 +91,18 @@ pub const GC = struct {
         self.closures.deinit(self.allocator);
         self.upvalues.deinit(self.allocator);
         self.bound_methods.deinit(self.allocator);
-        self.natives.deinit(self.allocator);
         self.ranges.deinit(self.allocator);
-        self.breps.deinit(self.allocator);
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
+        self.builtins.deinit();
+    }
+
+    /// Registers a chunk's constant pool as a GC root until the chunk is freed.
+    pub fn trackChunk(self: *GC, c: *chunk.Chunk) !void {
+        try self.live_chunks.track(self.allocator, c);
     }
 
     // --- Dynamic Tracking Allocator Interface ---
@@ -164,12 +189,12 @@ pub const GC = struct {
                 self.arrays.items.len + self.maps.items.len + self.functions.items.len +
                 self.classes.items.len + self.modules.items.len + self.instances.items.len +
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
-                self.natives.items.len + self.ranges.items.len + self.breps.items.len +
+                self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
                 self.assemblies.items.len + self.workplanes.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
-                vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.\n", .{});
+                vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
                 // Instruct the VM to halt execution immediately so the daemon stays alive
                 vm.cancel_token.store(true, .release);
                 return;
@@ -188,26 +213,27 @@ pub const GC = struct {
 
     /// Generic allocator that appends directly to the specific tracking list
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T), obj_type: value.ObjType) !*T {
-        if (self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
+        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
             self.collectGarbage(vm, false);
         }
 
         if (self.max_memory_limit) |limit| {
             if (self.bytes_allocated + @sizeOf(T) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.\n", .{limit});
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.", .{limit});
                 return error.OutOfMemory;
             }
         }
 
         const ptr = try self.allocator.create(T);
+        // Not in its list yet: nothing would ever sweep it (it leaked, and stayed counted).
+        errdefer self.allocator.destroy(ptr);
+        try list.append(self.allocator, ptr);
         self.bytes_allocated += @sizeOf(T);
 
         ptr.obj = .{
             .obj_type = obj_type,
             .is_marked = false,
         };
-
-        try list.append(self.allocator, ptr);
         return ptr;
     }
 
@@ -241,6 +267,11 @@ pub const GC = struct {
         ptr.splat_pos = null;
         ptr.chunk = null;
         ptr.owns_chunk = true;
+        ptr.is_lambda = false;
+        ptr.is_method = false;
+        ptr.min_args = 0;
+        ptr.has_kwargs = false;
+        ptr.namespace = null;
         return ptr;
     }
 
@@ -253,6 +284,7 @@ pub const GC = struct {
         ptr.class_fields = .empty;
         ptr.included_modules = .empty;
         ptr.instance_layout = .empty;
+        ptr.is_value_class = false;
         return ptr;
     }
 
@@ -277,9 +309,10 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateNative(self: *GC, vm: *VM, function: value.NativeFn) !*value.ObjNative {
-        const ptr = try self.allocateObject(vm, value.ObjNative, &self.natives, .native);
-        ptr.function = function;
+    /// A native, alive as long as the VM (see `builtins`); `name` must live as long.
+    pub fn allocateNative(self: *GC, name: []const u8, function: value.NativeFn) !*value.ObjNative {
+        const ptr = try self.builtins.allocator().create(value.ObjNative);
+        ptr.* = .{ .obj = .{ .obj_type = .native, .is_marked = true }, .function = function, .name = name };
         return ptr;
     }
 
@@ -303,6 +336,10 @@ pub const GC = struct {
 
         ptr.function = function;
         ptr.upvalues = upvalues.ptr;
+        ptr.home_class = null;
+        ptr.home = null;
+        ptr.home_self = value.Value.initNil();
+        ptr.home_block = value.Value.initNil();
         return ptr;
     }
 
@@ -336,6 +373,17 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// `chars`, a name that outlives the VM (a literal of the standard library), as an
+    /// interned string alive as long as the VM (see `builtins`): no copy, never swept. The
+    /// string already interned under that text, if there is one.
+    pub fn internStatic(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
+        if (vm.strings.get(chars)) |existing| return existing;
+        const ptr = try self.builtins.allocator().create(value.ObjString);
+        ptr.* = .{ .obj = .{ .obj_type = .string, .is_marked = true }, .chars = chars };
+        try vm.strings.put(self.allocator, chars, ptr);
+        return ptr;
+    }
+
     pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| {
             self.trackingAllocator().free(chars); // Safely free the duplicate via tracker
@@ -356,14 +404,13 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjGeometry, &self.geometries, .geometry);
         ptr.dag_idx = switch (state) {
             .symbolic => |idx| idx,
-            .concrete => std.math.maxInt(u32), // Sentinel value instead of 0
+            .concrete => CONCRETE_NODE_SENTINEL, // no DAG node
         };
         ptr.cached_handle = switch (state) {
             .symbolic => null,
             .concrete => |h| h,
         };
         ptr.cached_bbox = null;
-        ptr.cached_topology = null;
         return ptr;
     }
 
@@ -407,7 +454,20 @@ pub const GC = struct {
         // Protect error values held across native boundary unwinds
         for (vm.unwind_stack.items) |u_frame| {
             self.markValue(u_frame.err_val);
-         }
+        }
+        if (vm.pending_break) |pending| self.markValue(pending.value);
+
+        // Constants of chunks still being compiled (or not yet wrapped in a function)
+        for (self.live_chunks.chunks.items) |c| {
+            for (c.constants.items) |val| self.markValue(val);
+        }
+
+        // Import cache: a module's result is only referenced from here once its
+        // top-level closure has returned, and later imports push it straight from the cache.
+        var modules_it = vm.modules.valueIterator();
+        while (modules_it.next()) |val| {
+            self.markValue(val.*);
+        }
 
         // --- Protect static interned strings ---
         if (vm.static_true) |s| self.markObject(&s.obj);
@@ -427,6 +487,12 @@ pub const GC = struct {
         var globals_it = vm.globals.valueIterator();
         while (globals_it.next()) |val| {
             self.markValue(val.*);
+        }
+        var shadowed_it = vm.shadowed_builtins.valueIterator();
+        while (shadowed_it.next()) |val| self.markValue(val.*);
+        for (vm.module_namespaces.items) |ns| {
+            var ns_it = ns.globals.valueIterator();
+            while (ns_it.next()) |val| self.markValue(val.*);
         }
 
         for (vm.param_registry.items(.name)) |name| self.markValue(name);
@@ -466,41 +532,53 @@ pub const GC = struct {
     fn blackenObject(self: *GC, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .array => {
-                const arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                const arr = obj.as(value.ObjArray);
                 for (arr.items.items) |val| self.markValue(val);
             },
             .map => {
-                const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                const map = obj.as(value.ObjMap);
                 for (map.map.keys()) |k| self.markValue(k);
                 for (map.map.values()) |v| self.markValue(v);
             },
             .closure => {
-                const closure_obj: *value.ObjClosure = @alignCast(@fieldParentPtr("obj", obj));
+                const closure_obj = obj.as(value.ObjClosure);
                 self.markObject(&closure_obj.function.obj);
                 for (0..closure_obj.function.upvalue_count) |i| {
                     if (closure_obj.upvalues[i]) |u| self.markObject(&u.obj);
                 }
+                if (closure_obj.home_class) |c| self.markObject(&c.obj);
+                if (closure_obj.home) |h| self.markObject(&h.obj);
+                self.markValue(closure_obj.home_self);
+                self.markValue(closure_obj.home_block);
             },
             .upvalue => {
-                const upval: *value.ObjUpvalue = @alignCast(@fieldParentPtr("obj", obj));
+                const upval = obj.as(value.ObjUpvalue);
                 self.markValue(upval.closed);
             },
             .function => {
-                const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", obj));
+                const func = obj.as(value.ObjFunction);
                 if (func.name) |name| self.markObject(&name.obj);
                 if (func.chunk) |c_ptr| {
                     const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
                     for (exec_chunk.constants.items) |val| self.markValue(val);
+                    // The caches hold classes and methods; an unmarked one could be swept
+                    // and its address reused while a site still trusts the cache.
+                    for (exec_chunk.inline_caches.items) |ic| {
+                        if (ic.cached_class_1) |c| self.markObject(&c.obj);
+                        if (ic.cached_class_2) |c| self.markObject(&c.obj);
+                        self.markValue(ic.cached_val_1);
+                        self.markValue(ic.cached_val_2);
+                    }
                 }
             },
             .module => {
-                const module_obj: *value.ObjModule = @alignCast(@fieldParentPtr("obj", obj));
+                const module_obj = obj.as(value.ObjModule);
                 self.markObject(&module_obj.name.obj);
                 for (module_obj.methods.keys()) |k| self.markValue(k);
                 for (module_obj.methods.values()) |v| self.markValue(v);
             },
             .class => {
-                const class_obj: *value.ObjClass = @alignCast(@fieldParentPtr("obj", obj));
+                const class_obj = obj.as(value.ObjClass);
                 self.markObject(&class_obj.name.obj);
                 if (class_obj.superclass) |sup| self.markObject(&sup.obj);
                 for (class_obj.included_modules.items) |mod| self.markObject(&mod.obj);
@@ -518,22 +596,22 @@ pub const GC = struct {
                 for (class_obj.instance_layout.keys()) |k| self.markValue(k);
             },
             .instance => {
-                const instance_obj: *value.ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
+                const instance_obj = obj.as(value.ObjInstance);
                 self.markObject(&instance_obj.class.obj);
                 for (instance_obj.fields.items) |val| self.markValue(val);
             },
             .bound_method => {
-                const bound_obj: *value.ObjBoundMethod = @alignCast(@fieldParentPtr("obj", obj));
+                const bound_obj = obj.as(value.ObjBoundMethod);
                 self.markValue(bound_obj.receiver);
                 self.markValue(bound_obj.method);
             },
             .assembly => {
-                const assembly: *value.ObjAssembly = @alignCast(@fieldParentPtr("obj", obj));
+                const assembly = obj.as(value.ObjAssembly);
                 self.markObject(&assembly.name.obj);
                 self.markObject(&assembly.parts.obj);
             },
             .workplane => {
-                const wp_obj: *value.ObjWorkplane = @alignCast(@fieldParentPtr("obj", obj));
+                const wp_obj = obj.as(value.ObjWorkplane);
                 self.markObject(&wp_obj.parent.obj);
             },
             else => {},
@@ -582,9 +660,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjArray, &self.arrays);
         self.sweepList(vm, value.ObjMap, &self.maps);
         self.sweepList(vm, value.ObjUpvalue, &self.upvalues);
-        self.sweepList(vm, value.ObjNative, &self.natives);
         self.sweepList(vm, value.ObjRange, &self.ranges);
-        self.sweepList(vm, value.ObjBrep, &self.breps);
         self.sweepList(vm, value.ObjBBox, &self.bboxes);
         self.sweepList(vm, value.ObjString, &self.strings);
         self.sweepList(vm, value.ObjSymbol, &self.symbols);
@@ -608,7 +684,7 @@ pub const GC = struct {
         keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
 
         for (self.geometries.items) |geom_ptr| {
-            if (geom_ptr.dag_idx != std.math.maxInt(u32)) {
+            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL) {
                 if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
                     const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
                     live_hashes.putAssumeCapacity(hash, {});
@@ -618,6 +694,7 @@ pub const GC = struct {
 
         var cache_it = vm.dag_cache.iterator();
         while (cache_it.next()) |entry| {
+            // Keys are node hashes (which cover the node's settings).
             if (!live_hashes.contains(entry.key_ptr.*)) {
                 // Destruct C++ handle immediately
                 kernel.destruct(entry.value_ptr.*);
@@ -640,28 +717,27 @@ pub const GC = struct {
     fn freeObject(self: *GC, vm: *VM, obj: *value.Obj) void {
         switch (obj.obj_type) {
             .assembly => {
-                const assembly_obj: *value.ObjAssembly = @alignCast(@fieldParentPtr("obj", obj));
+                const assembly_obj = obj.as(value.ObjAssembly);
                 self.destroyObject(value.ObjAssembly, assembly_obj);
             },
             .geometry => {
-                const geom_obj: *value.ObjGeometry = @alignCast(@fieldParentPtr("obj", obj));
-                if (geom_obj.cached_topology) |cache| self.allocator.destroy(cache);
+                const geom_obj = obj.as(value.ObjGeometry);
                 if (geom_obj.cached_handle) |handle| {
                     if (vm.host.mesh_destructor) |destructor| destructor(handle);
                 }
                 self.destroyObject(value.ObjGeometry, geom_obj);
             },
             .workplane => {
-                const wp_obj: *value.ObjWorkplane = @alignCast(@fieldParentPtr("obj", obj));
+                const wp_obj = obj.as(value.ObjWorkplane);
                 self.destroyObject(value.ObjWorkplane, wp_obj);
             },
             .cross_section => {
-                const cs_obj: *value.ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
+                const cs_obj = obj.as(value.ObjCrossSection);
                 if (cs_obj.cached_handle) |handle| kernel.destructCrossSection(handle);
                 self.destroyObject(value.ObjCrossSection, cs_obj);
             },
             .string => {
-                const str_obj: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
+                const str_obj = obj.as(value.ObjString);
                 // Debug Memory Poisoning: Instantly crash any lingering references to this string's bytes
                 if (builtin.is_test or builtin.mode == .debug) {
                     @memset(@constCast(str_obj.chars), 0xAA);
@@ -670,34 +746,34 @@ pub const GC = struct {
                 self.destroyObject(value.ObjString, str_obj);
             },
             .symbol => {
-                const sym_obj: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
+                const sym_obj = obj.as(value.ObjSymbol);
                 self.trackingAllocator().free(sym_obj.chars);
                 self.destroyObject(value.ObjSymbol, sym_obj);
             },
-            .native => self.destroyObject(value.ObjNative, @alignCast(@fieldParentPtr("obj", obj))),
+            .native => {}, // in no sweep list: natives live in `builtins`
             .array => {
-                const arr_obj: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                const arr_obj = obj.as(value.ObjArray);
                 arr_obj.items.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjArray, arr_obj);
             },
             .map => {
-                const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                const map_obj = obj.as(value.ObjMap);
                 map_obj.map.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .instance => {
-                const instance_obj: *value.ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
+                const instance_obj = obj.as(value.ObjInstance);
                 instance_obj.fields.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjInstance, instance_obj);
             },
             .closure => {
-                const closure_obj: *value.ObjClosure = @alignCast(@fieldParentPtr("obj", obj));
+                const closure_obj = obj.as(value.ObjClosure);
                 const upvalue_count = closure_obj.function.upvalue_count;
                 self.trackingAllocator().free(closure_obj.upvalues[0..upvalue_count]);
                 self.destroyObject(value.ObjClosure, closure_obj);
             },
             .function => {
-                const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", obj));
+                const func = obj.as(value.ObjFunction);
                 if (func.owns_chunk) {
                     if (func.chunk) |c| {
                         const chnk: *chunk.Chunk = @ptrCast(@alignCast(c));
@@ -707,14 +783,14 @@ pub const GC = struct {
                 }
                 self.destroyObject(value.ObjFunction, func);
             },
-            .upvalue => self.destroyObject(value.ObjUpvalue, @alignCast(@fieldParentPtr("obj", obj))),
+            .upvalue => self.destroyObject(value.ObjUpvalue, obj.as(value.ObjUpvalue)),
             .module => {
-                const module_obj: *value.ObjModule = @alignCast(@fieldParentPtr("obj", obj));
+                const module_obj = obj.as(value.ObjModule);
                 module_obj.methods.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjModule, module_obj);
             },
             .class => {
-                const class_obj: *value.ObjClass = @alignCast(@fieldParentPtr("obj", obj));
+                const class_obj = obj.as(value.ObjClass);
                 class_obj.methods.deinit(self.trackingAllocator());
                 class_obj.included_modules.deinit(self.trackingAllocator());
                 class_obj.class_methods.deinit(self.trackingAllocator());
@@ -722,15 +798,9 @@ pub const GC = struct {
                 class_obj.instance_layout.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjClass, class_obj);
             },
-            .bound_method => self.destroyObject(value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj))),
-            .range => self.destroyObject(value.ObjRange, @alignCast(@fieldParentPtr("obj", obj))),
-            .bbox => self.destroyObject(value.ObjBBox, @alignCast(@fieldParentPtr("obj", obj))),
-            .brep => {
-                const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
-                brep_obj.data.deinit(self.allocator);
-                self.allocator.destroy(brep_obj.data);
-                self.destroyObject(value.ObjBrep, brep_obj);
-            },
+            .bound_method => self.destroyObject(value.ObjBoundMethod, obj.as(value.ObjBoundMethod)),
+            .range => self.destroyObject(value.ObjRange, obj.as(value.ObjRange)),
+            .bbox => self.destroyObject(value.ObjBBox, obj.as(value.ObjBBox)),
         }
     }
 };

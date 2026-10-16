@@ -1,3 +1,7 @@
+//! Where the package manager keeps its global state: `getHomeDir` finds the user's home
+//! directory (the profile folder on Windows, `HOME` elsewhere), and `getGlobalDir` returns
+//! `KUPCAD_HOME` or `~/.kupcad`.
+
 const std = @import("std");
 const builtin = @import("builtin");
 

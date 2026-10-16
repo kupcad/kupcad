@@ -1,0 +1,6 @@
+nut_trap = cylinder(d: 8, h: 5, segments: 6)
+hole = circle(r: 2, segments: 8)
+rounded = cylinder(r: 5, h: 10, segments: 4, round_r: 1) # no fix: sides can't take round_r
+smooth = cylinder(r: 5, h: 10, segments: 64)             # smoothness, as meant
+prism = cylinder(r: 5, h: 10, sides: 6)
+[nut_trap, hole, rounded, smooth, prism]

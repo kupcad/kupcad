@@ -1,3 +1,7 @@
+//! The compiler's view of variables: locals, upvalues, loop and unwind state, and the
+//! functions on `Compiler` that resolve a name to a local slot, an upvalue or a global
+//! (`classifyVariable`, `resolveLocal`, `resolveUpvalue`, `addLocal`).
+
 const std = @import("std");
 const ast = @import("../core/ast.zig");
 const resolver = @import("../core/resolver.zig");
@@ -18,7 +22,21 @@ pub const Local = struct {
 pub const LoopState = struct {
     start: usize,
     depth: usize,
+    // Length of the compiler's unwind stack when the loop was entered. `break` and
+    // `next` only unwind the begin/rescue/ensure regions opened inside the loop.
+    unwind_depth: usize = 0,
     exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
+};
+
+/// A lexically enclosing region that a non-local jump (return/break/next) must
+/// leave cleanly. The VM keeps rescue handlers on a runtime stack that is only
+/// popped by `op_pop_rescue` or by a throw, so jumping out without popping leaves
+/// a stale handler that a later, unrelated error would jump back into.
+pub const UnwindEntry = union(enum) {
+    /// An active `op_setup_rescue` handler.
+    rescue_handler,
+    /// An `ensure` body that must run before control leaves the region.
+    ensure_body: ast.NodeIndex,
 };
 
 pub const VarType = enum {
@@ -135,6 +153,8 @@ pub fn resolveSelfUpvalue(self: *Compiler) CompileError!?u8 {
         // The parent IS a method. Its `self` is at local 0.
         return try self.addUpvalue(0, true);
     }
+    // The parent is a class or module body: its `self` is in a hidden local.
+    if (enclosing.namespace_selfs.getLastOrNull()) |slot| return try self.addUpvalue(slot, true);
 
     // The parent is also a block. Recursively capture.
     if (try enclosing.resolveSelfUpvalue()) |upv_idx| {
@@ -165,6 +185,24 @@ pub fn isScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
     // Use pure string lookup to bypass integer ID caching discrepancies
     const name_str = self.tree.getString(name_id);
     return root.script_globals.contains(name_str);
+}
+
+/// True when compiling a `def` body, or a block/lambda nested inside one.
+pub fn insideDef(self: *Compiler) bool {
+    var c: ?*Compiler = self;
+    while (c) |cur| : (c = cur.enclosing) {
+        if (cur.is_method) return true;
+    }
+    return false;
+}
+
+/// Whether assigning `name_id` here writes the script-level variable of that name.
+/// Methods may READ top-level variables, but an assignment inside a `def` always makes
+/// a method local (as in Ruby), so a helper's scratch `x` can't clobber a top-level `x`.
+/// Top-level code and top-level blocks/lambdas still write script variables, so
+/// `total = total + i` inside a top-level `each` keeps working.
+pub fn writesScriptGlobal(self: *Compiler, name_id: ast.StringId) bool {
+    return self.isScriptGlobal(name_id) and !self.insideDef();
 }
 
 pub fn seedLocals(self: *Compiler, names: []const []const u8, offset: u16) void {

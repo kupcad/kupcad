@@ -1,3 +1,7 @@
+//! `Profiler`: the tracing profiler a VM calls on entering and leaving each function when one
+//! is attached (`enterFrame`, `exitFrame`); it sums calls, total and self time per function,
+//! and `dumpProfile` prints them as a table. Attached by `kupcad dev bench`.
+
 const std = @import("std");
 
 pub const ProfileStats = struct {

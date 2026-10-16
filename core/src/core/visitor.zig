@@ -1,3 +1,6 @@
+//! `walk`: a depth-first AST traversal that visits every child of every node, calling the
+//! context's optional `enterNode` and `leaveNode` around each.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 
@@ -16,7 +19,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .undef, .self_expr, .namespace_access, .defined_expr, .docstring => {},
 
         // Multi-child nodes
-        .interpolated_string, .array_literal, .yield_stmt => {
+        .interpolated_string, .array_literal => {
             for (tree.getNodes(tree.nodeSpan(node))) |child| try walk(Context, ctx, tree, child);
         },
         .hash_literal => {
@@ -81,7 +84,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         },
         .for_stmt => {
             const fs = tree.forStmt(node);
-            for (tree.getForBindings(fs.bindings)) |binding| try walk(Context, ctx, tree, binding.range);
+            try walk(Context, ctx, tree, fs.iterable);
             try walk(Context, ctx, tree, fs.body);
         },
         .case_stmt => {
@@ -139,7 +142,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
             try walk(Context, ctx, tree, rm.expr);
             try walk(Context, ctx, tree, rm.rescue_expr);
         },
-        .splat_expr, .double_splat_expr, .each_expr, .return_stmt, .break_stmt, .next_stmt => {
+        .splat_expr, .double_splat_expr, .return_stmt, .break_stmt, .next_stmt => {
             try walk(Context, ctx, tree, tree.nodeIndex(node));
         },
     }

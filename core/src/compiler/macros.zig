@@ -1,3 +1,7 @@
+//! The methods `attr_reader`, `attr_writer` and `attr_accessor` define: `emitAttrReader` and
+//! `emitAttrWriter` compile a getter or setter of an instance variable as its own function
+//! and emit the bytecode that binds it to the class. Called by `compiler.zig`.
+
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
@@ -7,6 +11,15 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    func.namespace = comp.rootModuleNamespace();
+    // Root the function until it is stored in the constant pool: the name and
+    // child-chunk constants allocated below can trigger a collection.
+    comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;
+    comp.vm.push(value.Value.initObj(&func.obj));
+    var func_rooted = true;
+    errdefer if (func_rooted) {
+        _ = comp.vm.pop();
+    };
     func.arity = 0;
     func.owns_chunk = true;
 
@@ -15,7 +28,7 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     func.chunk = child_chunk;
 
     const str_val = try comp.vm.allocateString(clean_name);
-    func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    func.name = str_val.asString();
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
     defer child_comp.deinit();
@@ -28,7 +41,7 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     // --- Generate Bytecode: def prop() @prop end ---
     try child_comp.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
     const prop_idx = try child_comp.makeStringConstant(clean_name);
-    try child_comp.emitOpWithOperand(.op_get_property, .op_get_property_wide, prop_idx);
+    try child_comp.emitOpWithOperand(.op_get_ivar, .op_get_ivar_wide, prop_idx);
     try child_comp.emitInlineCacheIndex();
     try child_comp.emitOp(.op_return);
 
@@ -36,6 +49,8 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
 
     const func_val = value.Value.initObj(&func.obj);
     const func_idx = try comp.makeConstant(func_val);
+    _ = comp.vm.pop();
+    func_rooted = false;
     try comp.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
 
     const meth_name_idx = try comp.makeStringConstant(clean_name);
@@ -48,6 +63,15 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const clean_name = std.mem.trimStart(u8, prop_name, ":@");
 
     const func = try comp.vm.gc.allocateFunction(comp.vm);
+    func.namespace = comp.rootModuleNamespace();
+    // Root the function until it is stored in the constant pool: the name and
+    // child-chunk constants allocated below can trigger a collection.
+    comp.vm.ensureStackCapacity(comp.vm.stack_top + 1) catch return error.OutOfMemory;
+    comp.vm.push(value.Value.initObj(&func.obj));
+    var func_rooted = true;
+    errdefer if (func_rooted) {
+        _ = comp.vm.pop();
+    };
     func.arity = 1;
     func.owns_chunk = true;
 
@@ -60,7 +84,7 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const setter_name = std.fmt.bufPrint(&name_buf, "{s}=", .{clean_name}) catch return error.OutOfMemory;
 
     const str_val = try comp.vm.allocateString(setter_name);
-    func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    func.name = str_val.asString();
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
     defer child_comp.deinit();
@@ -84,6 +108,8 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
 
     const func_val = value.Value.initObj(&func.obj);
     const func_idx = try comp.makeConstant(func_val);
+    _ = comp.vm.pop();
+    func_rooted = false;
     try comp.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
 
     const meth_name_idx = try comp.makeStringConstant(setter_name);

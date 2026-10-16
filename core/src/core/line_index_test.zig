@@ -7,7 +7,7 @@ test "LineIndex: accurately calculates line numbers from offsets" {
     // foo\nbar\n
     const source = "foo\nbar\n";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     // Verify line starts
     try testing.expectEqual(@as(usize, 3), index.line_starts.len);
@@ -33,7 +33,7 @@ test "LineIndex: correctly maps UTF-8 and UTF-16 columns for LSP" {
     // b (7)
     const source = "a 🚀 b\n";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     // Target the 'b' character
     const target_offset: u32 = 7;
@@ -51,10 +51,23 @@ test "LineIndex: correctly maps UTF-8 and UTF-16 columns for LSP" {
 test "LineIndex: safely handles empty strings" {
     const source = "";
     var index = try LineIndex.init(testing.allocator, source);
-    defer testing.allocator.free(index.line_starts);
+    defer index.deinit(testing.allocator);
 
     try testing.expectEqual(@as(usize, 1), index.line_starts.len);
     try testing.expectEqual(@as(u32, 0), index.getLine(0));
     try testing.expectEqual(@as(u32, 0), index.getUtf8Column(0));
     try testing.expectEqual(@as(u32, 0), index.getUtf16Column(0));
+}
+
+test "LineIndex: humanPosition is the 1-based line and UTF-8 column compilers print" {
+    const source = "a = 1\nμ = 2\n";
+    const index = try LineIndex.init(testing.allocator, source);
+    defer index.deinit(testing.allocator);
+    const first = index.humanPosition(0);
+    try testing.expectEqual(@as(u32, 1), first.line);
+    try testing.expectEqual(@as(u32, 1), first.column);
+    // "μ" is two bytes: the `=` after it is byte column 4 of line 2.
+    const eq = index.humanPosition(@intCast(std.mem.lastIndexOfScalar(u8, source, '=').?));
+    try testing.expectEqual(@as(u32, 2), eq.line);
+    try testing.expectEqual(@as(u32, 4), eq.column);
 }

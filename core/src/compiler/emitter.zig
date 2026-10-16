@@ -1,3 +1,8 @@
+//! Writes bytecode into the chunk being compiled: opcodes and their operands, constants
+//! (shared by equal values, `makeConstant`), jumps and loops and their patching, and the
+//! stack depth tracked for each op (`getStaticStackEffect`). Its functions are re-exported
+//! as methods of `Compiler` in compiler.zig.
+
 const std = @import("std");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
@@ -50,6 +55,9 @@ pub fn simulatePop(self: *Compiler, count: usize) void {
 
 pub fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
     const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
+    // The index is a 16-bit operand; a larger one would silently alias an earlier
+    // call site's cache and dispatch to the wrong method.
+    if (ic_idx > limits.MAX_INLINE_CACHES) return error.TooManyInlineCaches;
     try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
     try self.emitByte(@intCast(ic_idx & 0xff));
 }
@@ -71,14 +79,26 @@ pub fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
     }
 }
 
+/// The slot of `val` in the chunk's constants, added if it has none. Equal constants
+/// share a slot: a number, a symbol (interned) or any other value by its bits, a string
+/// by its text. Each lookup is one hash; a scan of the constants comparing values made
+/// compiling a 4000-number literal quadratic.
 pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
-    // Linear scan over constants to reuse existing matching values
-    for (self.current_chunk.constants.items, 0..) |existing, i| {
-        if (self.vm.valuesEqual(existing, val)) return i;
-    }
+    const bits: u64 = @bitCast(val);
+    const known = if (val.isString()) self.string_slots.get(val.asString().chars) else self.constant_slots.get(bits);
+    if (known) |slot| return slot;
 
+    // A top-level chunk (no ObjFunction yet) is not reachable from any root until
+    // interpret()/op_import wraps it; register it so heap constants survive a GC
+    // triggered mid-compile. Nested chunks are traced through their ObjFunction,
+    // which compileClosureBlock keeps on the VM stack while compiling.
+    if (val.isObject() and self.function == null) self.vm.gc.trackChunk(self.current_chunk) catch return error.OutOfMemory;
     const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
     if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
+    (if (val.isString())
+        self.string_slots.put(self.allocator, val.asString().chars, @intCast(index))
+    else
+        self.constant_slots.put(self.allocator, bits, @intCast(index))) catch return error.OutOfMemory;
     return index;
 }
 
@@ -101,6 +121,16 @@ pub fn patchJump(self: *Compiler, offset: usize) void {
     const jump = self.current_chunk.code.items.len - offset - 4;
     std.debug.assert(jump <= 0xFFFFFFFF); // Assert it fits in 32 bits
     self.writeJumpOffset(offset, jump);
+}
+
+/// `op_for_next` over the loop state at `slot` (the iterable; its count is `slot + 1`).
+/// Returns the exit jump's position for patchJump.
+pub fn emitForNext(self: *Compiler, slot: u16) CompileError!usize {
+    try self.emitOp(.op_for_next);
+    try self.emitByte(@intCast(slot >> 8));
+    try self.emitByte(@intCast(slot & 0xff));
+    for (0..4) |_| try self.emitByte(0xff);
+    return self.current_chunk.code.items.len - 4;
 }
 
 pub fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
@@ -185,14 +215,8 @@ pub fn emitBinaryOp(self: *Compiler, op: ast.BinaryOp) CompileError!void {
         },
         .less => try self.emitOp(.op_less),
         .greater => try self.emitOp(.op_greater),
-        .less_equal => {
-            try self.emitOp(.op_greater);
-            try self.emitOp(.op_not);
-        },
-        .greater_equal => {
-            try self.emitOp(.op_less);
-            try self.emitOp(.op_not);
-        },
+        .less_equal => try self.emitOp(.op_less_equal),
+        .greater_equal => try self.emitOp(.op_greater_equal),
         .spaceship => try self.emitOp(.op_cmp),
         else => return error.UnknownNode,
     }
@@ -204,7 +228,33 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
     return switch (op) {
         // --- Pushes 1 (Net: +1) ---
         // These operations introduce a new value onto the top of the stack.
-        .op_nil, .op_true, .op_false, .op_get_local, .op_get_local_wide, .op_get_global, .op_get_global_wide, .op_constant, .op_constant_wide, .op_closure, .op_closure_wide, .op_get_upvalue, .op_dup, .op_import, .op_import_wide, .op_block_given, .op_defined, .op_defined_wide, .op_module, .op_module_wide, .op_extract_kwarg, .op_extract_kwarg_wide, .op_class, .op_class_wide => 1,
+        .op_nil,
+        .op_true,
+        .op_false,
+        .op_get_local,
+        .op_get_local_wide,
+        .op_get_global,
+        .op_get_global_wide,
+        .op_constant,
+        .op_constant_wide,
+        .op_closure,
+        .op_closure_wide,
+        .op_get_upvalue,
+        .op_dup,
+        .op_import,
+        .op_import_wide,
+        .op_block_given,
+        .op_defined,
+        .op_defined_wide,
+        .op_module,
+        .op_module_wide,
+        .op_extract_kwarg,
+        .op_extract_kwarg_wide,
+        .op_class,
+        .op_class_wide,
+        // op_for_next pushes the element on the path that stays in the loop.
+        .op_for_next,
+        => 1,
 
         // --- Pops 1 (Net: -1) ---
         // These operations consume exactly one value from the stack without pushing anything back.
@@ -216,7 +266,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Pops 2, Pushes 1 (Net: -1) ---
         // Binary operations that consume a left and right operand, and yield a single result.
-        .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide, .op_cmp => -1,
+        .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_equal, .op_case_equal, .op_is_instance, .op_get_index, .op_set_property, .op_set_property_wide, .op_set_class_var, .op_set_class_var_wide, .op_cmp => -1,
 
         // --- Pops 3, Pushes 1 (Net: -2) ---
         // Consumes a target, an index, and a value, yielding the assigned value back.

@@ -1,9 +1,21 @@
+//! The Map class's methods (`keys`, `each`, `merge`, `get`, `symbolize_keys` and the rest),
+//! as a `methods` table of `common.MethodDef`, and `mapNew`, which registry.zig binds as
+//! `Map.new`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
+const callBlock = @import("iteration.zig").callBlock;
 
-/// Map#keys
+/// Map.new -> an empty Map
+pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
+    _ = class;
+    const map = try vm.gc.allocateMap(vm);
+    return value.Value.initObj(&map.obj);
+}
+
+/// Map#keys -> its keys, in insertion order
 pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
@@ -38,20 +50,28 @@ pub fn mapKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
 }
 
 /// Map#delete(key)
+/// Map#delete(key) -> the removed value, nil when absent. The other entries keep their
+/// order (a swap-remove moved the last entry into the hole).
 pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     _ = vm;
-    if (map.map.fetchSwapRemove(key)) |kv| {
+    if (map.map.fetchOrderedRemove(key)) |kv| {
         return kv.value;
     }
     return value.Value.initNil();
 }
 
+// The iterators index the map afresh on every step and stop at its current count: a
+// block that inserts into the map it iterates moves its entries, and the key and value
+// slices taken once read freed memory.
+
 /// Map#each { |k, v| ... }
 pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
-    const keys = map.map.keys();
-    const values = map.map.values();
-    for (keys, 0..) |k, i| {
-        _ = try vm.callClosureSync(closure, &.{ k, values[i] });
+    var i: usize = 0;
+    while (i < map.map.count()) : (i += 1) {
+        switch (try callBlock(vm, closure, &.{ map.map.keys()[i], map.map.values()[i] })) {
+            .broke => |v| return v,
+            .value => {},
+        }
     }
     return value.Value.initObj(&map.obj);
 }
@@ -100,17 +120,15 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
     vm.push(value.Value.initObj(&new_arr.obj));
 
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
-
-    const keys = map.map.keys();
-    const values = map.map.values();
     const closure = block_opt.?;
 
-    for (keys, 0..) |k, i| {
-        const mapped_val = vm.callClosureSync(closure, &.{ k, values[i] }) catch |err| {
-            if (err == error.BlockBreak) return vm.stack[vm.stack_top - 1];
-            return err;
+    var i: usize = 0;
+    while (i < map.map.count()) : (i += 1) {
+        const mapped_val = switch (try callBlock(vm, closure, &.{ map.map.keys()[i], map.map.values()[i] })) {
+            .broke => |v| return v,
+            .value => |v| v,
         };
-        new_arr.items.appendAssumeCapacity(mapped_val);
+        try new_arr.items.append(vm.gc.trackingAllocator(), mapped_val);
     }
 
     return value.Value.initObj(&new_arr.obj);
@@ -160,8 +178,8 @@ pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     while (it.next()) |entry| {
         const k = entry.key_ptr.*;
         var new_k = k;
-        if (k.isObject() and k.asObj().obj_type == .string) {
-            const str: *value.ObjString = @alignCast(@fieldParentPtr("obj", k.asObj()));
+        if (k.isString()) {
+            const str = k.asString();
             new_k = try vm.allocateSymbol(str.chars);
         }
         try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
@@ -180,8 +198,8 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     while (it.next()) |entry| {
         const k = entry.key_ptr.*;
         var new_k = k;
-        if (k.isObject() and k.asObj().obj_type == .symbol) {
-            const sym: *value.ObjSymbol = @alignCast(@fieldParentPtr("obj", k.asObj()));
+        if (k.isSymbol()) {
+            const sym = k.asSymbol();
             new_k = try vm.allocateString(sym.chars);
         }
         try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);

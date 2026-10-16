@@ -1,5 +1,24 @@
+//! Bytecode: the `OpCode` set and its `CallFlags`, `Chunk` (code, constants, source offsets
+//! and inline caches), the `InlineCache` of a property or invoke site, and the
+//! `ChunkRegistry` that keeps a chunk's constants alive while it is compiled.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
+
+/// The byte after the argument count of op_call, op_invoke(_wide), op_super_invoke and
+/// op_yield, saying how the call site passed its arguments.
+pub const CallFlags = packed struct(u8) {
+    /// The last argument is the call's block (`do ... end`, `{ ... }` or `&blk`). Without
+    /// it a trailing lambda is an ordinary argument, never mistaken for the block.
+    has_block: bool = false,
+    /// The positional arguments arrive packed in one Array (the call used `*splat`) and
+    /// are spread onto the stack before dispatch.
+    spread: bool = false,
+    /// The last argument before the block is the call's keyword Map (`f(x, key: 1)`).
+    /// Without it a trailing Map is an ordinary argument, never mistaken for keywords.
+    has_kwargs: bool = false,
+    _: u5 = 0,
+};
 
 /// The Virtual Machine Instruction Set
 pub const OpCode = enum(u8) {
@@ -36,6 +55,10 @@ pub const OpCode = enum(u8) {
     op_class_wide,
     op_get_property,
     op_get_property_wide,
+    /// `@x` read: the instance's own field, nil when unset, never a method of that name
+    /// (op_get_property's method fallback). Same operands as op_get_property.
+    op_get_ivar,
+    op_get_ivar_wide,
     op_set_property,
     op_set_property_wide,
     op_class_method,
@@ -75,8 +98,6 @@ pub const OpCode = enum(u8) {
     op_get_global_wide,
     op_define_global,
     op_define_global_wide,
-    op_set_global,
-    op_set_global_wide,
 
     // Math
     op_add,
@@ -98,6 +119,9 @@ pub const OpCode = enum(u8) {
     op_case_equal,
     op_greater,
     op_less,
+    /// `<=` and `>=` of their own: as `not >` and `not <` they were true against NaN.
+    op_less_equal,
+    op_greater_equal,
     op_cmp,
 
     // Control Flow
@@ -108,6 +132,10 @@ pub const OpCode = enum(u8) {
     op_switch,
     op_switch_wide,
     op_loop,
+    /// One step of a `for` loop: u16 slot, then a 4-byte exit offset. The loop keeps its
+    /// iterable in local `slot` and how many elements it has taken in `slot + 1`; this
+    /// pushes the next element and counts it, or jumps forward by the offset when none is left.
+    op_for_next,
     op_break_block,
 
     // Exception Handling
@@ -128,8 +156,14 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
-// A 2-way Polymorphic Inline Cache (PIC)
+/// A 2-way polymorphic inline cache at one property or invoke site: per class, the method
+/// found (`cached_val`), or the field offset when the name is a field (`cached_val` nil).
+/// Valid for `VM.method_epoch` as of `epoch`: defining, redefining or mixing in a method
+/// anywhere bumps the epoch, so no site keeps calling a method that was replaced (it did,
+/// and after a collection it called freed memory). The GC traces the entries.
 pub const InlineCache = struct {
+    epoch: u32 = 0,
+
     cached_class_1: ?*value.ObjClass = null,
     cached_val_1: value.Value = value.Value.initNil(),
     offset_1: usize = 0,
@@ -137,11 +171,76 @@ pub const InlineCache = struct {
     cached_class_2: ?*value.ObjClass = null,
     cached_val_2: value.Value = value.Value.initNil(),
     offset_2: usize = 0,
+
+    /// The field offset cached for `class` at this site, if the name is one of its fields.
+    pub fn fieldOffset(self: *const InlineCache, class: *value.ObjClass) ?usize {
+        if (self.cached_class_1 == class and self.cached_val_1.isNil()) return self.offset_1;
+        if (self.cached_class_2 == class and self.cached_val_2.isNil()) return self.offset_2;
+        return null;
+    }
+
+    /// The method cached for `class` at this site, if the name is one of its methods.
+    pub fn cachedMethod(self: *const InlineCache, class: *value.ObjClass) ?value.Value {
+        if (self.cached_class_1 == class and !self.cached_val_1.isNil()) return self.cached_val_1;
+        if (self.cached_class_2 == class and !self.cached_val_2.isNil()) return self.cached_val_2;
+        return null;
+    }
+
+    /// Records that `name` is `class`'s field at `offset` (or its method `method`) here.
+    pub fn remember(self: *InlineCache, class: *value.ObjClass, method: value.Value, offset: usize) void {
+        if (self.cached_class_1 == null or self.cached_class_1 == class) {
+            self.cached_class_1 = class;
+            self.cached_val_1 = method;
+            self.offset_1 = offset;
+        } else {
+            self.cached_class_2 = class;
+            self.cached_val_2 = method;
+            self.offset_2 = offset;
+        }
+    }
 };
 
 pub const DebugSpan = struct {
     ip: u32,
     source_offset: u32,
+};
+
+/// Set of live chunks whose constant pools are GC roots.
+///
+/// A chunk under compilation is not reachable from any ObjFunction yet (the
+/// top-level chunk only gets wrapped in interpret(), an imported module's chunk
+/// only after compile() returns), so constants copied into it would otherwise be
+/// swept by a GC triggered mid-compile. Chunks register themselves on the first
+/// heap constant and unregister in Chunk.free, so the registry never holds a
+/// dangling chunk pointer.
+pub const ChunkRegistry = struct {
+    chunks: std.ArrayListUnmanaged(*Chunk) = .empty,
+
+    pub fn track(self: *ChunkRegistry, allocator: std.mem.Allocator, c: *Chunk) !void {
+        if (c.registry != null) return;
+        try self.chunks.append(allocator, c);
+        c.registry = self;
+        c.registry_index = self.chunks.items.len - 1;
+    }
+
+    pub fn untrack(self: *ChunkRegistry, c: *Chunk) void {
+        const idx = c.registry_index;
+        std.debug.assert(idx < self.chunks.items.len and self.chunks.items[idx] == c);
+        _ = self.chunks.swapRemove(idx);
+        if (idx < self.chunks.items.len) self.chunks.items[idx].registry_index = idx;
+        c.registry = null;
+        c.registry_index = 0;
+    }
+
+    /// Detaches every still-registered chunk (e.g. a stack chunk freed after
+    /// its VM) so a later Chunk.free does not touch the destroyed registry.
+    pub fn deinit(self: *ChunkRegistry, allocator: std.mem.Allocator) void {
+        for (self.chunks.items) |c| {
+            c.registry = null;
+            c.registry_index = 0;
+        }
+        self.chunks.deinit(allocator);
+    }
 };
 
 pub const Chunk = struct {
@@ -152,6 +251,10 @@ pub const Chunk = struct {
     max_stack_slots: usize,
     local_count: usize,
     local_names: std.ArrayListUnmanaged([]const u8), // For REPL introspection
+    // GC root registration (see ChunkRegistry). A registered chunk must not be
+    // moved by value, since the registry stores its address.
+    registry: ?*ChunkRegistry = null,
+    registry_index: usize = 0,
 
     pub fn init() Chunk {
         return .{
@@ -219,6 +322,7 @@ pub const Chunk = struct {
     }
 
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
+        if (self.registry) |r| r.untrack(self);
         self.code.deinit(allocator);
         self.inline_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);

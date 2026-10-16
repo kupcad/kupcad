@@ -1,3 +1,7 @@
+//! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
+//! fonts (`FontKey`, `getFace`), flattens their curves into closed contours scaled to the
+//! given size in mm, and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
+
 const std = @import("std");
 const tatfi = @import("tatfi");
 const bezier = @import("bezier.zig");
@@ -72,6 +76,15 @@ const BuilderContext = struct {
     cursor_y: f64,
     scale: f64,
     tolerance_sq: f64,
+    /// The outline callbacks can't return errors, so an allocation failure in one is kept
+    /// here and reported after the glyph: it used to drop points, truncating the outline.
+    failed: bool = false,
+
+    fn record(self: *BuilderContext, result: anyerror!void) void {
+        result catch {
+            self.failed = true;
+        };
+    }
 
     fn flushContour(self: *BuilderContext) !void {
         if (self.current_contour) |*c| {
@@ -97,47 +110,50 @@ const BuilderContext = struct {
 // --- tatfi.OutlineBuilder VTable Callbacks ---
 fn moveTo(ptr: *anyopaque, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
-    ctx.flushContour() catch return;
+    if (ctx.failed) return;
+    ctx.record(ctx.flushContour());
+    if (ctx.failed) return;
 
     ctx.current_contour = std.ArrayListUnmanaged([2]f64).empty;
     const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-    ctx.current_contour.?.append(ctx.allocator, pt) catch return;
+    ctx.record(ctx.current_contour.?.append(ctx.allocator, pt));
 }
 
 fn lineTo(ptr: *anyopaque, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
-    if (ctx.current_contour == null) return;
+    if (ctx.failed or ctx.current_contour == null) return;
 
     const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-    ctx.current_contour.?.append(ctx.allocator, pt) catch return;
+    ctx.record(ctx.current_contour.?.append(ctx.allocator, pt));
 }
 
 fn quadTo(ptr: *anyopaque, x1: f32, y1: f32, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
-    if (ctx.current_contour == null) return;
+    if (ctx.failed or ctx.current_contour == null) return;
 
     const p0 = ctx.lastPoint();
     const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
     const p2 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
 
-    bezier.flattenQuadratic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, ctx.tolerance_sq) catch return;
+    ctx.record(bezier.flattenQuadratic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, ctx.tolerance_sq));
 }
 
 fn curveTo(ptr: *anyopaque, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
-    if (ctx.current_contour == null) return;
+    if (ctx.failed or ctx.current_contour == null) return;
 
     const p0 = ctx.lastPoint();
     const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
     const p2 = [2]f64{ ctx.cursor_x + @as(f64, x2) * ctx.scale, ctx.cursor_y + @as(f64, y2) * ctx.scale };
     const p3 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
 
-    bezier.flattenCubic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, p3, ctx.tolerance_sq) catch return;
+    ctx.record(bezier.flattenCubic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, p3, ctx.tolerance_sq));
 }
 
 fn closePath(ptr: *anyopaque) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
-    ctx.flushContour() catch return;
+    if (ctx.failed) return;
+    ctx.record(ctx.flushContour());
 }
 
 /// The Main Extraction Engine
@@ -166,6 +182,7 @@ pub fn extractText(
         .scale = scale,
         .tolerance_sq = tol_sq,
     };
+    errdefer if (ctx.current_contour) |*c| c.deinit(allocator);
 
     const builder = tatfi.OutlineBuilder{
         .ptr = &ctx,
@@ -181,11 +198,14 @@ pub fn extractText(
     const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".param_types[1].?;
     const gpa_val: GpaType = if (GpaType == void) {} else allocator;
 
-    var iter = std.unicode.Utf8Iterator{ .bytes = text_str, .i = 0 };
+    // Checked, not assumed: the iterator asserts on a malformed sequence.
+    const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
+    var iter = view.iterator();
     while (iter.nextCodepoint()) |cp| {
         if (face.glyph_index(cp)) |glyph_id| {
             // Extract outlines and route to flattener
             _ = face.outline_glyph(gpa_val, glyph_id, builder);
+            if (ctx.failed) return error.OutOfMemory;
             try ctx.flushContour();
 
             // Advance cursor for next letter

@@ -1,231 +1,148 @@
+//! The methods every value has, bound on the root `Object` class by `registry.zig`: `class`,
+//! `inspect`, `is_a?`, `respond_to?`, `nil?`, `empty?`, `method`, `tap`, `into`, `dup`/`clone`.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const common = @import("common.zig");
+const util = @import("../methods/util.zig");
 
-/// Object#is_a?(Class) -> Returns true if receiver is an instance of the class or its subclasses
-pub fn nativeIsA(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-
-    const has_block = arg_count > 0 and args[arg_count - 1].isClosure();
-    const pos_args = if (has_block) arg_count - 1 else arg_count;
-
-    if (pos_args != 1) {
-        vm.runtimeError("Runtime Error: is_a? expects exactly 1 argument.\n", .{});
-        return error.RuntimeError;
-    }
-
-    const target_val = args[0];
-    if (!target_val.isClass()) {
-        vm.runtimeError("Runtime Error: is_a? expects a Class as its argument.\n", .{});
-        return error.RuntimeError;
-    }
-
-    var match = false;
-
-    // Use the centralized class resolver on the VM
-    if (vm.getClass(receiver)) |start_class| {
-        match = VM.isSubclassOf(start_class, target_val.asClass());
-    }
-
-    return value.Value.initBool(match);
+/// Object#is_a?(Class) -> true if the receiver is an instance of the class or a subclass
+fn objectIsA(vm: *VM, receiver: value.Value, class: *value.ObjClass) !value.Value {
+    const own = vm.getClass(receiver) orelse return value.Value.initBool(false);
+    return value.Value.initBool(VM.isSubclassOf(own, class));
 }
 
-/// Object#responds_to?(Symbol|String) -> Returns true if receiver can invoke the method
-pub fn nativeRespondsTo(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+/// Object#respond_to?(Symbol|String) -> true if the receiver has that method (or, for an
+/// instance, that field)
+fn objectRespondTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
+    const query_name = try util.requireName(vm, name_val, "respond_to?", "the method name");
+    const query_val = try vm.allocateString(query_name);
 
-    const has_block = arg_count > 0 and args[arg_count - 1].isClosure();
-    const pos_args = if (has_block) arg_count - 1 else arg_count;
-
-    if (pos_args != 1) {
-        vm.runtimeError("Runtime Error: responds_to? expects exactly 1 argument.\n", .{});
-        return error.RuntimeError;
-    }
-
-    const target_val = args[0];
-    var query_val = target_val;
-    var query_name: []const u8 = "";
-
-    // Normalize symbols into string Values for consistent dictionary lookup
-    if (target_val.isObject() and target_val.asObj().obj_type == .symbol) {
-        query_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-        query_val = try vm.allocateString(query_name);
-    } else if (target_val.isObject() and target_val.asObj().obj_type == .string) {
-        query_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", target_val.asObj()))).chars;
-    } else {
-        vm.runtimeError("Runtime Error: responds_to? expects a Symbol or String.\n", .{});
-        return error.RuntimeError;
-    }
-
-    var match = false;
-
-    // Unified Resolution
     if (receiver.isClass()) {
-        const resolved = vm.findClassMethodWithPrivacy(receiver.asClass(), query_val);
-        if (resolved.method != null) match = true;
-        if (!match and std.mem.eql(u8, query_name, "new")) match = true;
-    } else if (vm.getClass(receiver)) |c| {
-        const resolved = vm.findMethodWithPrivacy(c, query_val, null);
-        if (resolved.method != null) match = true;
+        if (vm.findClassMethodWithPrivacy(receiver.asClass(), query_val).method != null) return value.Value.initBool(true);
+        return value.Value.initBool(std.mem.eql(u8, query_name, "new"));
     }
-
-    if (!match and receiver.isInstance()) {
-        const clean_name = if (query_name.len > 0 and query_name[0] == '@' and (query_name.len == 1 or query_name[1] != '@'))
+    if (classOrObject(vm, receiver)) |c| {
+        if (vm.findMethodWithPrivacy(c, query_val, null).method != null) return value.Value.initBool(true);
+    }
+    if (receiver.isInstance()) {
+        const field_name = if (query_name.len > 0 and query_name[0] == '@' and (query_name.len == 1 or query_name[1] != '@'))
             query_name[1..]
         else
             query_name;
-
-        const clean_val = try vm.allocateString(clean_name);
-        if (receiver.asInstance().class.instance_layout.contains(clean_val)) match = true;
-    }
-
-    return value.Value.initBool(match);
-}
-
-/// Object#nil? -> Returns true if receiver is NilClass, false otherwise
-pub fn nativeNilQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    return value.Value.initBool(receiver.isNil());
-}
-
-/// Object#empty? -> Checks length of collections/strings or volume of 3D geometry
-pub fn nativeEmptyQ(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const self_val = vm.getReceiver(args);
-
-    if (self_val.isNil()) return value.Value.initBool(true);
-
-    if (self_val.isObject()) {
-        const obj = self_val.asObj();
-        switch (obj.obj_type) {
-            .string => {
-                const str: *value.ObjString = @alignCast(@fieldParentPtr("obj", obj));
-                return value.Value.initBool(str.chars.len == 0);
-            },
-            .array => {
-                const arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", obj));
-                return value.Value.initBool(arr.items.items.len == 0);
-            },
-            .map => {
-                const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", obj));
-                return value.Value.initBool(map.map.count() == 0);
-            },
-            else => {},
-        }
-    }
-
-    if (self_val.isGeometry()) {
-        const handle = try vm.ensureConcrete(self_val);
-        const vol = kernel.volume(handle);
-        return value.Value.initBool(vol == 0.0);
+        const field_val = try vm.allocateString(field_name);
+        return value.Value.initBool(receiver.asInstance().class.instance_layout.contains(field_val));
     }
     return value.Value.initBool(false);
 }
 
-/// Object#tap { |obj| ... } -> Yields receiver to block, discards block result, returns receiver
-pub fn nativeTap(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
+/// The class whose methods `receiver` answers: its own, or Object's for a value without one.
+fn classOrObject(vm: *VM, receiver: value.Value) ?*value.ObjClass {
+    return vm.getClass(receiver) orelse vm.object_class;
+}
 
-    if (arg_count > 0 and args[arg_count - 1].isClosure()) {
-        const block_closure = args[arg_count - 1].asClosure();
-        // Execute block and capture its result
-        _ = try vm.callClosureSync(block_closure, &.{receiver});
+/// Object#nil?
+fn objectNilQ(vm: *VM, receiver: value.Value) !value.Value {
+    _ = vm;
+    return value.Value.initBool(receiver.isNil());
+}
+
+/// Object#empty? -> nil, an empty String/Array/Map, or a Solid with no volume
+fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
+    if (receiver.isNil()) return value.Value.initBool(true);
+    if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
+    if (receiver.isArray()) return value.Value.initBool(receiver.asArray().items.items.len == 0);
+    if (receiver.isMap()) return value.Value.initBool(receiver.asMap().map.count() == 0);
+    if (receiver.isGeometry()) {
+        const solid = try vm.ensureConcrete(receiver);
+        try vm.requireFeature(solid.engine, .volume);
+        return value.Value.initBool(kernel.volume(solid) == 0.0);
     }
+    return value.Value.initBool(false);
+}
+
+/// Object#tap { |obj| ... } -> yields the receiver to the block and returns the receiver
+fn objectTap(vm: *VM, receiver: value.Value, block: ?*value.ObjClosure) !value.Value {
+    if (block) |b| _ = try vm.callClosureSync(b, &.{receiver});
     return receiver;
 }
 
-pub fn nativeMethod(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    if (arg_count != 1) return error.RuntimeError;
+/// Object#into { |obj| ... } -> yields the receiver to the block and returns the block's result
+fn objectInto(vm: *VM, receiver: value.Value, block: ?*value.ObjClosure) !value.Value {
+    const b = block orelse return receiver;
+    return vm.callClosureSync(b, &.{receiver});
+}
 
-    const receiver = (args - 1)[0];
-    const name_val = args[0];
-
-    var query_val = name_val;
-    var method_name: []const u8 = "";
-
-    // Normalize name to String Value
-    if (name_val.isObject() and name_val.asObj().obj_type == .symbol) {
-        method_name = @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-        query_val = try vm.allocateString(method_name);
-    } else if (name_val.isObject() and name_val.asObj().obj_type == .string) {
-        method_name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))).chars;
-    } else {
-        return error.RuntimeError;
-    }
-
-    var method_val: ?value.Value = null;
-
-    // Standard Class Lookup using Value Keys
-    if (receiver.isInstance()) {
-        method_val = vm.findMethod(receiver.asInstance().class, query_val);
-    } else if (receiver.isObject()) {
-        const class_obj = switch (receiver.asObj().obj_type) {
-            .string => vm.string_class,
-            .symbol => vm.symbol_class,
-            .array => vm.array_class,
-            .map => vm.map_class,
-            else => vm.object_class,
-        };
-        if (class_obj) |c| method_val = vm.findMethod(c, query_val);
-    } else if (receiver.isNumber()) {
-        if (vm.number_class) |c| method_val = vm.findMethod(c, query_val);
-    } else if (receiver.isBool()) {
-        if (vm.boolean_class) |c| method_val = vm.findMethod(c, query_val);
-    }
-
-    // CAD Mesh Method Lookup (String based via Manifest)
-    if (method_val == null and (receiver.isGeometry() or receiver.isCrossSection() or receiver.isAssembly())) {
-        const manifest = @import("../manifest.zig");
-        if (manifest.getMeshMethod(method_name)) |mesh_fn| {
-            const native_obj = try vm.gc.allocateNative(vm, mesh_fn);
-            method_val = value.Value.initObj(&native_obj.obj);
-        }
-    }
-
-    if (method_val == null) return error.RuntimeError;
-
-    const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val.?);
+/// Object#method(:name) -> the method bound to the receiver, called with `.call`
+fn objectMethod(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
+    const method_name = try util.requireName(vm, name_val, "method", "the method name");
+    const query_val = try vm.allocateString(method_name);
+    const class = classOrObject(vm, receiver);
+    const method_val = (if (class) |c| vm.findMethod(c, query_val) else null) orelse {
+        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, util.typeName(vm, receiver) });
+    };
+    const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val);
     return value.Value.initObj(&bound.obj);
 }
 
-/// Object#into { |obj| ... } -> Yields receiver to block, returns block result
-pub fn nativeInto(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-
-    if (arg_count > 0 and args[arg_count - 1].isClosure()) {
-        const block_closure = args[arg_count - 1].asClosure();
-        // Return the evaluated block's result directly (it already has the correct ref count)
-        return try vm.callClosureSync(block_closure, &.{receiver});
+/// Object#dup / Object#clone -> values are immutable or shared, so the receiver itself
+/// Object#dup / #clone -> a shallow copy of an Array, Map or instance: its own elements,
+/// entries or fields, holding the same values. Everything else is immutable (or a
+/// handle, like a Solid) and is returned as it is. It used to return the receiver
+/// itself, so `copy = parts.dup; copy.push(x)` changed `parts`.
+fn objectDup(vm: *VM, receiver: value.Value) !value.Value {
+    if (receiver.isArray()) {
+        const copy = try vm.gc.allocateArray(vm);
+        vm.push(value.Value.initObj(&copy.obj)); // rooted while its storage is allocated
+        defer _ = vm.pop();
+        try copy.items.appendSlice(vm.gc.trackingAllocator(), receiver.asArray().items.items);
+        return value.Value.initObj(&copy.obj);
+    }
+    if (receiver.isMap()) {
+        const copy = try vm.gc.allocateMap(vm);
+        vm.push(value.Value.initObj(&copy.obj));
+        defer _ = vm.pop();
+        copy.map = try receiver.asMap().map.clone(vm.gc.trackingAllocator());
+        return value.Value.initObj(&copy.obj);
+    }
+    if (receiver.isInstance()) {
+        const source = receiver.asInstance();
+        const copy = try vm.gc.allocateInstance(vm, source.class);
+        vm.push(value.Value.initObj(&copy.obj));
+        defer _ = vm.pop();
+        try copy.fields.appendSlice(vm.gc.trackingAllocator(), source.fields.items);
+        return value.Value.initObj(&copy.obj);
     }
     return receiver;
 }
 
-/// Object#dup / Object#clone -> Duplicates primitive or increments ARC on geometry
-pub fn nativeDup(vm_opaque: *anyopaque, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-    const vm: *VM = @ptrCast(@alignCast(vm_opaque));
-    const receiver = vm.getReceiver(args);
-    return receiver;
+/// Object#class -> the receiver's class, or nil for a value that has none (nil, a lambda)
+fn objectClass(vm: *VM, receiver: value.Value) !value.Value {
+    const class = vm.getClass(receiver) orelse return value.Value.initNil();
+    return value.Value.initObj(&class.obj);
+}
+
+/// Object#inspect -> the receiver as it would be written in a script: Strings quoted,
+/// Symbols with their colon (`puts` and interpolation print Strings bare).
+fn objectInspect(vm: *VM, receiver: value.Value) !value.Value {
+    var out: std.Io.Writer.Allocating = .init(vm.allocator);
+    defer out.deinit();
+    try receiver.stringify(true, &out.writer);
+    return vm.allocateString(out.written());
 }
 
 pub const methods = [_]common.MethodDef{
-    .{ .name = "is_a?", .func = nativeIsA },
-    .{ .name = "responds_to?", .func = nativeRespondsTo },
-    .{ .name = "nil?", .func = nativeNilQ },
-    .{ .name = "empty?", .func = nativeEmptyQ },
-    .{ .name = "method", .func = nativeMethod },
-    .{ .name = "tap", .func = nativeTap },
-    .{ .name = "into", .func = nativeInto },
-    .{ .name = "dup", .func = nativeDup },
-    .{ .name = "clone", .func = nativeDup },
+    .{ .name = "class", .func = common.wrapMethod(objectClass) },
+    .{ .name = "inspect", .func = common.wrapMethod(objectInspect) },
+    .{ .name = "is_a?", .func = common.wrapMethod(objectIsA) },
+    .{ .name = "respond_to?", .func = common.wrapMethod(objectRespondTo) },
+    .{ .name = "nil?", .func = common.wrapMethod(objectNilQ) },
+    .{ .name = "empty?", .func = common.wrapMethod(objectEmptyQ) },
+    .{ .name = "method", .func = common.wrapMethod(objectMethod) },
+    .{ .name = "tap", .func = common.wrapMethod(objectTap) },
+    .{ .name = "into", .func = common.wrapMethod(objectInto) },
+    .{ .name = "dup", .func = common.wrapMethod(objectDup) },
+    .{ .name = "clone", .func = common.wrapMethod(objectDup) },
 };

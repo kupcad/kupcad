@@ -21,7 +21,7 @@ test "ScriptSession: buildReverseGraph inverts workspace module dependency edges
     const parent_path = "main.kup";
 
     const child_id = try session.workspace.addModule(child_path, "def square(x) x * x end");
-    const parent_id = try session.workspace.addModule(parent_path, "import \"math.kup\" as math; val = math.square(5)");
+    const parent_id = try session.workspace.addModule(parent_path, "import \"./math.kup\" as math; val = math.square(5)");
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -42,7 +42,7 @@ test "ScriptSession: markFileEdited triggers reverse BFS invalidation" {
     const parent_path = "main.kup";
 
     const child_id = try session.workspace.addModule(child_path, "def square(x) x * x end");
-    const parent_id = try session.workspace.addModule(parent_path, "import \"math.kup\" as math; val = math.square(5)");
+    const parent_id = try session.workspace.addModule(parent_path, "import \"./math.kup\" as math; val = math.square(5)");
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -85,9 +85,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     try testing.expectApproxEqAbs(@as(f64, 1000.0), vol, 1e-4);
 
     // 2. Modify code to yield the identical output geometry (variable renaming)
-    var mod = &session.workspace.modules.items[@backingInt(mod_id)];
-    testing.allocator.free(mod.source);
-    mod.source = try testing.allocator.dupe(u8, "box = cube(10.0)");
+    try session.workspace.updateModuleSource(mod_id, "box = cube(10.0)");
 
     try session.markFileEdited(file_path);
 
@@ -105,6 +103,35 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
     try testing.expect(node2.cached_handle != null);
 }
 
+test "ScriptSession: stores its own copy of the module output" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit(); // the cache-owned handle used to be freed twice here
+
+    const file_path = "model.kup";
+    const mod_id = try session.workspace.addModule(file_path, "c = cube(10.0)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+
+    const node = &session.nodes.items[@backingInt(mod_id)];
+    const first = node.cached_handle orelse return error.NoHandle;
+
+    // The session copy must survive the DAG cache dropping its entry (what GC
+    // eviction does once no ObjGeometry references the node).
+    session.vm.clearDagCache();
+    try testing.expectApproxEqAbs(@as(f64, 1000.0), kernel.volume(first), 1e-6);
+
+    // Changing the output destroys the old copy (not the cache's handle).
+    var mod = &session.workspace.modules.items[@backingInt(mod_id)];
+    testing.allocator.free(mod.source);
+    mod.source = try testing.allocator.dupe(u8, "c = cube(20.0)");
+    try session.markFileEdited(file_path);
+    try session.evaluateModule(mod_id);
+
+    const second = session.nodes.items[@backingInt(mod_id)].cached_handle orelse return error.NoHandle;
+    try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(second), 1e-6);
+}
+
 test "ScriptSession: evaluateWorkspace processes multi-file dependencies and propagates early cutoffs" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -114,8 +141,8 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
 
     session.vm.vfs = mem_vfs.vfs();
 
-    const leaf_path = "./leaf.kup";
-    const root_path = "./root.kup";
+    const leaf_path = "leaf.kup";
+    const root_path = "root.kup";
 
     const leaf_source = "c = cube(10.0); export c;";
     const root_source = "import { c as l_c } from \"./leaf.kup\"; out = l_c.translate(20.0, 0.0, 0.0); export out;";
@@ -144,9 +171,7 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     const new_leaf_source = "c = cube(x: 10.0, y: 10.0, z: 10.0); export c;";
     try mem_vfs.vfs().writeFile(leaf_path, new_leaf_source);
 
-    var mod_leaf = &session.workspace.modules.items[@backingInt(leaf_id)];
-    testing.allocator.free(mod_leaf.source);
-    mod_leaf.source = try testing.allocator.dupe(u8, new_leaf_source);
+    try session.workspace.updateModuleSource(leaf_id, new_leaf_source);
 
     // Invalidates leaf.kup and reverse-BFS invalidates root.kup
     try session.markFileEdited(leaf_path);
@@ -181,14 +206,14 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
     const b_source = "import { out as a_out } from \"./a.kup\"; out_b = a_out.translate(5.0, 0.0, 0.0); export out_b;";
     const c_source = "import { out_b as b_out } from \"./b.kup\"; out_c = b_out.translate(0.0, 5.0, 0.0); export out_c;";
 
-    try mem_vfs.vfs().writeFile("./a.kup", a_source);
-    try mem_vfs.vfs().writeFile("./b.kup", b_source);
-    try mem_vfs.vfs().writeFile("./c.kup", c_source);
+    try mem_vfs.vfs().writeFile("a.kup", a_source);
+    try mem_vfs.vfs().writeFile("b.kup", b_source);
+    try mem_vfs.vfs().writeFile("c.kup", c_source);
 
     // A -> B -> C
-    const a_id = try session.workspace.addModule("./a.kup", a_source);
-    const b_id = try session.workspace.addModule("./b.kup", b_source);
-    const c_id = try session.workspace.addModule("./c.kup", c_source);
+    const a_id = try session.workspace.addModule("a.kup", a_source);
+    const b_id = try session.workspace.addModule("b.kup", b_source);
+    const c_id = try session.workspace.addModule("c.kup", c_source);
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -197,13 +222,11 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
 
     // Change 'A' source code but maintain identical geometric output
     const new_a_source = "x = cube(10.0); out = x; export out;";
-    try mem_vfs.vfs().writeFile("./a.kup", new_a_source);
+    try mem_vfs.vfs().writeFile("a.kup", new_a_source);
 
-    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
-    testing.allocator.free(mod_a.source);
-    mod_a.source = try testing.allocator.dupe(u8, new_a_source);
+    try session.workspace.updateModuleSource(a_id, new_a_source);
 
-    try session.markFileEdited("./a.kup");
+    try session.markFileEdited("a.kup");
     try session.evaluateWorkspace();
 
     const a_node = &session.nodes.items[@backingInt(a_id)];
@@ -231,11 +254,11 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     const a_source = "out = cube(10.0); export out;";
     const b_source = "import { out as a_out } from \"./a.kup\"; out_b = a_out.translate(5.0, 0.0, 0.0); export out_b;";
 
-    try mem_vfs.vfs().writeFile("./a.kup", a_source);
-    try mem_vfs.vfs().writeFile("./b.kup", b_source);
+    try mem_vfs.vfs().writeFile("a.kup", a_source);
+    try mem_vfs.vfs().writeFile("b.kup", b_source);
 
-    const a_id = try session.workspace.addModule("./a.kup", a_source);
-    const b_id = try session.workspace.addModule("./b.kup", b_source);
+    const a_id = try session.workspace.addModule("a.kup", a_source);
+    const b_id = try session.workspace.addModule("b.kup", b_source);
 
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
@@ -245,13 +268,11 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
 
     // Introduce a syntax error in A
     const bad_a_source = "out = cube(10.0; export out;";
-    try mem_vfs.vfs().writeFile("./a.kup", bad_a_source);
+    try mem_vfs.vfs().writeFile("a.kup", bad_a_source);
 
-    var mod_a = &session.workspace.modules.items[@backingInt(a_id)];
-    testing.allocator.free(mod_a.source);
-    mod_a.source = try testing.allocator.dupe(u8, bad_a_source);
+    try session.workspace.updateModuleSource(a_id, bad_a_source);
 
-    try session.markFileEdited("./a.kup");
+    try session.markFileEdited("a.kup");
 
     const err = session.evaluateWorkspace();
     try testing.expectError(error.ParseError, err);
@@ -261,4 +282,162 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
 
     try testing.expect(a_node.is_stale);
     try testing.expect(b_node.is_stale);
+}
+
+test "ScriptSession: keeps the failing parse, with resolver errors, until the next evaluation" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    session.vm.vfs = mem_vfs.vfs();
+
+    // Valid syntax, but the resolver rejects it; the workspace's own parse skips the
+    // resolver, so the build used to report "0 syntax errors" and no message.
+    const bad = "f = ->(x) { break x }\ncube(1)";
+    try mem_vfs.vfs().writeFile("a.kup", bad);
+    const a_id = try session.workspace.addModule("a.kup", bad);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    const failure = session.failure orelse return error.MissingFailure;
+    try testing.expectEqual(a_id, failure.module);
+    try testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
+    try testing.expectEqualStrings("Cannot use 'break' outside of a loop", failure.diagnostics[0].message);
+
+    const good = "cube(1)";
+    try mem_vfs.vfs().writeFile("a.kup", good);
+    try session.workspace.updateModuleSource(a_id, good);
+    try session.markFileEdited("a.kup");
+    try session.evaluateWorkspace();
+    try testing.expect(session.failure == null);
+}
+
+test "ScriptSession: a compile error is kept as the failure, with its location" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    session.vm.vfs = mem_vfs.vfs();
+
+    const bad = "w = 1\ncube = 5";
+    try mem_vfs.vfs().writeFile("a.kup", bad);
+    const a_id = try session.workspace.addModule("a.kup", bad);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+
+    try testing.expectError(error.CompileError, session.evaluateWorkspace());
+    const failure = session.failure orelse return error.MissingFailure;
+    try testing.expectEqual(a_id, failure.module);
+    try testing.expectEqual(@as(usize, 1), failure.diagnostics.len);
+    try testing.expectEqualStrings("'cube' is a built-in and can't be assigned", failure.diagnostics[0].message);
+    try testing.expectEqual(@as(u32, 6), failure.diagnostics[0].loc.offset); // start of line 2
+}
+
+test "ScriptSession: params reach param() on every evaluation" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+
+    // Registering the standard library makes a new `params` map; values injected once,
+    // before the first evaluation, used to be wiped by it.
+    var params: std.StringHashMapUnmanaged(f64) = .empty;
+    defer params.deinit(testing.allocator);
+    try params.put(testing.allocator, "w", 20);
+    try session.setParams(params);
+
+    const mod_id = try session.workspace.addModule("model.kup", "w = param(:w, default: 1)\ncube(w)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    const node = &session.nodes.items[@backingInt(mod_id)];
+    try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(node.cached_handle.?), 1e-4);
+
+    // An edit re-evaluates with the same parameters, and setParams replaces them.
+    try session.setParams(.empty);
+    try session.workspace.updateModuleSource(mod_id, "w = param(:w, default: 5)\ncube(w)");
+    try session.markFileEdited("model.kup");
+    try session.evaluateModule(mod_id);
+    try testing.expectApproxEqAbs(@as(f64, 125.0), kernel.volume(node.cached_handle.?), 1e-4);
+}
+
+test "ScriptSession: removeModule drops its output and the modules after it keep theirs" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    _ = try session.workspace.addModule("closed.kup", "cube(1)");
+    _ = try session.workspace.addModule("open.kup", "cube(2)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    try session.removeModule("closed.kup");
+    try session.removeModule("closed.kup"); // already gone
+
+    try testing.expectEqual(@as(usize, 1), session.nodes.items.len);
+    try testing.expectEqual(@as(usize, 1), session.workspace.modules.items.len);
+    const kept = session.nodes.items[0].cached_handle.?;
+    try testing.expectApproxEqAbs(@as(f64, 8.0), kernel.volume(kept), 1e-9);
+    try session.evaluateWorkspace();
+}
+
+test "ScriptSession: removing the module that failed clears the failure" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    _ = try session.workspace.addModule("ok.kup", "cube(1)");
+    _ = try session.workspace.addModule("broken.kup", "cube(");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    try testing.expect(session.failure != null);
+
+    try session.removeModule("broken.kup");
+    try testing.expect(session.failure == null);
+    try session.evaluateWorkspace();
+}
+
+/// Evaluates `source` as the module `name`, then `changed` as its next version; returns
+/// the two output hashes.
+fn hashesOf(session: *ScriptSession, name: []const u8, source: []const u8, changed: []const u8) ![2]u64 {
+    const mod_id = try session.workspace.addModule(name, source);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    const first = session.nodes.items[@backingInt(mod_id)].output_hash;
+    try session.workspace.updateModuleSource(mod_id, changed);
+    try session.markFileEdited(name);
+    try session.evaluateModule(mod_id);
+    return .{ first, session.nodes.items[@backingInt(mod_id)].output_hash };
+}
+
+test "ScriptSession: the output fingerprint sees a colour change and a hole moved inside the part" {
+    // It was the bounding box and volume alone, so neither reached the viewport.
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    const coloured = try hashesOf(&session, "colour.kup", "c = cube(10)", "c = cube(10).material(color: \"#FF0000\")");
+    try testing.expect(coloured[0] != coloured[1]);
+    const moved = try hashesOf(&session, "hole.kup", "c = cube(10) - cube(2).translate(2, 2, 2)", "c = cube(10) - cube(2).translate(5, 5, 5)");
+    try testing.expect(moved[0] != moved[1]);
+    const same = try hashesOf(&session, "same.kup", "c = cube(10)", "box = cube(10)");
+    try testing.expectEqual(same[0], same[1]);
+}
+
+test "ScriptSession: materials and ghosts don't accumulate across runs" {
+    // The session's VM kept every material and ghost of every run, so each viewport
+    // export carried all of them.
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    const src = "ghost { cube(1) }\nc = cube(10).material(color: \"#FF0000\")";
+    const mod_id = try session.workspace.addModule("m.kup", src);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(mod_id);
+    // The ghost's material and the red one; one ghost.
+    try testing.expectEqual(@as(usize, 2), session.vm.materials.items.len);
+    try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
+    try session.workspace.updateModuleSource(mod_id, src ++ "\n");
+    try session.markFileEdited("m.kup");
+    try session.evaluateModule(mod_id);
+    try testing.expectEqual(@as(usize, 2), session.vm.materials.items.len);
+    try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
 }

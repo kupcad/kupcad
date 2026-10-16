@@ -1,23 +1,48 @@
+//! The VM's runtime values: `Value`, a NaN-boxed 8-byte number, nil, boolean or object
+//! pointer, and the heap objects it points to (`ObjString`, `ObjArray`, `ObjClosure`,
+//! `ObjClass`, `ObjGeometry`, ...), with number formatting and `Value.stringify` printing.
+
 const std = @import("std");
 const dag = @import("../vm/dag.zig");
-const locus_topo_arena = @import("../locus/src/topology/arena.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const owned_keys = @import("owned_keys.zig");
 
-/// Identifies the primitive type of a Value.
-pub const ValueTag = enum(u8) {
-    number,
-    boolean,
-    nil,
-    symbol,
-    object, // Points to a heap-allocated Obj
-};
+/// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
+/// print in scientific notation instead (1e-7), as in JavaScript.
+const MIN_PLAIN_MAGNITUDE = 1e-6;
+/// From this magnitude plain notation prints a long digit string (1e300 had 301 digits).
+/// It is the first power of ten past 2^53, where f64 stops holding every integer exactly:
+/// plain digits above it look exact but aren't (2^60 printed as 1152921504606846976).
+/// Ruby and Crystal switch at the same point.
+const MAX_PLAIN_MAGNITUDE = 1e16;
+
+/// Containers nested deeper than this print as `[...]`; see Printing.
+const MAX_STRINGIFY_DEPTH = 256;
+
+// --- NaN Tagging Constants ---
+const QNAN: u64 = 0x7FFC000000000000;
+const SIGN_BIT: u64 = 0x8000000000000000;
+
+const TAG_NIL: u64 = 1;
+const TAG_FALSE: u64 = 2;
+const TAG_TRUE: u64 = 3;
+
+const VAL_NIL: u64 = QNAN | TAG_NIL;
+const VAL_FALSE: u64 = QNAN | TAG_FALSE;
+const VAL_TRUE: u64 = QNAN | TAG_TRUE;
+const TAG_OBJ: u64 = SIGN_BIT | QNAN;
+/// The one NaN a number Value holds. Any other NaN may carry payload bits that QNAN
+/// tests for (bit 50 is one of them), which made it read as nil, a boolean or a pointer.
+const CANONICAL_NAN: u64 = 0x7FF8000000000000;
+comptime {
+    if (CANONICAL_NAN & QNAN == QNAN) @compileError("the canonical NaN must not look like a tagged value");
+}
 
 /// Identifies the specific type of a heap-allocated Object.
 pub const ObjType = enum(u8) {
     string,
     symbol,
     native,
-    brep,
     array,
     map,
     function,
@@ -39,6 +64,11 @@ pub const ObjType = enum(u8) {
 pub const Obj = struct {
     obj_type: ObjType,
     is_marked: bool,
+
+    /// The object this header begins: `obj.as(ObjArray)` for one whose obj_type is .array.
+    pub inline fn as(self: *Obj, comptime T: type) *T {
+        return @alignCast(@fieldParentPtr("obj", self));
+    }
 };
 
 /// A heap-allocated String Object.
@@ -97,6 +127,40 @@ pub const ObjFunction = struct {
     chunk: ?*anyopaque, // Pointer to chunk.Chunk (avoids circular dependency)
     name: ?*ObjString,
     owns_chunk: bool,
+    /// A lambda or block: a value, called with `.call(...)`. A `def` is called by name.
+    is_lambda: bool,
+    /// A `def`. Neither this nor `is_lambda`: a script's or module's top-level code.
+    is_method: bool,
+    /// Positional parameters without a default: the fewest arguments a def accepts.
+    min_args: u8,
+    /// Declares keyword parameters or `**opts`: the slot after the positionals (the last
+    /// of `arity`) holds the call's keyword Map.
+    has_kwargs: bool,
+    /// Top-level scope this function's global reads/writes go to: null for the main
+    /// script (VM.globals), otherwise the namespace of the imported module it came from.
+    namespace: ?*Namespace,
+};
+
+/// The top-level variables of one imported module. Each module gets its own, so its
+/// top-level names never leak into (or get overwritten by) the importer: only exported
+/// names cross files. Owned by the VM (VM.module_namespaces); values are GC roots.
+pub const Namespace = struct {
+    globals: std.StringHashMapUnmanaged(Value) = .empty,
+
+    pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
+        (try owned_keys.getOrPutOwned(&self.globals, allocator, name)).value_ptr.* = val;
+    }
+
+    pub fn remove(self: *Namespace, allocator: std.mem.Allocator, name: []const u8) void {
+        const kv = self.globals.fetchRemove(name) orelse return;
+        allocator.free(kv.key);
+    }
+
+    pub fn deinit(self: *Namespace, allocator: std.mem.Allocator) void {
+        var it = self.globals.keyIterator();
+        while (it.next()) |key| allocator.free(key.*);
+        self.globals.deinit(allocator);
+    }
 };
 
 pub const ObjUpvalue = struct {
@@ -110,6 +174,16 @@ pub const ObjClosure = struct {
     obj: Obj,
     function: *ObjFunction,
     upvalues: [*]?*ObjUpvalue,
+    /// A method's: the class it was defined in (set when `def` binds it), so `super`
+    /// starts above that class and a private call is allowed from inside it.
+    home_class: ?*ObjClass,
+    /// A block's or lambda's: the method it was written in (null at top level), and that
+    /// method's receiver and block, so `yield`, `super`, `self` and a private call inside
+    /// the block mean what they mean in the method. They used to read the block's own
+    /// frame, where slot 0 is the block and the block slot is empty.
+    home: ?*ObjClosure,
+    home_self: Value,
+    home_block: Value,
 };
 
 pub const ObjClass = struct {
@@ -121,6 +195,11 @@ pub const ObjClass = struct {
     class_fields: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
     included_modules: std.ArrayListUnmanaged(*ObjModule),
     instance_layout: std.ArrayHashMapUnmanaged(Value, usize, ValueContext, false),
+    /// The class of a built-in kind of value (Array, Number, NilClass, Proc, ...), made by
+    /// literals and methods, not by `.new`: a generic instance of it is no such value (it
+    /// used to be: `Array.new` was an empty object, not an Array). Such a class may still
+    /// define a `new` class method of its own.
+    is_value_class: bool = false,
 };
 
 pub const ObjModule = struct {
@@ -141,18 +220,40 @@ pub const ObjBoundMethod = struct {
     method: Value,
 };
 
+/// Formats a script number for anything a user reads (puts, to_s, interpolation, error
+/// messages): `NaN`, `Infinity` and `-Infinity` for non-finite values, as Ruby spells them,
+/// otherwise `{d}`. Plain `{d}` prints the NaN's sign bit, which is platform-dependent
+/// (`inf - inf` is `nan` on ARM but `-nan` on x86), so output differed between machines.
+pub fn fmtNumber(n: f64) NumberFormat {
+    return .{ .n = n };
+}
+
+/// `%` as in Ruby: floored, so the result takes the divisor's sign (7 % -3 is -2, -7 % 3
+/// is 2). Shared by the VM and the compiler's constant folding. Zig's @mod on floats
+/// gave 7 % -3 = 1.
+pub fn flooredMod(a: f64, b: f64) f64 {
+    const r = @rem(a, b);
+    return if (r != 0 and (r < 0) != (b < 0)) r + b else r;
+}
+
+pub const NumberFormat = struct {
+    n: f64,
+
+    pub fn format(self: NumberFormat, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (std.math.isNan(self.n)) return w.writeAll("NaN");
+        if (std.math.isInf(self.n)) return w.writeAll(if (self.n > 0) "Infinity" else "-Infinity");
+        const mag = @abs(self.n);
+        if (mag != 0.0 and (mag < MIN_PLAIN_MAGNITUDE or mag >= MAX_PLAIN_MAGNITUDE)) return w.print("{e}", .{self.n});
+        return w.print("{d}", .{self.n});
+    }
+};
+
 pub const ObjRange = struct {
     obj: Obj,
     start: f64,
     end: f64,
     step: f64,
     is_exclusive: bool,
-};
-
-pub const Vec3 = struct {
-    x: f32,
-    y: f32,
-    z: f32,
 };
 
 pub const GeometryState = union(enum) {
@@ -167,11 +268,6 @@ pub const BBox = struct {
     max_x: f64,
     max_y: f64,
     max_z: f64,
-};
-
-pub const TopologyCache = struct {
-    is_populated: bool,
-    // Future: HashMap mapping FaceFilters to cached FaceHandles
 };
 
 pub const ObjWorkplane = struct {
@@ -192,7 +288,6 @@ pub const ObjGeometry = struct {
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,
     cached_bbox: ?BBox = null,
-    cached_topology: ?*TopologyCache,
 
     pub fn isConcrete(self: *const ObjGeometry) bool {
         return self.cached_handle != null;
@@ -202,7 +297,7 @@ pub const ObjGeometry = struct {
 pub const ObjCrossSection = struct {
     obj: Obj,
     dag_idx: u32,
-    cached_handle: ?@import("../kernel/geometry_handle.zig").CrossSectionHandle,
+    cached_handle: ?geom.CrossSectionHandle,
 };
 
 pub const ObjAssembly = struct {
@@ -211,18 +306,39 @@ pub const ObjAssembly = struct {
     parts: *ObjArray,
 };
 
-/// Signature for all Native CAD Built-ins
-/// Takes an opaque VM pointer to avoid circular imports, argument count, and a pointer to the first argument on the stack.
-pub const NativeFn = *const fn (vm: *anyopaque, arg_count: u8, args: [*]Value) anyerror!Value;
+/// Signature for all Native CAD Built-ins. Takes an opaque VM pointer to avoid circular
+/// imports. Most natives are typed Zig functions turned into this by stdlib/classes/common.zig.
+pub const NativeFn = *const fn (vm: *anyopaque, args: NativeArgs) anyerror!Value;
+
+/// A native call's arguments, on the VM stack: `count` values at `ptr`, the receiver (or
+/// callee) just below at `ptr[-1]`, and the call's block last when `has_block` (see
+/// chunk.CallFlags) — a lambda passed as an ordinary argument is never taken for it.
+pub const NativeArgs = struct {
+    ptr: [*]Value,
+    count: u8,
+    has_block: bool = false,
+    /// The native's script name, for error messages.
+    name: []const u8,
+
+    pub fn receiver(self: NativeArgs) Value {
+        return (self.ptr - 1)[0];
+    }
+
+    /// The arguments without the block.
+    pub fn positional(self: NativeArgs) []Value {
+        return self.ptr[0 .. self.count - @intFromBool(self.has_block)];
+    }
+
+    pub fn block(self: NativeArgs) ?*ObjClosure {
+        return if (self.has_block) self.ptr[self.count - 1].asClosure() else null;
+    }
+};
 
 pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
-};
-
-pub const ObjBrep = struct {
-    obj: Obj,
-    data: *locus_topo_arena.TopologyArena, // Pointer to the pure Zig B-Rep data
+    /// The name scripts call it by (static: names come from the stdlib tables).
+    name: []const u8,
 };
 
 pub const ObjBBox = struct {
@@ -231,19 +347,6 @@ pub const ObjBBox = struct {
     max: [3]f64,
 };
 
-// --- NaN Tagging Constants ---
-const QNAN: u64 = 0x7FFC000000000000;
-const SIGN_BIT: u64 = 0x8000000000000000;
-
-const TAG_NIL: u64 = 1;
-const TAG_FALSE: u64 = 2;
-const TAG_TRUE: u64 = 3;
-
-const VAL_NIL: u64 = QNAN | TAG_NIL;
-const VAL_FALSE: u64 = QNAN | TAG_FALSE;
-const VAL_TRUE: u64 = QNAN | TAG_TRUE;
-const TAG_OBJ: u64 = SIGN_BIT | QNAN;
-
 /// A completely unboxed, 8-byte value payload.
 pub const Value = packed struct {
     val: u64,
@@ -251,6 +354,8 @@ pub const Value = packed struct {
     // --- Constructors ---
 
     pub inline fn initNumber(num: f64) Value {
+        // Every NaN is the canonical one (see CANONICAL_NAN).
+        if (std.math.isNan(num)) return .{ .val = CANONICAL_NAN };
         // Normalize -0.0 to +0.0 to protect Map invariants
         const normalized: f64 = if (num == 0.0) 0.0 else num;
         return .{ .val = @bitCast(normalized) };
@@ -305,12 +410,12 @@ pub const Value = packed struct {
         return self.isObject() and self.asObj().obj_type == .map;
     }
 
-    pub inline fn isRange(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .range;
+    pub inline fn isFunction(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .function;
     }
 
-    pub inline fn isBrep(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .brep;
+    pub inline fn isRange(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .range;
     }
 
     pub inline fn isGeometry(self: Value) bool {
@@ -318,9 +423,6 @@ pub const Value = packed struct {
     }
     pub inline fn isCrossSection(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .cross_section;
-    }
-    pub inline fn isWorkplane(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .workplane;
     }
     pub inline fn isInstance(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .instance;
@@ -382,9 +484,6 @@ pub const Value = packed struct {
     pub inline fn asCrossSection(self: Value) *ObjCrossSection {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-    pub inline fn asWorkplane(self: Value) *ObjWorkplane {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
     pub inline fn asInstance(self: Value) *ObjInstance {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
@@ -425,11 +524,6 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
-    pub inline fn asBrep(self: Value) *ObjBrep {
-        std.debug.assert(self.isBrep());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
     pub inline fn asBBox(self: Value) *ObjBBox {
         std.debug.assert(self.isBBox());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
@@ -459,18 +553,17 @@ pub const Value = packed struct {
         return false;
     }
 
-    // Alias eql to isEqual to support any lingering tests using the old naming convention
-    pub inline fn eql(self: Value, other: Value) bool {
-        return self.isEqual(other);
-    }
-
     pub inline fn isFalsey(self: Value) bool {
         return self.isNil() or (self.isBool() and !self.asBool());
     }
 
     pub fn stringify(self: Value, is_inspect: bool, writer: *std.Io.Writer) !void {
+        return self.stringifyNested(is_inspect, writer, null);
+    }
+
+    fn stringifyNested(self: Value, is_inspect: bool, writer: *std.Io.Writer, up: ?*const Printing) !void {
         if (self.isNumber()) {
-            try writer.print("{d}", .{self.asNumber()});
+            try writer.print("{f}", .{fmtNumber(self.asNumber())});
         } else if (self.isBool()) {
             try writer.writeAll(if (self.asBool()) "true" else "false");
         } else if (self.isNil()) {
@@ -481,44 +574,54 @@ pub const Value = packed struct {
                 .string => {
                     const str_obj: *ObjString = @alignCast(@fieldParentPtr("obj", obj));
                     if (is_inspect) {
-                        try writer.print("\"{s}\"", .{str_obj.chars});
+                        try writeQuoted(writer, str_obj.chars);
                     } else {
                         try writer.writeAll(str_obj.chars);
                     }
                 },
                 .symbol => {
+                    // As in Ruby: `:name` when inspected, the bare name otherwise (puts,
+                    // interpolation, join), which used to keep the colon too.
                     const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print(":{s}", .{sym.chars});
+                    if (is_inspect) try writer.writeAll(":");
+                    try writer.writeAll(sym.chars);
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
+                    const here = Printing.enter(up, obj) orelse return writer.writeAll("[...]");
                     try writer.writeAll("[");
                     for (arr.items.items, 0..) |item, i| {
                         if (i > 0) try writer.writeAll(", ");
-                        try item.stringify(true, writer); // Force inspect mode for nested items
+                        try item.stringifyNested(true, writer, &here); // Force inspect mode for nested items
                     }
                     try writer.writeAll("]");
                 },
                 .map => {
                     const map: *ObjMap = @alignCast(@fieldParentPtr("obj", obj));
+                    const here = Printing.enter(up, obj) orelse return writer.writeAll("{...}");
                     try writer.writeAll("{");
                     const keys = map.map.keys();
                     const values = map.map.values();
                     for (keys, 0..) |key, i| {
                         if (i > 0) try writer.writeAll(", ");
-                        try key.stringify(true, writer);
-                        try writer.writeAll(": ");
-                        try values[i].stringify(true, writer);
+                        // As written in a script: `{x: 1}` for a Symbol key, `{"x" => 1}` otherwise.
+                        if (key.isSymbol()) {
+                            try writer.print("{s}: ", .{key.asSymbol().chars});
+                        } else {
+                            try key.stringifyNested(true, writer, &here);
+                            try writer.writeAll(" => ");
+                        }
+                        try values[i].stringifyNested(true, writer, &here);
                     }
                     try writer.writeAll("}");
                 },
                 .class => {
                     const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("<Class {s}>", .{cls.name.chars});
+                    try writer.writeAll(cls.name.chars); // `puts 5.class` prints Number, as in Ruby
                 },
                 .instance => {
                     const inst: *ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("<Instance of {s}>", .{inst.class.name.chars});
+                    try writer.print("#<{s}>", .{inst.class.name.chars});
                 },
                 .closure, .function => try writer.writeAll("<Function>"),
                 .native => try writer.writeAll("<Native Function>"),
@@ -526,7 +629,7 @@ pub const Value = packed struct {
                 .range => {
                     const r: *ObjRange = @alignCast(@fieldParentPtr("obj", obj));
                     const op_str = if (r.is_exclusive) "..." else "..";
-                    try writer.print("{d}{s}{d}", .{ r.start, op_str, r.end });
+                    try writer.print("{f}{s}{f}", .{ fmtNumber(r.start), op_str, fmtNumber(r.end) });
                 },
                 .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
                 .cross_section => {
@@ -536,13 +639,59 @@ pub const Value = packed struct {
                 .workplane => try writer.writeAll("<Workplane>"),
                 .bbox => {
                     const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("BoundingBox(min: [{d}, {d}, {d}], max: [{d}, {d}, {d}])", .{ bx.min[0], bx.min[1], bx.min[2], bx.max[0], bx.max[1], bx.max[2] });
+                    const f = fmtNumber;
+                    try writer.print("BoundingBox(min: [{f}, {f}, {f}], max: [{f}, {f}, {f}])", .{ f(bx.min[0]), f(bx.min[1]), f(bx.min[2]), f(bx.max[0]), f(bx.max[1]), f(bx.max[2]) });
                 },
                 else => try writer.writeAll("<Object>"),
             }
         }
     }
 };
+
+/// The containers being printed, outermost first, so one that holds itself (directly or
+/// through others) prints as `[...]` / `{...}`, as in Ruby: it recursed off the native
+/// stack. Nesting past MAX_STRINGIFY_DEPTH prints the same, for the same reason.
+const Printing = struct {
+    obj: *const Obj,
+    up: ?*const Printing,
+    depth: u32,
+
+    /// Null when `obj` is already being printed, or the nesting is too deep.
+    fn enter(up: ?*const Printing, obj: *const Obj) ?Printing {
+        const depth = if (up) |u| u.depth + 1 else 1;
+        if (depth > MAX_STRINGIFY_DEPTH) return null;
+        var cur = up;
+        while (cur) |p| : (cur = p.up) {
+            if (p.obj == obj) return null;
+        }
+        return .{ .obj = obj, .up = up, .depth = depth };
+    }
+};
+
+/// `s` as a script writes it: quoted, with the lexer's escapes for `"`, `\`, `#{` and
+/// control characters (`inspect` wrote the bytes raw, so `"say \"hi\""` came out as
+/// `"say "hi""`). A control character the lexer has no escape for is shown as `\xHH`.
+pub fn writeQuoted(writer: *std.Io.Writer, s: []const u8) !void {
+    try writer.writeByte('"');
+    for (s, 0..) |c, i| {
+        switch (c) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            '\n' => try writer.writeAll("\\n"),
+            '\t' => try writer.writeAll("\\t"),
+            '\r' => try writer.writeAll("\\r"),
+            0x0c => try writer.writeAll("\\f"),
+            0x0b => try writer.writeAll("\\v"),
+            0x08 => try writer.writeAll("\\b"),
+            0x07 => try writer.writeAll("\\a"),
+            0x1b => try writer.writeAll("\\e"),
+            0 => try writer.writeAll("\\0"),
+            '#' => try writer.writeAll(if (i + 1 < s.len and s[i + 1] == '{') "\\#" else "#"),
+            else => if (c < 0x20 or c == 0x7f) try writer.print("\\x{X:0>2}", .{c}) else try writer.writeByte(c),
+        }
+    }
+    try writer.writeByte('"');
+}
 
 /// A dynamic array of Values (used for the VM Stack and constants arrays).
 pub const ValueArray = std.ArrayListUnmanaged(Value);

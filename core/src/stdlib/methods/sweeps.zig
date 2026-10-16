@@ -1,10 +1,14 @@
-const std = @import("std");
+//! The methods that make a solid from a sketch: `extrude`, `revolve`, `helix` and `loft`,
+//! each checking its arguments and adding a DAG node. Exported through methods.zig.
+
 const util = @import("util.zig");
+const sig = @import("../method_signatures.zig");
+const kernel = @import("../../kernel/kernel.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "extrude", receiver);
 
     const ExtrudeOpts = struct {
         h: f64 = 1.0,
@@ -16,23 +20,18 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         center: bool = false,
     };
 
-    var opts = ExtrudeOpts{};
-    var pos_count = args.len;
-
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-        pos_count -= 1;
-        opts = util.parseKwargs(ExtrudeOpts, map);
-        if (opts.scale) |s| {
-            opts.scale_x = s;
-            opts.scale_y = s;
-        }
+    // NaN/inf sweep parameters propagate into every generated vertex: requireNumber
+    // and parseKwargs reject them along with non-numbers.
+    const pos = util.positionalArgs(args);
+    var base = ExtrudeOpts{};
+    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "extrude", "h");
+    var opts = (try util.parseKwargsOver(ExtrudeOpts, base, sig.EXTRUDE.keywords, vm, args, "extrude")).opts;
+    if (opts.scale) |s| {
+        opts.scale_x = s;
+        opts.scale_y = s;
     }
 
-    if (pos_count > 0) {
-        if (!args[0].isNumber()) return error.RuntimeError;
-        opts.h = args[0].asNumber();
-    }
+    try util.requireSegmentCount(vm, opts.slices, "slices");
 
     var new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, opts.h, opts.slices, opts.twist, opts.scale_x, opts.scale_y);
 
@@ -43,61 +42,41 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
-    var degrees: f64 = 360.0;
-    var pos_count = args.len;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "revolve", receiver);
+    const RevolveOpts = struct { deg: f64 = 360.0, segments: i32 = 0 };
+    const pos = util.positionalArgs(args);
+    var base = RevolveOpts{};
+    if (pos.len > 0) base.deg = try util.requireNumber(vm, pos[0], "revolve", "deg");
+    const opts = (try util.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
 
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-        pos_count -= 1;
-        var it = map.map.iterator();
-        while (it.next()) |entry| {
-            const k = entry.key_ptr.*;
-            if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
-                const k_str = if (k.asObj().obj_type == .string)
-                    @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
-                else
-                    @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-
-                if (std.mem.eql(u8, k_str, "deg") and entry.value_ptr.*.isNumber()) degrees = entry.value_ptr.*.asNumber();
-            }
+    // The profile spins about the Y axis, so its radius is its farthest x. It used to be
+    // assumed 10 mm, whatever the profile's size. Resolved now, under the active config.
+    const segments = if (opts.segments > 0) opts.segments else blk: {
+        const profile = try vm.ensureConcreteCrossSection(receiver);
+        if (!kernel.supports(profile.engine, .sketch_measure)) {
+            return vm.fail(.NotImplementedError, "the {s} engine can't measure the profile to choose revolve's segments yet; pass segments:", .{profile.engine.scriptName()});
         }
-    }
+        const bounds = kernel.crossSectionBounds(profile);
+        break :blk util.autoSegments(vm, @max(@abs(bounds.min[0]), @abs(bounds.max[0])));
+    };
 
-    if (pos_count > 0) {
-        if (!args[0].isNumber()) return error.RuntimeError;
-        degrees = args[0].asNumber();
-    }
-
-    // Pull the active configuration and calculate segments
-    const config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    // For a 2D cross-section, if fixed_segments isn't set, we use a safe baseline radius
-    // (e.g., 10.0mm) to generate a smooth default resolution via the new getSegments solver.
-    const segments: i32 = if (config.manifold.fixed_segments > 0)
-        @intCast(config.manifold.fixed_segments)
-    else
-        @intCast(config.manifold.getSegments(10.0));
-
-    const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, degrees);
+    const new_idx = try vm.dag_builder.addRevolve(receiver.asCrossSection().dag_idx, segments, opts.deg);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
 pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "helix", receiver);
 
     const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 64 };
-    var opts = HelixOpts{};
-    var pos_count = args.len;
+    const pos = util.positionalArgs(args);
+    var base = HelixOpts{};
+    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "helix", "h");
+    if (pos.len > 1) base.twist = try util.requireNumber(vm, pos[1], "helix", "twist");
+    if (pos.len > 2) base.slices = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[2], "helix", "slices"), "slices");
+    const opts = (try util.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
 
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-        const map = args[args.len - 1].asMap();
-        pos_count -= 1;
-        opts = util.parseKwargs(HelixOpts, map);
-    }
-
-    if (pos_count > 0 and args[0].isNumber()) opts.h = args[0].asNumber();
-    if (pos_count > 1 and args[1].isNumber()) opts.twist = args[1].asNumber();
+    try util.requireSegmentCount(vm, opts.slices, "slices");
 
     // Re-use DAG's extrude with twist applied natively
     const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, opts.h, opts.slices, opts.twist, 1.0, 1.0);
@@ -105,14 +84,16 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 }
 
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return error.RuntimeError;
-    if (args.len < 2 or !args[0].isCrossSection() or !args[1].isNumber()) {
-        vm.reportError("ArgumentError: loft requires a target CrossSection and a z-height.\n", .{});
-        return error.RuntimeError;
+    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "loft", receiver);
+    if (args.len < 2) {
+        return vm.fail(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
+    }
+    if (!args[0].isCrossSection()) {
+        return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
     }
 
     const cs_top = args[0].asCrossSection();
-    const height = args[1].asNumber();
+    const height = try util.requireNumber(vm, args[1], "loft", "height");
 
     const dag_idx = try vm.dag_builder.addLoft(receiver.asCrossSection().dag_idx, cs_top.dag_idx, height);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });

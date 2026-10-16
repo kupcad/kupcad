@@ -1,5 +1,9 @@
+//! Syntax errors: `ParseError`, and the `Diagnostic` list (`Diagnostics`) the parser and
+//! the resolver add located messages to.
+
 const std = @import("std");
 const token = @import("token.zig");
+const LineIndex = @import("line_index.zig").LineIndex;
 
 pub const ParseError = error{
     AstTooDeep,
@@ -11,11 +15,22 @@ pub const ParseError = error{
 pub const Diagnostic = struct {
     loc: token.Location,
     message: []const u8,
+
+    /// "line:col: message", the one-line form for where there is no room for a caret.
+    pub fn formatLine(self: Diagnostic, allocator: std.mem.Allocator, line_index: *const LineIndex) ![]u8 {
+        const line = line_index.getLine(self.loc.offset) + 1;
+        const col = line_index.getUtf8Column(self.loc.offset) + 1;
+        return allocator.print("{d}:{d}: {s}", .{ line, col, self.message });
+    }
 };
 
 pub const Diagnostics = struct {
     allocator: std.mem.Allocator,
     list: std.ArrayListUnmanaged(Diagnostic) = .empty,
+    /// A diagnostic could not be stored (out of memory). `add` is called where errors
+    /// can't propagate, so the owner checks this instead: a dropped syntax error must
+    /// not let the source pass as valid.
+    dropped: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) Diagnostics {
         return .{ .allocator = allocator };
@@ -29,7 +44,13 @@ pub const Diagnostics = struct {
     }
 
     pub fn add(self: *Diagnostics, loc: token.Location, comptime fmt: []const u8, args: anytype) void {
-        const msg = self.allocator.print(fmt, args) catch return;
-        self.list.append(self.allocator, .{ .loc = loc, .message = msg }) catch return;
+        const msg = self.allocator.print(fmt, args) catch {
+            self.dropped = true;
+            return;
+        };
+        self.list.append(self.allocator, .{ .loc = loc, .message = msg }) catch {
+            self.allocator.free(msg);
+            self.dropped = true;
+        };
     }
 };

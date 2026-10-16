@@ -2,33 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 const linter_mod = @import("../linter.zig");
 const UnusedVarsRule = @import("unused_vars.zig").UnusedVarsRule;
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+const lint_testing = @import("../testing.zig");
 
 fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
-    // Disable all default rules to strictly isolate the environment to just what we append below
-    var engine = linter_mod.Linter.init(allocator, .{
-        .check_negative_dims = false,
-        .check_unused_vars = false,
-        .check_unreachable_code = false,
-        .check_self_subtraction = false,
-    });
-
-    var rule_impl = UnusedVarsRule{};
-    try engine.rules.append(allocator, rule_impl.rule());
-
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-    const tokens = try lexer.lexAll(arena.allocator());
-
-    var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
-
-    const root = try parser.parseProgram();
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
-
-    return engine;
+    return lint_testing.lint(allocator, source, lint_testing.only(UnusedVarsRule.id));
 }
 
 test "Linter Rule: UnusedVarsRule catches unused variables" {
@@ -85,4 +62,66 @@ test "Linter Rule: UnusedVarsRule handles arbitrary nested destructuring in bloc
 
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'b'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}
+
+test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts as a use" {
+    // Each of these used to report a variable that is read (or is the model).
+    const clean = [_][]const u8{
+        "box = cube(10)\npart = box - cube(2)", // the script's last statement is the model
+        "if ok\n  y = 1\nend\nputs y", // if, while and for bodies open no scope
+        "for i in [1]\nend\nputs i",
+        "n = 0\nwhile n < 1\n  z = 5\n  n += 1\nend\nputs z", // n += 1 reads n
+        "x = 1\nexport x",
+        "def f\n  r = 1\nend\nputs f", // a method's last statement is its result
+        "puts [1].map { |v| w = v * 2 }",
+    };
+    for (clean) |src| {
+        errdefer std.debug.print("source:\n{s}\n", .{src});
+        var engine = try runRule(testing.allocator, src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+    }
+
+    // Still reported: assigned and never read.
+    const unused = [_]struct { src: []const u8, name: []const u8 }{
+        .{ .src = "unused = 1\nputs 2", .name = "unused" },
+        .{ .src = "def f(a)\n  t = a\n  1\nend\nputs f(1)", .name = "t" },
+        .{ .src = "[1].each { |v| q = v\n  puts 1 }", .name = "q" },
+        .{ .src = "if ok\n  y = 1\nend\nputs 2", .name = "y" },
+    };
+    for (unused) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.src});
+        var engine = try runRule(testing.allocator, case.src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+        const expected = try std.fmt.allocPrint(testing.allocator, "Unused variable '{s}'. Prefix with '_' if intentional.", .{case.name});
+        defer testing.allocator.free(expected);
+        try testing.expectEqualStrings(expected, engine.diagnostics.items[0].message);
+    }
+}
+
+test "Linter Rule: UnusedVarsRule leaves a class's and a module's methods alone" {
+    // They are called through the class's objects (`G.new.teeth`), outside the class's
+    // scope, so every method of a class was reported unused.
+    const source =
+        \\class Gear
+        \\  def teeth(n)
+        \\    n * 2
+        \\  end
+        \\  class << self
+        \\    def standard = new
+        \\  end
+        \\end
+        \\module Parts
+        \\  def self.bolt = 1
+        \\end
+        \\def helper = 1
+        \\Gear.standard.teeth(3)
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    // A script's own top-level method is still reported when nothing calls it.
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'helper'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }

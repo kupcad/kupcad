@@ -1,3 +1,6 @@
+//! The methods of `true` and `false` (`to_s`, `inspect`, `to_i` and the rest), as a
+//! `methods` table of `common.MethodDef`.
+
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");

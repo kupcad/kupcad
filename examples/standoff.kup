@@ -1,21 +1,21 @@
 # [Frame Physical Dimensions]
-standoff_dist   = param(:standoff_dist, default: 20.0, validate: { min: 15.0, max: 35.0 })
-standoff_dia    = param(:standoff_dia, default: 5.0, validate: { min: 3.0, max: 8.0 })
+standoff_dist = param(:standoff_dist, default: 20.0, validate: { min: 15.0, max: 35.0 })
+standoff_dia = param(:standoff_dia, default: 5.0, validate: { min: 3.0, max: 8.0 })
 standoff_height = param(:standoff_height, default: 25.0)
-wall_thickness  = param(:wall_thickness, default: 1.6)
-fit_tolerance   = param(:fit_tolerance, default: 0.2)
+wall_thickness = param(:wall_thickness, default: 1.6)
+fit_tolerance = param(:fit_tolerance, default: 0.2)
 
 # [Antenna Platform Settings]
-antenna_angle   = param(:antenna_angle, default: 25.0)
+antenna_angle = param(:antenna_angle, default: 25.0)
 platform_offset = param(:platform_offset, default: 23.0)
-platform_w      = param(:platform_w, default: 15.0)
+platform_w = param(:platform_w, default: 15.0)
 platform_padding = param(:platform_padding, default: 8.0)
-mounting_thick  = param(:mounting_thick, default: 2.5)
+mounting_thick = param(:mounting_thick, default: 2.5)
 
 # [Hardware Specifications]
-sma_hole_dia    = param(:sma_hole_dia, default: 6.6)
-sma_hex_flat    = param(:sma_hex_flat, default: 8.2)
-shoulder_thick  = param(:shoulder_thick, default: 1.25)
+sma_hole_dia = param(:sma_hole_dia, default: 6.6)
+sma_hex_flat = param(:sma_hex_flat, default: 8.2)
+shoulder_thick = param(:shoulder_thick, default: 1.25)
 
 # Internal Math
 platform_l = platform_offset + platform_padding
@@ -54,7 +54,7 @@ end
 
 # Standoff Holes (Octagons for friction)
 [-1, 1].each do |i|
-  hole = cylinder(d: standoff_dia + fit_tolerance, h: standoff_height + 2.0, segments: 8)
+  hole = cylinder(d: standoff_dia + fit_tolerance, h: standoff_height + 2.0, sides: 8)
     .translate(i * standoff_dist / 2.0, 0.0, -1.0)
   main_body = main_body - hole
 end
@@ -62,7 +62,7 @@ end
 # SMA Connector Stack
 hex_size = sma_hex_flat / 0.866025
 thread_hole = cylinder(d: sma_hole_dia, h: 55.0).translate(0.0, 0.0, -50.0)
-hex_trap = cylinder(d: hex_size, h: 50.0 - shoulder_thick, segments: 6).translate(0.0, 0.0, -50.0)
+hex_trap = cylinder(d: hex_size, h: 50.0 - shoulder_thick, sides: 6).translate(0.0, 0.0, -50.0)
 
 sma_stack = (thread_hole + hex_trap)
   .translate(0.0, platform_offset, 0.0)

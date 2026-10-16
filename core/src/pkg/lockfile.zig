@@ -1,14 +1,31 @@
+//! `Lockfile`: reads and writes a project's `kupcad.lock`, the resolved source, ref,
+//! integrity and dependencies of every installed package (`LockedPackage`), and tells which
+//! integrity scheme an older lockfile version used.
+
 const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const semver = @import("../core/semver.zig");
 
-pub const StringMap = std.StringHashMap([]const u8);
+const log = std.log.scoped(.pkg);
+
+const string_map = @import("string_map.zig");
+pub const StringMap = string_map.StringMap;
+
+/// 3.0.0: a git host package's files are recorded without its archive's top folder.
+/// 2.0.0: integrity uses length-prefixed hashing (see integrity.zig).
+pub const LOCKFILE_VERSION = "3.0.0";
+/// 1.x: integrity uses the ambiguous v1 hashing (integrity.Algo.legacy).
+const LEGACY_HASH_MAJOR = 1;
+/// The last major that recorded git host archives under their top folder.
+const WRAPPED_ARCHIVES_MAJOR = 2;
+/// Must match LOCKFILE_VERSION's major.
+const CURRENT_LOCKFILE_MAJOR = 3;
+
+/// JSON-escaped, quoted string formatter.
+fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
+    return std.json.fmt(s, .{});
+}
 pub const PackagesMap = std.StringHashMap(LockedPackage);
-
-const SortUtil = struct {
-    pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-        return std.mem.order(u8, a, b) == .lt;
-    }
-};
 
 pub const LockedPackage = struct {
     resolved: []const u8,
@@ -20,12 +37,7 @@ pub const LockedPackage = struct {
         allocator.free(self.resolved);
         allocator.free(self.ref);
         allocator.free(self.integrity);
-        var it = self.dependencies.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-            allocator.free(entry.value_ptr.*);
-        }
-        self.dependencies.deinit();
+        string_map.deinitOwned(allocator, &self.dependencies);
     }
 };
 
@@ -34,10 +46,10 @@ pub const Lockfile = struct {
     version: []const u8,
     packages: PackagesMap,
 
-    pub fn init(allocator: std.mem.Allocator) Lockfile {
+    pub fn init(allocator: std.mem.Allocator) !Lockfile {
         return .{
             .allocator = allocator,
-            .version = allocator.dupe(u8, "1.0.0") catch @panic("OOM allocating lockfile version"),
+            .version = try allocator.dupe(u8, LOCKFILE_VERSION),
             .packages = PackagesMap.init(allocator),
         };
     }
@@ -54,7 +66,7 @@ pub const Lockfile = struct {
 
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Lockfile {
         const content = fs.readFile(allocator, "kupcad.lock") catch |err| switch (err) {
-            error.FileNotFound => return Lockfile.init(allocator),
+            error.FileNotFound => return try Lockfile.init(allocator),
             else => return err,
         };
         defer allocator.free(content);
@@ -67,7 +79,7 @@ pub const Lockfile = struct {
         const root = parsed.value;
         if (root != .object) return error.UnexpectedToken;
 
-        var lockfile = Lockfile.init(allocator);
+        var lockfile = try Lockfile.init(allocator);
         errdefer lockfile.deinit();
 
         if (root.object.get("version")) |v| {
@@ -76,6 +88,12 @@ pub const Lockfile = struct {
                 lockfile.version = try allocator.dupe(u8, v.string);
             }
         }
+        // Reject unknown formats up front: verifying a newer lockfile with our hash
+        // scheme would only surface later as a misleading IntegrityMismatch.
+        _ = lockfile.format() catch |err| {
+            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x to {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ lockfile.version, LEGACY_HASH_MAJOR, CURRENT_LOCKFILE_MAJOR });
+            return err;
+        };
 
         if (root.object.get("packages")) |pkgs| {
             if (pkgs == .object) {
@@ -131,60 +149,92 @@ pub const Lockfile = struct {
         return lockfile;
     }
 
+    /// How a lockfile's version took its integrities, so older ones can still be checked.
+    pub const Format = struct {
+        /// 1.x: the ambiguous v1 path hashing (integrity.Algo.legacy).
+        legacy_hash: bool,
+        /// Before 3.0.0: a git host package's files kept its archive's top folder.
+        wrapped_git_archives: bool,
+    };
+
+    /// Any other (or unparseable) version is a format this build cannot verify.
+    pub fn format(self: *const Lockfile) error{UnsupportedLockfileVersion}!Format {
+        const v = semver.Version.parse(self.version) catch return error.UnsupportedLockfileVersion;
+        return switch (v.major) {
+            LEGACY_HASH_MAJOR => .{ .legacy_hash = true, .wrapped_git_archives = true },
+            WRAPPED_ARCHIVES_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = true },
+            CURRENT_LOCKFILE_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = false },
+            else => error.UnsupportedLockfileVersion,
+        };
+    }
+
     pub fn save(self: *Lockfile, fs: Vfs) !void {
-        var out_str: std.ArrayListUnmanaged(u8) = .empty;
-        defer out_str.deinit(self.allocator);
+        // Allocated before writing so the in-memory version can't lag the file on OOM.
+        const saved_version = try self.allocator.dupe(u8, LOCKFILE_VERSION);
+        errdefer self.allocator.free(saved_version);
+
+        var aw: std.Io.Writer.Allocating = .init(self.allocator);
+        defer aw.deinit();
+        const w = &aw.writer;
 
         var pkg_keys: std.ArrayListUnmanaged([]const u8) = .empty;
         defer pkg_keys.deinit(self.allocator);
 
         var pkg_it = self.packages.keyIterator();
         while (pkg_it.next()) |k| try pkg_keys.append(self.allocator, k.*);
-        std.mem.sort([]const u8, pkg_keys.items, {}, SortUtil.lessThan);
+        string_map.sortKeys(pkg_keys.items);
 
-        try out_str.appendSlice(self.allocator, "{\n  \"version\": \"");
-        try out_str.appendSlice(self.allocator, self.version);
-        try out_str.appendSlice(self.allocator, "\",\n  \"packages\": {");
+        // Every string goes through the JSON string encoder: ids, refs and aliases
+        // can originate from downloaded manifests, and raw `{s}` interpolation let a
+        // `"` in an alias inject arbitrary lockfile entries.
+        // Saving always upgrades to the current format (integrities were recomputed by the resolver).
+        try w.print("{{\n  \"version\": {f},\n  \"packages\": {{", .{jsonStr(LOCKFILE_VERSION)});
 
         if (pkg_keys.items.len > 0) {
-            try out_str.appendSlice(self.allocator, "\n");
+            try w.writeAll("\n");
             for (pkg_keys.items, 0..) |pkg_id, i| {
                 const locked_pkg = self.packages.get(pkg_id).?;
                 const comma1 = if (i < pkg_keys.items.len - 1) "," else "";
 
-                const pkg_header = try self.allocator.print("    \"{s}\": {{\n      \"resolved\": \"{s}\",\n      \"ref\": \"{s}\",\n      \"integrity\": \"{s}\"", .{ pkg_id, locked_pkg.resolved, locked_pkg.ref, locked_pkg.integrity });
-                defer self.allocator.free(pkg_header);
-                try out_str.appendSlice(self.allocator, pkg_header);
+                try w.print("    {f}: {{\n      \"resolved\": {f},\n      \"ref\": {f},\n      \"integrity\": {f}", .{
+                    jsonStr(pkg_id),
+                    jsonStr(locked_pkg.resolved),
+                    jsonStr(locked_pkg.ref),
+                    jsonStr(locked_pkg.integrity),
+                });
 
                 if (locked_pkg.dependencies.count() > 0) {
-                    try out_str.appendSlice(self.allocator, ",\n      \"dependencies\": {\n");
+                    try w.writeAll(",\n      \"dependencies\": {\n");
 
                     var dep_keys: std.ArrayListUnmanaged([]const u8) = .empty;
                     defer dep_keys.deinit(self.allocator);
                     var dep_it = locked_pkg.dependencies.keyIterator();
                     while (dep_it.next()) |k| try dep_keys.append(self.allocator, k.*);
-                    std.mem.sort([]const u8, dep_keys.items, {}, SortUtil.lessThan);
+                    string_map.sortKeys(dep_keys.items);
 
                     for (dep_keys.items, 0..) |dep_key, j| {
                         const dep_val = locked_pkg.dependencies.get(dep_key).?;
                         const comma2 = if (j < dep_keys.items.len - 1) "," else "";
-                        const dep_line = try self.allocator.print("        \"{s}\": \"{s}\"{s}\n", .{ dep_key, dep_val, comma2 });
-                        defer self.allocator.free(dep_line);
-                        try out_str.appendSlice(self.allocator, dep_line);
+                        try w.print("        {f}: {f}{s}\n", .{ jsonStr(dep_key), jsonStr(dep_val), comma2 });
                     }
-                    try out_str.appendSlice(self.allocator, "      }\n    }");
+                    try w.writeAll("      }\n    }");
                 } else {
-                    try out_str.appendSlice(self.allocator, "\n    }");
+                    try w.writeAll("\n    }");
                 }
 
-                try out_str.appendSlice(self.allocator, comma1);
-                try out_str.appendSlice(self.allocator, "\n");
+                try w.writeAll(comma1);
+                try w.writeAll("\n");
             }
-            try out_str.appendSlice(self.allocator, "  }\n}");
+            try w.writeAll("  }\n}");
         } else {
-            try out_str.appendSlice(self.allocator, "}\n}");
+            try w.writeAll("}\n}");
         }
 
-        try fs.writeFile("kupcad.lock", out_str.items);
+        try fs.writeFile("kupcad.lock", aw.written());
+
+        // The file is now current-format; a reused in-memory lockfile must verify with
+        // the current hash too, not the legacy one it was loaded with.
+        self.allocator.free(self.version);
+        self.version = saved_version;
     }
 };

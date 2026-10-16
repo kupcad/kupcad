@@ -1,3 +1,6 @@
+//! `SortImportsRule`: the formatter rule that sorts each run of imports by path, leaving a
+//! run with a comment on or between its imports in the author's order.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const FormatRule = @import("rule.zig").FormatRule;
@@ -17,7 +20,9 @@ pub const SortImportsRule = struct {
         return "Sort Imports";
     }
 
-    fn processBlockStmts(ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) []const ast.NodeIndex {
+    /// Sorts each run of imports by path. A run with a comment on or between its imports
+    /// is left in the author's order: sorting moved the imports away from their comments.
+    fn processBlockStmts(ptr: *anyopaque, temp_allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex, commented: []const bool) []const ast.NodeIndex {
         _ = ptr;
         if (stmts.len < 2) return stmts;
 
@@ -36,7 +41,7 @@ pub const SortImportsRule = struct {
                     j += 1;
                 }
 
-                if (j - i > 1) {
+                if (j - i > 1 and std.mem.indexOfScalar(bool, commented[i..j], true) == null) {
                     const block = new_stmts[i..j];
                     // Sort the indices based on the path of their resolved nodes
                     std.mem.sort(ast.NodeIndex, block, tree, struct {

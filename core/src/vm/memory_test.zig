@@ -1,10 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
+const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+const Document = @import("../core/document.zig").Document;
 
 fn countObjects(gc: *GC) usize {
     var count: usize = 0;
@@ -21,9 +24,7 @@ fn countObjects(gc: *GC) usize {
     count += gc.closures.items.len;
     count += gc.upvalues.items.len;
     count += gc.bound_methods.items.len;
-    count += gc.natives.items.len;
     count += gc.ranges.items.len;
-    count += gc.breps.items.len;
     count += gc.geometries.items.len;
     count += gc.cross_sections.items.len;
     count += gc.workplanes.items.len;
@@ -269,20 +270,6 @@ test "GC: Unrooted objects are cleanly swept without double-frees" {
     try std.testing.expectEqual(initial_strings, vm.gc.strings.items.len);
 }
 
-test "GC: Memory limit safely aborts allocations without crashing" {
-    var vm = try VM.init(std.testing.allocator, std.testing.io);
-    defer vm.deinit();
-
-    // Artificially restrict the GC's memory limit to exactly what it's using right now
-    vm.gc.max_memory_limit = vm.gc.bytes_allocated;
-
-    // Attempt to allocate a new string.
-    // The GC should intercept this, report a Sandbox Error, and yield OutOfMemory.
-    const result = vm.gc.allocateString(&vm, "this_string_exceeds_the_sandbox_limit");
-
-    try std.testing.expectError(error.OutOfMemory, result);
-}
-
 test "GC Edge Case: Sweep handles OutOfMemory gracefully without panicking" {
     // This allocator will fail immediately on its first request
     var fail_alloc = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
@@ -311,4 +298,123 @@ test "GC Edge Case: Sweep handles OutOfMemory gracefully without panicking" {
 
     // The cache item should survive because eviction was aborted
     try testing.expectEqual(@as(usize, 1), vm.dag_cache.count());
+}
+
+// --- Constants of a chunk under compilation must be GC roots ---
+
+fn expectGlobalString(vm: *VM, name: []const u8, expected: []const u8) !void {
+    const val = vm.globals.get(name) orelse return error.MissingGlobal;
+    try testing.expect(val.isString());
+    try testing.expectEqualStrings(expected, val.asString().chars);
+}
+
+test "GC: string constants survive collections triggered during compilation" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Every later literal allocates and (under stress) collects; before the fix
+    // "FIRST" was referenced only by the unrooted top-level chunk and got swept.
+    vm.gc.stress = true;
+    const source =
+        \\first = "FIRST"
+        \\b = "second literal"
+        \\c = "third literal"
+        \\d = "fourth literal"
+        \\result = first
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    // A collection between compile() and interpret() must not sweep constants either
+    vm.gc.collectGarbage(&vm, false);
+    vm.gc.stress = false;
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try expectGlobalString(&vm, "result", "FIRST");
+    // Once the script closure roots the chunk, interpret drops the compile-time registration
+    try testing.expectEqual(@as(usize, 0), vm.gc.live_chunks.chunks.items.len);
+}
+
+test "GC: an object whose list entry can't be allocated is freed, not leaked" {
+    // allocateObject created the object, then appended it to its type's list; a failed
+    // append returned OutOfMemory with the object unreachable by the sweep.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try testing.expectEqual(@as(usize, 0), vm.gc.bboxes.items.len);
+
+    // The first allocation is the object, the second its list's storage.
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 1 });
+    vm.gc.allocator = failing.allocator();
+    const before = vm.gc.bytes_allocated;
+    try testing.expectError(error.OutOfMemory, vm.gc.allocateBBox(&vm, 0, 0, 0, 1, 1, 1));
+    vm.gc.allocator = testing.allocator;
+    try testing.expectEqual(before, vm.gc.bytes_allocated);
+    try testing.expectEqual(@as(usize, 0), vm.gc.bboxes.items.len);
+    // testing.allocator reports the object as leaked at deinit if it wasn't destroyed.
+}
+
+test "GC: a script past its memory limit stops with a Sandbox Error" {
+    // The GC had the cap all along, but nothing ever set it.
+    const support = @import("../test_support.zig");
+    for ([_]struct { limit: ?usize, outcome: @import("vm.zig").InterpretResult }{
+        .{ .limit = 64 * 1024, .outcome = .runtime_error },
+        .{ .limit = null, .outcome = .ok },
+    }) |case| {
+        var vm = try support.initVm();
+        defer vm.deinit();
+        vm.setMemoryLimit(case.limit);
+        try std.testing.expectEqual(case.outcome, try support.runOn(&vm, "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\nr = a.length"));
+    }
+}
+
+test "GC: the standard library's natives and names live with the VM, outside the sweep" {
+    // Each native and each name was its own GC allocation, freed at teardown: a VM cost about
+    // 850 allocations before running anything, and the test suite most of its time.
+    var counting = std.testing.FailingAllocator.init(testing.allocator, .{});
+    var vm = try VM.init(counting.allocator(), testing.io);
+    defer vm.deinit();
+    const before = counting.allocations;
+    try registry.registerStandardLibrary(&vm);
+    try testing.expect(counting.allocations - before < 200);
+
+    // None of them is in a list the sweep walks, so a collection keeps every one.
+    const strings_before = vm.gc.strings.items.len;
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(strings_before, vm.gc.strings.items.len);
+    try testing.expect(vm.globals.get("cube").?.isNative());
+
+    // A script string with a built-in name's text is that static string, unharmed by
+    // collections (a freed string's bytes are overwritten).
+    const union_name = try vm.allocateString("union");
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(union_name.asObj(), (try vm.allocateString("union")).asObj());
+    try testing.expectEqualStrings("union", union_name.asString().chars);
+}
+
+test "GC: a script runs as before on a VM collected after registering the library" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.gc.collectGarbage(&vm, false);
+
+    var doc = try Document.parse(testing.allocator, "r = [3, 1, 2].sort.map { |v| v * cube(1).volume }\nm = Math::PI.round(2)\n");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    vm.gc.stress = true; // collect on every allocation while it runs
+    defer vm.gc.stress = false;
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try testing.expectEqual(@as(usize, 3), vm.globals.get("r").?.asArray().items.items.len);
+    try testing.expectApproxEqAbs(@as(f64, 3.14), vm.globals.get("m").?.asNumber(), 1e-9);
 }

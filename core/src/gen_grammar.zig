@@ -1,5 +1,9 @@
+//! Generates the VS Code TextMate grammar (`zig build grammar`): `generateTextMateJson` takes
+//! the keywords from the lexer and the function and method names from the stdlib manifest and
+//! classes, so highlighting follows the language, and `main` writes it to the given path.
+
 const std = @import("std");
-const kupcad_lexer = @import("frontend/kupcad/lexer.zig");
+const kupcad_lexer = @import("frontend/lexer.zig");
 const manifest = @import("stdlib/manifest.zig");
 const array_class = @import("stdlib/classes/array.zig");
 const map_class = @import("stdlib/classes/map.zig");
@@ -11,6 +15,9 @@ const math_class = @import("stdlib/classes/math.zig");
 const object_class = @import("stdlib/classes/object.zig");
 const gc_class = @import("stdlib/classes/gc.zig");
 const log_helpers = @import("log.zig");
+
+/// `for`, the loop variables (up to a comment), then the first standalone `in`.
+pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
@@ -164,6 +171,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#global_vars" },
             .{ .include = "#constants" },
             .{ .include = "#method_calls" },
+            .{ .include = "#for_in" },
             .{ .include = "#keywords" },
             .{ .include = "#builtins" },
             .{ .include = "#core_methods" },
@@ -238,6 +246,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                 .match = "([a-zA-Z_]\\w*[!?]?)(\\()",
                 .captures = .{
                     .@"1" = .{ .name = "entity.name.function.kupcad" },
+                },
+            },
+            // `in` is a keyword only in `for x in xs` (the lexer reads it as a name, so `in:`
+            // stays a label), so it is highlighted there and nowhere else.
+            .for_in = .{
+                .match = FOR_IN_MATCH,
+                .captures = .{
+                    .@"1" = .{ .name = "keyword.control.kupcad" },
+                    .@"3" = .{ .name = "keyword.control.kupcad" },
                 },
             },
             .keywords = .{

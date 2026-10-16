@@ -1,255 +1,301 @@
 const std = @import("std");
+const test_support = @import("../test_support.zig");
 const testing = std.testing;
-const Cafs = @import("cafs.zig").Cafs;
-const Store = @import("store.zig").Store;
+const cafs_mod = @import("cafs.zig");
+const Cafs = cafs_mod.Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const helpers = @import("test_helpers.zig");
+const TarEntry = helpers.TarEntry;
+const freeMap = helpers.freeMap;
 
-test "Cafs: isolates physical filesystem operations using system temp directories" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+/// CAFS rooted in a fresh tmp dir, linking into an in-memory project VFS.
+const Fixture = struct {
+    tmp: testing.TmpDir,
+    tmp_path: [:0]u8,
+    mem_vfs: MemoryVfs,
+    cafs: Cafs,
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    fn init(self: *Fixture) !void {
+        self.tmp = testing.tmpDir(.{});
+        errdefer self.tmp.cleanup();
+        self.tmp_path = try self.tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+        errdefer testing.allocator.free(self.tmp_path);
+        self.mem_vfs = MemoryVfs.init(testing.allocator);
+        errdefer self.mem_vfs.deinit();
+        self.cafs = try Cafs.init(testing.allocator, testing.io, self.tmp_path, self.mem_vfs.vfs());
+    }
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
+    fn deinit(self: *Fixture) void {
+        self.cafs.deinit();
+        self.mem_vfs.deinit();
+        testing.allocator.free(self.tmp_path);
+        self.tmp.cleanup();
+    }
 
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
+    fn writeBlob(self: *Fixture, hash: []const u8, data: []const u8) !void {
+        const path = try self.cafs.blobPath(hash);
+        defer testing.allocator.free(path);
+        var f = try std.Io.Dir.cwd().createFile(testing.io, path, .{});
+        defer f.close(testing.io);
+        try f.writeStreamingAll(testing.io, data);
+    }
 
-    const cwd = std.Io.Dir.cwd();
-    const files_dir = try testing.allocator.print("{s}/files", .{tmp_path});
-    defer testing.allocator.free(files_dir);
+    fn extract(self: *Fixture, entries: []const TarEntry) !std.StringHashMap([]const u8) {
+        const archive = try self.extractAs(entries, .flat);
+        testing.allocator.free(archive.root);
+        return archive.files;
+    }
 
-    var dir = try cwd.openDir(testing.io, files_dir, .{});
+    fn extractAs(self: *Fixture, entries: []const TarEntry, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
+        const gz = try helpers.buildTarGz(testing.allocator, entries);
+        defer testing.allocator.free(gz);
+        var reader: std.Io.Reader = .fixed(gz);
+        return self.cafs.extractTarball(&reader, layout);
+    }
+
+    fn expectExtractError(self: *Fixture, expected: anyerror, entries: []const TarEntry) !void {
+        return self.expectExtractErrorAs(expected, entries, .flat);
+    }
+
+    fn expectExtractErrorAs(self: *Fixture, expected: anyerror, entries: []const TarEntry, layout: cafs_mod.ArchiveLayout) !void {
+        var archive = self.extractAs(entries, layout) catch |err| return testing.expectEqual(expected, err);
+        archive.deinit(testing.allocator);
+        return error.TestExpectedError;
+    }
+};
+
+fn existsAbs(path: []const u8) bool {
+    std.Io.Dir.cwd().access(testing.io, path, .{}) catch return false;
+    return true;
+}
+
+test "Cafs: init creates the blob directory under the global dir" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    var dir = try fx.tmp.dir.openDir(testing.io, "files", .{});
     dir.close(testing.io);
 }
 
 test "Cafs: blobPath generates correct absolute paths" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    const expected = try testing.allocator.print("{s}/files/deadbeef", .{tmp_path});
+    const expected = try testing.allocator.print("{s}/files/deadbeef", .{fx.tmp_path});
     defer testing.allocator.free(expected);
-
-    const actual = try cafs.blobPath("deadbeef");
+    const actual = try fx.cafs.blobPath("deadbeef");
     defer testing.allocator.free(actual);
-
     try testing.expectEqualStrings(expected, actual);
 }
 
-test "Cafs: linkBlob falls back to physical read across devices" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+test "Cafs: linkBlob copies when the VFS cannot hard-link" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    try fx.writeBlob("112233445566", "cross device payload");
+    try fx.cafs.linkBlob("112233445566", "virtual_file.txt");
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    const hash = "112233445566";
-    const blob_path = try cafs.blobPath(hash);
-    defer testing.allocator.free(blob_path);
-
-    var f = try std.Io.Dir.cwd().createFile(testing.io, blob_path, .{});
-    try f.writeStreamingAll(testing.io, "cross device payload");
-    f.close(testing.io);
-
-    try cafs.linkBlob(hash, "virtual_file.txt");
-
-    const content = try mem_vfs.vfs().readFile(testing.allocator, "virtual_file.txt");
+    const content = try fx.mem_vfs.vfs().readFile(testing.allocator, "virtual_file.txt");
     defer testing.allocator.free(content);
-
     try testing.expectEqualStrings("cross device payload", content);
 }
 
-test "Cafs: extractTarball leverages PID and timestamp for concurrent isolation" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+// ---------------------------------------------------------------------------
+// Archive extraction (audit fixes: untrusted tarballs)
+// ---------------------------------------------------------------------------
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+// A symlink entry followed by a file "through" it used to write outside the package.
+test "Cafs: extractTarball does not let a symlink entry plant files outside the package" {
+    test_support.expectWarnings();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
+    try fx.tmp.dir.createDirPath(testing.io, "victim");
+    const victim = try std.fmt.allocPrint(testing.allocator, "{s}/victim", .{fx.tmp_path});
+    defer testing.allocator.free(victim);
 
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
+    var map = try fx.extract(&.{
+        .{ .name = "pkg/link", .kind = .symlink, .link = victim },
+        .{ .name = "pkg/link/planted.txt", .data = "pwned!" },
+    });
+    defer freeMap(&map);
 
-    const cwd = std.Io.Dir.cwd();
-    const dummy_tar = try testing.allocator.print("{s}/dummy.tar.gz", .{tmp_path});
-    defer testing.allocator.free(dummy_tar);
+    const planted = try std.fmt.allocPrint(testing.allocator, "{s}/planted.txt", .{victim});
+    defer testing.allocator.free(planted);
+    try testing.expect(!existsAbs(planted));
+    try testing.expect(map.get("pkg/link") == null);
+}
 
-    var f = try cwd.createFile(testing.io, dummy_tar, .{});
-    f.close(testing.io);
+test "Cafs: sanitizeEntryPath rejects escaping and non-portable names" {
+    var buf: [256]u8 = undefined;
+    const rejected = [_][]const u8{
+        "",     "/etc/passwd", "//x",  "../escape.txt", "a/../../b",
+        "a/..", "a\\..\\b",    "C:/x", "a/b:stream",    "a\x00b",
+        ".",    "./",
+    };
+    for (rejected) |name| {
+        testing.expectError(error.UnsafeArchivePath, cafs_mod.sanitizeEntryPath(&buf, name)) catch |err| {
+            std.debug.print("accepted unsafe entry name: \"{f}\"\n", .{std.zig.fmtString(name)});
+            return err;
+        };
+    }
 
-    var dummy_file = try cwd.openFile(testing.io, dummy_tar, .{});
-    defer dummy_file.close(testing.io);
+    const normalized = [_]struct { in: []const u8, out: []const u8 }{
+        .{ .in = "pkg/main.kup", .out = "pkg/main.kup" },
+        .{ .in = "./a//b", .out = "a/b" },
+        .{ .in = "a/./b/", .out = "a/b" },
+    };
+    for (normalized) |c| try testing.expectEqualStrings(c.out, try cafs_mod.sanitizeEntryPath(&buf, c.in));
 
-    var buf: [1024]u8 = undefined;
-    var file_reader = dummy_file.reader(testing.io, &buf);
+    // Names that don't fit the output buffer are rejected, not truncated.
+    var small: [4]u8 = undefined;
+    try testing.expectError(error.UnsafeArchivePath, cafs_mod.sanitizeEntryPath(&small, "abcde"));
+    try testing.expectError(error.UnsafeArchivePath, cafs_mod.sanitizeEntryPath(&small, "ab/cd"));
+}
 
-    const result = cafs.extractTarball(&file_reader.interface);
-    try testing.expectError(error.ReadFailed, result);
+test "Cafs: extractTarball rejects escaping and duplicate entries" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var global_dir = try cwd.openDir(testing.io, tmp_path, .{ .iterate = true });
-    defer global_dir.close(testing.io);
+    try fx.expectExtractError(error.UnsafeArchivePath, &.{.{ .name = "../escape.txt", .data = "x" }});
+    // A later duplicate (after normalization) would silently replace verified content.
+    try fx.expectExtractError(error.DuplicateArchiveEntry, &.{
+        .{ .name = "a.kup", .data = "1" },
+        .{ .name = "./a.kup", .data = "2" },
+    });
+}
 
-    var it = global_dir.iterate();
-    while (try it.next(testing.io)) |entry| {
-        if (std.mem.startsWith(u8, entry.name, "tmp_")) {
-            return error.OrphanedTempDirFound;
+// Decompression bombs used to be extracted without bound.
+test "Cafs: extractTarball enforces decompressed size and file count limits" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    const big: [4096]u8 = @splat('A');
+
+    fx.cafs.extract_limits = .{ .max_total_bytes = big.len };
+    {
+        var map = try fx.extract(&.{.{ .name = "exact.bin", .data = &big }});
+        freeMap(&map);
+    }
+    fx.cafs.extract_limits = .{ .max_total_bytes = big.len - 1 };
+    try fx.expectExtractError(error.ArchiveTooLarge, &.{.{ .name = "bomb.bin", .data = &big }});
+
+    const three = [_]TarEntry{ .{ .name = "a", .data = "1" }, .{ .name = "b", .data = "2" }, .{ .name = "c", .data = "3" } };
+    fx.cafs.extract_limits = .{ .max_file_count = three.len };
+    {
+        var map = try fx.extract(&three);
+        freeMap(&map);
+    }
+    fx.cafs.extract_limits = .{ .max_file_count = three.len - 1 };
+    try fx.expectExtractError(error.ArchiveTooManyFiles, &three);
+}
+
+test "Cafs: failed extraction leaves no partial blobs or temp files" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+
+    const payload: [4096]u8 = @splat('B');
+    const gz = try helpers.buildTarGz(testing.allocator, &.{.{ .name = "big.bin", .data = &payload }});
+    defer testing.allocator.free(gz);
+
+    // Cut the stream in the middle of the file body.
+    var reader: std.Io.Reader = .fixed(gz[0 .. gz.len / 2]);
+    if (fx.cafs.extractTarball(&reader, .flat)) |a| {
+        var archive = a;
+        archive.deinit(testing.allocator);
+        return error.TestExpectedError;
+    } else |_| {}
+
+    for ([_][]const u8{ "tmp", "files" }) |sub| {
+        const path = try std.fmt.allocPrint(testing.allocator, "{s}/{s}", .{ fx.tmp_path, sub });
+        defer testing.allocator.free(path);
+        var dir = try std.Io.Dir.cwd().openDir(testing.io, path, .{ .iterate = true });
+        defer dir.close(testing.io);
+        var it = dir.iterate();
+        if (try it.next(testing.io)) |entry| {
+            std.debug.print("leftover in cafs/{s}: {s}\n", .{ sub, entry.name });
+            return error.TestUnexpectedLeftover;
         }
     }
 }
 
-test "Store: hasPackage and getPackageFiles correctly query SQLite cache" {
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
+// ---------------------------------------------------------------------------
+// Linking into a NativeVfs sandbox
+// ---------------------------------------------------------------------------
 
-    // 1. Verify unregistered package returns false
-    try testing.expect(!try store.hasPackage("github.com/kupcad/std", "commit-abc"));
+// Real installs failed with AccessDenied: the sandbox rejected the absolute blob source.
+test "Cafs: linkBlob hard-links blobs into a NativeVfs sandbox" {
+    var proj = testing.tmpDir(.{});
+    defer proj.cleanup();
+    var global = testing.tmpDir(.{});
+    defer global.cleanup();
+    const global_path = try global.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(global_path);
 
-    // 2. Register a mock package
-    var files = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files.deinit();
-    try files.put("lib/main.kup", "hash_main_123");
-    try files.put("kupcad.json", "hash_json_456");
-
-    try store.registerPackage("github.com/kupcad/std", "commit-abc", "github", "sha256-mock", &files);
-
-    // 3. Verify store queries
-    try testing.expect(try store.hasPackage("github.com/kupcad/std", "commit-abc"));
-
-    var cached_files = (try store.getPackageFiles(testing.allocator, "github.com/kupcad/std", "commit-abc")).?;
-    defer {
-        var it = cached_files.iterator();
-        while (it.next()) |entry| {
-            testing.allocator.free(entry.key_ptr.*);
-            testing.allocator.free(entry.value_ptr.*);
-        }
-        cached_files.deinit();
-    }
-
-    try testing.expectEqual(@as(usize, 2), cached_files.count());
-    try testing.expectEqualStrings("hash_main_123", cached_files.get("lib/main.kup").?);
-    try testing.expectEqualStrings("hash_json_456", cached_files.get("kupcad.json").?);
-}
-
-test "Cafs: resolvePackage fast-path short-circuits when package is cached offline" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
+    var native = NativeVfs.init(testing.io, proj.dir);
+    const fs = native.vfs();
+    var cafs = try Cafs.init(testing.allocator, testing.io, global_path, fs);
     defer cafs.deinit();
 
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
+    const blob = try cafs.blobPath("cafe");
+    defer testing.allocator.free(blob);
+    try helpers.writeAbs(blob, "shared");
 
-    // Pre-seed package into store
-    var files = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files.deinit();
-    try files.put("entry.kup", "hash_entry_999");
+    try fs.makePath("store/pkg");
+    try cafs.linkBlob("cafe", "store/pkg/main.kup");
+    try cafs.linkBlob("cafe", "store/pkg/main.kup"); // re-install replaces
 
-    try store.registerPackage("pkg-cached", "sha-100", "local", "sha256-cached", &files);
+    const stat = try proj.dir.statFile(testing.io, "store/pkg/main.kup", .{});
+    try testing.expect(stat.nlink >= 2);
 
-    // Call resolvePackage with `reader = null` (no network stream)
-    var resolved_map = try cafs.resolvePackage(&store, "pkg-cached", "sha-100", "local", null);
-    defer {
-        var it = resolved_map.iterator();
-        while (it.next()) |entry| {
-            testing.allocator.free(entry.key_ptr.*);
-            testing.allocator.free(entry.value_ptr.*);
-        }
-        resolved_map.deinit();
-    }
-
-    try testing.expectEqualStrings("hash_entry_999", resolved_map.get("entry.kup").?);
+    // The trusted API refuses relative sources, and destinations stay sandboxed.
+    try testing.expectError(error.AccessDenied, fs.hardLinkTrusted("../outside", "x"));
+    try testing.expectError(error.AccessDenied, fs.hardLinkTrusted(blob, "../../escape"));
+    try testing.expectError(error.AccessDenied, fs.hardLinkTrusted(blob, "/tmp/escape"));
+    // linkBlob must not fall back to copying when the sandbox rejects the destination.
+    try testing.expectError(error.AccessDenied, cafs.linkBlob("cafe", "../escape"));
 }
 
-test "Cafs: resolvePackage returns PackageNotFoundOffline on cache miss when reader is null" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
+test "Cafs: a wrapped archive's top folder is not part of the package" {
+    // GitHub, GitLab and Gitea wrap the repository in `repo-<sha>/`; it was kept, so
+    // `import "github.com/u/r"` never found the package's files.
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
 
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
+    var archive = try fx.extractAs(&.{
+        .{ .name = "parts-0123abc/", .kind = .dir },
+        .{ .name = "parts-0123abc/kupcad.json", .data = "{}" },
+        .{ .name = "parts-0123abc/lib/bolt.kup", .data = "def bolt() 1 end" },
+    }, .wrapped);
+    defer archive.deinit(testing.allocator);
+    try testing.expectEqualStrings("parts-0123abc", archive.root);
+    try testing.expectEqual(@as(u32, 2), archive.files.count());
+    try testing.expect(archive.files.contains("kupcad.json"));
+    try testing.expect(archive.files.contains("lib/bolt.kup"));
 
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    var store = try Store.init(testing.io, ":memory:");
-    defer store.deinit();
-
-    // Attempting offline resolution without pre-seeding or a network reader must fail cleanly
-    const result = cafs.resolvePackage(&store, "non-existent-pkg", "sha-000", "github", null);
-    try testing.expectError(error.PackageNotFoundOffline, result);
+    // An archive named directly is the package as it is.
+    var flat = try fx.extractAs(&.{.{ .name = "parts/kupcad.json", .data = "{}" }}, .flat);
+    defer flat.deinit(testing.allocator);
+    try testing.expect(flat.files.contains("parts/kupcad.json"));
+    try testing.expectEqualStrings("", flat.root);
 }
 
-test "Cafs: materializePackage links resolved package files into target VFS directory" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
-
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(tmp_path);
-
-    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
-    defer cafs.deinit();
-
-    // 1. Seed blobs in physical CAFS storage
-    const hash_a = "hash_file_a";
-    const blob_a = try cafs.blobPath(hash_a);
-    defer testing.allocator.free(blob_a);
-    var fa = try std.Io.Dir.cwd().createFile(testing.io, blob_a, .{});
-    try fa.writeStreamingAll(testing.io, "const a = 42;");
-    fa.close(testing.io);
-
-    const hash_b = "hash_file_b";
-    const blob_b = try cafs.blobPath(hash_b);
-    defer testing.allocator.free(blob_b);
-    var fb = try std.Io.Dir.cwd().createFile(testing.io, blob_b, .{});
-    try fb.writeStreamingAll(testing.io, "const b = 100;");
-    fb.close(testing.io);
-
-    // 2. Build files map
-    var files_map = std.StringHashMap([]const u8).init(testing.allocator);
-    defer files_map.deinit();
-    try files_map.put("src/a.kup", hash_a);
-    try files_map.put("src/b.kup", hash_b);
-
-    // 3. Materialize to target dir in VFS
-    try cafs.materializePackage(&files_map, ".kupcad/pkg/my_pkg");
-
-    // 4. Verify contents in VFS
-    const content_a = try mem_vfs.vfs().readFile(testing.allocator, ".kupcad/pkg/my_pkg/src/a.kup");
-    defer testing.allocator.free(content_a);
-    try testing.expectEqualStrings("const a = 42;", content_a);
-
-    const content_b = try mem_vfs.vfs().readFile(testing.allocator, ".kupcad/pkg/my_pkg/src/b.kup");
-    defer testing.allocator.free(content_b);
-    try testing.expectEqualStrings("const b = 100;", content_b);
+test "Cafs: a wrapped archive must have exactly one top folder" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{.{ .name = "README.md", .data = "x" }}, .wrapped);
+    try fx.expectExtractErrorAs(error.UnexpectedArchiveLayout, &.{
+        .{ .name = "a/kupcad.json", .data = "{}" },
+        .{ .name = "b/main.kup", .data = "x" },
+    }, .wrapped);
 }

@@ -1,0 +1,14 @@
+a = cube(sise: 3)                  # one edit away: a suggestion
+b = cylinder(r: 2, hieght: 5)      # two edits
+c = sphere(r: 2, colour: "red")    # nothing close: the list
+d = cube(10).translate(X: 1)       # a method of a solid
+sk = square(4)
+e = sk.extrude(hieght: 2)          # of a sketch, through a variable
+f = d.rotate(z: 90).volume(precise: true) # a method that takes no keywords
+class Gear
+  def translate(by:)
+    by
+  end
+end
+g = Gear.new.translate(by: 1)      # the script's own translate: not checked
+[a, b, c, d, e, f, g]

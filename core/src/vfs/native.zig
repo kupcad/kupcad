@@ -1,3 +1,7 @@
+//! `NativeVfs`: the `Vfs` over a real directory, confining every path to it (no absolute
+//! paths, no `..` above it, symlink targets kept inside); `hardLinkTrusted` links in a file
+//! from the package store outside it.
+
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
 
@@ -19,6 +23,7 @@ pub const NativeVfs = struct {
                 .writeFile = writeFile,
                 .hardLink = hardLink,
                 .symLink = symLink,
+                .hardLinkTrusted = hardLinkTrusted,
             },
         };
     }
@@ -55,6 +60,8 @@ pub const NativeVfs = struct {
         const file_size: usize = @intCast(stat.size);
 
         const buffer = try allocator.alloc(u8, file_size);
+        // Free on the short-read error path below; the caller only owns it on success.
+        errdefer allocator.free(buffer);
         const bytes_read = try file.readStreaming(self.io, &.{buffer});
         if (bytes_read != file_size) return error.RuntimeError;
 
@@ -74,10 +81,69 @@ pub const NativeVfs = struct {
         try self.root_dir.hardLink(old_path, self.root_dir, new_path, self.io, .{});
     }
 
-    fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
-        try ensureSafePath(target_path);
-        try ensureSafePath(link_path);
+    /// Links a trusted absolute source (the CAFS store, outside the sandbox root)
+    /// into the sandbox. Only absolute sources are accepted so this can't be used
+    /// as a back door for relative, script-supplied paths; the destination is
+    /// still confined by ensureSafePath. An existing destination is replaced so
+    /// re-installs refresh links.
+    fn hardLinkTrusted(ptr: *anyopaque, trusted_abs_source: []const u8, new_path: []const u8) anyerror!void {
+        if (!std.fs.path.isAbsolute(trusted_abs_source)) return error.AccessDenied;
+        try ensureSafePath(new_path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
-        try self.root_dir.symLink(self.io, target_path, link_path, .{});
+        const cwd = std.Io.Dir.cwd();
+        cwd.hardLink(trusted_abs_source, self.root_dir, new_path, self.io, .{}) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                try self.root_dir.deleteFile(self.io, new_path);
+                try cwd.hardLink(trusted_abs_source, self.root_dir, new_path, self.io, .{});
+            },
+            else => return err,
+        };
+    }
+
+    /// Validates a symlink target *relative to the link's directory* (which is how
+    /// the OS resolves it) and requires it to stay inside the root. Absolute
+    /// targets are always rejected.
+    fn ensureSafeLinkTarget(link_path: []const u8, target_path: []const u8) !void {
+        if (target_path.len == 0 or std.fs.path.isAbsolute(target_path)) return error.AccessDenied;
+
+        var depth: isize = 0;
+        if (std.fs.path.dirname(link_path)) |link_dir| {
+            var dir_it = std.mem.tokenizeAny(u8, link_dir, "/\\");
+            while (dir_it.next()) |component| {
+                if (std.mem.eql(u8, component, "..")) {
+                    depth -= 1;
+                } else if (!std.mem.eql(u8, component, ".")) {
+                    depth += 1;
+                }
+            }
+        }
+
+        var it = std.mem.tokenizeAny(u8, target_path, "/\\");
+        while (it.next()) |component| {
+            if (std.mem.eql(u8, component, "..")) {
+                depth -= 1;
+                if (depth < 0) return error.AccessDenied;
+            } else if (!std.mem.eql(u8, component, ".")) {
+                depth += 1;
+            }
+        }
+    }
+
+    fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
+        try ensureSafePath(link_path);
+        try ensureSafeLinkTarget(link_path, target_path);
+        const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        self.root_dir.symLink(self.io, target_path, link_path, .{}) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                // Re-install: replace a stale *symlink* (e.g. pointing at an old commit),
+                // but never delete a real file/directory that happens to be there.
+                var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+                const n = self.root_dir.readLink(self.io, link_path, &buf) catch return err;
+                if (std.mem.eql(u8, buf[0..n], target_path)) return;
+                try self.root_dir.deleteFile(self.io, link_path);
+                try self.root_dir.symLink(self.io, target_path, link_path, .{});
+            },
+            else => return err,
+        };
     }
 };

@@ -23,6 +23,24 @@
         "title": "KupCAD: Open Viewer"
       }
     ],
+    "configuration": {
+      "title": "KupCAD",
+      "properties": {
+        "kupcad.serverPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to the `kupcad` executable. When empty, `kupcad` is looked up on PATH, then the monorepo dev build."
+        },
+        "kupcad.viewport.port": {
+          "type": "integer",
+          "default": 9001,
+          "minimum": 0,
+          "maximum": 65535,
+          "description": "Preferred port for the local viewport WebSocket (0 = always pick a free port). If taken, the server falls back to a free port automatically."
+        }
+      }
+    },
     "languages": [
       {
         "id": "kupcad",

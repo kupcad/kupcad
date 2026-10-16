@@ -1,28 +1,67 @@
+//! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
+//! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints)
+//! and runs the last edited document in a sandboxed VM (`ReadOnlyVfs`) to send its mesh to
+//! the viewport WebSocket server (daemon/viewport_ws.zig).
+
 const std = @import("std");
 const builtin = @import("builtin");
 const lsp = @import("lsp");
+const build_info = @import("build_info");
 const api = @import("../api.zig");
+const lsp_actions = @import("lsp_actions.zig");
+const lsp_inbox = @import("lsp_inbox.zig");
+const lsp_hints = @import("lsp_hints.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const VM = @import("../vm/vm.zig").VM;
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
+const Outcome = @import("outcome.zig").Outcome;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
-const ViewportWsServer = @import("../daemon/viewport_ws.zig").ViewportWsServer;
+const viewport_ws = @import("../daemon/viewport_ws.zig");
+const ViewportWsServer = viewport_ws.ViewportWsServer;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const Vfs = @import("../vfs/vfs.zig").Vfs;
+const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
+const project_config = @import("config.zig");
+const ProjectConfig = project_config.ProjectConfig;
+const limits = @import("../core/limits.zig");
 
 const logger = std.log.scoped(.lsp);
 
+/// Custom notification telling the editor where the viewport WebSocket listens.
+pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
+/// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
+pub const VIEWPORT_PORT_ENV = "KUPCAD_VIEWPORT_PORT";
+
+pub const USAGE =
+    \\Usage: kupcad lsp
+    \\
+    \\Starts the language server on stdin and stdout. Editors start it themselves;
+    \\the VS Code extension runs it for .kup files.
+    \\
+;
+
+/// Resolves the preferred viewport port from the environment, defaulting to DEFAULT_PORT.
+pub fn preferredViewportPort(environ: *const std.process.Environ.Map) u16 {
+    const raw = environ.get(VIEWPORT_PORT_ENV) orelse return viewport_ws.DEFAULT_PORT;
+    return std.fmt.parseInt(u16, raw, 10) catch viewport_ws.DEFAULT_PORT;
+}
+
 pub const DocumentBuffer = struct {
     uri: []const u8,
+    /// What the session and imports call it (Handler.modulePath), owned.
+    module_path: []const u8,
     source: []const u8,
     doc: ?api.Document = null,
 
     pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
         allocator.free(self.uri);
+        allocator.free(self.module_path);
         allocator.free(self.source);
         if (self.doc) |*d| d.deinit();
     }
@@ -33,155 +72,126 @@ const ScopeContext = struct {
     class_name: ?[]const u8 = null,
 };
 
-fn getReturnTypeHint(method_name: []const u8) ?[]const u8 {
-    // Check Global Functions
-    for (manifest.global_functions) |g| {
-        if (std.mem.eql(u8, g.name, method_name)) {
-            return switch (g.category) {
-                .primitive_3d, .csg_operator, .brep_op => "Geometry",
-                .primitive_2d => "CrossSection",
-                .transform => if (std.mem.eql(u8, method_name, "ghost") or std.mem.eql(u8, method_name, "highlight")) "Geometry" else "CrossSection",
-                .file_io => "Geometry",
-                else => null,
-            };
+/// A document run once for its hovers. It used to run again for every hover, in a fresh
+/// VM capped at 500k instructions, so a big model's hovers showed nothing; now it runs
+/// once per version of the workspace, under the preview's limit, and every hover reads
+/// what that run left. Heap-allocated: the VM must not move.
+pub const HoverRun = struct {
+    allocator: std.mem.Allocator,
+    /// The document it ran (owned).
+    uri: []const u8,
+    vm: VM,
+    program: chunk.Chunk,
+
+    /// Runs `doc` (known in the project as `module_path`) on `sandbox`, which must not
+    /// write: the document is untrusted. Null when it doesn't compile: running an
+    /// incomplete chunk broke the VM's invariants, and its diagnostics say why.
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, uri: []const u8, module_path: []const u8) !?*HoverRun {
+        const self = try allocator.create(HoverRun);
+        errdefer allocator.destroy(self);
+        self.* = .{ .allocator = allocator, .uri = try allocator.dupe(u8, uri), .vm = undefined, .program = chunk.Chunk.init() };
+        errdefer allocator.free(self.uri);
+        self.vm = try VM.init(allocator, io);
+        errdefer self.vm.deinit();
+        // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
+        self.vm.vfs = sandbox;
+        self.vm.mute_errors = true; // its errors are the document's diagnostics
+        self.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+        self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        try registry.registerStandardLibrary(&self.vm);
+
+        var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
+        defer comp.deinit();
+        comp.module_path = module_path;
+        comp.compile(doc.tree.root) catch |err| {
+            logger.debug("Hover: the document doesn't compile: {}", .{err});
+            self.destroy();
+            return null;
+        };
+        // A run that stops early still leaves what it defined before stopping.
+        _ = self.vm.interpret(&self.program);
+        return self;
+    }
+
+    pub fn destroy(self: *HoverRun) void {
+        const allocator = self.allocator;
+        self.program.free(allocator);
+        self.vm.deinit();
+        allocator.free(self.uri);
+        allocator.destroy(self);
+    }
+
+    /// What the run knows about the value at `target_node` of `doc` (the document it ran):
+    /// a variable's value, or a call's, with a shape's measurements.
+    pub fn writeFacts(self: *HoverRun, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
+        const node = doc.tree.getNode(target_node) orelse return error.NoValue;
+        var val: value.Value = value.Value.initNil();
+
+        if (node.tag == .identifier or node.tag == .assignment) {
+            const name = if (node.tag == .identifier) doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) else doc.tree.getString(doc.tree.assignment(node).name);
+            val = self.vm.globals.get(name) orelse return error.NoValue;
+        } else if (node.tag == .method_call) {
+            // The call alone, in the run's VM, so it sees the run's variables.
+            var expr_chunk = chunk.Chunk.init();
+            defer expr_chunk.free(self.allocator);
+            var expr_comp = Compiler.forDocument(self.allocator, doc, &expr_chunk, &self.vm);
+            defer expr_comp.deinit();
+            expr_comp.compile(target_node) catch return error.NoValue;
+            const res = self.vm.interpret(&expr_chunk);
+            if (res != .ok or self.vm.stack_top == 0) return error.NoValue;
+            val = self.vm.stack[self.vm.stack_top - 1];
+        } else {
+            return;
+        }
+
+        // 3. Concretize and write Markdown while memory is safe
+        if (val.isGeometry()) {
+            try writer.print("\n---\n### 🧊 3D Solid\n", .{});
+
+            if (self.vm.ensureConcrete(val)) |handle| {
+                // Only what the engine can measure: a B-Rep part would otherwise show zeros.
+                const engine = handle.engine;
+                if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
+                    const dx = bx.max[0] - bx.min[0];
+                    const dy = bx.max[1] - bx.min[1];
+                    const dz = bx.max[2] - bx.min[2];
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
+                };
+
+                if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
+                if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
+                if (kernel.supports(engine, .genus)) {
+                    const gen = kernel.genus(handle);
+                    if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
+                }
+
+                // Counted, not tessellated: the mesh used to be built and copied for this line.
+                if (kernel.numTris(handle)) |tris| try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ kernel.numVerts(handle), tris });
+            } else |_| {}
+        } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
+            try writer.print("\n---\n### 📐 2D Profile\n", .{});
+
+            if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
+                if (kernel.supports(cs_handle.engine, .sketch_measure)) {
+                    const area = kernel.crossSectionArea(cs_handle);
+                    const rect = kernel.crossSectionBounds(cs_handle);
+
+                    const w = rect.max[0] - rect.min[0];
+                    const l = rect.max[1] - rect.min[1];
+
+                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
+                }
+            } else |_| {}
+        } else if (val.isString()) {
+            try writer.writeAll("\n---\n*(String)* `");
+            try val.stringify(true, writer);
+            try writer.writeAll("`\n");
+        } else if (val.isBool()) {
+            try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
         }
     }
-
-    // Check Mesh Methods
-    for (manifest.mesh_methods) |m| {
-        if (std.mem.eql(u8, m.name, method_name)) {
-            return switch (m.category) {
-                .csg_operator, .transform => "Geometry",
-                .workplane_method => "Workplane",
-                .inspection_method => "Number",
-                else => null,
-            };
-        }
-    }
-
-    return null;
-}
-
-fn getParamNames(method_name: []const u8, pos_count: usize) []const []const u8 {
-    if (std.mem.eql(u8, method_name, "cube")) {
-        if (pos_count <= 1) return &[_][]const u8{ "size", "y", "z", "center" };
-        return &[_][]const u8{ "x", "y", "z", "center" };
-    }
-    if (std.mem.eql(u8, method_name, "square")) {
-        if (pos_count <= 1) return &[_][]const u8{ "size", "y", "center" };
-        return &[_][]const u8{ "x", "y", "center" };
-    }
-
-    if (std.mem.eql(u8, method_name, "sphere")) return &[_][]const u8{"radius"};
-    if (std.mem.eql(u8, method_name, "cylinder")) return &[_][]const u8{ "r1", "r2", "h", "center", "segments" };
-    if (std.mem.eql(u8, method_name, "circle")) return &[_][]const u8{ "radius", "segments" };
-
-    if (std.mem.eql(u8, method_name, "translate") or
-        std.mem.eql(u8, method_name, "rotate") or
-        std.mem.eql(u8, method_name, "scale") or
-        std.mem.eql(u8, method_name, "resize")) return &[_][]const u8{ "x", "y", "z" };
-
-    if (std.mem.eql(u8, method_name, "mirror")) return &[_][]const u8{ "nx", "ny", "nz" };
-    if (std.mem.eql(u8, method_name, "extrude")) return &[_][]const u8{ "height", "slices", "twist", "scale_x", "scale_y" };
-    if (std.mem.eql(u8, method_name, "revolve")) return &[_][]const u8{ "segments", "degrees" };
-    if (std.mem.eql(u8, method_name, "regular_polygon")) return &[_][]const u8{ "sides", "r" };
-    if (std.mem.eql(u8, method_name, "offset")) return &[_][]const u8{ "delta", "join" };
-
-    return &[_][]const u8{};
-}
-
-fn writeSpatialHover(allocator: std.mem.Allocator, io: std.Io, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
-    var vm = try VM.init(allocator, io);
-    defer vm.deinit();
-    vm.mute_errors = true; // Prevent LSP from spamming stderr
-
-    // Set a strict instruction limit so the LSP doesn't hang on infinite loops
-    vm.instruction_limit = 500_000;
-
-    try registry.registerStandardLibrary(&vm);
-
-    // 1. Compile and run the ENTIRE document to populate global variables and state
-    var main_chunk = chunk.Chunk.init();
-    defer main_chunk.free(allocator);
-
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
-    comp.compile(doc.tree.root) catch |err| {
-        std.log.err("LSP Hover Compilation Error: {}", .{err});
-    };
-
-    _ = vm.interpret(&main_chunk);
-
-    // 2. Extract requested node safely
-    const node = doc.tree.getNode(target_node) orelse return error.NoValue;
-    var val: value.Value = value.Value.initNil();
-
-    if (node.tag == .identifier) {
-        const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
-        val = vm.globals.get(name) orelse return error.NoValue;
-    } else if (node.tag == .assignment) {
-        const assign = doc.tree.assignment(node);
-        const name = doc.tree.getString(assign.name);
-        val = vm.globals.get(name) orelse return error.NoValue;
-    } else if (node.tag == .method_call) {
-        // Compile and evaluate inline expression safely inside the VM
-        var expr_chunk = chunk.Chunk.init();
-        defer expr_chunk.free(allocator);
-
-        var expr_comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &expr_chunk, &vm);
-        expr_comp.compile(target_node) catch return error.RuntimeError;
-
-        const res = vm.interpret(&expr_chunk);
-        if (res != .ok or vm.stack_top == 0) return error.NoValue;
-        val = vm.stack[vm.stack_top - 1];
-    } else {
-        return;
-    }
-
-    // 3. Concretize and write Markdown while memory is safe
-    if (val.isGeometry()) {
-        try writer.print("\n---\n### 🧊 3D Solid\n", .{});
-
-        if (vm.ensureConcrete(val)) |handle| {
-            const vol = kernel.volume(handle);
-            const sa = kernel.surfaceArea(handle);
-            const gen = kernel.genus(handle);
-
-            if (kernel.boundingBox(handle)) |bx| {
-                const dx = bx.max[0] - bx.min[0];
-                const dy = bx.max[1] - bx.min[1];
-                const dz = bx.max[2] - bx.min[2];
-                try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
-            }
-
-            try writer.print("- **Volume:** `{d:.2}` mm³\n", .{vol});
-            try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{sa});
-            if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
-
-            if (kernel.getMesh(allocator, handle)) |mesh| {
-                defer allocator.free(mesh.vert_props);
-                defer allocator.free(mesh.tri_verts);
-                try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
-            }
-        } else |_| {}
-    } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
-        try writer.print("\n---\n### 📐 2D Profile\n", .{});
-
-        if (vm.ensureConcreteCrossSection(val)) |cs_handle| {
-            const area = kernel.crossSectionArea(cs_handle);
-            const rect = kernel.crossSectionBounds(cs_handle);
-
-            const w = rect.max[0] - rect.min[0];
-            const l = rect.max[1] - rect.min[1];
-
-            try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
-            try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
-        } else |_| {}
-    } else if (val.isString()) {
-        try writer.print("\n---\n*(String)* `\"{s}\"`\n", .{val.asString().chars});
-    } else if (val.isBool()) {
-        try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
-    }
-}
+};
 
 inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
     var current = start_node;
@@ -216,6 +226,18 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
     return ctx;
 }
 
+/// A diagnostic as `textDocument/publishDiagnostics` sends it.
+const PublishedDiagnostic = struct {
+    const Position = lsp.types.Position;
+
+    range: struct { start: Position, end: Position },
+    severity: u32,
+    source: []const u8,
+    message: []const u8,
+    /// The lint rule's id, which editors show beside the message.
+    code: ?[]const u8 = null,
+};
+
 pub const Handler = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -224,17 +246,39 @@ pub const Handler = struct {
     files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
     session: *ScriptSession,
-    ws_server: *ViewportWsServer,
+    /// Null when the viewport server failed to start; language features keep working.
+    ws_server: ?*ViewportWsServer,
     mem_vfs: *MemoryVfs,
+    /// Read-only VFS every LSP-run VM uses (session + hover).
+    sandbox: *ReadOnlyVfs,
+    /// The project's files on disk, as imports read them: rooted at `root` once the editor
+    /// names it. Null when there are none to read (tests).
+    workspace_fs: ?*NativeVfs,
+    /// The workspace folder the editor opened (absolute, owned): documents are known by
+    /// their path relative to it, so their relative imports find each other.
+    root: ?[]u8 = null,
+    /// The directory `workspace_fs` was re-rooted at, closed with the handler.
+    root_dir: ?std.Io.Dir = null,
+    /// The module path of the document last edited, whose mesh the viewport shows (owned).
+    preview_module: ?[]u8 = null,
+    /// The last document run for hovers, until any document changes (imports make any
+    /// edit matter).
+    hover_run: ?*HoverRun = null,
+    /// An edit hasn't been evaluated yet.
+    preview_pending: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
         transport: *lsp.Transport,
         session: *ScriptSession,
-        ws_server: *ViewportWsServer,
+        ws_server: ?*ViewportWsServer,
         mem_vfs: *MemoryVfs,
+        sandbox: *ReadOnlyVfs,
+        workspace_fs: ?*NativeVfs,
     ) Handler {
+        session.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+        session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
         return .{
             .allocator = allocator,
             .io = io,
@@ -244,10 +288,125 @@ pub const Handler = struct {
             .session = session,
             .ws_server = ws_server,
             .mem_vfs = mem_vfs,
+            .sandbox = sandbox,
+            .workspace_fs = workspace_fs,
         };
     }
 
+    /// Replaces the module source in the session; the preview of `uri` is evaluated once the
+    /// editor goes quiet (`evaluatePreview`, run by the inbox), not on every keystroke.
+    /// Uses upsertModule: addModule returns error.DuplicateModule for known paths, and the old
+    /// "catch -> patch source" path never ran, so the viewport kept rendering stale code.
+    /// The module is named by its path in the project (modulePath), and its unsaved text
+    /// is what imports of it read; the modules importing it are evaluated again with it.
+    fn syncSession(self: *Handler, module_path: []const u8, source: []const u8) !void {
+        try self.mem_vfs.vfs().writeFile(module_path, source);
+
+        _ = try self.session.workspace.upsertModule(module_path, source);
+        try self.session.workspace.linkDependencies();
+        try self.session.buildReverseGraph();
+        try self.session.markFileEdited(module_path);
+
+        self.dropHoverRun();
+        const previewed = try self.allocator.dupe(u8, module_path);
+        if (self.preview_module) |old| self.allocator.free(old);
+        self.preview_module = previewed;
+        self.preview_pending = true;
+    }
+
+    /// The run of `buf` for hovers: the last one if it ran this document, else a new one.
+    fn hoverRun(self: *Handler, buf: DocumentBuffer, doc: *const api.Document) !?*HoverRun {
+        if (self.hover_run) |run| {
+            if (std.mem.eql(u8, run.uri, buf.uri)) return run;
+            self.dropHoverRun();
+        }
+        self.hover_run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), doc, buf.uri, buf.module_path);
+        return self.hover_run;
+    }
+
+    fn dropHoverRun(self: *Handler) void {
+        if (self.hover_run) |run| run.destroy();
+        self.hover_run = null;
+    }
+
+    /// What the session and imports call the document at `uri`: its path relative to the
+    /// workspace root (as `./hw.kup` in another file resolves), else its absolute path, else
+    /// the URI itself (an unsaved buffer). They used to know it by its URI, which no import
+    /// names, so open documents never linked. Caller owns the result.
+    fn modulePath(self: *const Handler, allocator: std.mem.Allocator, uri: []const u8) ![]u8 {
+        var scratch = std.heap.ArenaAllocator.init(allocator);
+        defer scratch.deinit();
+        const path = try documentPath(scratch.allocator(), uri) orelse return allocator.dupe(u8, uri);
+        if (self.root) |root| {
+            if (path.len > root.len and std.mem.startsWith(u8, path, root) and path[root.len] == '/') {
+                return allocator.dupe(u8, path[root.len + 1 ..]);
+            }
+        }
+        return allocator.dupe(u8, path);
+    }
+
+    /// Takes the workspace folder from `initialize`: its first folder, else its root URI.
+    fn setRoot(self: *Handler, request: lsp.types.InitializeParams) !void {
+        const uri = if (request.workspaceFolders) |folders| (if (folders.len > 0) folders[0].uri else null) else null;
+        const root_uri = uri orelse request.rootUri orelse return;
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        const path = try documentPath(scratch.allocator(), root_uri) orelse return;
+        const trimmed = std.mem.trimEnd(u8, path, "/");
+        self.root = try self.allocator.dupe(u8, trimmed);
+        if (self.workspace_fs) |fs| {
+            const dir = try std.Io.Dir.cwd().openDir(self.io, trimmed, .{});
+            self.root_dir = dir;
+            fs.root_dir = dir;
+        }
+    }
+
+    /// Evaluates the session and streams the edited document's mesh to the viewport. An edit
+    /// that arrives meanwhile cancels it (the inbox sets the VM's cancel token).
+    pub fn evaluatePreview(self: *Handler) void {
+        self.preview_pending = false;
+        const uri = self.preview_module orelse return;
+        // Stopped by a message (the inbox's cancel): run again once the editor is quiet. The
+        // modules it finished stay evaluated, so the next run picks up where it stopped.
+        defer if (self.session.vm.cancel_token.load(.acquire)) {
+            self.preview_pending = true;
+        };
+        // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
+        self.session.evaluateUntilCancelled() catch |err| switch (err) {
+            error.ParseError, error.CompileError, error.RuntimeError, error.Canceled => {
+                logger.debug("{s} did not evaluate: {}", .{ uri, err });
+                return;
+            },
+            else => {
+                logger.warn("Session evaluation failed: {}", .{err});
+                return;
+            },
+        };
+        if (self.ws_server) |ws| {
+            ws.broadcastSessionMesh(self.session, uri) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
+        }
+    }
+
+    /// The preview as the inbox's slow work.
+    pub fn previewWork(self: *Handler) lsp_inbox.Work {
+        const Hooks = struct {
+            fn pending(context: *anyopaque) bool {
+                const handler: *Handler = @ptrCast(@alignCast(context));
+                return handler.preview_pending;
+            }
+            fn run(context: *anyopaque) void {
+                const handler: *Handler = @ptrCast(@alignCast(context));
+                handler.evaluatePreview();
+            }
+        };
+        return .{ .context = self, .pending = Hooks.pending, .run = Hooks.run, .cancel = &self.session.vm.cancel_token };
+    }
+
     pub fn deinit(self: *Handler) void {
+        self.dropHoverRun();
+        if (self.preview_module) |m| self.allocator.free(m);
+        if (self.root) |r| self.allocator.free(r);
+        if (self.root_dir) |d| d.close(self.io);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -255,32 +414,48 @@ pub const Handler = struct {
         self.files.deinit(self.allocator);
     }
 
-    fn log(self: *Handler, comptime fmt: []const u8, args: anytype) void {
-        _ = self;
-        logger.err("LSP: " ++ fmt, args);
-    }
-
     pub fn initialize(
         self: *Handler,
         _: std.mem.Allocator,
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
-        self.log("Initializing Server...", .{});
+        logger.info("Initializing server", .{});
+        self.setRoot(request) catch |err| logger.warn("Could not open the workspace folder: {}; imports are read from the current directory", .{err});
 
+        // The client's preferred encoding among the two columns are computed in: UTF-8 or
+        // UTF-16 (the default every client supports). UTF-32 was announced when offered
+        // first, while every column was still counted in UTF-16.
         if (request.capabilities.general) |general| {
             for (general.positionEncodings orelse &.{}) |encoding| {
                 self.offset_encoding = switch (encoding) {
                     .@"utf-8" => .@"utf-8",
                     .@"utf-16" => .@"utf-16",
-                    .@"utf-32" => .@"utf-32",
-                    .custom_value => continue,
+                    .@"utf-32", .custom_value => continue,
                 };
                 break;
             }
         }
 
-        const server_capabilities: lsp.types.ServerCapabilities = .{
-            .positionEncoding = switch (self.offset_encoding) {
+        const server_capabilities = serverCapabilities(self.offset_encoding);
+        if (builtin.mode == .debug) {
+            lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
+        }
+
+        return .{
+            .serverInfo = .{
+                .name = "kupcad-lsp",
+                .version = build_info.version,
+            },
+            .capabilities = server_capabilities,
+        };
+    }
+
+    /// What the server offers. Every capability needs its handler: lsp_kit checks that in
+    /// Debug builds, so declaring inlay hints as plain `true` (which promises
+    /// `inlayHint/resolve` too) made a Debug server panic on `initialize`.
+    pub fn serverCapabilities(encoding: lsp.offsets.Encoding) lsp.types.ServerCapabilities {
+        return .{
+            .positionEncoding = switch (encoding) {
                 .@"utf-8" => .@"utf-8",
                 .@"utf-16" => .@"utf-16",
                 .@"utf-32" => .@"utf-32",
@@ -293,27 +468,25 @@ pub const Handler = struct {
             },
             .documentFormattingProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
-            .inlayHintProvider = .{ .bool = true },
+            // The hints are complete when sent: nothing to resolve later.
+            .inlayHintProvider = .{ .inlay_hint_options = .{ .resolveProvider = false } },
             .completionProvider = .{
                 .triggerCharacters = &.{ ".", ":" },
             },
             .documentSymbolProvider = .{ .bool = true },
-        };
-
-        if (builtin.mode == .debug) {
-            lsp.basic_server.validateServerCapabilities(Handler, server_capabilities);
-        }
-
-        return .{
-            .serverInfo = .{
-                .name = "kupcad-lsp",
-                .version = "0.1.0",
-            },
-            .capabilities = server_capabilities,
+            .codeActionProvider = .{ .bool = true },
         };
     }
 
-    pub fn initialized(_: *Handler, _: std.mem.Allocator, _: lsp.types.InitializedParams) void {}
+    pub fn initialized(self: *Handler, arena: std.mem.Allocator, _: lsp.types.InitializedParams) void {
+        // Tell the editor which port the viewport actually bound (it may be ephemeral), so the
+        // extension never has to hard-code it. Sent after `initialized` per LSP lifecycle rules.
+        const ws = self.ws_server orelse return;
+        const Params = struct { port: u16 };
+        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, Params, .{ .port = ws.port }, .{}) catch |err| {
+            logger.warn("Failed to announce viewport port: {}", .{err});
+        };
+    }
 
     pub fn shutdown(_: *Handler, _: std.mem.Allocator, _: void) ?void {
         return null;
@@ -325,8 +498,10 @@ pub const Handler = struct {
         return self.offset_encoding == .@"utf-8";
     }
 
-    inline fn getColumn(self: *const Handler, line_index: *const api.LineIndex, offset: u32) u32 {
-        return if (self.useUtf8()) line_index.getUtf8Column(offset) else line_index.getUtf16Column(offset);
+    /// `offset` as the editor counts it (lsp_actions.position, in the negotiated encoding).
+    fn lspPosition(self: *const Handler, line_index: *const api.LineIndex, offset: u32) lsp.types.Position {
+        const at = lsp_actions.position(line_index, offset, if (self.useUtf8()) .utf8 else .utf16);
+        return .{ .line = at.line, .character = at.character };
     }
 
     pub fn @"textDocument/didOpen"(
@@ -334,42 +509,27 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidOpenParams,
     ) !void {
-        self.log("Opened {s}", .{params.textDocument.uri});
+        logger.debug("Opened {s}", .{params.textDocument.uri});
         if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
         }
 
         const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        const module_path = try self.modulePath(self.allocator, params.textDocument.uri);
         const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
 
         const parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
         try self.files.put(self.allocator, uri_dup, .{
             .uri = uri_dup,
+            .module_path = module_path,
             .source = source_dup,
             .doc = parsed_doc,
         });
 
-        // 1. Sync VFS and ScriptSession Pipeline
-        try self.mem_vfs.vfs().writeFile(uri_dup, source_dup);
+        try self.syncSession(module_path, source_dup);
 
-        _ = self.session.workspace.addModule(uri_dup, source_dup) catch {
-            if (self.session.workspace.path_to_id.get(uri_dup)) |mod_id| {
-                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
-                self.allocator.free(mod.source);
-                mod.source = try self.allocator.dupe(u8, source_dup);
-            }
-        };
-
-        try self.session.workspace.linkDependencies();
-        try self.session.buildReverseGraph();
-        try self.session.markFileEdited(uri_dup);
-
-        // 2. Evaluate and Stream
-        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
-        self.ws_server.broadcastSessionMesh(self.session, uri_dup) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
-
-        try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
+        try self.runDiagnostics(arena, self.files.getPtr(uri_dup).?);
     }
 
     pub fn @"textDocument/didChange"(
@@ -377,7 +537,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidChangeParams,
     ) !void {
-        self.log("Changed {s}", .{params.textDocument.uri});
+        logger.debug("Changed {s}", .{params.textDocument.uri});
         if (params.contentChanges.len > 0) {
             switch (params.contentChanges[0]) {
                 .text_document_content_change_whole_document => |doc_change| {
@@ -388,26 +548,9 @@ pub const Handler = struct {
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
-                        // 1. Sync VFS and ScriptSession Pipeline
-                        try self.mem_vfs.vfs().writeFile(params.textDocument.uri, buf.source);
-
-                        _ = self.session.workspace.addModule(params.textDocument.uri, buf.source) catch {
-                            if (self.session.workspace.path_to_id.get(params.textDocument.uri)) |mod_id| {
-                                var mod = &self.session.workspace.modules.items[@backingInt(mod_id)];
-                                self.allocator.free(mod.source);
-                                mod.source = try self.allocator.dupe(u8, buf.source);
-                            }
-                        };
-
-                        try self.session.workspace.linkDependencies();
-                        try self.session.buildReverseGraph();
-                        try self.session.markFileEdited(params.textDocument.uri);
-
-                        // 2. Evaluate and Stream
-                        self.session.evaluateWorkspace() catch |err| self.log("Session evaluation failed: {}", .{err});
-                        self.ws_server.broadcastSessionMesh(self.session, params.textDocument.uri) catch |err| self.log("WebSocket Broadcast failed: {}", .{err});
+                        try self.syncSession(buf.module_path, buf.source);
+                        try self.runDiagnostics(arena, buf);
                     }
-                    try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
                 else => {},
             }
@@ -419,12 +562,15 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.TextDocument.DidCloseParams,
     ) !void {
-        _ = arena;
-        self.log("Closed {s}", .{params.textDocument.uri});
-        if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
-            var old_doc = kv.value;
-            old_doc.deinit(self.allocator);
-        }
+        const uri = params.textDocument.uri;
+        logger.debug("Closed {s}", .{uri});
+        // The editor keeps the last diagnostics it was sent for a file until told otherwise.
+        try self.publishDiagnostics(arena, uri, &.{});
+        self.dropHoverRun();
+        var closed = (self.files.fetchRemove(uri) orelse return).value;
+        defer closed.deinit(self.allocator);
+        try self.session.removeModule(closed.module_path);
+        _ = self.mem_vfs.deleteFile(closed.module_path);
     }
 
     pub fn @"textDocument/formatting"(
@@ -432,25 +578,24 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.document_formatting.Params,
     ) !?[]const lsp.types.TextEdit {
-        self.log("Formatting requested for {s}", .{params.textDocument.uri});
+        logger.debug("Formatting requested for {s}", .{params.textDocument.uri});
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const source = doc_buf.source;
 
-        const formatted = api.formatCode(arena, source, .{}) catch |err| {
-            self.log("Formatter failed: {}", .{err});
+        const doc = doc_buf.doc orelse return null;
+
+        const config = self.projectConfig(arena, params.textDocument.uri);
+        const formatted = api.formatCode(arena, source, config.fmt) catch |err| {
+            logger.debug("Not formatted: {}", .{err});
             return null;
         };
 
-        var line_index = try api.LineIndex.init(arena, source);
-        const end_offset: u32 = @intCast(source.len);
-        const end_line = line_index.getLine(end_offset);
-        const end_char = self.getColumn(&line_index, end_offset);
-
+        const line_index = &doc.line_index;
         var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
             .range = .{
                 .start = .{ .line = 0, .character = 0 },
-                .end = .{ .line = end_line, .character = end_char },
+                .end = self.lspPosition(line_index, @intCast(source.len)),
             },
             .newText = formatted,
         });
@@ -463,22 +608,12 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.Hover.Params,
     ) ?lsp.types.Hover {
-        self.log("Hover requested for {s}", .{params.textDocument.uri});
+        logger.debug("Hover requested for {s}", .{params.textDocument.uri});
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
         const target_offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
-
-        var found_token_idx: ?u24 = null;
-        for (doc.tokens.starts, 0..) |start, i| {
-            const len = doc.tokens.lengths[i];
-            if (target_offset >= start and target_offset < start + len) {
-                found_token_idx = @intCast(i);
-                break;
-            }
-        }
-
-        const tok_idx = found_token_idx orelse return null;
+        const tok_idx = tokenAt(&doc, target_offset) orelse return null;
 
         var found_node_idx: ast.NodeIndex = .none;
         for (doc.tree.nodes.items, 0..) |node, i| {
@@ -510,11 +645,21 @@ pub const Handler = struct {
             out.writer.print("```kupcad\n(number) {d}\n```\n", .{num_val}) catch return null;
         }
 
-        // LIVE SPATIAL EVALUATION
-        // Silently execute and append live Markdown traits
-        writeSpatialHover(arena, self.io, &doc, found_node_idx, &out.writer) catch |err| {
-            std.log.err("LSP Hover Evaluation Error: {}", .{err});
-        };
+        // What running the document says about it (bounds, volume, ...). A variable's value
+        // is in the run's globals only for a script-level variable: one outside any def
+        // (the resolver leaves the script's own unresolved or local), or a top-level one
+        // read inside a def (resolved as a global there). A def's parameter or local of
+        // the same name used to show the global's facts.
+        const sym_kind = doc.symbols[@backingInt(found_node_idx)].kind;
+        const is_variable = target_node.tag == .identifier or target_node.tag == .assignment;
+        const script_variable = sym_kind == .global or (scope.def_name == null and (sym_kind == .local or sym_kind == .unresolved));
+        if (!is_variable or script_variable) {
+            if (self.hoverRun(buf, &doc)) |maybe_run| {
+                if (maybe_run) |run| run.writeFacts(&doc, found_node_idx, &out.writer) catch |err| {
+                    logger.debug("Hover: no value to show: {}", .{err});
+                };
+            } else |err| logger.warn("Hover: could not run the document: {}", .{err});
+        }
 
         // Add scope footer
         if (scope.def_name) |dn| {
@@ -534,80 +679,45 @@ pub const Handler = struct {
         };
     }
 
+    /// The token `offset` is in, found by binary search (token starts are in order;
+    /// a scan from the first token made a hover near the end of a long file cost its length).
+    fn tokenAt(doc: *const api.Document, offset: usize) ?u24 {
+        const starts = doc.tokens.starts;
+        var lo: usize = 0;
+        var hi: usize = starts.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            if (starts[mid] <= offset) lo = mid + 1 else hi = mid;
+        }
+        if (lo == 0) return null;
+        const i = lo - 1;
+        return if (offset < starts[i] + doc.tokens.lengths[i]) @intCast(i) else null;
+    }
+
     pub fn @"textDocument/inlayHint"(
         self: *Handler,
         arena: std.mem.Allocator,
         params: lsp.types.InlayHint.Params,
     ) !?[]const lsp.types.InlayHint {
-        self.log("Inlay hints requested for {s}", .{params.textDocument.uri});
+        logger.debug("Inlay hints requested for {s}", .{params.textDocument.uri});
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
         var hints = std.ArrayListUnmanaged(lsp.types.InlayHint).empty;
-        var line_index = try api.LineIndex.init(arena, buf.source);
+        const line_index = &doc.line_index;
 
-        for (doc.tree.nodes.items) |*node| {
-            if (node.tag == .assignment) {
-                const assign = doc.tree.assignment(node);
-                const rhs_node = doc.tree.getNode(assign.value) orelse continue;
-
-                if (rhs_node.tag == .method_call) {
-                    const mc = doc.tree.methodCall(rhs_node);
-                    const m_name = doc.tree.getString(mc.method_name);
-
-                    if (getReturnTypeHint(m_name)) |type_hint| {
-                        const lhs_tok = node.main_token;
-                        const end_offset = doc.tokens.starts[lhs_tok] + doc.tokens.lengths[lhs_tok];
-
-                        const line = line_index.getLine(end_offset);
-                        const char = self.getColumn(&line_index, end_offset);
-
-                        try hints.append(arena, .{
-                            .position = .{ .line = line, .character = char },
-                            .label = .{ .string = try arena.print(": {s}", .{type_hint}) },
-                            .kind = .Type,
-                            .paddingLeft = false,
-                            .paddingRight = false,
-                        });
-                    }
-                }
-            } else if (node.tag == .method_call) {
-                const mc = doc.tree.methodCall(node);
-                const m_name = doc.tree.getString(mc.method_name);
-                const args = doc.tree.getNamedArgs(mc.args);
-
-                // Count positional arguments
-                var pos_count: usize = 0;
-                for (args) |arg| {
-                    if (arg.name == .none) pos_count += 1;
-                }
-
-                // Pass the count to get dynamic parameter names
-                const param_names = getParamNames(m_name, pos_count);
-
-                if (param_names.len > 0) {
-                    for (args, 0..) |arg, arg_idx| {
-                        if (arg_idx >= param_names.len) break;
-                        // Skip if the user already provided an explicit keyword argument label
-                        if (arg.name != .none) continue;
-
-                        const arg_val_node = doc.tree.getNode(arg.value) orelse continue;
-                        const arg_tok = arg_val_node.main_token;
-                        const start_offset = doc.tokens.starts[arg_tok];
-
-                        const line = line_index.getLine(start_offset);
-                        const char = self.getColumn(&line_index, start_offset);
-
-                        try hints.append(arena, .{
-                            .position = .{ .line = line, .character = char },
-                            .label = .{ .string = try arena.print("{s}:", .{param_names[arg_idx]}) },
-                            .kind = .Parameter,
-                            .paddingLeft = false,
-                            .paddingRight = true,
-                        });
-                    }
-                }
-            }
+        for (try lsp_hints.hints(arena, &doc)) |hint| {
+            const label = switch (hint.kind) {
+                .parameter => try arena.print("{s}:", .{hint.name}),
+                .type => try arena.print(": {s}", .{hint.name}),
+            };
+            try hints.append(arena, .{
+                .position = self.lspPosition(line_index, hint.offset),
+                .label = .{ .string = label },
+                .kind = if (hint.kind == .parameter) .Parameter else .Type,
+                .paddingLeft = false,
+                .paddingRight = hint.kind == .parameter,
+            });
         }
 
         return hints.items;
@@ -618,7 +728,7 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.completion.Params,
     ) !lsp.ResultType("textDocument/completion") {
-        self.log("Completion requested for {s}", .{params.textDocument.uri});
+        logger.debug("Completion requested for {s}", .{params.textDocument.uri});
 
         var items = std.ArrayListUnmanaged(lsp.types.completion.Item).empty;
 
@@ -657,6 +767,12 @@ pub const Handler = struct {
                     .kind = .Method,
                 });
             }
+            // An assembly's own (its exports are a solid's too, already listed).
+            for (manifest.assembly_methods) |am| {
+                for (manifest.mesh_methods) |mm| {
+                    if (std.mem.eql(u8, mm.name, am.name)) break;
+                } else try items.append(arena, .{ .label = am.name, .kind = .Method });
+            }
         } else {
             // CONTEXT: Standard Scope
             // Suggest Classes, Global Functions, and Primitives
@@ -677,12 +793,12 @@ pub const Handler = struct {
         arena: std.mem.Allocator,
         params: lsp.types.DocumentSymbol.Params,
     ) !lsp.ResultType("textDocument/documentSymbol") {
-        self.log("Document symbol requested for {s}", .{params.textDocument.uri});
+        logger.debug("Document symbol requested for {s}", .{params.textDocument.uri});
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = doc_buf.doc orelse return null;
 
         var symbols = std.ArrayListUnmanaged(lsp.types.DocumentSymbol).empty;
-        var line_index = try api.LineIndex.init(arena, doc_buf.source);
+        const line_index = &doc.line_index;
 
         // Capture node by reference using `*node`
         for (doc.tree.nodes.items, 0..) |*node, i| {
@@ -723,16 +839,7 @@ pub const Handler = struct {
                 const length = doc.tokens.lengths[node.main_token];
                 const end_offset = start_offset + length;
 
-                const start_pos = lsp.types.Position{
-                    .line = line_index.getLine(start_offset),
-                    .character = self.getColumn(&line_index, start_offset),
-                };
-                const end_pos = lsp.types.Position{
-                    .line = line_index.getLine(end_offset),
-                    .character = self.getColumn(&line_index, end_offset),
-                };
-
-                const range = lsp.types.Range{ .start = start_pos, .end = end_pos };
+                const range = lsp.types.Range{ .start = self.lspPosition(line_index, start_offset), .end = self.lspPosition(line_index, end_offset) };
 
                 try symbols.append(arena, .{
                     .name = name,
@@ -746,57 +853,85 @@ pub const Handler = struct {
         return .{ .document_symbols = symbols.items };
     }
 
-    pub fn @"kupcad/setParam"(self: *Handler, arena: std.mem.Allocator, params: std.json.Value) !void {
-        _ = arena;
-        self.log("Received interactive parameter update: {}", .{params});
+    /// Quick fixes for the lint findings on the asked lines (cli/lsp_actions.zig): each
+    /// finding's fix, and an action that disables its rule for the line.
+    pub fn @"textDocument/codeAction"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.CodeAction.Params,
+    ) !lsp.ResultType("textDocument/codeAction") {
+        const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
+        const encoding: lsp_actions.Encoding = if (self.useUtf8()) .utf8 else .utf16;
+        const config = self.projectConfig(arena, params.textDocument.uri);
+        const doc = doc_buf.doc orelse return null;
+        const found = try lsp_actions.actionsFor(arena, self.io, &doc, config.lint, params.range.start.line, params.range.end.line, encoding);
+
+        const results = try arena.alloc(lsp.types.CodeAction.Result, found.len);
+        for (found, results) |action, *result| {
+            const edits = try arena.alloc(lsp.types.TextEdit, action.edits.len);
+            for (action.edits, edits) |e, *out| out.* = .{
+                .range = .{
+                    .start = .{ .line = e.start.line, .character = e.start.character },
+                    .end = .{ .line = e.end.line, .character = e.end.character },
+                },
+                .newText = e.text,
+            };
+            var changes: std.json.ArrayHashMap([]const lsp.types.TextEdit) = .{};
+            try changes.map.put(arena, params.textDocument.uri, edits);
+            result.* = .{ .code_action = .{
+                .title = action.title,
+                .kind = .quickfix,
+                .isPreferred = action.preferred,
+                .edit = .{ .changes = changes },
+            } };
+        }
+        return results;
     }
 
-    fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
-        const diags = api.checkCode(self.allocator, source, .{}) catch |err| {
-            self.log("Linter crashed: {}", .{err});
+    /// The settings for the document at `uri`, from the `.kupcad.json` nearest its folder, so
+    /// they don't depend on the directory the editor started the server in. The defaults
+    /// when there is none, or when it can't be read (logged).
+    fn projectConfig(self: *Handler, arena: std.mem.Allocator, uri: []const u8) ProjectConfig {
+        const document = documentPath(arena, uri) catch return .{};
+        const path = document orelse return .{};
+        const dir = std.fs.path.dirname(path) orelse return .{};
+        const found = ProjectConfig.find(self.io, arena, dir) catch |err| {
+            logger.warn("Could not look for {s} above {s}: {}", .{ project_config.FILE_NAME, dir, err });
+            return .{};
+        } orelse return .{};
+        var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
+        return ProjectConfig.load(self.io, arena, found, &where) catch |err| {
+            logger.warn("{s}:{d}:{d}: {s}; using the default settings", .{ found, where.line, where.column, ProjectConfig.describeError(err) });
+            return .{};
+        };
+    }
+
+    /// Publishes the diagnostics of `buf`, from the document parsed when it arrived (every
+    /// request reads that one; the linter used to parse the text again, and each request
+    /// built its own line index).
+    fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, buf: *const DocumentBuffer) !void {
+        const doc = &(buf.doc orelse return);
+        const config = self.projectConfig(arena, buf.uri);
+        const diags = api.checkDocument(self.allocator, self.io, doc, config.lint) catch |err| {
+            logger.err("Linter failed: {}", .{err});
             return;
         };
         defer api.freeDiagnostics(self.allocator, diags);
 
-        const Position = struct { line: u32, character: u32 };
-        const Range = struct { start: Position, end: Position };
-        const Diagnostic = struct {
-            range: Range,
-            severity: u32,
-            source: []const u8,
-            message: []const u8,
-        };
-        const PublishDiagnosticsParams = struct {
-            uri: []const u8,
-            diagnostics: []const Diagnostic,
-        };
-
-        var line_index = try api.LineIndex.init(arena, source);
-        var lsp_diags: std.ArrayListUnmanaged(Diagnostic) = .empty;
+        const line_index = &doc.line_index;
+        var lsp_diags: std.ArrayListUnmanaged(PublishedDiagnostic) = .empty;
 
         for (diags) |d| {
-            const start_line = line_index.getLine(d.loc.offset);
-            const start_char = self.getColumn(&line_index, d.loc.offset);
-
-            var end_line = start_line;
-            var end_char = start_char;
-
-            if (d.loc.length > 0) {
-                // Standard multi-character token
-                const end_offset = d.loc.offset + d.loc.length;
-                end_line = line_index.getLine(end_offset);
-                end_char = self.getColumn(&line_index, end_offset);
-            } else {
-                // Zero-length token (EOF, missing semicolon, etc)
-                // Draw a 1-character wide squiggly explicitly on the same line
-                end_char = start_char + 1;
-            }
+            const start = self.lspPosition(line_index, d.loc.offset);
+            // A zero-length finding (end of file, a missing token) gets a one-character
+            // squiggle on its line.
+            const end = if (d.loc.length > 0)
+                self.lspPosition(line_index, d.loc.offset + d.loc.length)
+            else
+                lsp.types.Position{ .line = start.line, .character = start.character + 1 };
 
             try lsp_diags.append(arena, .{
-                .range = .{
-                    .start = .{ .line = start_line, .character = start_char },
-                    .end = .{ .line = end_line, .character = end_char },
-                },
+                .range = .{ .start = start, .end = end },
                 .severity = switch (d.severity) {
                     .@"error" => 1,
                     .warning => 2,
@@ -804,61 +939,91 @@ pub const Handler = struct {
                 },
                 .message = d.message,
                 .source = "kupcad",
+                .code = d.rule,
             });
         }
+        try self.publishDiagnostics(arena, buf.uri, lsp_diags.items);
+    }
 
-        try self.transport.writeNotification(
-            self.io,
-            arena,
-            "textDocument/publishDiagnostics",
-            PublishDiagnosticsParams,
-            .{
-                .uri = uri,
-                .diagnostics = lsp_diags.items,
-            },
-            .{},
-        );
+    /// Replaces the diagnostics the editor shows for `uri` (none clears them).
+    fn publishDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, diagnostics: []const PublishedDiagnostic) !void {
+        const Params = struct { uri: []const u8, diagnostics: []const PublishedDiagnostic };
+        try self.transport.writeNotification(self.io, arena, "textDocument/publishDiagnostics", Params, .{
+            .uri = uri,
+            .diagnostics = diagnostics,
+        }, .{});
     }
 
     pub fn onResponse(
-        self: *Handler,
-        arena: std.mem.Allocator,
+        _: *Handler,
+        _: std.mem.Allocator,
         response: lsp.JsonRPCMessage.Response,
     ) void {
-        _ = arena;
-        self.log("Received unexpected response: {?}", .{response.id});
+        logger.warn("Received unexpected response: {?}", .{response.id});
     }
 };
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !void {
+/// The file a `file:` URI names (percent-decoding it), or null for another scheme, such as
+/// an editor's unsaved `untitled:` buffer.
+pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
+    const parsed = std.Uri.parse(uri) catch return null;
+    if (!std.mem.eql(u8, parsed.scheme, "file")) return null;
+    const path = try parsed.path.toRawMaybeAlloc(arena);
+    // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
+    if (builtin.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
+    return path;
+}
+
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !Outcome {
     // 1. Setup global dependencies
     var mem_vfs = MemoryVfs.init(allocator);
     defer mem_vfs.deinit();
 
+    // Imports may read workspace files (jailed to cwd by NativeVfs), but never write.
+    var workspace_ro = NativeVfs.init(init.io, std.Io.Dir.cwd());
+    var sandbox = ReadOnlyVfs.init(mem_vfs.vfs(), workspace_ro.vfs());
+
     var session = try ScriptSession.init(allocator, init.io);
     defer session.deinit();
-    session.vm.vfs = mem_vfs.vfs();
+    session.vm.vfs = sandbox.vfs();
 
-    var ws_server = try ViewportWsServer.init(allocator, init.io, 9001);
-    defer ws_server.deinit();
-
-    // 2. Detach the WebSocket server onto a background thread
-    const ws_thread = try std.Thread.spawn(.{}, ViewportWsServer.listenLoop, .{&ws_server});
-    ws_thread.detach();
+    // 2. Viewport WebSocket server. Failure here must not take down language features.
+    const preferred_port = preferredViewportPort(init.environ_map);
+    var ws_storage: ViewportWsServer = undefined;
+    var ws_server: ?*ViewportWsServer = null;
+    if (ViewportWsServer.initWithFallback(allocator, init.io, preferred_port)) |srv| {
+        ws_storage = srv;
+        if (ws_storage.start()) |_| {
+            ws_server = &ws_storage;
+        } else |err| {
+            logger.warn("Viewport server failed to start: {}; continuing without it", .{err});
+            ws_storage.deinit();
+        }
+    } else |err| {
+        logger.warn("Viewport server unavailable: {}; continuing without it", .{err});
+    }
+    defer if (ws_server) |ws| ws.deinit();
 
     // 3. Bind everything to the LSP Handler
     var read_buffer: [4096]u8 = undefined;
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport, &session, &ws_server, &mem_vfs);
+    var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox, &workspace_ro);
     defer handler.deinit();
 
-    try lsp.basic_server.run(
-        init.io,
-        allocator,
-        transport,
-        &handler,
-        logger.err,
-    );
+    // Messages come through the inbox, which evaluates the preview when the editor goes
+    // quiet, cancels a stale evaluation and drops cancelled requests (cli/lsp_inbox.zig).
+    var inbox = lsp_inbox.Inbox.init(allocator, init.io, transport, handler.previewWork());
+    try inbox.start();
+    defer inbox.deinit();
+
+    try lsp.basic_server.run(init.io, allocator, &inbox.transport, &handler, logger.err);
+    return .success;
+}
+
+test "LSP: every declared capability has its handler" {
+    inline for (.{ .@"utf-8", .@"utf-16", .@"utf-32" }) |encoding| {
+        lsp.basic_server.validateServerCapabilities(Handler, Handler.serverCapabilities(encoding));
+    }
 }

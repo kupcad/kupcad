@@ -1,0 +1,6 @@
+1:10 E [unknown-keyword] cube doesn't take 'sise'; did you mean 'size'?
+2:20 E [unknown-keyword] cylinder doesn't take 'hieght' (it takes: r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments, sides)
+3:18 E [unknown-keyword] sphere doesn't take 'colour' (it takes: r, d, radius, segments)
+4:24 E [unknown-keyword] translate doesn't take 'X'; did you mean 'x'?
+6:16 E [unknown-keyword] extrude doesn't take 'hieght' (it takes: h, slices, twist, scale_x, scale_y, scale, center)
+7:28 E [unknown-keyword] volume doesn't take 'precise' (it takes no keywords)

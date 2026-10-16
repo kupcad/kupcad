@@ -1,0 +1,25 @@
+12:1 W [unused-variable] Unused variable 'loose'. Prefix with '_' if intentional.
+15:1 W [suppression] kupcad:disable-next-line self-subtraction hides nothing here; remove it
+17:1 W [suppression] kupcad:disable-next-line names no rule 'unused-varable' (`kupcad check --help` lists them)
+18:1 W [suppression] unknown directive 'kupcad:disable-nextline' (use disable-next-line, disable-line or disable)
+19:1 W [suppression] kupcad:disable-line must name the rules it hides
+--- after --fix (1 fixed) ---
+# kupcad:disable param-order -- this file reads params before defining them
+early = param(:width)
+width = param(:width, default: 10)
+
+# kupcad:disable-next-line unused-variable
+spare = 1
+also_spare = 2 # kupcad:disable-line unused-variable -- kept for the next revision
+
+# Hides the next line only: `loose` is still reported.
+# kupcad:disable-next-line unused-variable
+hidden = 3
+_loose = 4
+
+# A directive that hides nothing, a rule that doesn't exist, a mistyped directive.
+# kupcad:disable-next-line self-subtraction
+part = cube(width + early)
+# kupcad:disable-next-line unused-varable
+# kupcad:disable-nextline unused-variable
+# kupcad:disable-line

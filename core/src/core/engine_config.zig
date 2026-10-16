@@ -1,49 +1,90 @@
+//! The settings `CAD.config` changes. The shared ones come first and mean the same on
+//! both kernels, so a model reads the same whichever engine builds it; `manifold` and
+//! `brep` hold what only one kernel has.
+
 const std = @import("std");
 const geom = @import("../kernel/geometry_handle.zig");
+const limits = @import("limits.zig");
 
-/// Configuration parameters for the fast parallel mesh CSG backend (Manifold 3D).
+const MAX_SEGMENTS: u32 = limits.MAX_SEGMENTS;
+
+/// How finely curves are cut into straight edges. Defined in Locus, which can't import
+/// KupCAD, so that its tessellator and the mesh engine follow one rule.
+pub const Resolution = @import("../locus/src/math_env.zig").Resolution;
+
+/// Settings only the mesh engine (Manifold) has.
 pub const ManifoldConfig = struct {
-    tolerance: f64 = 1e-5, // Coincidence & float-snapping threshold for mesh booleans
-    fixed_segments: u32 = 0, // Explicit segment count override (0 = auto-calculate via angle & length)
-    min_angle_deg: f64 = 12.0, // Minimum angular step per segment in degrees (OpenSCAD $fa)
-    min_segment_len: f64 = 2.0, // Minimum linear edge length in units/mm (OpenSCAD $fs)
-    simplify_coplanar: bool = false, // Merge redundant coplanar triangles after CSG operations
-
-    /// Calculates the optimal segment count for an arc or circle of a given radius.
-    pub fn getSegments(self: ManifoldConfig, radius: f64) u32 {
-        if (self.fixed_segments > 0) return self.fixed_segments;
-        if (radius <= 0.0) return 12;
-
-        const angle_count = 360.0 / @max(self.min_angle_deg, 0.1);
-        const length_count = (2.0 * std.math.pi * radius) / @max(self.min_segment_len, 0.01);
-
-        const count = @min(angle_count, length_count);
-        return @max(5, @as(u32, @intFromFloat(@ceil(count))));
-    }
+    /// Merge coplanar triangles after each boolean, hull and union (within `tolerance`).
+    simplify_coplanar: bool = false,
 };
 
-/// Configuration parameters for the exact analytical surface backend (B-Rep).
+/// Settings only the exact engine (B-Rep) has.
 pub const BRepConfig = struct {
-    // Tolerances
-    tolerance: f64 = 1e-5, // Linear Tolerance - The minimum 3D distance between two points to treat them as coincident
-    angle_tolerance: f64 = 1e-4, // Angular Tolerance - The maximum angle difference between two surface normal vectors to consider them coplanar or tangent
-    sewing_tolerance: f64 = 1e-5, // Stitching/Healing Tolerance - The distance threshold used when stitching free edges of adjacent faces into a closed Shell or Solid
-
-    // Tessellation (B-Rep -> Mesh)
-    chordal_deflection: f64 = 1e-3, // The maximum allowable distance between a curved B-Rep surface and the flat triangle mesh representing it. Lower values produce smoother curves
-    angular_deflection: f64 = 0.2, // The maximum allowed angle between adjacent triangle normal vectors on a curved surface
-    min_circle_segments: u32 = 16, // The minimum number of linear segments used when meshing circular arcs/cylinders
-
-    // Solvers
-    max_newton_trials: u32 = 50, // The maximum iteration limit for Newton-Raphson root finders when projecting points onto surfaces or curves
-    max_marching_steps: u32 = 500, // The maximum number of steps allowed when marching along a surface-surface intersection curve during CSG Boolean operations
+    /// Iteration limit of the Newton root finders that project points onto surfaces.
+    max_newton_trials: u32 = 50,
+    /// Step limit when marching along a surface-surface intersection in a boolean.
+    max_marching_steps: u32 = 500,
 };
 
 pub const EngineConfig = struct {
-    engine: geom.EngineType = .manifold, // Selects the active backend CAD evaluation kernel
+    engine: geom.EngineType = .manifold,
+    /// Points closer than this are the same point: booleans weld them (B-Rep), coplanar
+    /// faces merge within it (Manifold's simplify_coplanar), and measurements use it.
+    tolerance: f64 = 1e-5,
+    resolution: Resolution = .{},
+    /// Most vertices one operation may produce (~500 MB of RAM at the default during CSG).
+    max_vertices: usize = 5_000_000,
     manifold: ManifoldConfig = .{},
     brep: BRepConfig = .{},
-    /// Maximum number of vertices allowed in a single generated DAG node
-    /// Default: 5,000,000 (~500MB RAM footprint during CSG ops)
-    max_vertices: usize = 5_000_000,
+
+    /// Why the settings can't be used, or null if they can. Checked whenever a script
+    /// changes them, so the kernels never see a zero tolerance or a 1-edge circle.
+    pub fn problem(self: EngineConfig) ?[]const u8 {
+        if (!isPositive(self.tolerance)) return "tolerance must be a positive number";
+        const res = self.resolution;
+        if (res.segments != 0 and (res.segments < 3 or res.segments > MAX_SEGMENTS))
+            return std.fmt.comptimePrint("resolution segments must be 0 (automatic) or 3 to {d}", .{MAX_SEGMENTS});
+        if (!isPositive(res.min_angle) or res.min_angle > 180.0) return "resolution min_angle must be above 0 and at most 180 degrees";
+        if (!isPositive(res.min_length)) return "resolution min_length must be a positive number";
+        if (self.max_vertices == 0) return "max_vertices must be at least 1";
+        if (self.brep.max_newton_trials == 0 or self.brep.max_newton_trials > limits.MAX_NEWTON_TRIALS)
+            return std.fmt.comptimePrint("brep max_newton_trials must be 1 to {d}", .{limits.MAX_NEWTON_TRIALS});
+        if (self.brep.max_marching_steps == 0 or self.brep.max_marching_steps > limits.MAX_MARCHING_STEPS)
+            return std.fmt.comptimePrint("brep max_marching_steps must be 1 to {d}", .{limits.MAX_MARCHING_STEPS});
+        return null;
+    }
+
+    /// The segment count a full circle of `radius` gets, within MAX_SEGMENTS: an automatic
+    /// count can exceed it (a huge radius) without that being the script's fault.
+    pub fn segmentsFor(self: EngineConfig, radius: f64) u32 {
+        return @min(self.resolution.segmentsFor(radius), MAX_SEGMENTS);
+    }
+
+    /// How far a circle of `radius` drawn at this resolution strays from the true curve
+    /// (the sagitta of one of its segments): the chord tolerance that draws other curves,
+    /// such as a font's, as finely as a circle of that size.
+    pub fn chordError(self: EngineConfig, radius: f64) f64 {
+        const n: f64 = @floatFromInt(self.segmentsFor(radius));
+        return radius * (1.0 - @cos(std.math.pi / n));
+    }
+
+    /// A hash of the settings that change what an operation builds (not `max_vertices`,
+    /// which only decides whether it may), so cached results are reused only under the
+    /// settings they were built with.
+    pub fn resultHash(self: EngineConfig) u64 {
+        var h = std.hash.Wyhash.init(0);
+        std.hash.autoHash(&h, self.engine);
+        std.hash.autoHash(&h, @as(u64, @bitCast(self.tolerance)));
+        std.hash.autoHash(&h, self.resolution.segments);
+        std.hash.autoHash(&h, @as(u64, @bitCast(self.resolution.min_angle)));
+        std.hash.autoHash(&h, @as(u64, @bitCast(self.resolution.min_length)));
+        std.hash.autoHash(&h, self.manifold.simplify_coplanar);
+        std.hash.autoHash(&h, self.brep.max_newton_trials);
+        std.hash.autoHash(&h, self.brep.max_marching_steps);
+        return h.final();
+    }
 };
+
+fn isPositive(x: f64) bool {
+    return x > 0.0 and std.math.isFinite(x);
+}

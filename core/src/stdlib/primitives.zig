@@ -1,13 +1,80 @@
+//! The primitive constructors (`cube`, `cylinder`, `sphere`, `torus`, `polyhedron`,
+//! `square`, `circle`, `polygon`, `regular_polygon`, `text`): each one's `Signature`, its
+//! argument checks, and the `native*` function that adds the shape to the geometry DAG.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
+const Signature = @import("signature.zig").Signature;
 const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
+const limits = @import("../core/limits.zig");
 
-const ArgParseCtx = struct {
-    pos_count: usize,
-    kwargs: ?value.Value,
+/// Smallest allowed text() flattening tolerance relative to the glyph size.
+const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
+
+// What each primitive takes (see signature.zig). The runtime parses its keywords from it,
+// and `kupcad check` reads its sizes to flag `cube(-5)` before the script runs.
+pub const CUBE = Signature{
+    .positional = &.{ "x", "y", "z", "center" },
+    .single = "size",
+    .keywords = &.{ "x", "y", "z", "size", "center", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "x", "y", "z", "size" },
 };
+pub const SQUARE = Signature{
+    .positional = &.{ "x", "y", "center" },
+    .single = "size",
+    .keywords = &.{ "x", "y", "size", "center", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "x", "y", "size" },
+};
+pub const CYLINDER = Signature{
+    .positional = &.{ "r", "h", "center" },
+    .keywords = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h", "center", "round_r", "chamfer", "segments", "sides" },
+    .sizes = &.{ "r", "r1", "r2", "d", "d1", "d2", "radius", "h" },
+};
+pub const SPHERE = Signature{
+    .positional = &.{"r"},
+    .keywords = &.{ "r", "d", "radius", "segments" },
+    .sizes = &.{ "r", "d", "radius" },
+};
+pub const CIRCLE = Signature{
+    .positional = &.{"r"},
+    .keywords = &.{ "r", "d", "radius", "segments", "sides" },
+    .sizes = &.{ "r", "d", "radius" },
+};
+pub const REGULAR_POLYGON = Signature{
+    .positional = &.{ "sides", "r" },
+    .keywords = &.{ "sides", "r", "d", "radius" },
+    .sizes = &.{ "r", "d", "radius" },
+};
+pub const TORUS = Signature{
+    .positional = &.{ "major_r", "minor_r" },
+    .keywords = &.{ "major_r", "minor_r", "segments" },
+    .sizes = &.{ "major_r", "minor_r" },
+};
+pub const POLYGON = Signature{
+    .positional = &.{ "points", "paths" },
+    .keywords = &.{"paths"},
+};
+pub const POLYHEDRON = Signature{
+    .positional = &.{ "points", "faces" },
+    .keywords = &.{ "points", "faces" },
+};
+pub const TEXT = Signature{
+    .positional = &.{ "content", "size" },
+    .keywords = &.{ "size", "tolerance", "font", "halign", "valign" },
+    .sizes = &.{ "size", "tolerance" },
+};
+
+/// Fewest points that enclose an area (a polygon contour).
+const MIN_CONTOUR_POINTS = 3;
+/// Fewest points and faces of a closed solid (a tetrahedron).
+const MIN_POLYHEDRON_POINTS = 4;
+const MIN_POLYHEDRON_FACES = 4;
+/// Faces are triangles: the kernels take exactly three point indices per face.
+const POLYHEDRON_FACE_LEN = 3;
+/// Room for an argument label such as "a point index (path 12, entry 345)".
+const MAX_LABEL_LEN = 64;
 
 const GeomOptions = struct {
     x: f64 = 1.0,
@@ -21,62 +88,72 @@ const GeomOptions = struct {
     chamfer: ?f64 = null,
     segments: i32 = 0,
     center: bool = false,
+    /// A faceted shape: a circle with this many straight sides is a regular polygon, a
+    /// cylinder a prism. Unlike `segments` (how finely a curve is drawn, which the B-Rep
+    /// engine keeps exact), it is the shape itself, so it is the same on both engines.
+    sides: ?i32 = null,
+    // Aliases, folded into the fields above by parseGeomOptions.
+    size: ?f64 = null,
+    d: ?f64 = null,
+    d1: ?f64 = null,
+    d2: ?f64 = null,
+    radius: ?f64 = null,
 };
 
 // --- Helpers ---
 
-fn parseArgs(args: []const value.Value) ArgParseCtx {
-    const arg_count = args.len;
-    if (arg_count > 0 and args[arg_count - 1].isObject() and args[arg_count - 1].asObj().obj_type == .map) {
-        return .{ .pos_count = arg_count - 1, .kwargs = args[arg_count - 1] };
-    }
-    return .{ .pos_count = arg_count, .kwargs = null };
+/// The primitives share GeomOptions; each accepts only the keywords it lists.
+/// `base` holds what the positional arguments set; keywords override it.
+fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
+    var parsed = try util.parseKwargsOver(GeomOptions, base, accepted, vm, args, method);
+    const opts = &parsed.opts;
+    if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
+    if (opts.d) |d| opts.r = d / 2.0;
+    if (opts.d1) |d1| opts.r1 = d1 / 2.0;
+    if (opts.d2) |d2| opts.r2 = d2 / 2.0;
+    if (opts.radius) |radius| opts.r = radius;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
+    return parsed;
 }
 
-fn extractGeomOptions(parsed: ArgParseCtx) GeomOptions {
-    var opts = GeomOptions{};
-
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            opts = util.parseKwargs(GeomOptions, map);
-
-            if (util.getKey(map, "size")) |v| {
-                if (v.isNumber()) {
-                    opts.x = v.asNumber();
-                    opts.y = opts.x;
-                    opts.z = opts.x;
-                }
-            }
-            if (util.getKey(map, "d")) |v| {
-                if (v.isNumber()) opts.r = v.asNumber() / 2.0;
-            }
-            if (util.getKey(map, "d1")) |v| {
-                if (v.isNumber()) opts.r1 = v.asNumber() / 2.0;
-            }
-            if (util.getKey(map, "d2")) |v| {
-                if (v.isNumber()) opts.r2 = v.asNumber() / 2.0;
-            }
-            if (util.getKey(map, "radius")) |v| {
-                if (v.isNumber()) opts.r = v.asNumber();
-            }
-        }
+/// Validates a user-supplied index into an array of length `len`.
+fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
+    if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {
+        return vm.fail(.ValueError, "{s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
     }
-    return opts;
+    return @intFromFloat(raw);
 }
 
-fn requirePositive(vm: *VM, val: f64, name: []const u8) !void {
-    if (val <= 0.0) {
-        vm.reportError("ValueError: '{s}' must be strictly greater than zero, got {d}.\n", .{ name, val });
-        return error.RuntimeError;
+fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: []const u8) !void {
+    if (count < min) {
+        return vm.fail(.ValueError, "{s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
     }
 }
 
-fn requireNonNegative(vm: *VM, val: f64, name: []const u8) !void {
-    if (val < 0.0) {
-        vm.reportError("ValueError: '{s}' cannot be negative, got {d}.\n", .{ name, val });
-        return error.RuntimeError;
+/// `sides` as a side count, or an error if it isn't one (or comes with `segments`, which
+/// would ask for a smooth curve and a faceted one at once).
+fn requireSides(vm: *VM, opts: GeomOptions, method: []const u8) !i32 {
+    const sides = opts.sides.?;
+    if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
+        return vm.fail(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
     }
+    if (opts.segments != 0) {
+        return vm.fail(.ArgumentError, "{s} takes sides: (a faceted shape) or segments: (how smooth a round one is), not both", .{method});
+    }
+    return sides;
+}
+
+/// A regular polygon centred on the origin, its first corner on +x (as Manifold's circles).
+fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
+    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    const alloc = vm.scratch_arena.allocator();
+    defer pts.deinit(alloc);
+    const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
+    for (0..@as(usize, @intCast(sides))) |i| {
+        const ang = @as(f64, @floatFromInt(i)) * step;
+        try pts.append(alloc, .{ r * @cos(ang), r * @sin(ang) });
+    }
+    return vm.dag_builder.addPolygon(pts.items);
 }
 
 // --- Filleting Math Helpers ---
@@ -102,12 +179,10 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
     const cx = if (center) 0.0 else hw;
     const cy = if (center) 0.0 else hh;
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
     if (round_r) |r| {
         const safe_r = @min(r, @min(hw, hh));
         // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
-        const total_segs: i32 = if (segs > 0) segs else @intCast(active_config.manifold.getSegments(safe_r));
+        const total_segs: i32 = if (segs > 0) segs else util.autoSegments(vm, safe_r);
         const arc_segs = @max(1, @as(usize, @intCast(total_segs)) / 4);
         // Build corners Counter-Clockwise
         try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
@@ -133,17 +208,18 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 
 // --- Methods ---
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
-    if (parsed.pos_count > 0 and args[0].isNumber()) {
-        opts.x = args[0].asNumber();
-        opts.y = opts.x;
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) {
+        base.x = try util.requireNumber(vm, pos[0], "square", "x");
+        base.y = base.x;
     }
-    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
+    if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "square", "y");
+    if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "square", "center");
+    const opts = (try parseGeomOptions(SQUARE.keywords, base, vm, args, "square")).opts;
 
-    try requirePositive(vm, opts.x, "x");
-    try requirePositive(vm, opts.y, "y");
+    try util.requirePositive(vm, opts.x, "square", "x");
+    try util.requirePositive(vm, opts.y, "square", "y");
 
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
@@ -155,20 +231,21 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
-    if (parsed.pos_count > 0 and args[0].isNumber()) {
-        opts.x = args[0].asNumber();
-        opts.y = opts.x;
-        opts.z = opts.x;
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) {
+        base.x = try util.requireNumber(vm, pos[0], "cube", "x");
+        base.y = base.x;
+        base.z = base.x;
     }
-    if (parsed.pos_count > 1 and args[1].isNumber()) opts.y = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isNumber()) opts.z = args[2].asNumber();
-    if (parsed.pos_count > 3 and args[3].isBool()) opts.center = args[3].asBool();
+    if (pos.len > 1) base.y = try util.requireNumber(vm, pos[1], "cube", "y");
+    if (pos.len > 2) base.z = try util.requireNumber(vm, pos[2], "cube", "z");
+    if (pos.len > 3) base.center = try util.requireBool(vm, pos[3], "cube", "center");
+    const opts = (try parseGeomOptions(CUBE.keywords, base, vm, args, "cube")).opts;
 
-    try requirePositive(vm, opts.x, "x");
-    try requirePositive(vm, opts.y, "y");
-    try requirePositive(vm, opts.z, "z");
+    try util.requirePositive(vm, opts.x, "cube", "x");
+    try util.requirePositive(vm, opts.y, "cube", "y");
+    try util.requirePositive(vm, opts.z, "cube", "z");
 
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
@@ -188,24 +265,33 @@ pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
-    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
-    if (parsed.pos_count > 1 and args[1].isNumber()) opts.h = args[1].asNumber();
-    if (parsed.pos_count > 2 and args[2].isBool()) opts.center = args[2].asBool();
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "cylinder", "r");
+    if (pos.len > 1) base.h = try util.requireNumber(vm, pos[1], "cylinder", "h");
+    if (pos.len > 2) base.center = try util.requireBool(vm, pos[2], "cylinder", "center");
+    var opts = (try parseGeomOptions(CYLINDER.keywords, base, vm, args, "cylinder")).opts;
 
     const r1 = opts.r1 orelse opts.r;
     const r2 = opts.r2 orelse opts.r;
 
-    try requirePositive(vm, r1, "radius 1");
-    try requirePositive(vm, r2, "radius 2");
-    try requirePositive(vm, opts.h, "height");
+    try util.requirePositive(vm, r1, "cylinder", "radius 1");
+    try util.requirePositive(vm, r2, "cylinder", "radius 2");
+    try util.requirePositive(vm, opts.h, "cylinder", "height");
 
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
-    if (opts.segments == 0) {
-        opts.segments = @intCast(active_config.manifold.getSegments(@max(r1, r2)));
+    if (opts.sides != null) {
+        const sides = try requireSides(vm, opts, "cylinder");
+        if (opts.round_r != null or opts.chamfer != null) {
+            return vm.fail(.ArgumentError, "cylinder takes sides: or round_r:/chamfer:, not both yet", .{});
+        }
+        // A prism (a frustum when r2 differs): the polygon swept up, narrowing to r2.
+        const outline = try addRegularPolygon(vm, sides, r1);
+        var prism = try vm.dag_builder.addExtrude(outline, opts.h, 0, 0.0, r2 / r1, r2 / r1);
+        if (opts.center) prism = try vm.dag_builder.addTranslate(prism, 0.0, 0.0, -opts.h / 2.0);
+        return try vm.allocateGeometry(.{ .symbolic = prism });
     }
+
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, @max(r1, r2));
 
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
@@ -224,7 +310,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
             const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
 
-            const corner_segs: i32 = @intCast(active_config.manifold.getSegments(@max(safe_r1, safe_r2)));
+            const corner_segs: i32 = util.autoSegments(vm, @max(safe_r1, safe_r2));
             const arc_segs = @max(1, @as(usize, @intCast(corner_segs)) / 4);
             // Bottom Right Corner (sweep from -90 deg to 0)
             try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
@@ -253,176 +339,128 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativeSphere(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
-    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
-    try requirePositive(vm, opts.r, "radius");
-    const dag_idx = try vm.dag_builder.addSphere(opts.r);
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "sphere", "r");
+    var opts = (try parseGeomOptions(SPHERE.keywords, base, vm, args, "sphere")).opts;
+    try util.requirePositive(vm, opts.r, "sphere", "radius");
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
+    const dag_idx = try vm.dag_builder.addSphere(opts.r, opts.segments);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{};
+    if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "circle", "r");
+    var opts = (try parseGeomOptions(CIRCLE.keywords, base, vm, args, "circle")).opts;
+    try util.requirePositive(vm, opts.r, "circle", "radius");
+    if (opts.sides != null) return try vm.allocateCrossSection(try addRegularPolygon(vm, try requireSides(vm, opts, "circle"), opts.r));
 
-    if (parsed.pos_count > 0 and args[0].isNumber()) opts.r = args[0].asNumber();
-    try requirePositive(vm, opts.r, "radius");
+    if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
 
-    if (opts.segments == 0) {
-        const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-        opts.segments = @intCast(active_config.manifold.getSegments(opts.r));
-    }
-
-    try requireNonNegative(vm, @as(f64, @floatFromInt(opts.segments)), "segments");
     const dag_idx = try vm.dag_builder.addCircle(opts.r, opts.segments);
     return try vm.allocateCrossSection(dag_idx);
 }
 
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
-    if (args.len < 1 or !args[0].isArray()) return error.RuntimeError;
-    const pt_arr = args[0].asArray().items.items;
-    var paths_arr: ?[]value.Value = null;
-
-    if (args.len > 1) {
-        // Parse `paths` from kwargs or positional argument
-        if (args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
-            const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", args[args.len - 1].asObj()));
-            // $O(1)$ Hash lookup
-            var it = map.map.iterator();
-            while (it.next()) |entry| {
-                const k = entry.key_ptr.*;
-                if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
-                    const k_str = if (k.asObj().obj_type == .string)
-                        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
-                    else
-                        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-                    if (std.mem.eql(u8, k_str, "paths")) {
-                        if (entry.value_ptr.isArray()) {
-                            paths_arr = entry.value_ptr.asArray().items.items;
-                        }
-                    }
-                }
-            }
-        } else if (args[1].isArray()) {
-            paths_arr = args[1].asArray().items.items;
-        }
+    const parsed = try util.parseKwargsSubset(struct { paths: ?value.Value = null }, POLYGON.keywords, vm, args, "polygon");
+    if (parsed.positional.len < 1) {
+        return vm.fail(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
     }
+    const pt_arr = try util.requireArray(vm, args[0], "polygon", "points");
+    try requireMinCount(vm, pt_arr.len, MIN_CONTOUR_POINTS, "polygon", "points");
 
-    const alloc = vm.scratch_arena.allocator();
+    // `paths` is the second positional argument or the `paths:` kwarg (which wins).
+    var paths_val: value.Value = value.Value.initNil();
+    if (parsed.positional.len > 1) paths_val = args[1];
+    if (parsed.opts.paths) |v| paths_val = v;
 
-    if (paths_arr) |paths| {
-        // Build Multi-Contour Polygon (Supports Holes via Even-Odd rule)
-        var contours = try alloc.alloc([]const [2]f64, paths.len);
-        defer {
-            for (contours) |c| alloc.free(c);
-            alloc.free(contours);
-        }
+    const alloc = vm.allocator;
 
-        for (paths, 0..) |path_val, c_idx| {
-            if (!path_val.isArray()) return error.RuntimeError;
-            const indices = path_val.asArray().items.items;
-            var contour = try alloc.alloc([2]f64, indices.len);
+    // Every point is validated, including ones no path references.
+    const pts = try alloc.alloc([2]f64, pt_arr.len);
+    defer alloc.free(pts);
+    for (pt_arr, pts, 0..) |pt_val, *pt, i| pt.* = try util.parsePoint(2, vm, pt_val, "polygon", i);
 
-            for (indices, 0..) |idx_val, p_idx| {
-                if (!idx_val.isNumber()) return error.RuntimeError;
-                const pt_idx: usize = @intFromFloat(idx_val.asNumber());
-                if (pt_idx >= pt_arr.len) return error.RuntimeError;
-
-                const pt_val = pt_arr[pt_idx];
-                if (!pt_val.isArray()) return error.RuntimeError;
-                const inner = pt_val.asArray().items.items;
-
-                contour[p_idx][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
-                contour[p_idx][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
-            }
-            contours[c_idx] = contour;
-        }
-        const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
-        return try vm.allocateCrossSection(dag_idx);
-    } else {
+    if (paths_val.isNil()) {
         // Standard Single-Contour Polygon
-        var pts = try alloc.alloc([2]f64, pt_arr.len);
-        defer alloc.free(pts);
-
-        for (pt_arr, 0..) |val, i| {
-            if (!val.isArray()) return error.RuntimeError;
-            const inner = val.asArray().items.items;
-            pts[i][0] = if (inner.len > 0 and inner[0].isNumber()) inner[0].asNumber() else 0.0;
-            pts[i][1] = if (inner.len > 1 and inner[1].isNumber()) inner[1].asNumber() else 0.0;
-        }
         const dag_idx = try vm.dag_builder.addPolygon(pts);
         return try vm.allocateCrossSection(dag_idx);
     }
-}
 
-pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    var opts = extractGeomOptions(parsed);
+    // Build Multi-Contour Polygon (Supports Holes via Even-Odd rule)
+    const paths = try util.requireArray(vm, paths_val, "polygon", "paths");
+    const contours = try alloc.alloc([]const [2]f64, paths.len);
+    // Initialize so the deferred free is safe if validation fails part-way.
+    @memset(contours, &.{});
+    defer {
+        for (contours) |c| alloc.free(c);
+        alloc.free(contours);
+    }
 
-    var sides: i32 = 6; // Default to a hexagon
-    if (parsed.pos_count > 0 and args[0].isNumber()) sides = @intFromFloat(args[0].asNumber());
-    if (parsed.pos_count > 1 and args[1].isNumber()) opts.r = args[1].asNumber();
+    for (paths, 0..) |path_val, c_idx| {
+        // Labels are formatted only on the error path (see util.NumberArray).
+        var label_buf: [MAX_LABEL_LEN]u8 = undefined;
+        if (!path_val.isArray()) {
+            const path_name = std.fmt.bufPrint(&label_buf, "path {d}", .{c_idx}) catch "a path";
+            _ = try util.requireArray(vm, path_val, "polygon", path_name);
+        }
+        const indices = path_val.asArray().items.items;
+        if (indices.len < MIN_CONTOUR_POINTS) {
+            const count_what = std.fmt.bufPrint(&label_buf, "point indices in path {d}", .{c_idx}) catch "point indices per path";
+            try requireMinCount(vm, indices.len, MIN_CONTOUR_POINTS, "polygon", count_what);
+        }
 
-    // Check kwargs explicitly for sides/radius if passed
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            if (util.getKey(map, "sides")) |v| {
-                if (v.isNumber()) sides = @intFromFloat(v.asNumber());
-            }
+        const contour = try alloc.alloc([2]f64, indices.len);
+        contours[c_idx] = contour;
+        for (indices, contour, 0..) |idx_val, *pt, p_idx| {
+            const raw = if (idx_val.isNumber() and std.math.isFinite(idx_val.asNumber()))
+                idx_val.asNumber()
+            else blk: {
+                const what = std.fmt.bufPrint(&label_buf, "a point index (path {d}, entry {d})", .{ c_idx, p_idx }) catch "a point index";
+                break :blk try util.requireNumber(vm, idx_val, "polygon", what);
+            };
+            pt.* = pts[try checkedIndex(vm, raw, pts.len, "polygon path")];
         }
     }
-
-    if (sides < 3) {
-        vm.reportError("ValueError: 'sides' must be at least 3, got {d}.\n", .{sides});
-        return error.RuntimeError;
-    }
-    try requirePositive(vm, opts.r, "radius");
-
-    var pts = std.ArrayListUnmanaged([2]f64).empty;
-    const alloc = vm.scratch_arena.allocator();
-    defer pts.deinit(alloc);
-
-    // Generate points around the circle
-    const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
-    for (0..@as(usize, @intCast(sides))) |i| {
-        const ang = @as(f64, @floatFromInt(i)) * step;
-        try pts.append(alloc, .{ opts.r * @cos(ang), opts.r * @sin(ang) });
-    }
-
-    const dag_idx = try vm.dag_builder.addPolygon(pts.items);
+    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
     return try vm.allocateCrossSection(dag_idx);
 }
 
+pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
+    const pos = util.positionalArgs(args);
+    var base = GeomOptions{ .sides = 6 }; // Default to a hexagon
+    if (pos.len > 0) base.sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[0], "regular_polygon", "sides"), "sides");
+    if (pos.len > 1) base.r = try util.requireNumber(vm, pos[1], "regular_polygon", "r");
+    const opts = (try parseGeomOptions(REGULAR_POLYGON.keywords, base, vm, args, "regular_polygon")).opts;
+    const sides = try requireSides(vm, opts, "regular_polygon");
+    try util.requirePositive(vm, opts.r, "regular_polygon", "radius");
+    return try vm.allocateCrossSection(try addRegularPolygon(vm, sides, opts.r));
+}
+
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    const opts = extractGeomOptions(parsed);
+    const parsed = try util.parseKwargsSubset(struct { major_r: ?f64 = null, minor_r: ?f64 = null, segments: i32 = 0 }, TORUS.keywords, vm, args, "torus");
+    const opts = parsed.opts;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
 
     var major_r: f64 = 10.0;
     var minor_r: f64 = 2.0;
 
-    if (parsed.pos_count > 0 and args[0].isNumber()) major_r = args[0].asNumber();
-    if (parsed.pos_count > 1 and args[1].isNumber()) minor_r = args[1].asNumber();
+    if (parsed.positional.len > 0) major_r = try util.requireNumber(vm, args[0], "torus", "major_r");
+    if (parsed.positional.len > 1) minor_r = try util.requireNumber(vm, args[1], "torus", "minor_r");
+    if (opts.major_r) |r| major_r = r;
+    if (opts.minor_r) |r| minor_r = r;
 
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map = kw.asMap();
-            if (util.getKey(map, "major_r")) |v| {
-                if (v.isNumber()) major_r = v.asNumber();
-            }
-            if (util.getKey(map, "minor_r")) |v| {
-                if (v.isNumber()) minor_r = v.asNumber();
-            }
-        }
+    try util.requirePositive(vm, major_r, "torus", "major_r");
+    try util.requirePositive(vm, minor_r, "torus", "minor_r");
+    if (minor_r >= major_r) {
+        // The tube would reach (or cross) the axis and the revolved solid would intersect itself.
+        return vm.fail(.ValueError, "torus needs minor_r smaller than major_r, got minor_r {f} and major_r {f}", .{ value.fmtNumber(minor_r), value.fmtNumber(major_r) });
     }
 
-    try requirePositive(vm, major_r, "major_r");
-    try requirePositive(vm, minor_r, "minor_r");
-
-    const active_config = vm.config_stack.items[vm.config_stack.items.len - 1];
-
     // Create a 2D circle using the minor radius
-    const circ_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(minor_r)));
+    const circ_segs = if (opts.segments > 0) opts.segments else util.autoSegments(vm, minor_r);
     const circ_idx = try vm.dag_builder.addCircle(minor_r, circ_segs);
 
     // Translate the circle outward by the major radius
@@ -430,109 +468,96 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const trans_idx = try vm.dag_builder.addCrossSectionTransform(circ_idx, trans_mat);
 
     // Revolve the translated circle 360 degrees around the origin
-    const rev_segs = if (opts.segments > 0) opts.segments else @as(i32, @intCast(active_config.manifold.getSegments(major_r)));
+    const rev_segs = if (opts.segments > 0) opts.segments else util.autoSegments(vm, major_r);
     const dag_idx = try vm.dag_builder.addRevolve(trans_idx, rev_segs, 360.0);
 
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
-    if (args.len < 2 or !args[0].isArray() or !args[1].isArray()) {
-        vm.reportError("ArgumentError: polyhedron expects points Array and faces Array.\n", .{});
-        return error.RuntimeError;
+    // `points` and `faces` are positional or kwargs (which win), like polygon's `paths`.
+    const parsed = try util.parseKwargsSubset(struct { points: ?value.Value = null, faces: ?value.Value = null }, POLYHEDRON.keywords, vm, args, "polyhedron");
+    const pos = parsed.positional;
+    const points_arg = parsed.opts.points orelse if (pos.len > 0) pos[0] else null;
+    const faces_arg = parsed.opts.faces orelse if (pos.len > 1) pos[1] else null;
+    if (points_arg == null or faces_arg == null) {
+        return vm.fail(.ArgumentError, "polyhedron expects a points Array and a faces Array", .{});
     }
-    const alloc = vm.scratch_arena.allocator();
+    const pts_val = try util.requireArray(vm, points_arg.?, "polyhedron", "points");
+    const faces_val = try util.requireArray(vm, faces_arg.?, "polyhedron", "faces");
+    try requireMinCount(vm, pts_val.len, MIN_POLYHEDRON_POINTS, "polyhedron", "points");
+    try requireMinCount(vm, faces_val.len, MIN_POLYHEDRON_FACES, "polyhedron", "faces");
 
-    const pts_val = args[0].asArray().items.items;
-    const faces_val = args[1].asArray().items.items;
+    const alloc = vm.allocator;
 
-    var pts = try alloc.alloc([3]f64, pts_val.len);
+    const pts = try alloc.alloc([3]f64, pts_val.len);
     defer alloc.free(pts);
+    for (pts_val, pts, 0..) |p, *pt, i| pt.* = try util.parsePoint(3, vm, p, "polyhedron", i);
 
-    for (pts_val, 0..) |p, i| {
-        if (!p.isArray()) return error.RuntimeError;
-        const p_arr = p.asArray().items.items;
-        pts[i][0] = if (p_arr.len > 0 and p_arr[0].isNumber()) p_arr[0].asNumber() else 0.0;
-        pts[i][1] = if (p_arr.len > 1 and p_arr[1].isNumber()) p_arr[1].asNumber() else 0.0;
-        pts[i][2] = if (p_arr.len > 2 and p_arr[2].isNumber()) p_arr[2].asNumber() else 0.0;
-    }
-
-    var faces = try alloc.alloc([3]u32, faces_val.len);
+    const faces = try alloc.alloc([3]u32, faces_val.len);
     defer alloc.free(faces);
 
-    for (faces_val, 0..) |f, i| {
-        if (!f.isArray()) return error.RuntimeError;
-        const f_arr = f.asArray().items.items;
-        faces[i][0] = if (f_arr.len > 0 and f_arr[0].isNumber()) @intFromFloat(f_arr[0].asNumber()) else 0;
-        faces[i][1] = if (f_arr.len > 1 and f_arr[1].isNumber()) @intFromFloat(f_arr[1].asNumber()) else 0;
-        faces[i][2] = if (f_arr.len > 2 and f_arr[2].isNumber()) @intFromFloat(f_arr[2].asNumber()) else 0;
+    for (faces_val, faces, 0..) |f, *face, i| {
+        // A quad used to be silently truncated to its first triangle.
+        if (f.isArray() and f.asArray().items.items.len != POLYHEDRON_FACE_LEN) {
+            return vm.fail(.ValueError, "polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
+        }
+        const raw = try util.parseNumberArray(POLYHEDRON_FACE_LEN, vm, f, .{
+            .method = "polyhedron",
+            .name = "face",
+            .row = i,
+            .elem = "a point index",
+            .index_label = "entry",
+        }, POLYHEDRON_FACE_LEN, 0.0);
+        // Kernels index points[] directly with these, so they must be in range.
+        for (raw, face) |r, *c| c.* = @intCast(try checkedIndex(vm, r, pts.len, "polyhedron face"));
     }
     const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = parseArgs(args);
-    if (parsed.pos_count == 0 or !args[0].isString()) {
-        vm.reportError("ArgumentError: text() expects a String as its first argument.\n", .{});
-        return error.RuntimeError;
+    const parsed = try util.parseKwargsSubset(struct {
+        size: ?f64 = null,
+        tolerance: ?f64 = null,
+        font: []const u8 = "sans",
+        halign: text_mod.HAlign = .left,
+        valign: text_mod.VAlign = .baseline,
+    }, TEXT.keywords, vm, args, "text");
+    if (parsed.positional.len == 0 or !args[0].isString()) {
+        return vm.fail(.ArgumentError, "text() expects a String as its first argument", .{});
     }
     const text_str = args[0].asString().chars;
+    const opts = parsed.opts;
     var size: f64 = 10.0;
-    var font_name: []const u8 = "sans";
-    var tolerance: f64 = 0.1;
-    var halign: text_mod.HAlign = .left;
-    var valign: text_mod.VAlign = .baseline;
+    if (parsed.positional.len > 1) size = try util.requireNumber(vm, args[1], "text", "size");
+    if (opts.size) |n| size = n;
+    const font_name = opts.font;
 
-    if (parsed.pos_count > 1 and args[1].isNumber()) size = args[1].asNumber();
-
-    if (parsed.kwargs) |kw| {
-        if (kw.isObject() and kw.asObj().obj_type == .map) {
-            const map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", kw.asObj()));
-            var it = map.map.iterator();
-            while (it.next()) |entry| {
-                const k = entry.key_ptr.*;
-                if (k.isObject() and (k.asObj().obj_type == .string or k.asObj().obj_type == .symbol)) {
-                    const k_str = if (k.asObj().obj_type == .string)
-                        @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars
-                    else
-                        @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars;
-
-                    const v = entry.value_ptr.*;
-                    if (std.mem.eql(u8, k_str, "size") and v.isNumber()) size = v.asNumber();
-                    if (std.mem.eql(u8, k_str, "tolerance") and v.isNumber()) tolerance = v.asNumber();
-                    if (std.mem.eql(u8, k_str, "font")) {
-                        if (v.isString()) font_name = v.asString().chars;
-                        if (v.isSymbol()) font_name = v.asSymbol().chars;
-                    }
-                    if (std.mem.eql(u8, k_str, "halign")) {
-                        const h_str = if (v.isString()) v.asString().chars else if (v.isSymbol()) v.asSymbol().chars else "";
-                        if (std.mem.eql(u8, h_str, "center")) halign = .center;
-                        if (std.mem.eql(u8, h_str, "right")) halign = .right;
-                    }
-                    if (std.mem.eql(u8, k_str, "valign")) {
-                        const v_str = if (v.isString()) v.asString().chars else if (v.isSymbol()) v.asSymbol().chars else "";
-                        if (std.mem.eql(u8, v_str, "center")) valign = .center;
-                        if (std.mem.eql(u8, v_str, "top")) valign = .top;
-                        if (std.mem.eql(u8, v_str, "bottom")) valign = .bottom;
-                    }
-                }
-            }
-        }
+    try util.requirePositive(vm, size, "text", "size");
+    // By default the glyphs are drawn as finely as a circle the size of a letter's bowl
+    // (half the text size) at the active resolution, never finer than the floor below.
+    const tolerance = opts.tolerance orelse @max(vm.config().chordError(size / 2.0), size * MIN_TEXT_TOLERANCE_RATIO);
+    try util.requirePositive(vm, tolerance, "text", "tolerance");
+    // Bezier flattening recurses until the chord error is below `tolerance`, so the
+    // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
+    // (e.g. 1e-300, whose square underflows to 0) never terminates in practice.
+    if (tolerance < size * MIN_TEXT_TOLERANCE_RATIO) {
+        return vm.fail(.ValueError, "'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
     }
-
-    try requirePositive(vm, size, "size");
-    try requirePositive(vm, tolerance, "tolerance");
 
     const alloc = vm.scratch_arena.allocator();
 
     const face = text_mod.getFaceByName(font_name) catch {
-        vm.reportError("RuntimeError: Failed to load font '{s}'.\n", .{font_name});
-        return error.RuntimeError;
+        return vm.fail(.RuntimeError, "Failed to load font '{s}'", .{font_name});
     };
-    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, halign, valign) catch {
-        vm.reportError("RuntimeError: Failed to extract text contours.\n", .{});
-        return error.RuntimeError;
+    var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
+        error.InvalidUtf8 => {
+            return vm.fail(.ValueError, "text: the String isn't valid UTF-8", .{});
+        },
+        else => {
+            return vm.fail(.RuntimeError, "Failed to extract text contours", .{});
+        },
     };
     defer polygons.deinit(alloc);
 

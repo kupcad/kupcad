@@ -1,3 +1,7 @@
+//! The global functions `puts`, `print` and `inspect`: they write through the host's print
+//! handler, and `inspect` prefixes its output with the calling line and column and returns
+//! its last argument.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -9,7 +13,7 @@ inline fn printShared(vm: *VM, args: []const value.Value, append_newline: bool) 
             var out: std.Io.Writer.Allocating = .init(vm.allocator);
             defer out.deinit();
 
-            try arg.stringify(false, &out.writer);
+            try vm.writeDisplay(arg, &out.writer);
             if (append_newline) {
                 try out.writer.writeAll("\n");
             }
@@ -60,15 +64,15 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
                 const tos_key = try vm.allocateString("to_s");
 
                 if (inst.class.methods.get(inspect_key) orelse inst.class.methods.get(tos_key)) |m_val| {
-                    if (m_val.isObject() and m_val.asObj().obj_type == .native) {
-                        const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", m_val.asObj()));
+                    if (m_val.isNative()) {
+                        const native_obj = m_val.asNative();
 
                         // Push `arg` onto the VM stack so `vm.getReceiver(args_ptr)` safely resolves `arg`!
                         vm.push(arg);
                         defer _ = vm.pop();
                         const args_ptr = vm.stack.ptr + vm.stack_top;
 
-                        if (native_obj.function(vm, 0, args_ptr)) |res_str| {
+                        if (native_obj.function(vm, .{ .ptr = args_ptr, .count = 0, .name = native_obj.name })) |res_str| {
                             try res_str.stringify(false, &out.writer);
                             printed = true;
                         } else |_| {}

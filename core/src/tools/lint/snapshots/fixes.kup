@@ -1,0 +1,29 @@
+# Renamed everywhere it is bound, with the edit keeping the rest of the line.
+count = 1
+count = 2
+[1, 2].each { |n| puts 1 }
+
+# No rename for a method's parameter (a caller may pass it by name)...
+def wide(unused_size)
+  1
+end
+
+# ... for a `for` target or a multiple assignment (no token holds the name alone)...
+for k in [1]
+  puts 2
+end
+a, b = 1, 2
+puts b
+
+# ... or when the new name is taken.
+taken = 3
+_taken = 4
+puts _taken
+
+# Unreachable code is offered for deletion in the editor, never deleted by --fix.
+def early
+  return 1
+  puts 3
+end
+
+result = [wide(1), early]

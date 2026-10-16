@@ -1,40 +1,100 @@
+//! The `unreachable-code` lint rule (`UnreachableCodeRule`); its `alwaysLeaves` tells whether
+//! a statement leaves its body on every path through it.
+
+const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
+const token_span = @import("../../../core/token_span.zig");
 
+/// Flags the first statement of a body that can't run because a statement before it always
+/// leaves: it returns, breaks, nexts or raises on every path through it, an `if` whose
+/// branches all do, a `case` with an `else`, or a `begin` whose body and rescues all do.
 pub const UnreachableCodeRule = struct {
+    pub const id = "unreachable-code";
+    pub const description = "Statements after one that always returns, breaks, nexts or raises";
+
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
             },
         };
     }
 
-    fn name(_: *anyopaque) []const u8 {
-        return "Unreachable Code Check";
-    }
-
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         _ = ptr;
         const node = tree.getNode(node_idx) orelse return;
+        if (node.tag != .block) return;
 
-        if (node.tag == .block) {
-            const b = tree.block(node);
-            var found_terminal = false;
-            for (tree.getNodes(b.stmts)) |stmt_idx| {
-                const stmt_node = tree.getNode(stmt_idx).?;
-
-                if (found_terminal) {
-                    try engine.addDiagnostic(engine.getLoc(stmt_node.main_token), .warning, "Unreachable code detected after explicit control flow return/break.", .{});
-                }
-
-                if (stmt_node.tag == .return_stmt or stmt_node.tag == .break_stmt or stmt_node.tag == .next_stmt) {
-                    found_terminal = true;
-                }
-            }
+        const stmts = tree.getNodes(tree.block(node).stmts);
+        for (stmts, 0..) |stmt, i| {
+            if (!alwaysLeaves(tree, stmt) or i + 1 == stmts.len) continue;
+            const dead = stmts[i + 1 ..];
+            const first_dead = tree.getNode(dead[0]).?;
+            try engine.reportFix(id, engine.getLoc(first_dead.main_token), try deleteFix(engine, tree, dead), "Unreachable: the statement before this always returns, breaks, nexts or raises", .{});
+            return; // the rest of the body is dead too; one finding says so
         }
+    }
+
+    /// Deletes the dead statements. Only offered: dead code is often a half-finished edit
+    /// the author still wants to read, so `check --fix` never removes it.
+    fn deleteFix(engine: *linter.Linter, tree: *const ast.Tree, dead: []const ast.NodeIndex) !linter.Fix {
+        const allocator = engine.allocator;
+        const range = engine.deletionRange(token_span.first(tree, dead[0]), token_span.last(tree, dead[dead.len - 1]));
+        const edits = try allocator.alloc(linter.Edit, 1);
+        errdefer allocator.free(edits);
+        edits[0] = .{ .offset = range.offset, .length = range.length, .replacement = try allocator.dupe(u8, "") };
+        errdefer allocator.free(edits[0].replacement);
+        return .{ .title = try allocator.dupe(u8, "Remove the unreachable code"), .edits = edits, .safe = false };
+    }
+
+    /// Whether control never passes `idx`. A `return` inside a block leaves only the block
+    /// (KupCAD's difference from Ruby), so a call with a block never counts.
+    pub fn alwaysLeaves(tree: *const ast.Tree, idx: ast.NodeIndex) bool {
+        const node = tree.getNode(idx) orelse return false;
+        return switch (node.tag) {
+            .return_stmt, .break_stmt, .next_stmt => true,
+            .method_call => isRaise(tree, node),
+            .block => blockLeaves(tree, idx),
+            .if_stmt => blk: {
+                const s = tree.ifStmt(node);
+                break :blk s.else_branch != .none and alwaysLeaves(tree, s.then_branch) and alwaysLeaves(tree, s.else_branch);
+            },
+            .case_stmt => blk: {
+                const s = tree.caseStmt(node);
+                if (s.else_branch == .none or !alwaysLeaves(tree, s.else_branch)) break :blk false;
+                for (tree.getWhenBranches(s.when_branches)) |when| {
+                    if (!alwaysLeaves(tree, when.body)) break :blk false;
+                }
+                break :blk true;
+            },
+            .begin_stmt => blk: {
+                const s = tree.beginStmt(node);
+                if (s.ensure_body != .none and alwaysLeaves(tree, s.ensure_body)) break :blk true;
+                if (!alwaysLeaves(tree, s.body)) break :blk false;
+                for (tree.getRescueClauses(s.rescues)) |rescue| {
+                    if (!alwaysLeaves(tree, rescue.body)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn blockLeaves(tree: *const ast.Tree, idx: ast.NodeIndex) bool {
+        const node = tree.getNode(idx) orelse return false;
+        for (tree.getNodes(tree.block(node).stmts)) |stmt| {
+            if (alwaysLeaves(tree, stmt)) return true;
+        }
+        return false;
+    }
+
+    /// `raise ...`, the built-in (it can't be redefined).
+    fn isRaise(tree: *const ast.Tree, node: *const ast.Node) bool {
+        const call = tree.methodCall(node);
+        return call.receiver == .none and std.mem.eql(u8, tree.getString(call.method_name), "raise");
     }
 };

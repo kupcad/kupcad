@@ -2,52 +2,45 @@ const std = @import("std");
 const testing = std.testing;
 const linter_mod = @import("../linter.zig");
 const UnreachableCodeRule = @import("unreachable_code.zig").UnreachableCodeRule;
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+const lint_testing = @import("../testing.zig");
 
 fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
-    var engine = linter_mod.Linter.init(allocator, .{});
-    var rule_impl = UnreachableCodeRule{};
-    try engine.rules.append(allocator, rule_impl.rule());
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-    const tokens = try lexer.lexAll(allocator);
-
-    var parser = try parser_mod.Parser.init(tokens, source, allocator);
-    const root = try parser.parseProgram();
-
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
-    return engine;
+    return lint_testing.lint(allocator, source, lint_testing.only(UnreachableCodeRule.id));
 }
 
 test "Linter Rule: UnreachableCodeRule catches code after return" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
     const source =
         \\def check_flow()
         \\  return
         \\  cube()
         \\end
     ;
-    const engine = try runRule(arena.allocator(), source);
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
 
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
+    try testing.expectEqualStrings("Unreachable: the statement before this always returns, breaks, nexts or raises", engine.diagnostics.items[0].message);
 }
 
 test "Linter Rule: UnreachableCodeRule catches code after break and next" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
+    inline for (.{ "break", "next" }) |keyword| {
+        const source = "while true\n  " ++ keyword ++ "\n  cube() # Unreachable\nend";
+        var engine = try runRule(testing.allocator, source);
+        defer engine.deinit();
 
-    const source =
-        \\while true
-        \\  break
-        \\  cube() # Unreachable
-        \\end
-    ;
-    const engine = try runRule(arena.allocator(), source);
+        try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+        try testing.expectEqualStrings("Unreachable: the statement before this always returns, breaks, nexts or raises", engine.diagnostics.items[0].message);
+    }
+}
 
-    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("Unreachable code detected after explicit control flow return/break.", engine.diagnostics.items[0].message);
+test "Linter Rule: UnreachableCodeRule offers to delete the dead lines, never as a safe fix" {
+    const source = "def f\n  return 1\n  puts 2\n  puts 3\nend\nf\n";
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+    const fix = engine.diagnostics.items[0].fix.?;
+    try testing.expect(!fix.safe); // `check --fix` leaves dead code for its author
+    try testing.expectEqual(@as(usize, 1), fix.edits.len);
+    const e = fix.edits[0];
+    try testing.expectEqualStrings("  puts 2\n  puts 3\n", source[e.offset .. e.offset + e.length]);
+    try testing.expectEqualStrings("", e.replacement);
 }

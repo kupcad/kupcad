@@ -1,99 +1,64 @@
+//! Built-ins for checking and timing a script: `assert` (`nativeAssert`) raises an
+//! AssertionError, or the given class, through the VM's rescue machinery; `warn` prints a
+//! warning through the host; `benchmark` times its block.
+
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
+const util = @import("methods/util.zig");
 
-pub fn nativeAssert(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    if (args.len == 0) {
-        vm.reportError("ArgumentError: assert requires at least 1 argument.\n", .{});
-        return error.RuntimeError;
+/// assert(condition, message = "Assertion failed.", error_class = AssertionError) { message }
+/// -> raises when the condition is false or nil; the block, if given, builds the message
+/// lazily (only for a failure).
+pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, error_class: ?*value.ObjClass, block: ?*value.ObjClosure) anyerror!value.Value {
+    if (!value.Value.isFalsey(condition)) return value.Value.initNil();
+
+    const err_class = error_class orelse vm.error_classes.get(.AssertionError) orelse {
+        return vm.fail(.RuntimeError, "AssertionError class not found", .{});
+    };
+
+    const msg_val = if (block) |closure|
+        try requireMessage(vm, try vm.callClosureSync(closure, &.{}), "its block to return a String message")
+    else if (message) |m|
+        try requireMessage(vm, m, "a String for its message")
+    else
+        try vm.allocateString("Assertion failed.");
+
+    // Construct and Throw Exception
+    vm.push(msg_val); // A fresh message is otherwise unrooted while the instance is allocated
+    const inst = try vm.gc.allocateInstance(vm, err_class);
+    vm.push(value.Value.initObj(&inst.obj)); // Protect from GC
+
+    const msg_key = try vm.allocateString("message");
+    try vm.setInstanceField(inst, msg_key, msg_val, null);
+
+    // Capture Stack Trace
+    if (vm.buildBacktrace()) |bt_arr| {
+        vm.push(value.Value.initObj(&bt_arr.obj));
+        const bt_key = try vm.allocateString("backtrace");
+        try vm.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null);
+        _ = vm.pop();
+    } else |_| {}
+
+    _ = vm.pop(); // Unprotect
+    _ = vm.pop(); // msg_val, now held by the instance
+
+    // Throw directly into the VM's rescue system
+    vm.push(value.Value.initObj(&inst.obj));
+    const res = vm.executeThrow();
+
+    if (res == .ok) {
+        // A rescue block caught it! Tell the Native Wrapper to sync the instruction pointer.
+        return error.Unwind;
+    } else {
+        // Uncaught exception
+        return error.FatalError;
     }
+}
 
-    var pos_count = args.len;
-    var block_closure: ?*value.ObjClosure = null;
-
-    // The VM pushes blocks as the final argument invisibly. Extract it if present.
-    if (args.len > 0 and args[args.len - 1].isClosure()) {
-        block_closure = args[args.len - 1].asClosure();
-        pos_count -= 1;
-    }
-
-    if (pos_count < 1 or pos_count > 3) {
-        vm.reportError("ArgumentError: assert expects 1 to 3 positional arguments.\n", .{});
-        return error.RuntimeError;
-    }
-
-    const condition = args[0];
-
-    // Check if the assertion failed (using Truthiness: only false or nil fail)
-    if (value.Value.isFalsey(condition)) {
-        // Determine Exception Class
-        // SAFETY: err_class is unconditionally initialized in the if/else block below.
-        var err_class: *value.ObjClass = undefined;
-        if (pos_count == 3) {
-            const err_val = args[2];
-            if (!err_val.isClass()) {
-                vm.reportError("TypeError: Third argument to assert must be an Exception Class.\n", .{});
-                return error.RuntimeError;
-            }
-            err_class = err_val.asClass();
-        } else {
-            const default_err = vm.globals.get("AssertionError") orelse {
-                vm.reportError("RuntimeError: AssertionError class not found.\n", .{});
-                return error.RuntimeError;
-            };
-            err_class = default_err.asClass();
-        }
-
-        // Determine Message
-        var msg_val = value.Value.initNil();
-        if (block_closure) |closure| {
-            // Lazy Evaluation: Only execute the block because the assertion failed!
-            msg_val = try vm.callClosureSync(closure, &.{});
-            if (!msg_val.isObject() or msg_val.asObj().obj_type != .string) {
-                vm.reportError("TypeError: assert block must return a String message.\n", .{});
-                return error.RuntimeError;
-            }
-        } else if (pos_count >= 2) {
-            msg_val = args[1];
-            if (!msg_val.isObject() or msg_val.asObj().obj_type != .string) {
-                vm.reportError("TypeError: assert message must be a String.\n", .{});
-                return error.RuntimeError;
-            }
-        } else {
-            msg_val = try vm.allocateString("Assertion failed.");
-        }
-
-        // Construct and Throw Exception
-        const inst = try vm.gc.allocateInstance(vm, err_class);
-        vm.push(value.Value.initObj(&inst.obj)); // Protect from GC
-
-        const msg_key = try vm.allocateString("message");
-        try vm.setInstanceField(inst, msg_key, msg_val, null);
-
-        // Capture Stack Trace
-        if (vm.buildBacktrace()) |bt_arr| {
-            vm.push(value.Value.initObj(&bt_arr.obj));
-            const bt_key = try vm.allocateString("backtrace");
-            try vm.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null);
-            _ = vm.pop();
-        } else |_| {}
-
-        _ = vm.pop(); // Unprotect
-
-        // Throw directly into the VM's rescue system
-        vm.push(value.Value.initObj(&inst.obj));
-        const res = vm.executeThrow();
-
-        if (res == .ok) {
-            // A rescue block caught it! Tell the Native Wrapper to sync the instruction pointer.
-            return error.Unwind;
-        } else {
-            // Uncaught exception
-            return error.FatalError;
-        }
-    }
-
-    return value.Value.initNil();
+fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !value.Value {
+    if (msg.isString()) return msg;
+    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{util.typeName(vm, msg)});
 }
 
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
@@ -114,29 +79,15 @@ pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
     return value.Value.initNil();
 }
 
-pub fn nativeBenchmark(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    var pos_count = args.len;
-    var block_closure: ?*value.ObjClosure = null;
-
-    if (args.len > 0 and args[args.len - 1].isClosure()) {
-        block_closure = args[args.len - 1].asClosure();
-        pos_count -= 1;
-    }
-
-    if (block_closure == null) {
-        vm.reportError("ArgumentError: benchmark requires a block.\n", .{});
-        return error.RuntimeError;
-    }
-
-    var label: []const u8 = "Execution";
-    if (pos_count > 0 and args[0].isString()) {
-        label = args[0].asString().chars;
-    }
+/// benchmark(label = "Execution") { ... } -> runs the block, prints how long it took and
+/// returns its result
+pub fn nativeBenchmark(vm: *VM, label_str: ?*value.ObjString, block: *value.ObjClosure) anyerror!value.Value {
+    const label = if (label_str) |l| l.chars else "Execution";
 
     // Start Timer using the VM's IO capability
     const start_time = std.Io.Clock.now(.awake, vm.io);
 
-    const result = try vm.callClosureSync(block_closure.?, &.{});
+    const result = try vm.callClosureSync(block, &.{});
 
     // Stop Timer
     const end_time = std.Io.Clock.now(.awake, vm.io);

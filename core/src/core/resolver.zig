@@ -1,3 +1,7 @@
+//! `Resolver`: walks the AST once and records, per node, whether a name is a local, an
+//! upvalue, a global or an instance variable (`ResolvedSymbol`), and which variables each
+//! closure captures; it also reports `break` and `next` outside a loop. Run by `document.zig`.
+
 const std = @import("std");
 const ast = @import("ast.zig");
 const visitor = @import("visitor.zig");
@@ -330,11 +334,11 @@ const ResolverContext = struct {
                 }
             },
             .for_stmt => {
-                try self.resolver.pushScope(false, false, .none);
+                // Like Ruby's, a for loop opens no scope: its variables stay after it.
                 self.resolver.loop_depth += 1;
                 const fs = tree.forStmt(node);
-                for (tree.getForBindings(fs.bindings)) |binding| {
-                    _ = try self.resolver.declareLocal(binding.name);
+                for (tree.getLhsExprs(fs.targets)) |target| {
+                    _ = try self.resolver.declareLocal(target.name);
                 }
             },
             .class_stmt, .module_stmt, .singleton_class => {
@@ -366,7 +370,6 @@ const ResolverContext = struct {
             },
             .for_stmt => {
                 self.resolver.loop_depth -= 1;
-                try self.resolver.popScope();
             },
             .block => {
                 _ = self.resolver.active_method_blocks.remove(node_idx);

@@ -1,0 +1,2 @@
+2:1 E 'cube' is a built-in and can't be assigned
+2:10 W [suppression] kupcad:disable-line unused-variable hides nothing here; remove it

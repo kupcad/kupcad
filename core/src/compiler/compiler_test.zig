@@ -2,12 +2,60 @@ const std = @import("std");
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
+const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
+
+const RunResult = struct {
+    status: @import("../vm/vm.zig").InterpretResult,
+    top: value.Value,
+};
+
+/// Compiles and runs `source`, returning the interpreter status and the value
+/// left on the stack (nil if none).
+fn run(vm: *VM, source: []const u8) !RunResult {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    const status = vm.interpret(&out_chunk);
+    const top = if (vm.stack_top > 0) vm.stack[vm.stack_top - 1] else value.Value.initNil();
+    return .{ .status = status, .top = top };
+}
+
+fn expectRunsTo(source: []const u8, expected: f64) !void {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(expected, res.top.asNumber());
+}
+
+fn compileOnly(source: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+}
 
 test "Compiler: compiles basic binary addition" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -27,9 +75,8 @@ test "Compiler: compiles basic binary addition" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    // Pass &vm as the 5th argument
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(bin_node);
 
     // Bytecode Expected (Folded):
@@ -61,7 +108,7 @@ test "Compiler: compiles range expression (1..10)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(range_node);
 
     // Bytecode expected:
@@ -100,7 +147,7 @@ test "Compiler: compiles compound assignment (x += 5)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(assign_node);
 
     // Bytecode expected for `x += 5` at top level:
@@ -145,7 +192,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(safe_call);
 
     // Bytecode expected:
@@ -180,7 +227,7 @@ test "Compiler: compiles string interpolation" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(interp_node);
 
     // Bytecode Expected:
@@ -215,7 +262,7 @@ test "Compiler: compiles import statement" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(import_node);
 
     // Expected Bytecode:
@@ -249,7 +296,7 @@ test "Compiler: compiles namespace access (Hardware::Screw)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(namespace_node);
 
     // Expected Bytecode:
@@ -283,7 +330,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(rescue_node);
 
     // Expected Bytecode:
@@ -332,11 +379,12 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     var comp = Compiler.init(testing.allocator, &b.tree, symbols.items, &[_]u32{}, &out_chunk, &vm);
     defer comp.deinit();
 
-    // We are ensuring the complex `op_is_instance` dynamic routing compiles without crashing
     try comp.compile(begin_stmt);
 
-    // The setup, type check duping, and routing generates a significant amount of bytecode
-    try testing.expect(out_chunk.code.items.len > 10);
+    // The handler is installed first, and the typed clause routes through op_is_instance
+    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
+    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_is_instance)) != null);
+    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_pop_rescue)) != null);
 }
 
 test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
@@ -351,7 +399,7 @@ test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
 
     // {}
     const empty_hash_span = try b.addHashEntries(&.{});
-    const hash_node = try b.hashLiteral(empty_hash_span, 0);
+    const hash_node = try b.hashLiteral(empty_hash_span, 0, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -393,7 +441,7 @@ test "Compiler: case statements with literals optimize to op_switch" {
     try registry.registerStandardLibrary(&vm);
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(case_node);
 
     // Verify the fast-path OP_SWITCH was emitted
@@ -426,7 +474,7 @@ test "Compiler: correctly maps AST token offsets into DebugSpans" {
     defer vm.deinit();
 
     var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &token_starts, &out_chunk, &vm);
-    defer comp.deinit(); // Leak fixed
+    defer comp.deinit();
     try comp.compile(bin_node);
 
     // Verify the DebugSpans caught the offsets from the token_starts array
@@ -443,11 +491,11 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Generate 300 literal "1" nodes
+    // One more element than a u8 count operand can hold
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
-    for (0..300) |_| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |_| {
         const num = try b.number("1", 0);
         try elements.append(testing.allocator, num);
     }
@@ -473,60 +521,33 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     try testing.expect(found_wide);
 }
 
-test "Compiler Edge Case: Prevent stack leaks from break inside expressions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
+test "Compiler Edge Case: Prevent stack leaks from break/next inside expressions" {
+    // `10 + (break 5)` / `10 + next`: jumping out with the left operand still on
+    // the stack must be rejected instead of leaking a slot.
+    inline for (.{ ast.Tag.break_stmt, ast.Tag.next_stmt }) |tag| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var b = ast.Builder.init(arena.allocator());
+        defer b.deinit();
 
-    // 1. Construct AST manually to bypass the parser: 10 + (break 5)
-    const ten = try b.number("10", 0);
-    const five = try b.number("5", 0);
+        // Built manually to bypass the parser
+        const ten = try b.number("10", 0);
+        const payload = if (tag == .break_stmt) try b.number("5", 0) else ast.NodeIndex.none;
+        const jump_node = try b.createNode(tag, 0, @backingInt(payload));
+        const add_node = try b.binary(.add, ten, jump_node, 0);
 
-    // Inject the break statement payload directly
-    const break_node = try b.createNode(.break_stmt, 0, @backingInt(five));
-    const add_node = try b.binary(.add, ten, break_node, 0);
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
 
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        defer comp.deinit();
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-
-    // 2. Inject a fake loop state into the compiler so it permits the break
-    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
-
-    // 3. Compile the addition. The compiler will catch the depth mismatch and abort!
-    const result = comp.compile(add_node);
-    try testing.expectError(error.UnsupportedScope, result);
-}
-
-test "Compiler: Prevent stack leaks from next inside expressions" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    // 1. Construct AST manually: 10 + (next)
-    const ten = try b.number("10", 0);
-    const next_node = try b.createNode(.next_stmt, 0, @backingInt(ast.NodeIndex.none));
-    const add_node = try b.binary(.add, ten, next_node, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
-    defer comp.deinit();
-
-    // 2. Inject a fake loop state
-    try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
-
-    const result = comp.compile(add_node);
-    try testing.expectError(error.UnsupportedScope, result);
+        // A fake loop so the jump itself is permitted
+        try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
+        try testing.expectError(error.UnsupportedScope, comp.compile(add_node));
+    }
 }
 
 test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
@@ -711,7 +732,7 @@ test "Compiler: Method blocks accurately extract local_count for the VM" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -756,7 +777,7 @@ test "Compiler: Short-circuit AND/OR operands pop cleanly before loop jumps" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -787,7 +808,7 @@ test "Compiler: Block closures calculate total local slots accurately" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -837,8 +858,8 @@ test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build 
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Create an array literal with 70,000 elements
-    const elem_count: usize = 70000;
+    // One more element than op_build_array_wide's u16 count can hold
+    const elem_count: usize = limits.MAX_CONSTANTS + 1;
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
@@ -1042,6 +1063,7 @@ test "Compiler: compiles STL asset import interception" {
     try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
     try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
     try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 argument
+    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[6]); // no block, no spread
 }
 
 test "Compiler: Local variable names are exported to chunk metadata for REPL introspection" {
@@ -1059,7 +1081,7 @@ test "Compiler: Local variable names are exported to chunk metadata for REPL int
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1098,7 +1120,7 @@ test "Compiler: Multiple assignment optimization skips heap allocation for stati
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1127,7 +1149,7 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
 
@@ -1151,6 +1173,222 @@ test "Compiler: Deep spatial tuple destructuring emits recursive unpacks" {
         if (byte == @backingInt(chunk.OpCode.op_unpack)) unpack_count += 1;
     }
     try testing.expectEqual(@as(usize, 2), unpack_count);
+}
+
+// --- Destructuring and `rescue =>` store into every kind of variable ---
+
+const StoreCase = struct {
+    name: []const u8,
+    source: []const u8,
+    expected: union(enum) { number: f64, string: []const u8 },
+};
+
+// Destructuring and `rescue => target` store a value that is already on the
+// stack, unlike `target = value`, so every target kind needs its own check.
+const store_cases = [_]StoreCase{
+    .{ .name = "ivars from a literal", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, @b = [1, 2]
+    \\    @a + @b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "ivars from a runtime array, read by another method", .expected = .{ .number = 43 }, .source =
+    \\class P
+    \\  attr_reader :b
+    \\  def run(pair)
+    \\    @a, @b = pair
+    \\    @a
+    \\  end
+    \\end
+    \\p = P.new
+    \\p.run([3, 4]) + p.b * 10
+    },
+    .{ .name = "ivar splat", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, *@rest = [1, 2, 3]
+    \\    @a + @rest.size * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "ivars inside a block", .expected = .{ .number = 32 }, .source =
+    \\class P
+    \\  def run
+    \\    [1].each { |x| @a, @b = [x + 1, x + 2] }
+    \\    @a + @b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "every kind in one statement", .expected = .{ .number = 4321 }, .source =
+    \\class P
+    \\  def run
+    \\    @a, b, @@c, $d = [1, 2, 3, 4]
+    \\    @a + b * 10 + @@c * 100 + $d * 1000
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into an ivar", .expected = .{ .string = "boom" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise "boom"
+    \\    rescue => @e
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "typed rescue clauses into an ivar", .expected = .{ .string = "typed" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise(ArgumentError.new("typed"))
+    \\    rescue TypeError => @e
+    \\      return "wrong clause"
+    \\    rescue ArgumentError => @e
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into an ivar inside a block", .expected = .{ .string = "in block" }, .source =
+    \\class P
+    \\  def run
+    \\    [1].each do |x|
+    \\      begin
+    \\        raise "in block"
+    \\      rescue => @e
+    \\      end
+    \\    end
+    \\    @e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "class vars", .expected = .{ .number = 21 }, .source =
+    \\class P
+    \\  def run
+    \\    @@a, @@b = [1, 2]
+    \\    @@a + @@b * 10
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "rescue into a class var", .expected = .{ .string = "cv" }, .source =
+    \\class P
+    \\  def run
+    \\    begin
+    \\      raise "cv"
+    \\    rescue => @@e
+    \\    end
+    \\    @@e.message
+    \\  end
+    \\end
+    \\P.new.run
+    },
+    .{ .name = "captured locals from a block", .expected = .{ .number = 32 }, .source =
+    \\def f
+    \\  a = 0
+    \\  b = 0
+    \\  [1].each { |x| a, b = [x + 1, x + 2] }
+    \\  a + b * 10
+    \\end
+    \\f()
+    },
+    .{ .name = "rescue into a captured local", .expected = .{ .string = "inner" }, .source =
+    \\def f
+    \\  e = nil
+    \\  [1].each do |x|
+    \\    begin
+    \\      raise "inner"
+    \\    rescue => e
+    \\    end
+    \\  end
+    \\  e.message
+    \\end
+    \\f()
+    },
+    .{ .name = "$globals from a method are visible to others", .expected = .{ .number = 321 }, .source =
+    \\def set_all
+    \\  $a, $b = [1, 2]
+    \\  $c = 3
+    \\end
+    \\def read_all
+    \\  $a + $b * 10 + $c * 100
+    \\end
+    \\set_all()
+    \\read_all()
+    },
+    .{ .name = "rescue into a $global", .expected = .{ .string = "gv" }, .source =
+    \\def f
+    \\  begin
+    \\    raise "gv"
+    \\  rescue => $e
+    \\  end
+    \\end
+    \\f()
+    \\$e.message
+    },
+    .{ .name = "top-level destructuring keeps self and makes script globals", .expected = .{ .number = 79 }, .source =
+    \\s = self
+    \\a, b = [7, 8]
+    \\def g
+    \\  b + 1
+    \\end
+    \\self == s ? a * 10 + g() : -1
+    },
+};
+
+test "Compiler: destructuring and rescue store into ivars, cvars, globals and captured locals" {
+    for (store_cases) |case| {
+        errdefer std.debug.print("store case '{s}' failed\n", .{case.name});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        try registry.registerStandardLibrary(&vm);
+        const res = try run(&vm, case.source);
+        try testing.expectEqual(.ok, res.status);
+        switch (case.expected) {
+            .number => |n| try testing.expectEqual(n, res.top.asNumber()),
+            .string => |s| {
+                try testing.expect(res.top.isString());
+                try testing.expectEqualStrings(s, res.top.asString().chars);
+            },
+        }
+    }
+}
+
+test "Compiler: sigil parameters and index or attribute destructuring targets get a located parse error" {
+    // Formal parameters follow Ruby: a sigil name is never a parameter. Index and
+    // attribute targets are not destructuring or rescue targets either.
+    const cases = [_]struct { source: []const u8, culprit: []const u8 }{
+        .{ .source = "[[1, 2]].each { |(@a, b)| b }", .culprit = "@a" },
+        .{ .source = "[[1, 2]].each { |(a, @@b)| a }", .culprit = "@@b" },
+        .{ .source = "[1].each { |@a| 1 }", .culprit = "@a" },
+        .{ .source = "[1].each { |*$rest| 1 }", .culprit = "$rest" },
+        .{ .source = "def f(@a)\n  1\nend", .culprit = "@a" },
+        .{ .source = "def f(**@@opts)\n  1\nend", .culprit = "@@opts" },
+        .{ .source = "g = ->($x) { 1 }", .culprit = "$x" },
+        .{ .source = "a = [0, 0]\na[0], b = [1, 2]", .culprit = "," },
+        .{ .source = "o = 1\no.x, y = [1, 2]", .culprit = "," },
+        .{ .source = "begin\n  1\nrescue => o.x\nend", .culprit = "." },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("rejection case '{s}' failed\n", .{case.source});
+        var doc = try Document.parse(testing.allocator, case.source);
+        defer doc.deinit();
+        try testing.expect(doc.diagnostics.len > 0);
+        // Located at the offending token, not at the start of the file
+        const loc = doc.diagnostics[0].loc;
+        try testing.expectEqualStrings(case.culprit, case.source[loc.offset .. loc.offset + loc.length]);
+    }
 }
 
 test "Compiler: compiles bitwise and shift operators" {
@@ -1216,8 +1454,7 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     defer args.deinit(testing.allocator);
 
     const val = try b.number("1", 0);
-    // Push 256 arguments (VM limits MAX_ARGS to 255)
-    for (0..256) |_| {
+    for (0..limits.MAX_ARGS + 1) |_| {
         try args.append(testing.allocator, .{ .name = .none, .value = val, .modifier = null });
     }
 
@@ -1238,6 +1475,132 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     try testing.expectError(error.TooManyArguments, result);
 }
 
+test "Compiler Guardrail: Rejects programmatically built deep trees" {
+    // The parser bounds depth for source code, but trees built directly with
+    // ast.Builder must be rejected by the compiler itself.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    var node = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 10) |_| node = try b.unary(.not, node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.AstTooDeep, comp.compile(node));
+}
+
+test "Compiler Guardrail: Nested closures share one depth budget" {
+    // Each closure body compiles in a child Compiler; the child used to restart
+    // at depth 0, so nested lambdas recursed natively without any bound.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var b = ast.Builder.init(arena.allocator());
+    defer b.deinit();
+
+    const no_params = try b.addParams(&.{});
+    var node = try b.booleanNode(true, 0);
+    for (0..limits.MAX_AST_DEPTH + 10) |_| node = try b.lambdaExpr(no_params, node, 0);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.AstTooDeep, comp.compile(node));
+}
+
+test "Compiler Guardrail: Inline-cache indexes past 16 bits are a compile error" {
+    // Regression: the u16 inline-cache operand used to overflow silently
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, "x = 1\n");
+    for (0..limits.MAX_INLINE_CACHES + 2) |_| try buf.appendSlice(testing.allocator, "x.foo\n");
+
+    var doc = try Document.parse(testing.allocator, buf.items);
+    defer doc.deinit();
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.TooManyInlineCaches, comp.compile(doc.tree.root));
+}
+
+/// A parameter-list shape. Frame layout: slot 0 = closure, then the positionals,
+/// the kwarg map (if any keyword), the block slot, and one slot per keyword;
+/// the highest slot must not exceed MAX_ARGS.
+const SlotShape = struct {
+    name: []const u8,
+    keywords: usize = 0,
+    block_param: bool = false,
+    block_literal: bool = false,
+    /// Most positionals that still fit: one more must be TooManyParameters.
+    max_positionals: usize,
+};
+
+/// `def f(p0.., k0: 1.., &blk)` returning `p{last} + k{last}`, followed by a call
+/// passing 0..positionals-1; or `f do |p0..| 1 end` for block literals.
+fn slotShapeSource(shape: SlotShape, positionals: usize) ![]u8 {
+    const a = testing.allocator;
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer buf.deinit(a);
+    try buf.appendSlice(a, if (shape.block_literal) "f do |" else "def f(");
+    for (0..positionals) |i| try buf.print(a, "{s}p{d}", .{ if (i > 0) ", " else "", i });
+    for (0..shape.keywords) |i| try buf.print(a, ", k{d}: {d}", .{ i, i + 1 });
+    if (shape.block_param) try buf.appendSlice(a, ", &blk");
+    if (shape.block_literal) {
+        try buf.appendSlice(a, "|\n  1\nend\n");
+    } else {
+        try buf.print(a, ")\n  p{d}", .{positionals - 1});
+        if (shape.keywords > 0) try buf.print(a, " + k{d}", .{shape.keywords - 1});
+        try buf.appendSlice(a, "\nend\nf(");
+        for (0..positionals) |i| try buf.print(a, "{s}{d}", .{ if (i > 0) ", " else "", i });
+        try buf.appendSlice(a, ")\n");
+    }
+    return buf.toOwnedSlice(a);
+}
+
+test "Compiler Guardrail: Frame-slot check matches the real slot layout" {
+    const kw = 6;
+    const shapes = [_]SlotShape{
+        // Closure slot + positionals + block slot.
+        .{ .name = "positional only", .max_positionals = limits.MAX_ARGS - 1 },
+        .{ .name = "block literal", .block_literal = true, .max_positionals = limits.MAX_ARGS - 1 },
+        // ... + kwarg map + one virtual slot per keyword.
+        .{ .name = "positional + kwargs", .keywords = kw, .max_positionals = limits.MAX_ARGS - 2 - kw },
+        // &blk reuses the block slot, so it costs nothing extra.
+        .{ .name = "positional + kwargs + &blk", .keywords = kw, .block_param = true, .max_positionals = limits.MAX_ARGS - 2 - kw },
+    };
+    for (shapes) |shape| {
+        errdefer std.debug.print("slot shape '{s}' failed\n", .{shape.name});
+
+        // The largest accepted layout compiles (it used to panic computing the
+        // virtual keyword slots in a u8) and, for defs, binds every slot correctly.
+        const at_max = try slotShapeSource(shape, shape.max_positionals);
+        defer testing.allocator.free(at_max);
+        if (shape.block_literal) {
+            try compileOnly(at_max);
+        } else {
+            const expected = shape.max_positionals - 1 + shape.keywords;
+            try expectRunsTo(at_max, @floatFromInt(expected));
+        }
+
+        // One more positional is a clean compile error, not an overflow.
+        const over = try slotShapeSource(shape, shape.max_positionals + 1);
+        defer testing.allocator.free(over);
+        try testing.expectError(error.TooManyParameters, compileOnly(over));
+    }
+}
+
 test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wide" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -1247,9 +1610,9 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     var entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty;
     defer entries.deinit(testing.allocator);
 
-    // Generate a hash with 300 entries (exceeds 255 1-byte limit)
+    // One more entry than a u8 count operand can hold
     const val = try b.number("1", 0);
-    for (0..300) |i| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [10]u8 = undefined;
         const key_str = try std.fmt.bufPrint(&buf, "k{d}", .{i});
         const key = try b.stringNode(key_str, 0);
@@ -1257,7 +1620,7 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     }
 
     const span = try b.addHashEntries(entries.items);
-    const map_node = try b.hashLiteral(span, 0);
+    const map_node = try b.hashLiteral(span, 0, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1302,7 +1665,7 @@ test "Compiler: Deep namespace constant resolution does not leak memory" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     // The testing allocator will automatically panic if `emitVariableLoad` fails to free
@@ -1316,11 +1679,11 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // Generate 300 identifier nodes to breach MAX_SHORT_CONSTANTS (255)
+    // One more identifier than MAX_SHORT_CONSTANTS
     var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
-    for (0..300) |i| {
+    for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [16]u8 = undefined;
         const str = try std.fmt.bufPrint(&buf, "v{d}", .{i});
         const name_id = try b.intern(str);
@@ -1332,7 +1695,7 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     const span = try b.addNodes(elements.items);
     const tuple_node = try b.arrayLiteral(span, 0, 0);
 
-    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v299)|`
+    // Pass the massive array destructuring node as a parameter to a block: `do |(v0...v255)|`
     const block_node = try b.block(&.{tuple_node}, &.{}, 0, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
@@ -1410,6 +1773,23 @@ test "Compiler: op_switch table entries are emitted in strictly sorted order" {
     try testing.expectEqual(@as(f64, 30.0), val3);
 }
 
+test "Compiler: case with more than MAX_JUMP_TABLE_CASES literal conditions does not overflow" {
+    // The u16 condition counter used to overflow; now falls back to linear compares
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    defer buf.deinit(testing.allocator);
+    try buf.appendSlice(testing.allocator, "case 1\nwhen 1");
+    for (0..limits.MAX_JUMP_TABLE_CASES + 1) |_| try buf.appendSlice(testing.allocator, ",1");
+    try buf.appendSlice(testing.allocator, "\n  10\nend\n");
+    try expectRunsTo(buf.items, 10);
+}
+
+test "Compiler: case with duplicate literal keys keeps first-match order" {
+    // The VM binary-searches the jump table, so equal keys used to resolve to
+    // an arbitrary branch instead of the first `when`.
+    try expectRunsTo("case 1 when 1 then 10 when 1 then 20 end", 10);
+    try expectRunsTo("case \"b\" when \"a\", \"b\" then 1 when \"b\" then 2 else 3 end", 1);
+}
+
 test "Compiler: Constant Folding optimizer" {
     const source = "val = 10 * 5.0 + 2";
 
@@ -1422,7 +1802,7 @@ test "Compiler: Constant Folding optimizer" {
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(std.testing.allocator);
 
-    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1443,98 +1823,111 @@ test "Compiler: Constant Folding optimizer" {
     try std.testing.expect(!has_math);
 }
 
-test "Compiler: Jump patch alignments for nested A and (B or C)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    const A = try b.booleanNode(true, 0);
-    const B = try b.booleanNode(false, 0);
-    const C = try b.booleanNode(true, 0);
-
-    const b_or_c = try b.binary(.logical_or, B, C, 0);
-    const root = try b.binary(.logical_and, A, b_or_c, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
+/// The constants `source` compiles to (the main chunk's).
+fn compiledConstants(allocator: std.mem.Allocator, source: []const u8, out: *std.ArrayListUnmanaged(f64)) !void {
+    var vm = try VM.init(allocator, std.testing.io);
     defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(allocator);
+    var comp = Compiler.forDocument(allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
-    try comp.compile(root);
-
-    // Bytecode Alignment Walkthrough:
-    // 0: op_true (A)
-    // 1: op_jump_if_false (AND jump)
-    // 2-5: [4-byte offset]
-    // 6: op_pop (AND pop)
-    // 7: op_false (B)
-    // 8: op_jump_if_false (OR else_jump)
-    // 9-12: [4-byte offset]
-    // 13: op_jump (OR end_jump)
-    // 14-17: [4-byte offset]
-    // 18: op_pop (OR pop)
-    // 19: op_true (C)
-    // 20: op_return (Implicitly added by compile)
-
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
+    try comp.compile(doc.tree.root);
+    for (main_chunk.constants.items) |c| if (c.isNumber()) try out.append(allocator, c.asNumber());
 }
 
-test "Compiler: Jump patch alignments for nested A or (B and C)" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
+test "Compiler: a negated literal, and arithmetic on one, is a single constant" {
+    // `-5 * 2` is `(-5) * 2` to the parser, with a negation under the multiplication;
+    // the fold stopped at the negation, so 5 and 2 were constants and three ops ran.
+    const cases = [_]struct { src: []const u8, folded: f64 }{
+        .{ .src = "x = -5 * 2", .folded = -10 },
+        .{ .src = "x = -(3 + 4)", .folded = -7 },
+        .{ .src = "x = 2 - -3", .folded = 5 },
+        .{ .src = "x = --8", .folded = 8 },
+    };
+    for (cases) |case| {
+        var numbers: std.ArrayListUnmanaged(f64) = .empty;
+        defer numbers.deinit(std.testing.allocator);
+        try compiledConstants(std.testing.allocator, case.src, &numbers);
+        try std.testing.expectEqualSlices(f64, &.{case.folded}, numbers.items);
+    }
+}
 
-    const A = try b.booleanNode(false, 0);
-    const B = try b.booleanNode(true, 0);
-    const C = try b.booleanNode(true, 0);
+test "Compiler: equal literals share one constant slot" {
+    // Numbers, strings (by text) and symbols each have one slot however often they appear.
+    var numbers: std.ArrayListUnmanaged(f64) = .empty;
+    defer numbers.deinit(std.testing.allocator);
+    try compiledConstants(std.testing.allocator, "x = [1, 1, 1, 2.5, 2.5, -1, -1]", &numbers);
+    try std.testing.expectEqualSlices(f64, &.{ 1, 2.5, -1 }, numbers.items);
 
-    const b_and_c = try b.binary(.logical_and, B, C, 0);
-    const root = try b.binary(.logical_or, A, b_and_c, 0);
-
-    var vm = try VM.init(testing.allocator, testing.io);
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+    var doc = try Document.parse(std.testing.allocator, "x = [\"a\", \"a\", :s, :s, \"b\"]");
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+    var comp = Compiler.forDocument(std.testing.allocator, &doc, &main_chunk, &vm);
     defer comp.deinit();
-    try comp.compile(root);
+    try comp.compile(doc.tree.root);
+    var strings: usize = 0;
+    var symbols: usize = 0;
+    for (main_chunk.constants.items) |c| {
+        if (c.isString()) strings += 1;
+        if (c.isSymbol()) symbols += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), strings); // "a", "b" and the name "x"
+    try std.testing.expectEqual(@as(usize, 1), symbols);
+}
 
-    // Bytecode Alignment Walkthrough:
-    // 0: op_false (A)
-    // 1: op_jump_if_false (OR else_jump)
-    // 2-5: [4-byte offset]
-    // 6: op_jump (OR end_jump)
-    // 7-10: [4-byte offset]
-    // 11: op_pop (OR pop left)
-    // 12: op_true (B)
-    // 13: op_jump_if_false (AND jump)
-    // 14-17: [4-byte offset]
-    // 18: op_pop (AND pop left)
-    // 19: op_true (C)
-    // 20: op_return
+test "Compiler: Jump patch alignments for nested and/or" {
+    // Each jump carries a 4-byte offset; the listed opcodes must sit exactly at
+    // these offsets or a jump would land inside an operand.
+    const OpAt = struct { usize, chunk.OpCode };
+    const cases = [_]struct {
+        outer: ast.BinaryOp,
+        inner: ast.BinaryOp,
+        a: bool,
+        expected: []const OpAt,
+    }{
+        // A and (B or C)
+        .{ .outer = .logical_and, .inner = .logical_or, .a = true, .expected = &.{
+            .{ 0, .op_true },  .{ 1, .op_jump_if_false }, .{ 6, .op_pop },
+            .{ 7, .op_false }, .{ 8, .op_jump_if_false }, .{ 13, .op_jump },
+            .{ 18, .op_pop },  .{ 19, .op_true },         .{ 20, .op_return },
+        } },
+        // A or (B and C)
+        .{ .outer = .logical_or, .inner = .logical_and, .a = false, .expected = &.{
+            .{ 0, .op_false }, .{ 1, .op_jump_if_false }, .{ 6, .op_jump },
+            .{ 11, .op_pop },  .{ 12, .op_true },         .{ 13, .op_jump_if_false },
+            .{ 18, .op_pop },  .{ 19, .op_true },         .{ 20, .op_return },
+        } },
+    };
 
-    try testing.expectEqual(chunk.OpCode.op_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[1])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[11])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[12])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_false, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[18])));
-    try testing.expectEqual(chunk.OpCode.op_true, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[19])));
-    try testing.expectEqual(chunk.OpCode.op_return, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[20])));
+    for (cases) |c| {
+        var arena = std.heap.ArenaAllocator.init(testing.allocator);
+        defer arena.deinit();
+        var b = ast.Builder.init(arena.allocator());
+        defer b.deinit();
+
+        // Operands: A, B = !A, C = true
+        const lhs = try b.booleanNode(c.a, 0);
+        const inner = try b.binary(c.inner, try b.booleanNode(!c.a, 0), try b.booleanNode(true, 0), 0);
+        const root = try b.binary(c.outer, lhs, inner, 0);
+
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        var out_chunk = chunk.Chunk.init();
+        defer out_chunk.free(testing.allocator);
+
+        var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
+        defer comp.deinit();
+        try comp.compile(root);
+
+        for (c.expected) |e| {
+            try testing.expectEqual(e[1], @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[e[0]])));
+        }
+    }
 }
 
 test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
@@ -1564,7 +1957,7 @@ test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
 
     try comp.compile(doc.tree.root);
@@ -1579,4 +1972,298 @@ test "Compiler: Exhaustive runtime execution of Pratt parser logic jumps" {
     try testing.expectEqual(true, arr_obj.items.items[2].asBool());
     try testing.expectEqual(false, arr_obj.items.items[3].asBool());
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
+}
+
+// --- Non-local jumps out of begin/rescue/ensure must unwind the handler ---
+
+test "Compiler: return inside begin/rescue pops the handler" {
+    const source =
+        \\def f
+        \\  begin
+        \\    return 1
+        \\  rescue => e
+        \\    puts "x"
+        \\  end
+        \\end
+        \\f()
+        \\[1].fetch(99).foo
+    ;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    // A clean uncaught runtime error, not a jump into the stale rescue body
+    try testing.expectEqual(.runtime_error, res.status);
+}
+
+test "Compiler: break/next out of begin/rescue pops the handler" {
+    // The inner rescue must be gone once control leaves it, so only the outer
+    // rescue may catch the later error (hits == 1, not 100+). `{0s}` is the
+    // looping construct, `{1s}` the jump keyword.
+    const template =
+        \\def g
+        \\  hits = 0
+        \\  begin
+        \\    {0s}
+        \\      begin
+        \\        {1s}
+        \\      rescue => e
+        \\        hits += 100
+        \\      end
+        \\    end
+        \\    [1].fetch(99).foo
+        \\  rescue => e
+        \\    hits += 1
+        \\  end
+        \\  hits
+        \\end
+        \\g()
+    ;
+    // A `while` loop jumps within the frame; a block returns from its closure
+    const loops = .{ "i = 0\n    while i < 3\n      i += 1", "[1, 2, 3].each do |x|" };
+    inline for (loops) |loop| {
+        inline for (.{ "break", "next" }) |keyword| {
+            expectRunsTo(std.fmt.comptimePrint(template, .{ loop, keyword }), 1) catch |err| {
+                std.debug.print("rescue case '{s}' / '{s}' failed\n", .{ loop, keyword });
+                return err;
+            };
+        }
+    }
+}
+
+test "Compiler: return and break out of begin run the ensure body" {
+    const source =
+        \\def f(log)
+        \\  begin
+        \\    return 1
+        \\  ensure
+        \\    log.push(1)
+        \\  end
+        \\end
+        \\def g(log)
+        \\  while true
+        \\    begin
+        \\      break
+        \\    rescue => e
+        \\      log.push(100)
+        \\    ensure
+        \\      log.push(10)
+        \\    end
+        \\  end
+        \\  log
+        \\end
+        \\log = []
+        \\f(log)
+        \\g(log)
+        \\log.size * 1000 + log[0] + log[1]
+    ;
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, source);
+    try testing.expectEqual(.ok, res.status);
+    try testing.expectEqual(@as(f64, 2011), res.top.asNumber());
+}
+
+// --- GC rooting of functions under construction ---
+
+/// A swept ObjFunction is dropped from the GC's tracking list but its pointer
+/// stays in the constant pool, so "every function constant is still tracked"
+/// detects the use-after-free deterministically (the freed slot is often
+/// rewritten by the compiler, so behaviour alone can look fine).
+fn expectFunctionsTracked(vm: *VM, c: *const chunk.Chunk) !void {
+    for (c.constants.items) |val| {
+        if (!val.isObject() or val.asObj().obj_type != .function) continue;
+        const func: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", val.asObj()));
+        var tracked = false;
+        for (vm.gc.functions.items) |f| {
+            if (f == func) tracked = true;
+        }
+        try testing.expect(tracked);
+        if (func.chunk) |c_ptr| try expectFunctionsTracked(vm, @ptrCast(@alignCast(c_ptr)));
+    }
+}
+
+test "Compiler: functions stay rooted while def/attr macros allocate under stress GC" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // `audit_gc_greet` is a top-level def whose name is not interned beforehand,
+    // so allocating its name string collects while the ObjFunction is fresh.
+    // (Method names are interned by makeMethodNameConstant first and can't hit it.)
+    const source =
+        \\def audit_gc_greet(who)
+        \\  "hi " + who
+        \\end
+        \\class Person
+        \\  attr_accessor :name
+        \\  attr_reader :age
+        \\  def initialize(name, age)
+        \\    @name = name
+        \\    @age = age
+        \\  end
+        \\  def label(suffix)
+        \\    "person" + suffix
+        \\  end
+        \\end
+        \\p = Person.new("Leo", 30)
+        \\p.name = "Leon"
+        \\[p.name, p.age, p.label("!"), audit_gc_greet("x")]
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+
+    // Collect on every allocation: the function's name string and the child
+    // chunk's constants used to be allocated while the ObjFunction was unrooted.
+    vm.gc.stress = true;
+    const compile_result = comp.compile(doc.tree.root);
+    vm.gc.stress = false;
+    try compile_result;
+    try expectFunctionsTracked(&vm, &out_chunk);
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    const arr = vm.stack[vm.stack_top - 1].asArray();
+    try testing.expectEqualStrings("Leon", arr.items.items[0].asString().chars);
+    try testing.expectEqual(@as(f64, 30), arr.items.items[1].asNumber());
+    try testing.expectEqualStrings("person!", arr.items.items[2].asString().chars);
+    try testing.expectEqualStrings("hi x", arr.items.items[3].asString().chars);
+}
+
+test "Compiler: assignment inside a def makes a method local, never a top-level write" {
+    // Methods may read top-level variables, but a plain assignment inside a def (or a block
+    // nested in one) always creates a local. Before, it overwrote a top-level variable of the
+    // same name, but only when the def came after that variable in the source.
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "x = 1\ndef f\n  x = 2\nend\nf()\nx", .expected = 1 },
+        .{ .src = "def f\n  x = 2\nend\nx = 1\nf()\nx", .expected = 1 },
+        .{ .src = "x = 1\ndef f\n  x = 2\n  x * 10\nend\nf()", .expected = 20 },
+        .{ .src = "a = 1\ndef g\n  a, b = [5, 6]\n  a + b\nend\ng() * 100 + a", .expected = 1101 },
+        .{ .src = "e = 7\ndef h\n  begin\n    raise \"boom\"\n  rescue => e\n    1\n  end\nend\nh()\ne", .expected = 7 },
+        .{ .src = "n = 5\ndef bump\n  n = 0\n  n += 3\n  n\nend\nbump() * 10 + n", .expected = 35 },
+        .{ .src = "x = 1\ndef f\n  [1].each { |i| x = 99 }\n  0\nend\nf()\nx", .expected = 1 },
+        .{ .src = "count = 3\nclass C\n  def run\n    count = 100\n    count\n  end\nend\nc = C.new\nc.run + count", .expected = 103 },
+        // Unchanged: reads of top-level variables, top-level blocks/lambdas writing them,
+        // blocks updating their def's own locals, and $globals.
+        .{ .src = "w = 5\ndef area\n  w * 2\nend\narea()", .expected = 10 },
+        .{ .src = "total = 0\n[1, 2, 3].each { |i| total = total + i }\ntotal", .expected = 6 },
+        .{ .src = "total = 1\nadd = ->(n) { total = total + n }\nadd.call(10)\ntotal", .expected = 11 },
+        .{ .src = "def acc\n  sum = 0\n  [1, 2, 3].each { |i| sum = sum + i }\n  sum\nend\nacc()", .expected = 6 },
+        .{ .src = "$g = 1\ndef setg\n  $g = 2\nend\nsetg()\n$g", .expected = 2 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
+
+test "Compiler: destructured block parameters shadow outer variables like plain ones" {
+    // `|(x, y)|` used to write through to an outer `x` (as an upvalue) instead of binding a
+    // block-local parameter, so the outer variable changed after the loop.
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "x = 5\n[[1, 2]].each { |(x, y)| x }\nx", .expected = 5 },
+        .{ .src = "def f\n  x = 5\n  [[1, 2]].each { |(x, y)| x }\n  x\nend\nf()", .expected = 5 },
+        .{ .src = "x = 7\ny = 8\n[[1, [2, 3]]].each { |(x, (y, z))| x }\nx * 10 + y", .expected = 78 },
+        // The parameters themselves are bound inside the block.
+        .{ .src = "s = 0\n[[1, [2, 3]], [4, [5, 6]]].each { |(a, (b, c))| s = s + a * 100 + b * 10 + c }\ns", .expected = 579 },
+        .{ .src = "[[1, 2]].map { |(x, y)| x * 10 + y }[0]", .expected = 12 },
+        // Unchanged reference behaviour of a plain parameter.
+        .{ .src = "x = 5\n[1].each { |x| x }\nx", .expected = 5 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
+
+test "Compiler: `case` picks the `when ... then` branch for constants and names" {
+    const cases = [_]struct { src: []const u8, expected: f64 }{
+        .{ .src = "case (1..2)\nwhen Range then 1\nelse 2\nend", .expected = 1 },
+        .{ .src = "K = 3\ncase 3\nwhen 1 then 10\nwhen K then 30\nend", .expected = 30 },
+        .{ .src = "k = 4\ncase 4\nwhen k then 40\nelse 0\nend", .expected = 40 },
+        .{ .src = "case \"s\"\nwhen Array then 1\nwhen String then 2\nend", .expected = 2 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script:\n{s}\n", .{case.src});
+        try expectRunsTo(case.src, case.expected);
+    }
+}
+
+fn expectCompileError(source: []const u8, expected: anyerror, line: u32, col: u32, message: []const u8) !void {
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+
+    try testing.expectError(expected, comp.compile(doc.tree.root));
+    const diagnostic = comp.errorDiagnostic() orelse return error.MissingDiagnostic;
+    try testing.expectEqualStrings(message, diagnostic.message);
+    try testing.expectEqual(line, doc.line_index.getLine(diagnostic.loc.offset) + 1);
+    try testing.expectEqual(col, doc.line_index.getUtf8Column(diagnostic.loc.offset) + 1);
+}
+
+test "Compiler: a failed compile reports where and why" {
+    // Callers could only print the error name, such as "error.ProtectedSymbol".
+    try expectCompileError("w = 1\ncube = 5", error.ProtectedSymbol, 2, 1, "'cube' is a built-in and can't be assigned");
+    try expectCompileError("def puts(x)\n  x\nend", error.ProtectedSymbol, 1, 1, "'puts' is a built-in and can't be redefined");
+    // Inside a def (a child compiler), the error still reaches the caller's compiler.
+    try expectCompileError("def f\n  x = 1\n  sphere = 2\nend", error.ProtectedSymbol, 3, 3, "'sphere' is a built-in and can't be assigned");
+    try expectCompileError("class Math\nend", error.ProtectedSymbol, 1, 1, "'Math' is a built-in and can't be redefined");
+
+    const many_args = comptime blk: {
+        var src: []const u8 = "f(";
+        for (0..limits.MAX_ARGS) |_| src = src ++ "1, ";
+        break :blk src ++ "1)";
+    };
+    try expectCompileError(many_args, error.TooManyArguments, 1, 1, "a call takes at most 255 arguments");
+}
+
+/// Compiles the single expression `build` makes and returns the compile error's message.
+fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex) ![]const u8 {
+    var b = ast.Builder.init(testing.allocator);
+    defer b.deinit();
+    const root = try build(&b);
+    const symbols = try testing.allocator.alloc(resolver.ResolvedSymbol, b.tree.nodes.items.len);
+    defer testing.allocator.free(symbols);
+    @memset(symbols, .{ .kind = .unresolved, .index = 0 });
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &b.tree, symbols, &.{0}, &out_chunk, &vm);
+    defer comp.deinit();
+    try testing.expectError(error.UnknownNode, comp.compile(root));
+    return testing.allocator.dupe(u8, comp.errorDiagnostic().?.message);
+}
+
+fn straySplat(b: *ast.Builder) anyerror!ast.NodeIndex {
+    return b.splatExpr(try b.number("1", 0), 0);
+}
+
+test "Compiler: a node it can't compile is an error, not nil" {
+    // Unhandled nodes used to compile to nil: a half-built `for` parsed and did nothing.
+    const splat_msg = try compileFailure(straySplat);
+    defer testing.allocator.free(splat_msg);
+    try testing.expectEqualStrings("'*' and '**' only spread values inside an array, a hash or a call's arguments", splat_msg);
+
+    // nil and doc comments still compile, now on purpose.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const res = try run(&vm, "## @label size\nx = nil");
+    try testing.expectEqual(.ok, res.status);
 }

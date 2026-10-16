@@ -1,65 +1,55 @@
-# kupcad-vscode README
+# KupCAD for VS Code
 
-This is the README for your extension "kupcad-vscode". After writing up a brief description, we recommend including the following sections.
+Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, backed by the
+`kupcad lsp` language server.
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+* Syntax highlighting and language configuration for `.kup`.
+* Diagnostics and hover information from the language server.
+* `KupCAD: Open Viewer` opens a viewport panel that connects to the language server's local
+  WebSocket and receives the current model as GLB whenever the document changes.
 
 ## Requirements
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+A `kupcad` executable (built from the repository: `cd core && zig build`). The extension looks for it
+in this order:
+
+1. the `kupcad.serverPath` setting,
+2. `kupcad` on `PATH`,
+3. the monorepo development build at `core/zig-out/bin/kupcad` (only when running from the repo).
 
 ## Extension Settings
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+* `kupcad.serverPath` (machine scope): absolute path to the `kupcad` executable. Empty means "look it
+  up as above". Machine scope means a workspace's `.vscode/settings.json` cannot point the extension at
+  an arbitrary binary.
+* `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` = always
+  pick a free port). If the port is taken, the server falls back to a free one and the extension follows
+  it automatically.
 
-For example:
+## Security notes
 
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+* The language server evaluates documents on a read-only virtual filesystem: a `.kup` file cannot write
+  to disk (`export_*`) just by being opened.
+* The viewport socket only listens on `127.0.0.1` and only accepts connections whose `Origin` is a
+  VS Code webview (or the local dev server during development); the webview itself runs under a strict,
+  nonce-based Content Security Policy.
 
 ## Known Issues
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+* The viewport webview front-end is a stub: the panel opens, receives the socket URL, and the server
+  streams models, but there is no renderer yet.
+* B-Rep (`CAD.config(engine: :brep)`) is in progress; use the default Manifold engine for previews.
 
-## Release Notes
+## Development
 
-Users appreciate release notes as you update your extension.
+```sh
+pnpm install
+pnpm --filter @kupcad/vscode build     # bundles dist/extension.cjs and dist-webview/
+pnpm --filter @kupcad/vscode watch     # rebuild on change
+pnpm --filter @kupcad/vscode test      # vitest unit tests (webview helpers)
+```
 
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code.  Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux)
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux)
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+`test/extension.test.js` is a VS Code-hosted test (`@vscode/test-cli`, see `.vscode-test.mjs`) and is
+excluded from vitest.

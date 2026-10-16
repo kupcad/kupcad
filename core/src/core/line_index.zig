@@ -1,3 +1,6 @@
+//! `LineIndex`: the start offset of every line of a source, for turning byte offsets into
+//! lines and columns, in UTF-8 and in the UTF-16 units LSP clients count.
+
 const std = @import("std");
 
 /// The LineIndex provides O(log N) lookups for converting flat byte offsets
@@ -26,6 +29,11 @@ pub const LineIndex = struct {
         };
     }
 
+    /// Frees the line table (`source` is borrowed). Not needed for arena-backed indexes.
+    pub fn deinit(self: LineIndex, allocator: std.mem.Allocator) void {
+        allocator.free(self.line_starts);
+    }
+
     /// Finds the 0-indexed line number for a given byte offset using binary search.
     pub fn getLine(self: *const LineIndex, offset: u32) u32 {
         var left: usize = 0;
@@ -42,21 +50,21 @@ pub const LineIndex = struct {
         return @intCast(left - 1);
     }
 
-    /// Extracts a specific line of text from the source code (1-based index)
-    pub fn getSourceLine(source: []const u8, target_line: u32) []const u8 {
-        var line_num: u32 = 1;
-        var iter = std.mem.splitScalar(u8, source, '\n');
-        while (iter.next()) |line| {
-            if (line_num == target_line) {
-                var trimmed = line;
-                if (trimmed.len > 0 and trimmed[trimmed.len - 1] == '\r') {
-                    trimmed = trimmed[0 .. trimmed.len - 1];
-                }
-                return trimmed;
-            }
-            line_num += 1;
-        }
-        return "";
+    /// The text of 0-based `line` of `source` (the text this index was built from), without
+    /// its line ending; "" past the end. Constant time: a report quotes one line per
+    /// finding, and scanning from the top each time made big reports quadratic.
+    pub fn lineText(self: *const LineIndex, source: []const u8, line: u32) []const u8 {
+        if (line >= self.line_starts.len) return "";
+        const start = self.line_starts[line];
+        const end = if (line + 1 < self.line_starts.len) self.line_starts[line + 1] else source.len;
+        return std.mem.trimEnd(u8, source[start..end], "\r\n");
+    }
+
+    /// Where `offset` is as compilers print it: the 1-based line and 1-based UTF-8 column
+    /// (`file:line:column`). The terminal report, `--format json` and the browser build
+    /// each worked it out themselves.
+    pub fn humanPosition(self: *const LineIndex, offset: u32) struct { line: u32, column: u32 } {
+        return .{ .line = self.getLine(offset) + 1, .column = self.getUtf8Column(offset) + 1 };
     }
 
     /// Returns the 0-indexed UTF-8 byte column.

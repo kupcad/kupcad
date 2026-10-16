@@ -1,0 +1,354 @@
+//! Runs the built `kupcad` binary and checks what a shell or CI job sees: the exit
+//! status and the text on stdout/stderr. Unit tests can't catch a command that prints an
+//! error and then exits 0, which is exactly the bug class these guard.
+
+const std = @import("std");
+const testing = std.testing;
+const options = @import("cli_test_options");
+
+const VALID_SCRIPT = "cube(10)\n";
+
+const Run = struct {
+    code: u8,
+    stdout: []u8,
+    stderr: []u8,
+
+    fn deinit(self: Run) void {
+        testing.allocator.free(self.stdout);
+        testing.allocator.free(self.stderr);
+    }
+};
+
+/// Runs `kupcad args...` with `cwd` as its working directory, in the test's own
+/// environment without the colour variables: the developer's shell (CLICOLOR_FORCE=1 is
+/// common) used to colour the piped output these tests read.
+fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR" }) |name| _ = env.swapRemove(name);
+    return kupcadIn(cwd, args, &env);
+}
+
+fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.Environ.Map) !Run {
+    // The build hands us a path relative to the build root; the child runs elsewhere.
+    const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
+    defer testing.allocator.free(exe);
+    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    defer argv.deinit(testing.allocator);
+    try argv.append(testing.allocator, exe);
+    try argv.appendSlice(testing.allocator, args);
+    const res = try std.process.run(testing.allocator, testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .environ_map = env });
+    const code: u8 = switch (res.term) {
+        .exited => |c| c,
+        else => 255,
+    };
+    return .{ .code = code, .stdout = res.stdout, .stderr = res.stderr };
+}
+
+/// A temp dir holding `valid.kup` and one script per kind of error; tests run kupcad
+/// inside it.
+const Sandbox = struct {
+    tmp: testing.TmpDir,
+    path: [:0]u8,
+
+    fn init() !Sandbox {
+        var tmp = testing.tmpDir(.{});
+        errdefer tmp.cleanup();
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "valid.kup", .data = VALID_SCRIPT });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "semantic_error.kup", .data = "f = ->(x) { break x }\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "syntax_error.kup", .data = "x = )\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "compile_error.kup", .data = "cube = 5\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "class.kup", .data = "class Foo\n  BAR = 7\nend\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "unused.kup", .data = "x = 1\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "fixme.kup", .data = "spare = 1\ncube(1)\n" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "strict.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "quiet.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = "typo.json", .data = "{\n  \"lint\": {\n    \"unused-variabel\": \"off\"\n  }\n}" });
+        const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+        return .{ .tmp = tmp, .path = path };
+    }
+
+    fn deinit(self: *Sandbox) void {
+        testing.allocator.free(self.path);
+        self.tmp.cleanup();
+    }
+};
+
+const Expect = struct {
+    args: []const []const u8,
+    code: u8,
+    /// Must appear in stdout or stderr.
+    contains: ?[]const u8 = null,
+    /// Must appear in neither (e.g. an error trace or a false "Success").
+    absent: ?[]const u8 = null,
+};
+
+fn expectRuns(cases: []const Expect) !void {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    for (cases) |case| {
+        const run = try kupcad(sb.path, case.args);
+        defer run.deinit();
+        errdefer {
+            std.debug.print("$ kupcad", .{});
+            for (case.args) |arg| std.debug.print(" {s}", .{arg});
+            std.debug.print("\nexit {d}\nstdout:\n{s}\nstderr:\n{s}\n", .{ run.code, run.stdout, run.stderr });
+        }
+        try testing.expectEqual(case.code, run.code);
+        if (case.contains) |needle| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) != null or std.mem.indexOf(u8, run.stderr, needle) != null);
+        }
+        if (case.absent) |needle| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) == null and std.mem.indexOf(u8, run.stderr, needle) == null);
+        }
+    }
+}
+
+test "kupcad: help, version and unknown commands" {
+    try expectRuns(&.{
+        .{ .args = &.{}, .code = 1, .contains = "Usage: kupcad <command>" },
+        .{ .args = &.{"--help"}, .code = 0, .contains = "Commands:" },
+        .{ .args = &.{"-h"}, .code = 0, .contains = "  pkg" },
+        .{ .args = &.{"help"}, .code = 0, .contains = "  watch" },
+        .{ .args = &.{"--version"}, .code = 0, .contains = "kupcad " ++ options.version ++ "\n" },
+        .{ .args = &.{"-V"}, .code = 0, .contains = options.version },
+        .{ .args = &.{"frobnicate"}, .code = 1, .contains = "Unknown command 'frobnicate'" },
+        // Per-command help: `check --help` used to try to read a file named "--help".
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "Usage: kupcad check", .absent = "Could not read" },
+        .{ .args = &.{ "check", "valid.kup", "-h" }, .code = 0, .contains = "Usage: kupcad check", .absent = "Success" },
+        .{ .args = &.{ "build", "--help" }, .code = 0, .contains = "-p, --param <name=value>" },
+        .{ .args = &.{ "fmt", "--help" }, .code = 0, .contains = "Usage: kupcad fmt" },
+        .{ .args = &.{ "doc", "-h" }, .code = 0, .contains = "Usage: kupcad doc" },
+        .{ .args = &.{ "watch", "--help" }, .code = 0, .contains = "Usage: kupcad watch" },
+        .{ .args = &.{ "pkg", "--help" }, .code = 0, .contains = "add <alias>=<url>" },
+        .{ .args = &.{ "pkg", "add", "--help" }, .code = 0, .contains = "Usage: kupcad pkg" },
+        .{ .args = &.{ "lsp", "--help" }, .code = 0, .contains = "Usage: kupcad lsp" },
+        .{ .args = &.{ "dev", "-h" }, .code = 0, .contains = "Usage: kupcad dev" },
+        .{ .args = &.{"--help"}, .code = 0, .contains = "Run 'kupcad <command> --help'" },
+    });
+}
+
+test "kupcad: every command exits non-zero when it fails" {
+    // fmt, doc, a bare/unknown pkg command and check on a missing file all used to exit 0.
+    try expectRuns(&.{
+        .{ .args = &.{"fmt"}, .code = 1 },
+        .{ .args = &.{ "fmt", "missing.kup" }, .code = 1 },
+        .{ .args = &.{"doc"}, .code = 1, .contains = "Missing input file path" },
+        .{ .args = &.{ "doc", "missing.kup" }, .code = 1, .contains = "Could not read 'missing.kup'" },
+        .{ .args = &.{ "check", "missing.kup" }, .code = 1, .absent = "Success" },
+        .{ .args = &.{"pkg"}, .code = 1, .contains = "Usage: kupcad pkg <init|add|install|prune|doctor>" },
+        .{ .args = &.{ "pkg", "frobnicate" }, .code = 1, .contains = "Unknown pkg command 'frobnicate'", .absent = "ManifestNotFound" },
+        .{ .args = &.{"watch"}, .code = 1, .contains = "Missing input file path" },
+        .{ .args = &.{"dev"}, .code = 1 },
+        .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },
+        .{ .args = &.{ "build", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{ "build", "valid.kup", "-o" }, .code = 1, .contains = "Missing output path after -o" },
+        // An option a command doesn't take is an error with its usage, not a file path.
+        .{ .args = &.{ "check", "valid.kup", "--bogus" }, .code = 1, .contains = "Unknown option '--bogus'\n\nUsage: kupcad check", .absent = "Could not read" },
+        .{ .args = &.{ "fmt", "--bogus", "valid.kup" }, .code = 1, .contains = "Unknown option '--bogus'" },
+        .{ .args = &.{ "fmt", "--check", "--write", "valid.kup" }, .code = 1, .contains = "--check and --write can't be used together" },
+        .{ .args = &.{ "fmt", "--check", "syntax_error.kup" }, .code = 1, .contains = "has syntax errors" },
+        .{ .args = &.{"check"}, .code = 1, .contains = "Missing file path\n\nUsage: kupcad check" },
+    });
+}
+
+test "kupcad: errors found in a file fail the command and are counted" {
+    // check printed a resolver error but summarised "0 errors" and exited 0, and fmt
+    // exited 0 on a file it could not format: each command's walk overwrote the count
+    // its per-file callback had kept. build printed "Build failed: 0 syntax errors".
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "semantic_error.kup" }, .code = 1, .contains = "1 file inspected, 1 error, 1 warning, 0 info detected." },
+        .{ .args = &.{ "check", "syntax_error.kup" }, .code = 1, .contains = "Invalid expression starting with ')'" },
+        .{ .args = &.{ "fmt", "syntax_error.kup" }, .code = 1 },
+        .{ .args = &.{ "build", "semantic_error.kup", "-o", "out.stl" }, .code = 1, .contains = "Cannot use 'break' outside of a loop" },
+        // A compile error is found by check too, not only when building.
+        .{ .args = &.{ "check", "compile_error.kup" }, .code = 1, .contains = "'cube' is a built-in and can't be assigned" },
+        .{ .args = &.{ "build", "compile_error.kup", "-o", "out.stl" }, .code = 1, .contains = "compile_error.kup:1:1:" },
+    });
+}
+
+test "kupcad: commands succeed with exit 0 on valid input" {
+    try expectRuns(&.{
+        // dev never freed its compiler, so a script with a class reported a leak.
+        .{ .args = &.{ "dev", "disasm", "class.kup" }, .code = 0, .absent = "leaked" },
+        .{ .args = &.{ "dev", "bench", "class.kup" }, .code = 0, .absent = "leaked" },
+        .{ .args = &.{ "fmt", "valid.kup" }, .code = 0, .contains = "cube(10)" },
+        .{ .args = &.{ "fmt", "--check", "valid.kup" }, .code = 0 },
+        .{ .args = &.{ "doc", "valid.kup" }, .code = 0 },
+        .{ .args = &.{ "check", "valid.kup" }, .code = 0, .contains = "Success" },
+        .{ .args = &.{ "build", "valid.kup", "-o", "out.stl" }, .code = 0, .contains = "Successfully built out.stl" },
+    });
+}
+
+test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for them" {
+    // check and build wrote ANSI escape codes into pipes and log files.
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const commands = [_][]const []const u8{
+        &.{ "check", "semantic_error.kup" },
+        &.{ "check", "valid.kup" },
+        &.{ "build", "syntax_error.kup", "-o", "out.stl" },
+    };
+    for (commands) |args| {
+        errdefer std.debug.print("$ kupcad {s}\n", .{args[0]});
+        const plain = try kupcad(sb.path, args);
+        defer plain.deinit();
+        try testing.expect(std.mem.indexOfScalar(u8, plain.stdout, 0x1b) == null);
+        try testing.expect(std.mem.indexOfScalar(u8, plain.stderr, 0x1b) == null);
+    }
+
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("CLICOLOR_FORCE", "1");
+    const forced = try kupcadIn(sb.path, &.{ "check", "semantic_error.kup" }, &env);
+    defer forced.deinit();
+    try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 error") != null);
+}
+
+test "kupcad: check names each finding's rule, at the level .kupcad.json gives it" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "unused.kup" }, .code = 0, .contains = "Unused variable 'x'. Prefix with '_' if intentional. [unused-variable]" },
+        .{ .args = &.{ "check", "--config", "strict.json", "unused.kup" }, .code = 1, .contains = "unused.kup:1:1: E: Unused variable 'x'" },
+        .{ .args = &.{ "check", "--config", "quiet.json", "unused.kup" }, .code = 0, .contains = "Success" },
+        // A mistyped rule used to be ignored, leaving it on.
+        .{ .args = &.{ "check", "--config", "typo.json", "unused.kup" }, .code = 1, .contains = "Error: typo.json:3:" },
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "  unused-variable    A variable assigned and never read" },
+    });
+}
+
+test "kupcad: check --fix doesn't print what the script prints" {
+    // Telling whether a fix changes the model runs the script, and its `puts` reached the
+    // terminal (and, in the test suite, corrupted the test runner's protocol).
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "chatty.kup", .data = "spare = 1\nputs(\"from the script\")\ninspect(cube(1))\ncube(1)\n" });
+    const run = try kupcad(sb.path, &.{ "check", "--fix", "chatty.kup" });
+    defer run.deinit();
+    errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+    try testing.expectEqual(@as(u8, 0), run.code);
+    try testing.expect(std.mem.indexOf(u8, run.stderr, "Fixed 1 problem") != null);
+    try testing.expect(std.mem.indexOf(u8, run.stdout, "from the script") == null and std.mem.indexOf(u8, run.stderr, "from the script") == null);
+    try testing.expect(std.mem.indexOf(u8, run.stdout, "Geometry") == null);
+    const fixed = try sb.tmp.dir.readFileAlloc(testing.io, "chatty.kup", testing.allocator, .limited(1024));
+    defer testing.allocator.free(fixed);
+    try testing.expect(std.mem.startsWith(u8, fixed, "_spare = 1\n"));
+}
+
+test "kupcad: dev bench prints its report, not what the script prints" {
+    // Each timed run (and the profiled one) printed the script's puts, inspect and
+    // benchmark output into the report, once per run.
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "chatty.kup", .data = "puts(\"from the script\")\ninspect(cube(1))\nbenchmark(\"inner\") { cube(2) }\ncube(1)\n" });
+    inline for (.{ &[_][]const u8{ "dev", "bench", "chatty.kup", "--repeat", "2" }, &[_][]const u8{ "dev", "bench", "chatty.kup", "--json", "--no-profile" } }) |args| {
+        const run = try kupcad(sb.path, args);
+        defer run.deinit();
+        errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+        try testing.expectEqual(@as(u8, 0), run.code);
+        for ([_][]const u8{ "from the script", "Geometry", "inner" }) |noise| {
+            try testing.expect(std.mem.indexOf(u8, run.stdout, noise) == null and std.mem.indexOf(u8, run.stderr, noise) == null);
+        }
+    }
+    // The JSON report is the whole of stdout, so it parses.
+    const json_run = try kupcad(sb.path, &.{ "dev", "bench", "chatty.kup", "--json", "--no-profile" });
+    defer json_run.deinit();
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json_run.stdout, .{});
+    defer parsed.deinit();
+    try testing.expect(parsed.value.object.get("evaluated").?.bool);
+}
+
+test "kupcad: check run in a subfolder uses the project's .kupcad.json above it" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "parts");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/unused.kup", .data = "x = 1\ncube(1)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
+    const parts = try std.fs.path.join(testing.allocator, &.{ sb.path, "parts" });
+    defer testing.allocator.free(parts);
+
+    // It used to read .kupcad.json from the current directory only.
+    const run = try kupcad(parts, &.{ "check", "unused.kup" });
+    defer run.deinit();
+    try testing.expectEqual(@as(u8, 1), run.code);
+    const report = try std.mem.concat(testing.allocator, u8, &.{ run.stdout, run.stderr });
+    defer testing.allocator.free(report);
+    try testing.expect(std.mem.indexOf(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
+}
+
+test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+
+    const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
+    defer created.deinit();
+    try testing.expectEqual(@as(u8, 0), created.code);
+    const before = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(before);
+
+    // It used to save the dependency first, so every later install failed on it too.
+    const added = try kupcadIn(sb.path, &.{ "pkg", "add", "missing=file:/nonexistent-kupcad-test/pkg.tar.gz" }, &env);
+    defer added.deinit();
+    try testing.expectEqual(@as(u8, 1), added.code);
+    const after = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(after);
+    try testing.expectEqualStrings(before, after);
+
+    // A self-hosted server must say which API it speaks; it used to be taken for Gitea.
+    const unknown = try kupcadIn(sb.path, &.{ "pkg", "add", "parts=git.example.com/team/parts" }, &env);
+    defer unknown.deinit();
+    try testing.expectEqual(@as(u8, 1), unknown.code);
+    try testing.expect(std.mem.indexOf(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
+}
+
+test "kupcad: build of a script in a subfolder imports its neighbours" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "parts");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/hw.kup", .data = "def bolt(l)\n  cylinder(r: 1, h: l)\nend\nexport bolt\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/main.kup", .data = "import { bolt } from \"./hw.kup\"\nbolt(5)\n" });
+    // "./hw.kup" used to be read from the current directory.
+    const run = try kupcad(sb.path, &.{ "build", "parts/main.kup", "-o", "out.stl" });
+    defer run.deinit();
+    errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+    try testing.expectEqual(@as(u8, 0), run.code);
+}
+
+test "kupcad: check --fix rewrites what it can fix and reports the rest" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .contains = "Fixed 1 problem in fixme.kup" },
+        // The file now says the variable is unused on purpose.
+        .{ .args = &.{ "check", "fixme.kup" }, .code = 0, .contains = "Success" },
+        .{ .args = &.{ "check", "--fix", "fixme.kup" }, .code = 0, .absent = "Fixed" },
+        .{ .args = &.{ "check", "--help" }, .code = 0, .contains = "--fix" },
+    });
+}
+
+test "kupcad: check --format json and sarif write one document to stdout" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    inline for (.{ "json", "sarif" }) |format| {
+        const run = try kupcad(sb.path, &.{ "check", "--format", format, "unused.kup" });
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        // stdout is the document alone: it parses, and names the finding's rule.
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, run.stdout, .{});
+        defer parsed.deinit();
+        try testing.expect(std.mem.indexOf(u8, run.stdout, "\"unused-variable\"") != null);
+    }
+}
+
+test "kupcad: check --max-warnings fails a run with more warnings than that" {
+    try expectRuns(&.{
+        .{ .args = &.{ "check", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "Failed: 1 warning, more than --max-warnings 0." },
+        .{ .args = &.{ "check", "--max-warnings", "1", "unused.kup" }, .code = 0 },
+        .{ .args = &.{ "check", "--format", "json", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "1 warning, more than --max-warnings 0" },
+        .{ .args = &.{ "check", "--format", "xml", "unused.kup" }, .code = 1, .contains = "--format is text, json or sarif, not 'xml'" },
+        .{ .args = &.{ "check", "--max-warnings", "many", "unused.kup" }, .code = 1, .contains = "--max-warnings takes a whole number" },
+        .{ .args = &.{ "check", "unused.kup", "--format" }, .code = 1, .contains = "Missing value after '--format'" },
+    });
+}

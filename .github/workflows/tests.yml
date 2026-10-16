@@ -11,12 +11,31 @@ permissions:
 
 jobs:
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     concurrency:
-      group: test-${{ github.workflow }}-${{ github.ref }}
+      group: test-${{ github.workflow }}-${{ github.ref }}-${{ matrix.name }}
       cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Debug, with UBSan on the C++ kernel.
+          - name: linux debug
+            os: ubuntu-latest
+            core_task: test:core
+            wasm_task: test:wasm
+          # The mode the released binaries are built in, which nothing tested.
+          - name: linux release-safe
+            os: ubuntu-latest
+            core_task: test:core:safe
+            wasm_task: test:wasm:safe
+          # Apple arm64: allocator, unwinding and libc differ from Linux.
+          - name: macos debug
+            os: macos-latest
+            core_task: test:core
+            wasm_task: ""
 
     steps:
       - name: Checkout
@@ -38,13 +57,20 @@ jobs:
           zig-version-file: .tool-versions
 
       - name: Setup `wasmtime`
+        if: matrix.wasm_task != ''
         uses: bytecodealliance/actions/wasmtime/setup@v1
 
       - name: Run `wasmtime version`
+        if: matrix.wasm_task != ''
         run: "wasmtime --version"
 
       - name: Run lib tests
-        run: pnpm test:core
+        run: pnpm ${{ matrix.core_task }}
+
+      - name: Check the examples are formatted and lint-clean
+        if: matrix.core_task == 'test:core'
+        run: pnpm check:examples
 
       - name: Run wasm tests
-        run: pnpm test:wasm
+        if: matrix.wasm_task != ''
+        run: pnpm ${{ matrix.wasm_task }}

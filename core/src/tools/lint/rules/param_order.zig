@@ -1,16 +1,23 @@
+//! The `param-order` lint rule: flags a top-level `param` read before its definition, and a
+//! definition inside a body (a def, a block, an if), where the UI's static extraction can't
+//! find it.
+
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 
 pub const ParamOrderRule = struct {
+    pub const id = "param-order";
+    pub const description = "A param read before it is defined, or defined where the UI can't find it";
+
     defined_params: std.StringHashMapUnmanaged(void) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
+            .id = id,
             .ptr = self,
             .vtable = &.{
-                .name = name,
                 .checkNode = checkNode,
                 .checkEOF = checkEOF,
             },
@@ -19,10 +26,6 @@ pub const ParamOrderRule = struct {
 
     pub fn deinit(self: *ParamOrderRule, allocator: std.mem.Allocator) void {
         self.defined_params.deinit(allocator);
-    }
-
-    fn name(_: *anyopaque) []const u8 {
-        return "Parameter Order & Scope Check";
     }
 
     fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
@@ -51,12 +54,12 @@ pub const ParamOrderRule = struct {
         const is_setter = args.len > 1 or args[0].name != .none;
 
         if (is_setter) {
-            // Warn if defined inside a nested scope (functions, blocks, etc.)
-            // Note: Root scope = 1, Top-level script block = 2, Nested scope > 2
-            if (engine.scopes.items.len > 2) {
-                try engine.addDiagnostic(
+            // Static UI extraction reads the script's own statements, so a definition inside
+            // any body (a def, a block, an if) is out of its reach.
+            if (engine.body_depth > 0) {
+                try engine.report(
+                    id,
                     engine.getLoc(node.main_token),
-                    .warning,
                     "Parameter ':{s}' definition should be placed at the top level for static UI extraction.",
                     .{param_name},
                 );
@@ -64,11 +67,13 @@ pub const ParamOrderRule = struct {
 
             try self.defined_params.put(engine.allocator, param_name, {});
         } else {
-            // Getter mode: warn if invoked before its top-level definition
-            if (!self.defined_params.contains(param_name)) {
-                try engine.addDiagnostic(
+            // Getter mode: warn if invoked before its top-level definition. A read inside a
+            // def or block runs when that is called, which may be after the definition
+            // below it, so only a top-level read is judged by its position.
+            if (engine.body_depth == 0 and !self.defined_params.contains(param_name)) {
+                try engine.report(
+                    id,
                     engine.getLoc(node.main_token),
-                    .warning,
                     "Parameter ':{s}' used before definition.",
                     .{param_name},
                 );
@@ -76,10 +81,12 @@ pub const ParamOrderRule = struct {
         }
     }
 
+    /// The name a `param` call gives as a literal; null for one computed at run time
+    /// (`param(name)` with a variable used to be taken for a parameter called "name").
     fn extractParamName(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
         const node = tree.getNode(node_idx) orelse return null;
         return switch (node.tag) {
-            .symbol, .string, .identifier => tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
+            .symbol, .string => tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
             else => null,
         };
     }

@@ -1,0 +1,5 @@
+# A read whose name is computed may read any of them: nothing is unread for sure.
+param(:width, default: 20)
+param(:height, default: 10)
+key = :width
+cube(param(key))

@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// The example models in ../examples, built and fingerprinted by src/examples_test.zig
+/// (which also checks that every example there is listed here).
+const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "standoff", "text" };
+
 const clipper_sources = &[_][]const u8{
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp",
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.offset.cpp",
@@ -188,6 +192,16 @@ const kupcad_bindings = &[_][]const u8{
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
+/// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C++ libraries' asserts
+/// (Manifold has many, some costly) are compiled out of release binaries, as their own
+/// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
+/// Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every arithmetic
+/// check of UBSan and aborted the process on a finding. Debug builds keep both.
+fn cxxFlags(b: *std.Build, optimize: std.builtin.OptimizeMode, base: []const []const u8) []const []const u8 {
+    if (optimize == .debug) return base;
+    return std.mem.concat(b.allocator, []const u8, &.{ base, &.{ "-DNDEBUG", "-fno-sanitize=undefined" } }) catch @panic("out of memory");
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -268,9 +282,9 @@ pub fn build(b: *std.Build) void {
                 "-fvisibility=hidden", "-include",               wasm_stub_header,
             }
     else if (enable_parallel)
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" }
+        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" })
     else
-        &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" };
+        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" });
 
     // ====================================================================
     // KupCAD Core Module
@@ -283,6 +297,11 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
         .imports = module_imports,
     });
+    // The version, read from build.zig.zon so it has one source: `kupcad --version`, the
+    // language server's serverInfo and the package client's User-Agent read it.
+    const build_info = b.addOptions();
+    build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
+    mod.addOptions("build_info", build_info);
 
     mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
     mod.addIncludePath(b.path("vendor/manifold/include"));
@@ -294,10 +313,10 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path("src/bindings"));
     mod.addIncludePath(b.path("src"));
 
-    const clipper_flags: []const []const u8 = if (is_wasm)
+    const clipper_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = clipper_sources,
@@ -350,17 +369,17 @@ pub fn build(b: *std.Build) void {
 
     mod.addImport("sqlite", sqlite_mod);
 
-    const drako_flags: []const []const u8 = if (is_wasm)
+    const drako_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
-        &.{ "-std=c++17", "-fno-exceptions" };
+        &.{ "-std=c++17", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = draco_sources,
         .flags = drako_flags,
     });
 
-    const kupcad_flags: []const []const u8 = &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" };
+    const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 
     mod.addCSourceFiles(.{
         .files = kupcad_bindings,
@@ -385,6 +404,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        wasm.root_module.addOptions("build_info", build_info);
 
         wasm.entry = .disabled;
         wasm.wasi_exec_model = .reactor;
@@ -417,6 +437,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        wasm_test.root_module.addOptions("build_info", build_info);
         // all mem must be aligned in 65536 bytes (64Kb)
         wasm_test.initial_memory = 134217728;
         wasm_test.max_memory = 4294967296;
@@ -460,6 +481,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        exe.root_module.addOptions("build_info", build_info);
         b.installArtifact(exe);
 
         const lib = b.addLibrary(.{
@@ -476,6 +498,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        lib.root_module.addOptions("build_info", build_info);
         b.installArtifact(lib);
 
         const run_step = b.step("run", "Run the app");
@@ -484,12 +507,29 @@ pub fn build(b: *std.Build) void {
         run_cmd.step.dependOn(b.getInstallStep());
 
         const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
+        // Lint snapshot tests rewrite their expected output instead of comparing with it.
+        const update_snapshots = b.option(bool, "update-snapshots", "Rewrite the lint and example snapshots (src/tools/lint/snapshots, src/examples.snap) from the current output") orelse false;
+        const snapshot_options = b.addOptions();
+        snapshot_options.addOption(bool, "update", update_snapshots);
+        mod.addOptions("lint_snapshot_options", snapshot_options);
+
+        // The examples are outside the module, so each comes in as an import (the build
+        // reruns the test when one changes).
+        const examples_options = b.addOptions();
+        examples_options.addOption([]const []const u8, "names", &EXAMPLES);
+        examples_options.addOption(bool, "update", update_snapshots);
+        mod.addOptions("examples", examples_options);
+        for (EXAMPLES) |name| {
+            mod.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
+        }
 
         const mod_tests = b.addTest(.{
             .root_module = mod,
             .filters = test_filters,
         });
         const run_mod_tests = b.addRunArtifact(mod_tests);
+        // Rewriting the snapshots must run the tests even when nothing they embed changed.
+        if (update_snapshots) run_mod_tests.has_side_effects = true;
 
         const exe_tests = b.addTest(.{
             .root_module = exe.root_module,
@@ -497,9 +537,25 @@ pub fn build(b: *std.Build) void {
         });
         const run_exe_tests = b.addRunArtifact(exe_tests);
 
+        // Black-box CLI tests: run the built `kupcad` binary and check exit codes and output.
+        const cli_test_options = b.addOptions();
+        cli_test_options.addOptionPath("kupcad_exe", exe.getEmittedBin());
+        cli_test_options.addOption([]const u8, "version", @import("build.zig.zon").version);
+        const cli_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/cli_process_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "cli_test_options", .module = cli_test_options.createModule() }},
+            }),
+            .filters = test_filters,
+        });
+        const run_cli_tests = b.addRunArtifact(cli_tests);
+
         const test_step = b.step("test", "Run tests");
         test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
+        test_step.dependOn(&run_cli_tests.step);
 
         if (use_vendored_tatfi) {
             const tatfi_tests = b.addTest(.{

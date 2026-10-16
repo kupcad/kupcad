@@ -1,0 +1,37 @@
+2:1 W [unused-variable] Unused variable 'count'. Prefix with '_' if intentional.
+4:16 W [unused-variable] Unused variable 'n'. Prefix with '_' if intentional.
+7:1 W [unused-variable] Unused variable 'unused_size'. Prefix with '_' if intentional.
+12:1 W [unused-variable] Unused variable 'k'. Prefix with '_' if intentional.
+15:1 W [unused-variable] Unused variable 'a'. Prefix with '_' if intentional.
+19:1 W [unused-variable] Unused variable 'taken'. Prefix with '_' if intentional.
+26:3 W [unreachable-code] Unreachable: the statement before this always returns, breaks, nexts or raises
+--- after --fix (2 fixed) ---
+# Renamed everywhere it is bound, with the edit keeping the rest of the line.
+_count = 1
+_count = 2
+[1, 2].each { |_n| puts 1 }
+
+# No rename for a method's parameter (a caller may pass it by name)...
+def wide(unused_size)
+  1
+end
+
+# ... for a `for` target or a multiple assignment (no token holds the name alone)...
+for k in [1]
+  puts 2
+end
+a, b = 1, 2
+puts b
+
+# ... or when the new name is taken.
+taken = 3
+_taken = 4
+puts _taken
+
+# Unreachable code is offered for deletion in the editor, never deleted by --fix.
+def early
+  return 1
+  puts 3
+end
+
+result = [wide(1), early]

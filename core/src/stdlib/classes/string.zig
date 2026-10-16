@@ -1,8 +1,19 @@
+//! The String class's methods (`methods`): `length`, case changes, `split`, `replace`,
+//! conversions such as `to_f` and `to_sym`, `trim` and prefix and suffix tests. Each returns
+//! a new String, as Strings are immutable values.
+
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
+
+/// String.new(text = "") -> the text (Strings are immutable values)
+pub fn stringNew(vm: *VM, class: value.Value, text: ?*value.ObjString) !value.Value {
+    _ = class;
+    if (text) |t| return value.Value.initObj(&t.obj);
+    return vm.allocateString("");
+}
 
 /// String#length / String#size
 pub fn stringLength(vm: *VM, str: *value.ObjString) !value.Value {
@@ -40,6 +51,19 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
 
     const arr_obj = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&arr_obj.obj));
+
+    if (delim_str.len == 0) {
+        // Into its characters, as in Ruby (an empty delimiter tripped an assertion).
+        const view = std.unicode.Utf8View.init(str.chars) catch {
+            return vm.fail(.ValueError, "split: the String isn't valid UTF-8", .{});
+        };
+        var chars = view.iterator();
+        while (chars.nextCodepointSlice()) |ch| {
+            const ch_val = try vm.allocateString(ch);
+            try arr_obj.items.append(vm.gc.trackingAllocator(), ch_val);
+        }
+        return value.Value.initObj(&arr_obj.obj);
+    }
 
     var iter = std.mem.splitSequence(u8, str.chars, delim_str);
     while (iter.next()) |part| {

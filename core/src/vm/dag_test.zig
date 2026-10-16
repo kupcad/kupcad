@@ -1,4 +1,6 @@
 const std = @import("std");
+const dag = @import("dag.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 
 test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     // Setup
@@ -25,7 +27,7 @@ test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     try std.testing.expectEqual(@as(usize, 4), payload.len);
 }
 
-test "DAG: addBalancedChain balances Differences into an O(log N) tree" {
+test "DAG: addBalancedChain subtracts the union of the cutters" {
     var buffer: [8192]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     var builder = @import("dag.zig").DAGBuilder.init(fba.allocator());
@@ -42,19 +44,98 @@ test "DAG: addBalancedChain balances Differences into an O(log N) tree" {
     const root_idx = try builder.addBalancedChain(.difference_op, &targets);
     const root_node = builder.nodes.items[root_idx];
 
-    // Assert: Root is a difference_op, not a batch
+    // c1 - (c2 ∪ c3 ∪ c4): one difference whose cutter is a batch union. It used to be
+    // the balanced (c1 - c2) - (c3 - c4), which isn't a difference of the four.
     try std.testing.expectEqual(.difference_op, root_node.tag);
-
     const root_payload = builder.getBinaryPayload(root_node);
+    try std.testing.expectEqual(c1, root_payload.left);
 
-    const left_node = builder.nodes.items[root_payload.left];
-    const right_node = builder.nodes.items[root_payload.right];
+    const cutters = builder.nodes.items[root_payload.right];
+    try std.testing.expectEqual(.batch_union_op, cutters.tag);
+    try std.testing.expectEqualSlices(u32, &.{ c2, c3, c4 }, builder.getBatchUnionPayload(cutters));
+}
 
-    // Assert: Tree is perfectly balanced (c1 - c2) - (c3 - c4)
-    try std.testing.expectEqual(.difference_op, left_node.tag);
-    try std.testing.expectEqual(.difference_op, right_node.tag);
+// --- CSE hashing and child validation ---
 
-    const left_payload = builder.getBinaryPayload(left_node);
-    try std.testing.expectEqual(c1, left_payload.left);
-    try std.testing.expectEqual(c2, left_payload.right);
+test "DAG: polyhedron hash separates points and faces" {
+    var b1 = dag.DAGBuilder.init(std.testing.allocator);
+    defer b1.deinit();
+    var b2 = dag.DAGBuilder.init(std.testing.allocator);
+    defer b2.deinit();
+
+    // The last point of `pts1` has the exact bytes of the first two faces of
+    // `faces2` (all zero), so both pts++faces byte streams are identical; every face
+    // names a point its own polyhedron has.
+    const shifted = [2][3]u32{ .{ 0, 0, 0 }, .{ 0, 0, 0 } };
+    const as_point: [3]f64 = @bitCast(shifted);
+    const pts1 = [_][3]f64{ .{ 0, 0, 0 }, as_point };
+    const faces1 = [_][3]u32{.{ 0, 0, 0 }};
+    const pts2 = [_][3]f64{.{ 0, 0, 0 }};
+    const faces2 = [_][3]u32{ shifted[0], shifted[1], .{ 0, 0, 0 } };
+
+    // Separate builders, so a structural-equality fallback cannot hide a collision.
+    const p1 = try b1.addPolyhedron(&pts1, &faces1);
+    const p2 = try b2.addPolyhedron(&pts2, &faces2);
+    try std.testing.expect(b1.node_hashes.items[p1] != b2.node_hashes.items[p2]);
+}
+
+test "DAG: a raw hash collision does not merge different nodes" {
+    // Learn the hash cube(2) will get, using a scratch builder (hashing is content-based).
+    var scratch = dag.DAGBuilder.init(std.testing.allocator);
+    defer scratch.deinit();
+    const c2_scratch = try scratch.addCube(2, 2, 2, false);
+    const c2_hash = scratch.node_hashes.items[c2_scratch];
+
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const c1 = try builder.addCube(1, 1, 1, false);
+
+    // Simulate a 64-bit collision: cube(2)'s hash already maps to cube(1).
+    try builder.dedup_map.put(builder.gpa, c2_hash, c1);
+
+    const c2 = try builder.addCube(2, 2, 2, false);
+    try std.testing.expect(c2 != c1);
+    try std.testing.expect(builder.node_hashes.items[c2] != builder.node_hashes.items[c1]);
+    try std.testing.expect(builder.node_hashes.items[c2] != c2_hash);
+
+    // Identical nodes still deduplicate (via the probed hash).
+    try std.testing.expectEqual(c2, try builder.addCube(2, 2, 2, false));
+}
+
+test "DAG: builder rejects the concrete sentinel as a child" {
+    // The sentinel marks concrete (decompose/simplify) leaves; it is not a node index.
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const c = try builder.addCube(1, 1, 1, false);
+    try std.testing.expectError(error.InvalidDAGNode, builder.addTranslate(dag.CONCRETE_NODE_SENTINEL, 1, 0, 0));
+    try std.testing.expectError(error.InvalidDAGNode, builder.addBinary(.union_op, c, dag.CONCRETE_NODE_SENTINEL));
+    try std.testing.expectError(error.InvalidDAGNode, builder.addBatchUnion(&.{ c, dag.CONCRETE_NODE_SENTINEL }));
+    // Rollback leaves the builder usable.
+    try std.testing.expectEqual(@as(usize, 1), builder.nodes.items.len);
+}
+
+test "DAG: settings are interned, the defaults being id 0" {
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), try builder.internSettings(.{}));
+    const brep = try builder.internSettings(.{ .engine = .brep_native });
+    try std.testing.expect(brep != 0);
+    try std.testing.expectEqual(brep, try builder.internSettings(.{ .engine = .brep_native }));
+    try std.testing.expect(try builder.internSettings(.{ .tolerance = 1e-3 }) != brep);
+    try std.testing.expectEqual(geom.EngineType.brep_native, builder.settings(brep).engine);
+}
+
+test "DAG: a node records the settings it was made under, and they tell it apart" {
+    var builder = dag.DAGBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const plain = try builder.addCube(1, 1, 1, false);
+    builder.current_settings = try builder.internSettings(.{ .tolerance = 1e-3 });
+    const fine = try builder.addCube(1, 1, 1, false);
+    try std.testing.expect(fine != plain); // not merged by CSE
+    try std.testing.expect(builder.node_hashes.items[fine] != builder.node_hashes.items[plain]);
+    try std.testing.expectEqual(@as(f64, 1e-3), builder.settings(builder.nodes.items[fine].settings).tolerance);
+    try std.testing.expectEqual(plain, blk: {
+        builder.current_settings = 0;
+        break :blk try builder.addCube(1, 1, 1, false);
+    });
 }

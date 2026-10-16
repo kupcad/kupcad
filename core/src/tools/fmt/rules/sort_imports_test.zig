@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../../core/ast.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
+const lexer_mod = @import("../../../frontend/lexer.zig");
+const parser_mod = @import("../../../frontend/parser.zig");
 const SortImportsRule = @import("sort_imports.zig").SortImportsRule;
 
 test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
@@ -26,7 +26,7 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -58,7 +58,7 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -106,7 +106,7 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+    const stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(stmts[0]).?;
     const n1 = parser.b.tree.getNode(stmts[1]).?;
@@ -147,7 +147,7 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts));
+    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -164,4 +164,11 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
 
     const val_node = parser.b.tree.getNode(a_attrs[0].value).?;
     try testing.expectEqual(@as(f64, 1.0), parser.b.tree.number(val_node));
+}
+
+/// No statement has a comment attached: the rule may reorder any of them.
+fn uncommented(allocator: std.mem.Allocator, count: usize) ![]const bool {
+    const flags = try allocator.alloc(bool, count);
+    @memset(flags, false);
+    return flags;
 }

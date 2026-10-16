@@ -2,68 +2,52 @@ const std = @import("std");
 const testing = std.testing;
 const linter_mod = @import("../linter.zig");
 const NegativeDimRule = @import("negative_dim.zig").NegativeDimRule;
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
+const lint_testing = @import("../testing.zig");
 
 fn runRule(allocator: std.mem.Allocator, source: []const u8) !linter_mod.Linter {
-    var engine = linter_mod.Linter.init(allocator, .{});
-    var rule_impl = NegativeDimRule{};
-    try engine.rules.append(allocator, rule_impl.rule());
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-
-    // Lex everything upfront to SoA tokens
-    const tokens = try lexer.lexAll(allocator);
-
-    // Initialize parser with tokens and source
-    var parser = try parser_mod.Parser.init(tokens, source, allocator);
-    const root = try parser.parseProgram();
-
-    // Pass token bounds to the linter engine for diagnostic locations
-    try engine.check(&parser.b.tree, tokens.starts, tokens.lengths, root, parser.diagnostics.list.items);
-
-    return engine;
+    return lint_testing.lint(allocator, source, lint_testing.only(NegativeDimRule.id));
 }
 
-test "Linter Rule: NegativeDimRule catches negative dimensions in method calls" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const source = "cyl = Cylinder.new(r: -50, h: 20)";
-    const engine = try runRule(arena.allocator(), source);
-
-    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'r' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
+test "Linter Rule: NegativeDimRule flags a primitive's size given as zero or a negative literal" {
+    const cases = [_]struct { src: []const u8, message: []const u8 }{
+        .{ .src = "cube(-5)", .message = "cube expects x to be greater than zero, got -5" },
+        .{ .src = "cube(10, 0, 5)", .message = "cube expects y to be greater than zero, got 0" },
+        .{ .src = "cube(size: -2.5)", .message = "cube expects size to be greater than zero, got -2.5" },
+        .{ .src = "cylinder(5, -10)", .message = "cylinder expects h to be greater than zero, got -10" },
+        .{ .src = "cylinder(d: -3, h: 4)", .message = "cylinder expects d to be greater than zero, got -3" },
+        .{ .src = "sphere(r: 0)", .message = "sphere expects r to be greater than zero, got 0" },
+        .{ .src = "regular_polygon(6, -1)", .message = "regular_polygon expects r to be greater than zero, got -1" },
+        .{ .src = "torus(10, -2)", .message = "torus expects minor_r to be greater than zero, got -2" },
+        .{ .src = "text(\"A\", -4)", .message = "text expects size to be greater than zero, got -4" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        var engine = try runRule(testing.allocator, case.src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+        try testing.expectEqualStrings(case.message, engine.diagnostics.items[0].message);
+    }
 }
 
-test "Linter Rule: NegativeDimRule catches negative dimensions in property assignment" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const source = "box.width = -10";
-    const engine = try runRule(arena.allocator(), source);
-
-    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'width' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
-}
-
-test "Linter Rule: NegativeDimRule ignores negative coordinates" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const source = "box = Box.new(x: -50, y: -20, z: -10)";
-    const engine = try runRule(arena.allocator(), source);
-
-    try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
-}
-
-test "Linter Rule: NegativeDimRule catches negative dimensions inside arrays" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-
-    const source = "box = Box.new(size: [10, -20, 30])";
-    const engine = try runRule(arena.allocator(), source);
-
-    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-    try testing.expectEqualStrings("CAD Warning: Property 'size' in primitive construction has non-positive dimension.", engine.diagnostics.items[0].message);
+test "Linter Rule: NegativeDimRule leaves coordinates and non-size arguments alone" {
+    // It used to warn on any negative argument of any call: 10 warnings across the examples.
+    const sources = [_][]const u8{
+        "cube(10).translate(-5, 0, -1)",
+        "part.trim_by_plane(0, 0, -1, -18)",
+        "part.ray_cast([0, 0, 50], [0, 0, -50])",
+        "cube(10, 10, 10, center: true)",
+        "cylinder(r: 5, h: 10, center: false)",
+        "regular_polygon(6, 5)",
+        // A computed size, a splat or a method of the same name: nothing to read statically.
+        "w = 5\ncube(w - 10)",
+        "dims = [1, 2, 3]\ncube(*dims, -1)",
+        "part.cube(-5)",
+        "box.width = -10",
+    };
+    for (sources) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        var engine = try runRule(testing.allocator, src);
+        defer engine.deinit();
+        try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+    }
 }

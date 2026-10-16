@@ -34,9 +34,8 @@ test "Text Engine: Extracts flat 2D polygons from text string and kerning" {
     var polygons = try text.extractText(testing.allocator, &face, "CAD", 10.0, 0.1, .left, .baseline);
     defer polygons.deinit(testing.allocator);
 
-    // "CAD" should produce at least 4 distinct closed contours
-    // (C=1, A=2 (outer+inner hole), D=2 (outer+inner hole)).
-    // Actual number depends on font specifics, but MUST be > 3!
+    // "CAD" is typically 5 closed contours (C, A + hole, D + hole); require
+    // at least one per glyph to stay font-agnostic.
     try testing.expect(polygons.contours.items.len >= 3);
 
     const first_contour = polygons.contours.items[0];
@@ -93,4 +92,36 @@ test "Text Engine: halign and valign offsets contours correctly" {
     // Since it is aligned Right/Top, the maximum bounds must be exactly shifted to 0.0
     try testing.expectApproxEqAbs(0.0, rx_max, 0.001);
     try testing.expectApproxEqAbs(0.0, ry_max, 0.001);
+}
+
+fn pointCount(polygons: *const text.TextPolygons) usize {
+    var total: usize = 0;
+    for (polygons.contours.items) |c| total += c.items.len;
+    return total;
+}
+
+test "Text Engine: running out of memory fails the extraction instead of truncating a glyph" {
+    const face = try text.getDefaultFace();
+    var reference = try text.extractText(testing.allocator, &face, "CAD", 10.0, 0.1, .left, .baseline);
+    defer reference.deinit(testing.allocator);
+
+    // Fail each allocation in turn: the outline callbacks used to drop the points they
+    // could not store and still return the (truncated) text.
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
+        var polygons = text.extractText(failing.allocator(), &face, "CAD", 10.0, 0.1, .left, .baseline) catch |err| {
+            try testing.expectEqual(error.OutOfMemory, err);
+            continue;
+        };
+        defer polygons.deinit(failing.allocator());
+        try testing.expect(!failing.has_induced_failure);
+        try testing.expectEqual(pointCount(&reference), pointCount(&polygons));
+        break;
+    }
+}
+
+test "Text: a String that isn't valid UTF-8 is an error, not an assertion" {
+    const face = try text.getFaceByName("sans");
+    try testing.expectError(error.InvalidUtf8, text.extractText(testing.allocator, &face, "A\xFFB", 10.0, 0.1, .left, .baseline));
 }

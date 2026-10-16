@@ -1,0 +1,22 @@
+# Assigned and never read; a name starting with _ says that is on purpose.
+spare = 1
+_scratch = 3
+width = 10
+
+# Read after an `if` body that set it: the body is not a scope.
+if width > 5
+  depth = 4
+end
+puts depth
+
+# A block parameter nobody reads, and one marked as unused.
+[1, 2].each { |item| puts 1 }
+[1, 2].each { |_item| puts 2 }
+
+def plate(size)
+  # The method's last assignment is its result.
+  base = cube(size)
+end
+
+# The script's last statement is the model.
+part = plate(width)

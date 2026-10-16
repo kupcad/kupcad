@@ -4,8 +4,9 @@ const Store = @import("store.zig").Store;
 const Cafs = @import("cafs.zig").Cafs;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const Doctor = @import("health.zig").Doctor;
+const writeAbs = @import("test_helpers.zig").writeAbs;
 
-test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
+test "Doctor: healMissingBlobs evicts blob and package records when physical files vanish" {
     std.testing.log_level = .err;
 
     var mem_vfs = MemoryVfs.init(testing.allocator);
@@ -23,25 +24,35 @@ test "Doctor: healMissingBlobs evicts DB records when physical files vanish" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
-    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
 
-    // 1. Seed DB record without creating the physical file
-    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('missing_hash', 10, 0)", .{}, .{});
-    try store.db.exec("INSERT INTO package_files (package_id, commit_sha, file_path, file_hash) VALUES ('pkg', 'sha', 'path', 'missing_hash')", .{}, .{});
+    // 1. Register a package whose blob is not on disk
+    var files = std.StringHashMap([]const u8).init(testing.allocator);
+    defer files.deinit();
+    try files.put("path", "missing_hash");
+    try store.registerPackage("pkg", "sha", "github", "sha256-x", &files);
 
     // 2. Heal
     try doc.run(); // Executes all healing routines
+    // The report is printed, not logged (release builds hide info logging).
+    try testing.expect(std.mem.indexOf(u8, out.written(), "System health check complete.") != null);
 
     // 3. Verify DB eviction for missing physical files
     const stmt1 = try store.db.prepare("SELECT 1 FROM files WHERE hash = 'missing_hash'");
     defer stmt1.deinit();
-    const row1 = try stmt1.one(struct { val: i32 }, .{}, .{});
+    const row1 = try stmt1.one(struct { val: i32 }, .{});
     try testing.expect(row1 == null);
 
     const stmt2 = try store.db.prepare("SELECT 1 FROM package_files WHERE file_hash = 'missing_hash'");
     defer stmt2.deinit();
-    const row2 = try stmt2.one(struct { val: i32 }, .{}, .{});
+    const row2 = try stmt2.one(struct { val: i32 }, .{});
     try testing.expect(row2 == null);
+
+    // The package itself is evicted too, otherwise it still looks cached and
+    // linking fails on the missing blob (audit fix).
+    try testing.expect(!try store.hasPackage("pkg", "sha"));
 }
 
 test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
@@ -62,7 +73,9 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
-    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
 
     // 1. Seed physical file WITHOUT creating a DB record
     const cwd = std.Io.Dir.cwd();
@@ -80,7 +93,43 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
     const stmt = try store.db.prepare("SELECT size FROM files WHERE hash = 'orphan_hash'");
     defer stmt.deinit();
 
-    const row = try stmt.one(struct { size: i64 }, .{}, .{});
+    const row = try stmt.one(struct { size: i64 }, .{});
     try testing.expect(row != null);
     try testing.expectEqual(@as(i64, 11), row.?.size); // "orphan data".len == 11
+}
+
+// Audit fix: a CAFS file name crafted as SQL was formatted into the lookup, which
+// then matched any row, so the orphan was never indexed. (Prune half: gc_test.zig.)
+test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(tmp_path);
+
+    var cafs = try Cafs.init(testing.allocator, testing.io, tmp_path, mem_vfs.vfs());
+    defer cafs.deinit();
+
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+
+    const evil_name = "zz' OR '1'='1";
+    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{});
+    for ([_][]const u8{ "keep", evil_name }, [_][]const u8{ "k", "x" }) |hash, data| {
+        const path = try cafs.blobPath(hash);
+        defer testing.allocator.free(path);
+        try writeAbs(path, data);
+    }
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
+    try doc.run();
+
+    const stmt = try store.db.prepare("SELECT 1 FROM files WHERE hash = ?");
+    defer stmt.deinit();
+    try testing.expect((try stmt.one(struct { v: i32 }, .{evil_name})) != null);
 }

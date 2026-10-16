@@ -1,3 +1,6 @@
+//! The root of the `kupcad` module (build.zig): what it exports to the CLI and other users,
+//! and the `test` block that pulls in every test file.
+
 pub const api = @import("api.zig");
 pub const wasm = @import("wasm.zig");
 pub const vm = @import("vm/vm.zig");
@@ -18,6 +21,7 @@ pub const LineIndex = api.LineIndex;
 test {
     _ = @import("api_test.zig");
     _ = @import("gen_grammar_test.zig");
+    _ = @import("log_test.zig");
 
     // Compiler
     _ = @import("compiler/compiler_test.zig");
@@ -25,8 +29,16 @@ test {
     // Core
     _ = @import("core/ast_test.zig");
     _ = @import("core/bezier_test.zig");
-    _ = @import("core/constant_folder_test.zig");
     _ = @import("core/document_test.zig");
+    _ = @import("core/visitor_test.zig");
+    _ = @import("registration_test.zig");
+    _ = @import("tools/bench_test.zig");
+    _ = @import("examples_test.zig");
+    _ = @import("vm/dag_verifier_test.zig");
+    _ = @import("pkg/providers/git_host_test.zig");
+    _ = @import("pkg/clock_test.zig");
+    _ = @import("core/owned_keys_test.zig");
+    _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");
     _ = @import("core/resolver_test.zig");
@@ -36,29 +48,35 @@ test {
     _ = @import("core/params/params_test.zig");
     _ = @import("core/text_test.zig");
     _ = @import("core/semver_test.zig");
+    _ = @import("core/import_path_test.zig");
 
     // Daemon
     _ = @import("daemon/session_manager_test.zig");
     _ = @import("daemon/session_test.zig");
     _ = @import("daemon/watcher_test.zig");
+    _ = @import("daemon/viewport_ws_test.zig");
 
     // exports
     _ = @import("exporters/3d/gltf_test.zig");
+    _ = @import("exporters/3d/stl_test.zig");
 
     // Frontends
-    _ = @import("frontend/kupcad/docstring_test.zig");
-    _ = @import("frontend/kupcad/lexer_test.zig");
-    _ = @import("frontend/kupcad/parser_test.zig");
-    _ = @import("frontend/openscad/lexer_test.zig");
-    _ = @import("frontend/openscad/parser_test.zig");
+    _ = @import("frontend/docstring_test.zig");
+    _ = @import("frontend/lexer_test.zig");
+    _ = @import("frontend/parser_test.zig");
 
     // Kernels
     _ = @import("kernel/engines/manifold/driver_test.zig");
     _ = @import("kernel/engines/brep/driver_test.zig");
 
     // CLI & Config Tests
+    _ = @import("cli/build_cmd_test.zig");
     _ = @import("cli/config_test.zig");
+    _ = @import("cli/diagnostic_report_test.zig");
     _ = @import("cli/options_test.zig");
+    _ = @import("cli/lsp_actions_test.zig");
+    _ = @import("cli/lsp_hints_test.zig");
+    _ = @import("cli/fmt_test.zig");
     _ = @import("cli/walker_test.zig");
 
     // Kernels
@@ -74,6 +92,8 @@ test {
     _ = @import("pkg/health_test.zig");
     _ = @import("pkg/store_test.zig");
     _ = @import("pkg/providers/fetcher_test.zig");
+    _ = @import("pkg/validate_test.zig");
+    _ = @import("pkg/http_client_test.zig");
 
     // Stdlib
     _ = @import("stdlib/stdlib_test.zig");
@@ -83,22 +103,33 @@ test {
 
     // Dev tools
     _ = @import("tools/dev/ast_dumper_test.zig");
+    _ = @import("tools/dev/disassembler_test.zig");
 
     // Formatter Tests
     _ = @import("tools/fmt/formatter_test.zig");
+    _ = @import("tools/fmt/equivalence_test.zig");
+    _ = @import("tools/fmt/stability_test.zig");
+    _ = @import("cli/pkg_cmd_test.zig");
+    _ = @import("cli/doc_test.zig");
+    _ = @import("cli/check_output_test.zig");
+    _ = @import("core/string_escape.zig");
     _ = @import("tools/fmt/rules/sort_imports_test.zig");
 
     // Linter Tests
     _ = @import("tools/lint/linter_test.zig");
+    _ = @import("tools/lint/snapshot_test.zig");
+    _ = @import("tools/lint/fixer_test.zig");
     _ = @import("tools/lint/rules/negative_dim_test.zig");
     _ = @import("tools/lint/rules/unused_vars_test.zig");
     _ = @import("tools/lint/rules/unreachable_code_test.zig");
     _ = @import("tools/lint/rules/self_subtraction_test.zig");
     _ = @import("tools/lint/rules/param_order_test.zig");
+    _ = @import("tools/lint/rules/cad_rules_test.zig");
 
     // VFS
     _ = @import("vfs/memory_test.zig");
     _ = @import("vfs/native_test.zig");
+    _ = @import("vfs/readonly_test.zig");
     _ = @import("vfs/vfs_test.zig");
 
     // VM
@@ -107,6 +138,7 @@ test {
     _ = @import("vm/dag_evaluator_test.zig");
     _ = @import("vm/memory_test.zig");
     _ = @import("vm/import_test.zig");
+    _ = @import("vm/language_test.zig");
     _ = @import("vm/host_test.zig");
     _ = @import("vm/profiler_test.zig");
     _ = @import("vm/validation_test.zig");

@@ -1,21 +1,22 @@
+//! `LintRule`: the interface every lint rule implements for `linter.zig`, an id and a vtable
+//! of hooks called per node, at the end of the script, and on entering and leaving a scope.
+
 const ast = @import("../../../core/ast.zig");
 const linter = @import("../linter.zig");
 
 pub const LintRule = struct {
+    /// The rule's stable id (`unused-variable`): shown with its messages, and how the
+    /// config and suppressions name it.
+    id: []const u8,
     ptr: *anyopaque,
     vtable: *const VTable,
 
     pub const VTable = struct {
-        name: *const fn (ptr: *anyopaque) []const u8,
         checkNode: *const fn (ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) anyerror!void,
         checkEOF: ?*const fn (ptr: *anyopaque, engine: *linter.Linter) anyerror!void = null,
         enterScope: ?*const fn (ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) anyerror!void = null,
         exitScope: ?*const fn (ptr: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) anyerror!void = null,
     };
-
-    pub fn name(self: LintRule) []const u8 {
-        return self.vtable.name(self.ptr);
-    }
 
     pub fn checkNode(self: LintRule, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         return self.vtable.checkNode(self.ptr, engine, tree, node_idx);

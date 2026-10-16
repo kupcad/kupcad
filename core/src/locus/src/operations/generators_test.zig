@@ -47,6 +47,22 @@ test "Generator: buildPolyhedron Strict Topology Validation" {
     try std.testing.expectEqual(@as(usize, 1), t_arena.solids.items.len);
 }
 
+test "Generator: buildPolyhedron rejects out-of-range face indices" {
+    // Regression: indices come from user scripts / imported files and used to read past `pts`.
+    const alloc = std.testing.allocator;
+    var t_arena = topo_arena.TopologyArena.init();
+    defer t_arena.deinit(alloc);
+    var g_arena = geom_arena.GeometryArena.init();
+    defer g_arena.deinit(alloc);
+
+    const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 10, 0, 0 }, .{ 0, 10, 0 }, .{ 0, 0, 10 } };
+    // pts.len is the first invalid index.
+    const faces = [_][3]u32{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 1, 2, 3 }, .{ pts.len, 0, 3 } };
+    try std.testing.expectError(error.InvalidFaceIndex, generators.buildPolyhedron(alloc, &t_arena, &g_arena, &pts, &faces));
+    // Validation happens before anything is added to the arenas.
+    try std.testing.expectEqual(@as(usize, 0), g_arena.points.items.len);
+}
+
 test "Generator: Cylinder Strict Topology Validation" {
     const alloc = std.testing.allocator;
     var t_arena = topo_arena.TopologyArena.init();

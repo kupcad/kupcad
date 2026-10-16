@@ -591,7 +591,14 @@ pub fn buildPolyhedron(
     g_arena: *geom_arena.GeometryArena,
     pts: []const [3]f64,
     faces: []const [3]u32,
-) GenError!topo_types.SolidIndex {
+) (GenError || error{InvalidFaceIndex})!topo_types.SolidIndex {
+    // Face indices come straight from user scripts / imported files; validate them
+    // before touching the arenas so a bad index can't read past `pts` (and so we
+    // don't leave half-built topology behind on failure).
+    for (faces) |f| {
+        for (f) |idx| if (idx >= pts.len) return error.InvalidFaceIndex;
+    }
+
     const v_start = t_arena.vertices.items.len;
     for (pts) |p| {
         const pt_idx: u32 = @intCast(g_arena.points.items.len);
