@@ -2384,6 +2384,18 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
     try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "kit.step"));
 }
 
+test "Stdlib: ghost shows a copy and gives the shape back to use" {
+    // It returned nil, so `env = part.ghost` lost the part.
+    try expectGlobalR(&.{
+        .{ .src = "env = cube(2).ghost\nr = env.volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = cube(2).ghost.translate(5, 0, 0).bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
+    });
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "a = cube(2).ghost\nb = a.ghost\n"));
+    try testing.expectEqual(@as(usize, 2), vm.display_list.items.len); // each call shows one copy
+}
+
 test "Stdlib: every export refuses a Sketch the same way" {
     // Each export collected its parts its own way, and glTF answered a Sketch with a
     // TypeError of its own wording.

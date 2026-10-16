@@ -7290,7 +7290,7 @@ test "VM: ghost and highlight modifiers tag materials and route geometry correct
         \\# Highlight stays on the stack for math
         \\h = cube(10).highlight
         \\
-        \\# Ghost drops off the stack (returns nil)
+        \\# Ghost shows a copy and gives the shape back, untouched
         \\g = cylinder(r: 5, h: 10).ghost
         \\
         \\[h, g]
@@ -7311,8 +7311,9 @@ test "VM: ghost and highlight modifiers tag materials and route geometry correct
 
     // highlight returns geometry
     try testing.expect(arr[0].isGeometry());
-    // ghost returns nil
-    try testing.expect(arr[1].isNil());
+    // ghost returns the shape itself, not the ghosted copy
+    try testing.expect(arr[1].isGeometry());
+    try testing.expect(vm.dag_builder.nodes.items[arr[1].asGeometry().dag_idx].tag == .cylinder);
 
     // Check the VM materials registry
     try testing.expectEqual(@as(usize, 2), vm.materials.items.len);

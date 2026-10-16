@@ -182,7 +182,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver),
     method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
     method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
-    method("ghost", .transform, methods.meshGhost, &sig.NONE, .nothing),
+    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),

@@ -92,8 +92,9 @@ pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
     // Force JIT evaluation and push directly to the standalone display list
     try appendToDisplayList(vm, ghost_geom);
 
-    // Return NIL so it drops completely out of the CSG math tree!
-    return value.Value.initNil();
+    // The shape itself, unchanged: the ghost is the copy on the display list. It returned
+    // nil, so `env = part.ghost` lost the shape it showed.
+    return receiver;
 }
 
 // --- Global Block Modifiers ---
