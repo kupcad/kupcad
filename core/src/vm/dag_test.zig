@@ -164,3 +164,62 @@ test "DAG: operandsOf gives each node's operands, whatever its layout" {
         try std.testing.expectEqualSlices(dag.DAGNodeIndex, case.operands, b.operandsOf(b.nodes.items[case.node]));
     }
 }
+
+test "DAG: compaction keeps the live nodes with their payloads, hashes and meshes" {
+    const kernel = @import("../kernel/kernel.zig");
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    // One node of each layout, with dead nodes between them.
+    const dead_cube = try b.addCube(9, 9, 9, false);
+    const cube = try b.addCube(1, 2, 3, true);
+    b.current_settings = try b.internSettings(.{ .tolerance = 0.01 });
+    const ball = try b.addSphere(1.5, 12);
+    b.current_settings = 0;
+    _ = try b.addTranslate(dead_cube, 1, 1, 1);
+    const cut = try b.addBinary(.difference_op, cube, ball);
+    const many = try b.addBatchUnion(&.{ cube, ball, cut });
+    const moved = try b.addTranslate(many, 1, 2, 3);
+    const tinted = try b.addSetMaterial(moved, 2);
+    const hulled = try b.addHull(tinted);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const lofted = try b.addLoft(small, big, 4);
+    const outline = try b.addPolygon(@constCast(&[_][2]f64{ .{ 0, 0 }, .{ 3, 0 }, .{ 0, 3 } }));
+    const two = [_][]const [2]f64{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } };
+    const holed = try b.addPolygonsEvenOdd(&two);
+    const shifted = try b.addCrossSectionTransform(holed, .{ 1, 0, 0, 1, 5, 5 });
+    const tetra = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } });
+    const dead_leaf = try b.addConcrete(kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed);
+    const leaf = try b.addConcrete(kernel.cube(&.{}, 2, 2, 2, false) orelse return error.KernelFailed);
+    const empty = try b.addEmpty(true);
+    _ = dead_leaf;
+
+    const roots = [_]dag.DAGNodeIndex{ hulled, lofted, outline, shifted, tetra, leaf, empty };
+    var live = try b.liveNodes(std.testing.allocator, &roots);
+    defer live.deinit(std.testing.allocator);
+    const hashes_before = try std.testing.allocator.dupe(u64, b.node_hashes.items);
+    defer std.testing.allocator.free(hashes_before);
+    const nodes_before = b.nodes.items.len;
+
+    const renumbered = try b.compact(&live);
+    defer std.testing.allocator.free(renumbered);
+
+    try std.testing.expectEqual(live.count(), b.nodes.items.len);
+    try std.testing.expect(b.nodes.items.len < nodes_before);
+    try std.testing.expectEqual(@as(usize, 1), b.held_leaves);
+    for (0..nodes_before) |old| {
+        if (!live.isSet(old)) {
+            try std.testing.expectEqual(std.math.maxInt(dag.DAGNodeIndex), renumbered[old]);
+            continue;
+        }
+        const new = renumbered[old];
+        errdefer std.debug.print("node {d} ({s}), now {d}\n", .{ old, @tagName(b.nodes.items[new].tag), new });
+        // The hash covers the payload and the operands' hashes: equal, the copy is whole.
+        try std.testing.expectEqual(hashes_before[old], b.node_hashes.items[new]);
+        try std.testing.expectEqual(hashes_before[old], try b.recomputedHash(new));
+    }
+    try std.testing.expectEqual(@as(dag.SettingsId, 1), b.nodes.items[renumbered[ball]].settings);
+    // An identical node is still found, at its new index.
+    try std.testing.expectEqual(renumbered[cube], try b.addCube(1, 2, 3, true));
+    try std.testing.expectEqual(renumbered[moved], try b.addTranslate(renumbered[many], 1, 2, 3));
+}

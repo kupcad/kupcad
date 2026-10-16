@@ -686,3 +686,24 @@ test "DAG: a mesh is kept while the native that made it still builds on it" {
         try support.expectValue(case.expected, vm.globals.get("r").?);
     }
 }
+
+test "DAG: shapes kept across runs still build after the graph is compacted" {
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    // Compact after every run
+    vm.dag_builder.compaction_floor = 0;
+    vm.dag_builder.compact_at = 0;
+    try testing.expectEqual(.ok, try support.runOn(&vm, "keep = cube(3).translate(x: 1)\nleaf = cube(2).simplify\nsketch = square(2).offset(1)"));
+    var buf: [128]u8 = undefined;
+    for (0..30) |i| {
+        const src = try std.fmt.bufPrint(&buf, "tmp = cube({d}) + sphere(1).translate(x: {d})\nr = tmp.volume > 0", .{ i + 1, i });
+        try testing.expectEqual(.ok, try support.runOn(&vm, src));
+    }
+    try testing.expect(vm.dag_builder.nodes.items.len < 20);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "r = [keep.volume, leaf.translate(y: 1).volume, sketch.extrude(1).volume > 4, tmp.volume > 27]"));
+    const r = vm.globals.get("r").?.asArray().items.items;
+    try testing.expectEqual(@as(f64, 27), r[0].asNumber());
+    try testing.expectEqual(@as(f64, 8), r[1].asNumber());
+    try testing.expect(r[2].asBool() and r[3].asBool());
+}

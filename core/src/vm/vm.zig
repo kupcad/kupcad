@@ -495,10 +495,11 @@ pub const VM = struct {
     }
 
     /// After an outermost run, when no native holds node indices of its own: releases the
-    /// meshes of concrete leaves (simplify, decompose) no live shape is made from. They
-    /// stayed until the VM went, a mesh per run in the editor's long-lived worker.
+    /// meshes of concrete leaves (simplify, decompose) no live shape is made from, and
+    /// compacts the graph once it has doubled since the last time. The meshes stayed until
+    /// the VM went, a mesh per run in the editor's long-lived worker, and so did every node.
     fn tidyGeometryGraph(self: *VM) void {
-        if (self.run_depth != 0 or self.dag_builder.held_leaves == 0) return;
+        if (self.run_depth != 0 or (self.dag_builder.held_leaves == 0 and !self.dag_builder.wantsCompaction())) return;
         // The shapes still live, and nothing else
         self.gc.collectGarbage(self, false);
         var roots: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
@@ -512,6 +513,18 @@ pub const VM = struct {
         var live = self.dag_builder.liveNodes(self.allocator, roots.items) catch return;
         defer live.deinit(self.allocator);
         self.dag_builder.releaseUnreachableLeaves(&live);
+        if (self.dag_builder.wantsCompaction()) self.compactGeometryGraph(&live);
+    }
+
+    /// Compacts the graph to its `live` nodes and moves every shape to its node's new index.
+    fn compactGeometryGraph(self: *VM, live: *const std.DynamicBitSetUnmanaged) void {
+        // Without room to compact, the next run tries again.
+        const renumbered = self.dag_builder.compact(live) catch return;
+        defer self.dag_builder.gpa.free(renumbered);
+        for (self.gc.geometries.items) |g| {
+            if (g.dag_idx != dag.CONCRETE_NODE_SENTINEL) g.dag_idx = renumbered[g.dag_idx];
+        }
+        for (self.gc.cross_sections.items) |cs| cs.dag_idx = renumbered[cs.dag_idx];
     }
 
     pub fn run(self: *VM) InterpretResult {

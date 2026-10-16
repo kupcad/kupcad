@@ -16,6 +16,9 @@ pub const DAGNodeIndex = u32;
 /// that matters: Debug and test builds.
 const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
 
+/// The size of the tables below which the graph is never compacted (DAGBuilder.compact).
+const MIN_COMPACTION_BYTES: usize = 1 << 20;
+
 /// Index of a node's settings in DAGBuilder.settings_table; 0 is the default settings.
 pub const SettingsId = u16;
 
@@ -190,12 +193,23 @@ pub const DAGBuilder = struct {
     /// The settings new nodes get; the VM sets it whenever its config changes.
     current_settings: SettingsId = 0,
 
+    /// The size of the tables (tableBytes) at which `wantsCompaction`: twice what the last
+    /// compaction kept, and never below `compaction_floor`.
+    compact_at: usize = MIN_COMPACTION_BYTES,
+    compaction_floor: usize = MIN_COMPACTION_BYTES,
+
     pub fn init(gpa: std.mem.Allocator) DAGBuilder {
         return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *DAGBuilder) void {
         for (self.concrete_leaves.items) |leaf| if (leaf.handle) |h| kernel.destruct(h);
+        self.freeTables();
+        self.settings_table.deinit(self.gpa);
+    }
+
+    /// Frees the node tables, not the meshes their leaves hold.
+    fn freeTables(self: *DAGBuilder) void {
         self.nodes.deinit(self.gpa);
         self.extra_data.deinit(self.gpa);
         self.numbers.deinit(self.gpa);
@@ -204,7 +218,6 @@ pub const DAGBuilder = struct {
         self.concrete_leaves.deinit(self.gpa);
         self.node_hashes.deinit(self.gpa);
         self.dedup_map.deinit(self.gpa);
-        self.settings_table.deinit(self.gpa);
     }
 
     inline fn allocator(self: *DAGBuilder) std.mem.Allocator {
@@ -602,6 +615,139 @@ pub const DAGBuilder = struct {
                 self.held_leaves -= 1;
             }
         }
+    }
+
+    // --- Compaction ---
+
+    /// The bytes the node tables hold.
+    pub fn tableBytes(self: *const DAGBuilder) usize {
+        return self.nodes.items.len * @sizeOf(DAGNode) +
+            self.node_hashes.items.len * @sizeOf(u64) +
+            self.dedup_map.count() * (@sizeOf(u64) + @sizeOf(DAGNodeIndex)) +
+            self.extra_data.items.len * @sizeOf(u32) +
+            self.numbers.items.len * @sizeOf(f64) +
+            self.poly_points.items.len * @sizeOf([3]f64) +
+            self.poly_faces.items.len * @sizeOf([3]u32) +
+            self.concrete_leaves.items.len * @sizeOf(ConcreteLeaf);
+    }
+
+    /// The hash node `idx` has by its payload now, for tests that check a copied payload: it
+    /// is the stored one but after a collision (appendNodeWithRollback).
+    pub fn recomputedHash(self: *const DAGBuilder, idx: DAGNodeIndex) !u64 {
+        return self.computeNodeHash(self.nodes.items[idx]);
+    }
+
+    /// Whether the tables have grown enough since the last compaction to compact them.
+    pub fn wantsCompaction(self: *const DAGBuilder) bool {
+        return self.tableBytes() >= self.compact_at;
+    }
+
+    /// Keeps only the `live` nodes (liveNodes): copies each, with its payload, into new
+    /// tables in their order, so operands stay before what is made from them, with its hash
+    /// (the result caches' key, so what they hold stays theirs), and drops the rest with
+    /// their leaves' meshes. Returns each old index's new one (maxInt for a dropped node),
+    /// which the caller applies to every shape it holds; on failure nothing has changed.
+    pub fn compact(self: *DAGBuilder, live: *const std.DynamicBitSetUnmanaged) ![]DAGNodeIndex {
+        var fresh = DAGBuilder.init(self.gpa);
+        // The leaves' meshes are still this builder's until the swap, and the settings ids
+        // stay the same: the table is shared, and not freed with the copy's.
+        errdefer fresh.freeTables();
+        fresh.settings_table = self.settings_table;
+        const renumbered = try self.gpa.alloc(DAGNodeIndex, self.nodes.items.len);
+        errdefer self.gpa.free(renumbered);
+
+        const kept = live.count();
+        try fresh.nodes.ensureTotalCapacity(self.gpa, kept);
+        try fresh.node_hashes.ensureTotalCapacity(self.gpa, kept);
+        try fresh.dedup_map.ensureTotalCapacity(self.gpa, @intCast(kept));
+        for (self.nodes.items, self.node_hashes.items, renumbered, 0..) |node, hash, *new_index, i| {
+            if (!live.isSet(i)) {
+                new_index.* = std.math.maxInt(DAGNodeIndex);
+                continue;
+            }
+            const copy = try self.copyNode(&fresh, node, renumbered);
+            if (VERIFY_NODES) if (dag_verifier.problem(&fresh, copy)) |why| {
+                std.debug.panic("DAG compaction bug: a {s} node copied malformed: {s}", .{ @tagName(copy.tag), why });
+            };
+            new_index.* = @intCast(fresh.nodes.items.len);
+            fresh.nodes.appendAssumeCapacity(copy);
+            fresh.node_hashes.appendAssumeCapacity(hash);
+            fresh.dedup_map.putAssumeCapacity(hash, new_index.*);
+        }
+
+        // Nothing fails from here: the dropped leaves' meshes go, and the new tables in.
+        for (self.nodes.items, 0..) |node, i| {
+            if (node.tag != .concrete or live.isSet(i)) continue;
+            if (self.concrete_leaves.items[node.data].handle) |h| kernel.destruct(h);
+        }
+        self.freeTables();
+        fresh.current_settings = self.current_settings;
+        fresh.next_leaf_serial = self.next_leaf_serial;
+        for (fresh.concrete_leaves.items) |leaf| fresh.held_leaves += @intFromBool(leaf.handle != null);
+        fresh.compaction_floor = self.compaction_floor;
+        fresh.compact_at = @max(self.compaction_floor, 2 * fresh.tableBytes());
+        self.* = fresh;
+        return renumbered;
+    }
+
+    /// `node`, its payload copied into `fresh` (by layoutOf) and its operands renumbered.
+    fn copyNode(self: *const DAGBuilder, fresh: *DAGBuilder, node: DAGNode, renumbered: []const DAGNodeIndex) !DAGNode {
+        const extra = self.extra_data.items;
+        const at = node.data;
+        var copy = node;
+        switch (layoutOf(node.tag)) {
+            .none => {},
+            .numbers => |n| copy.data = try fresh.appendNumbers(self.numbers.items[at..][0..n]),
+            .operands => |n| copy.data = try fresh.appendOperands(extra[at..][0..n], renumbered),
+            .operand_list => {
+                copy.data = try fresh.appendExtraData(&.{extra[at]});
+                _ = try fresh.appendOperands(extra[at + 1 ..][0..extra[at]], renumbered);
+            },
+            .target_numbers => |n| {
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at + 1]..][0..n]);
+                copy.data = try fresh.appendExtraData(&.{ renumbered[extra[at]], numbers_at });
+            },
+            .target_value => copy.data = try fresh.appendExtraData(&.{ renumbered[extra[at]], extra[at + 1] }),
+            .loft => {
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at + 2]..][0..1]);
+                copy.data = try fresh.appendExtraData(&.{ renumbered[extra[at]], renumbered[extra[at + 1]], numbers_at });
+            },
+            .polygon => {
+                const count = extra[at + 1];
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at]..][0 .. 2 * count]);
+                copy.data = try fresh.appendExtraData(&.{ numbers_at, count });
+            },
+            .polygons => {
+                const count = extra[at];
+                copy.data = try fresh.appendExtraData(&.{count});
+                for (0..count) |i| {
+                    const points = extra[at + 1 + 2 * i];
+                    const len = extra[at + 2 + 2 * i];
+                    const numbers_at = try fresh.appendNumbers(self.numbers.items[points..][0 .. 2 * len]);
+                    _ = try fresh.appendExtraData(&.{ numbers_at, len });
+                }
+            },
+            .polyhedron => {
+                const points_at: u32 = @intCast(fresh.poly_points.items.len);
+                try fresh.poly_points.appendSlice(fresh.gpa, self.poly_points.items[extra[at]..][0..extra[at + 1]]);
+                const faces_at: u32 = @intCast(fresh.poly_faces.items.len);
+                try fresh.poly_faces.appendSlice(fresh.gpa, self.poly_faces.items[extra[at + 2]..][0..extra[at + 3]]);
+                copy.data = try fresh.appendExtraData(&.{ points_at, extra[at + 1], faces_at, extra[at + 3], extra[at + 4], extra[at + 5] });
+            },
+            .concrete => {
+                copy.data = @intCast(fresh.concrete_leaves.items.len);
+                try fresh.concrete_leaves.append(fresh.gpa, self.concrete_leaves.items[at]);
+            },
+        }
+        return copy;
+    }
+
+    /// `operands` renumbered, appended to extra_data; where they start.
+    fn appendOperands(self: *DAGBuilder, operands: []const DAGNodeIndex, renumbered: []const DAGNodeIndex) !u32 {
+        const start: u32 = @intCast(self.extra_data.items.len);
+        try self.extra_data.ensureUnusedCapacity(self.gpa, operands.len);
+        for (operands) |operand| self.extra_data.appendAssumeCapacity(renumbered[operand]);
+        return start;
     }
 
     // --- Unpackers for JIT Materialization ---
