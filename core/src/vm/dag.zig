@@ -83,6 +83,59 @@ pub fn scriptName(tag: DAGTag) []const u8 {
     };
 }
 
+/// Where a node's payload lives in the side tables, by tag: the one description of the
+/// layouts. The verifier checks every node against it, and a node's operands are found by it.
+pub const Layout = union(enum) {
+    /// No payload.
+    none,
+    /// `data` starts this many numbers.
+    numbers: u8,
+    /// `data` starts this many operands in extra_data.
+    operands: u8,
+    /// `data` is an operand count in extra_data, the operands after it.
+    operand_list,
+    /// extra_data at `data`: the operand, then the index of this many numbers.
+    target_numbers: u8,
+    /// extra_data at `data`: the operand, then a plain value (a material id).
+    target_value,
+    /// extra_data at `data`: the base and top operands, then the index of one number.
+    loft,
+    /// extra_data at `data`: the index of the points' numbers (x, y each), then their count.
+    polygon,
+    /// extra_data at `data`: the contour count, then a polygon's two words per contour.
+    polygons,
+    /// extra_data at `data`: the points' start and count, the faces' start and count, and
+    /// the two halves of the mesh's hash.
+    polyhedron,
+    /// `data` is the node's slot in concrete_leaves.
+    concrete,
+};
+
+pub fn layoutOf(tag: DAGTag) Layout {
+    return switch (tag) {
+        .empty_solid, .empty_sketch => .none,
+        .cube => .{ .numbers = 3 },
+        .cylinder => .{ .numbers = 4 },
+        .sphere, .square, .circle => .{ .numbers = 2 },
+        .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => .{ .operands = 2 },
+        .hull, .project_op => .{ .operands = 1 },
+        .batch_union_op, .batch_hull_op => .operand_list,
+        .translate, .rotate, .scale, .mirror => .{ .target_numbers = 3 },
+        .transform_matrix => .{ .target_numbers = 12 },
+        .trim_by_plane => .{ .target_numbers = 4 },
+        .slice_op, .offset => .{ .target_numbers = 1 },
+        .extrude => .{ .target_numbers = 5 },
+        .revolve => .{ .target_numbers = 2 },
+        .cs_transform => .{ .target_numbers = 6 },
+        .set_material => .target_value,
+        .loft => .loft,
+        .polygon => .polygon,
+        .polygons_even_odd => .polygons,
+        .polyhedron_op => .polyhedron,
+        .concrete => .concrete,
+    };
+}
+
 /// Exactly 8 bytes for optimal L1 cache line density (8 nodes per 64B line)
 pub const DAGNode = struct {
     tag: DAGTag,
@@ -490,6 +543,19 @@ pub const DAGBuilder = struct {
 
         const extra_idx = try self.appendExtraData(&.{ num_idx, @intCast(pts.len) });
         return try self.appendNodeWithRollback(.{ .tag = .polygon, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// The nodes `node` is made from, in extra_data (`node` must be sound, as the verifier
+    /// checks every node to be).
+    pub fn operandsOf(self: *const DAGBuilder, node: DAGNode) []const DAGNodeIndex {
+        const extra = self.extra_data.items;
+        return switch (layoutOf(node.tag)) {
+            .operands => |n| extra[node.data..][0..n],
+            .operand_list => extra[node.data + 1 ..][0..extra[node.data]],
+            .target_numbers, .target_value => extra[node.data..][0..1],
+            .loft => extra[node.data..][0..2],
+            .none, .numbers, .polygon, .polygons, .polyhedron, .concrete => &.{},
+        };
     }
 
     // --- Unpackers for JIT Materialization ---

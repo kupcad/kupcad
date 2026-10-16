@@ -139,3 +139,28 @@ test "DAG: a node records the settings it was made under, and they tell it apart
         break :blk try builder.addCube(1, 1, 1, false);
     });
 }
+
+test "DAG: operandsOf gives each node's operands, whatever its layout" {
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const cube = try b.addCube(1, 1, 1, false);
+    const ball = try b.addSphere(1, 8);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const cases = [_]struct { node: dag.DAGNodeIndex, operands: []const dag.DAGNodeIndex }{
+        .{ .node = cube, .operands = &.{} },
+        .{ .node = try b.addBinary(.difference_op, cube, ball), .operands = &.{ cube, ball } },
+        .{ .node = try b.addBatchUnion(&.{ ball, cube }), .operands = &.{ ball, cube } },
+        .{ .node = try b.addHull(ball), .operands = &.{ball} },
+        .{ .node = try b.addTranslate(cube, 1, 2, 3), .operands = &.{cube} },
+        .{ .node = try b.addSetMaterial(ball, 1), .operands = &.{ball} },
+        .{ .node = try b.addLoft(small, big, 4), .operands = &.{ small, big } },
+        .{ .node = try b.addExtrude(big, 2, 0, 0, 1, 1), .operands = &.{big} },
+        .{ .node = try b.addPolygon(@constCast(&[_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 } })), .operands = &.{} },
+        .{ .node = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } }), .operands = &.{} },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("node: {s}\n", .{@tagName(b.nodes.items[case.node].tag)});
+        try std.testing.expectEqualSlices(dag.DAGNodeIndex, case.operands, b.operandsOf(b.nodes.items[case.node]));
+    }
+}
