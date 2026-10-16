@@ -34,8 +34,8 @@ jobs:
           # Apple arm64: allocator, unwinding and libc differ from Linux.
           - name: macos debug
             os: macos-latest
-            wasm_task: test:core
-            wasm: ""
+            core_task: test:core
+            wasm_task: ""
 
     steps:
       - name: Checkout
