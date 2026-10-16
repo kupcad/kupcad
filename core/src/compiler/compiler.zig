@@ -88,6 +88,52 @@ const CallArgs = struct {
     flags: chunk.CallFlags = .{},
 };
 
+/// Where a function's parameters live in its frame: slot 0 is the closure, then the
+/// positionals (a splat among them), the keyword map when it takes keywords, the block,
+/// and one slot per keyword parameter.
+const ParamLayout = struct {
+    /// The positional slots, the keyword map's included.
+    arity: u8,
+    min_args: u8,
+    splat_pos: ?u8,
+    has_kwargs: bool,
+    /// The keyword map's slot; 0 without one.
+    map_slot: u8,
+
+    fn of(params: []const ast.Param) error{TooManyParameters}!ParamLayout {
+        var positionals: usize = 0;
+        var keywords: usize = 0;
+        var required: usize = 0;
+        var splat_pos: ?usize = null;
+        var has_kwargs = false;
+        for (params) |p| {
+            if (p.is_keyword) keywords += 1;
+            if (p.is_keyword or p.modifier == .double_splat) {
+                has_kwargs = true;
+            } else if (p.modifier == null or p.modifier == .splat) {
+                if (p.modifier == .splat) splat_pos = positionals;
+                positionals += 1;
+            }
+            if (p.modifier == null and !p.is_keyword and p.default_value == .none) required += 1;
+        }
+        // Frame slots and arity are u8 operands: the last keyword's slot must fit.
+        const arity = positionals + @intFromBool(has_kwargs);
+        if (arity + 1 + keywords > limits.MAX_ARGS) return error.TooManyParameters;
+        return .{
+            .arity = @intCast(arity),
+            .min_args = @intCast(required),
+            .splat_pos = if (splat_pos) |pos| @intCast(pos) else null,
+            .has_kwargs = has_kwargs,
+            .map_slot = if (has_kwargs) @intCast(positionals + 1) else 0,
+        };
+    }
+
+    /// The block's slot, after the positionals (padded with nil when it isn't given).
+    fn blockSlot(self: ParamLayout) u8 {
+        return self.arity + 1;
+    }
+};
+
 pub const Upvalue = scope_mod.Upvalue;
 pub const Local = scope_mod.Local;
 pub const LoopState = scope_mod.LoopState;
@@ -2677,58 +2723,44 @@ pub const Compiler = struct {
             func.name = str_val.asString();
         }
 
-        var positional_count: usize = 0;
-        var keyword_count: usize = 0;
-        var splat_pos: ?u8 = null;
-        var has_kwargs = false;
-
-        // Frame slots and arity are u8 operands. Layout: slot 0 = closure,
-        // 1..N = positionals (+ kwarg map), N+1 = block, then one virtual slot
-        // per keyword param. Reject before any @intCast below can overflow.
-        var needs_kwarg_map = false;
-        for (params) |p| {
-            if (p.is_keyword) keyword_count += 1;
-            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
-                needs_kwarg_map = true;
-            } else if (p.modifier == null or p.modifier.? == .splat) {
-                positional_count += 1;
-            }
-        }
-        const highest_slot = positional_count + @intFromBool(needs_kwarg_map) + 1 + keyword_count;
-        if (highest_slot > limits.MAX_ARGS) return error.TooManyParameters;
-        positional_count = 0;
-
-        for (params) |p| {
-            if (p.modifier != null) {
-                if (p.modifier.? == .splat or p.modifier.? == .double_splat) {
-                    if (p.modifier.? == .splat) splat_pos = @intCast(positional_count);
-                }
-            }
-            if (p.is_keyword or (p.modifier != null and p.modifier.? == .double_splat)) {
-                has_kwargs = true;
-            } else if (p.modifier == null or p.modifier.? == .splat) {
-                positional_count += 1;
-            }
-        }
-
-        // Kwargs are passed as a single Dictionary map taking exactly 1 positional slot
-        const kwarg_slot_offset = positional_count;
-        if (has_kwargs) positional_count += 1;
-        // Include the implicit block slot in the arity so the VM pads it with nil when omitted
-        func.arity = @intCast(positional_count);
-        func.splat_pos = splat_pos;
-        func.has_kwargs = has_kwargs;
-        var min_args: u8 = 0;
-        for (params) |p| {
-            if (p.modifier == null and !p.is_keyword and p.default_value == .none) min_args += 1;
-        }
-        func.min_args = min_args;
+        const layout = try ParamLayout.of(params);
+        func.arity = layout.arity;
+        func.splat_pos = layout.splat_pos;
+        func.has_kwargs = layout.has_kwargs;
+        func.min_args = layout.min_args;
 
         const child_chunk = try self.allocator.create(chunk.Chunk);
         child_chunk.* = chunk.Chunk.init();
         func.chunk = child_chunk;
 
-        var child_compiler = Compiler{
+        var child_compiler = try self.childCompiler(child_chunk, func, is_method);
+        defer child_compiler.deinit();
+        try child_compiler.declareParams(params, layout);
+        if (layout.has_kwargs) try child_compiler.emitKeywordParams(params, layout.map_slot);
+        try child_compiler.emitPositionalDefaults(params);
+        try child_compiler.compile(body_node);
+
+        // Extract the exact local footprint from the child AFTER compiling
+        func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
+
+        const func_val = value.Value.initObj(&func.obj);
+        const func_idx = try self.makeConstant(func_val);
+        // Now owned by our constant pool; unroot exactly once
+        _ = self.vm.pop();
+        func_rooted = false;
+
+        try self.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
+
+        for (child_compiler.upvalues.items) |upv| {
+            try self.emitByte(if (upv.is_local) 1 else 0);
+            try self.emitByte(@intCast((upv.index >> 8) & 0xff));
+            try self.emitByte(@intCast(upv.index & 0xff));
+        }
+    }
+
+    /// The compiler of a function nested in this one, writing into `child_chunk`.
+    fn childCompiler(self: *Compiler, child_chunk: *chunk.Chunk, func: *value.ObjFunction, is_method: bool) CompileError!Compiler {
+        return .{
             .allocator = self.allocator,
             .tree = self.tree,
             .script_globals = .empty,
@@ -2758,124 +2790,86 @@ pub const Compiler = struct {
             .seeded_locals = &.{},
             .seeded_slot_offset = 0,
         };
-        defer child_compiler.deinit();
+    }
 
-        // Reserve slot 0 for the closure itself
-        try child_compiler.addLocal(.none, 0);
-
-        var current_slot: u8 = 1;
-        // The kwarg map goes AFTER the standard positionals
-        const map_slot = if (has_kwargs) @as(u8, @intCast(kwarg_slot_offset + 1)) else 0;
-
+    /// Declares a function's parameters as its locals, each in its frame slot (ParamLayout).
+    fn declareParams(self: *Compiler, params: []const ast.Param, layout: ParamLayout) CompileError!void {
+        try self.addLocal(.none, 0); // the closure itself
+        var slot: u8 = 1;
         for (params) |param| {
-            if (param.modifier != null and param.modifier.? == .block) {
-                try child_compiler.addLocal(param.name, @intCast(positional_count + 1));
-            } else if (param.is_keyword) {
-                // Handled dynamically via virtual slots below
-            } else if (param.modifier != null and param.modifier.? == .double_splat) {
-                try child_compiler.addLocal(param.name, map_slot);
-            } else {
-                try child_compiler.addLocal(param.name, current_slot);
-                current_slot += 1;
+            if (param.modifier == .block) {
+                try self.addLocal(param.name, layout.blockSlot());
+            } else if (param.modifier == .double_splat) {
+                try self.addLocal(param.name, layout.map_slot);
+            } else if (!param.is_keyword) {
+                try self.addLocal(param.name, slot);
+                slot += 1;
             }
         }
-
-        // Reserve slot (positional_count + 1) for the implicit block slot safely
-        while (child_compiler.locals.items.len <= positional_count + 1) {
-            try child_compiler.addLocal(.none, @intCast(child_compiler.locals.items.len));
+        // Every slot up to the block's is a local, so the VM pads what a call leaves out
+        while (self.locals.items.len <= layout.blockSlot()) {
+            try self.addLocal(.none, @intCast(self.locals.items.len));
         }
-
-        // u16 like addLocal's slot: the check above caps the LAST keyword's slot at
-        // MAX_ARGS (255), so a u8 counter overflowed on its final `+= 1`, and its
-        // start value (block slot + 1) already overflowed with zero keywords.
-        var virtual_slot: u16 = @intCast(positional_count + 2);
+        // Keyword parameters get the slots after the block. u16 like addLocal's slot: the
+        // layout caps the LAST keyword's slot at MAX_ARGS (255), so a u8 counter overflowed
+        // on its final `+= 1`.
+        var keyword_slot: u16 = @as(u16, layout.blockSlot()) + 1;
         for (params) |param| {
             if (param.is_keyword) {
-                try child_compiler.addLocal(param.name, virtual_slot);
-                virtual_slot += 1;
+                try self.addLocal(param.name, keyword_slot);
+                keyword_slot += 1;
             }
         }
+    }
 
-        if (has_kwargs) {
-            for (params) |param| {
-                if (param.is_keyword) {
-                    const name_str = self.tree.getString(param.name);
-                    const kw_name_idx = try child_compiler.makeSymbolConstant(name_str);
-
-                    if (kw_name_idx <= limits.MAX_SHORT_CONSTANTS) {
-                        try child_compiler.emitOp(.op_extract_kwarg);
-                        try child_compiler.emitByte(map_slot);
-                        try child_compiler.emitByte(@intCast(kw_name_idx));
-                    } else {
-                        try child_compiler.emitOp(.op_extract_kwarg_wide);
-                        try child_compiler.emitByte(map_slot);
-                        try child_compiler.emitByte(@intCast((kw_name_idx >> 8) & 0xff));
-                        try child_compiler.emitByte(@intCast(kw_name_idx & 0xff));
-                    }
-
-                    if (param.default_value != .none) {
-                        // The extracted value is already sitting on top of the stack.
-                        // Peek at it. If it is NOT nil, jump directly to setting the local variable.
-                        const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
-
-                        // If it IS nil, pop the nil and evaluate the default AST expression
-                        try child_compiler.emitOp(.op_pop);
-                        try child_compiler.compileNode(param.default_value);
-
-                        // The landing zone for the jump
-                        child_compiler.patchJump(skip_default_jump);
-                    }
-
-                    const local_slot = child_compiler.resolveLocal(param.name).?;
-                    try child_compiler.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
-                    try child_compiler.emitOp(.op_pop);
-                }
-            }
-        }
-
-        // Positional Parameter Defaults Handling
+    /// Takes each keyword parameter out of the keyword map in `map_slot` into its local,
+    /// evaluating its default when the call didn't give it.
+    fn emitKeywordParams(self: *Compiler, params: []const ast.Param, map_slot: u8) CompileError!void {
         for (params) |param| {
-            if (!param.is_keyword and param.modifier == null and param.default_value != .none) {
-                if (child_compiler.resolveLocal(param.name)) |local_slot| {
-                    // Read the padded parameter from the stack
-                    try child_compiler.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
-
-                    // If the caller provided an argument (it is NOT nil), jump over the default assignment
-                    const skip_default_jump = try child_compiler.emitJump(.op_jump_if_not_nil);
-
-                    // If it IS nil, pop the nil and evaluate the default AST expression
-                    try child_compiler.emitOp(.op_pop);
-                    try child_compiler.compileNode(param.default_value);
-
-                    // Store the evaluated default back into the local variable slot
-                    try child_compiler.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
-
-                    // The landing zone for the jump
-                    child_compiler.patchJump(skip_default_jump);
-
-                    // Clean up the stack (pop the result of set_local or the unskipped get_local)
-                    try child_compiler.emitOp(.op_pop);
-                }
+            if (!param.is_keyword) continue;
+            const kw_name_idx = try self.makeSymbolConstant(self.tree.getString(param.name));
+            if (kw_name_idx <= limits.MAX_SHORT_CONSTANTS) {
+                try self.emitOp(.op_extract_kwarg);
+                try self.emitByte(map_slot);
+                try self.emitByte(@intCast(kw_name_idx));
+            } else {
+                try self.emitOp(.op_extract_kwarg_wide);
+                try self.emitByte(map_slot);
+                try self.emitByte(@intCast((kw_name_idx >> 8) & 0xff));
+                try self.emitByte(@intCast(kw_name_idx & 0xff));
             }
+
+            if (param.default_value != .none) {
+                // The extracted value is on top of the stack: not nil, it is the value
+                const skip_default_jump = try self.emitJump(.op_jump_if_not_nil);
+                // nil: pop it and evaluate the default instead
+                try self.emitOp(.op_pop);
+                try self.compileNode(param.default_value);
+                self.patchJump(skip_default_jump);
+            }
+
+            const local_slot = self.resolveLocal(param.name).?;
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
+            try self.emitOp(.op_pop);
         }
+    }
 
-        try child_compiler.compile(body_node);
-
-        // Extract the exact local footprint from the child AFTER compiling
-        func.local_count = @max(child_compiler.locals.items.len, child_compiler.max_local_slot + 1);
-
-        const func_val = value.Value.initObj(&func.obj);
-        const func_idx = try self.makeConstant(func_val);
-        // Now owned by our constant pool; unroot exactly once
-        _ = self.vm.pop();
-        func_rooted = false;
-
-        try self.emitOpWithOperand(.op_closure, .op_closure_wide, func_idx);
-
-        for (child_compiler.upvalues.items) |upv| {
-            try self.emitByte(if (upv.is_local) 1 else 0);
-            try self.emitByte(@intCast((upv.index >> 8) & 0xff));
-            try self.emitByte(@intCast(upv.index & 0xff));
+    /// Gives each positional parameter with a default that default when the call left it
+    /// out (the VM padded it with nil).
+    fn emitPositionalDefaults(self: *Compiler, params: []const ast.Param) CompileError!void {
+        for (params) |param| {
+            if (param.is_keyword or param.modifier != null or param.default_value == .none) continue;
+            const local_slot = self.resolveLocal(param.name) orelse continue;
+            try self.emitOpWithOperand(.op_get_local, .op_get_local_wide, local_slot);
+            // Given (not nil): skip the default
+            const skip_default_jump = try self.emitJump(.op_jump_if_not_nil);
+            // nil: pop it, evaluate the default and store it
+            try self.emitOp(.op_pop);
+            try self.compileNode(param.default_value);
+            try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
+            self.patchJump(skip_default_jump);
+            // The stored default, or the given value read above
+            try self.emitOp(.op_pop);
         }
     }
 };
