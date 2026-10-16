@@ -217,7 +217,7 @@ test "GC Sandbox: Enforces max_memory_limit strictly" {
 test "GC: Mass allocation and sweep underflow protection" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.zealous_gc = true;
+    vm.hooks.setZealousGc(true);
 
     // Allocate and free multiple batches of dynamic strings and closures
     for (0..500) |i| {

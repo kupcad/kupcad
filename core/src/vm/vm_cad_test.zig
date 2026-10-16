@@ -2159,7 +2159,7 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
     try registry.registerStandardLibrary(&vm);
 
     // Explicitly expand the VM instruction limit to accommodate the massive tree generation loop
-    vm.instruction_limit = 1_000_000;
+    vm.hooks.setLimit(1_000_000);
 
     const MockKernel = struct {
         fn shape(ctx_opaque: *anyopaque, _: value.NativeArgs) !value.Value {

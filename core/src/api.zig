@@ -188,7 +188,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     var sandbox = ReadOnlyVfs.init(vm.vfs, null);
     vm.vfs = sandbox.vfs();
     vm.line_index = &doc.line_index;
-    vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+    vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
     vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
     try registry.registerStandardLibrary(&vm);
     vm.host.print_handler = null; // puts, print, inspect, benchmark

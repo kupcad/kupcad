@@ -328,10 +328,10 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         .base_slot = repl_base_slot,
     }) catch return;
 
-    const saved_step = vm.step_mode;
-    vm.step_mode = false;
+    const saved_step = vm.hooks.step;
+    vm.hooks.setStep(false);
     const res = vm.runUntil(target_depth);
-    vm.step_mode = saved_step;
+    vm.hooks.setStep(saved_step);
 
     if (res == .ok) {
         const result_val = vm.pop();
@@ -398,10 +398,10 @@ pub fn debuggerLoop(vm: *VM) void {
 
         if (std.mem.eql(u8, trimmed, ".c") or std.mem.eql(u8, trimmed, ".continue")) {
             stderr.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch return;
-            vm.step_mode = false;
+            vm.hooks.setStep(false);
             break;
         } else if (std.mem.eql(u8, trimmed, ".s") or std.mem.eql(u8, trimmed, ".step")) {
-            vm.step_mode = true;
+            vm.hooks.setStep(true);
             break;
         } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
             stderr.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch return;

@@ -21,7 +21,7 @@ const ErrorKind = @import("error_kind.zig").ErrorKind;
 /// Runs a chunk and enforces strict stack equilibrium checks
 pub fn executeAndAssertStack(vm: *VM, chunk_ptr: *chunk.Chunk, expected_stack_top: usize) !value.Value {
     // Turn on the brutal GC mode for tests
-    vm.zealous_gc = true;
+    vm.hooks.setZealousGc(true);
 
     const result = vm.interpret(chunk_ptr);
     try testing.expectEqual(.ok, result);

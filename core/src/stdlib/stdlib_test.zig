@@ -794,7 +794,7 @@ test "Stdlib: the instruction budget stops an uncapped range loop" {
         errdefer std.debug.print("script: {s}\n", .{src});
         var vm = try initVm();
         defer vm.deinit();
-        vm.instruction_limit = budget;
+        vm.hooks.setLimit(budget);
         // Same outcome as a runaway `while` loop under the same budget.
         try testing.expectEqual(InterpretResult.execution_limit_exceeded, try runOn(&vm, src));
         try testing.expect(vm.instruction_count > budget);

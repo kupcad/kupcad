@@ -37,7 +37,7 @@ fn mockStepHandler(vm: *VM) void {
 
 fn steppingDebugger(vm: *VM) void {
     stepping_debugger_calls += 1;
-    vm.step_mode = stepping_debugger_calls <= 2;
+    vm.hooks.setStep(stepping_debugger_calls <= 2);
 }
 
 test "VM: Comprehensive Ruby-like language features integration" {
@@ -372,7 +372,7 @@ test "VM Debugger: step_mode triggers callback exactly on line boundaries" {
 
     // Bind the mock debugger handler and enable stepping
     vm.debugger_step_handler = mockStepHandler;
-    vm.step_mode = true;
+    vm.hooks.setStep(true);
     mock_step_count = 0;
 
     // A 3-line script should cross a line boundary exactly twice after the first instruction starts
@@ -612,7 +612,7 @@ test "VM Debugger: debugger() steps the following lines, then continues, and the
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
     // The breakpoint, then two line steps (b = 2, c = 3); `.continue` ran the rest unseen.
     try testing.expectEqual(@as(usize, 3), stepping_debugger_calls);
-    try testing.expect(!vm.step_mode);
+    try testing.expect(!vm.hooks.step);
     try testing.expectEqual(@as(f64, 10), vm.globals.get("r").?.asNumber());
 }
 
@@ -621,7 +621,7 @@ test "VM Debugger: stepping with no one to answer runs the script to the end" {
     // could resume; nobody is there to pause for, so the run goes on.
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.step_mode = true;
+    vm.hooks.setStep(true);
     const source =
         \\x = 10
         \\y = 20
@@ -636,7 +636,7 @@ test "VM Debugger: stepping with no one to answer runs the script to the end" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
-    try testing.expect(!vm.step_mode);
+    try testing.expect(!vm.hooks.step);
     try testing.expectEqual(@as(f64, 30), vm.globals.get("z").?.asNumber());
 }
 

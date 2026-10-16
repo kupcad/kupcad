@@ -12,6 +12,7 @@ const error_kind = @import("error_kind.zig");
 pub const ErrorKind = error_kind.ErrorKind;
 const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
+const InstructionHooks = @import("instruction_hooks.zig").InstructionHooks;
 const value = @import("../core/value.zig");
 const parameters = @import("../core/parameters.zig");
 const host_mod = @import("host.zig");
@@ -172,7 +173,6 @@ pub const VM = struct {
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
     /// `mute_errors`, so embedders (api, wasm) can show it. Owned by `allocator`.
     last_error: ?[]u8 = null,
-    step_mode: bool = false,
 
     // std classes
     string_class: ?*value.ObjClass = null,
@@ -227,12 +227,11 @@ pub const VM = struct {
 
     // safety for infinite loops
     instruction_count: usize,
-    instruction_limit: usize,
+    /// The instruction budget, zealous GC and debugger stepping, behind one flag.
+    hooks: InstructionHooks,
     import_depth: u8 = 0,
     // max call stack
     max_call_frames: usize = 100_000,
-    /// Set to true during tests to brutally expose unrooted allocations
-    zealous_gc: bool = false,
 
     cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -292,7 +291,6 @@ pub const VM = struct {
                 .config_stack = config_stack,
                 .line_index = null,
                 .debugger_step_handler = null,
-                .step_mode = false,
                 .rescue_frames = rescue_frames,
                 .param_registry = .{},
                 .param_lookup = .empty,
@@ -308,7 +306,11 @@ pub const VM = struct {
                 .static_nil = null,
                 .unwind_stack = .empty,
                 .instruction_count = 0,
-                .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
+                .hooks = hooks: {
+                    var hooks: InstructionHooks = .{};
+                    hooks.setLimit(limits.DEFAULT_INSTRUCTION_LIMIT);
+                    break :hooks hooks;
+                },
                 .import_depth = 0,
             };
         };
@@ -489,6 +491,42 @@ pub const VM = struct {
         return self.runUntil(0);
     }
 
+    /// The instruction hooks that are on (see InstructionHooks): the budget, zealous GC and
+    /// the debugger's stop at a new line. A result ends the run.
+    fn beforeInstruction(self: *VM, frame: *const CallFrame, exec_chunk: *const chunk.Chunk, previous_line: *?u32) ?InterpretResult {
+        if (self.hooks.limit > 0) {
+            self.instruction_count += 1;
+            if (self.instruction_count > self.hooks.limit) {
+                self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.hooks.limit});
+                return .execution_limit_exceeded;
+            }
+        }
+        // A full collection before the instruction: a value a native forgot to root is
+        // swept now, and the next instruction to use it fails.
+        if (self.hooks.zealous_gc) self.gc.collectGarbage(self, false);
+        if (self.hooks.step) {
+            const li = self.line_index orelse return null;
+            const current_line = li.getLine(exec_chunk.getOffset(frame.ip));
+            const prev = previous_line.* orelse {
+                // The first instruction of this step.
+                previous_line.* = current_line;
+                return null;
+            };
+            if (current_line == prev) return null;
+            if (self.debugger_step_handler) |handler| {
+                // A new line: the debugger takes over, then the step goes on from it.
+                handler(self);
+                previous_line.* = current_line;
+            } else {
+                // Nobody to pause for (a host armed stepping without a handler): the run
+                // goes on, as debugger() does without a host. It used to end here with a
+                // `paused` result no caller could resume.
+                self.hooks.setStep(false);
+            }
+        }
+        return null;
+    }
+
     pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
         // The scratch arena is recycled when the outermost run ends, even after an unwind.
         // A nested run (a native calling a block through callClosureSync) must not reset
@@ -503,53 +541,15 @@ pub const VM = struct {
 
         while (self.frames.items.len > target_depth) {
 
-            // Cancellation Token Check (Instant UI / Ctrl+C Interrupt)
-            if (self.cancel_token.load(.acquire)) return .runtime_error;
-
-            // Gas Check
-            if (self.instruction_limit > 0) {
-                self.instruction_count += 1;
-                if (self.instruction_count > self.instruction_limit) {
-                    self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.instruction_limit});
-                    return .execution_limit_exceeded;
-                }
-            }
-
-            if (self.zealous_gc) {
-                // Run a full Mark-and-Sweep before executing the opcode.
-                // If ANY native method forgot to root a temporary object, it will be
-                // swept right now, and the next instruction will immediately crash.
-                self.gc.collectGarbage(self, false);
-            }
+            // A relaxed load: the flag publishes nothing, the run only has to see it soon.
+            if (self.cancel_token.load(.monotonic)) return .runtime_error;
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
 
-            // --- DEBUGGER: Step Mechanics ---
-            if (self.step_mode) {
-                if (self.line_index) |li| {
-                    const current_offset = exec_chunk.getOffset(frame.ip);
-                    const current_line = li.getLine(current_offset);
-
-                    if (previous_line) |prev| {
-                        if (current_line != prev) {
-                            // We crossed a line boundary! Invoke the REPL.
-                            if (self.debugger_step_handler) |handler| {
-                                handler(self);
-                                // After debugger returns, update tracking so it doesn't loop forever on the same line
-                                previous_line = current_line;
-                            } else {
-                                // Nobody to pause for (a host armed stepping without a handler):
-                                // the run goes on, as debugger() does without a host. It used to
-                                // end here with a `paused` result no caller could resume.
-                                self.step_mode = false;
-                            }
-                        }
-                    } else {
-                        // Initialize tracking on the first instruction of this step
-                        previous_line = current_line;
-                    }
-                }
+            if (self.hooks.active) {
+                @branchHint(.unlikely); // off unless a host, a test or the debugger turns a hook on
+                if (self.beforeInstruction(frame, exec_chunk, &previous_line)) |stop| return stop;
             }
 
             // Prevent runaway instruction pointer

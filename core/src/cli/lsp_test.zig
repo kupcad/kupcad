@@ -176,10 +176,10 @@ test "LSP: a script that never ends doesn't hang the server" {
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    try testing.expectEqual(limits.INTERACTIVE_INSTRUCTION_LIMIT, server.preview.session.vm.instruction_limit);
+    try testing.expectEqual(limits.INTERACTIVE_INSTRUCTION_LIMIT, server.preview.session.vm.hooks.limit);
 
     // The same stop, sooner, so the test is quick.
-    server.preview.session.vm.instruction_limit = 10_000;
+    server.preview.session.vm.hooks.setLimit(10_000);
     server.preview.session.vm.mute_errors = true;
     try server.open(URI, "n = 0\nwhile true\n  n += 1\nend\n");
     server.settle(); // returns: the evaluation gave up

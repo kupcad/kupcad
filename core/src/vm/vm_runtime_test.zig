@@ -71,7 +71,7 @@ test "VM: Dynamic stack growth handles pushes beyond initial 64K pre-allocation"
 test "VM: Gas limit prevents infinite loops and throws specific error" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.instruction_limit = 50;
+    vm.hooks.setLimit(50);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -622,7 +622,7 @@ test "VM: Gas limit perfectly triggers inside deeply nested loop contexts, preve
     try registry.registerStandardLibrary(&vm);
 
     // Set a strict gas limit
-    vm.instruction_limit = 100;
+    vm.hooks.setLimit(100);
 
     // Deeply nested infinite loop to test the bounds of the interpreter's safety constraints
     const source =
@@ -660,7 +660,7 @@ test "VM: Gas limit triggers securely through native op_yield re-entrancy" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    vm.instruction_limit = 50;
+    vm.hooks.setLimit(50);
 
     const source =
         \\def infinite_yielder

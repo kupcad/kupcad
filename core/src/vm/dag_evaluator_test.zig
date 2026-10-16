@@ -547,7 +547,7 @@ test "DAG Evaluator: rejects a DAG mixing engines" {
 test "DAG Evaluator: decompose/simplify results feed later DAG ops" {
     var vm = try initVm();
     defer vm.deinit();
-    vm.zealous_gc = true; // concrete handles must survive collection of their ObjGeometry
+    vm.hooks.setZealousGc(true); // concrete handles must survive collection of their ObjGeometry
 
     try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm, "result = cube(10).decompose[0].translate(x: 1).volume"), 1e-6);
     try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm,

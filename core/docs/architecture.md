@@ -143,6 +143,10 @@ When the evaluation stack reallocates to a new memory block:
 
 This prevents open upvalues from dangling or pointing to deallocated stack memory during runtime stack expansions.
 
+### The Dispatch Loop's Checks
+
+Before each instruction the loop reads the cancel token (a relaxed atomic load: it only has to see a cancel soon) and one flag, `hooks.active` (`vm/instruction_hooks.zig`): whether the instruction budget, zealous GC or the debugger's stepping is on. Only then does it call `beforeInstruction`, which does what is on. `InstructionHooks` keeps the flag through its setters (`setLimit`, `setZealousGc`, `setStep`), which every host and test uses. Testing each on every instruction cost a fifth of a tight loop's time (1M iterations, ReleaseFast: 46.6 ms, now 36.6 ms; a loop of calls 21.4, now 17.4 ms). Where a host sets a budget (the language server, the browser) the count runs on every instruction, as before.
+
 ### Inline Caching (IC)
 
 Property getters/setters (`op_get_property`, `op_set_property`) and method invocations (`op_invoke`) use a **2-Way Polymorphic Inline Cache (PIC)** (`InlineCache` in `chunk.zig`). A property read whose name is a method of the receiver's class (a reader, `b.width` with `def width`) caches that method at the read site, as a call site does (`InlineCache.cachedMethod`); it used to find no field and look the method up from scratch, class chain and private name, on every read.
@@ -408,7 +412,7 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 ## 16. GC Stress
 
-`zig build test -Dgc-stress` builds every VM collecting at every object allocation (`GC.stress` defaults to `build_info.gc_stress`), so a value a native or the VM forgot to root is swept at once and the test that uses it fails there; the nightly job runs the whole suite this way on Linux. The first run found no unrooted value in the VM or the natives, only tests that build bytecode by hand without registering the chunk (`vm.gc.trackChunk`) as the compiler registers its own, and tests that count objects between their own collections (`collectOnlyWhenAsked` in `vm/memory_test.zig`). A test can still set `vm.gc.stress` (or `vm.zealous_gc`, a collection before every instruction) for a script of its own. The WebAssembly suite runs the same way (`zig build test-wasm -Dtarget=wasm32-wasi -Dgc-stress`), where usize and every pointer are 32 bits.
+`zig build test -Dgc-stress` builds every VM collecting at every object allocation (`GC.stress` defaults to `build_info.gc_stress`), so a value a native or the VM forgot to root is swept at once and the test that uses it fails there; the nightly job runs the whole suite this way on Linux. The first run found no unrooted value in the VM or the natives, only tests that build bytecode by hand without registering the chunk (`vm.gc.trackChunk`) as the compiler registers its own, and tests that count objects between their own collections (`collectOnlyWhenAsked` in `vm/memory_test.zig`). A test can still set `vm.gc.stress` (or `vm.hooks.setZealousGc(true)`, a collection before every instruction) for a script of its own. The WebAssembly suite runs the same way (`zig build test-wasm -Dtarget=wasm32-wasi -Dgc-stress`), where usize and every pointer are 32 bits.
 
 ## 17. Engine Parity
 

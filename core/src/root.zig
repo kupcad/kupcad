@@ -155,6 +155,7 @@ test {
     _ = @import("vm/validation_test.zig");
     _ = @import("vm/verifier_test.zig");
     _ = @import("vm/vm_test.zig");
+    _ = @import("vm/instruction_hooks_test.zig");
     _ = @import("vm/vm_runtime_test.zig");
     _ = @import("vm/vm_exceptions_test.zig");
     _ = @import("vm/vm_cad_test.zig");

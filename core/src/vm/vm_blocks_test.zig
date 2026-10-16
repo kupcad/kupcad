@@ -516,7 +516,7 @@ test "VM Edge Case: executes 32-bit control flow jump correctly (> 65KB block)" 
     out_chunk.max_stack_slots = 5;
 
     // Temporarily increase gas limit because decoding 70,000 nils counts against instructions run
-    vm.instruction_limit = 200_000;
+    vm.hooks.setLimit(200_000);
 
     // The VM should successfully land and return 42
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);

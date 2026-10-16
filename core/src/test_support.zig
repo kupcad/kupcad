@@ -93,7 +93,7 @@ pub fn expectScripts(cases: []const ScriptCase) !void {
         errdefer std.debug.print("script:\n{s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
-        vm.zealous_gc = case.gc_stress;
+        vm.hooks.setZealousGc(case.gc_stress);
         try std.testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         const r = vm.globals.get("r") orelse return error.MissingGlobal;
         try expectValue(case.expected, r);

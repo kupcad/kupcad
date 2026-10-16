@@ -98,7 +98,7 @@ fn astDepth() !void {
 fn instructionBudget() !void {
     var vm = try support.initVm();
     defer vm.deinit();
-    vm.instruction_limit = SMALL_INSTRUCTION_BUDGET;
+    vm.hooks.setLimit(SMALL_INSTRUCTION_BUDGET);
     try testing.expectEqual(InterpretResult.execution_limit_exceeded, try support.runOn(&vm, "while true\nend"));
     try testing.expect(std.mem.indexOf(u8, vm.last_error orelse "", "Execution limit") != null);
 }
@@ -118,7 +118,7 @@ fn memoryBudget() !void {
 fn defaultInstructionLimit() !void {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    try testing.expectEqual(limits.DEFAULT_INSTRUCTION_LIMIT, vm.instruction_limit);
+    try testing.expectEqual(limits.DEFAULT_INSTRUCTION_LIMIT, vm.hooks.limit);
 }
 
 fn segments() !void {
