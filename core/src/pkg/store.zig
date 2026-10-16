@@ -302,11 +302,7 @@ pub const Store = struct {
         while (it.next()) |k| try paths.append(allocator, k.*);
 
         // Deterministic sorting ensures the hash is identical across environments
-        std.mem.sort([]const u8, paths.items, {}, struct {
-            pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-                return std.mem.order(u8, a, b) == .lt;
-            }
-        }.lessThan);
+        string_map.sortKeys(paths.items);
 
         // A common folder doesn't change the order, so it is only added while hashing.
         const folder: []const []const u8 = if (scheme.root.len > 0) &.{ scheme.root, "/" } else &.{};

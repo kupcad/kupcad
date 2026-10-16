@@ -10,12 +10,6 @@ const string_map = @import("string_map.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 pub const StringMap = string_map.StringMap;
 
-const SortUtil = struct {
-    pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-        return std.mem.order(u8, a, b) == .lt;
-    }
-};
-
 pub const Manifest = struct {
     allocator: std.mem.Allocator,
     name: []const u8,
@@ -117,7 +111,7 @@ pub const Manifest = struct {
 
         var key_it = self.dependencies.keyIterator();
         while (key_it.next()) |k| try keys.append(self.allocator, k.*);
-        std.mem.sort([]const u8, keys.items, {}, SortUtil.lessThan);
+        string_map.sortKeys(keys.items);
 
         // All strings are JSON-escaped so a `"` in a name/alias can't inject keys.
         const header = try self.allocator.print("{{\n  \"name\": {f},\n  \"version\": {f},\n  \"dependencies\": {{", .{ std.json.fmt(self.name, .{}), std.json.fmt(self.version, .{}) });

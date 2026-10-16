@@ -27,12 +27,6 @@ fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
 }
 pub const PackagesMap = std.StringHashMap(LockedPackage);
 
-const SortUtil = struct {
-    pub fn lessThan(_: void, a: []const u8, b: []const u8) bool {
-        return std.mem.order(u8, a, b) == .lt;
-    }
-};
-
 pub const LockedPackage = struct {
     resolved: []const u8,
     ref: []const u8,
@@ -188,7 +182,7 @@ pub const Lockfile = struct {
 
         var pkg_it = self.packages.keyIterator();
         while (pkg_it.next()) |k| try pkg_keys.append(self.allocator, k.*);
-        std.mem.sort([]const u8, pkg_keys.items, {}, SortUtil.lessThan);
+        string_map.sortKeys(pkg_keys.items);
 
         // Every string goes through the JSON string encoder: ids, refs and aliases
         // can originate from downloaded manifests, and raw `{s}` interpolation let a
@@ -216,7 +210,7 @@ pub const Lockfile = struct {
                     defer dep_keys.deinit(self.allocator);
                     var dep_it = locked_pkg.dependencies.keyIterator();
                     while (dep_it.next()) |k| try dep_keys.append(self.allocator, k.*);
-                    std.mem.sort([]const u8, dep_keys.items, {}, SortUtil.lessThan);
+                    string_map.sortKeys(dep_keys.items);
 
                     for (dep_keys.items, 0..) |dep_key, j| {
                         const dep_val = locked_pkg.dependencies.get(dep_key).?;
