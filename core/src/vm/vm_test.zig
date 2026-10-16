@@ -1,4 +1,5 @@
 const std = @import("std");
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
@@ -1691,12 +1692,11 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
 
     try registry.registerStandardLibrary(&vm);
 
+    // The export lands in memory, never in the working directory.
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
     const test_stl_path = "test_export_cube.stl";
-
-    // Clean up the output file if it already exists before running the test
-    const cwd = std.Io.Dir.cwd();
-    cwd.deleteFile(testing.io, test_stl_path) catch {};
-    defer cwd.deleteFile(testing.io, test_stl_path) catch {};
 
     // 1. Run script exporting a 10x10x10 cube
     const source =
@@ -1718,13 +1718,8 @@ test "STL Exporter: exports valid Binary STL file with expected byte structure" 
 
     try testing.expectEqual(.ok, result);
 
-    // 2. Read the generated STL file back using @fromBackingInt for std.Io.Limit
-    const file_contents = try cwd.readFileAlloc(
-        testing.io,
-        test_stl_path,
-        testing.allocator,
-        @fromBackingInt(10 * 1024 * 1024),
-    );
+    // 2. Read the generated STL file back
+    const file_contents = try mem_vfs.vfs().readFile(testing.allocator, test_stl_path);
     defer testing.allocator.free(file_contents);
 
     // Header must be at least 84 bytes (80-byte header + 4-byte triangle count)
@@ -7056,6 +7051,9 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
     const test_path = "test_output.glb";
 
     const source = "sphere(5).material(color: \"#0000FF\", transmission: 0.9).export_gltf(\"test_output.glb\")";
@@ -7071,16 +7069,11 @@ test "VM: Export GLTF generates valid .glb file with extensions" {
 
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    const cwd = std.Io.Dir.cwd();
-    const file = try cwd.openFile(vm.io, test_path, .{});
-    defer file.close(vm.io);
-    defer cwd.deleteFile(vm.io, test_path) catch {};
+    const written = try mem_vfs.vfs().readFile(testing.allocator, test_path);
+    defer testing.allocator.free(written);
+    try testing.expect(written.len >= 12);
 
-    var header_bytes: [24]u8 = undefined;
-    const bytes_read = try file.readStreaming(vm.io, &.{&header_bytes});
-    try testing.expect(bytes_read >= 12);
-
-    const magic = std.mem.readInt(u32, header_bytes[0..4], .little);
+    const magic = std.mem.readInt(u32, written[0..4], .little);
     try testing.expectEqual(@as(u32, 0x46546C67), magic); // "glTF"
 }
 
@@ -7089,7 +7082,9 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
-    const test_path = "import_test.stl";
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    vm.vfs = mem_vfs.vfs();
 
     // Export a 10x10x10 cube (Volume = 1000)
     const export_source = "cube(10).export_stl(\"import_test.stl\")";
@@ -7104,12 +7099,6 @@ test "STL Importer: imports exported binary STL and evaluates valid volume" {
     try comp_export.compile(doc_export.tree.root);
 
     _ = try executeAndAssertStack(&vm, &chunk_export, 1);
-
-    // Clean up file on exit
-    defer {
-        const cwd = std.Io.Dir.cwd();
-        cwd.deleteFile(testing.io, test_path) catch {};
-    }
 
     // Now import the STL and check its volume
     const import_source =
@@ -10517,8 +10506,6 @@ test "VM: DAG Benchmark - Safely orchestrates 10,000 deeply nested CSG booleans"
 }
 
 test "VM Edge Case: Import depth limit prevents host stack overflow" {
-    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 

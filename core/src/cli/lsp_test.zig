@@ -114,11 +114,17 @@ test "LSP: editing a document logs nothing above debug" {
     server.settle();
     try server.change(URI, "cube(\n"); // doesn't parse
     server.settle();
+    // The failure reaches the editor as a diagnostic, not the log.
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "publishDiagnostics") != null);
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1") != null);
     try server.change(URI, "undefined_thing(1)\n"); // doesn't run
     server.session.vm.mute_errors = true; // its runtime error would print to the test log
     server.settle();
+    // A runtime error is the preview's to report, not a diagnostic: the document is clean.
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
     try server.change(URI, "cube(20)\n");
     server.settle();
+    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
     try server.close(URI);
 }
 
@@ -213,10 +219,14 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
     // Assigning to a built-in is a compile error. The hover logged it as an error, then ran
     // the half-compiled chunk, which crashed the VM (an assertion; undefined in release).
     try server.open(URI, "cube = 5\nx = 1\n");
-    _ = server.handler.@"textDocument/hover"(server.arena.allocator(), .{
+    const answer = server.handler.@"textDocument/hover"(server.arena.allocator(), .{
         .textDocument = .{ .uri = URI },
         .position = .{ .line = 1, .character = 0 },
     });
+    // The variable is described from the syntax alone; no run happened.
+    try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "(variable) x") != null);
+    try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "Volume") == null);
+    try testing.expect(server.handler.hover_run == null);
 }
 
 test "LSP: open documents import each other, and editing one re-evaluates its importers" {

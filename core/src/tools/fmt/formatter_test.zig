@@ -1,34 +1,13 @@
 const std = @import("std");
 const testing = std.testing;
 
-const LineIndex = @import("../../core/line_index.zig").LineIndex;
-const lexer_mod = @import("../../frontend/lexer.zig");
-const parser_mod = @import("../../frontend/parser.zig");
-const Formatter = @import("formatter.zig").Formatter;
 const FormatterConfig = @import("config.zig").Config;
 
-/// Completely local wrapper that uses our strict structures for isolated testing
+/// Formats through the checked API, so every layout test also proves its output parses,
+/// means the same program and keeps the comments. (A local wrapper used to drive the
+/// Formatter directly, so none of the 43 layout tests checked equivalence.)
 fn formatCodeLocal(allocator: std.mem.Allocator, source: []const u8, config: FormatterConfig) ![]const u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const arena_alloc = arena.allocator();
-
-    var lexer = lexer_mod.Lexer.init(source, 0);
-    const tokens = try lexer.lexAll(arena_alloc);
-
-    var parser = try parser_mod.Parser.init(tokens, source, arena_alloc);
-    const root = parser.parseProgram() catch .none;
-
-    if (parser.diagnostics.list.items.len > 0) return error.SyntaxError;
-    if (root == .none) return error.SyntaxError;
-
-    const line_index = try LineIndex.init(arena_alloc, source);
-
-    var formatter = Formatter.init(allocator, source, tokens.starts, tokens.lengths, &line_index, parser.comments.items, config);
-    defer formatter.deinit();
-    try formatter.registerDefaultRules();
-
-    return formatter.format(&parser.b.tree, root);
+    return @import("../../api.zig").formatCode(allocator, source, config);
 }
 
 /// Helper to parse, format, and strictly compare the output.
@@ -267,12 +246,17 @@ test "Formatter: Multi-Assignment and Indexing" {
 }
 
 test "Formatter: Flow control keywords (return, break, next, yield)" {
-    const source = "return  x,y\nbreak   42\nnext\nyield(  1,  width: 50)";
+    // In the places the language allows them: the checked API rejects a stray `break`.
+    const source = "def f(x,y)\n[1].each do |v|\nbreak   42\nnext\nend\nyield(  1,  width: 50)\nreturn  x,y\nend";
     const expected =
-        \\return x, y
-        \\break 42
-        \\next
-        \\yield(1, width: 50)
+        \\def f(x, y)
+        \\  [1].each do |v|
+        \\    break 42
+        \\    next
+        \\  end
+        \\  yield(1, width: 50)
+        \\  return x, y
+        \\end
         \\
     ;
     try expectFormat(source, expected);

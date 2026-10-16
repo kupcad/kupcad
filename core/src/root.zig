@@ -27,6 +27,8 @@ test {
     _ = @import("core/ast_test.zig");
     _ = @import("core/bezier_test.zig");
     _ = @import("core/document_test.zig");
+    _ = @import("core/visitor_test.zig");
+    _ = @import("registration_test.zig");
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");

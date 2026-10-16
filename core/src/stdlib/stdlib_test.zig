@@ -11,6 +11,7 @@ const limits = @import("../core/limits.zig");
 const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
 const test_support = @import("../test_support.zig");
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const geom = @import("../kernel/geometry_handle.zig");
 
 const print = std.fmt.comptimePrint;
@@ -97,7 +98,8 @@ test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive
 test "Stdlib: Instance export methods allow fluent method chaining and return receiver" {
     const alloc = testing.allocator;
     const tmp_stl = "test_chain_export.stl";
-    defer std.Io.Dir.cwd().deleteFile(testing.io, tmp_stl) catch {};
+    var mem_vfs = MemoryVfs.init(alloc); // the export lands in memory, not in the working directory
+    defer mem_vfs.deinit();
 
     const src =
         \\c = Solid.cube(10).translate(5, 0, 0).export_stl("test_chain_export.stl")
@@ -109,6 +111,7 @@ test "Stdlib: Instance export methods allow fluent method chaining and return re
     var vm = try VM.init(alloc, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(alloc);
@@ -124,9 +127,9 @@ test "Stdlib: Instance export methods allow fluent method chaining and return re
     try testing.expect(vm.stack[0].isGeometry());
 
     // Verify file export was executed
-    const cwd = std.Io.Dir.cwd();
-    const stat = try cwd.statFile(testing.io, tmp_stl, .{});
-    try testing.expect(stat.size > 84);
+    const written = try mem_vfs.vfs().readFile(alloc, tmp_stl);
+    defer alloc.free(written);
+    try testing.expect(written.len > 84);
 }
 
 test "Stdlib: global union() processes arrays into batch DAG nodes" {
@@ -301,8 +304,28 @@ fn expectAll(expected: InterpretResult, sources: []const []const u8) !void {
     }
 }
 
+/// Each script fails with an uncaught error of one of `kinds`. (`expectAll(.runtime_error)`
+/// accepted any failure, a typo in the script included, since the muted VM showed nothing.)
+fn expectAllRaise(kinds: []const ErrorKind, sources: []const []const u8) !void {
+    for (sources) |src| {
+        var vm = try initVm();
+        defer vm.deinit();
+        const message = blk: {
+            const result = try runOn(&vm, src);
+            errdefer std.debug.print("script: {s}\n", .{src});
+            try testing.expectEqual(.runtime_error, result);
+            break :blk vm.last_error orelse return error.NoErrorRecorded;
+        };
+        errdefer std.debug.print("script: {s}\nerror: {s}\n", .{ src, message });
+        const kind_name = message[0 .. std.mem.indexOfScalar(u8, message, ':') orelse message.len];
+        var matched = false;
+        for (kinds) |kind| matched = matched or std.mem.eql(u8, @tagName(kind), kind_name);
+        try testing.expect(matched);
+    }
+}
+
 test "Stdlib: integer kwargs reject NaN, inf and out-of-i32 values" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{ .ValueError, .RangeError, .TypeError }, &.{
         "cylinder(r: 1, h: 1, segments: 1e12)",
         "cylinder(r: 1, h: 1, segments: Number::INFINITY)",
         "cylinder(r: 1, h: 1, segments: Number::NAN)",
@@ -314,7 +337,7 @@ test "Stdlib: integer kwargs reject NaN, inf and out-of-i32 values" {
 }
 
 test "Stdlib: tessellation counts are capped at MAX_SEGMENTS" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         print("cylinder(r: 1, h: 1, segments: {d})", .{MAX_SEGS + 1}),
         print("circle(r: 1, segments: {d})", .{MAX_SEGS + 1}),
         print("torus(10, 2, segments: {d})", .{MAX_SEGS + 1}),
@@ -492,17 +515,17 @@ test "Stdlib: Array#slice follows Ruby arr[start, len] semantics" {
         try testing.expectEqual(expected.len, items.len);
         for (expected, items) |e, item| try testing.expectEqual(e, item.asNumber());
     }
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{ .ValueError, .TypeError, .ArgumentError }, &.{
         "[1, 2, 3].slice(Number::NAN, 1)",
         "[1, 2, 3].slice(0, Number::NAN)",
     });
 }
 
 test "Stdlib: dimensions and sweep parameters reject NaN and inf" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         "cube(Number::INFINITY - Number::INFINITY)",
         "sphere(Number::INFINITY)",
-        "cylinder(r: Math.sqrt(-1), h: 1)",
+        "cylinder(r: Number::NAN, h: 1)",
         "square(10).extrude(Number::INFINITY - Number::INFINITY)",
         "square(10).extrude(5, twist: Number::INFINITY)",
         "square(10).extrude(5, scale: Number::NAN)",
@@ -514,7 +537,7 @@ test "Stdlib: dimensions and sweep parameters reject NaN and inf" {
 }
 
 test "Stdlib: text tolerance cannot be vanishingly small" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         // Degenerate: its square underflows to 0 in the Bezier flattening test.
         "text(\"A\", tolerance: 1e-300)",
         // The minimum is relative to the glyph size (0.05 is fine at the default size).
@@ -546,7 +569,7 @@ test "Stdlib: text is drawn as finely as the resolution draws circles" {
 }
 
 test "Stdlib: polyhedron and polygon path indices are bounds-checked" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{ .IndexError, .ValueError, .TypeError }, &.{
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[-1,2,3]])",
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[4,2,3]])",
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], [[0,1,2],[0,3,1],[0,2,3],[Number::NAN,2,3]])",
@@ -558,7 +581,7 @@ test "Stdlib: polyhedron and polygon path indices are bounds-checked" {
 }
 
 test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{ .ValueError, .RangeError }, &.{
         print("cube(1).repeat_linear({d}, [2, 0, 0])", .{MAX_COUNT + 1}),
         "cube(1).repeat_linear(Number::INFINITY, [2, 0, 0])",
         print("cube(1).repeat_polar({d})", .{MAX_COUNT + 1}),
@@ -719,7 +742,7 @@ test "Stdlib: range and times errors are rescuable with their class and real mes
         try testing.expect(std.mem.startsWith(u8, r.asString().chars, case.prefix));
     }
     // Uncaught, the same errors fail the script.
-    try expectAll(.runtime_error, &.{ "2.5.times { }", "(0..3).each", "(0..3).step(0)" });
+    try expectAllRaise(&.{ .ArgumentError, .TypeError, .ValueError }, &.{ "2.5.times { }", "(0..3).each", "(0..3).step(0)" });
 }
 
 test "Stdlib: block iteration is not capped, only array building is" {
@@ -1500,7 +1523,7 @@ test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped s
 }
 
 test "Stdlib: geometry arguments reject non-number coordinates" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{ .TypeError, .ArgumentError, .ValueError }, &.{
         // The reported case, and every way a polygon point can be malformed.
         "polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume",
         "polygon([[0,0],[10,nil],[10,10]])",
@@ -1619,7 +1642,7 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
 }
 
 test "Stdlib: geometry coordinates reject NaN and inf" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         "polygon([[0,0],[10,Number::NAN],[10,10]])",
         "polygon([[0,0],[Number::INFINITY,0],[10,10]])",
         "polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,0,-Number::INFINITY]], " ++ TETRA_FACES ++ ")",
@@ -1653,7 +1676,7 @@ test "Stdlib: geometry coordinates reject NaN and inf" {
 }
 
 test "Stdlib: degenerate vectors and matrices are rejected" {
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         // A zero mirror normal or scale factor can never produce a valid solid.
         "cube(1).mirror(0, 0, 0)",
         "cube(1).mirror()",
@@ -1679,7 +1702,7 @@ test "Stdlib: degenerate vectors and matrices are rejected" {
 test "Stdlib: near-zero normals and subnormal factors are rejected, not silently emptied" {
     // Not exactly zero, but normalizing them underflows: these used to build an
     // empty or zero-volume solid with no error.
-    try expectAll(.runtime_error, &.{
+    try expectAllRaise(&.{.ValueError}, &.{
         "cube(1).mirror(1e-320, 0, 0)",
         "cube(1).mirror(1e-170, 1e-170, 0)",
         "cube(10).translate(x: -5).trim_by_plane(1e-200, 0, 0)",
@@ -1949,7 +1972,6 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
 }
 
 test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes GeometryErrors" {
-    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     // A single triangle: valid STL, but not a closed solid.

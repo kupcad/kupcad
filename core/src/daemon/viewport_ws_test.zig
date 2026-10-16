@@ -8,7 +8,10 @@ const ViewportWsServer = ws.ViewportWsServer;
 const WAIT_TIMEOUT_MS: i64 = 5000;
 const POLL_MS: i64 = 1;
 /// Broadcasting to a stalled client must return well within this (it used to hang forever).
-const BROADCAST_BUDGET_MS: i64 = 2000;
+/// What a broadcast loop that never blocks on a client takes, with room to spare: the
+/// regression it guards (writing synchronously on the caller's thread) hangs for as long
+/// as the client doesn't read, so a tight bound only risked a false alarm on a slow machine.
+const BROADCAST_BUDGET_MS: i64 = 30_000;
 
 const SEC_WEBSOCKET_KEY = "dGhlIHNhbXBsZSBub25jZQ==";
 /// RFC 6455 section 1.3: accept key for SEC_WEBSOCKET_KEY.
