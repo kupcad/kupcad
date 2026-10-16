@@ -824,14 +824,16 @@ pub const Parser = struct {
                 self.advance();
                 has_from = true;
             }
-        } else if (self.tag(0) == .string) {
+        } else if (self.tag(0) == .string or self.tag(0) == .raw_string) {
             has_from = true;
         } else {
             return ParseError.UnexpectedToken;
         }
 
         if (has_from) {
-            const path_idx = try self.expect(.string);
+            // In single quotes or double: a path is its text either way.
+            const path_idx = if (self.tag(0) == .raw_string) self.tok_idx else try self.expect(.string);
+            if (path_idx == self.tok_idx) self.advance(); // the raw string, which expect didn't take
             path_node = try self.b.intern(self.tokens.lexeme(self.source, path_idx));
             // `with { ... }` may follow on the next line; otherwise the line break ends the import.
             if (self.skipIgnoredBefore(&.{.keyword_with})) {
@@ -1564,6 +1566,14 @@ pub const Parser = struct {
                 self.skipComments();
 
                 left = try self.stringNode(raw_lexeme, str_tok);
+            },
+            .raw_string => {
+                const str_tok = self.tok_idx;
+                const raw_lexeme = self.tokens.lexeme(self.source, str_tok);
+                self.advance();
+                self.skipComments();
+                // The delimiter is the byte before the text: the quote, or %q's bracket.
+                left = try self.b.stringNodeRaw(raw_lexeme, str_tok, self.source[self.tokens.starts[str_tok] - 1]);
             },
             .symbol => {
                 self.advance();

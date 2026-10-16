@@ -979,6 +979,16 @@ pub const Builder = struct {
         return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
+    /// A single-quoted or `%q` literal's node (string_escape.unescapeRawInto), `open` its
+    /// opening delimiter.
+    pub fn stringNodeRaw(self: *Builder, lexeme_str: []const u8, main_token: u24, open: u8) !NodeIndex {
+        var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, lexeme_str.len);
+        defer buf.deinit(self.allocator);
+        try string_escape.unescapeRawInto(&buf, self.allocator, lexeme_str, open);
+        const str_id = try self.intern(buf.items);
+        return self.createNode(.string, main_token, @backingInt(str_id));
+    }
+
     pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24, problem: *string_escape.Problem) string_escape.Error!NodeIndex {
         const str_id = try self.internUnescaped(lexeme_str, problem);
         return self.createNode(.string, main_token, @backingInt(str_id));

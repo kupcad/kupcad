@@ -12,6 +12,7 @@ const parser = @import("../../frontend/parser.zig");
 const Precedence = parser.Precedence;
 const token_span = @import("../../core/token_span.zig");
 const string_escape = @import("../../core/string_escape.zig");
+const TokenTag = @import("../../frontend/lexer.zig").Tag;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -24,6 +25,7 @@ pub const Formatter = struct {
     source: []const u8,
     token_starts: []const u32,
     token_lengths: []const u32,
+    token_tags: []const TokenTag,
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
@@ -39,15 +41,16 @@ pub const Formatter = struct {
 
     /// A formatter for a parsed document: its source, tokens, line index and comments.
     pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, config: Config) Formatter {
-        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, &doc.line_index, doc.comments, config);
+        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tokens.tags, &doc.line_index, doc.comments, config);
     }
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, token_tags: []const TokenTag, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{
             .allocator = allocator,
             .source = source,
             .token_starts = token_starts,
             .token_lengths = token_lengths,
+            .token_tags = token_tags,
             .line_index = line_index,
             .comments = comments,
             .config = config,
@@ -497,12 +500,17 @@ pub const Formatter = struct {
         const raw = self.tokenText(node.main_token);
         var decoded: std.ArrayListUnmanaged(u8) = .empty;
         defer decoded.deinit(self.allocator);
-        var problem: string_escape.Problem = undefined;
-        string_escape.unescapeInto(&decoded, self.allocator, raw, &problem) catch |err| switch (err) {
-            // The parser refused it already; there is nothing to reuse
-            error.InvalidEscape => return null,
-            error.OutOfMemory => |e| return e,
-        };
+        if (self.token_tags[node.main_token] == .raw_string) {
+            // Single-quoted or %q, decoded by its own delimiter, the byte before it
+            try string_escape.unescapeRawInto(&decoded, self.allocator, raw, self.source[self.token_starts[node.main_token] - 1]);
+        } else {
+            var problem: string_escape.Problem = undefined;
+            string_escape.unescapeInto(&decoded, self.allocator, raw, &problem) catch |err| switch (err) {
+                // The parser refused it already; there is nothing to reuse
+                error.InvalidEscape => return null,
+                error.OutOfMemory => |e| return e,
+            };
+        }
         return if (std.mem.eql(u8, decoded.items, tree.getString(@fromBackingInt(node.data)))) raw else null;
     }
 

@@ -75,3 +75,11 @@ test "gen_grammar: a \\u escape is highlighted whole" {
     // In the JSON, each backslash of the pattern is written twice
     try testing.expect(std.mem.indexOf(u8, json, "\\\\\\\\(?:u\\\\{[0-9A-Fa-f]{1,6}\\\\}|u[0-9A-Fa-f]{4}|.)") != null);
 }
+
+test "gen_grammar: single-quoted strings are strings, with only \\\\ and \\' as escapes" {
+    const json = try gen_grammar.generateTextMateJson(testing.allocator);
+    defer testing.allocator.free(json);
+    try testing.expect(std.mem.indexOf(u8, json, "string.quoted.single.kupcad") != null);
+    // In the JSON, each backslash of the pattern is written twice
+    try testing.expect(std.mem.indexOf(u8, json, "\"\\\\\\\\['\\\\\\\\]\"") != null);
+}

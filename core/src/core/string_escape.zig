@@ -6,6 +6,7 @@
 //! A backslash before a letter or digit must start a known escape: `\q` or `\d` is a syntax
 //! error, where it used to stand for the letter. A backslash before any other printable
 //! ASCII character (a quote, `\`, `#`, a %-literal's delimiter, a space) stands for it.
+//! Single-quoted and `%q` literals have only `\\` and their delimiter (unescapeRawInto).
 
 const std = @import("std");
 
@@ -113,6 +114,30 @@ fn decodeUnicode(text: []const u8, at: usize, bytes: *[4]u8, problem: *Problem) 
     return .{ .bytes = written, .len = len };
 }
 
+/// The delimiter that closes a literal `open` opens: a bracket's pair, else `open` itself.
+pub fn closingDelimiter(open: u8) u8 {
+    return switch (open) {
+        '[' => ']',
+        '{' => '}',
+        '(' => ')',
+        '<' => '>',
+        else => open,
+    };
+}
+
+/// A single-quoted (or `%q`) literal's `text` decoded, appended to `out`, as Ruby does: `\\`
+/// is a backslash and a backslash before the literal's delimiter (`open`, or its pair) is the
+/// delimiter; every other backslash is itself, so `'C:\data'` is what it says.
+pub fn unescapeRawInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, text: []const u8, open: u8) !void {
+    const close = closingDelimiter(open);
+    var i: usize = 0;
+    while (i < text.len) : (i += 1) {
+        const escaped = text[i] == '\\' and i + 1 < text.len and (text[i + 1] == '\\' or text[i + 1] == open or text[i + 1] == close);
+        if (escaped) i += 1;
+        try out.append(allocator, text[i]);
+    }
+}
+
 /// `value` as the content of a double-quoted literal, appended to `out`: the characters
 /// `decodeLetter` has letters for, the quote, the backslash and a `#{` are escaped;
 /// everything else is written as it is.
@@ -200,4 +225,19 @@ test "string_escape: a backslash before a letter or digit no escape uses is an e
 test "string_escape: a backslash before punctuation or a space stands for it" {
     try expectDecodes("\"'\\#{}()[]<>|/!. ", "\\\"\\'\\\\\\#\\{\\}\\(\\)\\[\\]\\<\\>\\|\\/\\!\\.\\ ");
     try expectDecodes("\n\t\r\x0c\x0b\x08\x07\x1b\x00", "\\n\\t\\r\\f\\v\\b\\a\\e\\0");
+}
+
+fn expectRaw(expected: []const u8, text: []const u8, open: u8) !void {
+    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    defer decoded.deinit(std.testing.allocator);
+    try unescapeRawInto(&decoded, std.testing.allocator, text, open);
+    try std.testing.expectEqualStrings(expected, decoded.items);
+}
+
+test "string_escape: a single-quoted literal has only \\\\ and its delimiter as escapes" {
+    try expectRaw("C:\\data\\n", "C:\\data\\n", '\'');
+    try expectRaw("it's \\ here", "it\\'s \\\\ here", '\'');
+    try expectRaw("\\u00e9 \\q", "\\u00e9 \\q", '\'');
+    try expectRaw("a ) b ( c \\]", "a \\) b \\( c \\]", '(');
+    try expectRaw("trailing \\", "trailing \\", '\'');
 }

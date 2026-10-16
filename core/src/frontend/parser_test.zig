@@ -4488,10 +4488,8 @@ test "KupCAD Parser: an escape a string can't hold is a syntax error at the esca
     // `\q` stood for `q`, so "C:\data" was "C:data" without a word; `\u` wasn't an escape.
     const cases = [_]struct { src: []const u8, message: []const u8, at: []const u8 }{
         .{ .src = "x = \"C:\\data\"", .message = "Unknown escape '\\d' in a string; write '\\\\' for a backslash", .at = "\\d" },
-        .{ .src = "x = 'it\\qs'", .message = "Unknown escape '\\q'", .at = "\\q" },
         .{ .src = "x = \"#{1} and \\z\"", .message = "Unknown escape '\\z'", .at = "\\z" },
         .{ .src = "x = <<~EOS\n  a\\1\nEOS\n", .message = "Unknown escape '\\1'", .at = "\\1" },
-        .{ .src = "x = %q(a \\w)", .message = "Unknown escape '\\w'", .at = "\\w" },
         .{ .src = "x = \"\\u12\"", .message = "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{1F600})", .at = "\\u12" },
         .{ .src = "x = \"\\u{}\"", .message = "'\\u' takes 4 hex digits", .at = "\\u{}" },
         .{ .src = "x = \"\\uDBFF\"", .message = "U+DBFF is a UTF-16 surrogate, not a character", .at = "\\uDBFF" },
@@ -4539,4 +4537,12 @@ test "Parser: an assignment in an argument or an element takes one value" {
     var doc = try Document.parse(testing.allocator, "y = 1, 2\nr = y.length");
     defer doc.deinit();
     try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+}
+
+test "KupCAD Parser: an import's path may be single-quoted" {
+    try compileOnly("import { a } from './a.kup'\n");
+    var pt = try KTest.init("import './b.kup'\n");
+    defer pt.deinit();
+    _ = try pt.parser.parseProgram();
+    try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
 }

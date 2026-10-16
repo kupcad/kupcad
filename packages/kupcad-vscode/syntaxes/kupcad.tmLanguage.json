@@ -12,6 +12,9 @@
       "include": "#strings"
     },
     {
+      "include": "#single_quoted_strings"
+    },
+    {
       "include": "#method_declarations"
     },
     {
@@ -106,6 +109,17 @@
               "include": "$self"
             }
           ]
+        }
+      ]
+    },
+    "single_quoted_strings": {
+      "begin": "'",
+      "end": "'",
+      "name": "string.quoted.single.kupcad",
+      "patterns": [
+        {
+          "match": "\\\\['\\\\]",
+          "name": "constant.character.escape.kupcad"
         }
       ]
     },

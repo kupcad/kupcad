@@ -995,3 +995,12 @@ test "Formatter: an assignment passed as an argument keeps its arguments" {
     try expectStableFormat("o a,\nb = 5\n", "o(\n  a,\n  b = 5,\n)\n");
     try expectStableFormat("o(b = 5, 6)", "o(b = 5, 6)\n");
 }
+
+test "Formatter: a single-quoted string keeps its text, backslashes and all, and %q its value" {
+    // Its value is now decoded by its own rules (only \\ and the delimiter escape), so the
+    // text still decodes to the value and is written back as it was.
+    try expectStableFormat("x = 'C:\\data\\new'\n", "x = 'C:\\data\\new'\n");
+    try expectStableFormat("y = 'it\\'s'\n", "y = 'it\\'s'\n");
+    // %q is written as a double-quoted string, as it always was; its value stays.
+    try expectStableFormat("z = %q(a \\) b \\d)\n", "z = \"a ) b \\\\d\"\n");
+}

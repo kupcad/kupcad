@@ -352,7 +352,7 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
 
     // Closed after the interpolation, the string's rest still isn't.
     var lexer3 = Lexer.init("'one' :\"two\" %w[three \"a #{1} b", 0);
-    try testing.expectEqual(.string, lexer3.next().tag);
+    try testing.expectEqual(.raw_string, lexer3.next().tag);
     try testing.expectEqual(.symbol, lexer3.next().tag);
     try testing.expectEqual(.unterminated_string, lexer3.next().tag);
     var lexer4 = Lexer.init("\"a #{1} b", 0);
@@ -592,16 +592,16 @@ test "KupCAD Lexer: Percent Q (%Q) interpolates like double quotes" {
 test "KupCAD Lexer: Percent q (%q) ignores interpolation like single quotes" {
     // Verifies that %q treats '#{...}' purely as raw text
     try expectTokens("str = %q[Value: #{1 + 2}]", &.{
-        t(.ident, "str"),              t(.equal, "="),
-        t(.string, "Value: #{1 + 2}"), t(.eof, ""),
+        t(.ident, "str"),                  t(.equal, "="),
+        t(.raw_string, "Value: #{1 + 2}"), t(.eof, ""),
     });
 }
 
 test "KupCAD Lexer: Percent Q and q support identical delimiters and nesting" {
     // Verifies that the Q/q modifiers safely inherit the pairing/nesting algorithms
     try expectTokens("a = %Q|hello|\nb = %q(a (b) c)", &.{
-        t(.ident, "a"), t(.equal, "="), t(.string, "hello"),   t(.newline, "\n"),
-        t(.ident, "b"), t(.equal, "="), t(.string, "a (b) c"), t(.eof, ""),
+        t(.ident, "a"), t(.equal, "="), t(.string, "hello"),       t(.newline, "\n"),
+        t(.ident, "b"), t(.equal, "="), t(.raw_string, "a (b) c"), t(.eof, ""),
     });
 }
 

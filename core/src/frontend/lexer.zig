@@ -5,6 +5,7 @@
 const std = @import("std");
 const common_token = @import("../core/token.zig");
 const utils = @import("utils.zig");
+const string_escape = @import("../core/string_escape.zig");
 
 pub const Tag = enum {
     eof,
@@ -22,6 +23,8 @@ pub const Tag = enum {
     constant,
     number,
     string,
+    /// A single-quoted string or `%q(...)`: only `\\` and its delimiter are escapes, as in Ruby.
+    raw_string,
     string_start,
     string_mid,
     string_end,
@@ -273,19 +276,9 @@ pub const Lexer = struct {
 
         const open_delim = self.peek();
         self.advance();
-        const close_delim = getClosingDelimiter(open_delim);
+        const close_delim = string_escape.closingDelimiter(open_delim);
         const content_loc = self.getLoc();
         return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
-    }
-
-    inline fn getClosingDelimiter(open_delim: u8) u8 {
-        return switch (open_delim) {
-            '[' => ']',
-            '{' => '}',
-            '(' => ')',
-            '<' => '>',
-            else => open_delim,
-        };
     }
 
     fn consumeDot(self: *Lexer, start_loc: common_token.Location) Token {
@@ -353,7 +346,7 @@ pub const Lexer = struct {
         self.advance();
 
         const inner_start = self.index;
-        const close_delim = getClosingDelimiter(open_delim);
+        const close_delim = string_escape.closingDelimiter(open_delim);
 
         const is_paired = (open_delim != close_delim);
         var nesting_depth: u32 = 1;
@@ -382,7 +375,7 @@ pub const Lexer = struct {
         const inner_end = self.index;
         self.advance(); // consume close delim
 
-        const tag: Tag = if (!has_letter or kind == 'q') .string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
+        const tag: Tag = if (!has_letter or kind == 'q') .raw_string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
 
         if (!has_letter or kind == 'q') {
             // For raw strings (%q), the parser expects exactly the inner content.
@@ -600,7 +593,7 @@ pub const Lexer = struct {
                 return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start..] };
             var content_loc = start_loc;
             content_loc.offset += 1;
-            return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
+            return .{ .tag = .raw_string, .loc = content_loc, .lexeme = lexeme };
         }
         self.advance();
         const content_loc = self.getLoc();

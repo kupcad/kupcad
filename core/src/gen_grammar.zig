@@ -163,6 +163,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#docstring" },
             .{ .include = "#comments" },
             .{ .include = "#strings" },
+            .{ .include = "#single_quoted_strings" },
             .{ .include = "#method_declarations" },
             .{ .include = "#hash_keys" },
             .{ .include = "#block_parameters" },
@@ -211,6 +212,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                             .{ .include = "$self" },
                         },
                     },
+                },
+            },
+            // Only \\ and \' are escapes in single quotes, and nothing is interpolated.
+            .single_quoted_strings = .{
+                .begin = "'",
+                .end = "'",
+                .name = "string.quoted.single.kupcad",
+                .patterns = .{
+                    .{ .match = "\\\\['\\\\]", .name = "constant.character.escape.kupcad" },
                 },
             },
             .symbols = .{

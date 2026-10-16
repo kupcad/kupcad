@@ -1164,9 +1164,21 @@ test "Stdlib: \\u escapes give the character, and a backslash before punctuation
         .{ .src = "r = \"\\u00d8 5 mm\"", .expected = .{ .str = "Ø 5 mm" } },
         .{ .src = "r = \"\\u{1F600}\".length", .expected = .{ .num = 1 } },
         .{ .src = "r = \"\\u{2300}\" == \"⌀\"", .expected = .{ .boolean = true } },
-        .{ .src = "r = 'it\\'s'", .expected = .{ .str = "it's" } },
-        .{ .src = "r = %q(a \\) b)", .expected = .{ .str = "a ) b" } },
+
         .{ .src = "x = 1\nr = \"\\#{x} is #{x}\"", .expected = .{ .str = "#{x} is 1" } },
+    });
+}
+
+test "Stdlib: single quotes and %q keep every backslash but before a backslash or their delimiter" {
+    // They decoded escapes as double quotes do, so '\\n' was a line break: two delimiters for
+    // one kind of string. As in Ruby, only \\\\ and the delimiter are escapes in them.
+    try expectScripts(&.{
+        .{ .src = "r = 'C:\\data\\new'", .expected = .{ .str = "C:\\data\\new" } },
+        .{ .src = "r = 'a\\nb'.length", .expected = .{ .num = 4 } },
+        .{ .src = "r = 'it\\'s \\\\ok'", .expected = .{ .str = "it's \\ok" } },
+        .{ .src = "r = '\\u00e9 \\q #{1}'", .expected = .{ .str = "\\u00e9 \\q #{1}" } },
+        .{ .src = "r = %q(a \\) b \\d)", .expected = .{ .str = "a ) b \\d" } },
+        .{ .src = "r = \"a\\nb\".length", .expected = .{ .num = 3 } },
     });
 }
 
