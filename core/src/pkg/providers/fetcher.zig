@@ -6,9 +6,7 @@ const http_client = @import("../http_client.zig");
 const limits = @import("../limits.zig");
 const validate = @import("../validate.zig");
 const semver = @import("../../core/semver.zig");
-const GithubProvider = @import("github.zig").GithubProvider;
-const GitlabProvider = @import("gitlab.zig").GitlabProvider;
-const GiteaProvider = @import("gitea.zig").GiteaProvider;
+const git_host = @import("git_host.zig");
 
 /// Read buffer for the size-limited archive stream.
 const ARCHIVE_READ_BUFFER_LEN = 64 * 1024;
@@ -34,12 +32,8 @@ pub const Fetcher = struct {
     /// Builds the commit-lookup API URL for git hosts. http/local packages have no
     /// commit API (error.NotApplicable) — the ref must never be treated as a URL.
     pub fn commitApiUrl(allocator: std.mem.Allocator, pkg: provider.ParsedPackage) ![]const u8 {
-        return switch (pkg.provider) {
-            .github => GithubProvider.formatApiUrl(allocator, pkg),
-            .gitlab => GitlabProvider.formatApiUrl(allocator, pkg),
-            .gitea => GiteaProvider.formatApiUrl(allocator, pkg),
-            .http, .local => error.NotApplicable,
-        };
+        const host = git_host.of(pkg.provider) orelse return error.NotApplicable;
+        return host.commit_url(allocator, pkg);
     }
 
     pub fn fetchCommitSha(self: *Fetcher, pkg: provider.ParsedPackage) ![]const u8 {
@@ -70,21 +64,13 @@ pub const Fetcher = struct {
 
     /// The tag list URL for git hosts (error.NotApplicable otherwise).
     pub fn tagsApiUrl(allocator: std.mem.Allocator, pkg: provider.ParsedPackage, page: usize) ![]const u8 {
-        return switch (pkg.provider) {
-            .github => GithubProvider.formatTagsUrl(allocator, pkg, page),
-            .gitlab => GitlabProvider.formatTagsUrl(allocator, pkg, page),
-            .gitea => GiteaProvider.formatTagsUrl(allocator, pkg, page),
-            .http, .local => error.NotApplicable,
-        };
+        const host = git_host.of(pkg.provider) orelse return error.NotApplicable;
+        return host.tags_url(allocator, pkg, page);
     }
 
+    /// Only asked of a git host: resolveRange reaches here after tagsApiUrl took the package.
     fn tagsPageSize(provider_type: provider.ProviderType) usize {
-        return switch (provider_type) {
-            .github => GithubProvider.TAGS_PAGE_SIZE,
-            .gitlab => GitlabProvider.TAGS_PAGE_SIZE,
-            .gitea => GiteaProvider.TAGS_PAGE_SIZE,
-            .http, .local => unreachable, // no tags API (tagsApiUrl refuses them)
-        };
+        return git_host.of(provider_type).?.tags_page_size;
     }
 
     /// GETs a provider API URL and returns its (bounded) body; caller frees.

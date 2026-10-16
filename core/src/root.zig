@@ -32,6 +32,7 @@ test {
     _ = @import("tools/bench_test.zig");
     _ = @import("examples_test.zig");
     _ = @import("vm/dag_verifier_test.zig");
+    _ = @import("pkg/providers/git_host_test.zig");
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");

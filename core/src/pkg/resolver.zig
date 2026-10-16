@@ -10,9 +10,7 @@ const Cafs = cafs_mod.Cafs;
 const Store = @import("store.zig").Store;
 const Fetcher = @import("providers/fetcher.zig").Fetcher;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
-const GithubProvider = @import("providers/github.zig").GithubProvider;
-const GitlabProvider = @import("providers/gitlab.zig").GitlabProvider;
-const GiteaProvider = @import("providers/gitea.zig").GiteaProvider;
+const git_host = @import("providers/git_host.zig");
 const HttpProvider = @import("providers/http.zig").HttpProvider;
 const LocalProvider = @import("providers/local.zig").LocalProvider;
 const validate = @import("validate.zig");
@@ -298,11 +296,7 @@ pub const Resolver = struct {
     fn downloadPackage(self: *Resolver, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !cafs_mod.Archive {
         switch (parsed.provider) {
             .github, .gitlab, .gitea => {
-                const archive_url = switch (parsed.provider) {
-                    .github => try GithubProvider.formatArchiveUrl(self.allocator, parsed, commit_sha.?),
-                    .gitlab => try GitlabProvider.formatArchiveUrl(self.allocator, parsed, commit_sha.?),
-                    else => try GiteaProvider.formatArchiveUrl(self.allocator, parsed, commit_sha.?),
-                };
+                const archive_url = try git_host.of(parsed.provider).?.archive_url(self.allocator, parsed, commit_sha.?);
                 defer self.allocator.free(archive_url);
                 return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
