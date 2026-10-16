@@ -156,7 +156,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 1-byte name constant + 2-byte Inline Cache
-            .op_get_property, .op_set_property => {
+            .op_get_property, .op_set_property, .op_get_ivar => {
                 if (ip + 3 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, code[ip]);
                 try checkInlineCache(c, code, ip + 1);
@@ -164,7 +164,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 2-byte name constant + 2-byte Inline Cache
-            .op_get_property_wide, .op_set_property_wide => {
+            .op_get_property_wide, .op_set_property_wide, .op_get_ivar_wide => {
                 if (ip + 4 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, readU16(code, ip));
                 try checkInlineCache(c, code, ip + 2);

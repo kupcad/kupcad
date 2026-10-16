@@ -412,3 +412,36 @@ test "Language: exporting an empty Solid is a GeometryError" {
         .{ .src = rescued("cube(1).difference(cube(2)).export_stl(\"never-written.stl\")"), .expected = .{ .str = "GeometryError: export_stl: the Solid is empty, there is nothing to write to 'never-written.stl'" } },
     });
 }
+
+test "Language: ||= and &&= assign only when the current value decides nothing" {
+    // Both reached the emitter as operators it had no opcode for: "internal compiler error".
+    try expectScripts(&.{
+        .{ .src = "x = nil\nx ||= 5\ny = 3\ny ||= 9\nr = [x, y]", .expected = .{ .nums = &.{ 5, 3 } } },
+        .{ .src = "z = 1\nz &&= 7\nw = nil\nw &&= 7\nr = \"#{z} #{w.nil?}\"", .expected = .{ .str = "7 true" } },
+        .{ .src = "n = 0\nx = false\nx ||= (n += 1)\nx ||= (n += 1)\nr = n", .expected = .{ .num = 1 } },
+        .{ .src = "class P\n  def v\n    @v ||= 4\n  end\nend\ninst = P.new\ninst.v\nr = inst.v", .expected = .{ .num = 4 } },
+        .{ .src = "a = [nil, 2]\na[0] ||= 8\na[1] ||= 9\nr = a", .expected = .{ .nums = &.{ 8, 2 } } },
+        .{ .src = "m = {}\nm[:k] ||= 1\nm[:k] ||= 2\nr = m[:k]", .expected = .{ .num = 1 } },
+        .{ .src = "class Q\n  attr_accessor :p\nend\nq = Q.new\nq.p ||= 6\nq.p ||= 7\nr = q.p", .expected = .{ .num = 6 } },
+    });
+}
+
+test "Language: an unset instance variable is nil, even where a method has its name" {
+    // `@v` read through op_get_property, whose method fallback handed back the method `v`
+    // itself, so `@v ||= 4` kept the method and `@v` inside `def v` was never nil.
+    try expectScripts(&.{
+        .{ .src = "class P\n  def v\n    @v\n  end\nend\nr = P.new.v.nil?", .expected = .{ .boolean = true } },
+        .{ .src = "class P\n  def v\n    @v += 1\n  end\n  def initialize\n    @v = 1\n  end\nend\nr = P.new.v", .expected = .{ .num = 2 } },
+    });
+}
+
+test "Language: include and inheritance mistakes are TypeErrors, not silent stops" {
+    // `include M` in a module body and `class A < X` with a non-class X stopped the run
+    // with no message and nothing to rescue.
+    try expectScripts(&.{
+        .{ .src = rescued("module M\nend\nmodule N\n  include M\nend"), .expected = .{ .str = "TypeError: include can't add a module to another module; include it in each class that needs it" } },
+        .{ .src = rescued("class A\n  include 5\nend"), .expected = .{ .str = "TypeError: include needs a Module, got Number" } },
+        .{ .src = rescued("X = 5\nclass A < X\nend"), .expected = .{ .str = "TypeError: a superclass must be a Class, got Number" } },
+        .{ .src = rescued("S = \"s\"\nclass B < S\nend"), .expected = .{ .str = "TypeError: a superclass must be a Class, got String" } },
+    });
+}

@@ -1086,12 +1086,18 @@ pub const VM = struct {
                 .op_mixin => {
                     const module_val = self.pop();
                     if (!module_val.isModule()) {
-                        if (self.raiseError(.TypeError, "Can only include Modules.", .{}) != .ok) return .runtime_error;
+                        if (self.raiseError(.TypeError, "include needs a Module, got {s}", .{self.typeName(module_val)}) != .ok) return .runtime_error;
                         continue;
                     }
 
                     const class_val = self.stack[self.stack_top - 1]; // Peek at class
-                    if (!class_val.isClass()) return .runtime_error;
+                    if (!class_val.isClass()) {
+                        // `include M` in a module body, or outside any class: it stopped the run
+                        // with no message and nothing to rescue.
+                        const where = if (class_val.isModule()) "include can't add a module to another module; include it in each class that needs it" else "include is only valid inside a class body";
+                        if (self.raiseError(.TypeError, "{s}", .{where}) != .ok) return .runtime_error;
+                        continue;
+                    }
                     const class_obj = class_val.asClass();
 
                     class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch return .runtime_error;
@@ -1135,6 +1141,20 @@ pub const VM = struct {
                         self.defineGlobal(name_str, val) catch return .runtime_error;
                     }
                 },
+                .op_get_ivar, .op_get_ivar_wide => {
+                    // `@x`: this instance's field, nil when unset. It went through
+                    // op_get_property, whose method fallback handed back a method named like
+                    // the variable: `@v` inside `def v` was the method itself.
+                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_get_ivar_wide);
+                    const ic = self.readInlineCache(exec_chunk, frame);
+                    const receiver = self.stack[self.stack_top - 1];
+                    self.stack[self.stack_top - 1] = if (receiver.isInstance())
+                        self.getPropertyCached(receiver.asInstance(), name_val, ic) orelse value.Value.initNil()
+                    else if (receiver.isClass())
+                        receiver.asClass().class_fields.get(name_val) orelse value.Value.initNil()
+                    else
+                        value.Value.initNil();
+                },
                 .op_get_property, .op_get_property_wide => {
                     const is_wide = op == .op_get_property_wide;
                     const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
@@ -1151,9 +1171,28 @@ pub const VM = struct {
                             continue;
                         }
 
-                        // --- 2. Method Fallback ---
+                        // --- 2. Method Fallback: a reader is called (`q.p ||= 6` read the
+                        // attr_accessor's reader as a value, a truthy method object, and kept it)
                         if (self.findMethodWithPrivacy(instance.class, name_val, null).method) |method_val| {
-                            self.stack[self.stack_top - 1] = method_val;
+                            if (method_val.isNative()) {
+                                const res = self.executeNative(method_val.asNative(), 0, self.stack.ptr + self.stack_top, false);
+                                if (res != .ok) return res;
+                                continue;
+                            }
+                            if (!method_val.isClosure()) {
+                                if (self.raiseError(.TypeError, "'{s}' is not callable", .{name_str}) != .ok) return .runtime_error;
+                                continue;
+                            }
+                            const depth = self.frames.items.len;
+                            const read = self.callMethodSync(receiver, method_val.asClosure(), &.{}) catch |err| {
+                                if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
+                                if (err == error.Unwind) {
+                                    self.restoreAfterUnwind(depth);
+                                    continue;
+                                }
+                                return .runtime_error;
+                            };
+                            self.stack[self.stack_top - 1] = read;
                             continue;
                         }
 
@@ -1224,7 +1263,11 @@ pub const VM = struct {
                 },
                 .op_inherit => {
                     const super_val = self.pop();
-                    if (!super_val.isClass()) return .runtime_error;
+                    if (!super_val.isClass()) {
+                        // `class A < x` with no class: it stopped the run with no message.
+                        if (self.raiseError(.TypeError, "a superclass must be a Class, got {s}", .{self.typeName(super_val)}) != .ok) return .runtime_error;
+                        continue;
+                    }
                     const sub_val = self.stack[self.stack_top - 1];
                     sub_val.asClass().superclass = super_val.asClass();
                     self.method_epoch +%= 1;

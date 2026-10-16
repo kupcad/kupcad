@@ -37,7 +37,7 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     // --- Generate Bytecode: def prop() @prop end ---
     try child_comp.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
     const prop_idx = try child_comp.makeStringConstant(clean_name);
-    try child_comp.emitOpWithOperand(.op_get_property, .op_get_property_wide, prop_idx);
+    try child_comp.emitOpWithOperand(.op_get_ivar, .op_get_ivar_wide, prop_idx);
     try child_comp.emitInlineCacheIndex();
     try child_comp.emitOp(.op_return);
 

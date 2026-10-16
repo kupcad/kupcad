@@ -51,6 +51,10 @@ pub const OpCode = enum(u8) {
     op_class_wide,
     op_get_property,
     op_get_property_wide,
+    /// `@x` read: the instance's own field, nil when unset, never a method of that name
+    /// (op_get_property's method fallback). Same operands as op_get_property.
+    op_get_ivar,
+    op_get_ivar_wide,
     op_set_property,
     op_set_property_wide,
     op_class_method,

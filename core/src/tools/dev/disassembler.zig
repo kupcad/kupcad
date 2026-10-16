@@ -66,11 +66,11 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
             return simpleInstruction(@tagName(op), offset, writer);
         },
         // Property ops carry a trailing 16-bit inline-cache index after the constant
-        .op_get_property, .op_set_property => {
+        .op_get_property, .op_set_property, .op_get_ivar => {
             const next = try constantInstruction(@tagName(op), c, offset, false, writer);
             return inlineCacheOperand(c, next, writer);
         },
-        .op_get_property_wide, .op_set_property_wide => {
+        .op_get_property_wide, .op_set_property_wide, .op_get_ivar_wide => {
             const next = try constantInstruction(@tagName(op), c, offset, true, writer);
             return inlineCacheOperand(c, next, writer);
         },

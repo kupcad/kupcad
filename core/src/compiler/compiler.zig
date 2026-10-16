@@ -573,11 +573,10 @@ pub const Compiler = struct {
             if (assign_payload.op) |op| {
                 try self.emitOp(.op_dup); // Stack: [self, self]
                 const name_idx = try self.makeStringConstant(clean_name);
-                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                try self.emitOpWithOperand(.op_get_ivar, .op_get_ivar_wide, name_idx);
                 try self.emitInlineCacheIndex();
 
-                try self.compileNode(assign_payload.value);
-                try self.emitBinaryOp(op);
+                try self.compileCompoundValue(op, assign_payload.value);
             } else {
                 try self.compileNode(assign_payload.value); // Stack: [self, new_val]
             }
@@ -610,14 +609,41 @@ pub const Compiler = struct {
         // Evaluate RHS (with Compound Operator getters if necessary)
         if (assign_payload.op) |op| {
             try self.emitVariableLoad(name_id, sym);
-            try self.compileNode(assign_payload.value);
-            try self.emitBinaryOp(op);
+            try self.compileCompoundValue(op, assign_payload.value);
         } else {
             try self.compileNode(assign_payload.value);
         }
 
         // Set the Target Variable
         try self.emitVariableStore(name_id, sym);
+    }
+
+    /// The value a compound assignment stores, with the current value on the stack: for
+    /// `+=` and the other arithmetic operators the result of the operation; for `||=`
+    /// and `&&=` the current value when it decides, else the right-hand side, which is
+    /// then evaluated only when needed. (Those two reached the emitter as binary
+    /// operators it has no opcode for: "internal compiler error".)
+    fn compileCompoundValue(self: *Compiler, op: ast.BinaryOp, rhs: ast.NodeIndex) CompileError!void {
+        switch (op) {
+            .logical_or => {
+                const else_jump = try self.emitJump(.op_jump_if_false);
+                const end_jump = try self.emitJump(.op_jump);
+                self.patchJump(else_jump);
+                try self.emitOp(.op_pop);
+                try self.compileNode(rhs);
+                self.patchJump(end_jump);
+            },
+            .logical_and => {
+                const end_jump = try self.emitJump(.op_jump_if_false);
+                try self.emitOp(.op_pop);
+                try self.compileNode(rhs);
+                self.patchJump(end_jump);
+            },
+            else => {
+                try self.compileNode(rhs);
+                try self.emitBinaryOp(op);
+            },
+        }
     }
 
     fn compileRescueModifier(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
@@ -849,10 +875,9 @@ pub const Compiler = struct {
             try self.emitOp(.op_get_index);
             // Stack is now: [target, index, current_val]
 
-            try self.compileNode(ia.value);
+            try self.compileCompoundValue(op, ia.value);
             // Stack is now: [target, index, current_val, rhs_val]
 
-            try self.emitBinaryOp(op);
             // Stack is now: [target, index, new_val]
         } else {
             try self.compileNode(ia.value); // Stack: [target, index, new_val]
@@ -2040,9 +2065,8 @@ pub const Compiler = struct {
             try self.emitInlineCacheIndex();
             // Stack is now: [target, old_val]
 
-            try self.compileNode(pa.value); // Stack: [target, old_val, rhs_val]
+            try self.compileCompoundValue(op, pa.value); // Stack: [target, new_val]
 
-            try self.emitBinaryOp(op);
             // Stack is now: [target, new_val]
         } else {
             try self.compileNode(pa.value); // Stack: [target, new_val]
@@ -2178,7 +2202,7 @@ pub const Compiler = struct {
                 try self.emitPushSelf();
                 const clean_name = if (name_str.len > 1) name_str[1..] else name_str;
                 const name_idx = try self.makeStringConstant(clean_name);
-                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, name_idx);
+                try self.emitOpWithOperand(.op_get_ivar, .op_get_ivar_wide, name_idx);
                 try self.emitInlineCacheIndex();
             },
             .local => {
