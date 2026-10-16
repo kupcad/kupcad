@@ -3244,80 +3244,17 @@ pub const VM = struct {
         return pending.value;
     }
 
+    /// Throws the value on top of the stack: to the innermost rescue, or, with none, out of
+    /// the run as an uncaught error. A class is raised as a new instance of it, and a value
+    /// that is no error instance as a RuntimeError with the value for its message. The value
+    /// stays in its stack slot (peeked, not popped) while anything allocates.
     pub fn executeThrow(self: *VM) InterpretResult {
-        // PEEK instead of POP to protect the thrown error from the GC
-        var err_val = self.stack[self.stack_top - 1];
-
-        // `raise Klass` raises Klass.new, as in Ruby: a rescue gets an instance, with a
-        // message (the class name) and a backtrace. The class itself was thrown before,
-        // so `e.message` on it was a NoMethodError.
-        if (err_val.isClass()) {
-            const throw_seq = self.throw_seq;
-            const depth = self.frames.items.len;
-            const res = self.constructInstance(err_val.asClass(), 0, self.stack_top - 1, false, false);
-            if (res != .ok) return res;
-            if (self.frames.items.len > depth) {
-                const init_res = self.runUntil(depth);
-                if (init_res != .ok) return init_res;
-            }
-            // initialize raised, and a rescue took over: nothing is left to throw
-            if (self.throw_seq != throw_seq) return .ok;
-            err_val = self.stack[self.stack_top - 1];
+        if (self.stack[self.stack_top - 1].isClass()) {
+            if (self.instantiateRaisedClass()) |done| return done;
         }
-
-        // --- Auto-wrap primitives in RuntimeError ---
-        // Each allocation below can collect, and Zig locals are not GC roots: every
-        // new object goes onto the stack as soon as it exists.
-        if (!err_val.isInstance() and !err_val.isClass()) {
-            if (self.error_classes.get(.RuntimeError)) |rt_class| {
-                if (self.gc.allocateInstance(self, rt_class) catch null) |inst| {
-                    const inst_val = value.Value.initObj(&inst.obj);
-                    self.push(inst_val);
-
-                    var str_val: ?value.Value = null;
-
-                    // If it's already a string, use it directly!
-                    if (err_val.isString()) {
-                        str_val = err_val;
-                    } else {
-                        // Otherwise, stringify the value (a number, an Array, ...). On the heap:
-                        // a fixed stack buffer used to truncate a large one.
-                        var out: std.Io.Writer.Allocating = .init(self.allocator);
-                        defer out.deinit();
-                        err_val.stringify(false, &out.writer) catch |err| {
-                            self.reportError("Error stringifying a raised value: {}", .{err});
-                        };
-                        str_val = self.allocateString(out.written()) catch null;
-                    }
-
-                    if (str_val) |s_val| {
-                        self.push(s_val); // Protect until the instance holds it
-                        const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
-                        self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
-                            self.reportError("Error setting exception message: {}", .{err});
-                        };
-                        _ = self.pop();
-
-                        // --- EAGER BACKTRACE CAPTURE ---
-                        if (self.buildBacktrace() catch null) |bt_arr| {
-                            self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                            const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
-                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                self.reportError("Error setting exception backtrace: {}", .{err});
-                            };
-                            _ = self.pop();
-                        }
-
-                        // The instance takes over the thrown slot, which keeps it rooted until it is popped
-                        _ = self.pop();
-                        self.stack[self.stack_top - 1] = inst_val;
-                        err_val = inst_val; // Overwrite the thrown value!
-                    } else {
-                        _ = self.pop(); // No message: drop the instance and throw the payload as-is
-                    }
-                }
-            }
-        }
+        const thrown = self.stack[self.stack_top - 1];
+        if (!thrown.isInstance() and !thrown.isClass()) self.wrapInRuntimeError();
+        const err_val = self.stack[self.stack_top - 1];
 
         self.throw_seq +%= 1;
         self.last_throw_target = if (self.rescue_frames.items.len > 0)
@@ -3325,63 +3262,85 @@ pub const VM = struct {
         else
             null;
 
-        if (self.rescue_frames.items.len == 0) {
-            // Pop only once reporting is done: the key lookups below allocate, and the
-            // thrown value must stay rooted in its stack slot until then.
-            defer _ = self.pop();
+        if (self.rescue_frames.items.len == 0) return self.reportUncaught(err_val);
+        return self.unwindToRescue(err_val);
+    }
 
-            // We removed the [Uncaught Exception] header
-            if (err_val.isString()) {
-                const str = err_val.asString().chars;
-                self.reportError("RuntimeError: {s}", .{str});
-                self.printStacktrace();
-            } else if (err_val.isInstance()) {
-                const inst = err_val.asInstance();
-                var printed = false;
-
-                const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
-
-                // Format: ClassName: Message
-                if (inst.class.instance_layout.get(msg_key)) |idx| {
-                    if (idx < inst.fields.items.len) {
-                        const msg_val = inst.fields.items[idx];
-                        if (msg_val.isString()) {
-                            const str = msg_val.asString().chars;
-                            self.reportError("{s}: {s}", .{ inst.class.name.chars, str });
-                            printed = true;
-                        }
-                    }
-                }
-                if (!printed) self.reportError("{s}", .{inst.class.name.chars});
-
-                // Print First-Class Backtrace seamlessly
-                var printed_bt = false;
-                const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
-
-                if (inst.class.instance_layout.get(bt_key)) |bt_idx| {
-                    if (bt_idx < inst.fields.items.len) {
-                        const bt_val = inst.fields.items[bt_idx];
-                        if (bt_val.isArray()) {
-                            const arr_obj = bt_val.asArray();
-                            for (arr_obj.items.items) |frame_val| {
-                                if (frame_val.isString()) {
-                                    const frame_str = frame_val.asString().chars;
-                                    self.reportError("{s}", .{frame_str});
-                                }
-                            }
-                            printed_bt = true;
-                        }
-                    }
-                }
-
-                if (!printed_bt) self.printStacktrace();
-            } else {
-                self.reportError("Unknown error.", .{});
-                self.printStacktrace();
-            }
-            return .runtime_error;
+    /// `raise Klass` raises Klass.new, as in Ruby: a rescue gets an instance, with a message
+    /// (the class name) and a backtrace (the class itself was thrown, so `e.message` on it
+    /// was a NoMethodError). The instance replaces the class on top of the stack. Null when
+    /// it is there to throw; otherwise what ends the throw: initialize's failure, or .ok when
+    /// initialize raised and a rescue has taken over.
+    fn instantiateRaisedClass(self: *VM) ?InterpretResult {
+        const throw_seq = self.throw_seq;
+        const depth = self.frames.items.len;
+        const res = self.constructInstance(self.stack[self.stack_top - 1].asClass(), 0, self.stack_top - 1, false, false);
+        if (res != .ok) return res;
+        if (self.frames.items.len > depth) {
+            const init_res = self.runUntil(depth);
+            if (init_res != .ok) return init_res;
         }
+        if (self.throw_seq != throw_seq) return .ok;
+        return null;
+    }
 
+    /// Replaces the value on top of the stack with a RuntimeError whose message it is (its
+    /// text, for a number or an Array), so `raise "text"` is rescued like any error. Before
+    /// the standard library defines RuntimeError, or without room for the error, the value
+    /// is thrown as it is.
+    fn wrapInRuntimeError(self: *VM) void {
+        const rt_class = self.error_classes.get(.RuntimeError) orelse return;
+        const payload = self.stack[self.stack_top - 1];
+        const inst = self.gc.allocateInstance(self, rt_class) catch return;
+        self.push(value.Value.initObj(&inst.obj));
+        defer _ = self.pop();
+        const message = if (payload.isString()) payload else self.messageText(payload) catch return;
+        self.setErrorFields(inst, message) catch return;
+        self.stack[self.stack_top - 2] = value.Value.initObj(&inst.obj);
+    }
+
+    /// `val` written out as an error's message, as a new string (on the heap: a fixed buffer
+    /// used to truncate a large one).
+    fn messageText(self: *VM, val: value.Value) !value.Value {
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try val.stringify(false, &out.writer);
+        return self.allocateString(out.written());
+    }
+
+    /// No rescue is left: reports the error as "<Class>: <message>" and its backtrace, and
+    /// ends the run.
+    fn reportUncaught(self: *VM, err_val: value.Value) InterpretResult {
+        // Popped once reporting is done: the field names may be interned, which allocates,
+        // and the thrown value must stay rooted in its slot until then.
+        defer _ = self.pop();
+        if (err_val.isInstance()) {
+            const inst = err_val.asInstance();
+            const message = self.errorField(inst, "message") catch return self.raisingOutOfMemory();
+            if (message != null and message.?.isString()) {
+                self.reportError("{s}: {s}", .{ inst.class.name.chars, message.?.asString().chars });
+            } else {
+                self.reportError("{s}", .{inst.class.name.chars});
+            }
+            const backtrace = self.errorField(inst, "backtrace") catch return self.raisingOutOfMemory();
+            if (backtrace != null and backtrace.?.isArray()) {
+                for (backtrace.?.asArray().items.items) |line| {
+                    if (line.isString()) self.reportError("{s}", .{line.asString().chars});
+                }
+                return .runtime_error;
+            }
+        } else if (err_val.isString()) {
+            self.reportError("RuntimeError: {s}", .{err_val.asString().chars});
+        } else {
+            self.reportError("Unknown error.", .{});
+        }
+        self.printStacktrace();
+        return .runtime_error;
+    }
+
+    /// Hands the error on top of the stack to the innermost rescue: drops the frames and
+    /// stack above it, and resumes at its handler with the error pushed for it.
+    fn unwindToRescue(self: *VM, err_val: value.Value) InterpretResult {
         // Complete the conceptual op_throw; nothing allocates before the handler re-pushes err_val
         _ = self.pop();
 
@@ -3752,23 +3711,7 @@ pub const VM = struct {
                 self.push(value.Value.initObj(&inst.obj));
 
                 if (self.allocateString(msg) catch null) |str_val| {
-                    self.push(str_val); // Protect until the instance holds it
-                    const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
-                    self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
-                        self.reportError("Error setting exception message: {}", .{err});
-                    };
-                    _ = self.pop();
-
-                    // --- EAGER BACKTRACE CAPTURE ---
-                    if (self.buildBacktrace() catch null) |bt_arr| {
-                        self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                        const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
-                        self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                            self.reportError("Error setting exception backtrace: {}", .{err});
-                        };
-                        _ = self.pop();
-                    }
-
+                    self.setErrorFields(inst, str_val) catch return self.raisingOutOfMemory();
                     // inst is already safely on the top of the stack, call executeThrow to bubble it
                     return self.executeThrow();
                 }
@@ -3883,6 +3826,26 @@ pub const VM = struct {
     fn printStacktrace(self: *VM) void {
         var lines = BacktraceLines.init(self);
         while (lines.next()) |line| self.reportError("{s}", .{line});
+    }
+
+    /// Gives a new error instance its `message` and, when one can be built, its
+    /// `backtrace`. Setting a field can collect, so both values are rooted here while they
+    /// are set; `inst` is the caller's to root.
+    pub fn setErrorFields(self: *VM, inst: *value.ObjInstance, message: value.Value) !void {
+        self.push(message);
+        defer _ = self.pop();
+        try self.setInstanceField(inst, try self.staticString("message"), message, null);
+        // An error without a backtrace is still the error.
+        const backtrace = value.Value.initObj(&(self.buildBacktrace() catch return).obj);
+        self.push(backtrace);
+        defer _ = self.pop();
+        try self.setInstanceField(inst, try self.staticString("backtrace"), backtrace, null);
+    }
+
+    /// An error instance's field (`message`, `backtrace`), if it was set.
+    pub fn errorField(self: *VM, inst: *const value.ObjInstance, comptime name: []const u8) !?value.Value {
+        const idx = inst.class.instance_layout.get(try self.staticString(name)) orelse return null;
+        return if (idx < inst.fields.items.len) inst.fields.items[idx] else null;
     }
 
     // --- First-Class Error Backtraces ---

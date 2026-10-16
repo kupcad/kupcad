@@ -27,24 +27,12 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
     // Construct and Throw Exception
     vm.push(msg_val); // A fresh message is otherwise unrooted while the instance is allocated
     const inst = try vm.gc.allocateInstance(vm, err_class);
-    vm.push(value.Value.initObj(&inst.obj)); // Protect from GC
-
-    const msg_key = try vm.allocateString("message");
-    try vm.setInstanceField(inst, msg_key, msg_val, null);
-
-    // Capture Stack Trace
-    if (vm.buildBacktrace()) |bt_arr| {
-        vm.push(value.Value.initObj(&bt_arr.obj));
-        const bt_key = try vm.allocateString("backtrace");
-        try vm.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null);
-        _ = vm.pop();
-    } else |_| {}
-
-    _ = vm.pop(); // Unprotect
-    _ = vm.pop(); // msg_val, now held by the instance
+    _ = vm.pop();
+    // The thrown slot roots the instance from here on
+    vm.push(value.Value.initObj(&inst.obj));
+    try vm.setErrorFields(inst, msg_val);
 
     // Throw directly into the VM's rescue system
-    vm.push(value.Value.initObj(&inst.obj));
     const res = vm.executeThrow();
 
     if (res == .ok) {

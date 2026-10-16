@@ -1518,6 +1518,36 @@ test "VM: assert keeps its message rooted while it allocates the exception" {
     try expectGlobalString(&vm, "block_msg", "lazy msg");
 }
 
+test "VM: a raised class and Exception.new keep their message and backtrace rooted" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+
+    // Exception#initialize set the message it had just made from the class name, and the
+    // backtrace, while only a Zig local held them.
+    const source =
+        \\from_class = begin
+        \\  raise ArgumentError
+        \\rescue ArgumentError => e
+        \\  if e.backtrace.length > 0
+        \\    e.message
+        \\  else
+        \\    "no backtrace"
+        \\  end
+        \\end
+        \\made = ArgumentError.new.message
+        \\given = ArgumentError.new("given " + "here").message
+    ;
+    try testing.expectEqual(.ok, try compileAndRunStressed(&vm, &out_chunk, source));
+    try expectGlobalString(&vm, "from_class", "ArgumentError");
+    try expectGlobalString(&vm, "made", "ArgumentError");
+    try expectGlobalString(&vm, "given", "given here");
+}
+
 test "VM: every runtime error kind is a registered StandardError subclass" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
