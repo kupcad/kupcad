@@ -223,3 +223,44 @@ test "DAG: compaction keeps the live nodes with their payloads, hashes and meshe
     try std.testing.expectEqual(renumbered[cube], try b.addCube(1, 2, 3, true));
     try std.testing.expectEqual(renumbered[moved], try b.addTranslate(renumbered[many], 1, 2, 3));
 }
+
+test "DAG: a node is found again exactly when every part of its payload matches" {
+    // Hashing and equality both read the payload by its layout (payloadParts); each layout
+    // here is built twice alike, then with one part changed.
+    const kernel = @import("../kernel/kernel.zig");
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const cube = try b.addCube(1, 1, 1, false);
+    const ball = try b.addSphere(1, 8);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const tri = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 } };
+    const moved_tri = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 2 } };
+    const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
+    const moved_pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 2 } };
+    const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } };
+    const contours = [_][]const [2]f64{ &tri, &tri };
+    const moved_contours = [_][]const [2]f64{ &tri, &moved_tri };
+    const cases = [_]struct { layout: []const u8, first: dag.DAGNodeIndex, again: dag.DAGNodeIndex, changed: []const dag.DAGNodeIndex }{
+        .{ .layout = "numbers", .first = try b.addCube(1, 2, 3, false), .again = try b.addCube(1, 2, 3, false), .changed = &.{ try b.addCube(1, 2, 4, false), try b.addCube(1, 2, 3, true) } },
+        .{ .layout = "operands", .first = try b.addBinary(.difference_op, cube, ball), .again = try b.addBinary(.difference_op, cube, ball), .changed = &.{try b.addBinary(.difference_op, ball, cube)} },
+        .{ .layout = "operand_list", .first = try b.addBatchUnion(&.{ cube, ball }), .again = try b.addBatchUnion(&.{ cube, ball }), .changed = &.{try b.addBatchUnion(&.{ cube, ball, cube })} },
+        .{ .layout = "target_numbers", .first = try b.addTranslate(cube, 1, 2, 3), .again = try b.addTranslate(cube, 1, 2, 3), .changed = &.{ try b.addTranslate(ball, 1, 2, 3), try b.addTranslate(cube, 1, 2, 4), try b.addRotate(cube, 1, 2, 3) } },
+        .{ .layout = "target_value", .first = try b.addSetMaterial(cube, 1), .again = try b.addSetMaterial(cube, 1), .changed = &.{try b.addSetMaterial(cube, 2)} },
+        .{ .layout = "loft", .first = try b.addLoft(small, big, 3), .again = try b.addLoft(small, big, 3), .changed = &.{ try b.addLoft(small, big, 4), try b.addLoft(big, small, 3) } },
+        .{ .layout = "polygon", .first = try b.addPolygon(@constCast(&tri)), .again = try b.addPolygon(@constCast(&tri)), .changed = &.{try b.addPolygon(@constCast(&moved_tri))} },
+        .{ .layout = "polygons", .first = try b.addPolygonsEvenOdd(&contours), .again = try b.addPolygonsEvenOdd(&contours), .changed = &.{ try b.addPolygonsEvenOdd(&moved_contours), try b.addPolygonsEvenOdd(contours[0..1]) } },
+        .{ .layout = "polyhedron", .first = try b.addPolyhedron(&pts, &faces), .again = try b.addPolyhedron(&pts, &faces), .changed = &.{try b.addPolyhedron(&moved_pts, &faces)} },
+        .{ .layout = "none", .first = try b.addEmpty(true), .again = try b.addEmpty(true), .changed = &.{try b.addEmpty(false)} },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("layout: {s}\n", .{case.layout});
+        try std.testing.expectEqual(case.first, case.again);
+        for (case.changed) |changed| try std.testing.expect(changed != case.first and b.node_hashes.items[changed] != b.node_hashes.items[case.first]);
+    }
+    // Two leaves are two nodes, even of one mesh's copies.
+    const mesh = kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed;
+    const leaf = try b.addConcrete(mesh);
+    const other = try b.addConcrete(kernel.clone(mesh) orelse return error.KernelFailed);
+    try std.testing.expect(leaf != other and b.node_hashes.items[leaf] != b.node_hashes.items[other]);
+}

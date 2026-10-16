@@ -157,6 +157,69 @@ pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
+/// A piece of a node's payload (DAGBuilder.payloadParts).
+const PayloadPart = union(enum) {
+    operands: []const DAGNodeIndex,
+    numbers: []const f64,
+    /// A plain value: a count, a material id, a polyhedron's mesh hash.
+    value: u64,
+    points: []const [3]f64,
+    faces: []const [3]u32,
+    /// A concrete leaf's serial.
+    serial: u64,
+};
+
+/// The parts of one node's payload, in order (see layoutOf).
+const PayloadParts = struct {
+    b: *const DAGBuilder,
+    node: DAGNode,
+    layout: Layout,
+    step: u32 = 0,
+
+    fn next(self: *PayloadParts) ?PayloadPart {
+        defer self.step += 1;
+        const b = self.b;
+        const extra = b.extra_data.items;
+        const at = self.node.data;
+        const step = self.step;
+        return switch (self.layout) {
+            .none => null,
+            .numbers => |n| if (step == 0) .{ .numbers = b.numbers.items[at..][0..n] } else null,
+            .operands => |n| if (step == 0) .{ .operands = extra[at..][0..n] } else null,
+            .operand_list => if (step == 0) .{ .operands = extra[at + 1 ..][0..extra[at]] } else null,
+            .target_numbers => |n| switch (step) {
+                0 => .{ .operands = extra[at..][0..1] },
+                1 => .{ .numbers = b.numbers.items[extra[at + 1]..][0..n] },
+                else => null,
+            },
+            .target_value => switch (step) {
+                0 => .{ .operands = extra[at..][0..1] },
+                1 => .{ .value = extra[at + 1] },
+                else => null,
+            },
+            .loft => switch (step) {
+                0 => .{ .operands = extra[at..][0..2] },
+                1 => .{ .numbers = b.numbers.items[extra[at + 2]..][0..1] },
+                else => null,
+            },
+            .polygon => if (step == 0) .{ .numbers = b.numbers.items[extra[at]..][0 .. 2 * extra[at + 1]] } else null,
+            .polygons => if (step == 0)
+                .{ .value = extra[at] }
+            else if (step <= extra[at])
+                .{ .numbers = b.numbers.items[extra[at + 2 * step - 1]..][0 .. 2 * extra[at + 2 * step]] }
+            else
+                null,
+            .polyhedron => switch (step) {
+                0 => .{ .value = (@as(u64, extra[at + 4]) << 32) | extra[at + 5] },
+                1 => .{ .points = b.poly_points.items[extra[at]..][0..extra[at + 1]] },
+                2 => .{ .faces = b.poly_faces.items[extra[at + 2]..][0..extra[at + 3]] },
+                else => null,
+            },
+            .concrete => if (step == 0) .{ .serial = b.concrete_leaves.items[at].serial } else null,
+        };
+    }
+};
+
 /// A `.concrete` node's mesh, and the serial its hash is made from.
 pub const ConcreteLeaf = struct {
     /// Null once released: no live shape was made from the node any more.
@@ -932,221 +995,59 @@ pub const DAGBuilder = struct {
         // By content, not id: the hash keys the result cache, which outlives the table.
         hasher.update(std.mem.asBytes(&self.settings(node.settings).resultHash()));
 
-        switch (node.tag) {
-            .empty_solid, .empty_sketch => {}, // the tag says it all
-            .cube => {
-                const p = self.getCubeDimensions(node);
-                hasher.update(std.mem.asBytes(&p.x));
-                hasher.update(std.mem.asBytes(&p.y));
-                hasher.update(std.mem.asBytes(&p.z));
+        // Every variable-length part with its length, so payloads split differently (a
+        // polygon's contours [3 pts][5 pts] and [4 pts][4 pts]) never hash alike.
+        var parts = self.payloadParts(node);
+        while (parts.next()) |part| switch (part) {
+            .operands => |operands| {
+                hasher.update(std.mem.asBytes(&@as(u64, operands.len)));
+                for (operands) |operand| hasher.update(std.mem.asBytes(&(try self.childHash(operand))));
             },
-            .cylinder => {
-                const p = self.getCylinderPayload(node);
-                hasher.update(std.mem.asBytes(&p.r1));
-                hasher.update(std.mem.asBytes(&p.r2));
-                hasher.update(std.mem.asBytes(&p.height));
-                hasher.update(std.mem.asBytes(&p.segments));
+            .numbers => |numbers| {
+                hasher.update(std.mem.asBytes(&@as(u64, numbers.len)));
+                hasher.update(std.mem.sliceAsBytes(numbers));
             },
-            .sphere => {
-                const p = self.getSpherePayload(node);
-                hasher.update(std.mem.asBytes(&p.radius));
-                hasher.update(std.mem.asBytes(&p.segments));
-            },
-            .square => {
-                const p = self.getSquarePayload(node);
-                hasher.update(std.mem.asBytes(&p.x));
-                hasher.update(std.mem.asBytes(&p.y));
-            },
-            .circle => {
-                const p = self.getCirclePayload(node);
-                hasher.update(std.mem.asBytes(&p.radius));
-                hasher.update(std.mem.asBytes(&p.segments));
-            },
-            .polygon => {
-                const num_idx = self.extra_data.items[node.data];
-                const pt_count = self.extra_data.items[node.data + 1];
-                hasher.update(std.mem.asBytes(&pt_count));
-                for (0..pt_count) |i| {
-                    hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2)]));
-                    hasher.update(std.mem.asBytes(&self.numbers.items[num_idx + (i * 2) + 1]));
-                }
-            },
-            .polygons_even_odd => {
-                const num_contours = self.extra_data.items[node.data];
-                hasher.update(std.mem.asBytes(&num_contours));
-                for (0..num_contours) |i| {
-                    const pts_start = self.extra_data.items[node.data + 1 + (i * 2)];
-                    const pts_len = self.extra_data.items[node.data + 1 + (i * 2) + 1];
-                    // Per-contour length: [3 pts][5 pts] must not hash like [4 pts][4 pts].
-                    hasher.update(std.mem.asBytes(&pts_len));
-                    for (0..pts_len) |pt_idx| {
-                        hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2)]));
-                        hasher.update(std.mem.asBytes(&self.numbers.items[pts_start + (pt_idx * 2) + 1]));
-                    }
-                }
-            },
-            .polyhedron_op => {
-                const p = self.getPolyhedronPayload(node);
-                // O(1) CSE Hashing: We use the precomputed mesh hash instead of iterating millions of vertices
-                hasher.update(std.mem.asBytes(&p.geom_hash));
-            },
-            .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
-                const p = self.getBinaryPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.left))));
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.right))));
-            },
-            .batch_union_op, .batch_hull_op => {
-                const targets = self.getBatchUnionPayload(node);
-                const count: u64 = targets.len;
-                hasher.update(std.mem.asBytes(&count));
-                for (targets) |t_idx| {
-                    hasher.update(std.mem.asBytes(&(try self.childHash(t_idx))));
-                }
-            },
-            .translate, .rotate, .scale, .mirror => {
-                const p = self.getTranslatePayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.x));
-                hasher.update(std.mem.asBytes(&p.y));
-                hasher.update(std.mem.asBytes(&p.z));
-            },
-            .extrude => {
-                const p = self.getExtrudePayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.height));
-                hasher.update(std.mem.asBytes(&p.slices));
-                hasher.update(std.mem.asBytes(&p.twist_degrees));
-                hasher.update(std.mem.asBytes(&p.scale_x));
-                hasher.update(std.mem.asBytes(&p.scale_y));
-            },
-            .revolve => {
-                const p = self.getRevolvePayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.segments));
-                hasher.update(std.mem.asBytes(&p.degrees));
-            },
-            .trim_by_plane => {
-                const p = self.getTrimByPlanePayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.nx));
-                hasher.update(std.mem.asBytes(&p.ny));
-                hasher.update(std.mem.asBytes(&p.nz));
-                hasher.update(std.mem.asBytes(&p.offset));
-            },
-            .offset => {
-                const p = self.getOffsetPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.delta));
-                hasher.update(std.mem.asBytes(&p.join_type));
-            },
-            .loft => {
-                const p = self.getLoftPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.base))));
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.top))));
-                hasher.update(std.mem.asBytes(&p.height));
-            },
-            .slice_op => {
-                const p = self.getSlicePayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.height));
-            },
-            .project_op, .hull => {
-                const p = self.getProjectPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-            },
-            .transform_matrix, .cs_transform => {
-                const p = self.getTransformPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-
-                const count: u32 = if (node.tag == .transform_matrix) 12 else 6;
-                for (0..count) |i| {
-                    hasher.update(std.mem.asBytes(&self.numbers.items[p.num_idx + i]));
-                }
-            },
-            .concrete => {
-                // Each wrapped handle is unique. Its serial identifies it, never its slot,
-                // which a later leaf could be given once this one is gone, and with it the
-                // results cached under this one's hash.
-                hasher.update(std.mem.asBytes(&self.concrete_leaves.items[node.data].serial));
-            },
-            .set_material => {
-                const p = self.getMaterialPayload(node);
-                hasher.update(std.mem.asBytes(&(try self.childHash(p.target))));
-                hasher.update(std.mem.asBytes(&p.material_id));
-            },
-        }
+            .value => |v| hasher.update(std.mem.asBytes(&v)),
+            .serial => |v| hasher.update(std.mem.asBytes(&v)),
+            // Covered by the mesh hash before them, computed once when the node was made:
+            // a polyhedron can have millions of points.
+            .points, .faces => {},
+        };
         return hasher.final();
     }
 
     // --- Structural Equality (CSE verification) ---
 
-    inline fn numbersEql(self: *const DAGBuilder, a_idx: u32, b_idx: u32, count: u32) bool {
-        const a = self.numbers.items[a_idx .. a_idx + count];
-        const b = self.numbers.items[b_idx .. b_idx + count];
-        // Bitwise, to match the byte-wise hashing (and so NaN payloads compare equal).
-        return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
-    }
-
-    inline fn extraEql(self: *const DAGBuilder, a_idx: u32, b_idx: u32, count: u32) bool {
-        return std.mem.eql(u32, self.extra_data.items[a_idx .. a_idx + count], self.extra_data.items[b_idx .. b_idx + count]);
-    }
-
-    /// Compares tag, flags and every side-table payload. Child references are
-    /// compared by index: children are themselves deduplicated exactly, so equal
-    /// sub-DAGs always share one index.
+    /// Compares tag, flags, settings and every payload part. Operands are compared by index:
+    /// they are deduplicated exactly themselves, so equal sub-DAGs always share one index.
     fn nodesEqual(self: *const DAGBuilder, a: DAGNode, b: DAGNode) bool {
         if (a.tag != b.tag or a.flags != b.flags or a.settings != b.settings) return false;
-        const ex = self.extra_data.items;
+        var parts_a = self.payloadParts(a);
+        var parts_b = self.payloadParts(b);
+        while (parts_a.next()) |part_a| {
+            const part_b = parts_b.next() orelse return false;
+            if (!partsEqual(part_a, part_b)) return false;
+        }
+        return parts_b.next() == null;
+    }
 
-        return switch (a.tag) {
-            .empty_solid, .empty_sketch => true,
-            .cube => self.numbersEql(a.data, b.data, 3),
-            .cylinder => self.numbersEql(a.data, b.data, 4),
-            .sphere, .square, .circle => self.numbersEql(a.data, b.data, 2),
-            .polygon => blk: {
-                const count = ex[a.data + 1];
-                if (count != ex[b.data + 1]) break :blk false;
-                break :blk self.numbersEql(ex[a.data], ex[b.data], count * 2);
-            },
-            .polygons_even_odd => blk: {
-                const n = ex[a.data];
-                if (n != ex[b.data]) break :blk false;
-                for (0..n) |i| {
-                    const off: u32 = @intCast(1 + i * 2);
-                    const len = ex[a.data + off + 1];
-                    if (len != ex[b.data + off + 1]) break :blk false;
-                    if (!self.numbersEql(ex[a.data + off], ex[b.data + off], len * 2)) break :blk false;
-                }
-                break :blk true;
-            },
-            .polyhedron_op => blk: {
-                const pa = self.getPolyhedronPayload(a);
-                const pb = self.getPolyhedronPayload(b);
-                break :blk std.mem.eql(u8, std.mem.sliceAsBytes(pa.pts), std.mem.sliceAsBytes(pb.pts)) and
-                    std.mem.eql(u8, std.mem.sliceAsBytes(pa.faces), std.mem.sliceAsBytes(pb.faces));
-            },
-            .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => self.extraEql(a.data, b.data, 2),
-            .batch_union_op, .batch_hull_op => std.mem.eql(DAGNodeIndex, self.getBatchUnionPayload(a), self.getBatchUnionPayload(b)),
-            .project_op, .hull => ex[a.data] == ex[b.data],
-            .concrete => a.data == b.data,
-            .set_material => self.extraEql(a.data, b.data, 2),
-            .loft => self.extraEql(a.data, b.data, 2) and self.numbersEql(ex[a.data + 2], ex[b.data + 2], 1),
-            // Remaining unary ops: [target, num_idx] in extra_data plus N numbers.
-            .translate, .rotate, .scale, .mirror, .transform_matrix, .cs_transform, .extrude, .revolve, .trim_by_plane, .offset, .slice_op => blk: {
-                if (ex[a.data] != ex[b.data]) break :blk false;
-                const count: u32 = switch (a.tag) {
-                    .translate, .rotate, .scale, .mirror => 3,
-                    .transform_matrix => 12,
-                    .cs_transform => 6,
-                    .extrude => 5,
-                    .revolve => 2,
-                    .trim_by_plane => 4,
-                    .offset, .slice_op => 1,
-                    else => unreachable,
-                };
-                break :blk self.numbersEql(ex[a.data + 1], ex[b.data + 1], count);
-            },
+    fn partsEqual(a: PayloadPart, b: PayloadPart) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .operands => |x| std.mem.eql(DAGNodeIndex, x, b.operands),
+            // Bitwise, as they are hashed (so NaN payloads compare equal).
+            .numbers => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.numbers)),
+            .points => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.points)),
+            .faces => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.faces)),
+            .value => |x| x == b.value,
+            .serial => |x| x == b.serial,
         };
+    }
+
+    /// `node`'s payload, part by part, as its layout lays it out: what the hash covers and
+    /// equality compares.
+    fn payloadParts(self: *const DAGBuilder, node: DAGNode) PayloadParts {
+        return .{ .b = self, .node = node, .layout = layoutOf(node.tag) };
     }
 
     // --- Hybrid CSG Tree Balancing ---
