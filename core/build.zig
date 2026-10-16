@@ -188,12 +188,14 @@ const kupcad_bindings = &[_][]const u8{
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
-/// `base` plus -DNDEBUG outside Debug builds, so the vendored C++ libraries' asserts
+/// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C++ libraries' asserts
 /// (Manifold has many, some costly) are compiled out of release binaries, as their own
-/// release builds do. Debug builds keep them.
+/// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
+/// Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every arithmetic
+/// check of UBSan and aborted the process on a finding. Debug builds keep both.
 fn cxxFlags(b: *std.Build, optimize: std.builtin.OptimizeMode, base: []const []const u8) []const []const u8 {
     if (optimize == .debug) return base;
-    return std.mem.concat(b.allocator, []const u8, &.{ base, &.{"-DNDEBUG"} }) catch @panic("out of memory");
+    return std.mem.concat(b.allocator, []const u8, &.{ base, &.{ "-DNDEBUG", "-fno-sanitize=undefined" } }) catch @panic("out of memory");
 }
 
 pub fn build(b: *std.Build) void {

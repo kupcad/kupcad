@@ -80,6 +80,47 @@ test "DAG Evaluator: correctly evaluates CSG tree (Union)" {
     try testing.expectApproxEqAbs(@as(f64, 2000.0), vol, 1e-6);
 }
 
+test "DAG Evaluator: a chain of unions is one batch, and its links still evaluate on their own" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    // acc = a; acc = acc + b; acc = acc + c; acc = acc + d, four unit cubes in a row.
+    var cubes: [5]u32 = undefined;
+    for (&cubes, 0..) |*c, i| c.* = try vm.dag_builder.addTranslate(try vm.dag_builder.addCube(1, 1, 1, false), @floatFromInt(2 * i), 0, 0);
+    const ab = try vm.dag_builder.addBinary(.union_op, cubes[0], cubes[1]);
+    const abc = try vm.dag_builder.addBinary(.union_op, ab, cubes[2]);
+    const abcd = try vm.dag_builder.addBinary(.union_op, abc, cubes[3]);
+
+    try testing.expectApproxEqAbs(@as(f64, 4), kernel.volume(try dag_evaluator.evaluateDAG(&vm, abcd)), 1e-9);
+    // The links were not evaluated for the batch, so they are not in the cache; asked for,
+    // they are evaluated as the chains they are.
+    try testing.expect(!vm.dag_cache.contains(vm.dag_builder.node_hashes.items[abc]));
+    try testing.expectApproxEqAbs(@as(f64, 2), kernel.volume(try dag_evaluator.evaluateDAG(&vm, ab)), 1e-9);
+    // A cached link is one operand of the chain above it.
+    const abcde = try vm.dag_builder.addBinary(.union_op, abcd, cubes[4]);
+    try testing.expectApproxEqAbs(@as(f64, 5), kernel.volume(try dag_evaluator.evaluateDAG(&vm, abcde)), 1e-9);
+}
+
+test "DAG Evaluator: a transform of a solid over the vertex budget is still refused" {
+    // The result checks are skipped after a pure transform (the solid is its operand's);
+    // the operand itself is checked, so nothing over the budget gets through.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    try vm.setConfig(.{ .max_vertices = 10 });
+    const moved = try vm.dag_builder.addTranslate(try vm.dag_builder.addSphere(10.0, 0), 1, 0, 0);
+    try testing.expectError(error.RamBudgetExceeded, dag_evaluator.evaluateDAG(&vm, moved));
+
+    // A transform keeps the operand's vertices, and is cached like any other result.
+    try vm.setConfig(.{ .max_vertices = 1_000_000 });
+    const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);
+    const moved_cube = try vm.dag_builder.addRotate(try vm.dag_builder.addTranslate(cube_idx, 5, 0, 0), 0, 0, 45);
+    const handle = try dag_evaluator.evaluateDAG(&vm, moved_cube);
+    try testing.expectEqual(@as(usize, 8), kernel.numVerts(handle));
+    try testing.expect(vm.dag_cache.contains(vm.dag_builder.node_hashes.items[moved_cube]));
+}
+
 test "DAG Builder: CSE Deduplication perfectly reuses identical nodes" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

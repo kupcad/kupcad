@@ -290,6 +290,34 @@ fn runOn(vm: *VM, source: []const u8) !InterpretResult {
     return vm.interpret(&out_chunk);
 }
 
+/// The DAG node the script's last value is, with its tag and the operands a batch node unions.
+fn resultNode(vm: *VM) struct { tag: @import("../vm/dag.zig").DAGTag, operands: usize } {
+    const node = vm.dag_builder.nodes.items[vm.stack[0].asGeometry().dag_idx];
+    return .{ .tag = node.tag, .operands = if (node.tag == .batch_union_op) vm.dag_builder.getBatchUnionPayload(node).len else 0 };
+}
+
+test "Patterns: repeat_linear and repeat_polar union their copies in one batch" {
+    // Each used to chain N − 1 binary unions, which the kernel ran one after another.
+    const cases = [_]struct { src: []const u8, count: usize }{
+        .{ .src = "cube(1).repeat_linear(300, [2, 0, 0])", .count = 300 },
+        .{ .src = "cube(1).translate(5, 0, 0).repeat_polar(12)", .count = 12 },
+        .{ .src = "cube(1).translate(5, 0, 0).repeat_polar(5, angle: 90)", .count = 5 },
+    };
+    for (cases) |case| {
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(.ok, try runOn(&vm, case.src));
+        const node = resultNode(&vm);
+        try testing.expectEqual(.batch_union_op, node.tag);
+        try testing.expectEqual(case.count, node.operands);
+    }
+    // One copy is the shape itself.
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try runOn(&vm, "cube(1).repeat_linear(1, [2, 0, 0])"));
+    try testing.expectEqual(.cube, resultNode(&vm).tag);
+}
+
 fn runScript(source: []const u8) !InterpretResult {
     var vm = try initVm();
     defer vm.deinit();

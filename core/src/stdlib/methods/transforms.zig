@@ -382,17 +382,39 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
     if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
     const tx, const ty, const tz = step;
 
-    const base_idx = receiver.asGeometry().dag_idx;
-    var current_idx = base_idx;
-
+    // One batch union of the copies: a chain of N − 1 unions took 60× the time.
+    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    defer copies.deinit(vm);
     for (1..count) |i| {
         const factor: f64 = @floatFromInt(i);
-        const next_idx = try vm.dag_builder.addTranslate(base_idx, tx * factor, ty * factor, tz * factor);
-        current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, next_idx);
+        copies.add(try vm.dag_builder.addTranslate(copies.base, tx * factor, ty * factor, tz * factor));
+    }
+    return copies.unionOf(vm);
+}
+
+/// The copies a repeat pattern makes of its base shape, unioned in one batch.
+const Copies = struct {
+    base: u32,
+    indices: std.ArrayListUnmanaged(u32),
+
+    fn init(vm: *VM, base: u32, count: usize) !Copies {
+        var indices = try std.ArrayListUnmanaged(u32).initCapacity(vm.allocator, count);
+        indices.appendAssumeCapacity(base);
+        return .{ .base = base, .indices = indices };
     }
 
-    return try vm.allocateGeometry(.{ .symbolic = current_idx });
-}
+    fn deinit(self: *Copies, vm: *VM) void {
+        self.indices.deinit(vm.allocator);
+    }
+
+    fn add(self: *Copies, copy: u32) void {
+        self.indices.appendAssumeCapacity(copy);
+    }
+
+    fn unionOf(self: *const Copies, vm: *VM) !value.Value {
+        return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, self.indices.items) });
+    }
+};
 
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_polar", receiver);
@@ -414,14 +436,11 @@ pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value
     else
         total_angle / @as(f64, @floatFromInt(count - 1));
 
-    const base_idx = receiver.asGeometry().dag_idx;
-    var current_idx = base_idx;
-
+    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    defer copies.deinit(vm);
     for (1..count) |i| {
         const rot_z = step_angle * @as(f64, @floatFromInt(i));
-        const next_idx = try vm.dag_builder.addRotate(base_idx, 0, 0, rot_z);
-        current_idx = try vm.dag_builder.addBinary(.union_op, current_idx, next_idx);
+        copies.add(try vm.dag_builder.addRotate(copies.base, 0, 0, rot_z));
     }
-
-    return try vm.allocateGeometry(.{ .symbolic = current_idx });
+    return copies.unionOf(vm);
 }

@@ -130,9 +130,83 @@ const EvalState = enum {
     execute,
 };
 
+/// Whether `tag` moves a solid without changing its mesh: the vertex count is its
+/// operand's, and a valid solid stays valid (the numbers are finite, checked where the
+/// script gives them), so the result checks the evaluator makes on every fresh solid
+/// have nothing to find. They also cost more than the transform: Manifold applies a
+/// transform lazily, composing a chain of them into one matrix, and asking for the status
+/// or the vertex count applies it then and there, so a chain of 200 translates took 12×
+/// the time of one.
+fn isPureTransform(tag: dag.DAGTag) bool {
+    return switch (tag) {
+        .translate, .rotate, .scale, .mirror, .transform_matrix => true,
+        else => false,
+    };
+}
+
+/// The operands of the chain of unions under `root`, `((a + b) + c) + d` as a script's
+/// `acc = acc + part` loop builds it, left to right in `chain`, so the kernel unions them
+/// in one batch: one call sorts and merges N shapes, where the chain made N − 1 calls,
+/// each over a growing result (300 parts took 60× the batch). A union already in the
+/// cache is one operand, so after an edit only the new parts join the cached rest.
+fn collectUnionOperands(vm: *VM, chain: *std.ArrayListUnmanaged(dag.DAGNodeIndex), root: dag.DAGNode) !void {
+    chain.clearRetainingCapacity();
+    var work: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+    defer work.deinit(vm.allocator);
+    const p = vm.dag_builder.getBinaryPayload(root);
+    try work.appendSlice(vm.allocator, &.{ p.right, p.left });
+    while (work.pop()) |idx| {
+        if (idx < vm.dag_builder.nodes.items.len) {
+            const node = vm.dag_builder.nodes.items[idx];
+            if (node.tag == .union_op and !vm.dag_cache.contains(vm.dag_builder.node_hashes.items[idx])) {
+                const q = vm.dag_builder.getBinaryPayload(node);
+                try work.appendSlice(vm.allocator, &.{ q.right, q.left });
+                continue;
+            }
+        }
+        try chain.append(vm.allocator, idx);
+    }
+}
+
+/// Unions or hulls the top `count` operands of `v_stack` in one kernel call, as a batch
+/// node asks (or a chain of unions flattened to one, see collectUnionOperands).
+fn executeBatch(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag: dag.DAGTag, count: usize) !void {
+    if (count == 0) return error.RuntimeError;
+    const is_union = tag == .batch_union_op;
+
+    const entries = try vm.allocator.alloc(StackEntry, count);
+    defer vm.allocator.free(entries);
+    // Pop in reverse order to restore original left-to-right hierarchy
+    var i: usize = count;
+    while (i > 0) {
+        i -= 1;
+        entries[i] = v_stack.pop();
+    }
+    defer for (entries) |e| v_stack.release(e);
+
+    const handles = try vm.allocator.alloc(geom.GeometryHandle, count);
+    defer vm.allocator.free(handles);
+    for (entries, handles) |e, *h| {
+        h.* = try geometryOf(e);
+        try vm.requireSameEngine(handles[0].engine, h.engine);
+    }
+    if (is_union) try vm.requireFeature(handles[0].engine, .boolean);
+    if (!is_union) for (handles) |h| try requireFlatOrCurvedHull(vm, h);
+
+    const result = if (is_union)
+        kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return kernelFailed(vm, tag)
+    else
+        kernel.batchHull(vm.allocator, handles) orelse return kernelFailed(vm, tag);
+
+    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
+}
+
 pub const EvaluationFrame = struct {
     node_idx: dag.DAGNodeIndex,
     state: EvalState = .visit,
+    /// For a union at the top of a chain of unions: how many operands the chain was
+    /// flattened to (see collectUnionOperands); 0 for every other node.
+    operands: u32 = 0,
 };
 
 pub const EvaluationFrameStack = struct {
@@ -220,6 +294,10 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     var f_stack = EvaluationFrameStack.init(vm.allocator);
     defer f_stack.deinit();
 
+    // The operands of the union chain being visited (collectUnionOperands).
+    var chain: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+    defer chain.deinit(vm.allocator);
+
     try f_stack.push(root_node_idx);
 
     while (f_stack.frames.items.len > 0) {
@@ -251,7 +329,19 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 
             // Push children onto the frame stack (Post-Order Traversal)
             switch (node.tag) {
-                .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+                .union_op => {
+                    try collectUnionOperands(vm, &chain, node);
+                    // Two operands: the plain binary union below. More: a batch of them.
+                    // The count goes on the frame before anything is pushed (pushing may
+                    // move the frames).
+                    if (chain.items.len > 2) frame.operands = @intCast(chain.items.len);
+                    var i: usize = chain.items.len;
+                    while (i > 0) {
+                        i -= 1;
+                        try f_stack.push(chain.items[i]);
+                    }
+                },
+                .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => {
                     const p = vm.dag_builder.getBinaryPayload(node);
                     // Push right then left so left evaluates first
                     try f_stack.push(p.right);
@@ -284,12 +374,13 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             }
         } else {
             // State == .execute
+            const operands = frame.operands;
             _ = f_stack.pop();
 
             // Operands are popped into locals and released by `defer`, so they are
             // freed (if owned) on both success and error paths. Kernel calls never
             // consume their inputs and always return new handles (kernel.zig).
-            switch (node.tag) {
+            if (operands > 2) try executeBatch(vm, &v_stack, config, .batch_union_op, operands) else switch (node.tag) {
                 // --- Leaf Geometry 3D ---
                 .empty_solid => {
                     try vm.requireFeature(config.engine, .empty);
@@ -357,33 +448,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 // --- Batch 3D Ops ---
                 .batch_union_op, .batch_hull_op => {
                     const targets = vm.dag_builder.getBatchUnionPayload(node);
-                    if (targets.len == 0) return error.RuntimeError;
-
-                    const entries = try vm.allocator.alloc(StackEntry, targets.len);
-                    defer vm.allocator.free(entries);
-                    // Pop in reverse order to restore original left-to-right hierarchy
-                    var i: usize = targets.len;
-                    while (i > 0) {
-                        i -= 1;
-                        entries[i] = v_stack.pop();
-                    }
-                    defer for (entries) |e| v_stack.release(e);
-
-                    const handles = try vm.allocator.alloc(geom.GeometryHandle, targets.len);
-                    defer vm.allocator.free(handles);
-                    for (entries, handles) |e, *h| {
-                        h.* = try geometryOf(e);
-                        try vm.requireSameEngine(handles[0].engine, h.engine);
-                    }
-                    if (node.tag == .batch_union_op) try vm.requireFeature(handles[0].engine, .boolean);
-                    if (node.tag == .batch_hull_op) for (handles) |h| try requireFlatOrCurvedHull(vm, h);
-
-                    const result = if (node.tag == .batch_union_op)
-                        kernel.batchBoolean(vm.allocator, handles, .union_op) orelse return kernelFailed(vm, node.tag)
-                    else
-                        kernel.batchHull(vm.allocator, handles) orelse return kernelFailed(vm, node.tag);
-
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
+                    try executeBatch(vm, &v_stack, config, node.tag, targets.len);
                 },
 
                 // --- Unary 3D Transforms ---
@@ -601,13 +666,16 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             // (concrete leaves) already have an owner.
             if (top.value == .geometry and top.owned) {
                 // Every freshly computed solid is checked here, once: an invalid mesh (e.g. a
-                // non-manifold polyhedron) is an error, not an empty export later.
-                if (kernel.problem(top.value.geometry)) |reason| {
-                    _ = vm.raiseError(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason });
-                    return error.RuntimeError; // still owned -> destroyed by errdefer
+                // non-manifold polyhedron) is an error, not an empty export later. A moved
+                // solid is its operand's, already checked (isPureTransform).
+                if (!isPureTransform(node.tag)) {
+                    if (kernel.problem(top.value.geometry)) |reason| {
+                        _ = vm.raiseError(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason });
+                        return error.RuntimeError; // still owned -> destroyed by errdefer
+                    }
+                    // On error the result is still owned, so the errdefer destroys it.
+                    try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
                 }
-                // On error the result is still owned, so the errdefer destroys it.
-                try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
 
                 // Ownership moves to the cache only once the put succeeds.
                 try vm.dag_cache.put(vm.allocator, node_hash, top.value.geometry);
