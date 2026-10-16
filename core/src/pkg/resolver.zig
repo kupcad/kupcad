@@ -322,17 +322,17 @@ pub const Resolver = struct {
         const json_data = try self.cafs.readBlob(self.allocator, manifest_hash, limits.MAX_MANIFEST_BYTES);
         defer self.allocator.free(json_data);
 
-        var parsed_json = std.json.parseFromSlice(std.json.Value, self.allocator, json_data, .{}) catch return error.InvalidPackageManifest;
+        var parsed_json = std.json.parseFromSlice(std.json.Value, self.allocator, json_data, .{}) catch return error.InvalidManifest;
         defer parsed_json.deinit();
 
-        if (parsed_json.value != .object) return error.InvalidPackageManifest;
+        if (parsed_json.value != .object) return error.InvalidManifest;
 
         if (parsed_json.value.object.get("dependencies")) |deps| {
-            if (deps != .object) return error.InvalidPackageManifest;
+            if (deps != .object) return error.InvalidManifest;
 
             var dep_it = deps.object.iterator();
             while (dep_it.next()) |dep_entry| {
-                if (dep_entry.value_ptr.* != .string) return error.InvalidPackageManifest;
+                if (dep_entry.value_ptr.* != .string) return error.InvalidManifest;
                 // Alias becomes a symlink name inside the store; never trust it raw.
                 try validate.validateAlias(dep_entry.key_ptr.*);
 

@@ -526,7 +526,7 @@ test "DAG Evaluator: respects atomic cancellation token" {
 
     const result = dag_evaluator.evaluateDAG(&vm, cube_idx);
 
-    try testing.expectError(error.Cancelled, result);
+    try testing.expectError(error.Canceled, result);
 }
 
 test "DAG Evaluator: dynamic stacks handle massive batches without overflow" {

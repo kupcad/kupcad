@@ -223,7 +223,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     try f_stack.push(root_node_idx);
 
     while (f_stack.frames.items.len > 0) {
-        if (vm.cancel_token.load(.acquire)) return error.Cancelled;
+        if (vm.cancel_token.load(.acquire)) return error.Canceled;
 
         var frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
 

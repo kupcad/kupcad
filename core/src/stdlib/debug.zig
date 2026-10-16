@@ -31,7 +31,7 @@ const History = struct {
             const diff = second_start - first_start;
 
             // Shift characters and remove oldest entry
-            self.chars.replaceRange(alloc, 0, diff, &[_]u8{}) catch @panic("OOM");
+            try self.chars.replaceRange(alloc, 0, diff, &[_]u8{});
             _ = self.line_starts.orderedRemove(0);
 
             for (self.line_starts.items) |*s| s.* -= diff;

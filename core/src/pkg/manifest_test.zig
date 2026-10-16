@@ -4,7 +4,7 @@ const Manifest = @import("manifest.zig").Manifest;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 test "Manifest: initializes with default values" {
-    var manifest = Manifest.init(testing.allocator, "test-project");
+    var manifest = try Manifest.init(testing.allocator, "test-project");
     defer manifest.deinit();
 
     try testing.expectEqualStrings("test-project", manifest.name);
@@ -18,7 +18,7 @@ test "Manifest: saves and loads from VFS correctly" {
     const fs = mem_vfs.vfs();
 
     // 1. Create and save a manifest
-    var manifest1 = Manifest.init(testing.allocator, "my-app");
+    var manifest1 = try Manifest.init(testing.allocator, "my-app");
     try manifest1.dependencies.put(try testing.allocator.dupe(u8, "std"), try testing.allocator.dupe(u8, "github.com/kupcad/std"));
     try manifest1.save(fs);
     manifest1.deinit();
@@ -127,7 +127,7 @@ test "Manifest: strings are JSON-escaped on save" {
     defer mem_vfs.deinit();
     const fs = mem_vfs.vfs();
     {
-        var m = Manifest.init(testing.allocator, "n\"ame");
+        var m = try Manifest.init(testing.allocator, "n\"ame");
         defer m.deinit();
         try m.dependencies.put(try testing.allocator.dupe(u8, "dep"), try testing.allocator.dupe(u8, "github.com/a/b@v\"1"));
         try m.save(fs);
@@ -141,7 +141,7 @@ test "Manifest: strings are JSON-escaped on save" {
 
 test "Manifest: setDependency adds an alias or replaces what it named" {
     // `put` with fresh copies leaked the old key and value when the alias existed.
-    var manifest = Manifest.init(testing.allocator, "p");
+    var manifest = try Manifest.init(testing.allocator, "p");
     defer manifest.deinit();
     try manifest.setDependency("std", "github.com/kupcad/std@v1");
     try manifest.setDependency("std", "github.com/kupcad/std@v2");

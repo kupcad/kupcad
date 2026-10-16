@@ -291,6 +291,11 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
         .imports = module_imports,
     });
+    // The version, read from build.zig.zon so it has one source: `kupcad --version`, the
+    // language server's serverInfo and the package client's User-Agent read it.
+    const build_info = b.addOptions();
+    build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
+    mod.addOptions("build_info", build_info);
 
     mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
     mod.addIncludePath(b.path("vendor/manifold/include"));
@@ -393,6 +398,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        wasm.root_module.addOptions("build_info", build_info);
 
         wasm.entry = .disabled;
         wasm.wasi_exec_model = .reactor;
@@ -425,6 +431,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        wasm_test.root_module.addOptions("build_info", build_info);
         // all mem must be aligned in 65536 bytes (64Kb)
         wasm_test.initial_memory = 134217728;
         wasm_test.max_memory = 4294967296;
@@ -468,9 +475,6 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
-        // Version string for `kupcad --version`, read from build.zig.zon so it has one source.
-        const build_info = b.addOptions();
-        build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
         exe.root_module.addOptions("build_info", build_info);
         b.installArtifact(exe);
 
@@ -488,6 +492,7 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        lib.root_module.addOptions("build_info", build_info);
         b.installArtifact(lib);
 
         const run_step = b.step("run", "Run the app");

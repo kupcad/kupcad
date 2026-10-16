@@ -36,8 +36,8 @@ const Fixture = struct {
         self.cafs = try Cafs.init(testing.allocator, testing.io, self.tmp_path, self.mem_vfs.vfs());
         errdefer self.cafs.deinit();
         self.store = try Store.init(testing.io, ":memory:");
-        self.manifest = Manifest.init(testing.allocator, "test-app");
-        self.lockfile = Lockfile.init(testing.allocator);
+        self.manifest = try Manifest.init(testing.allocator, "test-app");
+        self.lockfile = try Lockfile.init(testing.allocator);
     }
 
     fn deinit(self: *Fixture) void {
@@ -350,11 +350,11 @@ test "Resolver: forbidden or malformed transitive deps fail the install" {
         // Malformed manifests used to be skipped silently (install "succeeded")
         .{ .manifest =
         \\{"dependencies":["github.com/a/b"]}
-        , .err = error.InvalidPackageManifest },
+        , .err = error.InvalidManifest },
         .{ .manifest =
         \\{"dependencies":{"x":1}}
-        , .err = error.InvalidPackageManifest },
-        .{ .manifest = "not json", .err = error.InvalidPackageManifest },
+        , .err = error.InvalidManifest },
+        .{ .manifest = "not json", .err = error.InvalidManifest },
     };
     for (cases) |c| {
         var fx: Fixture = undefined;

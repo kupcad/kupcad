@@ -25,11 +25,10 @@ pub const Db = struct {
 
     pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
         _ = options;
-        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
-        defer std.heap.page_allocator.free(sql_z);
-
+        // SQLite takes the statement's length, so the text needs no copy (one went through
+        // the page allocator per statement).
         var stmt: ?*sqlite.sqlite3_stmt = null;
-        const rc_prep = sqlite.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt, null);
+        const rc_prep = sqlite.sqlite3_prepare_v2(self.handle, sql.ptr, @intCast(sql.len), &stmt, null);
         if (rc_prep != sqlite.SQLITE_OK or stmt == null) return error.SqliteError;
         defer _ = sqlite.sqlite3_finalize(stmt);
 
@@ -52,11 +51,8 @@ pub const Db = struct {
     }
 
     pub fn prepare(self: Db, sql: []const u8) !Stmt {
-        const sql_z = try std.heap.page_allocator.dupeSentinel(u8, sql, 0);
-        defer std.heap.page_allocator.free(sql_z);
-
         var stmt_handle: ?*sqlite.sqlite3_stmt = null;
-        const rc = sqlite.sqlite3_prepare_v2(self.handle, sql_z, -1, &stmt_handle, null);
+        const rc = sqlite.sqlite3_prepare_v2(self.handle, sql.ptr, @intCast(sql.len), &stmt_handle, null);
         if (rc != sqlite.SQLITE_OK or stmt_handle == null) return error.SqliteError;
 
         return Stmt{ .handle = stmt_handle.? };
@@ -171,7 +167,7 @@ pub const Store = struct {
             const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
             if (integrity_res) |res| {
                 if (!std.mem.eql(u8, res.result, "ok")) {
-                    log.err("CRITICAL: SQLite database is corrupted! Self-healing triggered...\n", .{});
+                    log.err("the package index {s} is corrupted (PRAGMA quick_check failed); delete it to let the next install rebuild it", .{db_path});
                     return error.DatabaseCorrupted;
                 }
             }
@@ -267,9 +263,8 @@ pub const Store = struct {
                 try self.db.exec("DELETE FROM packages WHERE provider IN ('github', 'gitlab', 'gitea')", .{}, .{});
                 try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
             }
-            const update_pragma = try std.fmt.allocPrint(std.heap.page_allocator, "PRAGMA user_version = {d}", .{SCHEMA_VERSION});
-            defer std.heap.page_allocator.free(update_pragma);
-            try self.db.exec(update_pragma, .{}, .{});
+            var pragma_buf: [48]u8 = undefined;
+            try self.db.exec(try std.fmt.bufPrint(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{}, .{});
             try self.db.exec("COMMIT", .{}, .{});
         }
     }

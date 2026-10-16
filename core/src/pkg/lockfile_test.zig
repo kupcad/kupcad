@@ -7,7 +7,7 @@ const StringMap = @import("lockfile.zig").StringMap;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 test "Lockfile: initializes with default version" {
-    var lockfile = Lockfile.init(testing.allocator);
+    var lockfile = try Lockfile.init(testing.allocator);
     defer lockfile.deinit();
 
     try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
@@ -19,7 +19,7 @@ test "Lockfile: saves deterministic JSON to VFS" {
     defer mem_vfs.deinit();
     const fs = mem_vfs.vfs();
 
-    var lockfile = Lockfile.init(testing.allocator);
+    var lockfile = try Lockfile.init(testing.allocator);
     defer lockfile.deinit();
 
     var deps = StringMap.init(testing.allocator);
@@ -124,7 +124,7 @@ test "Lockfile: strings are JSON-escaped on save" {
 
     const evil_alias = "x\": \"injected\", \"y";
     {
-        var lockfile = Lockfile.init(testing.allocator);
+        var lockfile = try Lockfile.init(testing.allocator);
         defer lockfile.deinit();
         var deps = StringMap.init(testing.allocator);
         try deps.put(try testing.allocator.dupe(u8, evil_alias), try testing.allocator.dupe(u8, "github.com/a/b"));

@@ -52,10 +52,10 @@ pub const Lockfile = struct {
     version: []const u8,
     packages: PackagesMap,
 
-    pub fn init(allocator: std.mem.Allocator) Lockfile {
+    pub fn init(allocator: std.mem.Allocator) !Lockfile {
         return .{
             .allocator = allocator,
-            .version = allocator.dupe(u8, LOCKFILE_VERSION) catch @panic("OOM allocating lockfile version"),
+            .version = try allocator.dupe(u8, LOCKFILE_VERSION),
             .packages = PackagesMap.init(allocator),
         };
     }
@@ -72,7 +72,7 @@ pub const Lockfile = struct {
 
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Lockfile {
         const content = fs.readFile(allocator, "kupcad.lock") catch |err| switch (err) {
-            error.FileNotFound => return Lockfile.init(allocator),
+            error.FileNotFound => return try Lockfile.init(allocator),
             else => return err,
         };
         defer allocator.free(content);
@@ -85,7 +85,7 @@ pub const Lockfile = struct {
         const root = parsed.value;
         if (root != .object) return error.UnexpectedToken;
 
-        var lockfile = Lockfile.init(allocator);
+        var lockfile = try Lockfile.init(allocator);
         errdefer lockfile.deinit();
 
         if (root.object.get("version")) |v| {

@@ -478,7 +478,7 @@ pub const VM = struct {
             if (self.instruction_limit > 0) {
                 self.instruction_count += 1;
                 if (self.instruction_count > self.instruction_limit) {
-                    self.runtimeError("Runtime Error: Execution limit exceeded (Infinite loop detected).\n", .{});
+                    self.runtimeError("Runtime Error: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.\n", .{self.instruction_limit});
                     return .execution_limit_exceeded;
                 }
             }
@@ -1598,16 +1598,10 @@ pub const VM = struct {
     }
 
     pub fn allocateStringTakeOwnership(self: *VM, chars: []u8) !value.Value {
-        // Use gc.takeString so the exact slice is adopted and not duped again!
-        // This stops the memory leak immediately.
+        // gc.takeString adopts the slice (no second copy) and interns it; nothing allocates
+        // after it here, so the value needs no rooting before it is returned.
         const str_obj = try self.gc.takeString(self, chars);
-
-        // Ensure it is protected from immediate GC
-        const str_val = value.Value.initObj(&str_obj.obj);
-        self.push(str_val);
-        // (gc.takeString safely handles map insertion)
-        _ = self.pop();
-        return str_val;
+        return value.Value.initObj(&str_obj.obj);
     }
 
     pub fn allocateSymbol(self: *VM, chars: []const u8) !value.Value {
@@ -2401,7 +2395,7 @@ pub const VM = struct {
             return self.callValue(receiver, arg_count, base_slot, call.has_block, call.has_kwargs);
         }
 
-        // --- 3. FALLBACK: NATIVE C++ KERNEL METHODS (Geometry) ---
+        // --- 3. The host's invoke handler (the default one only reports NoMethodError) ---
         if (self.host.invoke_handler) |handler| {
             const caller_depth = self.frames.items.len;
             const throw_seq = self.throw_seq;

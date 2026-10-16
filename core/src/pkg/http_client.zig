@@ -2,7 +2,7 @@ const std = @import("std");
 const validate = @import("validate.zig");
 
 pub const CONNECTION_TIMEOUT_NS: u64 = 10 * std.time.ns_per_s;
-pub const DEFAULT_USER_AGENT = "KupCAD/1.0";
+pub const DEFAULT_USER_AGENT = "KupCAD/" ++ @import("build_info").version;
 /// Most redirects one request follows (a GitHub archive link takes one).
 pub const MAX_REDIRECTS: usize = 5;
 /// Room for a request's URL, a redirect's target included.

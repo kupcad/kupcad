@@ -47,7 +47,7 @@ pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !
         reporter.err("Error: kupcad.json already exists here; nothing changed. Edit it, or `kupcad pkg add` a dependency.\n", .{});
         return .failure;
     } else |err| if (err != error.FileNotFound) return err;
-    var manifest = Manifest.init(allocator, "new-project");
+    var manifest = try Manifest.init(allocator, "new-project");
     defer manifest.deinit();
     try manifest.save(fs);
     reporter.out("Initialized kupcad.json\n", .{});

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const lsp = @import("lsp");
+const build_info = @import("build_info");
 const api = @import("../api.zig");
 const lsp_actions = @import("lsp_actions.zig");
 const lsp_inbox = @import("lsp_inbox.zig");
@@ -26,7 +27,6 @@ const limits = @import("../core/limits.zig");
 
 const logger = std.log.scoped(.lsp);
 
-/// Instruction budget for hover evaluation so the LSP doesn't hang on infinite loops.
 /// Custom notification telling the editor where the viewport WebSocket listens.
 pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
 /// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
@@ -370,7 +370,7 @@ pub const Handler = struct {
         };
         // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
         self.session.evaluateUntilCancelled() catch |err| switch (err) {
-            error.ParseError, error.CompileError, error.RuntimeError, error.Cancelled => {
+            error.ParseError, error.CompileError, error.RuntimeError, error.Canceled => {
                 logger.debug("{s} did not evaluate: {}", .{ uri, err });
                 return;
             },
@@ -441,7 +441,7 @@ pub const Handler = struct {
         return .{
             .serverInfo = .{
                 .name = "kupcad-lsp",
-                .version = "0.1.0",
+                .version = build_info.version,
             },
             .capabilities = server_capabilities,
         };
@@ -880,10 +880,6 @@ pub const Handler = struct {
             } };
         }
         return results;
-    }
-
-    pub fn @"kupcad/setParam"(_: *Handler, _: std.mem.Allocator, params: std.json.Value) !void {
-        logger.debug("Received interactive parameter update: {}", .{params});
     }
 
     /// The settings for the document at `uri`, from the `.kupcad.json` nearest its folder, so
