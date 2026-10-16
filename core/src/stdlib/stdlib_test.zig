@@ -20,18 +20,12 @@ const MAX_COUNT = limits.MAX_PATTERN_COUNT;
 
 const MAX_MATERIALIZE = limits.MAX_RANGE_MATERIALIZE;
 
-/// What a script leaves in the global `r`.
-/// Kernel-computed quantities (volumes, bounds) are compared with this absolute tolerance.
-const NUMBER_TOLERANCE = 1e-9;
-
-/// Wraps `src` so the global `r` holds the rescued error message (or "no error").
-/// `rescue <Kind> => e` for every runtime error kind, each yielding "<Kind>: <message>",
-/// so an expected string checks the error's class as well as its message.
-const RESCUE_BY_KIND = blk: {
-    var text: []const u8 = "";
-    for (std.meta.fieldNames(ErrorKind)) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
-    break :blk text;
-};
+const initVm = test_support.initVm;
+const runOn = test_support.runOn;
+const rescued = test_support.rescued;
+const ScriptCase = test_support.ScriptCase;
+const expectScripts = test_support.expectScripts;
+const expectRuns = test_support.expectRuns;
 
 const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
 const TETRA_FACES = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
@@ -218,7 +212,7 @@ test "Stdlib: variadic instance booleans flatten arguments and balance trees" {
 test "Stdlib: difference removes every cutter, overlapping ones included" {
     // The cutters went into a balanced tree, (a - b) - (c - d): where c and d overlapped,
     // c's share of d came back into the result.
-    try test_support.expectScripts(&.{
+    try expectScripts(&.{
         .{ .src = "r = cube(10).difference(cube(6), cube(6).translate(3, 0, 0)).volume", .expected = .{ .num = 1000 - 324 } },
         .{ .src = "r = cube(10).difference([cube(6), cube(6).translate(3, 0, 0), cube(6).translate(0, 3, 0)]).volume", .expected = .{ .num = 1000 - 432 } },
         .{ .src = "r = square(10).difference(square(6), square(6).translate(3, 0)).extrude(1).volume", .expected = .{ .num = 100 - 54 } },
@@ -265,31 +259,6 @@ test "Stdlib: meshHull dynamically gathers direct arguments and arrays into batc
 // error can only come from argument validation, not from a kernel.
 // `Number::INFINITY` is +inf and `Number::NAN` is NaN (the VM traps `0.0 / 0.0` itself).
 
-fn initVm() !VM {
-    var vm = try VM.init(testing.allocator, testing.io);
-    errdefer vm.deinit();
-    // Errors are muted because the test runner treats logged errors as failures.
-    vm.mute_errors = true;
-    try registry.registerStandardLibrary(&vm);
-    // Script output (puts, benchmark timings) would print into the test log.
-    vm.host.print_handler = null;
-    return vm;
-}
-
-fn runOn(vm: *VM, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    return vm.interpret(&out_chunk);
-}
-
 /// The DAG node the script's last value is, with its tag and the operands a batch node unions.
 fn resultNode(vm: *VM) struct { tag: @import("../vm/dag.zig").DAGTag, operands: usize } {
     const node = vm.dag_builder.nodes.items[vm.stack[0].asGeometry().dag_idx];
@@ -318,21 +287,7 @@ test "Patterns: repeat_linear and repeat_polar union their copies in one batch" 
     try testing.expectEqual(.cube, resultNode(&vm).tag);
 }
 
-fn runScript(source: []const u8) !InterpretResult {
-    var vm = try initVm();
-    defer vm.deinit();
-    return runOn(&vm, source);
-}
-
-/// Runs each script on a fresh VM and expects `expected`; names the offending script on failure.
-fn expectAll(expected: InterpretResult, sources: []const []const u8) !void {
-    for (sources) |src| {
-        errdefer std.debug.print("script: {s}\n", .{src});
-        try testing.expectEqual(expected, try runScript(src));
-    }
-}
-
-/// Each script fails with an uncaught error of one of `kinds`. (`expectAll(.runtime_error)`
+/// Each script fails with an uncaught error of one of `kinds`. (`expectRuns(.runtime_error)`
 /// accepted any failure, a typo in the script included, since the muted VM showed nothing.)
 fn expectAllRaise(kinds: []const ErrorKind, sources: []const []const u8) !void {
     for (sources) |src| {
@@ -374,7 +329,7 @@ test "Stdlib: tessellation counts are capped at MAX_SEGMENTS" {
         print("square(10).extrude(5, slices: {d})", .{MAX_SEGS + 1}),
         print("square(10).helix(slices: {d})", .{MAX_SEGS + 1}),
     });
-    try expectAll(.ok, &.{
+    try expectRuns(.ok, &.{
         print("cylinder(r: 1, h: 1, segments: {d})", .{MAX_SEGS}),
         print("regular_polygon({d}, 5)", .{MAX_SEGS}),
         print("square(10).extrude(5, slices: {d})", .{MAX_SEGS}),
@@ -441,7 +396,7 @@ test "Stdlib: CAD.config applies each setting and current_config reads it back" 
 
 test "Stdlib: a count that no integer holds says what is wrong, not the integer type's limits" {
     // These read "'segments' must be a finite integer in [-2147483648, 2147483647]".
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("cylinder(r: 1, h: 1, segments: 1e12)"), .expected = .{ .str = "ValueError: 'segments' is too large, got 1000000000000" } },
         .{ .src = comptime rescued("regular_polygon(-1e12, r: 1)"), .expected = .{ .str = "ValueError: 'sides' is too small, got -1000000000000" } },
         .{ .src = comptime rescued("circle(r: 1, segments: Number::NAN)"), .expected = .{ .str = "ValueError: 'segments' must be a finite number, got NaN" } },
@@ -453,7 +408,7 @@ test "Stdlib: a count that no integer holds says what is wrong, not the integer 
 test "Stdlib: geometry keeps the settings it was made under, wherever it is evaluated" {
     // Geometry is evaluated lazily; it used to be built under the settings in force then,
     // so CAD.with_config was lost on anything measured or exported after the block.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "a = nil\nCAD.with_config(engine: :brep) do\n  a = cube(10)\nend\n" ++ comptime rescued("a.volume"), .expected = .{ .str = brepLacks(.volume) } },
         .{ .src = "s = nil\nCAD.with_config(max_vertices: 10) do\n  s = sphere(r: 10)\nend\n" ++ comptime rescued("s.volume"), .expected = .{ .str = "GeometryError: sphere produced 258 vertices, above the 10-vertex limit; lower the resolution (segments:) or simplify the model" } },
         // After the block, the outer settings again.
@@ -616,7 +571,7 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
         "cube(1).repeat_polar(Number::INFINITY - Number::INFINITY)",
     });
     // Negative counts are a no-op (they used to panic in @intFromFloat to usize).
-    try expectAll(.ok, &.{
+    try expectRuns(.ok, &.{
         "cube(1).repeat_linear(-5, [2, 0, 0])",
         "cube(1).repeat_polar(-5)",
     });
@@ -624,41 +579,8 @@ test "Stdlib: repeat counts reject NaN and values above MAX_PATTERN_COUNT" {
 
 // --- Range iteration and Number#times/upto/downto ---
 
-const Expected = union(enum) {
-    nums: []const f64,
-    num: f64,
-    boolean: bool,
-    str: []const u8,
-};
-
-const IterCase = struct { src: []const u8, expected: Expected };
-
-fn expectGlobalR(cases: []const IterCase) !void {
-    for (cases) |case| {
-        errdefer std.debug.print("script: {s}\n", .{case.src});
-        var vm = try initVm();
-        defer vm.deinit();
-        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
-        const r = vm.globals.get("r") orelse return error.MissingGlobal;
-        switch (case.expected) {
-            .nums => |want| {
-                try testing.expect(r.isArray());
-                const items = r.asArray().items.items;
-                try testing.expectEqual(want.len, items.len);
-                for (want, items) |w, item| try testing.expectApproxEqAbs(w, item.asNumber(), 1e-12);
-            },
-            .num => |want| try testing.expectApproxEqAbs(want, r.asNumber(), NUMBER_TOLERANCE),
-            .boolean => |want| try testing.expectEqual(want, r.asBool()),
-            .str => |want| {
-                try testing.expect(r.isString());
-                try testing.expectEqualStrings(want, r.asString().chars);
-            },
-        }
-    }
-}
-
 test "Stdlib: Range#to_a and #step follow Ruby's step semantics" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = (0..3).to_a", .expected = .{ .nums = &.{ 0, 1, 2, 3 } } },
         .{ .src = "r = (0...3).to_a", .expected = .{ .nums = &.{ 0, 1, 2 } } },
         .{ .src = "r = (0..0).to_a", .expected = .{ .nums = &.{0} } },
@@ -681,7 +603,7 @@ test "Stdlib: Range#to_a and #step follow Ruby's step semantics" {
 }
 
 test "Stdlib: Range query methods" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = (0..3).size", .expected = .{ .num = 4 } },
         .{ .src = "r = (0...3).length", .expected = .{ .num = 3 } },
         .{ .src = "r = (5..1).count", .expected = .{ .num = 0 } },
@@ -703,7 +625,7 @@ test "Stdlib: Range query methods" {
 }
 
 test "Stdlib: Number#times, #upto and #downto" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = []\n3.times { |i| r.push(i) }", .expected = .{ .nums = &.{ 0, 1, 2 } } },
         .{ .src = "r = []\n0.times { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
         .{ .src = "r = []\n(-2).times { |i| r.push(i) }", .expected = .{ .nums = &.{} } },
@@ -717,7 +639,7 @@ test "Stdlib: Number#times, #upto and #downto" {
 }
 
 test "Stdlib: break, next, return and exceptions inside range and times blocks" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // `break value` becomes the method's return value; without break, each returns the receiver.
         .{ .src = "r = (0..5).each { |i| break i * 10 if i == 2 }", .expected = .{ .num = 20 } },
         .{ .src = "r = (0..5).map { |i| break 42 if i == 3\n i }", .expected = .{ .num = 42 } },
@@ -730,7 +652,7 @@ test "Stdlib: break, next, return and exceptions inside range and times blocks" 
     });
     // `return` inside a block leaves only the block in KupCAD (same as Array#each);
     // this guards that it unwinds cleanly through the native loop.
-    try expectAll(.ok, &.{
+    try expectRuns(.ok, &.{
         "def f(limit)\n  (0..limit).each { |i| return i if i > 2 }\n  -1\nend\nf(10)",
         "def g\n  3.times { |i| return i }\n  0\nend\ng()",
     });
@@ -758,9 +680,8 @@ test "Stdlib: range and times errors are rescuable with their class and real mes
         .{ .src = "(0..1e17).each { |i| }", .prefix = "ValueError: Range#each would iterate" },
         .{ .src = "1e17.times { }", .prefix = "ValueError: times would iterate" },
     };
-    for (cases) |case| {
-        var src_buf: [4096]u8 = undefined;
-        const src = try std.fmt.bufPrint(&src_buf, "r = begin\n  {s}\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end", .{case.src});
+    inline for (cases) |case| {
+        const src = comptime rescued(case.src);
         errdefer std.debug.print("script: {s}\n", .{src});
         var vm = try initVm();
         defer vm.deinit();
@@ -774,7 +695,7 @@ test "Stdlib: range and times errors are rescuable with their class and real mes
 }
 
 test "Stdlib: block iteration is not capped, only array building is" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // Far past the array cap: each/times/upto run until the block breaks out.
         .{ .src = "r = (0..1e12).each { |i| break i if i == 5 }", .expected = .{ .num = 5 } },
         .{ .src = "r = 1e12.times { |i| break i if i == 3 }", .expected = .{ .num = 3 } },
@@ -802,7 +723,7 @@ test "Stdlib: the instruction budget stops an uncapped range loop" {
 }
 
 test "Stdlib: the docs (0...3).each example builds three pegs" {
-    try expectGlobalR(&.{.{
+    try expectScripts(&.{.{
         .src =
         \\pegs = []
         \\(0...3).each do |row|
@@ -816,7 +737,7 @@ test "Stdlib: the docs (0...3).each example builds three pegs" {
 
 test "Stdlib: named functions are called by name, callable values with .call" {
     const not_by_name = "TypeError: a lambda is called with .call(...), not like a function";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // The README's Lambdas example.
         .{ .src = "double = ->(x) { x * 2 }\ndef apply(f, v)\n  f.call(v)\nend\nr = [double.call(4), apply(double, 5)]", .expected = .{ .nums = &.{ 8, 10 } } },
         .{ .src = "plate = ->(w, h = 10, thickness: 2) do\n  cube(x: w, y: h, z: thickness)\nend\nr = plate.call(30, thickness: 3).volume", .expected = .{ .num = 900 } },
@@ -850,7 +771,7 @@ test "Stdlib: named functions are called by name, callable values with .call" {
 
 test "Stdlib: a *rest parameter that gets no arguments is empty" {
     // Padding used to fill the splat's slot with nil, so `rest` was [nil].
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "def g(*rest)\n  rest\nend\nr = g().length", .expected = .{ .num = 0 } },
         .{ .src = "def g(a, *rest)\n  rest\nend\nr = g(1).length", .expected = .{ .num = 0 } },
         // A def's required parameter stays required (a block's would be nil).
@@ -865,7 +786,7 @@ test "Stdlib: a *rest parameter that gets no arguments is empty" {
 
 test "Stdlib: *splat, **hash and &blk spread into any call" {
     const sum2 = "def g(a, b)\n  a + b\nend\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // `*arr` used to arrive as one Array argument.
         .{ .src = sum2 ++ "r = g(*[1, 2])", .expected = .{ .num = 3 } },
         .{ .src = "def g(a, b, c, d)\n  [a, b, c, d]\nend\nr = g(1, *[2, 3], 4)", .expected = .{ .nums = &.{ 1, 2, 3, 4 } } },
@@ -898,7 +819,7 @@ test "Stdlib: *splat, **hash and &blk spread into any call" {
 }
 
 test "Stdlib: every value answers class and inspect" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // `x.class` was a syntax error (`class` lexed as the keyword) and `inspect` didn't exist.
         .{ .src = "r = 5.class == Number", .expected = .{ .boolean = true } },
         .{ .src = "r = \"#{[1].class} #{\"s\".class}\"", .expected = .{ .str = "Array String" } },
@@ -920,7 +841,7 @@ test "Stdlib: every value answers class and inspect" {
 test "Stdlib: a method name takes -1, *xs, &blk and [..] as its argument; a variable doesn't" {
     // `f -1` used to subtract 1 from f's result, and `f *xs` multiplied.
     const defs = "def f(a = 10) = a\ndef inc(a) = a + 1\ndef count(*a) = a.length\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = defs ++ "r = [(f -1), f - 1, f-1]", .expected = .{ .nums = &.{ -1, 9, 9 } } },
         .{ .src = defs ++ "xs = [1, 2, 3]\nr = count *xs", .expected = .{ .num = 3 } },
         .{ .src = defs ++ "sq = ->(v) { v * v }\nr = [2, 3].map &sq", .expected = .{ .nums = &.{ 4, 9 } } },
@@ -953,7 +874,7 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             const call = if (comptime std.mem.eql(u8, f.name, "text")) "text(\"A\", zz_unknown: 1)" else f.name ++ "(zz_unknown: 1)";
             comptime var accepted: []const u8 = "";
             inline for (sig.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
-            try expectGlobalR(&.{.{
+            try expectScripts(&.{.{
                 .src = comptime rescued(call),
                 .expected = .{ .str = "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
             }});
@@ -976,7 +897,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             const leading = comptime if (isOneOf(m.name, &counted)) "2, " else "";
             comptime var accepted: []const u8 = "";
             inline for (m.signature.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
-            try expectGlobalR(&.{.{
+            try expectScripts(&.{.{
                 .src = comptime rescued(receiver ++ "." ++ m.name ++ "(" ++ leading ++ "zz_unknown: 1)"),
                 .expected = .{ .str = "ArgumentError: " ++ m.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
             }});
@@ -995,7 +916,7 @@ fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
 
 test "Stdlib: for walks an Array, a Range or a Map, as Ruby's does" {
     // `for` was a syntax error.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = []\nfor x in [3, 1, 2]\n  r.push(x * 10)\nend", .expected = .{ .nums = &.{ 30, 10, 20 } } },
         // Ranges yield what Range#each does: exclusive ends, steps, negative steps, floats.
         .{ .src = "r = []\nfor i in 0...3\n  r.push(i)\nend", .expected = .{ .nums = &.{ 0, 1, 2 } } },
@@ -1015,7 +936,7 @@ test "Stdlib: for walks an Array, a Range or a Map, as Ruby's does" {
 }
 
 test "Stdlib: for's value, break, next and return behave as in Ruby" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // The loop's value is what it iterated, or what break passes.
         .{ .src = "r = for x in [1, 2]\nend", .expected = .{ .nums = &.{ 1, 2 } } },
         .{ .src = "r = for x in [1, 2, 3]\n  break x * 10 if x == 2\nend", .expected = .{ .num = 20 } },
@@ -1032,7 +953,7 @@ test "Stdlib: for's value, break, next and return behave as in Ruby" {
 }
 
 test "Stdlib: for rejects what it can't iterate" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("for x in 5\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got Number" } },
         .{ .src = comptime rescued("for x in \"abc\"\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got String" } },
         .{ .src = comptime rescued("for x in 1..Number::INFINITY\n  end"), .expected = .{ .str = "ValueError: for requires finite bounds and step, got 1..Infinity step 1" } },
@@ -1041,7 +962,7 @@ test "Stdlib: for rejects what it can't iterate" {
 
 test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
     // Interpolation, join and puts kept the colon: "#{:m3}" was ":m3".
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = \"#{:m3} #{[:a, :b].join(\"-\")} #{:c.to_s}\"", .expected = .{ .str = "m3 a-b c" } },
         .{ .src = "r = \"#{:m3.inspect} #{[:a].inspect} #{{ k: :v }.inspect}\"", .expected = .{ .str = ":m3 [:a] {k: :v}" } },
     });
@@ -1050,14 +971,14 @@ test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
 test "Stdlib: calling a value that isn't callable names what it is" {
     // As in Ruby, `a 2` is a call even when `a` is a variable; the error used to be just
     // "Can only call functions and classes."
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("a = 1\n  b = a 2"), .expected = .{ .str = "TypeError: a Number can't be called; only methods, built-ins and classes take arguments" } },
         .{ .src = comptime rescued("s = \"x\"\n  s(1)"), .expected = .{ .str = "TypeError: a String can't be called; only methods, built-ins and classes take arguments" } },
     });
 }
 
 test "Stdlib: Number answers parity, sign and range questions" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = [3.odd?, 4.odd?, 4.even?, -3.odd?, 0.even?].inspect", .expected = .{ .str = "[true, false, true, true, true]" } },
         .{ .src = "r = [0.zero?, 2.zero?, 2.positive?, -2.positive?, -2.negative?, 0.negative?].inspect", .expected = .{ .str = "[true, false, true, false, true, false]" } },
         .{ .src = "r = [5.integer?, 5.0.integer?, 2.5.integer?, Number::INFINITY.integer?].inspect", .expected = .{ .str = "[true, true, false, false]" } },
@@ -1071,7 +992,7 @@ test "Stdlib: Number answers parity, sign and range questions" {
 
 test "Stdlib: Math has degree trigonometry, exact at the angles CAD uses most" {
     // In radians, cos(90 degrees) is 6.1e-17, enough to leave a sliver between two parts.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = [Math.sind(0), Math.sind(30), Math.sind(90), Math.sind(150), Math.sind(180), Math.sind(270), Math.sind(-90), Math.sind(450)].inspect", .expected = .{ .str = "[0, 0.5, 1, 0.5, 0, -1, -1, 1]" } },
         .{ .src = "r = [Math.cosd(0), Math.cosd(60), Math.cosd(90), Math.cosd(180), Math.cosd(-90)].inspect", .expected = .{ .str = "[1, 0.5, 0, -1, 0]" } },
         .{ .src = "r = [Math.tand(0), Math.tand(45), Math.tand(135), Math.tand(-45)].inspect", .expected = .{ .str = "[0, 1, -1, -1]" } },
@@ -1085,7 +1006,7 @@ test "Stdlib: Math has degree trigonometry, exact at the angles CAD uses most" {
 }
 
 test "Stdlib: Math has the logarithms, roots and constants a CAD script needs" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = [Math.log(8, 2), Math.log10(1000), Math.log2(8), Math.exp(0), Math.cbrt(27), Math.cbrt(-8)].inspect", .expected = .{ .str = "[3, 3, 3, 1, 3, -2]" } },
         .{ .src = "r = Math.close?(Math.log(Math::E), 1) && Math.close?(Math.atan(1) * 4, Math::PI) && Math::TAU == 2 * Math::PI", .expected = .{ .boolean = true } },
         // hypot takes any number of components: a 3D distance.
@@ -1099,7 +1020,7 @@ test "Stdlib: Math has the logarithms, roots and constants a CAD script needs" {
 }
 
 test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gcd/lcm" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = [Math.snap(12.3, 0.5), Math.snap(12.2, 0.5), Math.snap(-7, 5), Math.snap(7.5, 5)].inspect", .expected = .{ .str = "[12.5, 12, -5, 10]" } },
         .{ .src = "r = [Math.remap(5, 0, 10, 100, 200), Math.remap(15, 0, 10, 0, 1), Math.remap(2, 0, 4, 10, 0)].inspect", .expected = .{ .str = "[150, 1.5, 5]" } },
         .{ .src = "r = [Math.smoothstep(0, 10, -1), Math.smoothstep(0, 10, 5), Math.smoothstep(0, 10, 11), Math.smoothstep(0, 10, 2.5)].inspect", .expected = .{ .str = "[0, 0.5, 1, 0.15625]" } },
@@ -1114,7 +1035,7 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
 
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = \"#{[1].respond_to?(:push)} #{1.respond_to?(\"push\")} #{Array.respond_to?(:new)}\"", .expected = .{ .str = "true false true" } },
         .{ .src = comptime rescued("1.responds_to?(:abs)"), .expected = .{ .str = "NoMethodError: undefined method 'responds_to?' for Number" } },
     });
@@ -1147,7 +1068,7 @@ test "Stdlib: an implicit super spreads the method's *rest back into arguments" 
         \\end
         \\
     ;
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = classes ++ "r = B.new.m(1, 2, 3)", .expected = .{ .nums = &.{ 1, 2, 3 } } },
         .{ .src = classes ++ "r = B.new.m.length", .expected = .{ .num = 0 } },
         .{ .src = classes ++ "r = B.new.n(1, 2, 3, k: 9)", .expected = .{ .nums = &.{ 1, 2, 9 } } },
@@ -1157,7 +1078,7 @@ test "Stdlib: an implicit super spreads the method's *rest back into arguments" 
 }
 
 test "Stdlib: built-in methods check their argument count, types and block" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // Extra arguments used to be dropped silently and missing ones were a generic error.
         .{ .src = comptime rescued("Math.sqrt(4, 9)"), .expected = .{ .str = "ArgumentError: Math.sqrt expects 1 argument, got 2" } },
         .{ .src = comptime rescued("Math.sqrt()"), .expected = .{ .str = "ArgumentError: Math.sqrt expects 1 argument, got 0" } },
@@ -1189,7 +1110,7 @@ test "Stdlib: built-in methods check their argument count, types and block" {
 test "Stdlib: errors carry their real cause, never a generic message" {
     // Each used to be "CAD Kernel / Method Error" or "Native Execution Error" (or, for a
     // Sketch passed where a Solid was assumed, undefined behaviour).
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("nil.foo"), .expected = .{ .str = "NoMethodError: undefined method 'foo' for nil" } },
         .{ .src = comptime rescued("cube(1).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Geometry" } },
         .{ .src = comptime rescued("square(1).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for CrossSection" } },
@@ -1219,7 +1140,7 @@ test "Stdlib: errors carry their real cause, never a generic message" {
 test "Stdlib: a deep backtrace lists its innermost and outermost frames only" {
     // A stack overflow used to print and allocate all ~100,000 frames.
     const deep = "def f(n)\n  raise \"deep\" if n == 0\n  f(n - 1)\nend\nr = begin\n  f(100)\nrescue => e\n  ";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // 102 frames (the script and 101 calls of f): 16 + the omission line + 16.
         .{ .src = deep ++ "e.backtrace.length\nend", .expected = .{ .num = 33 } },
         .{ .src = deep ++ "e.backtrace[16]\nend", .expected = .{ .str = "    ... 70 frames omitted ..." } },
@@ -1232,14 +1153,14 @@ test "Stdlib: a deep backtrace lists its innermost and outermost frames only" {
 
 test "Stdlib: raising a value that isn't an exception keeps all of it as the message" {
     // A non-String value was stringified into a 1 KB stack buffer, cutting the message.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "big = (1..500).to_a\nr = begin\n  raise big\nrescue => e\n  e.message == big.inspect\nend", .expected = .{ .boolean = true } },
         .{ .src = "r = begin\n  raise 42\nrescue RuntimeError => e\n  e.message\nend", .expected = .{ .str = "42" } },
     });
 }
 
 test "Stdlib: Strings index by character and Arrays and Strings by Range, as in Ruby" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // `"abc"[0]` used to be "TypeError: Cannot index target."
         .{ .src = "r = \"abc\"[0]", .expected = .{ .str = "a" } },
         .{ .src = "r = \"abc\"[-1]", .expected = .{ .str = "c" } },
@@ -1264,7 +1185,7 @@ test "Stdlib: Strings index by character and Arrays and Strings by Range, as in 
 
 test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
     // Numbers are 64-bit floats; `2 ** 1024` used to become Infinity silently.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("2 ** 1024"), .expected = .{ .str = "RangeError: 2 ** 1024 overflows: the result is beyond the largest number (1.8e308)" } },
         .{ .src = comptime rescued("x = 2\n  x ** 1024"), .expected = .{ .str = "RangeError: 2 ** 1024 overflows: the result is beyond the largest number (1.8e308)" } },
         .{ .src = comptime rescued("x = 1e308\n  x + x"), .expected = .{ .str = "RangeError: 1e308 + 1e308 overflows: the result is beyond the largest number (1.8e308)" } },
@@ -1281,7 +1202,7 @@ test "Stdlib: arithmetic that overflows is a RangeError, not Infinity" {
 }
 
 test "Stdlib: numbers print plainly only while their digits are exact" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // Huge and tiny numbers print in scientific notation (1e300 used to print 301 digits).
         .{ .src = "r = \"#{1e300} #{1e-7} #{123456.5}\"", .expected = .{ .str = "1e300 1e-7 123456.5" } },
         // Integers stay plain up to 2^53; from 1e16 the digits would claim a precision f64 lacks.
@@ -1293,7 +1214,7 @@ test "Stdlib: numbers print plainly only while their digits are exact" {
 test "Stdlib: a keyword wins over the same option given positionally" {
     // Primitives and sweeps used to let the positional value win, while translate, polygon,
     // fillet_edges (now a Solid's offset) and repeat_polar let the keyword win.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = cube(1).offset(5, delta: 0.1).volume < 2", .expected = .{ .boolean = true } },
         .{ .src = "r = cube(5, z: 3).bbox.max", .expected = .{ .nums = &.{ 5, 5, 3 } } },
         .{ .src = "r = square(2, x: 4).extrude(1).bbox.max", .expected = .{ .nums = &.{ 4, 2, 1 } } },
@@ -1309,11 +1230,11 @@ test "Stdlib: a keyword wins over the same option given positionally" {
 test "Stdlib: two keywords for one option are an error, not one silently ignored" {
     // `d:` beat `r:` and `radius:` both, and `size:` an `x:`, whatever their order: found
     // by the engine parity test. A keyword still overrides a positional value.
-    try expectGlobalR(&.{
-        .{ .src = test_support.rescued("cylinder(r: 1, d: 6, h: 2)"), .expected = .{ .str = "ArgumentError: cylinder takes r or d, not both" } },
-        .{ .src = test_support.rescued("cylinder(r1: 1, d1: 2, r2: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes r1 or d1, not both" } },
-        .{ .src = test_support.rescued("sphere(radius: 1, r: 2)"), .expected = .{ .str = "ArgumentError: sphere takes radius or r, not both" } },
-        .{ .src = test_support.rescued("cube(size: 3, x: 1)"), .expected = .{ .str = "ArgumentError: cube takes size or x, not both" } },
+    try expectScripts(&.{
+        .{ .src = rescued("cylinder(r: 1, d: 6, h: 2)"), .expected = .{ .str = "ArgumentError: cylinder takes r or d, not both" } },
+        .{ .src = rescued("cylinder(r1: 1, d1: 2, r2: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes r1 or d1, not both" } },
+        .{ .src = rescued("sphere(radius: 1, r: 2)"), .expected = .{ .str = "ArgumentError: sphere takes radius or r, not both" } },
+        .{ .src = rescued("cube(size: 3, x: 1)"), .expected = .{ .str = "ArgumentError: cube takes size or x, not both" } },
         .{ .src = "r = cylinder(2, d: 6, h: 1, segments: 64).bbox.max[0]", .expected = .{ .num = 3 } },
     });
 }
@@ -1321,7 +1242,7 @@ test "Stdlib: two keywords for one option are an error, not one silently ignored
 test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found" {
     // An 8-sided cylinder of radius 1 has area 2·√2, a 64-sided one 32·sin(π/32).
     const vol = "vol = -> { cylinder(r: 1, h: 1).volume }\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = vol ++
             \\r = []
             \\got = CAD.with_config(resolution: { segments: 8 }) do
@@ -1355,22 +1276,22 @@ test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found"
         \\  end
         \\end
         \\
-        ++ comptime test_support.rescued("b.volume"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+        ++ comptime rescued("b.volume"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
     });
 }
 
 test "Stdlib: text draws accented and Cyrillic letters, and refuses a character the font lacks" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = text(\"Привет é\", size: 10).extrude(1).volume > text(\"Привет\", size: 10).extrude(1).volume", .expected = .{ .boolean = true } },
-        .{ .src = test_support.rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '中' (U+4E2D)" } },
-        .{ .src = test_support.rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
+        .{ .src = rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '中' (U+4E2D)" } },
+        .{ .src = rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
     });
 }
 
 test "Stdlib: revolve takes segments and sizes them to the profile" {
     // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
     const seg8 = "v = nil\nCAD.with_config(resolution: { min_angle: 1, min_length: 1 }) do\n  v = ";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = square(1).translate(x: 1).revolve(segments: 4).volume < square(1).translate(x: 1).revolve(segments: 64).volume", .expected = .{ .boolean = true } },
         // A larger profile gets more segments for the same minimum segment length.
         .{ .src = seg8 ++ "[square(1).translate(x: 1).revolve.volume, square(1).translate(x: 100).revolve.volume]\nend\nr = v[0] / (Math::PI * 2 * 1.5) < v[1] / (Math::PI * 2 * 100.5)", .expected = .{ .boolean = true } },
@@ -1379,7 +1300,7 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
 }
 
 test "Stdlib: material checks its color and factors" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // An invalid color used to export as white, and factors out of 0..1 were kept.
         .{ .src = comptime rescued("cube(1).material(color: \"red\")"), .expected = .{ .str = "ValueError: material color must be \"#RRGGBB\" or \"#RGB\", got \"red\"" } },
         .{ .src = comptime rescued("cube(1).material(color: \"#12345\")"), .expected = .{ .str = "ValueError: material color must be \"#RRGGBB\" or \"#RGB\", got \"#12345\"" } },
@@ -1391,7 +1312,7 @@ test "Stdlib: material checks its color and factors" {
 
 test "Stdlib: every value has a class, and value classes aren't built with .new" {
     // nil, lambdas, bound methods, classes and modules had no class (`.class` was nil).
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = \"#{nil.class} #{true.class} #{1.class} #{:s.class}\"", .expected = .{ .str = "NilClass Boolean Number Symbol" } },
         .{ .src = "f = -> { 1 }\nr = \"#{f.class} #{f.is_a?(Proc)}\"", .expected = .{ .str = "Proc true" } },
         .{ .src = "class C\n  def g\n  end\nend\nr = \"#{C.new.method(:g).class} #{C.class} #{Math.class}\"", .expected = .{ .str = "Method Class Math" } },
@@ -1413,7 +1334,7 @@ test "Stdlib: every value has a class, and value classes aren't built with .new"
 test "Stdlib: constants of a class or module are read with ::" {
     // `Foo::BAR` was "NameError: Undefined class member 'BAR'" (only nested classes worked).
     const src = "module M\n  K = 3\n  class Inner\n    Z = 4\n    def self.z\n      Z\n    end\n  end\nend\nclass Foo\n  BAR = 7\n  BAR2 = BAR + 1\nend\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = src ++ "r = [M::K, M::Inner::Z, M::Inner.z, Foo::BAR, Foo::BAR2]", .expected = .{ .nums = &.{ 3, 4, 4, 7, 8 } } },
         .{ .src = "r = Math::PI > 3", .expected = .{ .boolean = true } },
     });
@@ -1422,7 +1343,7 @@ test "Stdlib: constants of a class or module are read with ::" {
 test "Stdlib: block_given? works with or without parentheses" {
     // The bare form used to be looked up as a variable: NameError.
     const m = "def m(&b)\n  [block_given?, block_given?()]\nend\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = m ++ "r = \"#{m}\"", .expected = .{ .str = "[false, false]" } },
         .{ .src = m ++ "r = \"#{m { 1 }}\"", .expected = .{ .str = "[true, true]" } },
         .{ .src = m ++ "f = -> { 1 }\nr = \"#{m(&f)}\"", .expected = .{ .str = "[true, true]" } },
@@ -1431,7 +1352,7 @@ test "Stdlib: block_given? works with or without parentheses" {
 }
 
 test "Stdlib: yield works anywhere an expression does" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "def a\n  x = yield\n  x + 1\nend\nr = a { 1 }", .expected = .{ .num = 2 } },
         .{ .src = "def b\n  yield(2).round\nend\nr = b { |v| v * 1.4 }", .expected = .{ .num = 3 } },
         .{ .src = "def c\n  block_given? ? yield : 0\nend\nr = [c, c { 5 }]", .expected = .{ .nums = &.{ 0, 5 } } },
@@ -1444,7 +1365,7 @@ test "Stdlib: yield works anywhere an expression does" {
 }
 
 test "Stdlib: lambdas behave like blocks" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // `return` and `next` leave just the lambda or block, never the enclosing def.
         .{ .src = "f = ->(x) do\n  return 10 if x > 0\n  20\nend\nr = [f.call(1), f.call(-1)]", .expected = .{ .nums = &.{ 10, 20 } } },
         .{ .src = "f = -> do\n  next 7\n  8\nend\nr = f.call", .expected = .{ .num = 7 } },
@@ -1483,10 +1404,6 @@ test "Stdlib: Range#map keeps its result array and block results alive across GC
 // Non-number coordinates used to read as 0 (polygon([[0,0],[10,"x"],[10,10]]) was a
 // 50 mm^3 prism) and NaN/inf went straight to the kernels.
 
-fn rescued(comptime src: []const u8) []const u8 {
-    return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
-}
-
 test "Stdlib: sides: is a faceted shape, segments: only how smooth a round one is" {
     const hex_prism = 1.5 * @sqrt(3.0) * 25.0 * 10.0; // a hexagon of radius 5, 10 high
     const cases = [_]struct { src: []const u8, expected: f64 }{
@@ -1508,7 +1425,7 @@ test "Stdlib: sides: is a faceted shape, segments: only how smooth a round one i
         try testing.expectApproxEqAbs(case.expected, vm.globals.get("r").?.asNumber(), 1e-9);
     }
 
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 2)"), .expected = .{ .str = "ValueError: 'sides' must be between 3 and 2048, got 2" } },
         .{ .src = comptime rescued("circle(r: 5, sides: 6, segments: 32)"), .expected = .{ .str = "ArgumentError: circle takes sides: (a faceted shape) or segments: (how smooth a round one is), not both" } },
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6, round_r: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes sides: or round_r:/chamfer:, not both yet" } },
@@ -1808,14 +1725,14 @@ test "Stdlib: near-zero normals and subnormal factors are rejected, not silently
         // A subnormal determinant flattens the shape as surely as 0.
         "cube(1).transform([1e-110,0,0, 0,1e-110,0, 0,0,1e-110, 0,0,0])",
     });
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = rescued("cube(1).mirror(1e-320, 0, 0)"), .expected = .{ .str = "ValueError: mirror expects a non-zero plane normal, got [1e-320, 0, 0]" } },
         .{ .src = rescued("cube(1).trim_by_plane(0, 1e-200, 0)"), .expected = .{ .str = "ValueError: trim_by_plane expects a non-zero plane normal, got [0, 1e-200, 0]" } },
     });
 }
 
 test "Stdlib: tiny-but-normal and huge vectors, CrossSection z scale and nil step still build" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // The smallest normals that still normalize keep working, as do huge ones.
         .{ .src = "r = cube(1).mirror(1e-150, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
         .{ .src = "r = cube(1).mirror(1e200, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
@@ -1828,7 +1745,7 @@ test "Stdlib: tiny-but-normal and huge vectors, CrossSection z scale and nil ste
 }
 
 test "Stdlib: lazily formatted element errors keep their exact wording" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,\"a\"],[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 1, entry 2), got String" } },
         .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],5,[0,2,3],[1,3,2]])"), .expected = .{ .str = "TypeError: polyhedron expects an Array for face 1, got Number" } },
         .{ .src = rescued("polygon([[0,0],[1,0],5])"), .expected = .{ .str = "TypeError: polygon expects an Array for point 2, got Number" } },
@@ -1841,7 +1758,7 @@ test "Stdlib: lazily formatted element errors keep their exact wording" {
 }
 
 test "Stdlib: rescued argument errors name the method, the position and the bad type" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = rescued("polygon([[0,0],[10,\"x\"],[10,10]]).extrude(1).volume"), .expected = .{ .str = "TypeError: polygon expects a number for a coordinate (point 1, component 1), got String" } },
         .{ .src = rescued("polygon([[0,0],[10,0],[Number::NAN,10]])"), .expected = .{ .str = "ValueError: polygon expects a finite number for a coordinate (point 2, component 0), got NaN" } },
         .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
@@ -1867,7 +1784,7 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
 }
 
 test "Stdlib: valid coordinates and vector arguments still build" {
-    try expectAll(.ok, &.{
+    try expectRuns(.ok, &.{
         "polygon([[0,0],[10,0],[10,10]])",
         "polygon([[0.5,-1.5],[10,0],[-3,10.25]]).extrude(2)",
         "polygon([[0,0],[10,0],[10,10],[0,10],[2,2],[8,2],[8,8],[2,8]], paths: [[0,1,2,3],[4,5,6,7]])",
@@ -1962,7 +1879,7 @@ test "Stdlib: valid coordinates and vector arguments still build" {
 }
 
 test "Stdlib: validated geometry methods keep their results for valid input" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = polygon([[0,0],[10,0],[10,10]]).extrude(1).volume.round(6)", .expected = .{ .num = 50 } },
         .{ .src = "r = polygon([[0,0],[10,0],[10,10],[0,10],[2,2],[8,2],[8,8],[2,8]], paths: [[0,1,2,3],[4,5,6,7]]).extrude(1).volume.round(6)", .expected = .{ .num = 64 } },
         .{ .src = "r = polyhedron([[0,0,0],[6,0,0],[0,6,0],[0,0,6]], [[0,2,1],[0,1,3],[0,3,2],[1,2,3]]).volume.round(6)", .expected = .{ .num = 36 } },
@@ -1984,7 +1901,7 @@ test "Stdlib: validated geometry methods keep their results for valid input" {
 
 test "Stdlib: split_by_plane normal kwargs default the other components to 0" {
     // nz: 1 alone used to keep the default nx = 1, splitting along a diagonal plane.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "parts = cube(10, 20, 30).split_by_plane(nz: 1, offset: 10)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 4000, 2000 } } },
         .{ .src = "parts = cube(10, 20, 30).split_by_plane(ny: -1, offset: -5)\nr = [parts[0].volume.round(6), parts[1].volume.round(6)]", .expected = .{ .nums = &.{ 1500, 4500 } } },
     });
@@ -2007,7 +1924,7 @@ test "Stdlib: split_by_plane keeps both halves alive across GC" {
 test "Stdlib: non-finite numbers print the same on every platform" {
     // `inf - inf` is a NaN with the sign bit set on x86 (printed "-nan" by {d}) but not on
     // ARM ("nan"), so output and error messages used to differ between machines.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = (Number::INFINITY - Number::INFINITY).to_s", .expected = .{ .str = "NaN" } },
         .{ .src = "r = Number::INFINITY.to_s", .expected = .{ .str = "Infinity" } },
         .{ .src = "r = (-Number::INFINITY).to_s", .expected = .{ .str = "-Infinity" } },
@@ -2022,7 +1939,7 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
     // accepted solids.
     const square = "s = square(10)\n";
     const ring = "s = square(10, center: true) - circle(r: 3)\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = square ++ "r = s.contains?([5, 5])", .expected = .{ .boolean = true } },
         .{ .src = square ++ "r = s.contains?([15, 5])", .expected = .{ .boolean = false } },
         .{ .src = square ++ "r = s.contains?([-0.5, 5])", .expected = .{ .boolean = false } },
@@ -2044,7 +1961,7 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
         // Solids are unchanged.
         .{ .src = "r = cube(10).contains?([5, 5, 5])", .expected = .{ .boolean = true } },
     });
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = rescued("square(10).contains?([5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 2 to 3 numbers, got 1" } },
         .{ .src = rescued("cube(10).contains?([5, 5])"), .expected = .{ .str = "ValueError: contains? expects the point to have 3 numbers, got 2" } },
         .{ .src = "CAD.config(engine: :brep)\n" ++ comptime rescued("square(10).contains?([5, 5])"), .expected = .{ .str = "NotImplementedError: the brep engine can't test whether a point is inside (contains?) yet; build this part with engine: :manifold" } },
@@ -2053,7 +1970,7 @@ test "Stdlib: Sketch#contains? tests the closed 2D region" {
 
 test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of wrong geometry" {
     const tetra = "pts = [[0,0,0],[1,0,0],[0,1,0],[0,0,1]]\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // Non-manifold input (inconsistent winding, a duplicated face) used to export nothing.
         .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[1,2,3]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
         .{ .src = tetra ++ comptime rescued("polyhedron(pts, [[0,1,2],[0,3,1],[0,2,3],[0,1,2]]).volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
@@ -2071,7 +1988,7 @@ test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes Geome
     // A single triangle: valid STL, but not a closed solid.
     try mem_vfs.vfs().writeFile("tri.stl", "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n");
     try mem_vfs.vfs().writeFile("junk.stl", "not an stl at all");
-    const cases = [_]IterCase{
+    const cases = [_]ScriptCase{
         .{ .src = rescued("import_stl(\"missing.stl\")"), .expected = .{ .str = "ImportError: could not read STL file 'missing.stl': FileNotFound" } },
         .{ .src = rescued("import_stl(\"tri.stl\").volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
     };
@@ -2098,7 +2015,7 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
     const tetra = "pts = [[0,0,0],[1,0,0],[0,1,0],[0,0,1]]\n";
     const outward = "[[0,2,1],[0,1,3],[0,3,2],[1,2,3]]";
     const inward = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // A tube reaching the axis makes the torus intersect itself.
         .{ .src = comptime rescued("torus(major_r: 5, minor_r: 5)"), .expected = .{ .str = "ValueError: torus needs minor_r smaller than major_r, got minor_r 5 and major_r 5" } },
         .{ .src = comptime rescued("torus(major_r: 2, minor_r: 3)"), .expected = .{ .str = "ValueError: torus needs minor_r smaller than major_r, got minor_r 3 and major_r 2" } },
@@ -2119,7 +2036,7 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
 
 test "Stdlib: sphere resolution follows segments and the active config" {
     const with_8_segments = "v = nil\nCAD.with_config(resolution: { segments: 8 }) do\n  v = ";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // Both used to be Manifold's built-in default, whatever was asked for.
         .{ .src = "r = sphere(r: 1, segments: 8).volume < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
         .{ .src = with_8_segments ++ "sphere(r: 1).volume\nend\nr = v == sphere(r: 1, segments: 8).volume && v < sphere(r: 1, segments: 64).volume", .expected = .{ .boolean = true } },
@@ -2158,16 +2075,16 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission" },
     };
     const iter_cases = comptime blk: {
-        var list: [cases.len]IterCase = undefined;
+        var list: [cases.len]ScriptCase = undefined;
         for (cases, &list) |case, *iter_case| iter_case.* = .{
             .src = rescued(case.src),
             .expected = .{ .str = "ArgumentError: " ++ case.method ++ " does not take a keyword 'bogus' (it accepts: " ++ case.accepted ++ ")" },
         };
         break :blk list;
     };
-    try expectGlobalR(&iter_cases);
+    try expectScripts(&iter_cases);
 
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // The typos that motivated the check.
         .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg, segments)" } },
         .{ .src = comptime rescued("cube(1).translate(X: 5)"), .expected = .{ .str = "ArgumentError: translate does not take a keyword 'X' (it accepts: x, y, z)" } },
@@ -2183,7 +2100,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
 }
 
 test "Stdlib: accepted keywords and aliases still build" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = cube(size: 2).volume", .expected = .{ .num = 8 } },
         .{ .src = "r = cylinder(d: 2, h: 1, segments: 4).volume", .expected = .{ .num = 2 } },
         .{ .src = "r = cylinder(radius: 1, h: 1, segments: 4).volume", .expected = .{ .num = 2 } },
@@ -2200,7 +2117,7 @@ test "Stdlib: accepted keywords and aliases still build" {
 
 test "Stdlib: Sketch transforms stay in the XY plane" {
     const diagonal = 2.0 * std.math.sqrt2; // A 2x2 square turned 45 degrees spans its diagonal.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // rotate(z:) and rotate(0, 0, a) used to read x, so they did not rotate at all.
         .{ .src = "r = square(2).rotate(z: 45).extrude(1).bbox.max[1]", .expected = .{ .num = diagonal } },
         .{ .src = "r = square(2).rotate(0, 0, 45).extrude(1).bbox.max[1]", .expected = .{ .num = diagonal } },
@@ -2227,7 +2144,7 @@ fn countDebuggerOpen(_: *VM) void {
 
 test "Stdlib: debugger() opens the host's debugger, and does nothing without one" {
     // Without a handler (the LSP, the viewport) it must not touch stdin or stdout.
-    try testing.expectEqual(.ok, try runScript("debugger()\nr = 1"));
+    try expectRuns(.ok, &.{"debugger()\nr = 1"});
 
     var vm = try initVm();
     defer vm.deinit();
@@ -2238,7 +2155,7 @@ test "Stdlib: debugger() opens the host's debugger, and does nothing without one
 }
 
 test "Stdlib: Array#compact drops the nils, Array#reject the items its block accepts" {
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // false is a value, not a missing one, as in Ruby.
         .{ .src = "r = [1, nil, false, 2, nil].compact.inspect", .expected = .{ .str = "[1, false, 2]" } },
         .{ .src = "a = [nil, 3]\nb = a.compact\nr = [a.size, b.size]", .expected = .{ .nums = &.{ 2, 1 } } },
@@ -2270,10 +2187,10 @@ test "Stdlib: a built-in call with more arguments than its Signature names is an
         .{ "cube(1).repeat_linear(3, [10, 0, 0], z: 5)", "ArgumentError: repeat_linear takes the step as an Array or as x, y, z, not both" },
     };
     inline for (cases) |case| {
-        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+        try expectScripts(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
     }
     // What they do take still works: helix's third positional is its slices.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("square(2).helix(10, 90, 8)\ncube(1).highlight\ncube(1).project"), .expected = .{ .str = "no error" } },
     });
 }
@@ -2290,9 +2207,9 @@ test "Stdlib: booleans and hull take only shapes of the receiver's kind, nil inc
         .{ "union([cube(1), nil])", "TypeError: union expects only Solids, got nil at index 1; leave out the nils with .compact" },
     };
     inline for (cases) |case| {
-        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+        try expectScripts(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
     }
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         // The way to pass optional parts; an empty list is set theory's: a union with or a
         // difference by nothing is the receiver, an intersection with nothing is empty.
         .{ .src = "boss = nil\nr = cube(2).union([boss, cube(1).translate(5, 0, 0)].compact).volume", .expected = .{ .num = 9 } },
@@ -2313,9 +2230,9 @@ test "Stdlib: center takes axes of x, y and z, and a Sketch only x and y" {
         .{ "square(2).center(:xz)", "ValueError: a Sketch lies in the XY plane: center it on x and y, got \"xz\"" },
     };
     inline for (cases) |case| {
-        try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
+        try expectScripts(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
     }
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "r = cube(2).center(:xy).volume + square(2).center.extrude(1).volume", .expected = .{ .num = 12 } },
         // nil leaves an optional parameter unset, as it does for every built-in.
         .{ .src = "r = cube(2).center(nil).volume", .expected = .{ .num = 8 } },
@@ -2324,7 +2241,7 @@ test "Stdlib: center takes axes of x, y and z, and a Sketch only x and y" {
 
 test "Stdlib: highlight { } and ghost { } need their block to give a Solid" {
     // Anything else was passed through (highlight) or dropped (ghost) without being shown.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("highlight { 5 }"), .expected = .{ .str = "TypeError: highlight's block must give a Solid, got Number" } },
         .{ .src = comptime rescued("ghost { nil }"), .expected = .{ .str = "TypeError: ghost's block must give a Solid, got nil" } },
         .{ .src = "r = highlight { cube(2) }.volume", .expected = .{ .num = 8 } },
@@ -2366,7 +2283,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         if (call) |src| {
             const sketch_receiver = comptime std.mem.startsWith(u8, src, "s.");
             const expected = comptime if (m.result == .receiver) (if (sketch_receiver) "CrossSection" else "Geometry") else m.result.className().?;
-            try expectGlobalR(&.{.{ .src = "c = cube(2)\ns = square(2)\nr = \"#{(" ++ src ++ ").class}\"", .expected = .{ .str = expected } }});
+            try expectScripts(&.{.{ .src = "c = cube(2)\ns = square(2)\nr = \"#{(" ++ src ++ ").class}\"", .expected = .{ .str = expected } }});
             checked += 1;
         } else {
             comptime if (!isOneOf(m.name, &writes_files)) @compileError("no sample call for " ++ m.name);
@@ -2380,7 +2297,7 @@ test "Stdlib: export_step refuses a mesh part by name, and writes an exact one" 
     // A mesh part was left out of the file without a word (or failed as NoGeometry).
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    const cases = [_]IterCase{
+    const cases = [_]ScriptCase{
         .{ .src = rescued("cube(1).export_step(\"m.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and the model was built by the manifold engine (a mesh); build it with engine: :brep" } },
         .{ .src = "CAD.config(engine: :brep)\nr = \"#{cube(1).export_step(\"b.step\").class}\"", .expected = .{ .str = "Geometry" } },
     };
@@ -2400,7 +2317,7 @@ test "Stdlib: export_step refuses a mesh part by name, and writes an exact one" 
 
 test "Stdlib: an Assembly answers its name and parts, and keeps its own list" {
     // It had no methods: every call on it was a NoMethodError.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "a = assemble(name: \"kit\", parts: [cube(1), cube(2)])\nr = \"#{a.name} #{a.class} #{a.parts.length}\"", .expected = .{ .str = "kit Assembly 2" } },
         // Changing the Array it was made from, or the one `parts` gives, changes nothing.
         .{ .src = "p = [cube(1)]\na = assemble(name: \"k\", parts: p)\np.push(cube(2))\na.parts.push(cube(3))\nr = a.parts.length", .expected = .{ .num = 1 } },
@@ -2411,7 +2328,7 @@ test "Stdlib: an Assembly answers its name and parts, and keeps its own list" {
 test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
     // It could only be exported: placing a subassembly meant moving its parts one by one.
     const kit = "a = assemble(name: \"kit\", parts: [cube(2), cube(2).translate(10, 0, 0)])\n";
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = kit ++ "r = a.bbox.max", .expected = .{ .nums = &.{ 12, 2, 2 } } },
         .{ .src = kit ++ "r = a.translate(0, 5, 0).bbox.min", .expected = .{ .nums = &.{ 0, 5, 0 } } },
         .{ .src = kit ++ "r = a.center.bbox.min", .expected = .{ .nums = &.{ -6, -1, -1 } } },
@@ -2424,7 +2341,7 @@ test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
 
 test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
     // Anything else was accepted and then left out of every export without a word.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Number at index 1" } },
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got CrossSection at index 0" } },
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got nil at index 0; leave out the nils with .compact" } },
@@ -2436,7 +2353,7 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     const kit = "a = assemble(name: \"kit\", parts: [cube(1), cube(1).translate(3, 0, 0)])\n";
-    const cases = [_]IterCase{
+    const cases = [_]ScriptCase{
         .{ .src = kit ++ "r = \"#{a.export_stl(\"kit.stl\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
@@ -2465,7 +2382,7 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
 
 test "Stdlib: ghost shows a copy and gives the shape back to use" {
     // It returned nil, so `env = part.ghost` lost the part.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = "env = cube(2).ghost\nr = env.volume", .expected = .{ .num = 8 } },
         .{ .src = "r = cube(2).ghost.translate(5, 0, 0).bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
     });
@@ -2478,7 +2395,7 @@ test "Stdlib: ghost shows a copy and gives the shape back to use" {
 test "Stdlib: every export refuses a Sketch the same way" {
     // Each export collected its parts its own way, and glTF answered a Sketch with a
     // TypeError of its own wording.
-    try expectGlobalR(&.{
+    try expectScripts(&.{
         .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for CrossSection" } },
@@ -2493,7 +2410,7 @@ test "Stdlib: each Assembly method gives back what the manifest says it does" {
             try testing.expectEqual(manifest.Result.receiver, m.result);
         } else {
             const expected = comptime if (m.result == .receiver) "Assembly" else m.result.className().?;
-            try expectGlobalR(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
+            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
         }
     }
 }
@@ -2501,7 +2418,7 @@ test "Stdlib: each Assembly method gives back what the manifest says it does" {
 test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform takes a vector" {
     // One number used to stretch x alone (every CAD tool reads it as uniform) and to turn
     // a Solid about x but a Sketch about z.
-    try test_support.expectScripts(&.{
+    try expectScripts(&.{
         .{ .src = "r = cube(2).scale(3).bbox.max", .expected = .{ .nums = &.{ 6, 6, 6 } } },
         .{ .src = "r = cube(2).scale([2, 1, 1]).bbox.max", .expected = .{ .nums = &.{ 4, 2, 2 } } },
         .{ .src = "r = cube(2).scale(2, 1, 1).bbox.max", .expected = .{ .nums = &.{ 4, 2, 2 } } },
@@ -2518,7 +2435,7 @@ test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform take
 test "Stdlib: union([]) is the empty Solid, a valid part that renders nothing" {
     // It raised an ArgumentError, though a list of optional parts all left out is an
     // ordinary outcome of procedural generation. The B-Rep engine has no empty solid yet.
-    try test_support.expectScripts(&.{
+    try expectScripts(&.{
         .{ .src = "r = union([]).volume", .expected = .{ .num = 0 } },
         .{ .src = "r = (cube(1) + union([])).volume", .expected = .{ .num = 1 } },
         .{ .src = "r = (cube(1) - union([])).volume", .expected = .{ .num = 1 } },
