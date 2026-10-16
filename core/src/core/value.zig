@@ -5,6 +5,7 @@
 const std = @import("std");
 const dag = @import("../vm/dag.zig");
 const geom = @import("../kernel/geometry_handle.zig");
+const owned_keys = @import("owned_keys.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
 /// print in scientific notation instead (1e-7), as in JavaScript.
@@ -147,14 +148,7 @@ pub const Namespace = struct {
     globals: std.StringHashMapUnmanaged(Value) = .empty,
 
     pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
-        const gop = try self.globals.getOrPut(allocator, name);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = allocator.dupe(u8, name) catch |err| {
-                self.globals.removeByPtr(gop.key_ptr);
-                return err;
-            };
-        }
-        gop.value_ptr.* = val;
+        (try owned_keys.getOrPutOwned(&self.globals, allocator, name)).value_ptr.* = val;
     }
 
     pub fn remove(self: *Namespace, allocator: std.mem.Allocator, name: []const u8) void {

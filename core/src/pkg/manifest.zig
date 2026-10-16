@@ -7,6 +7,7 @@ const validate = @import("validate.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 const string_map = @import("string_map.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 pub const StringMap = string_map.StringMap;
 
 const SortUtil = struct {
@@ -100,15 +101,8 @@ pub const Manifest = struct {
     pub fn setDependency(self: *Manifest, alias: []const u8, url: []const u8) !void {
         const url_copy = try self.allocator.dupe(u8, url);
         errdefer self.allocator.free(url_copy);
-        const gop = try self.dependencies.getOrPut(alias);
-        if (gop.found_existing) {
-            self.allocator.free(gop.value_ptr.*);
-        } else {
-            gop.key_ptr.* = self.allocator.dupe(u8, alias) catch |err| {
-                self.dependencies.removeByPtr(gop.key_ptr);
-                return err;
-            };
-        }
+        const gop = try owned_keys.getOrPutOwned(&self.dependencies, self.allocator, alias);
+        if (gop.found_existing) self.allocator.free(gop.value_ptr.*);
         gop.value_ptr.* = url_copy;
     }
 

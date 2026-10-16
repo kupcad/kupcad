@@ -27,6 +27,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const sequence = @import("sequence.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 
 const log = std.log.scoped(.vm);
 
@@ -1678,14 +1679,7 @@ pub const VM = struct {
     /// Import cache insert. Keys are owned copies: the path slice comes from a
     /// constant ObjString that can be swept while the cache entry lives on.
     fn cacheModule(self: *VM, path: []const u8, val: value.Value) !void {
-        const gop = try self.modules.getOrPut(self.allocator, path);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = self.allocator.dupe(u8, path) catch |err| {
-                self.modules.removeByPtr(gop.key_ptr);
-                return err;
-            };
-        }
-        gop.value_ptr.* = val;
+        (try owned_keys.getOrPutOwned(&self.modules, self.allocator, path)).value_ptr.* = val;
     }
 
     /// Drops the module imported from `path`, so the next import of it runs its new

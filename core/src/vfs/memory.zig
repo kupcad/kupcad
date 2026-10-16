@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
+const owned_keys = @import("../core/owned_keys.zig");
 
 pub const NodeKind = enum { file, directory, symlink };
 
@@ -60,18 +61,10 @@ pub const MemoryVfs = struct {
     /// over a linked path freed the content under the other link, and a link onto an
     /// existing path leaked both the old node's content and the new path copy.
     fn replaceNode(self: *MemoryVfs, path: []const u8, node: MemoryNode) !void {
-        const gop = try self.nodes.getOrPut(path);
-        if (gop.found_existing) {
-            const old = gop.value_ptr.*;
-            gop.value_ptr.* = node;
-            if (old.content) |c| self.releaseContent(c);
-            return;
-        }
-        gop.key_ptr.* = self.allocator.dupe(u8, path) catch |err| {
-            self.nodes.removeByPtr(gop.key_ptr);
-            return err;
-        };
+        const gop = try owned_keys.getOrPutOwned(&self.nodes, self.allocator, path);
+        const old: ?MemoryNode = if (gop.found_existing) gop.value_ptr.* else null;
         gop.value_ptr.* = node;
+        if (old) |o| if (o.content) |c| self.releaseContent(c);
     }
 
     pub fn vfs(self: *MemoryVfs) Vfs {
