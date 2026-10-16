@@ -415,6 +415,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 `src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus's `parallel_for` (`locus/src/bindings/parallel_c.cpp`) runs serially in every build: it parallelizes only under `MANIFOLD_PAR == 1`, which the bindings aren't compiled with.
 
+## 19. Geometry Invariants
+
+`src/kernel/invariants_test.zig` takes one of each kind of operation the Manifold kernel performs (primitives, rounded and chamfered cubes, booleans, extrusions with holes and twist, revolve, hull, Minkowski sums, mirror, scale, text) and checks the mesh of each: closed and consistently oriented (`kernel/mesh_check.zig`), its own signed volume and area the kernel's (to float precision: the exported positions are floats), its vertices' bounds the kernel's, and its Euler characteristic the kernel's genus. Scripts check what the operations must keep: inclusion-exclusion for booleans, the volume under a rigid move and mirror, eight times it under `scale(2)`.
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |
