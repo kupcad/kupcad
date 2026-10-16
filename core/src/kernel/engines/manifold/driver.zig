@@ -637,6 +637,12 @@ fn numVertsImpl(handle: geom.GeometryHandle) usize {
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
+fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
+    std.debug.assert(handle.engine == .manifold);
+    if (@intFromPtr(handle.ptr) == 0) return 0;
+    return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));
+}
+
 // --- Copies ---
 
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
@@ -745,6 +751,7 @@ pub const driver = struct {
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
     pub const numVertsFn = numVertsImpl;
+    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const setMaterialFn = setMaterialImpl;
     pub const cloneFn = cloneImpl;

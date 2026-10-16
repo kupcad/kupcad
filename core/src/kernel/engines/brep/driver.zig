@@ -803,6 +803,12 @@ fn numVertsImpl(handle: geom.GeometryHandle) usize {
     return solid.t_arena.vertices.items.len;
 }
 
+/// A B-Rep solid has faces, not triangles; a mesh of it exists only once tessellated.
+fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
+    std.debug.assert(handle.engine == .brep_native);
+    return null;
+}
+
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
     // No-op for B-Rep, but must still return a NEW handle (single-owner rule, see kernel.zig).
@@ -924,6 +930,7 @@ pub const driver = struct {
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
     pub const numVertsFn = numVertsImpl;
+    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const cloneFn = cloneImpl;
     pub const destructFn = destructImpl;

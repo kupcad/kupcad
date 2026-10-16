@@ -21,10 +21,10 @@ pub const Action = struct {
 pub const Encoding = enum { utf8, utf16 };
 
 /// The actions for findings starting on lines `first_line` to `last_line` (0-based) of
-/// `source`, linted with `config`. Everything is allocated in `arena`.
-pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, config: api.LinterConfig, first_line: u32, last_line: u32, encoding: Encoding) ![]Action {
-    const diags = try api.checkCode(arena, io, source, config);
-    const line_index = try api.LineIndex.init(arena, source);
+/// `doc`, linted with `config`. Everything is allocated in `arena`.
+pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, doc: *const api.Document, config: api.LinterConfig, first_line: u32, last_line: u32, encoding: Encoding) ![]Action {
+    const diags = try api.checkDocument(arena, io, doc, config);
+    const line_index = &doc.line_index;
     var actions: std.ArrayListUnmanaged(Action) = .empty;
     for (diags) |d| {
         const rule = d.rule orelse continue; // a syntax or compile error has no fix or suppression
@@ -34,8 +34,8 @@ pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, conf
         if (d.fix) |fix| {
             const edits = try arena.alloc(TextEdit, fix.edits.len);
             for (fix.edits, edits) |e, *out| out.* = .{
-                .start = position(&line_index, e.offset, encoding),
-                .end = position(&line_index, e.offset + e.length, encoding),
+                .start = position(line_index, e.offset, encoding),
+                .end = position(line_index, e.offset + e.length, encoding),
                 .text = e.replacement,
             };
             try actions.append(arena, .{ .title = fix.title, .preferred = fix.safe, .edits = edits });
@@ -43,7 +43,7 @@ pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, source: []const u8, conf
         // A suppression comment that suppresses nothing isn't silenced by another one
         // above it (that one would warn too), so no disable action for it.
         if (std.mem.eql(u8, rule, suppressions.RULE)) continue;
-        try actions.append(arena, try disableAction(arena, source, &line_index, line, rule));
+        try actions.append(arena, try disableAction(arena, doc.source, line_index, line, rule));
     }
     return actions.toOwnedSlice(arena);
 }

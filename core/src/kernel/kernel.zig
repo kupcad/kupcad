@@ -374,6 +374,12 @@ pub inline fn numVerts(handle: geom.GeometryHandle) usize {
     return dispatch("numVertsFn", handle, .{});
 }
 
+/// How many triangles the solid's mesh has, without building the mesh; null for an engine
+/// that has no mesh of its own (kernel.supports(engine, .mesh)).
+pub inline fn numTris(handle: geom.GeometryHandle) ?usize {
+    return dispatch("numTrisFn", handle, .{});
+}
+
 /// Deep copy; the caller owns the returned handle.
 pub inline fn clone(handle: geom.GeometryHandle) ?geom.GeometryHandle {
     return dispatch("cloneFn", handle, .{});

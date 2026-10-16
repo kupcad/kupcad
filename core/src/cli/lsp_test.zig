@@ -269,6 +269,27 @@ test "LSP: hovers are answered from one run of the document, until something cha
     try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
 }
 
+test "LSP: a hover counts a solid's vertices and faces without building its mesh" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "a = cube(2)\n");
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Topology:** `8` Vertices, `12` Faces") != null);
+}
+
+test "LSP: hovering the last token of a document, and past it, finds the right token" {
+    // Tokens are found by binary search; its edges are the first token, the last, and a
+    // position after the last.
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "first = 1\nsecond = 2\nlast = 3");
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "(variable) first") != null);
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 2, 0).?, "(variable) last") != null);
+    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 2, 7).?, "(number) 3") != null);
+    try testing.expect(server.hover(URI, 2, 9) == null);
+}
+
 test "LSP: a model that takes long to run still gets its hovers" {
     // The hover's run stopped at 500k instructions, before `a` existed, and showed nothing.
     var server: Server = undefined;

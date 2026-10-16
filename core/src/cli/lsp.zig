@@ -159,11 +159,8 @@ pub const HoverRun = struct {
                     if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
                 }
 
-                if (kernel.supports(engine, .mesh)) if (kernel.getMesh(self.allocator, handle)) |mesh| {
-                    defer self.allocator.free(mesh.vert_props);
-                    defer self.allocator.free(mesh.tri_verts);
-                    try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ mesh.vert_props.len / mesh.num_prop, mesh.tri_verts.len / 3 });
-                };
+                // Counted, not tessellated: the mesh used to be built and copied for this line.
+                if (kernel.numTris(handle)) |tris| try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ kernel.numVerts(handle), tris });
             } else |_| {}
         } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
             try writer.print("\n---\n### 📐 2D Profile\n", .{});
@@ -524,7 +521,7 @@ pub const Handler = struct {
 
         try self.syncSession(module_path, source_dup);
 
-        try self.runDiagnostics(arena, params.textDocument.uri, params.textDocument.text);
+        try self.runDiagnostics(arena, self.files.getPtr(uri_dup).?);
     }
 
     pub fn @"textDocument/didChange"(
@@ -544,8 +541,8 @@ pub const Handler = struct {
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
                         try self.syncSession(buf.module_path, buf.source);
+                        try self.runDiagnostics(arena, buf);
                     }
-                    try self.runDiagnostics(arena, params.textDocument.uri, doc_change.text);
                 },
                 else => {},
             }
@@ -577,16 +574,18 @@ pub const Handler = struct {
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const source = doc_buf.source;
 
+        const doc = doc_buf.doc orelse return null;
+
         const config = self.projectConfig(arena, params.textDocument.uri);
         const formatted = api.formatCode(arena, source, config.fmt) catch |err| {
             logger.debug("Not formatted: {}", .{err});
             return null;
         };
 
-        var line_index = try api.LineIndex.init(arena, source);
+        const line_index = &doc.line_index;
         const end_offset: u32 = @intCast(source.len);
         const end_line = line_index.getLine(end_offset);
-        const end_char = self.getColumn(&line_index, end_offset);
+        const end_char = self.getColumn(line_index, end_offset);
 
         var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
@@ -610,17 +609,7 @@ pub const Handler = struct {
         const doc = buf.doc orelse return null;
 
         const target_offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
-
-        var found_token_idx: ?u24 = null;
-        for (doc.tokens.starts, 0..) |start, i| {
-            const len = doc.tokens.lengths[i];
-            if (target_offset >= start and target_offset < start + len) {
-                found_token_idx = @intCast(i);
-                break;
-            }
-        }
-
-        const tok_idx = found_token_idx orelse return null;
+        const tok_idx = tokenAt(&doc, target_offset) orelse return null;
 
         var found_node_idx: ast.NodeIndex = .none;
         for (doc.tree.nodes.items, 0..) |node, i| {
@@ -686,6 +675,21 @@ pub const Handler = struct {
         };
     }
 
+    /// The token `offset` is in, found by binary search (token starts are in order;
+    /// a scan from the first token made a hover near the end of a long file cost its length).
+    fn tokenAt(doc: *const api.Document, offset: usize) ?u24 {
+        const starts = doc.tokens.starts;
+        var lo: usize = 0;
+        var hi: usize = starts.len;
+        while (lo < hi) {
+            const mid = lo + (hi - lo) / 2;
+            if (starts[mid] <= offset) lo = mid + 1 else hi = mid;
+        }
+        if (lo == 0) return null;
+        const i = lo - 1;
+        return if (offset < starts[i] + doc.tokens.lengths[i]) @intCast(i) else null;
+    }
+
     pub fn @"textDocument/inlayHint"(
         self: *Handler,
         arena: std.mem.Allocator,
@@ -696,7 +700,7 @@ pub const Handler = struct {
         const doc = buf.doc orelse return null;
 
         var hints = std.ArrayListUnmanaged(lsp.types.InlayHint).empty;
-        var line_index = try api.LineIndex.init(arena, buf.source);
+        const line_index = &doc.line_index;
 
         for (try lsp_hints.hints(arena, &doc)) |hint| {
             const label = switch (hint.kind) {
@@ -704,7 +708,7 @@ pub const Handler = struct {
                 .type => try arena.print(": {s}", .{hint.name}),
             };
             try hints.append(arena, .{
-                .position = .{ .line = line_index.getLine(hint.offset), .character = self.getColumn(&line_index, hint.offset) },
+                .position = .{ .line = line_index.getLine(hint.offset), .character = self.getColumn(line_index, hint.offset) },
                 .label = .{ .string = label },
                 .kind = if (hint.kind == .parameter) .Parameter else .Type,
                 .paddingLeft = false,
@@ -784,7 +788,7 @@ pub const Handler = struct {
         const doc = doc_buf.doc orelse return null;
 
         var symbols = std.ArrayListUnmanaged(lsp.types.DocumentSymbol).empty;
-        var line_index = try api.LineIndex.init(arena, doc_buf.source);
+        const line_index = &doc.line_index;
 
         // Capture node by reference using `*node`
         for (doc.tree.nodes.items, 0..) |*node, i| {
@@ -827,11 +831,11 @@ pub const Handler = struct {
 
                 const start_pos = lsp.types.Position{
                     .line = line_index.getLine(start_offset),
-                    .character = self.getColumn(&line_index, start_offset),
+                    .character = self.getColumn(line_index, start_offset),
                 };
                 const end_pos = lsp.types.Position{
                     .line = line_index.getLine(end_offset),
-                    .character = self.getColumn(&line_index, end_offset),
+                    .character = self.getColumn(line_index, end_offset),
                 };
 
                 const range = lsp.types.Range{ .start = start_pos, .end = end_pos };
@@ -858,7 +862,8 @@ pub const Handler = struct {
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const encoding: lsp_actions.Encoding = if (self.useUtf8()) .utf8 else .utf16;
         const config = self.projectConfig(arena, params.textDocument.uri);
-        const found = try lsp_actions.actionsFor(arena, self.io, doc_buf.source, config.lint, params.range.start.line, params.range.end.line, encoding);
+        const doc = doc_buf.doc orelse return null;
+        const found = try lsp_actions.actionsFor(arena, self.io, &doc, config.lint, params.range.start.line, params.range.end.line, encoding);
 
         const results = try arena.alloc(lsp.types.CodeAction.Result, found.len);
         for (found, results) |action, *result| {
@@ -900,20 +905,24 @@ pub const Handler = struct {
         };
     }
 
-    fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, source: []const u8) !void {
-        const config = self.projectConfig(arena, uri);
-        const diags = api.checkCode(self.allocator, self.io, source, config.lint) catch |err| {
+    /// Publishes the diagnostics of `buf`, from the document parsed when it arrived (every
+    /// request reads that one; the linter used to parse the text again, and each request
+    /// built its own line index).
+    fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, buf: *const DocumentBuffer) !void {
+        const doc = &(buf.doc orelse return);
+        const config = self.projectConfig(arena, buf.uri);
+        const diags = api.checkDocument(self.allocator, self.io, doc, config.lint) catch |err| {
             logger.err("Linter failed: {}", .{err});
             return;
         };
         defer api.freeDiagnostics(self.allocator, diags);
 
-        var line_index = try api.LineIndex.init(arena, source);
+        const line_index = &doc.line_index;
         var lsp_diags: std.ArrayListUnmanaged(PublishedDiagnostic) = .empty;
 
         for (diags) |d| {
             const start_line = line_index.getLine(d.loc.offset);
-            const start_char = self.getColumn(&line_index, d.loc.offset);
+            const start_char = self.getColumn(line_index, d.loc.offset);
 
             var end_line = start_line;
             var end_char = start_char;
@@ -922,7 +931,7 @@ pub const Handler = struct {
                 // Standard multi-character token
                 const end_offset = d.loc.offset + d.loc.length;
                 end_line = line_index.getLine(end_offset);
-                end_char = self.getColumn(&line_index, end_offset);
+                end_char = self.getColumn(line_index, end_offset);
             } else {
                 // Zero-length token (EOF, missing semicolon, etc)
                 // Draw a 1-character wide squiggly explicitly on the same line
@@ -944,7 +953,7 @@ pub const Handler = struct {
                 .code = d.rule,
             });
         }
-        try self.publishDiagnostics(arena, uri, lsp_diags.items);
+        try self.publishDiagnostics(arena, buf.uri, lsp_diags.items);
     }
 
     /// Replaces the diagnostics the editor shows for `uri` (none clears them).

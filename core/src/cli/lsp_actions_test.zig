@@ -1,9 +1,12 @@
 const std = @import("std");
 const testing = std.testing;
 const actions = @import("lsp_actions.zig");
+const api = @import("../api.zig");
 
 fn actionsOn(arena: std.mem.Allocator, source: []const u8, line: u32, encoding: actions.Encoding) ![]actions.Action {
-    return actions.actionsFor(arena, testing.io, source, .{}, line, line, encoding);
+    const doc = try arena.create(api.Document);
+    doc.* = try api.Document.parse(arena, source);
+    return actions.actionsFor(arena, testing.io, doc, .{}, line, line, encoding);
 }
 
 test "LSP actions: a finding's fix, preferred when safe, and a disable action indented like its line" {
