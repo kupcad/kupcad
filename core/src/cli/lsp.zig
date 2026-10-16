@@ -12,6 +12,7 @@ const VM = @import("../vm/vm.zig").VM;
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
+const Outcome = @import("outcome.zig").Outcome;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const ScriptSession = @import("../daemon/session.zig").ScriptSession;
@@ -991,7 +992,7 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     return path;
 }
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !@import("outcome.zig").Outcome {
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !Outcome {
     // 1. Setup global dependencies
     var mem_vfs = MemoryVfs.init(allocator);
     defer mem_vfs.deinit();

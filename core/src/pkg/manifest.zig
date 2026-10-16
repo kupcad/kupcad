@@ -1,5 +1,6 @@
 const std = @import("std");
 const validate = @import("validate.zig");
+const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 pub const StringMap = std.StringHashMap([]const u8);
 
@@ -37,7 +38,7 @@ pub const Manifest = struct {
     }
 
     /// Loads and parses kupcad.json from disk
-    pub fn load(allocator: std.mem.Allocator, fs: @import("../vfs/vfs.zig").Vfs) !Manifest {
+    pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Manifest {
         const buffer = fs.readFile(allocator, "kupcad.json") catch |err| switch (err) {
             error.FileNotFound => return error.ManifestNotFound,
             else => return err,
@@ -97,7 +98,7 @@ pub const Manifest = struct {
     }
 
     /// Saves the current state back to kupcad.json deterministically
-    pub fn save(self: *Manifest, fs: @import("../vfs/vfs.zig").Vfs) !void {
+    pub fn save(self: *Manifest, fs: Vfs) !void {
         var out_str: std.ArrayListUnmanaged(u8) = .empty;
         defer out_str.deinit(self.allocator);
 

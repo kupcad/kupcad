@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const VM = @import("vm/vm.zig").VM;
 const chunk = @import("vm/chunk.zig");
 const value = @import("core/value.zig");
@@ -206,7 +207,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
 
 /// modelFingerprint, for tests that compare models (api_test.zig).
 pub fn modelFingerprintForTest(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
-    if (!@import("builtin").is_test) @compileError("tests only");
+    if (!builtin.is_test) @compileError("tests only");
     return modelFingerprint(allocator, io, source);
 }
 

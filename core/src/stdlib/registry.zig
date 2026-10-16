@@ -7,6 +7,9 @@ const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
 const object_mod = @import("classes/object.zig");
+const array_class_mod = @import("classes/array.zig");
+const string_class_mod = @import("classes/string.zig");
+const map_class_mod = @import("classes/map.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
@@ -94,9 +97,9 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // vm.workplane_class = try defineValueClass(vm, "Workplane");
 
     // Array.new / String.new / Map.new build real empty values, as in Ruby.
-    try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(@import("classes/array.zig").arrayNew));
-    try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(@import("classes/string.zig").stringNew));
-    try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(@import("classes/map.zig").mapNew));
+    try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(array_class_mod.arrayNew));
+    try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(string_class_mod.stringNew));
+    try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
 
     // --- Formalize Kernel, Solid and Sketch2D Classes ---
     const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);

@@ -5,6 +5,7 @@ const fs = @import("fs.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
+const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const diagnostic_report = @import("diagnostic_report.zig");
 const session_mod = @import("../daemon/session.zig");
 const debug = @import("../stdlib/debug.zig");
@@ -213,7 +214,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     // The project's memory sandbox (`vm_memory_limit` in .kupcad.json), if it sets one.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(io, allocator, target_input, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ @import("config.zig").FILE_NAME, target_input, where.line, where.column, ProjectConfig.describeError(err) });
+        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, target_input, where.line, where.column, ProjectConfig.describeError(err) });
         return .failure;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);

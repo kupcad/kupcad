@@ -2,6 +2,7 @@ const std = @import("std");
 const semver = @import("../../core/semver.zig");
 const validate = @import("../validate.zig");
 const ArchiveLayout = @import("../cafs.zig").ArchiveLayout;
+const git_host = @import("git_host.zig");
 
 /// Length of the hex digest prefix used to derive ids for URL/path based packages.
 const URL_ID_HEX_LEN = 16;
@@ -35,7 +36,7 @@ pub const ProviderType = enum {
 
     /// Providers with a commit-resolution API (refs are pinned to an immutable commit).
     pub fn isGitHost(self: ProviderType) bool {
-        return @import("git_host.zig").of(self) != null;
+        return git_host.of(self) != null;
     }
 
     /// Git hosts wrap their archives in a top folder; an archive named directly is the package.

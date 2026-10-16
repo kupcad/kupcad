@@ -22,7 +22,7 @@ const CONTENT_COMMIT_LEN = 40;
 /// Where installed packages live, by content: PACKAGE_DIR/<alias> links into it.
 const STORE_DIR = PACKAGE_DIR ++ "/.store";
 
-const log = std.log.scoped(.resolver);
+const log = std.log.scoped(.pkg);
 
 pub const Resolver = struct {
     allocator: std.mem.Allocator,

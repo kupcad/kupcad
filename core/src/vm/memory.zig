@@ -4,6 +4,7 @@ const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
+const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
@@ -188,7 +189,7 @@ pub const GC = struct {
                 self.assemblies.items.len + self.workplanes.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
-                vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.\n", .{});
+                vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
                 // Instruct the VM to halt execution immediately so the daemon stays alive
                 vm.cancel_token.store(true, .release);
                 return;
@@ -213,7 +214,7 @@ pub const GC = struct {
 
         if (self.max_memory_limit) |limit| {
             if (self.bytes_allocated + @sizeOf(T) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.\n", .{limit});
+                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.", .{limit});
                 return error.OutOfMemory;
             }
         }
@@ -398,7 +399,7 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjGeometry, &self.geometries, .geometry);
         ptr.dag_idx = switch (state) {
             .symbolic => |idx| idx,
-            .concrete => @import("dag.zig").CONCRETE_NODE_SENTINEL, // no DAG node
+            .concrete => CONCRETE_NODE_SENTINEL, // no DAG node
         };
         ptr.cached_handle = switch (state) {
             .symbolic => null,
@@ -678,7 +679,7 @@ pub const GC = struct {
         keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
 
         for (self.geometries.items) |geom_ptr| {
-            if (geom_ptr.dag_idx != @import("dag.zig").CONCRETE_NODE_SENTINEL) {
+            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL) {
                 if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
                     const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
                     live_hashes.putAssumeCapacity(hash, {});

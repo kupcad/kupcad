@@ -14,6 +14,7 @@ const token = @import("../../core/token.zig");
 const LineIndex = @import("../../core/line_index.zig").LineIndex;
 const linter = @import("linter.zig");
 const Config = @import("config.zig").Config;
+const Level = @import("config.zig").Level;
 
 /// What findings about suppressions are reported under (they can't be suppressed).
 pub const RULE = "suppression";
@@ -144,7 +145,7 @@ fn parseComment(
     if (named == 0) try addProblem(allocator, problems, comment.loc, "kupcad:{s} must name the rules it hides", .{name});
 }
 
-fn levelOf(config: Config, rule: []const u8) @import("config.zig").Level {
+fn levelOf(config: Config, rule: []const u8) Level {
     inline for (comptime std.meta.fieldNames(Config)) |id| {
         if (std.mem.eql(u8, id, rule)) return @field(config, id);
     }

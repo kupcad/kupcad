@@ -37,6 +37,10 @@ const MAX_TRACE_LINE_LEN = 256;
 
 /// Values a call site pushes after its packed positional Array: the keyword Map and the block.
 const MAX_TRAILING_CALL_VALUES = 2;
+/// Bits a shift count may name in a bitwise op.
+const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);
+/// 2^63: the smallest float magnitude outside i64 (-2^63 itself still fits).
+const I64_FLOAT_BOUND: f64 = 0x1p63;
 
 pub const MethodLookupResult = struct {
     method: ?value.Value,
@@ -457,7 +461,7 @@ pub const VM = struct {
 
         // --- PROFILER: Top-Level Script ---
         if (self.profiler) |p| p.enterFrame("script") catch |err| {
-            std.log.err("Profiler error: {}", .{err});
+            log.err("Profiler error: {}", .{err});
         };
 
         const res = self.run();
@@ -490,7 +494,7 @@ pub const VM = struct {
             if (self.instruction_limit > 0) {
                 self.instruction_count += 1;
                 if (self.instruction_count > self.instruction_limit) {
-                    self.runtimeError("Runtime Error: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.\n", .{self.instruction_limit});
+                    self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.instruction_limit});
                     return .execution_limit_exceeded;
                 }
             }
@@ -1660,7 +1664,7 @@ pub const VM = struct {
 
     fn verifyBytecode(self: *VM, c: *const chunk.Chunk) bool {
         verifier.verifyChunk(self.allocator, c) catch |err| {
-            self.reportError("Fatal: Bytecode verification failed: {s}\n", .{@errorName(err)});
+            self.reportError("Fatal: Bytecode verification failed: {s}", .{@errorName(err)});
             return false;
         };
         return true;
@@ -2001,7 +2005,7 @@ pub const VM = struct {
     fn reserveFrame(self: *VM, function: *value.ObjFunction, locals_to_pad: usize) !void {
         const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(function.chunk.?));
         self.ensureStackCapacity(self.stack_top + locals_to_pad + exec_chunk.max_stack_slots + NATIVE_STACK_RESERVE) catch |err| {
-            self.runtimeError("Fatal: out of memory growing the VM stack.\n", .{});
+            self.runtimeError("Fatal: out of memory growing the VM stack.", .{});
             return err;
         };
     }
@@ -2011,7 +2015,7 @@ pub const VM = struct {
     /// `has_kwargs`: the argument before the block is the call's keyword Map.
     pub fn dispatchClosure(self: *VM, closure: *value.ObjClosure, arg_count: usize, base_slot: usize, is_constructor: bool, has_block: bool, has_kwargs: bool) InterpretResult {
         if (self.frames.items.len >= self.max_call_frames) {
-            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
+            self.runtimeError("Call stack overflow: deeper than {d} calls (a recursion that never ends?).", .{self.max_call_frames});
             return .runtime_error;
         }
         self.frames.ensureUnusedCapacity(self.allocator, 1) catch return .runtime_error;
@@ -2042,7 +2046,7 @@ pub const VM = struct {
 
         if (self.profiler) |p| {
             p.enterFrame(self.closureName(closure)) catch |err| {
-                std.log.err("Profiler error: {}", .{err});
+                log.err("Profiler error: {}", .{err});
             };
         }
 
@@ -2069,7 +2073,7 @@ pub const VM = struct {
     /// `args` is the call's keyword Map (a `yield x, key: v`) for the keyword slot.
     fn callClosureWith(self: *VM, closure: *value.ObjClosure, self_val: value.Value, args: []const value.Value, has_kwargs: bool) !value.Value {
         if (self.frames.items.len >= self.max_call_frames) {
-            self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
+            self.runtimeError("Call stack overflow: deeper than {d} calls (a recursion that never ends?).", .{self.max_call_frames});
             return error.RuntimeError;
         }
         try self.frames.ensureUnusedCapacity(self.allocator, 1);
@@ -2096,7 +2100,7 @@ pub const VM = struct {
         if (self.profiler) |p| {
             const func_name = if (closure.function.name) |n| n.chars else "block";
             p.enterFrame(func_name) catch |err| {
-                std.log.err("Profiler error: {}", .{err});
+                log.err("Profiler error: {}", .{err});
             };
         }
 
@@ -2173,10 +2177,6 @@ pub const VM = struct {
         _ = self;
         return map.map.getIndex(key);
     }
-
-    const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);
-    // 2^63: the smallest float magnitude outside i64 (-2^63 itself still fits)
-    const I64_FLOAT_BOUND: f64 = 0x1p63;
 
     /// The i64 a number stands for in a bitwise op (truncated toward zero), or null
     /// when it is NaN, infinite or outside i64.
@@ -2980,12 +2980,12 @@ pub const VM = struct {
 
         // --- PROFILER: Native Enter ---
         if (self.profiler) |p| p.enterFrame(native_obj.name) catch |err| {
-            std.log.err("Profiler error: {}", .{err});
+            log.err("Profiler error: {}", .{err});
         };
 
         const result = native_obj.function(self, .{ .ptr = args_ptr, .count = arg_count, .has_block = has_block, .name = native_obj.name }) catch |err| {
             if (self.profiler) |p| p.exitFrame() catch |e| {
-                std.log.err("Profiler error: {}", .{e});
+                log.err("Profiler error: {}", .{e});
             };
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) {
@@ -3010,7 +3010,7 @@ pub const VM = struct {
 
         // --- PROFILER: Native Exit ---
         if (self.profiler) |p| p.exitFrame() catch |err| {
-            std.log.err("Profiler error: {}", .{err});
+            log.err("Profiler error: {}", .{err});
         };
 
         self.popAndRelease(arg_count + 1);
@@ -3101,7 +3101,7 @@ pub const VM = struct {
     /// it set up forgotten.
     fn popFrame(self: *VM) void {
         if (self.profiler) |p| p.exitFrame() catch |err| {
-            std.log.err("Profiler error: {}", .{err});
+            log.err("Profiler error: {}", .{err});
         };
         std.debug.assert(self.frames.items.len > 0);
         const top = self.frames.items[self.frames.items.len - 1];
@@ -3217,7 +3217,7 @@ pub const VM = struct {
                         var out: std.Io.Writer.Allocating = .init(self.allocator);
                         defer out.deinit();
                         err_val.stringify(false, &out.writer) catch |err| {
-                            self.reportError("Error stringifying a raised value: {}\n", .{err});
+                            self.reportError("Error stringifying a raised value: {}", .{err});
                         };
                         str_val = self.allocateString(out.written()) catch null;
                     }
@@ -3226,7 +3226,7 @@ pub const VM = struct {
                         self.push(s_val); // Protect until the instance holds it
                         const msg_key = self.allocateString("message") catch return .runtime_error;
                         self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
-                            self.reportError("Error setting exception message: {}\n", .{err});
+                            self.reportError("Error setting exception message: {}", .{err});
                         };
                         _ = self.pop();
 
@@ -3235,7 +3235,7 @@ pub const VM = struct {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                             const bt_key = self.allocateString("backtrace") catch return .runtime_error;
                             self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                self.reportError("Error setting exception backtrace: {}\n", .{err});
+                                self.reportError("Error setting exception backtrace: {}", .{err});
                             };
                             _ = self.pop();
                         }
@@ -3265,7 +3265,7 @@ pub const VM = struct {
             // We removed the [Uncaught Exception] header
             if (err_val.isObject() and err_val.asObj().obj_type == .string) {
                 const str = err_val.asString().chars;
-                self.reportError("\nRuntimeError: {s}\n", .{str});
+                self.reportError("RuntimeError: {s}", .{str});
                 self.printStacktrace();
             } else if (err_val.isInstance()) {
                 const inst = err_val.asInstance();
@@ -3284,7 +3284,7 @@ pub const VM = struct {
                         }
                     }
                 }
-                if (!printed) self.reportError("\n{s}\n", .{inst.class.name.chars});
+                if (!printed) self.reportError("{s}", .{inst.class.name.chars});
 
                 // Print First-Class Backtrace seamlessly
                 var printed_bt = false;
@@ -3298,7 +3298,7 @@ pub const VM = struct {
                             for (arr_obj.items.items) |frame_val| {
                                 if (frame_val.isObject() and frame_val.asObj().obj_type == .string) {
                                     const frame_str = frame_val.asString().chars;
-                                    self.reportError("{s}\n", .{frame_str});
+                                    self.reportError("{s}", .{frame_str});
                                 }
                             }
                             printed_bt = true;
@@ -3308,7 +3308,7 @@ pub const VM = struct {
 
                 if (!printed_bt) self.printStacktrace();
             } else {
-                self.reportError("\nUnknown error.\n", .{});
+                self.reportError("Unknown error.", .{});
                 self.printStacktrace();
             }
             return .runtime_error;
@@ -3338,7 +3338,7 @@ pub const VM = struct {
             .stack_top = r_frame.stack_top,
             .frame_count = r_frame.frame_count,
         }) catch {
-            self.reportError("Fatal: Out of memory during exception unwinding.\n", .{});
+            self.reportError("Fatal: Out of memory during exception unwinding.", .{});
             return .runtime_error;
         };
 
@@ -3664,8 +3664,7 @@ pub const VM = struct {
     /// rejected at compile time.
     pub fn raiseError(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) InterpretResult {
         comptime {
-            if (fmt.len > 0 and fmt[fmt.len - 1] == '\n') @compileError("error messages must not end in a newline: \"" ++ fmt ++ "\"");
-            if (std.mem.startsWith(u8, fmt, "Runtime Error:")) @compileError("drop the 'Runtime Error:' prefix from \"" ++ fmt ++ "\"");
+            checkMessageLayout(fmt);
             for (std.meta.fieldNames(ErrorKind)) |name| {
                 if (std.mem.startsWith(u8, fmt, name ++ ":")) @compileError("drop the '" ++ name ++ ":' prefix and pass ." ++ name ++ ": \"" ++ fmt ++ "\"");
             }
@@ -3681,7 +3680,7 @@ pub const VM = struct {
                     self.push(str_val); // Protect until the instance holds it
                     const msg_key = self.allocateString("message") catch return .runtime_error;
                     self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
-                        self.reportError("Error setting exception message: {}\n", .{err});
+                        self.reportError("Error setting exception message: {}", .{err});
                     };
                     _ = self.pop();
 
@@ -3690,7 +3689,7 @@ pub const VM = struct {
                         self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
                         const bt_key = self.allocateString("backtrace") catch return .runtime_error;
                         self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                            self.reportError("Error setting exception backtrace: {}\n", .{err});
+                            self.reportError("Error setting exception backtrace: {}", .{err});
                         };
                         _ = self.pop();
                     }
@@ -3708,7 +3707,7 @@ pub const VM = struct {
             self.push(err_val);
             return self.executeThrow();
         } else {
-            self.runtimeError("Fatal: OOM while throwing exception.\n", .{});
+            self.runtimeError("Fatal: out of memory while raising an error.", .{});
             return .runtime_error;
         }
     }
@@ -3718,7 +3717,17 @@ pub const VM = struct {
         self.printStacktrace(); // Append the exact line and column
     }
 
+    /// The message layout every error the VM reports keeps: the logger and the embedders
+    /// lay it out, so a message has no newlines at its ends (reportError's had, and printed
+    /// blank lines), and no "Runtime Error:" prefix of its own.
+    fn checkMessageLayout(comptime fmt: []const u8) void {
+        if (fmt.len > 0 and fmt[fmt.len - 1] == '\n') @compileError("error messages must not end in a newline: \"" ++ fmt ++ "\"");
+        if (fmt.len > 0 and fmt[0] == '\n') @compileError("error messages must not start with a newline: \"" ++ fmt ++ "\"");
+        if (std.mem.startsWith(u8, fmt, "Runtime Error:")) @compileError("drop the 'Runtime Error:' prefix from \"" ++ fmt ++ "\"");
+    }
+
     pub fn reportError(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        comptime checkMessageLayout(fmt);
         self.recordLastError(fmt, args);
         if (self.mute_errors) return;
 
@@ -3780,7 +3789,7 @@ pub const VM = struct {
 
     fn printStacktrace(self: *VM) void {
         var lines = BacktraceLines.init(self);
-        while (lines.next()) |line| self.reportError("{s}\n", .{line});
+        while (lines.next()) |line| self.reportError("{s}", .{line});
     }
 
     // --- First-Class Error Backtraces ---

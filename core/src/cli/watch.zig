@@ -7,6 +7,7 @@ const build_cmd = @import("build_cmd.zig");
 const fs = @import("fs.zig");
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
+const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const debug = @import("../stdlib/debug.zig");
@@ -41,7 +42,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // interactive default, so a runaway loop ends with an error instead of the machine.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(init.io, allocator, file_path, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ @import("config.zig").FILE_NAME, file_path, where.line, where.column, ProjectConfig.describeError(err) });
+        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, file_path, where.line, where.column, ProjectConfig.describeError(err) });
         return .failure;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit orelse limits.INTERACTIVE_MEMORY_LIMIT);
