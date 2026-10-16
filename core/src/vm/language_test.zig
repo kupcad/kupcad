@@ -367,3 +367,31 @@ test "Language: == compares Arrays, Maps and Ranges by content" {
         .{ .src = "r = \"#{[1] == 1} #{\"a\" == [\"a\"]}\"", .expected = .{ .str = "false false" } },
     });
 }
+
+const TO_S_CLASS = "class P\n  def initialize(x)\n    @x = x\n  end\n  def to_s\n    \"P(#{@x})\"\n  end\nend\n";
+
+test "Language: puts and interpolation show an instance by its own to_s" {
+    // The method was ignored: the instance showed as "#<P>" in both.
+    try expectScripts(&.{
+        .{ .src = TO_S_CLASS ++ "r = \"#{P.new(1)} and #{P.new(2)}\"", .expected = .{ .str = "P(1) and P(2)" } },
+        .{ .src = TO_S_CLASS ++ "r = \"#{P.new(1)}\"", .expected = .{ .str = "P(1)" }, .gc_stress = true },
+        .{ .src = rescued("class Q\n  def to_s\n    5\n  end\nend\n\"#{Q.new}\""), .expected = .{ .str = "TypeError: Q#to_s must return a String, got Number" } },
+        .{ .src = rescued("class Q\n  def to_s\n    raise \"boom\"\n  end\nend\n\"#{Q.new}\""), .expected = .{ .str = "RuntimeError: boom" } },
+        .{ .src = "class Q\nend\nr = \"#{Q.new}\".length > 0", .expected = .{ .boolean = true } },
+    });
+
+    var vm = try support.initVm();
+    defer vm.deinit();
+    captured_output.clearRetainingCapacity();
+    defer captured_output.clearAndFree(testing.allocator);
+    vm.host.print_handler = capturePrint;
+    try testing.expectEqual(.ok, try support.runOn(&vm, TO_S_CLASS ++ "puts P.new(3)\nprint P.new(4)"));
+    try testing.expectEqualStrings("P(3)\nP(4)", captured_output.items);
+}
+
+var captured_output: std.ArrayListUnmanaged(u8) = .empty;
+
+fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {
+    _ = vm;
+    captured_output.appendSlice(testing.allocator, message) catch @panic("out of memory capturing output");
+}

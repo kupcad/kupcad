@@ -735,38 +735,8 @@ pub const VM = struct {
                 .op_interpolate => {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-
-                    var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
-                    var fba = std.heap.FixedBufferAllocator.init(&stack_buf);
-                    var stack_out: std.Io.Writer.Allocating = .init(fba.allocator());
-
-                    var use_heap = false;
-                    const start_idx = self.stack_top - count;
-                    for (self.stack[start_idx..self.stack_top]) |val| {
-                        val.stringify(false, &stack_out.writer) catch {
-                            use_heap = true;
-                            break;
-                        };
-                    }
-
-                    // SAFETY: Unconditionally populated in all execution branches by the if/else block below
-                    var merged_str: value.Value = undefined;
-                    if (!use_heap) {
-                        merged_str = self.allocateString(stack_out.written()) catch return .runtime_error;
-                    } else {
-                        var heap_out: std.Io.Writer.Allocating = .init(self.allocator);
-                        defer heap_out.deinit();
-                        for (self.stack[start_idx..self.stack_top]) |val| {
-                            val.stringify(false, &heap_out.writer) catch return .runtime_error;
-                        }
-                        merged_str = self.allocateString(heap_out.written()) catch return .runtime_error;
-                    }
-
-                    // Pop and release all original stack fragments
-                    for (0..count) |_| {
-                        _ = self.pop();
-                    }
-                    self.push(merged_str);
+                    const res = self.executeInterpolate(count);
+                    if (res != .ok) return res;
                 },
                 .op_array_push => {
                     // Peek instead of Pop to keep `val` rooted during potential reallocation
@@ -1353,7 +1323,7 @@ pub const VM = struct {
 
                     // Safely propagate limits through native yields
                     const yield_depth = self.frames.items.len;
-                    const result = self.callClosureWith(block_closure, yield_args, yield_call.has_kwargs) catch |err| {
+                    const result = self.callClosureWith(block_closure, value.Value.initObj(&block_closure.obj), yield_args, yield_call.has_kwargs) catch |err| {
                         if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
                         if (err == error.BlockBreak) {
                             self.popAndRelease(yield_arg_count);
@@ -2013,12 +1983,18 @@ pub const VM = struct {
     }
 
     pub fn callClosureSync(self: *VM, closure: *value.ObjClosure, args: []const value.Value) !value.Value {
-        return self.callClosureWith(closure, args, false);
+        return self.callClosureWith(closure, value.Value.initObj(&closure.obj), args, false);
     }
 
-    /// callClosureSync where `has_kwargs` says the last of `args` is the call's keyword
-    /// Map (a `yield x, key: v`), which goes to the block's keyword slot.
-    fn callClosureWith(self: *VM, closure: *value.ObjClosure, args: []const value.Value, has_kwargs: bool) !value.Value {
+    /// Calls a method (`to_s` for display) on `receiver` and runs it to completion.
+    pub fn callMethodSync(self: *VM, receiver: value.Value, method: *value.ObjClosure, args: []const value.Value) !value.Value {
+        return self.callClosureWith(method, receiver, args, false);
+    }
+
+    /// callClosureSync with the frame's slot 0 (`self_val`: the closure itself for a block
+    /// or lambda, the receiver for a method) and `has_kwargs`, which says the last of
+    /// `args` is the call's keyword Map (a `yield x, key: v`) for the keyword slot.
+    fn callClosureWith(self: *VM, closure: *value.ObjClosure, self_val: value.Value, args: []const value.Value, has_kwargs: bool) !value.Value {
         if (self.frames.items.len >= self.max_call_frames) {
             self.runtimeError("Runtime Error: Call stack overflow (exceeded max frame depth of {d}).\n", .{self.max_call_frames});
             return error.RuntimeError;
@@ -2035,9 +2011,9 @@ pub const VM = struct {
         const total_pushes = 1 + @max(positional.len, expected_args) + 2;
         try self.ensureStackCapacity(self.stack_top + total_pushes);
 
-        const base_slot = self.stack_top; // Record where the closure lands exactly
+        const base_slot = self.stack_top; // Record where slot 0 lands exactly
 
-        self.push(value.Value.initObj(&closure.obj)); // closure itself
+        self.push(self_val);
 
         for (positional) |arg| self.push(arg);
 
@@ -3016,6 +2992,53 @@ pub const VM = struct {
         if (target > caller_depth) return null;
         self.restoreAfterUnwind(caller_depth);
         return .ok;
+    }
+
+    /// Joins the `count` fragments on top of the stack into one String (writeDisplay for
+    /// each, so an instance's own to_s is called), which replaces them. Short results are
+    /// built on the native stack, longer ones on the heap.
+    fn executeInterpolate(self: *VM, count: usize) InterpretResult {
+        const start_idx = self.stack_top - count;
+        const depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
+        var buffer = std.heap.BufferFirstAllocator.init(&stack_buf, self.allocator);
+        var out: std.Io.Writer.Allocating = .init(buffer.allocator());
+        defer out.deinit();
+        for (self.stack[start_idx..self.stack_top]) |val| {
+            self.writeDisplay(val, &out.writer) catch |err| switch (err) {
+                // A to_s raised: a rescue has the error (resume there) or the run has failed
+                error.Unwind => {
+                    self.restoreAfterUnwind(depth);
+                    return .ok;
+                },
+                error.ExecutionLimitExceeded => return .execution_limit_exceeded,
+                error.OutOfMemory, error.WriteFailed => return self.raiseError(.OutOfMemoryError, "out of memory building a String", .{}),
+                else => return self.alreadyThrown(throw_seq, depth) orelse .runtime_error,
+            };
+        }
+        const merged = self.allocateString(out.written()) catch return .runtime_error;
+        self.popAndRelease(count);
+        self.push(merged);
+        return .ok;
+    }
+
+    /// Writes `val` as `puts` and interpolation show it: an instance whose class defines
+    /// `to_s` in the script by what that returns (a String, else a TypeError), everything
+    /// else as stringify prints it. The method was ignored: an instance showed as "#<P>".
+    pub fn writeDisplay(self: *VM, val: value.Value, writer: *std.Io.Writer) !void {
+        if (val.isInstance()) {
+            const name = try self.allocateString("to_s");
+            if (self.findMethod(val.asInstance().class, name)) |method| if (method.isClosure()) {
+                const shown = try self.callMethodSync(val, method.asClosure(), &.{});
+                if (!shown.isString()) {
+                    _ = self.raiseError(.TypeError, "{s}#to_s must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
+                    return error.RuntimeError;
+                }
+                return writer.writeAll(shown.asString().chars);
+            };
+        }
+        try val.stringify(false, writer);
     }
 
     /// Leaves the top frame: its upvalues are closed, its slots dropped, and the handlers

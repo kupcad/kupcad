@@ -9,7 +9,7 @@ inline fn printShared(vm: *VM, args: []const value.Value, append_newline: bool) 
             var out: std.Io.Writer.Allocating = .init(vm.allocator);
             defer out.deinit();
 
-            try arg.stringify(false, &out.writer);
+            try vm.writeDisplay(arg, &out.writer);
             if (append_newline) {
                 try out.writer.writeAll("\n");
             }
