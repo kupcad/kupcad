@@ -250,20 +250,29 @@ fn keyName(k: value.Value) ?[]const u8 {
 
 /// Parses positional arguments and/or `x:`, `y:`, `z:` kwargs into [x, y, z].
 /// Unset components are `default_val`; kwargs override positionals.
+/// The x, y, z of a transform call: up to three numbers, one Array of two or three
+/// (`translate([1, 2, 3])`), and/or `x:`, `y:`, `z:`; axes not given are `default_val`.
 pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: []const u8) ![VEC3_LEN]f64 {
     // Raw values, so a nil coordinate is a TypeError rather than an unset axis.
     const parsed = try parseKwargsSubset(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, &VEC3_NAMES, vm, args, method);
-    if (parsed.positional.len > VEC3_LEN) {
-        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, parsed.positional.len });
+    const positional = if (parsed.positional.len == 1 and parsed.positional[0].isArray()) parsed.positional[0].asArray().items.items else parsed.positional;
+    if (positional.len > VEC3_LEN) {
+        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, positional.len });
         return error.RuntimeError;
     }
 
     var vec: [VEC3_LEN]f64 = @splat(default_val);
-    for (parsed.positional, 0..) |arg, i| vec[i] = try requireNumber(vm, arg, method, VEC3_NAMES[i]);
+    for (positional, 0..) |arg, i| vec[i] = try requireNumber(vm, arg, method, VEC3_NAMES[i]);
     inline for (VEC3_NAMES, 0..) |axis, i| {
         if (@field(parsed.opts, axis)) |v| vec[i] = try requireNumber(vm, v, method, axis);
     }
     return vec;
+}
+
+/// Whether a transform call gave one bare number and nothing else (`scale(2)`,
+/// `rotate(45)`): the shorthands with a meaning of their own.
+pub fn singleNumber(args: []const value.Value) bool {
+    return args.len == 1 and args[0].isNumber();
 }
 
 /// A native call's arguments split into positionals and keyword options.

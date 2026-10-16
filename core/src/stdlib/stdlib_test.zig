@@ -1532,7 +1532,7 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
         "cube(1).translate(\"10\", 0, 0)",
         "cube(1).translate(z: \"up\")",
         "cube(1).translate(x: nil)",
-        "cube(1).translate([1, 2, 3])",
+        "cube(1).translate([1, \"2\", 3])", // a vector is fine; a non-number in it is not
         "cube(1).translate(1, 2, 3, 4)",
         "square(1).translate(y: :a)",
         "cube(1).rotate(z: \"45\")",
@@ -2266,4 +2266,21 @@ test "Stdlib: each method gives back what the manifest says it does" {
         }
     }
     try testing.expectEqual(calls.len, checked);
+}
+
+test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform takes a vector" {
+    // One number used to stretch x alone (every CAD tool reads it as uniform) and to turn
+    // a Solid about x but a Sketch about z.
+    try test_support.expectScripts(&.{
+        .{ .src = "r = cube(2).scale(3).bbox.max", .expected = .{ .nums = &.{ 6, 6, 6 } } },
+        .{ .src = "r = cube(2).scale([2, 1, 1]).bbox.max", .expected = .{ .nums = &.{ 4, 2, 2 } } },
+        .{ .src = "r = cube(2).scale(2, 1, 1).bbox.max", .expected = .{ .nums = &.{ 4, 2, 2 } } },
+        .{ .src = "r = cube(2).scale(x: 2).bbox.max", .expected = .{ .nums = &.{ 4, 2, 2 } } },
+        .{ .src = "r = cube(2).rotate(90).bbox.min.map { |v| v.round(6) }", .expected = .{ .nums = &.{ -2, 0, 0 } } },
+        .{ .src = "r = square(2).rotate(90).extrude(1).bbox.min.map { |v| v.round(6) }", .expected = .{ .nums = &.{ -2, 0, 0 } } },
+        .{ .src = "r = cube(2).rotate(90, 0, 0).bbox.min.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0, -2, 0 } } },
+        .{ .src = "r = cube(2).translate([1, 2, 3]).bbox.min", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = square(2).translate([1, 2]).extrude(1).bbox.min", .expected = .{ .nums = &.{ 1, 2, 0 } } },
+        .{ .src = comptime rescued("cube(1).translate([1, 2, 3, 4])"), .expected = .{ .str = "ArgumentError: translate expects at most 3 numbers (x, y, z), got 4" } },
+    });
 }

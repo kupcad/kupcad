@@ -32,8 +32,14 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
     return util.notDefinedFor(vm, "translate", receiver);
 }
 
+/// `rotate(x, y, z)` in degrees, or `rotate(a)`: about z, for a Solid as for a Sketch
+/// (OpenSCAD's default; one angle used to mean x on a Solid and z on a Sketch).
 pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 0.0, "rotate");
+    var vec = try util.parseVec3(vm, args, 0.0, "rotate");
+    if (util.singleNumber(args)) {
+        const angle = vec[0]; // (written straight into `vec`, the aggregate read a cleared x)
+        vec = .{ 0.0, 0.0, angle };
+    }
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -48,11 +54,9 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     return util.notDefinedFor(vm, "rotate", receiver);
 }
 
-/// A Sketch turns about z only: `rotate(a)` (OpenSCAD's 2D rotate), `rotate(z: a)` or
-/// `rotate(0, 0, a)`, in degrees.
+/// A Sketch turns about z only: `rotate(a)`, `rotate(z: a)` or `rotate(0, 0, a)`, in degrees.
 fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
-    const single_angle = args.len == 1 and util.trailingKwargs(args) == null;
-    if (single_angle) return vec[0];
+    _ = args;
     if (vec[0] != 0.0 or vec[1] != 0.0) {
         _ = vm.raiseError(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
         return error.RuntimeError;
@@ -60,8 +64,14 @@ fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
     return vec[2];
 }
 
+/// `scale(x, y, z)`, `scale([x, y, z])`, `scale(x: 2)`, or `scale(s)`: the same factor on
+/// every axis, as every CAD tool reads it (one number used to stretch x alone).
 pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 1.0, "scale");
+    var vec = try util.parseVec3(vm, args, 1.0, "scale");
+    if (util.singleNumber(args)) {
+        const factor = vec[0];
+        vec = @splat(factor);
+    }
     // A zero factor flattens the shape onto a plane: never a valid solid or sketch.
     // Subnormal factors are rejected too, since they collapse just the same. A
     // CrossSection ignores z, so only x and y are checked for it.
