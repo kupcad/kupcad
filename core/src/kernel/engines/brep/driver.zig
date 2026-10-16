@@ -127,8 +127,10 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
     defer step_solids.deinit(allocator);
 
     for (handles) |h| {
-        if (h.engine != .brep_native) continue;
-        if (@intFromPtr(h.ptr) == 0) continue;
+        // Never skipped: a part left out is a wrong file (callers refuse mesh parts first,
+        // exporters/3d/step.zig requireExactParts).
+        if (h.engine != .brep_native) return error.NotExactGeometry;
+        if (@intFromPtr(h.ptr) == 0) return error.NoGeometry;
 
         const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
         try step_solids.append(allocator, .{

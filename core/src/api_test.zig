@@ -200,6 +200,29 @@ test "API: a model the engine can't mesh says so, for every mesh format" {
     try testing.expect(std.mem.startsWith(u8, step, "ISO-10303-21;"));
 }
 
+test "API: a STEP build refuses a part that isn't exact geometry, instead of dropping it" {
+    // The B-Rep writer skipped every mesh part: a model with a Manifold part exported a
+    // STEP file without it, and an all-Manifold model failed with a bare NoGeometry.
+    const cases = [_]struct { src: []const u8, message: []const u8 }{
+        .{
+            // A STEP build makes everything with the B-Rep engine, unless the script asks
+            // for another one.
+            .src = "m = nil\nCAD.with_config(engine: :manifold) do\n  m = cube(10).translate(20, 0, 0)\nend\n[cylinder(r: 2, h: 5), m]",
+            .message = "NotImplementedError: STEP export needs exact geometry, and part 2 of 2 was built by the manifold engine (a mesh); build it with engine: :brep",
+        },
+        .{
+            .src = "CAD.config(engine: :manifold)\ncube(10)",
+            .message = "NotImplementedError: STEP export needs exact geometry, and the model was built by the manifold engine (a mesh); build it with engine: :brep",
+        },
+    };
+    for (cases) |case| {
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModelWithDiagnostic(testing.allocator, testing.io, case.src, "step", false, null, null, &diag));
+        try testing.expectEqualStrings(case.message, diag.message.?);
+    }
+}
+
 test "API: an STL of several parts is their union; glTF keeps them apart" {
     const source = "[cube(10), cube(10).translate(5, 0, 0)]";
     const stl = try api.buildModel(testing.allocator, testing.io, source, "stl", false, null, null);

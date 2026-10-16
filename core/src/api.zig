@@ -230,7 +230,10 @@ pub fn exportModelFromVm(
     try export_handles.appendSlice(allocator, parts.items);
     if (export_handles.items.len == 0) return error.NoGeometry;
 
-    if (is_step) return step_exporter.buildStepBuffer(allocator, export_handles.items);
+    if (is_step) {
+        try step_exporter.requireExactParts(vm, export_handles.items);
+        return step_exporter.buildStepBuffer(allocator, export_handles.items);
+    }
 
     // Mesh formats: refuse parts the engine can't tessellate before any work on them.
     for (export_handles.items) |h| try vm.requireFeature(h.engine, .mesh);

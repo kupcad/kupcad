@@ -2311,6 +2311,28 @@ test "Stdlib: each method gives back what the manifest says it does" {
     try testing.expectEqual(calls.len, checked);
 }
 
+test "Stdlib: export_step refuses a mesh part by name, and writes an exact one" {
+    // A mesh part was left out of the file without a word (or failed as NoGeometry).
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    const cases = [_]IterCase{
+        .{ .src = rescued("cube(1).export_step(\"m.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and the model was built by the manifold engine (a mesh); build it with engine: :brep" } },
+        .{ .src = "CAD.config(engine: :brep)\nr = \"#{cube(1).export_step(\"b.step\").class}\"", .expected = .{ .str = "Geometry" } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        vm.vfs = mem_vfs.vfs();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        try testing.expectEqualStrings(case.expected.str, (vm.globals.get("r") orelse return error.MissingGlobal).asString().chars);
+    }
+    try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "m.step"));
+    const written = try mem_vfs.vfs().readFile(testing.allocator, "b.step");
+    defer testing.allocator.free(written);
+    try testing.expect(std.mem.startsWith(u8, written, "ISO-10303-21;"));
+}
+
 test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform takes a vector" {
     // One number used to stretch x alone (every CAD tool reads it as uniform) and to turn
     // a Solid about x but a Sketch about z.
