@@ -51,3 +51,12 @@ test "Linter Rule: NegativeDimRule leaves coordinates and non-size arguments alo
         try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
     }
 }
+
+test "Linter Rule: NegativeDimRule marks the whole size, sign and all" {
+    // It marked only the `-`, so an editor underlined one character of `-2.5`.
+    const source = "cube(size: -2.5)";
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+    const loc = engine.diagnostics.items[0].loc;
+    try testing.expectEqualStrings("-2.5", source[loc.offset..][0..loc.length]);
+}

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
+const token_span = @import("../../core/token_span.zig");
 const token = @import("../../core/token.zig");
 const common_errors = @import("../../core/errors.zig");
 const config_mod = @import("config.zig");
@@ -231,6 +232,15 @@ pub const Linter = struct {
             .length = self.token_lengths[main_token],
             .file_id = self.file_id,
         };
+    }
+
+    /// The source a node spans, from its first token to its last: `-2` whole, where its main
+    /// token is only the `-`.
+    pub fn nodeLoc(self: *const Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) token.Location {
+        const first = self.getLoc(@intCast(token_span.first(tree, node_idx)));
+        const last = self.getLoc(@intCast(token_span.last(tree, node_idx)));
+        if (last.offset < first.offset) return first;
+        return .{ .offset = first.offset, .length = last.offset + last.length - first.offset, .file_id = self.file_id };
     }
 
     /// Reports a finding of rule `rule_id`, at the level the config gives that rule.

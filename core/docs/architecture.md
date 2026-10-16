@@ -405,7 +405,7 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 ## 16. GC Stress
 
-`zig build test -Dgc-stress` builds every VM collecting at every object allocation (`GC.stress` defaults to `build_info.gc_stress`), so a value a native or the VM forgot to root is swept at once and the test that uses it fails there; the nightly job runs the whole suite this way on Linux. The first run found no unrooted value in the VM or the natives, only tests that build bytecode by hand without registering the chunk (`vm.gc.trackChunk`) as the compiler registers its own, and tests that count objects between their own collections (`collectOnlyWhenAsked` in `vm/memory_test.zig`). A test can still set `vm.gc.stress` (or `vm.zealous_gc`, a collection before every instruction) for a script of its own.
+`zig build test -Dgc-stress` builds every VM collecting at every object allocation (`GC.stress` defaults to `build_info.gc_stress`), so a value a native or the VM forgot to root is swept at once and the test that uses it fails there; the nightly job runs the whole suite this way on Linux. The first run found no unrooted value in the VM or the natives, only tests that build bytecode by hand without registering the chunk (`vm.gc.trackChunk`) as the compiler registers its own, and tests that count objects between their own collections (`collectOnlyWhenAsked` in `vm/memory_test.zig`). A test can still set `vm.gc.stress` (or `vm.zealous_gc`, a collection before every instruction) for a script of its own. The WebAssembly suite runs the same way (`zig build test-wasm -Dtarget=wasm32-wasi -Dgc-stress`), where usize and every pointer are 32 bits.
 
 ## 17. Engine Parity
 
@@ -418,6 +418,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 ## 19. Geometry Invariants
 
 `src/kernel/invariants_test.zig` takes one of each kind of operation the Manifold kernel performs (primitives, rounded and chamfered cubes, booleans, extrusions with holes and twist, revolve, hull, Minkowski sums, mirror, scale, text) and checks the mesh of each: closed and consistently oriented (`kernel/mesh_check.zig`), its own signed volume and area the kernel's (to float precision: the exported positions are floats), its vertices' bounds the kernel's, and its Euler characteristic the kernel's genus. Scripts check what the operations must keep: inclusion-exclusion for booleans, the volume under a rigid move and mirror, eight times it under `scale(2)`.
+
+## 20. The WebAssembly Suite
+
+`src/wasm_test.zig` drives the exports as the browser does: a build the instruction cap stops (`DEFAULT_INSTRUCTION_LIMIT` is the interactive one on wasm32) leaves the next build working; thirty rounds of build, check, format and a failing build leave the module's linear memory (`@wasmMemorySize`) where three left it; a build imports the files `put_file_wasm` put in the VFS, and fails naming the file after `clear_vfs_wasm`; `check_code_wasm`'s JSON gives each finding a one-based `line` and `col`, the `offset` and `length` of what it marks, a `severity` and a `message`, and `extract_params_wasm`'s is the `UiSchema` (`meta`, then each parameter's `name`, `type`, `default_value` and `validate`); and scripts of strings, maps, closures and instances run under GC stress with 32-bit pointers. A size finding now marks the whole literal, sign and all (`Linter.nodeLoc`), where it marked only the `-`.
 
 ## Architecture Summary Matrix
 

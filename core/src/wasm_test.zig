@@ -83,18 +83,13 @@ test "VM: Character ranges evaluate to an Array of Strings" {
     defer vm.deinit();
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks (see -Dgc-stress).
+    try vm.gc.trackChunk(&out_chunk);
 
-    const a_val = try vm.allocateString("a");
-    const d_val = try vm.allocateString("d");
-    vm.push(a_val); // Protect
-    vm.push(d_val); // Protect
-
-    const a_idx = try out_chunk.addConstant(testing.allocator, a_val);
-    const d_idx = try out_chunk.addConstant(testing.allocator, d_val);
+    // Each string is a constant of the registered chunk before the next allocation.
+    const a_idx = try out_chunk.addConstant(testing.allocator, try vm.allocateString("a"));
+    const d_idx = try out_chunk.addConstant(testing.allocator, try vm.allocateString("d"));
     const step_idx = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(1));
-
-    _ = vm.pop();
-    _ = vm.pop();
 
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(a_idx), 0);
@@ -152,6 +147,8 @@ test "VM: Closure invocation pads missing arguments with nil natively" {
     // 2. Call it with only ONE argument
     var main_chunk = chunk.Chunk.init();
     defer main_chunk.free(testing.allocator);
+    // Built by hand, so registered as the compiler registers its chunks (see -Dgc-stress).
+    try vm.gc.trackChunk(&main_chunk);
 
     const const_func = try main_chunk.addConstant(testing.allocator, value.Value.initObj(&func.obj));
     try main_chunk.writeOp(testing.allocator, .op_closure, 0);
@@ -370,4 +367,124 @@ test "WASM Interop: get_last_error truncates long messages on a UTF-8 boundary" 
     try testing.expect(msg.len <= wasm.MAX_ERROR_MSG_LEN);
     try testing.expect(msg.len > wasm.MAX_ERROR_MSG_LEN - "é".len);
     try testing.expect(std.unicode.utf8ValidateSlice(msg));
+}
+
+/// Builds `src` as STL and returns its bytes' length (freeing them).
+fn expectBuildLength(src: []const u8) !usize {
+    const fmt = "stl";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+        std.debug.print("build failed: {s}\n", .{std.mem.sliceTo(wasm.get_last_error(), 0)});
+        return error.BuildFailed;
+    };
+    wasm.wasm_free(@constCast(res), out_len);
+    return out_len;
+}
+
+test "WASM Interop: a build the instruction cap stops leaves the next one working" {
+    // In the browser a runaway loop stops at the cap, and the worker goes on serving builds.
+    const msg = try expectBuildFailure("while true\nend\ncube(1)");
+    try testing.expect(std.mem.indexOf(u8, msg, "Execution limit") != null);
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength("cube(2)"));
+}
+
+test "WASM Interop: repeated builds, checks and formats don't grow the module's memory" {
+    // Whatever one call leaves allocated (in the VFS, the error buffer, a cache) adds up
+    // over an editing session in the browser, which never restarts the module.
+    const src = "w = param(:w, default: 4)\nx = [cube(w).material(color: \"#FF0000\"), sphere(2).translate(x: 6)]\nx";
+    const fmt = "glb";
+    const once = struct {
+        fn run(source: []const u8, format: []const u8) !void {
+            var len: usize = 0;
+            const built = wasm.build_model_wasm(source.ptr, source.len, format.ptr, format.len, true, &len) orelse return error.BuildFailed;
+            wasm.wasm_free(@constCast(built), len);
+            const checked = wasm.check_code_wasm(source.ptr, source.len, &len) orelse return error.CheckFailed;
+            wasm.wasm_free(@constCast(checked), len);
+            const formatted = wasm.format_code_wasm(source.ptr, source.len, &len) orelse return error.FormatFailed;
+            wasm.wasm_free(@constCast(formatted), len);
+            _ = try expectBuildFailure("raise \"x\"");
+        }
+    };
+    for (0..3) |_| try once.run(src, fmt); // the allocator's own pools settle first
+    const pages = @wasmMemorySize(0);
+    for (0..30) |_| try once.run(src, fmt);
+    try testing.expectEqual(pages, @wasmMemorySize(0));
+}
+
+test "WASM Interop: a build imports the files put in the VFS, and not after clear_vfs_wasm" {
+    const lib_path = "parts/plate.kup";
+    const lib = "def plate(w)\n  cube(w, w, 1)\nend\nexport { plate }";
+    try testing.expect(wasm.put_file_wasm(lib_path.ptr, lib_path.len, lib.ptr, lib.len));
+    const main = "import { plate } from \"./parts/plate.kup\"\nplate(3)";
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength(main));
+
+    wasm.clear_vfs_wasm();
+    const msg = try expectBuildFailure(main);
+    try testing.expect(std.mem.indexOf(u8, msg, "plate.kup") != null);
+}
+
+test "WASM Interop: check_code_wasm's JSON names each finding's place, severity and message" {
+    const src = "x = 1\ncube(-2)";
+    var len: usize = 0;
+    const res = wasm.check_code_wasm(src.ptr, src.len, &len) orelse return error.CheckFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    const Finding = struct { line: u32, col: u32, offset: u32, length: u32, severity: []const u8, message: []const u8 };
+    const parsed = try std.json.parseFromSlice([]Finding, testing.allocator, res[0..len], .{});
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 2), parsed.value.len);
+    for (parsed.value) |f| {
+        try testing.expect(f.line >= 1 and f.col >= 1); // one-based, as an editor shows them
+        try testing.expectEqualStrings(src[f.offset..][0..f.length], src[f.offset..][0..f.length]);
+        try testing.expect(std.mem.eql(u8, f.severity, "error") or std.mem.eql(u8, f.severity, "warning") or std.mem.eql(u8, f.severity, "info"));
+        try testing.expect(f.message.len > 0);
+    }
+    const negative = for (parsed.value) |f| {
+        if (f.line == 2) break f;
+    } else return error.MissingFinding;
+    try testing.expectEqual(@as(u32, 6), negative.col);
+    try testing.expectEqualStrings("-2", src[negative.offset..][0..negative.length]);
+}
+
+test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" {
+    const src =
+        \\# @title Plate
+        \\w = param(:width, default: 10, validate: { min: 1, max: 50 })
+        \\m = param(:material, default: "PLA", validate: { in: ["PLA", "PETG"] })
+        \\cube(w)
+    ;
+    var len: usize = 0;
+    const res = wasm.extract_params_wasm(src.ptr, src.len, &len) orelse return error.ExtractFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    const Schema = struct {
+        meta: struct { title: ?[]const u8, description: ?[]const u8, author: ?[]const u8 },
+        parameters: []struct {
+            name: []const u8,
+            type: []const u8,
+            default_value: std.json.Value,
+            validate: struct { min: ?f64, max: ?f64, in: ?[]const std.json.Value },
+        },
+    };
+    const parsed = try std.json.parseFromSlice(Schema, testing.allocator, res[0..len], .{});
+    defer parsed.deinit();
+    const s = parsed.value;
+    try testing.expectEqualStrings("Plate", s.meta.title.?);
+    try testing.expectEqual(@as(usize, 2), s.parameters.len);
+    try testing.expectEqualStrings("width", s.parameters[0].name);
+    try testing.expectEqual(@as(?f64, 1), s.parameters[0].validate.min);
+    try testing.expectEqual(@as(?f64, 50), s.parameters[0].validate.max);
+    try testing.expectEqualStrings("material", s.parameters[1].name);
+    try testing.expectEqualStrings("PLA", s.parameters[1].default_value.string);
+    try testing.expectEqual(@as(usize, 2), s.parameters[1].validate.in.?.len);
+}
+
+test "WASM GC: scripts under GC stress run right with 32-bit pointers" {
+    // The collector, the NaN-boxed values and the natives' rooting, where usize and every
+    // pointer are 32 bits: the native suite only ever runs them with 64.
+    const support = kupcad.test_support;
+    try support.expectScripts(&.{
+        .{ .src = "a = (1..50).map { |i| \"s#{i}\" }\nr = a.join(\",\").length", .expected = .{ .num = 190 }, .gc_stress = true },
+        .{ .src = "m = {}\n(1..40).each { |i| m[\"k#{i}\"] = [i, i * 2] }\nr = m.values.map { |v| v[1] }.reduce(0) { |s, v| s + v }", .expected = .{ .num = 1640 }, .gc_stress = true },
+        .{ .src = "add = ->(x) { ->(y) { x + y } }\nr = (1..20).map { |i| add.call(i).call(1) }.last", .expected = .{ .num = 21 }, .gc_stress = true },
+        .{ .src = "class P\n  def initialize(v)\n    @v = v\n  end\n  def v\n    @v\n  end\nend\nr = (1..30).map { |i| P.new(i) }.map { |p| p.v }.reduce(0) { |s, v| s + v }", .expected = .{ .num = 465 }, .gc_stress = true },
+    });
 }

@@ -8,6 +8,8 @@ pub const chunk = @import("vm/chunk.zig");
 pub const value = @import("core/value.zig");
 pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
+/// For the WebAssembly tests (wasm_test.zig), which run scripts through this module.
+pub const test_support = @import("test_support.zig");
 pub const std_options = @import("log.zig").std_options;
 pub const SessionManager = @import("daemon/session_manager.zig").SessionManager;
 

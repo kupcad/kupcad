@@ -46,8 +46,7 @@ pub const NegativeDimRule = struct {
             if (!isSize(signature, param)) continue;
             const n = literals.number(tree, arg.value) orelse continue;
             if (n > 0) continue;
-            const at = tree.getNode(arg.value).?.main_token;
-            try engine.report(id, engine.getLoc(at), "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
+            try engine.report(id, engine.nodeLoc(tree, arg.value), "{s} expects {s} to be greater than zero, got {f}", .{ method, param, value.fmtNumber(n) });
         }
     }
 

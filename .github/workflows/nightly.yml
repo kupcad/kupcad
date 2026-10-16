@@ -58,6 +58,13 @@ jobs:
         with:
           zig-version-file: .tool-versions
 
+      - name: Setup `wasmtime`
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
       - name: Run the tests
         working-directory: core
         run: zig build test -Doptimize=debug -Dgc-stress --summary line
+
+      - name: Run the wasm tests (32-bit pointers)
+        working-directory: core
+        run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dgc-stress --summary line
