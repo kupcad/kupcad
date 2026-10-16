@@ -648,3 +648,41 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
     vm.gc.collectGarbage(&vm, false);
     try testing.expectEqual(@as(usize, 0), vm.cs_cache.count());
 }
+
+test "DAG: a simplify or decompose mesh is released after the run that drops its last shape" {
+    // Concrete leaves kept their meshes until the VM went: in the editor's long-lived
+    // worker, one more per run of a script that simplifies.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    for (0..20) |_| try testing.expectEqual(.ok, try support.runOn(&vm, "part = cube(2).simplify\nr = part.volume"));
+    try testing.expectEqual(@as(usize, 1), vm.dag_builder.held_leaves);
+
+    // A shape still live keeps its mesh into the next run.
+    try testing.expectEqual(.ok, try support.runOn(&vm, "r = part.translate(x: 1).volume"));
+    try support.expectValue(.{ .num = 8 }, vm.globals.get("r").?);
+
+    try testing.expectEqual(.ok, try support.runOn(&vm, "parts = (cube(1) + cube(1).translate(x: 3)).decompose\npart = nil"));
+    try testing.expectEqual(@as(usize, 2), vm.dag_builder.held_leaves);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "parts = nil"));
+    try testing.expectEqual(@as(usize, 0), vm.dag_builder.held_leaves);
+}
+
+test "DAG: a mesh is kept while the native that made it still builds on it" {
+    // Releasing in a collection would free a simplify result the native had made but not
+    // yet given an object; it happens after the run, when no native is running.
+    const support = @import("../test_support.zig");
+    const cases = [_]struct { src: []const u8, expected: support.Expected }{
+        .{ .src = "r = cube(2).simplify.translate(x: 1).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = (cube(1) + cube(1).translate(x: 3)).decompose.map { |p| p.volume }", .expected = .{ .nums = &.{ 1, 1 } } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        // A collection at every allocation, the natives' own included
+        vm.gc.stress = true;
+        try testing.expectEqual(.ok, try support.runOn(&vm, case.src));
+        try support.expectValue(case.expected, vm.globals.get("r").?);
+    }
+}

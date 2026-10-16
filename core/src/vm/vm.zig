@@ -490,7 +490,28 @@ pub const VM = struct {
 
         const res = self.run();
         self.clearUnwindState();
+        self.tidyGeometryGraph();
         return res;
+    }
+
+    /// After an outermost run, when no native holds node indices of its own: releases the
+    /// meshes of concrete leaves (simplify, decompose) no live shape is made from. They
+    /// stayed until the VM went, a mesh per run in the editor's long-lived worker.
+    fn tidyGeometryGraph(self: *VM) void {
+        if (self.run_depth != 0 or self.dag_builder.held_leaves == 0) return;
+        // The shapes still live, and nothing else
+        self.gc.collectGarbage(self, false);
+        var roots: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+        defer roots.deinit(self.allocator);
+        // Without room to work it out, the next run tries again.
+        roots.ensureTotalCapacity(self.allocator, self.gc.geometries.items.len + self.gc.cross_sections.items.len) catch return;
+        for (self.gc.geometries.items) |g| {
+            if (g.dag_idx != dag.CONCRETE_NODE_SENTINEL) roots.appendAssumeCapacity(g.dag_idx);
+        }
+        for (self.gc.cross_sections.items) |cs| roots.appendAssumeCapacity(cs.dag_idx);
+        var live = self.dag_builder.liveNodes(self.allocator, roots.items) catch return;
+        defer live.deinit(self.allocator);
+        self.dag_builder.releaseUnreachableLeaves(&live);
     }
 
     pub fn run(self: *VM) InterpretResult {

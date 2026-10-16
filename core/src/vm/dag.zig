@@ -60,7 +60,7 @@ pub const DAGTag = enum(u8) {
     polygons_even_odd,
     set_material,
     /// Leaf wrapping an already-evaluated handle (decompose/simplify results).
-    /// `data` indexes `concrete_handles`, which owns the handle.
+    /// `data` indexes `concrete_leaves`, which owns the handle.
     concrete,
 };
 
@@ -154,6 +154,13 @@ pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
+/// A `.concrete` node's mesh, and the serial its hash is made from.
+pub const ConcreteLeaf = struct {
+    /// Null once released: no live shape was made from the node any more.
+    handle: ?geom.GeometryHandle,
+    serial: u64,
+};
+
 pub const DAGBuilder = struct {
     /// The tables below grow as the script builds geometry; they were in an arena, which
     /// keeps every outgrown buffer until the end, so a DAG held about twice its size.
@@ -163,9 +170,14 @@ pub const DAGBuilder = struct {
     numbers: std.ArrayListUnmanaged(f64) = .empty,
     poly_points: std.ArrayListUnmanaged([3]f64) = .empty,
     poly_faces: std.ArrayListUnmanaged([3]u32) = .empty,
-    /// Handles owned by `.concrete` leaves. They cannot be recomputed from the DAG,
-    /// so they live as long as the builder (not in the evictable dag_cache).
-    concrete_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty,
+    /// The meshes of `.concrete` nodes. They cannot be recomputed from the DAG, so they
+    /// aren't in the evictable dag_cache: one lives until no live shape is made from its
+    /// node (releaseUnreachableLeaves).
+    concrete_leaves: std.ArrayListUnmanaged(ConcreteLeaf) = .empty,
+    /// The serial the next concrete leaf gets.
+    next_leaf_serial: u64 = 0,
+    /// How many concrete leaves still hold their mesh.
+    held_leaves: usize = 0,
 
     // CSE Deduplication
     node_hashes: std.ArrayListUnmanaged(u64) = .empty,
@@ -183,13 +195,13 @@ pub const DAGBuilder = struct {
     }
 
     pub fn deinit(self: *DAGBuilder) void {
-        for (self.concrete_handles.items) |h| kernel.destruct(h);
+        for (self.concrete_leaves.items) |leaf| if (leaf.handle) |h| kernel.destruct(h);
         self.nodes.deinit(self.gpa);
         self.extra_data.deinit(self.gpa);
         self.numbers.deinit(self.gpa);
         self.poly_points.deinit(self.gpa);
         self.poly_faces.deinit(self.gpa);
-        self.concrete_handles.deinit(self.gpa);
+        self.concrete_leaves.deinit(self.gpa);
         self.node_hashes.deinit(self.gpa);
         self.dedup_map.deinit(self.gpa);
         self.settings_table.deinit(self.gpa);
@@ -431,10 +443,13 @@ pub const DAGBuilder = struct {
     /// ownership of `handle`; on error the caller still owns it.
     pub fn addConcrete(self: *DAGBuilder, handle: geom.GeometryHandle) !DAGNodeIndex {
         const snap = self.snapshot();
-        const slot: u32 = @intCast(self.concrete_handles.items.len);
-        try self.concrete_handles.append(self.allocator(), handle);
-        errdefer self.concrete_handles.items.len = slot;
-        return try self.appendNodeWithRollback(.{ .tag = .concrete, .flags = 0, .data = slot }, snap);
+        const slot: u32 = @intCast(self.concrete_leaves.items.len);
+        try self.concrete_leaves.append(self.allocator(), .{ .handle = handle, .serial = self.next_leaf_serial });
+        errdefer self.concrete_leaves.items.len = slot;
+        const idx = try self.appendNodeWithRollback(.{ .tag = .concrete, .flags = 0, .data = slot }, snap);
+        self.next_leaf_serial += 1;
+        self.held_leaves += 1;
+        return idx;
     }
 
     pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
@@ -556,6 +571,37 @@ pub const DAGBuilder = struct {
             .loft => extra[node.data..][0..2],
             .none, .numbers, .polygon, .polygons, .polyhedron, .concrete => &.{},
         };
+    }
+
+    /// The nodes the `roots` are made from, the roots included. A node's operands are
+    /// always earlier nodes, so one pass from the last node back finds them all.
+    pub fn liveNodes(self: *const DAGBuilder, set_allocator: std.mem.Allocator, roots: []const DAGNodeIndex) !std.DynamicBitSetUnmanaged {
+        var live = try std.DynamicBitSetUnmanaged.initEmpty(set_allocator, self.nodes.items.len);
+        for (roots) |root| {
+            if (root < self.nodes.items.len) live.set(root);
+        }
+        var i = self.nodes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (!live.isSet(i)) continue;
+            for (self.operandsOf(self.nodes.items[i])) |operand| live.set(operand);
+        }
+        return live;
+    }
+
+    /// Destroys the meshes of the concrete leaves no `live` node is made from. Their nodes
+    /// stay, emptied: nothing can reach them again, since building on a node takes a live
+    /// shape made from it.
+    pub fn releaseUnreachableLeaves(self: *DAGBuilder, live: *const std.DynamicBitSetUnmanaged) void {
+        for (self.nodes.items, 0..) |node, i| {
+            if (node.tag != .concrete or live.isSet(i)) continue;
+            const leaf = &self.concrete_leaves.items[node.data];
+            if (leaf.handle) |h| {
+                kernel.destruct(h);
+                leaf.handle = null;
+                self.held_leaves -= 1;
+            }
+        }
     }
 
     // --- Unpackers for JIT Materialization ---
@@ -872,8 +918,10 @@ pub const DAGBuilder = struct {
                 }
             },
             .concrete => {
-                // Each wrapped handle is unique; its table slot identifies it.
-                hasher.update(std.mem.asBytes(&node.data));
+                // Each wrapped handle is unique. Its serial identifies it, never its slot,
+                // which a later leaf could be given once this one is gone, and with it the
+                // results cached under this one's hash.
+                hasher.update(std.mem.asBytes(&self.concrete_leaves.items[node.data].serial));
             },
             .set_material => {
                 const p = self.getMaterialPayload(node);

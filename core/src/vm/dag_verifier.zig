@@ -74,7 +74,7 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
             return null;
         },
         .polyhedron => polyhedron(b, node.data),
-        .concrete => if (node.data < b.concrete_handles.items.len) null else "it names no concrete handle",
+        .concrete => if (node.data < b.concrete_leaves.items.len) null else "it names no concrete leaf",
     };
 }
 

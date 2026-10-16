@@ -442,9 +442,10 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
             try pushSolid(vm, v_stack, node.tag, kernel.polyhedron(&config, vm.allocator, p.pts, p.faces));
         },
         .concrete => {
-            // Owned by dag_builder.concrete_handles: borrow it, never cache it.
-            if (node.data >= b.concrete_handles.items.len) return error.RuntimeError;
-            try v_stack.pushBorrowed(.{ .geometry = b.concrete_handles.items[node.data] });
+            // Owned by dag_builder.concrete_leaves: borrow it, never cache it. A released
+            // leaf is reachable from no live shape, so nothing evaluates it.
+            if (node.data >= b.concrete_leaves.items.len) return error.RuntimeError;
+            try v_stack.pushBorrowed(.{ .geometry = b.concrete_leaves.items[node.data].handle orelse return error.RuntimeError });
         },
         .empty_sketch => {
             try vm.requireFeature(config.engine, .empty);
