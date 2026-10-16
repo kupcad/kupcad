@@ -13,6 +13,12 @@ const geom = @import("../kernel/geometry_handle.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 const build_info = @import("build_info");
 
+/// How far past the memory limit an OutOfMemoryError may allocate while it is raised (its
+/// instance, message and backtrace), so a script that filled the limit is still told why, and
+/// can rescue it. Raising it used to fail too, and the run ended with "out of memory while
+/// raising an error". Only the raise gets it: the heap never passes the limit by more.
+pub const OUT_OF_MEMORY_RESERVE: usize = 64 * 1024;
+
 pub const GC = struct {
     allocator: std.mem.Allocator,
 
@@ -53,6 +59,8 @@ pub const GC = struct {
 
     // Hard Sandbox Memory Limit
     max_memory_limit: ?usize,
+    /// An OutOfMemoryError is being raised: it may use OUT_OF_MEMORY_RESERVE past the limit.
+    raising_out_of_memory: bool = false,
 
     // --- GC State ---
     is_gc_running: bool = false,
@@ -124,8 +132,8 @@ pub const GC = struct {
 
     fn trackAlloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *GC = @ptrCast(@alignCast(ctx));
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + len > limit) return null;
+        if (self.memoryCap()) |cap| {
+            if (self.bytes_allocated + len > cap) return null;
         }
         const res = self.allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
         self.bytes_allocated += len;
@@ -136,8 +144,8 @@ pub const GC = struct {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
             const diff = new_len - buf.len;
-            if (self.max_memory_limit) |limit| {
-                if (self.bytes_allocated + diff > limit) return false;
+            if (self.memoryCap()) |cap| {
+                if (self.bytes_allocated + diff > cap) return false;
             }
             if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
                 self.bytes_allocated += diff;
@@ -157,8 +165,8 @@ pub const GC = struct {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
             const diff = new_len - buf.len;
-            if (self.max_memory_limit) |limit| {
-                if (self.bytes_allocated + diff > limit) return null;
+            if (self.memoryCap()) |cap| {
+                if (self.bytes_allocated + diff > cap) return null;
             }
             if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
                 self.bytes_allocated += diff;
@@ -214,11 +222,18 @@ pub const GC = struct {
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
     }
 
+    /// The most the heap may hold now: the memory limit, and the reserve on top while an
+    /// OutOfMemoryError is raised; null without a limit.
+    fn memoryCap(self: *const GC) ?usize {
+        const limit = self.max_memory_limit orelse return null;
+        return if (self.raising_out_of_memory) limit +| OUT_OF_MEMORY_RESERVE else limit;
+    }
+
     /// The heap size past which the next allocation collects first: the growth threshold, or
-    /// the memory limit when that is lower, so a script whose garbage reaches the limit has
-    /// it collected instead of stopping with a Sandbox Error while it holds almost nothing.
+    /// the memory cap when that is lower, so a script whose garbage reaches the limit has it
+    /// collected instead of stopping while it holds almost nothing.
     fn collectionThreshold(self: *const GC) usize {
-        return @min(self.next_gc_threshold, self.max_memory_limit orelse std.math.maxInt(usize));
+        return @min(self.next_gc_threshold, self.memoryCap() orelse std.math.maxInt(usize));
     }
 
     /// Generic allocator that appends directly to the specific tracking list
@@ -227,11 +242,9 @@ pub const GC = struct {
             self.collectGarbage(vm, false);
         }
 
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + @sizeOf(T) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.", .{limit});
-                return error.OutOfMemory;
-            }
+        // The run raises the OutOfMemoryError that names the limit (VM.allocationFailed).
+        if (self.memoryCap()) |cap| {
+            if (self.bytes_allocated + @sizeOf(T) > cap) return error.OutOfMemory;
         }
 
         const ptr = try self.allocator.create(T);

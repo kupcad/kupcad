@@ -1485,7 +1485,7 @@ pub const VM = struct {
     }
 
     /// Caps the script heap the GC tracks at `bytes` (null: no cap); an allocation past it
-    /// ends the run with a Sandbox Error. The cap existed in the GC but nothing set it.
+    /// raises an OutOfMemoryError naming the limit. The cap existed in the GC but nothing set it.
     pub fn setMemoryLimit(self: *VM, bytes: ?usize) void {
         self.gc.max_memory_limit = bytes;
     }
@@ -3649,6 +3649,10 @@ pub const VM = struct {
             }
         }
         const msg = self.fmtScratch(fmt, args) catch "Out of memory while formatting an error message";
+        // The error that says the heap is full needs a little of it (gc.OUT_OF_MEMORY_RESERVE).
+        const was_raising = self.gc.raising_out_of_memory;
+        if (kind == .OutOfMemoryError) self.gc.raising_out_of_memory = true;
+        defer self.gc.raising_out_of_memory = was_raising;
 
         if (self.error_classes.get(kind)) |class| {
             if (self.gc.allocateInstance(self, class) catch null) |inst| {

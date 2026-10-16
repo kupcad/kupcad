@@ -338,5 +338,5 @@ test "build_cmd: the project's vm_memory_limit caps the script's heap" {
     var result = try runBuild(&.{ fx.input, "-o", fx.output });
     defer result.deinit();
     try testing.expectEqual(.failure, result.outcome);
-    try testing.expect(std.mem.indexOf(u8, result.text(), "Build failed") != null); // the VM reports the Sandbox Error itself
+    try testing.expect(std.mem.indexOf(u8, result.text(), "Build failed") != null); // the VM reports the OutOfMemoryError itself
 }
