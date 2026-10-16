@@ -167,7 +167,12 @@ pub const VM = struct {
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
+    /// Every evaluated solid by its node's hash, until the GC finds no solid referring to
+    /// the node (memory.zig). The evaluator reuses them; callers borrow them.
     dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
+    /// The same for sketches: one used by several solids (a profile extruded ten times) was
+    /// evaluated again for each of them.
+    cs_cache: std.AutoHashMapUnmanaged(u64, geom.CrossSectionHandle) = .empty,
     mute_errors: bool = false,
     /// The first error reported since the run started or the last exception was rescued,
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
@@ -340,6 +345,7 @@ pub const VM = struct {
 
         self.clearDagCache();
         self.dag_cache.deinit(self.allocator);
+        self.cs_cache.deinit(self.allocator);
 
         self.allocator.destroy(self.native_vfs_ptr);
 
@@ -1554,11 +1560,15 @@ pub const VM = struct {
         self.materials.clearRetainingCapacity();
     }
 
-    /// Destroys every cached result (GC eviction drops only those no geometry still uses).
+    /// Destroys every cached result, solids and sketches (GC eviction drops only those
+    /// nothing still uses).
     pub fn clearDagCache(self: *VM) void {
         var it = self.dag_cache.valueIterator();
         while (it.next()) |handle| kernel.destruct(handle.*);
         self.dag_cache.clearRetainingCapacity();
+        var cs_it = self.cs_cache.valueIterator();
+        while (cs_it.next()) |handle| kernel.destructCrossSection(handle.*);
+        self.cs_cache.clearRetainingCapacity();
     }
 
     /// Raises the GeometryError for one operation given geometry of two engines.
@@ -1617,13 +1627,10 @@ pub const VM = struct {
         return try dag_evaluator.evaluateDAG(self, geom_obj.dag_idx);
     }
 
+    /// The sketch's shape, borrowed from `cs_cache` as a solid's is from `dag_cache`.
     pub fn ensureConcreteCrossSection(self: *VM, val: value.Value) !geom.CrossSectionHandle {
         if (!val.isCrossSection()) return error.RuntimeError;
-        var cs = val.asCrossSection();
-        if (cs.cached_handle) |handle| return handle;
-        const handle = try dag_evaluator.evaluateCrossSectionDAG(self, cs.dag_idx);
-        cs.cached_handle = handle;
-        return handle;
+        return dag_evaluator.evaluateCrossSectionDAG(self, val.asCrossSection().dag_idx);
     }
 
     fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {

@@ -9,6 +9,7 @@ const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 const build_info = @import("build_info");
 
@@ -429,7 +430,6 @@ pub const GC = struct {
     pub fn allocateCrossSection(self: *GC, vm: *VM, dag_idx: u32) !*value.ObjCrossSection {
         const ptr = try self.allocateObject(vm, value.ObjCrossSection, &self.cross_sections, .cross_section);
         ptr.dag_idx = dag_idx;
-        ptr.cached_handle = null;
         return ptr;
     }
 
@@ -683,41 +683,34 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
 
         // --- CACHE EVICTION ---
-        var live_hashes = std.AutoHashMap(u64, void).init(self.allocator);
-        defer live_hashes.deinit();
-
-        var keys_to_remove = std.ArrayListUnmanaged(u64).empty;
-        defer keys_to_remove.deinit(self.allocator);
-
-        // Pre-allocate tracking arrays to their maximum theoretical bounds.
-        // If we lack memory to compute evictions, safely skip clearing the cache this cycle.
-        // The DAG cache will just be evaluated and cleaned up on the next GC run.
-        live_hashes.ensureTotalCapacity(@intCast(self.geometries.items.len)) catch return;
-        keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
-
+        // Results no live solid or sketch refers to. Without room to work it out, nothing
+        // is evicted this cycle: the next collection tries again.
+        var live: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        defer live.deinit(self.allocator);
+        live.ensureTotalCapacity(self.allocator, @intCast(self.geometries.items.len + self.cross_sections.items.len)) catch return;
+        const hashes = vm.dag_builder.node_hashes.items;
         for (self.geometries.items) |geom_ptr| {
-            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL) {
-                if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
-                    const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
-                    live_hashes.putAssumeCapacity(hash, {});
-                }
-            }
+            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL and geom_ptr.dag_idx < hashes.len) live.putAssumeCapacity(hashes[geom_ptr.dag_idx], {});
         }
+        for (self.cross_sections.items) |cs_ptr| {
+            if (cs_ptr.dag_idx < hashes.len) live.putAssumeCapacity(hashes[cs_ptr.dag_idx], {});
+        }
+        self.evictUnreferenced(geom.GeometryHandle, &vm.dag_cache, &live, kernel.destruct);
+        self.evictUnreferenced(geom.CrossSectionHandle, &vm.cs_cache, &live, kernel.destructCrossSection);
+    }
 
-        var cache_it = vm.dag_cache.iterator();
-        while (cache_it.next()) |entry| {
-            // Keys are node hashes (which cover the node's settings).
-            if (!live_hashes.contains(entry.key_ptr.*)) {
-                // Destruct C++ handle immediately
-                kernel.destruct(entry.value_ptr.*);
-                keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
-            }
+    /// Destroys the results in `cache` whose node isn't `live`, and drops them.
+    fn evictUnreferenced(self: *GC, comptime Handle: type, cache: *std.AutoHashMapUnmanaged(u64, Handle), live: *const std.AutoHashMapUnmanaged(u64, void), comptime destroy: anytype) void {
+        var stale: std.ArrayListUnmanaged(u64) = .empty;
+        defer stale.deinit(self.allocator);
+        stale.ensureTotalCapacity(self.allocator, cache.count()) catch return;
+        var it = cache.iterator();
+        while (it.next()) |entry| {
+            if (live.contains(entry.key_ptr.*)) continue;
+            destroy(entry.value_ptr.*);
+            stale.appendAssumeCapacity(entry.key_ptr.*);
         }
-
-        // Remove stale keys safely outside the iterator loop
-        for (keys_to_remove.items) |key| {
-            _ = vm.dag_cache.remove(key);
-        }
+        for (stale.items) |key| _ = cache.remove(key);
     }
 
     inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {
@@ -744,9 +737,7 @@ pub const GC = struct {
                 self.destroyObject(value.ObjWorkplane, wp_obj);
             },
             .cross_section => {
-                const cs_obj = obj.as(value.ObjCrossSection);
-                if (cs_obj.cached_handle) |handle| kernel.destructCrossSection(handle);
-                self.destroyObject(value.ObjCrossSection, cs_obj);
+                self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));
             },
             .string => {
                 const str_obj = obj.as(value.ObjString);

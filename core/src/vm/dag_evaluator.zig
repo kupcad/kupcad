@@ -31,9 +31,9 @@ pub const ValueHandle = union(enum) {
 };
 
 /// A value on the intermediate stack plus who owns it.
-/// `owned == false` means vm.dag_cache owns the handle (a cache hit, or a result
-/// already inserted into the cache) and the evaluator must never destroy it.
-/// Cross-sections are never cached, so they stay owned until consumed.
+/// `owned == false` means vm.dag_cache (or vm.cs_cache, for a sketch) owns the handle (a
+/// cache hit, or a result already inserted into the cache) and the evaluator must never
+/// destroy it.
 pub const StackEntry = struct {
     value: ValueHandle,
     owned: bool,
@@ -320,6 +320,11 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         if (vm.dag_cache.get(node_hash)) |cached| {
             _ = f_stack.pop();
             try v_stack.pushBorrowed(.{ .geometry = cached });
+            continue;
+        }
+        if (vm.cs_cache.get(node_hash)) |cached| {
+            _ = f_stack.pop();
+            try v_stack.pushBorrowed(.{ .cross_section = cached });
             continue;
         }
 
@@ -681,9 +686,10 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 // Ownership moves to the cache only once the put succeeds.
                 try vm.dag_cache.put(vm.allocator, node_hash, top.value.geometry);
                 top.owned = false;
+            } else if (top.value == .cross_section and top.owned) {
+                try vm.cs_cache.put(vm.allocator, node_hash, top.value.cross_section);
+                top.owned = false;
             }
-            // Cross-sections are intentionally not cached: they stay owned by the
-            // stack and are destroyed by the consuming parent (or returned to the caller).
         }
     }
 
@@ -700,15 +706,13 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 /// handle beyond the current operation must kernel.clone it.
 pub fn evaluateDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
-    if (final_val == .cross_section) {
-        // Cross-sections are never cached, so this one is ours to free.
-        final_val.destruct(vm.allocator);
-        return error.RuntimeError;
-    }
+    // A sketch's result is the cs_cache's, like a solid's is the dag_cache's.
+    if (final_val == .cross_section) return error.RuntimeError;
     return final_val.geometry;
 }
 
-/// Returns a cross-section handle OWNED by the caller.
+/// Returns a cross-section handle BORROWED from vm.cs_cache, as evaluateDAG's is from
+/// vm.dag_cache.
 pub fn evaluateCrossSectionDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
     // A geometry result is owned by vm.dag_cache; leave it there (freeing it here

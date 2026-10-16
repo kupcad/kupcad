@@ -349,9 +349,8 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     // 2. Add a 2D Offset operation
     const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
 
-    // 3. Evaluate explicitly requesting a 2D CrossSectionHandle
+    // 3. Evaluate explicitly requesting a 2D CrossSectionHandle (borrowed from vm.cs_cache)
     const handle = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
-    defer kernel.destructCrossSection(handle);
 
     try testing.expectEqual(.manifold, handle.engine);
 
@@ -624,4 +623,28 @@ test "DAG Builder: Polyhedron CSE uses O(1) precomputed hash correctly" {
     // perfectly deduplicate them.
     try testing.expectEqual(node1, node2);
     try testing.expectEqual(@as(usize, 1), vm.dag_builder.nodes.items.len);
+}
+
+test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing refers to it" {
+    // Sketches weren't cached: one extruded ten times was computed ten times.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+
+    const first = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
+    try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
+    // A solid made from it reads the cached sketch too.
+    _ = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addExtrude(offset_idx, 5.0, 0, 0.0, 1.0, 1.0));
+    try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
+
+    // While a sketch object refers to the node, a collection keeps it; then evicts it.
+    const sketch = try vm.allocateCrossSection(offset_idx);
+    vm.push(sketch);
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expect(vm.cs_cache.contains(vm.dag_builder.node_hashes.items[offset_idx]));
+    _ = vm.pop();
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(@as(usize, 0), vm.cs_cache.count());
 }
