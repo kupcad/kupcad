@@ -155,6 +155,14 @@ test {
     _ = @import("vm/validation_test.zig");
     _ = @import("vm/verifier_test.zig");
     _ = @import("vm/vm_test.zig");
+    _ = @import("vm/vm_runtime_test.zig");
+    _ = @import("vm/vm_exceptions_test.zig");
+    _ = @import("vm/vm_cad_test.zig");
+    _ = @import("vm/vm_classes_test.zig");
+    _ = @import("vm/vm_blocks_test.zig");
+    _ = @import("vm/vm_strings_test.zig");
+    _ = @import("vm/vm_collections_test.zig");
+    _ = @import("vm/vm_syntax_test.zig");
 
     // locus
     _ = @import("locus/src/root.zig");

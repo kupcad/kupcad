@@ -430,6 +430,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 * **`text`:** a character the font has no glyph for (`中`, an emoji, a line break) is a `ValueError` naming it (`text.firstMissingGlyph`); it was left out without a word, so `text("中")` made an empty sketch.
 * **The language server's handlers**, through `cli/lsp_test.zig`'s server: formatting, inlay hints, completion, document symbols and code actions. Completion outside a chain offered every solid method, each a `NameError` there (`manifest.lsp_completions` is the namespaces and global functions now), and document symbols left out the script's top-level variables (their parent is the script's block, not none).
 
+## 22. The VM's Tests
+
+The VM's tests are split by topic: `vm/vm_test.zig` (the core: running scripts end to end, the dispatch loop, inline caches, globals, REPL locals, the debugger and the profiler), `vm_runtime_test.zig` (stack and frames, the instruction budget, GC and ARC, the scratch arena, memory limits), `vm_exceptions_test.zig`, `vm_cad_test.zig`, `vm_classes_test.zig`, `vm_blocks_test.zig` (callables and argument passing), `vm_strings_test.zig`, `vm_collections_test.zig` and `vm_syntax_test.zig` (operators, assignments, control flow). What several share is in `vm_test_helpers.zig`; a helper only one topic uses stays in its file.
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |
