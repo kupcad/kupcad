@@ -2343,6 +2343,20 @@ test "Stdlib: an Assembly answers its name and parts, and keeps its own list" {
     });
 }
 
+test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
+    // It could only be exported: placing a subassembly meant moving its parts one by one.
+    const kit = "a = assemble(name: \"kit\", parts: [cube(2), cube(2).translate(10, 0, 0)])\n";
+    try expectGlobalR(&.{
+        .{ .src = kit ++ "r = a.bbox.max", .expected = .{ .nums = &.{ 12, 2, 2 } } },
+        .{ .src = kit ++ "r = a.translate(0, 5, 0).bbox.min", .expected = .{ .nums = &.{ 0, 5, 0 } } },
+        .{ .src = kit ++ "r = a.center.bbox.min", .expected = .{ .nums = &.{ -6, -1, -1 } } },
+        .{ .src = kit ++ "r = a.center(:x).bbox.min", .expected = .{ .nums = &.{ -6, 0, 0 } } },
+        // A new assembly of the same name; the original stays where it was.
+        .{ .src = kit ++ "b = a.translate(1, 0, 0)\nr = \"#{b.name} #{b.parts.length} #{a.bbox.min[0]}\"", .expected = .{ .str = "kit 2 0" } },
+        .{ .src = comptime rescued("assemble(name: \"e\", parts: []).bbox"), .expected = .{ .str = "ValueError: bbox: an empty assembly has no bounds" } },
+    });
+}
+
 test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
     // Anything else was accepted and then left out of every export without a word.
     try expectGlobalR(&.{
@@ -2413,7 +2427,7 @@ test "Stdlib: each Assembly method gives back what the manifest says it does" {
         if (comptime isOneOf(m.name, &writes_files)) {
             try testing.expectEqual(manifest.Result.receiver, m.result);
         } else {
-            const expected = comptime m.result.className().?;
+            const expected = comptime if (m.result == .receiver) "Assembly" else m.result.className().?;
             try expectGlobalR(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
         }
     }

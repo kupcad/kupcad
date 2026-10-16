@@ -42,6 +42,21 @@ fn copyArray(vm: *VM, from: *value.ObjArray) !*value.ObjArray {
     return copy;
 }
 
+/// A new assembly of the same name, every part moved by `offset` (translate and center).
+pub fn translated(vm: *VM, receiver: value.Value, offset: [3]f64) !value.Value {
+    const from = receiver.asAssembly();
+    const moved = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&moved.obj)); // rooted while the parts and the assembly are made
+    defer _ = vm.pop();
+    try moved.items.ensureTotalCapacity(vm.gc.trackingAllocator(), from.parts.items.items.len);
+    for (from.parts.items.items) |part| {
+        const idx = try vm.dag_builder.addTranslate(part.asGeometry().dag_idx, offset[0], offset[1], offset[2]);
+        moved.items.appendAssumeCapacity(try vm.allocateGeometry(.{ .symbolic = idx }));
+    }
+    const assembly = try vm.gc.allocateAssembly(vm, from.name, moved);
+    return value.Value.initObj(&assembly.obj);
+}
+
 /// `assembly.name`: the name it was given.
 pub fn assemblyName(vm: *VM, receiver: value.Value) !value.Value {
     _ = vm;

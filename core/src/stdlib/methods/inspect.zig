@@ -12,6 +12,11 @@ const error_kind = @import("../../vm/error_kind.zig");
 const DEFAULT_MIN_GAP_SEARCH_LENGTH: f64 = 100.0;
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
+    if (receiver.isAssembly()) {
+        const box = try util.boundsOf(vm, receiver, "bbox");
+        const bbox_inst = try vm.gc.allocateBBox(vm, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2]);
+        return value.Value.initObj(&bbox_inst.obj);
+    }
     if (receiver.isGeometry()) {
         const handle = try vm.ensureConcrete(receiver);
         try vm.requireFeature(handle.engine, .bounding_box);

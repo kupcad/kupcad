@@ -194,6 +194,10 @@ pub const mesh_methods = [_]MeshMethod{
 pub const assembly_methods = [_]MeshMethod{
     method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
     method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
+    // Placing a whole subassembly: its bounds, and every part moved alike.
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),

@@ -40,8 +40,22 @@ pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{R
     return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
 }
 
-/// The bounding box of a Solid, or of a Sketch (flat, at z = 0).
+/// The bounding box of a Solid, of a Sketch (flat, at z = 0), or of an Assembly (the box
+/// around all its parts).
 pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.BoundingBox {
+    if (receiver.isAssembly()) {
+        const parts = receiver.asAssembly().parts.items.items;
+        if (parts.len == 0) return vm.fail(.ValueError, "{s}: an empty assembly has no bounds", .{method});
+        var box = try boundsOf(vm, parts[0], method);
+        for (parts[1..]) |part| {
+            const b = try boundsOf(vm, part, method);
+            for (0..3) |axis| {
+                box.min[axis] = @min(box.min[axis], b.min[axis]);
+                box.max[axis] = @max(box.max[axis], b.max[axis]);
+            }
+        }
+        return box;
+    }
     if (receiver.isCrossSection()) {
         const sketch = try vm.ensureConcreteCrossSection(receiver);
         try vm.requireFeature(sketch.engine, .sketch_measure);
