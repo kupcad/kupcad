@@ -54,7 +54,6 @@ pub const InterpretResult = enum {
     compile_error,
     runtime_error,
     execution_limit_exceeded,
-    paused,
 };
 
 const SwitchMatch = struct {
@@ -508,7 +507,10 @@ pub const VM = struct {
                                 // After debugger returns, update tracking so it doesn't loop forever on the same line
                                 previous_line = current_line;
                             } else {
-                                return .paused;
+                                // Nobody to pause for (a host armed stepping without a handler):
+                                // the run goes on, as debugger() does without a host. It used to
+                                // end here with a `paused` result no caller could resume.
+                                self.step_mode = false;
                             }
                         }
                     } else {

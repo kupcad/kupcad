@@ -4996,65 +4996,6 @@ test "VM: Exception objects capture first-class error backtraces" {
     try testing.expect(std.mem.indexOf(u8, frame3, "in 'script'") != null);
 }
 
-test "VM: step_mode safely pauses execution across line boundaries" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    const source =
-        \\x = 10
-        \\y = 20
-        \\x + y
-    ;
-    var doc = try Document.parse(testing.allocator, source);
-    defer doc.deinit();
-
-    // Line index is required for step boundaries
-    vm.line_index = &doc.line_index;
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
-
-    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    // Manual execution setup (bypassing vm.interpret to control stepping)
-    vm.frames.ensureTotalCapacity(vm.allocator, 64) catch unreachable;
-
-    const func = vm.gc.allocateFunction(&vm) catch unreachable;
-    func.chunk = &out_chunk;
-    func.owns_chunk = false;
-    func.local_count = out_chunk.local_count;
-
-    const closure = vm.gc.allocateClosure(&vm, func) catch unreachable;
-    vm.push(value.Value.initObj(&closure.obj));
-
-    if (func.local_count > 1) {
-        for (0..func.local_count - 1) |_| vm.push(value.Value.initNil());
-    }
-
-    vm.frames.appendAssumeCapacity(.{ .closure = closure, .ip = 0, .base_slot = 0 });
-
-    // --- ENABLE DEBUGGER ---
-    vm.step_mode = true;
-
-    // Run Line 1: `x = 10`
-    var res = vm.run();
-    try testing.expectEqual(.paused, res);
-
-    // Run Line 2: `y = 20`
-    res = vm.run();
-    try testing.expectEqual(.paused, res);
-
-    // Run Line 3: `x + y` and exit
-    vm.step_mode = false; // Disable to let it finish
-    res = vm.run();
-    try testing.expectEqual(.ok, res);
-
-    // Verify the math resolved perfectly after resuming
-    try testing.expectEqual(@as(f64, 30.0), vm.stack[vm.stack_top - 1].asNumber());
-}
-
 test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing false op_call(0)" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -11346,4 +11287,69 @@ test "VM: running out of memory for the stack is an error, not a panic" {
     try comp.compile(doc.tree.root);
 
     try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+}
+
+/// A host's debugger for the tests below: on its first call it starts stepping, counts the
+/// line boundaries it is shown, and resumes after two of them, as `.step`, `.step`,
+/// `.continue` would at the prompt.
+var stepping_debugger_calls: usize = 0;
+fn steppingDebugger(vm: *VM) void {
+    stepping_debugger_calls += 1;
+    vm.step_mode = stepping_debugger_calls <= 2;
+}
+
+test "VM Debugger: debugger() steps the following lines, then continues, and the run completes" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null;
+    vm.debugger_handler = steppingDebugger;
+    stepping_debugger_calls = 0;
+
+    const source =
+        \\a = 1
+        \\debugger()
+        \\b = 2
+        \\c = 3
+        \\d = 4
+        \\r = a + b + c + d
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    vm.line_index = &doc.line_index;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    // The breakpoint, then two line steps (b = 2, c = 3); `.continue` ran the rest unseen.
+    try testing.expectEqual(@as(usize, 3), stepping_debugger_calls);
+    try testing.expect(!vm.step_mode);
+    try testing.expectEqual(@as(f64, 10), vm.globals.get("r").?.asNumber());
+}
+
+test "VM Debugger: stepping with no one to answer runs the script to the end" {
+    // step_mode without a step handler ended the run with a `paused` result no caller
+    // could resume; nobody is there to pause for, so the run goes on.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.step_mode = true;
+    const source =
+        \\x = 10
+        \\y = 20
+        \\z = x + y
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    vm.line_index = &doc.line_index;
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    try testing.expectEqual(.ok, vm.interpret(&out_chunk));
+    try testing.expect(!vm.step_mode);
+    try testing.expectEqual(@as(f64, 30), vm.globals.get("z").?.asNumber());
 }
