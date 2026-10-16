@@ -700,6 +700,11 @@ pub const DAGBuilder = struct {
         return self.computeNodeHash(self.nodes.items[idx]);
     }
 
+    /// Moves the next compaction to when the tables have doubled from now.
+    pub fn postponeCompaction(self: *DAGBuilder) void {
+        self.compact_at = @max(self.compaction_floor, 2 * self.tableBytes());
+    }
+
     /// Whether the tables have grown enough since the last compaction to compact them.
     pub fn wantsCompaction(self: *const DAGBuilder) bool {
         return self.tableBytes() >= self.compact_at;
@@ -748,7 +753,7 @@ pub const DAGBuilder = struct {
         fresh.next_leaf_serial = self.next_leaf_serial;
         for (fresh.concrete_leaves.items) |leaf| fresh.held_leaves += @intFromBool(leaf.handle != null);
         fresh.compaction_floor = self.compaction_floor;
-        fresh.compact_at = @max(self.compaction_floor, 2 * fresh.tableBytes());
+        fresh.postponeCompaction();
         self.* = fresh;
         return renumbered;
     }

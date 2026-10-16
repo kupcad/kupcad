@@ -207,6 +207,10 @@ pub const VM = struct {
     scratch_arena: std.heap.ArenaAllocator,
     /// How many runUntil calls are active (more than one while a native runs a block).
     run_depth: u32 = 0,
+    /// The VM runs script after script (a session: the editor's worker, the REPL), so after
+    /// each run it frees the geometry its shapes no longer use (tidyGeometryGraph). A VM that
+    /// runs one script and goes skips it.
+    runs_many_scripts: bool = false,
     static_true: ?*value.ObjString = null,
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
@@ -499,7 +503,8 @@ pub const VM = struct {
     /// compacts the graph once it has doubled since the last time. The meshes stayed until
     /// the VM went, a mesh per run in the editor's long-lived worker, and so did every node.
     fn tidyGeometryGraph(self: *VM) void {
-        if (self.run_depth != 0 or (self.dag_builder.held_leaves == 0 and !self.dag_builder.wantsCompaction())) return;
+        if (!self.runs_many_scripts or self.run_depth != 0) return;
+        if (self.dag_builder.held_leaves == 0 and !self.dag_builder.wantsCompaction()) return;
         // The shapes still live, and nothing else
         self.gc.collectGarbage(self, false);
         var roots: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
@@ -513,7 +518,10 @@ pub const VM = struct {
         var live = self.dag_builder.liveNodes(self.allocator, roots.items) catch return;
         defer live.deinit(self.allocator);
         self.dag_builder.releaseUnreachableLeaves(&live);
-        if (self.dag_builder.wantsCompaction()) self.compactGeometryGraph(&live);
+        if (self.dag_builder.wantsCompaction()) {
+            // Copying a graph that is mostly live frees little: wait until it doubles again.
+            if (2 * live.count() <= self.dag_builder.nodes.items.len) self.compactGeometryGraph(&live) else self.dag_builder.postponeCompaction();
+        }
     }
 
     /// Compacts the graph to its `live` nodes and moves every shape to its node's new index.

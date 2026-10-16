@@ -655,6 +655,7 @@ test "DAG: a simplify or decompose mesh is released after the run that drops its
     const support = @import("../test_support.zig");
     var vm = try support.initVm();
     defer vm.deinit();
+    vm.runs_many_scripts = true;
     for (0..20) |_| try testing.expectEqual(.ok, try support.runOn(&vm, "part = cube(2).simplify\nr = part.volume"));
     try testing.expectEqual(@as(usize, 1), vm.dag_builder.held_leaves);
 
@@ -691,6 +692,7 @@ test "DAG: shapes kept across runs still build after the graph is compacted" {
     const support = @import("../test_support.zig");
     var vm = try support.initVm();
     defer vm.deinit();
+    vm.runs_many_scripts = true;
     // Compact after every run
     vm.dag_builder.compaction_floor = 0;
     vm.dag_builder.compact_at = 0;
@@ -706,4 +708,25 @@ test "DAG: shapes kept across runs still build after the graph is compacted" {
     try testing.expectEqual(@as(f64, 27), r[0].asNumber());
     try testing.expectEqual(@as(f64, 8), r[1].asNumber());
     try testing.expect(r[2].asBool() and r[3].asBool());
+}
+
+test "DAG: only a VM that runs many scripts tidies its graph, and a mostly live one isn't copied" {
+    const support = @import("../test_support.zig");
+    // One script and done (a build): tidying would be work for nothing.
+    var once = try support.initVm();
+    defer once.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&once, "part = cube(2).simplify\npart = nil"));
+    try testing.expectEqual(@as(usize, 1), once.dag_builder.held_leaves);
+
+    // A graph that is all live is left as it is, the next try put off until it doubles.
+    var session = try support.initVm();
+    defer session.deinit();
+    session.runs_many_scripts = true;
+    session.dag_builder.compaction_floor = 0;
+    session.dag_builder.compact_at = 0;
+    try testing.expectEqual(.ok, try support.runOn(&session, "parts = (1..40).map { |i| cube(i).translate(x: i) }"));
+    const nodes = session.dag_builder.nodes.items.len;
+    try testing.expectEqual(.ok, try support.runOn(&session, "r = parts.length"));
+    try testing.expectEqual(nodes, session.dag_builder.nodes.items.len);
+    try testing.expect(session.dag_builder.compact_at >= 2 * session.dag_builder.tableBytes());
 }
