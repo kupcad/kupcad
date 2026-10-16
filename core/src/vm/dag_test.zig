@@ -64,13 +64,14 @@ test "DAG: polyhedron hash separates points and faces" {
     defer b2.deinit();
 
     // The last point of `pts1` has the exact bytes of the first two faces of
-    // `faces2`, so both pts++faces byte streams are identical.
-    const shifted = [2][3]u32{ .{ 0, 1, 2 }, .{ 3, 4, 5 } };
+    // `faces2` (all zero), so both pts++faces byte streams are identical; every face
+    // names a point its own polyhedron has.
+    const shifted = [2][3]u32{ .{ 0, 0, 0 }, .{ 0, 0, 0 } };
     const as_point: [3]f64 = @bitCast(shifted);
     const pts1 = [_][3]f64{ .{ 0, 0, 0 }, as_point };
-    const faces1 = [_][3]u32{.{ 6, 7, 8 }};
+    const faces1 = [_][3]u32{.{ 0, 0, 0 }};
     const pts2 = [_][3]f64{.{ 0, 0, 0 }};
-    const faces2 = [_][3]u32{ shifted[0], shifted[1], .{ 6, 7, 8 } };
+    const faces2 = [_][3]u32{ shifted[0], shifted[1], .{ 0, 0, 0 } };
 
     // Separate builders, so a structural-equality fallback cannot hide a collision.
     const p1 = try b1.addPolyhedron(&pts1, &faces1);

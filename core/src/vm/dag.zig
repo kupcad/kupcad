@@ -1,9 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
+const dag_verifier = @import("dag_verifier.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
 pub const DAGNodeIndex = u32;
+
+/// Every node is checked as it is added (dag_verifier.zig) where a check costs nothing
+/// that matters: Debug and test builds.
+const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
 
 /// Index of a node's settings in DAGBuilder.settings_table; 0 is the default settings.
 pub const SettingsId = u16;
@@ -193,7 +199,13 @@ pub const DAGBuilder = struct {
             return error.ExecutionLimitExceeded;
         }
 
+        // Rejects an operand that is no node, in every build (childHash).
         var hash = try self.computeNodeHash(new_node);
+        // Anything else malformed is a bug in the native that built the node: stop there,
+        // with its trace, where checking is cheap enough.
+        if (VERIFY_NODES) if (dag_verifier.problem(self, new_node)) |why| {
+            std.debug.panic("DAG builder bug: a {s} node is malformed: {s}", .{ @tagName(new_node.tag), why });
+        };
         var probe: u64 = 0;
         while (self.dedup_map.get(hash)) |existing_idx| {
             // A hash hit alone is not proof of identity: verify structurally before reusing.
