@@ -3,7 +3,7 @@ const testing = std.testing;
 const Document = @import("../../core/document.zig").Document;
 const extractor = @import("extractor.zig");
 
-test "Extractor: Parses Presentation Data and Param UI Config into Schema" {
+test "Extractor: Parses Presentation Data and Param Config into Schema" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -12,7 +12,7 @@ test "Extractor: Parses Presentation Data and Param UI Config into Schema" {
         \\# @description A parametric L-bracket optimized for 3D printing.
         \\# @author Leo
         \\
-        \\param(:width, default: -150.5, ui: { label: "Base Width", group: "Dimensions" }, validate: { min: 10, max: 200 })
+        \\param(:width, default: -150.5, validate: { min: 10, max: 200 })
         \\param(:verbose, default: true)
     ;
 
@@ -33,8 +33,6 @@ test "Extractor: Parses Presentation Data and Param UI Config into Schema" {
     try testing.expectEqualStrings("width", p1.name);
     try testing.expectEqualStrings("number", p1.type);
     try testing.expectEqual(@as(f64, -150.5), p1.default_value.?.float);
-    try testing.expectEqualStrings("Base Width", p1.ui.label.?);
-    try testing.expectEqualStrings("Dimensions", p1.ui.group.?);
     try testing.expectEqual(@as(f64, 10.0), p1.validate.min.?);
     try testing.expectEqual(@as(f64, 200.0), p1.validate.max.?);
 
@@ -62,4 +60,40 @@ test "Extractor: Parses Param within Assignments" {
     try testing.expectEqualStrings("standoff_dist", schema.parameters[0].name);
     try testing.expectEqual(@as(f64, 20.0), schema.parameters[0].default_value.?.float);
     try testing.expectEqualStrings("standoff_dia", schema.parameters[1].name);
+}
+
+test "Extractor: the schema is what param accepts, choices included, as JSON" {
+    // `validate: { in: }` was dropped, and the schema had `ui` and `validate.step`, which
+    // param refuses as unknown keywords: the JSON described scripts that can't run.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\width = param(:width, default: 20.0, validate: { min: 10.0, max: 100.0 })
+        \\material = param(:material, default: "PLA", validate: { in: ["PLA", "PETG", "ABS"] })
+        \\mount = param(:mount, default: :screw, validate: { in: [:screw, :clip] })
+        \\holes = param(:holes, default: 4, validate: { in: [2, 4, -6] })
+        \\size = param(:size, default: 1, validate: { in: [1, width] })
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try out.writer.print("{f}", .{std.json.fmt(schema, .{})});
+    // A choice list with something computed in it can't be known before the script runs,
+    // so it is left out rather than shown short.
+    try testing.expectEqualStrings(
+        \\{"meta":{"title":null,"description":null,"author":null},"parameters":[
+    ++
+        \\{"name":"width","type":"number","default_value":20,"validate":{"min":10,"max":100,"in":null}},
+    ++
+        \\{"name":"material","type":"string","default_value":"PLA","validate":{"min":null,"max":null,"in":["PLA","PETG","ABS"]}},
+    ++
+        \\{"name":"mount","type":"string","default_value":"screw","validate":{"min":null,"max":null,"in":["screw","clip"]}},
+    ++
+        \\{"name":"holes","type":"number","default_value":4,"validate":{"min":null,"max":null,"in":[2,4,-6]}},
+    ++
+        \\{"name":"size","type":"number","default_value":1,"validate":{"min":null,"max":null,"in":null}}]}
+    , out.written());
 }

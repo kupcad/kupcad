@@ -1,7 +1,7 @@
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../core/document.zig").Document;
-const visitor = @import("../../core/visitor.zig"); // <-- Add the AST Walker
+const visitor = @import("../../core/visitor.zig");
 
 pub const PresentationMeta = struct {
     title: ?[]const u8 = null,
@@ -9,23 +9,20 @@ pub const PresentationMeta = struct {
     author: ?[]const u8 = null,
 };
 
-pub const ParamUi = struct {
-    label: ?[]const u8 = null,
-    tooltip: ?[]const u8 = null,
-    group: ?[]const u8 = null,
-};
-
+/// What `param` accepts under `validate:` (stdlib/params.zig), and nothing else: the
+/// schema used to carry `ui` and `validate.step`, which param refuses as unknown keywords.
 pub const ParamValidate = struct {
     min: ?f64 = null,
     max: ?f64 = null,
-    step: ?f64 = null,
+    /// The allowed values, when the script lists them as literals; null when there is no
+    /// list or it holds something only the run can compute (shown short, it would mislead).
+    in: ?[]const std.json.Value = null,
 };
 
 pub const ParamMetadata = struct {
     name: []const u8,
     type: []const u8,
     default_value: ?std.json.Value,
-    ui: ParamUi,
     validate: ParamValidate,
 };
 
@@ -99,7 +96,6 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
 
     var def_val: ?std.json.Value = null;
     var p_type: []const u8 = "number";
-    var ui = ParamUi{};
     var val = ParamValidate{};
 
     for (args) |arg| {
@@ -116,44 +112,20 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
                     else => {},
                 }
             }
-        } else if (std.mem.eql(u8, kw_name, "ui")) {
-            ui = extractUi(tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "validate")) {
-            val = extractValidate(tree, arg.value);
+            val = try extractValidate(allocator, tree, arg.value);
         }
     }
-
-    _ = allocator;
 
     return ParamMetadata{
         .name = p_name,
         .type = p_type,
         .default_value = def_val,
-        .ui = ui,
         .validate = val,
     };
 }
 
-fn extractUi(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamUi {
-    var ui = ParamUi{};
-    const node = tree.getNode(node_idx) orelse return ui;
-    if (node.tag != .hash_literal) return ui;
-
-    const entries = tree.getHashEntries(tree.nodeSpan(node));
-    for (entries) |entry| {
-        const key = extractString(tree, entry.key) orelse continue;
-        if (std.mem.eql(u8, key, "label")) {
-            ui.label = extractString(tree, entry.value);
-        } else if (std.mem.eql(u8, key, "tooltip")) {
-            ui.tooltip = extractString(tree, entry.value);
-        } else if (std.mem.eql(u8, key, "group")) {
-            ui.group = extractString(tree, entry.value);
-        }
-    }
-    return ui;
-}
-
-fn extractValidate(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamValidate {
+fn extractValidate(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !ParamValidate {
     var val = ParamValidate{};
     const node = tree.getNode(node_idx) orelse return val;
     if (node.tag != .hash_literal) return val;
@@ -165,11 +137,22 @@ fn extractValidate(tree: *const ast.Tree, node_idx: ast.NodeIndex) ParamValidate
             val.min = extractNumber(tree, entry.value);
         } else if (std.mem.eql(u8, key, "max")) {
             val.max = extractNumber(tree, entry.value);
-        } else if (std.mem.eql(u8, key, "step")) {
-            val.step = extractNumber(tree, entry.value);
+        } else if (std.mem.eql(u8, key, "in")) {
+            val.in = try extractChoices(allocator, tree, entry.value);
         }
     }
     return val;
+}
+
+/// The literal values of an `in:` list; null for anything else, or for a list with an
+/// element that isn't a literal.
+fn extractChoices(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !?[]const std.json.Value {
+    const node = tree.getNode(node_idx) orelse return null;
+    if (node.tag != .array_literal) return null;
+    const elements = tree.getNodes(tree.arrayLiteral(node).span);
+    const choices = try allocator.alloc(std.json.Value, elements.len);
+    for (elements, choices) |e, *c| c.* = extractJsonValue(tree, e) orelse return null;
+    return choices;
 }
 
 fn extractString(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
