@@ -11,9 +11,7 @@ const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
 const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
-const step = @import("../exporters/3d/step.zig");
-const stl = @import("../exporters/3d/stl.zig");
-const gltf = @import("../exporters/3d/gltf.zig");
+const files = @import("files.zig");
 const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -139,8 +137,8 @@ pub const global_functions = [_]GlobalFunction{
     primitive("torus", .primitive_3d, primitives.nativeTorus, &primitives.TORUS),
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
-    .{ .name = "import_stl", .func = common.wrapGlobal(stl.nativeImportStl), .category = .file_io, .result = .solid },
-    .{ .name = "import_step", .func = common.wrapGlobal(step.nativeImportStep), .category = .file_io, .result = .solid },
+    .{ .name = "import_stl", .func = common.wrapGlobal(files.nativeImportStl), .category = .file_io, .result = .solid },
+    .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
 };
 
 pub const mesh_methods = [_]MeshMethod{
@@ -185,9 +183,9 @@ pub const mesh_methods = [_]MeshMethod{
     method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
     method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
     method("ghost", .transform, methods.meshGhost, &sig.NONE, .nothing),
-    method("export_stl", .file_io, stl.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, step.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, gltf.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
 };
 
 /// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
@@ -196,9 +194,9 @@ pub const mesh_methods = [_]MeshMethod{
 pub const assembly_methods = [_]MeshMethod{
     method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
     method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
-    method("export_stl", .file_io, stl.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, step.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, gltf.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
 };
 
 /// A primitive whose calls are checked against `signature` (common.checkArguments).

@@ -1,14 +1,11 @@
-//! STEP export for scripts: `export_step` (`meshExportStep`) writes the parts of a solid or
-//! assembly through the kernel, refusing any part that isn't B-Rep geometry; `import_step`
-//! is not implemented yet and raises.
+//! STEP: `buildStepBuffer` writes B-Rep solids through the kernel, and `requireExactParts`
+//! refuses, by name, any part that isn't B-Rep geometry, which STEP can't hold. The script's
+//! `export_step` and `import_step` are in stdlib/files.zig.
 
 const std = @import("std");
-const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const util = @import("../../stdlib/methods/util.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const kernel = @import("../../kernel/kernel.zig");
-const receiver_parts = @import("parts.zig");
 
 pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
     return kernel.exportStep(allocator, handles);
@@ -30,26 +27,4 @@ pub fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{Ru
         }
         return error.RuntimeError;
     }
-}
-
-pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var export_handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
-    defer export_handles.deinit(vm.allocator);
-
-    try receiver_parts.receiverParts(vm, receiver, "export_step", &export_handles);
-    try requireExactParts(vm, export_handles.items);
-
-    const step_bytes = buildStepBuffer(vm.allocator, export_handles.items) catch |err| {
-        return vm.fail(.GeometryError, "export_step could not write the STEP file ({s})", .{@errorName(err)});
-    };
-    defer vm.allocator.free(step_bytes);
-
-    try vm.vfs.writeFile(filepath, step_bytes);
-
-    return receiver;
-}
-
-pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {
-    _ = path_str;
-    return vm.fail(.NotImplementedError, "import_step is not supported yet", .{});
 }

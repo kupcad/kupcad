@@ -1,16 +1,13 @@
 //! glTF export: `buildGltfBuffer` meshes each part into one primitive per part and material,
 //! optionally Draco-compressed, as a `.glb` or a self-contained `.gltf` (`Container`), with
-//! the scene turned Z-up to Y-up and scaled to metres. `meshExportGltf` is the script's
-//! `export_gltf`, writing through the VM's file system.
+//! the scene turned Z-up to Y-up and scaled to metres. The script's `export_gltf` is in
+//! stdlib/files.zig.
 
 const std = @import("std");
-const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
-const receiver_parts = @import("parts.zig");
 
 // --- GLTF & Draco Configuration Constants ---
 const GLTF_COMPONENT_TYPE_FLOAT = 5126;
@@ -426,23 +423,6 @@ fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayLi
     try glb_payload.appendSlice(allocator, bin_buf.items);
 
     return try glb_payload.toOwnedSlice(allocator);
-}
-
-pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
-    var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
-    defer handles.deinit(vm.allocator);
-
-    const use_draco = draco_opt orelse false;
-
-    try receiver_parts.receiverParts(vm, receiver, "export_gltf", &handles);
-
-    for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-    const bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, Container.forPath(filepath));
-    defer vm.allocator.free(bytes);
-
-    try vm.vfs.writeFile(filepath, bytes);
-
-    return receiver;
 }
 
 fn appendU32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, word: u32) !void {

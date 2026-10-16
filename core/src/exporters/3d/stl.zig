@@ -1,15 +1,12 @@
-//! STL export and import: `buildStlBuffer` writes a solid as binary STL, `meshExportStl` backs
-//! `export_stl` on solids and assemblies, and `parseStlBuffer` reads binary or ASCII STL into
-//! a mesh with repeated vertices merged, for `nativeImportStl`.
+//! STL: `buildStlBuffer` writes a solid as binary STL, `buildStlOfParts` several as their
+//! union (STL holds one mesh), and `parseStlBuffer` reads binary or ASCII STL into a mesh with
+//! repeated vertices merged. The script's `export_stl` and `import_stl` are in stdlib/files.zig.
 
 const std = @import("std");
-const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const error_kind = @import("../../vm/error_kind.zig");
-const receiver_parts = @import("parts.zig");
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
 // a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
@@ -193,38 +190,4 @@ pub fn buildStlOfParts(allocator: std.mem.Allocator, vm: *VM, parts: []const geo
             return buildStlBuffer(allocator, united);
         },
     }
-}
-
-/// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
-pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
-    defer parts.deinit(vm.allocator);
-    try receiver_parts.receiverParts(vm, receiver, "export_stl", &parts);
-
-    const stl_bytes = buildStlOfParts(vm.allocator, vm, parts.items) catch |err| switch (err) {
-        error.NoGeometry => {
-            return vm.fail(.GeometryError, "export_stl: the model is empty, there is nothing to write to '{s}'", .{filepath});
-        },
-        else => return err,
-    };
-    defer vm.allocator.free(stl_bytes);
-
-    try vm.vfs.writeFile(filepath, stl_bytes);
-
-    return receiver;
-}
-
-pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    const file_buf = vm.vfs.readFile(vm.allocator, path_str) catch |err| {
-        return vm.fail(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer vm.allocator.free(file_buf);
-
-    var stl_mesh = parseStlBuffer(vm.allocator, file_buf) catch |err| {
-        return vm.fail(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer stl_mesh.deinit(vm.allocator);
-
-    const dag_idx = try vm.dag_builder.addPolyhedron(stl_mesh.points, stl_mesh.faces);
-    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
