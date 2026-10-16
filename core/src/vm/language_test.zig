@@ -445,3 +445,11 @@ test "Language: include and inheritance mistakes are TypeErrors, not silent stop
         .{ .src = rescued("S = \"s\"\nclass B < S\nend"), .expected = .{ .str = "TypeError: a superclass must be a Class, got String" } },
     });
 }
+
+test "Language: on_face and Workplane are withheld until the sketching API exists" {
+    // on_face returned a Workplane with no methods: an API that led nowhere.
+    try expectScripts(&.{
+        .{ .src = rescued("cube(1).on_face(:top) { }"), .expected = .{ .str = "NoMethodError: undefined method 'on_face' for Geometry" } },
+        .{ .src = "r = defined?(Workplane).nil?", .expected = .{ .boolean = true } },
+    });
+}

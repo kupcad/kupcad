@@ -32,6 +32,16 @@ pub const ProjectConfig = struct {
 
     pub const Position = struct { line: u64, column: u64 };
 
+    /// The settings that hold for the script at `script_path`: the nearest .kupcad.json in
+    /// its folder or above (as `find` looks), the defaults when there is none. A file that
+    /// doesn't parse is an error; `where` receives the position when it has one.
+    pub fn forScript(io: std.Io, allocator: std.mem.Allocator, script_path: []const u8, where: ?*Position) !ProjectConfig {
+        const dir = std.fs.path.dirname(script_path) orelse ".";
+        const found = try find(io, allocator, dir) orelse return .{};
+        defer allocator.free(found);
+        return load(io, allocator, found, where);
+    }
+
     /// Reads the settings at `path`; the defaults when there is no file (null).
     pub fn load(io: std.Io, allocator: std.mem.Allocator, path: ?[]const u8, where: ?*Position) !ProjectConfig {
         const source = try fs.readFileLimit(io, allocator, path orelse return .{}, MAX_FILE_SIZE);

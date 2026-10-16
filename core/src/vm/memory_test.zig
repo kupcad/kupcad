@@ -362,3 +362,17 @@ test "GC: an object whose list entry can't be allocated is freed, not leaked" {
     try testing.expectEqual(@as(usize, 0), vm.gc.bboxes.items.len);
     // testing.allocator reports the object as leaked at deinit if it wasn't destroyed.
 }
+
+test "GC: a script past its memory limit stops with a Sandbox Error" {
+    // The GC had the cap all along, but nothing ever set it.
+    const support = @import("../test_support.zig");
+    for ([_]struct { limit: ?usize, outcome: @import("vm.zig").InterpretResult }{
+        .{ .limit = 64 * 1024, .outcome = .runtime_error },
+        .{ .limit = null, .outcome = .ok },
+    }) |case| {
+        var vm = try support.initVm();
+        defer vm.deinit();
+        vm.setMemoryLimit(case.limit);
+        try std.testing.expectEqual(case.outcome, try support.runOn(&vm, "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\nr = a.length"));
+    }
+}

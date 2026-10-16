@@ -1724,6 +1724,12 @@ pub const VM = struct {
         self.unwind_stack.clearRetainingCapacity();
     }
 
+    /// Caps the script heap the GC tracks at `bytes` (null: no cap); an allocation past it
+    /// ends the run with a Sandbox Error. The cap existed in the GC but nothing set it.
+    pub fn setMemoryLimit(self: *VM, bytes: ?usize) void {
+        self.gc.max_memory_limit = bytes;
+    }
+
     pub fn resetStack(self: *VM) void {
         self.shrinkStack(0);
         self.clearUnwindState();

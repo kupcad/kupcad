@@ -94,7 +94,8 @@ pub const MeshMethod = struct {
 pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
-    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "Workplane",
+    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly",
+    // "Workplane": hidden with on_face (see the method table)
 };
 
 // Core language keywords and intrinsic system states
@@ -148,7 +149,10 @@ pub const mesh_methods = [_]MeshMethod{
     method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
     method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver),
     method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver),
-    method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane),
+    // `on_face` returns a Workplane, a value with no methods yet: hidden until the fluent
+    // sketching API it belongs to exists (CadQuery's Workplane does the local-coordinate
+    // sketching and extrusion; a bare one misleads). The implementation stays.
+    // method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane),
     method("split_by_plane", .transform, methods.meshSplitByPlane, &sig.SPLIT_BY_PLANE, .array),
     method("decompose", .transform, methods.meshDecompose, &sig.NONE, .array),
     method("genus", .inspection_method, methods.meshGenus, &sig.NONE, .number),

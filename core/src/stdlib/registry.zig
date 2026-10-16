@@ -93,7 +93,9 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.class_class = try defineValueClass(vm, "Class");
     vm.module_class = try defineValueClass(vm, "Module");
     vm.assembly_class = try defineValueClass(vm, "Assembly");
-    vm.workplane_class = try defineValueClass(vm, "Workplane");
+    // Workplane is hidden until the fluent sketching API exists (see manifest.zig, on_face);
+    // its class stays unregistered, so the name is free for scripts.
+    // vm.workplane_class = try defineValueClass(vm, "Workplane");
 
     // Array.new / String.new / Map.new build real empty values, as in Ruby.
     try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(@import("classes/array.zig").arrayNew));

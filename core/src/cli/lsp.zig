@@ -91,6 +91,7 @@ pub const HoverRun = struct {
         self.vm.vfs = sandbox;
         self.vm.mute_errors = true; // its errors are the document's diagnostics
         self.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+        self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
         try registry.registerStandardLibrary(&self.vm);
 
         var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &self.program, &self.vm);
@@ -274,6 +275,7 @@ pub const Handler = struct {
         workspace_fs: ?*NativeVfs,
     ) Handler {
         session.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+        session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
         return .{
             .allocator = allocator,
             .io = io,

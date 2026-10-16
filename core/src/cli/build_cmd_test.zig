@@ -329,3 +329,14 @@ test "build_cmd: unknown options, a missing -o value and extra inputs are reject
         try testing.expectEqualStrings(case.message, res.text());
     }
 }
+
+test "build_cmd: the project's vm_memory_limit caps the script's heap" {
+    // `.kupcad.json` had the setting, but no command applied it.
+    var fx = try Fixture.init("a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n");
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"vm_memory_limit\": 65536 }" });
+    var result = try runBuild(&.{ fx.input, "-o", fx.output });
+    defer result.deinit();
+    try testing.expectEqual(.failure, result.outcome);
+    try testing.expect(std.mem.indexOf(u8, result.text(), "Build failed") != null); // the VM reports the Sandbox Error itself
+}
