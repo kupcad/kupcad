@@ -4507,6 +4507,10 @@ test "KupCAD Parser: an escape a string can't hold is a syntax error at the esca
     }
 }
 
+test "KupCAD Parser: a bare $ is an unexpected character" {
+    try expectSingleDiagnostic("x = $\n", "Unexpected character '$'");
+}
+
 test "Parser: an assignment in an argument or an element takes one value" {
     // `f(b = 5, 6)` made b the array [5, 6] and passed one argument, and `f(b = 5,)` an
     // array with an invalid element, unreported. A statement still takes the list.

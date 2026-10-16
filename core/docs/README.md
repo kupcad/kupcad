@@ -180,6 +180,7 @@ end
 
 KupCAD borrows Ruby's syntax but deliberately keeps a simpler model; these are design choices, not missing features:
 
+* **`$` is no global sigil.** `$name` is a variable like any other, with the scope of any other; a `$` that starts no name is a syntax error ("Unexpected character '$'"), where it used to be a variable named `$`. Comments are `#` lines, and `/* */` is no comment.
 * **Lambdas are the only callable objects.** Write `->(x) { ... }` or `-> do ... end`; there is no `proc`, `Proc.new` or `lambda { }`. Call one with `f.call(3)` (or `f.call` with no arguments); `f.()` and `f[3]` don't exist.
 * **A lambda behaves exactly like a block.**
   * `return value` and `next value` leave just the block or lambda with that value; neither returns from the enclosing `def`. Use `break value` to stop an iteration and hand back a result: `[10, 20].each { |v| break v * 2 }` is `20`. A `break` leaves the call the block was given to: `m { break 5 }` is `5` and `m` stops where it stands, whether it reached the block through `yield` (from its own body or from inside another block), by handing it on with `each(&blk)` or with `blk.call`. `break` is only valid in a block given to an iterating method (not in a lambda, and an `ArgumentError` in a block given to `highlight`, `ghost`, `benchmark` or `assert`). An iteration reaches the elements its block adds to the array or map it iterates, as in Ruby.

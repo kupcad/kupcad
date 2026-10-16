@@ -242,6 +242,7 @@ pub const Lexer = struct {
             '#' => self.consumeCommentOrParam(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             '%' => self.consumePercentOrModulo(start_loc),
+            '$' => self.consumeGlobal(start_loc),
             else => {
                 if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
@@ -571,6 +572,14 @@ pub const Lexer = struct {
         // Fallback: It wasn't a valid Heredoc terminator, so it's just a Left Shift <<
         self.advance();
         return .{ .tag = .less_less, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+    }
+
+    /// `$name`, a global. A `$` that starts no name is a character the language doesn't use
+    /// (it was a variable named `$`).
+    fn consumeGlobal(self: *Lexer, start_loc: common_token.Location) Token {
+        const next_c: u8 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
+        if (next_c != '$' and utils.LexerUtils.isIdentStart(next_c, false)) return self.consumeIdentOrKeyword(start_loc);
+        return self.consumeChar(.invalid, start_loc);
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {

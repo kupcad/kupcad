@@ -977,3 +977,11 @@ test "Lexer: lexAll frees what it allocated when an allocation fails" {
     // the second list leaked the first.
     try testing.checkAllAllocationFailures(testing.allocator, lexAllWith, .{"x = cube(10).translate(1, 2, 3)\nputs x\n"});
 }
+
+test "KupCAD Lexer: a bare $ is a character the language doesn't use, $name a global" {
+    // `$` alone lexed as a variable named `$`.
+    try expectTokens("$ = 1", &.{ t(.invalid, "$"), t(.equal, "="), t(.number, "1"), t(.eof, "") });
+    try expectTokens("$", &.{ t(.invalid, "$"), t(.eof, "") });
+    try expectTokens("$$x", &.{ t(.invalid, "$"), t(.ident, "$x"), t(.eof, "") });
+    try expectTokens("$x + $_y", &.{ t(.ident, "$x"), t(.plus, "+"), t(.ident, "$_y"), t(.eof, "") });
+}
