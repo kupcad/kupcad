@@ -115,6 +115,9 @@ pub fn buildGltfBuffer(
         primitives_data.deinit(allocator);
     }
 
+    // Every part's positions as floats, for the Draco encoder (vertex_buf holds their bytes)
+    var all_positions: std.ArrayListUnmanaged(f32) = .empty;
+    defer all_positions.deinit(allocator);
     var global_min = [3]f64{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) };
     var global_max = [3]f64{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) };
     var total_vertices: u32 = 0;
@@ -163,9 +166,10 @@ pub fn buildGltfBuffer(
             if (z < global_min[2]) global_min[2] = z;
             if (z > global_max[2]) global_max[2] = z;
 
-            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 0]));
-            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 1]));
-            try vertex_buf.appendSlice(allocator, std.mem.asBytes(&mesh.vert_props[v + 2]));
+            for (0..3) |axis| {
+                try appendF32Le(&vertex_buf, allocator, mesh.vert_props[v + axis]);
+                try all_positions.append(allocator, mesh.vert_props[v + axis]);
+            }
         }
 
         var mat_it = mat_indices.iterator();
@@ -194,24 +198,18 @@ pub fn buildGltfBuffer(
     defer extensionsUsed.deinit(allocator);
     defer extensionsRequired.deinit(allocator);
 
-    try accessors.append(allocator, .{
-        .bufferView = if (use_draco) null else 0,
-        .byteOffset = 0,
-        .componentType = GLTF_COMPONENT_TYPE_FLOAT,
-        .count = total_vertices,
-        .type = "VEC3",
-        .min = global_min,
-        .max = global_max,
-    });
-
     if (use_draco) {
         try extensionsUsed.append(allocator, "KHR_draco_mesh_compression");
         try extensionsRequired.append(allocator, "KHR_draco_mesh_compression");
 
-        const raw_positions = @as([*]const f32, @ptrCast(@alignCast(vertex_buf.items.ptr)))[0 .. vertex_buf.items.len / 4];
-
         for (primitives_data.items) |prim| {
-            const draco_bytes = try draco.encodeMesh(allocator, raw_positions, prim.indices.items, DRACO_POSITION_QUANTIZATION_BITS);
+            // Draco decodes each primitive's mesh on its own, so its POSITION accessor must
+            // count that mesh's vertices: the ones the primitive uses, renumbered. (Every
+            // primitive pointed at one accessor with the total vertex count, a malformed
+            // file for any multi-part model.)
+            var compact = try compactPrimitive(allocator, all_positions.items, prim.indices.items);
+            defer compact.deinit(allocator);
+            const draco_bytes = try draco.encodeMesh(allocator, compact.positions.items, compact.indices, DRACO_POSITION_QUANTIZATION_BITS);
             defer allocator.free(draco_bytes);
 
             const draco_offset: u32 = @intCast(bin_buf.items.len);
@@ -226,6 +224,16 @@ pub fn buildGltfBuffer(
                 .byteLength = @intCast(draco_bytes.len),
             });
 
+            const position_accessor: u32 = @intCast(accessors.items.len);
+            try accessors.append(allocator, .{
+                .bufferView = null,
+                .byteOffset = 0,
+                .componentType = GLTF_COMPONENT_TYPE_FLOAT,
+                .count = @intCast(compact.positions.items.len / 3),
+                .type = "VEC3",
+                .min = compact.min,
+                .max = compact.max,
+            });
             const accessor_id: u32 = @intCast(accessors.items.len);
             try accessors.append(allocator, .{
                 .bufferView = null,
@@ -236,21 +244,31 @@ pub fn buildGltfBuffer(
             });
 
             try primitives.append(allocator, .{
-                .attributes = .{ .POSITION = 0 },
+                .attributes = .{ .POSITION = position_accessor },
                 .indices = accessor_id,
                 .material = prim.material,
                 .extensions = .{
                     .KHR_draco_mesh_compression = .{
                         .bufferView = draco_bv_idx,
+                        // Draco's own attribute id within the compressed mesh, not an accessor
                         .attributes = .{ .POSITION = 0 },
                     },
                 },
             });
         }
     } else {
-        // Uncompressed: one buffer view of tightly packed positions for every part (accessor 0
-        // above), then one index buffer per (part, material) primitive. The same layout as the
-        // draco branch, so both export every part with its own material.
+        // Uncompressed: one buffer view of tightly packed positions for every part (accessor
+        // 0), then one index buffer per (part, material) primitive, so every part keeps its
+        // own material.
+        try accessors.append(allocator, .{
+            .bufferView = 0,
+            .byteOffset = 0,
+            .componentType = GLTF_COMPONENT_TYPE_FLOAT,
+            .count = total_vertices,
+            .type = "VEC3",
+            .min = global_min,
+            .max = global_max,
+        });
         try bin_buf.appendSlice(allocator, vertex_buf.items);
         try bufferViews.append(allocator, .{
             .buffer = 0,
@@ -261,14 +279,13 @@ pub fn buildGltfBuffer(
 
         for (primitives_data.items) |prim| {
             const idx_byte_offset: u32 = @intCast(bin_buf.items.len);
-            const raw_indices = std.mem.sliceAsBytes(prim.indices.items);
-            try bin_buf.appendSlice(allocator, raw_indices);
+            for (prim.indices.items) |index| try appendU32Le(&bin_buf, allocator, index);
 
             const idx_bv_idx: u32 = @intCast(bufferViews.items.len);
             try bufferViews.append(allocator, .{
                 .buffer = 0,
                 .byteOffset = idx_byte_offset,
-                .byteLength = @intCast(raw_indices.len),
+                .byteLength = @intCast(prim.indices.items.len * 4),
                 .target = GLTF_TARGET_ELEMENT_ARRAY_BUFFER,
             });
 
@@ -396,16 +413,10 @@ fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayLi
     const json_chunk_type: u32 = 0x4E4F534A; // "JSON"
     const bin_chunk_type: u32 = 0x004E4942; // "BIN\0"
 
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&magic));
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&version));
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&total_length));
-
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&json_len));
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&json_chunk_type));
+    // glTF is little-endian on any host (the header and buffers were written in native order)
+    for ([_]u32{ magic, version, total_length, json_len, json_chunk_type }) |word| try appendU32Le(&glb_payload, allocator, word);
     try glb_payload.appendSlice(allocator, json_out.items);
-
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&bin_len));
-    try glb_payload.appendSlice(allocator, std.mem.asBytes(&bin_chunk_type));
+    for ([_]u32{ bin_len, bin_chunk_type }) |word| try appendU32Le(&glb_payload, allocator, word);
     try glb_payload.appendSlice(allocator, bin_buf.items);
 
     return try glb_payload.toOwnedSlice(allocator);
@@ -443,4 +454,49 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
 
 pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value, draco_opt: ?bool) !value.Value {
     return meshExportGltf(vm, target, path_str, draco_opt);
+}
+
+fn appendU32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, word: u32) !void {
+    var bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &bytes, word, .little);
+    try buf.appendSlice(allocator, &bytes);
+}
+
+fn appendF32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, f: f32) !void {
+    try appendU32Le(buf, allocator, @bitCast(f));
+}
+
+/// The vertices one primitive uses, renumbered from 0 in order of first use, its indices
+/// rewritten to match, and the bounds of those vertices.
+const CompactMesh = struct {
+    positions: std.ArrayListUnmanaged(f32) = .empty,
+    indices: []u32,
+    min: [3]f64 = .{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) },
+    max: [3]f64 = .{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) },
+
+    fn deinit(self: *CompactMesh, allocator: std.mem.Allocator) void {
+        self.positions.deinit(allocator);
+        allocator.free(self.indices);
+    }
+};
+
+fn compactPrimitive(allocator: std.mem.Allocator, positions: []const f32, indices: []const u32) !CompactMesh {
+    var compact: CompactMesh = .{ .indices = try allocator.alloc(u32, indices.len) };
+    errdefer compact.deinit(allocator);
+    var renumbered = std.AutoHashMap(u32, u32).init(allocator);
+    defer renumbered.deinit();
+    for (indices, compact.indices) |old, *new| {
+        const gop = try renumbered.getOrPut(old);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = @intCast(compact.positions.items.len / 3);
+            const vertex = positions[old * 3 ..][0..3];
+            try compact.positions.appendSlice(allocator, vertex);
+            for (vertex, &compact.min, &compact.max) |c, *lo, *hi| {
+                lo.* = @min(lo.*, @as(f64, @floatCast(c)));
+                hi.* = @max(hi.*, @as(f64, @floatCast(c)));
+            }
+        }
+        new.* = gop.value_ptr.*;
+    }
+    return compact;
 }

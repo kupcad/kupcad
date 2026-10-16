@@ -139,7 +139,9 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
 }
 
 /// Binary STL of `handle`, little-endian as the format requires on any host (bytes used
-/// to be copied in native order). Normals are left zero; readers recompute them.
+/// to be copied in native order). Normals are left zero; readers recompute them. An empty
+/// solid is error.NoGeometry, as for glTF: it used to be an 84-byte file with no
+/// triangles, which KupCAD's own importer rejects.
 pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ![]const u8 {
     if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
     const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
@@ -147,6 +149,7 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     defer allocator.free(mesh.tri_verts);
 
     const tri_count = mesh.tri_verts.len / 3;
+    if (tri_count == 0) return error.NoGeometry;
     const out = try allocator.alloc(u8, PREAMBLE_LEN + tri_count * RECORD_LEN);
     errdefer allocator.free(out);
 
@@ -174,7 +177,13 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .mesh);
 
-    const stl_bytes = try buildStlBuffer(vm.allocator, handle);
+    const stl_bytes = buildStlBuffer(vm.allocator, handle) catch |err| switch (err) {
+        error.NoGeometry => {
+            _ = vm.raiseError(.GeometryError, "export_stl: the Solid is empty, there is nothing to write to '{s}'", .{filepath});
+            return error.RuntimeError;
+        },
+        else => return err,
+    };
     defer vm.allocator.free(stl_bytes);
 
     try vm.vfs.writeFile(filepath, stl_bytes);

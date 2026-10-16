@@ -406,3 +406,9 @@ test "Language: rescue names a class by its scoped path, or lexically inside its
         .{ .src = parts ++ "r = begin\n  raise \"other\"\nrescue Parts::MyError => e\n  \"wrong\"\nrescue => e\n  e.message\nend", .expected = .{ .str = "other" } },
     });
 }
+
+test "Language: exporting an empty Solid is a GeometryError" {
+    try expectScripts(&.{
+        .{ .src = rescued("cube(1).difference(cube(2)).export_stl(\"never-written.stl\")"), .expected = .{ .str = "GeometryError: export_stl: the Solid is empty, there is nothing to write to 'never-written.stl'" } },
+    });
+}

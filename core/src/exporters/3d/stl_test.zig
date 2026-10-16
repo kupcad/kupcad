@@ -62,3 +62,14 @@ test "STL: an engine that can't tessellate yet is an error, not an empty file" {
     defer kernel.destruct(part);
     try testing.expectError(error.EngineCannotTessellate, stl.buildStlBuffer(testing.allocator, part));
 }
+
+test "STL: an empty solid is an error, not a file with no triangles" {
+    // It exported as an 84-byte file that KupCAD's own importer rejects, with exit 0.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const inner = try vm.dag_builder.addCube(1, 1, 1, false);
+    const outer = try vm.dag_builder.addCube(2, 2, 2, false);
+    const handle = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addBinary(.difference_op, inner, outer));
+    try testing.expectError(error.NoGeometry, stl.buildStlBuffer(testing.allocator, handle));
+}

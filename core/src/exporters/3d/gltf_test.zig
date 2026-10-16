@@ -161,7 +161,38 @@ test "GLTF: multi-part exports are valid and each part keeps its own material" {
         try std.testing.expectEqual(@as(usize, 2), grey);
         try std.testing.expectEqual(@as(usize, 1), red);
         try std.testing.expectEqual(@as(usize, 1), green);
+        if (use_draco) try expectOwnPositionsPerPrimitive(&glb);
     }
+}
+
+/// Under Draco each primitive is decoded on its own, so each needs a POSITION accessor
+/// counting its own vertices, with their bounds. Every primitive used to point at one
+/// accessor with the total count, which no decoder accepts for a multi-part model.
+fn expectOwnPositionsPerPrimitive(glb: *const Glb) !void {
+    const accessors = glb.array("accessors");
+    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
+    var total: usize = 0;
+    for (prims, 0..) |p, i| {
+        const pos = int(p.object.get("attributes").?.object.get("POSITION").?);
+        for (prims[0..i]) |earlier| try std.testing.expect(int(earlier.object.get("attributes").?.object.get("POSITION").?) != pos);
+        const accessor = accessors[pos].object;
+        try std.testing.expect(accessor.get("bufferView") == null); // compressed: no view of its own
+        total += int(accessor.get("count").?);
+        const min = accessor.get("min").?.array.items;
+        const max = accessor.get("max").?.array.items;
+        for (min, max) |lo, hi| try std.testing.expect(number(lo) <= number(hi));
+    }
+    // The two single cubes have 8 vertices each; the union's two primitives share none.
+    try std.testing.expectEqual(@as(usize, 8), int(accessors[int(prims[0].object.get("attributes").?.object.get("POSITION").?)].object.get("count").?));
+    try std.testing.expect(total > 16);
+}
+
+fn number(v: std.json.Value) f64 {
+    return switch (v) {
+        .float => |f| f,
+        .integer => |n| @floatFromInt(n),
+        else => unreachable,
+    };
 }
 
 test "GLTF: a model without materials uses only the default material" {
