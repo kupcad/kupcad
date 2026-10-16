@@ -1,7 +1,8 @@
 //! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
 //! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints)
-//! and runs the last edited document in a sandboxed VM (`ReadOnlyVfs`) to send its mesh to
-//! the viewport WebSocket server (daemon/viewport_ws.zig).
+//! and, through a `Preview` (lsp_preview.zig), runs the last edited document for the
+//! viewport WebSocket server (daemon/viewport_ws.zig) and for hovers: in a worker process
+//! (lsp_worker.zig), so a script whose run crashes leaves the server running.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -14,22 +15,18 @@ const lsp_hints = @import("lsp_hints.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const VM = @import("../vm/vm.zig").VM;
-const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
-const kernel = @import("../kernel/kernel.zig");
 const Outcome = @import("outcome.zig").Outcome;
-const Compiler = @import("../compiler/compiler.zig").Compiler;
-const registry = @import("../stdlib/registry.zig");
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const lsp_preview = @import("lsp_preview.zig");
+const Preview = lsp_preview.Preview;
+const SessionPreview = lsp_preview.SessionPreview;
+const lsp_worker = @import("lsp_worker.zig");
+const Args = @import("args.zig").Args;
 const viewport_ws = @import("../daemon/viewport_ws.zig");
 const ViewportWsServer = viewport_ws.ViewportWsServer;
-const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const NativeVfs = @import("../vfs/native.zig").NativeVfs;
-const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
-const limits = @import("../core/limits.zig");
 
 const logger = std.log.scoped(.lsp);
 
@@ -42,7 +39,8 @@ pub const USAGE =
     \\Usage: kupcad lsp
     \\
     \\Starts the language server on stdin and stdout. Editors start it themselves;
-    \\the VS Code extension runs it for .kup files.
+    \\the VS Code extension runs it for .kup files. It runs scripts in a worker
+    \\process of its own (kupcad lsp --preview-worker), which it restarts if it crashes.
     \\
 ;
 
@@ -70,127 +68,6 @@ pub const DocumentBuffer = struct {
 const ScopeContext = struct {
     def_name: ?[]const u8 = null,
     class_name: ?[]const u8 = null,
-};
-
-/// A document run once for its hovers. It used to run again for every hover, in a fresh
-/// VM capped at 500k instructions, so a big model's hovers showed nothing; now it runs
-/// once per version of the workspace, under the preview's limit, and every hover reads
-/// what that run left. Heap-allocated: the VM must not move.
-pub const HoverRun = struct {
-    allocator: std.mem.Allocator,
-    /// The document it ran (owned).
-    uri: []const u8,
-    vm: VM,
-    program: chunk.Chunk,
-
-    /// Runs `doc` (known in the project as `module_path`) on `sandbox`, which must not
-    /// write: the document is untrusted. Null when it doesn't compile: running an
-    /// incomplete chunk broke the VM's invariants, and its diagnostics say why.
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, uri: []const u8, module_path: []const u8) !?*HoverRun {
-        const self = try allocator.create(HoverRun);
-        errdefer allocator.destroy(self);
-        self.* = .{ .allocator = allocator, .uri = try allocator.dupe(u8, uri), .vm = undefined, .program = chunk.Chunk.init() };
-        errdefer allocator.free(self.uri);
-        self.vm = try VM.init(allocator, io);
-        errdefer self.vm.deinit();
-        // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
-        self.vm.vfs = sandbox;
-        self.vm.mute_errors = true; // its errors are the document's diagnostics
-        self.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
-        self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
-        try registry.registerStandardLibrary(&self.vm);
-
-        var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
-        defer comp.deinit();
-        comp.module_path = module_path;
-        comp.compile(doc.tree.root) catch |err| {
-            logger.debug("Hover: the document doesn't compile: {}", .{err});
-            self.destroy();
-            return null;
-        };
-        // A run that stops early still leaves what it defined before stopping.
-        _ = self.vm.interpret(&self.program);
-        return self;
-    }
-
-    pub fn destroy(self: *HoverRun) void {
-        const allocator = self.allocator;
-        self.program.free(allocator);
-        self.vm.deinit();
-        allocator.free(self.uri);
-        allocator.destroy(self);
-    }
-
-    /// What the run knows about the value at `target_node` of `doc` (the document it ran):
-    /// a variable's value, or a call's, with a shape's measurements.
-    pub fn writeFacts(self: *HoverRun, doc: *const api.Document, target_node: ast.NodeIndex, writer: anytype) !void {
-        const node = doc.tree.getNode(target_node) orelse return error.NoValue;
-        var val: value.Value = value.Value.initNil();
-
-        if (node.tag == .identifier or node.tag == .assignment) {
-            const name = if (node.tag == .identifier) doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) else doc.tree.getString(doc.tree.assignment(node).name);
-            val = self.vm.globals.get(name) orelse return error.NoValue;
-        } else if (node.tag == .method_call) {
-            // The call alone, in the run's VM, so it sees the run's variables.
-            var expr_chunk = chunk.Chunk.init();
-            defer expr_chunk.free(self.allocator);
-            var expr_comp = Compiler.forDocument(self.allocator, doc, &expr_chunk, &self.vm);
-            defer expr_comp.deinit();
-            expr_comp.compile(target_node) catch return error.NoValue;
-            const res = self.vm.interpret(&expr_chunk);
-            if (res != .ok or self.vm.stack_top == 0) return error.NoValue;
-            val = self.vm.stack[self.vm.stack_top - 1];
-        } else {
-            return;
-        }
-
-        // 3. Concretize and write Markdown while memory is safe
-        if (val.isGeometry()) {
-            try writer.print("\n---\n### 🧊 3D Solid\n", .{});
-
-            if (self.vm.ensureConcrete(val)) |handle| {
-                // Only what the engine can measure: a B-Rep part would otherwise show zeros.
-                const engine = handle.engine;
-                if (kernel.supports(engine, .bounding_box)) if (kernel.boundingBox(handle)) |bx| {
-                    const dx = bx.max[0] - bx.min[0];
-                    const dy = bx.max[1] - bx.min[1];
-                    const dz = bx.max[2] - bx.min[2];
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` H: `{d:.2}` mm\n", .{ dx, dy, dz });
-                };
-
-                if (kernel.supports(engine, .volume)) try writer.print("- **Volume:** `{d:.2}` mm³\n", .{kernel.volume(handle)});
-                if (kernel.supports(engine, .surface_area)) try writer.print("- **Surface Area:** `{d:.2}` mm²\n", .{kernel.surfaceArea(handle)});
-                if (kernel.supports(engine, .genus)) {
-                    const gen = kernel.genus(handle);
-                    if (gen > 0) try writer.print("- **Holes (Genus):** `{d}`\n", .{gen});
-                }
-
-                // Counted, not tessellated: the mesh used to be built and copied for this line.
-                if (kernel.numTris(handle)) |tris| try writer.print("- **Topology:** `{d}` Vertices, `{d}` Faces\n", .{ kernel.numVerts(handle), tris });
-            } else |_| {}
-        } else if (val.isCrossSection()) { //2D SAFE RESOLUTION
-            try writer.print("\n---\n### 📐 2D Profile\n", .{});
-
-            if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
-                if (kernel.supports(cs_handle.engine, .sketch_measure)) {
-                    const area = kernel.crossSectionArea(cs_handle);
-                    const rect = kernel.crossSectionBounds(cs_handle);
-
-                    const w = rect.max[0] - rect.min[0];
-                    const l = rect.max[1] - rect.min[1];
-
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
-                    try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
-                }
-            } else |_| {}
-        } else if (val.isString()) {
-            try writer.writeAll("\n---\n*(String)* `");
-            try val.stringify(true, writer);
-            try writer.writeAll("`\n");
-        } else if (val.isBool()) {
-            try writer.print("\n---\n*(Boolean)* `{}`\n", .{val.asBool()});
-        }
-    }
 };
 
 inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex) ScopeContext {
@@ -245,25 +122,16 @@ pub const Handler = struct {
     offset_encoding: lsp.offsets.Encoding = .@"utf-16",
     files: std.StringHashMapUnmanaged(DocumentBuffer) = .empty,
 
-    session: *ScriptSession,
+    /// Where scripts run: the preview and the run hovers read (lsp_preview.zig), in a worker
+    /// process when the server runs (lsp_worker.zig), in this one in tests.
+    preview: Preview,
     /// Null when the viewport server failed to start; language features keep working.
     ws_server: ?*ViewportWsServer,
-    mem_vfs: *MemoryVfs,
-    /// Read-only VFS every LSP-run VM uses (session + hover).
-    sandbox: *ReadOnlyVfs,
-    /// The project's files on disk, as imports read them: rooted at `root` once the editor
-    /// names it. Null when there are none to read (tests).
-    workspace_fs: ?*NativeVfs,
     /// The workspace folder the editor opened (absolute, owned): documents are known by
     /// their path relative to it, so their relative imports find each other.
     root: ?[]u8 = null,
-    /// The directory `workspace_fs` was re-rooted at, closed with the handler.
-    root_dir: ?std.Io.Dir = null,
     /// The module path of the document last edited, whose mesh the viewport shows (owned).
     preview_module: ?[]u8 = null,
-    /// The last document run for hovers, until any document changes (imports make any
-    /// edit matter).
-    hover_run: ?*HoverRun = null,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
 
@@ -271,62 +139,31 @@ pub const Handler = struct {
         allocator: std.mem.Allocator,
         io: std.Io,
         transport: *lsp.Transport,
-        session: *ScriptSession,
+        preview: Preview,
         ws_server: ?*ViewportWsServer,
-        mem_vfs: *MemoryVfs,
-        sandbox: *ReadOnlyVfs,
-        workspace_fs: ?*NativeVfs,
     ) Handler {
-        session.vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
-        session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
         return .{
             .allocator = allocator,
             .io = io,
             .transport = transport,
             .offset_encoding = .@"utf-16",
             .files = .empty,
-            .session = session,
+            .preview = preview,
             .ws_server = ws_server,
-            .mem_vfs = mem_vfs,
-            .sandbox = sandbox,
-            .workspace_fs = workspace_fs,
         };
     }
 
-    /// Replaces the module source in the session; the preview of `uri` is evaluated once the
-    /// editor goes quiet (`evaluatePreview`, run by the inbox), not on every keystroke.
-    /// Uses upsertModule: addModule returns error.DuplicateModule for known paths, and the old
-    /// "catch -> patch source" path never ran, so the viewport kept rendering stale code.
-    /// The module is named by its path in the project (modulePath), and its unsaved text
-    /// is what imports of it read; the modules importing it are evaluated again with it.
+    /// Gives the preview the module's source; it is evaluated once the editor goes quiet
+    /// (`evaluatePreview`, run by the inbox), not on every keystroke. The module is named
+    /// by its path in the project (modulePath), and its unsaved text is what imports of it
+    /// read; the modules importing it are evaluated again with it.
     fn syncSession(self: *Handler, module_path: []const u8, source: []const u8) !void {
-        try self.mem_vfs.vfs().writeFile(module_path, source);
-
-        _ = try self.session.workspace.upsertModule(module_path, source);
-        try self.session.workspace.linkDependencies();
-        try self.session.buildReverseGraph();
-        try self.session.markFileEdited(module_path);
-
-        self.dropHoverRun();
+        defer self.tellOfCrash();
+        try self.preview.update(module_path, source);
         const previewed = try self.allocator.dupe(u8, module_path);
         if (self.preview_module) |old| self.allocator.free(old);
         self.preview_module = previewed;
         self.preview_pending = true;
-    }
-
-    /// The run of `buf` for hovers: the last one if it ran this document, else a new one.
-    fn hoverRun(self: *Handler, buf: DocumentBuffer, doc: *const api.Document) !?*HoverRun {
-        if (self.hover_run) |run| {
-            if (std.mem.eql(u8, run.uri, buf.uri)) return run;
-            self.dropHoverRun();
-        }
-        self.hover_run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), doc, buf.uri, buf.module_path);
-        return self.hover_run;
-    }
-
-    fn dropHoverRun(self: *Handler) void {
-        if (self.hover_run) |run| run.destroy();
-        self.hover_run = null;
     }
 
     /// What the session and imports call the document at `uri`: its path relative to the
@@ -354,37 +191,39 @@ pub const Handler = struct {
         const path = try documentPath(scratch.allocator(), root_uri) orelse return;
         const trimmed = std.mem.trimEnd(u8, path, "/");
         self.root = try self.allocator.dupe(u8, trimmed);
-        if (self.workspace_fs) |fs| {
-            const dir = try std.Io.Dir.cwd().openDir(self.io, trimmed, .{});
-            self.root_dir = dir;
-            fs.root_dir = dir;
+        try self.preview.setRoot(trimmed);
+    }
+
+    /// Evaluates the preview and streams the edited document's mesh to the viewport. An edit
+    /// that arrives meanwhile cancels it (the inbox sets the preview's cancel token).
+    pub fn evaluatePreview(self: *Handler) void {
+        defer self.tellOfCrash();
+        self.preview_pending = false;
+        const module_path = self.preview_module orelse return;
+        const viewer = if (self.ws_server) |ws| (if (ws.clientCount() > 0) ws else null) else null;
+        switch (self.preview.evaluate(self.allocator, module_path, viewer != null)) {
+            .mesh => |glb| {
+                defer self.allocator.free(glb);
+                viewer.?.broadcastBinary(glb) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
+            },
+            .nothing, .failed => {},
+            // Stopped by a message: run again once the editor is quiet. The modules it
+            // finished stay evaluated, so the next run picks up where it stopped.
+            .cancelled => self.preview_pending = true,
+            // The worker running it ended (tellOfCrash says so); the next edit starts another.
+            .crashed => {},
         }
     }
 
-    /// Evaluates the session and streams the edited document's mesh to the viewport. An edit
-    /// that arrives meanwhile cancels it (the inbox sets the VM's cancel token).
-    pub fn evaluatePreview(self: *Handler) void {
-        self.preview_pending = false;
-        const uri = self.preview_module orelse return;
-        // Stopped by a message (the inbox's cancel): run again once the editor is quiet. The
-        // modules it finished stay evaluated, so the next run picks up where it stopped.
-        defer if (self.session.vm.cancel_token.load(.acquire)) {
-            self.preview_pending = true;
+    /// Tells the user the process running scripts ended, whichever call noticed: they would
+    /// otherwise see only a viewport that stopped updating, or hovers without values.
+    fn tellOfCrash(self: *Handler) void {
+        const subject = self.preview.takeCrash() orelse return;
+        var buf: [512]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "KupCAD: the worker process running scripts for the preview and hovers crashed (with {s}). The editor keeps working; the next edit starts a new one (the output panel says more).", .{subject}) catch "KupCAD: the worker process running scripts for the preview crashed; the next edit starts a new one.";
+        self.transport.writeNotification(self.io, self.allocator, "window/showMessage", lsp.types.window.ShowMessageParams, .{ .type = .Warning, .message = text }, .{}) catch |err| {
+            logger.warn("Could not tell the editor the preview crashed: {}", .{err});
         };
-        // A script that doesn't parse, compile or run is the user's to fix, not a server fault.
-        self.session.evaluateUntilCancelled() catch |err| switch (err) {
-            error.ParseError, error.CompileError, error.RuntimeError, error.Canceled => {
-                logger.debug("{s} did not evaluate: {}", .{ uri, err });
-                return;
-            },
-            else => {
-                logger.warn("Session evaluation failed: {}", .{err});
-                return;
-            },
-        };
-        if (self.ws_server) |ws| {
-            ws.broadcastSessionMesh(self.session, uri) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
-        }
     }
 
     /// The preview as the inbox's slow work.
@@ -399,14 +238,12 @@ pub const Handler = struct {
                 handler.evaluatePreview();
             }
         };
-        return .{ .context = self, .pending = Hooks.pending, .run = Hooks.run, .cancel = &self.session.vm.cancel_token };
+        return .{ .context = self, .pending = Hooks.pending, .run = Hooks.run, .cancel = self.preview.cancelToken() };
     }
 
     pub fn deinit(self: *Handler) void {
-        self.dropHoverRun();
         if (self.preview_module) |m| self.allocator.free(m);
         if (self.root) |r| self.allocator.free(r);
-        if (self.root_dir) |d| d.close(self.io);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -566,11 +403,10 @@ pub const Handler = struct {
         logger.debug("Closed {s}", .{uri});
         // The editor keeps the last diagnostics it was sent for a file until told otherwise.
         try self.publishDiagnostics(arena, uri, &.{});
-        self.dropHoverRun();
         var closed = (self.files.fetchRemove(uri) orelse return).value;
         defer closed.deinit(self.allocator);
-        try self.session.removeModule(closed.module_path);
-        _ = self.mem_vfs.deleteFile(closed.module_path);
+        defer self.tellOfCrash();
+        try self.preview.remove(closed.module_path);
     }
 
     pub fn @"textDocument/formatting"(
@@ -654,10 +490,9 @@ pub const Handler = struct {
         const is_variable = target_node.tag == .identifier or target_node.tag == .assignment;
         const script_variable = sym_kind == .global or (scope.def_name == null and (sym_kind == .local or sym_kind == .unresolved));
         if (!is_variable or script_variable) {
-            if (self.hoverRun(buf, &doc)) |maybe_run| {
-                if (maybe_run) |run| run.writeFacts(&doc, found_node_idx, &out.writer) catch |err| {
-                    logger.debug("Hover: no value to show: {}", .{err});
-                };
+            defer self.tellOfCrash();
+            if (self.preview.hoverFacts(arena, buf.module_path, found_node_idx)) |facts| {
+                if (facts) |text| out.writer.writeAll(text) catch return null;
             } else |err| logger.warn("Hover: could not run the document: {}", .{err});
         }
 
@@ -976,18 +811,27 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     return path;
 }
 
-pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !Outcome {
-    // 1. Setup global dependencies
-    var mem_vfs = MemoryVfs.init(allocator);
-    defer mem_vfs.deinit();
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
+    if (args.next()) |arg| {
+        if (!std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) return error.UnknownArgument;
+        try lsp_worker.runWorker(init.io, allocator);
+        return .success;
+    }
 
-    // Imports may read workspace files (jailed to cwd by NativeVfs), but never write.
-    var workspace_ro = NativeVfs.init(init.io, std.Io.Dir.cwd());
-    var sandbox = ReadOnlyVfs.init(mem_vfs.vfs(), workspace_ro.vfs());
-
-    var session = try ScriptSession.init(allocator, init.io);
-    defer session.deinit();
-    session.vm.vfs = sandbox.vfs();
+    // 1. Where scripts run: in a worker process (this executable, lsp_worker.zig), so one
+    // that crashes leaves the server running. Without a path to the executable, here.
+    const exe = std.process.executablePathAlloc(init.io, allocator) catch |err| blk: {
+        logger.warn("Running previews in the server itself: its executable wasn't found ({})", .{err});
+        break :blk null;
+    };
+    defer if (exe) |e| allocator.free(e);
+    const worker_argv = [_][]const u8{ exe orelse "", "lsp", lsp_worker.WORKER_FLAG };
+    var worker_preview = lsp_worker.WorkerPreview.init(allocator, init.io, &worker_argv);
+    defer worker_preview.deinit();
+    var session_preview: SessionPreview = undefined;
+    if (exe == null) try session_preview.init(allocator, init.io, true);
+    defer if (exe == null) session_preview.deinit();
+    const preview = if (exe != null) worker_preview.preview() else session_preview.preview();
 
     // 2. Viewport WebSocket server. Failure here must not take down language features.
     const preferred_port = preferredViewportPort(init.environ_map);
@@ -1011,7 +855,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator) !Outcome {
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport, &session, ws_server, &mem_vfs, &sandbox, &workspace_ro);
+    var handler = Handler.init(allocator, init.io, transport, preview, ws_server);
     defer handler.deinit();
 
     // Messages come through the inbox, which evaluates the preview when the editor goes

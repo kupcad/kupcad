@@ -62,8 +62,8 @@ fn globalFlag(arg: []const u8) ?GlobalFlag {
     return null;
 }
 
-fn runLsp(init: std.process.Init, allocator: std.mem.Allocator, _: *Args) anyerror!Outcome {
-    return lsp_cmd.execute(init, allocator);
+fn runLsp(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) anyerror!Outcome {
+    return lsp_cmd.execute(init, allocator, args);
 }
 
 pub fn main(init: std.process.Init) void {
@@ -119,4 +119,5 @@ test {
     _ = @import("cli/lsp.zig");
     _ = @import("cli/lsp_test.zig");
     _ = @import("cli/lsp_inbox_test.zig");
+    _ = @import("cli/lsp_worker_test.zig");
 }

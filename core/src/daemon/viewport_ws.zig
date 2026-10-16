@@ -1,12 +1,8 @@
 //! The WebSocket server the editor's viewport connects to on 127.0.0.1: the HTTP upgrade
 //! handshake with its origin check, frame encoding, and `ViewportWsServer`, which sends every
-//! client the session's model as GLB (`broadcastSessionMesh`). Started by cli/lsp.zig.
+//! client the preview's model as GLB (`broadcastBinary`). Started by cli/lsp.zig.
 
 const std = @import("std");
-const gltf = @import("../exporters/3d/gltf.zig");
-const ScriptSession = @import("session.zig").ScriptSession;
-const geom = @import("../kernel/geometry_handle.zig");
-const kernel = @import("../kernel/kernel.zig");
 
 const log = std.log.scoped(.viewport_ws);
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -499,25 +495,5 @@ pub const ViewportWsServer = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         for (self.clients.items) |c| c.post(frame);
-    }
-
-    pub fn broadcastSessionMesh(self: *ViewportWsServer, session: *ScriptSession, root_mod_path: []const u8) !void {
-        if (self.clientCount() == 0) return;
-        const root_id = session.workspace.path_to_id.get(root_mod_path) orelse return;
-        const node = &session.nodes.items[@backingInt(root_id)];
-        const handle = node.cached_handle orelse return;
-
-        if (!kernel.supports(handle.engine, .mesh)) {
-            log.warn("the viewport can't show this model: the {s} engine can't {s} yet", .{ handle.engine.scriptName(), kernel.Feature.mesh.describe() });
-            return;
-        }
-        const handles = [_]geom.GeometryHandle{handle};
-        const glb_bytes = gltf.buildGltfBuffer(self.allocator, &session.vm, &handles, false, .glb) catch |err| {
-            log.err("Failed to build GLB: {}", .{err});
-            return;
-        };
-        defer self.allocator.free(glb_bytes);
-
-        try self.broadcastBinary(glb_bytes);
     }
 };
