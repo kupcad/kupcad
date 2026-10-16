@@ -19,18 +19,14 @@ pub const ParamOrderRule = struct {
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .checkEOF = checkEOF,
+                .deinit = deinit,
             },
         };
     }
 
-    pub fn deinit(self: *ParamOrderRule, allocator: std.mem.Allocator) void {
-        self.defined_params.deinit(allocator);
-    }
-
-    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *ParamOrderRule = @ptrCast(@alignCast(ptr));
-        self.defined_params.deinit(engine.allocator);
+        self.defined_params.deinit(allocator);
         self.defined_params = .empty;
     }
 

@@ -36,15 +36,21 @@ pub fn initVm() !VM {
 
 /// Compiles and runs `source` on `vm`. A syntax error fails the test.
 pub fn runOn(vm: *VM, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(std.testing.allocator, source);
+    return runWith(std.testing.allocator, vm, source);
+}
+
+/// `runOn`, parsing and compiling with `allocator` (the one `vm` was made with, in a test
+/// that fails allocations).
+pub fn runWith(allocator: std.mem.Allocator, vm: *VM, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     if (doc.diagnostics.len > 0) {
         std.debug.print("syntax error in test script: {s}\n", .{doc.diagnostics[0].message});
         return error.SyntaxError;
     }
     var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, vm);
+    defer out_chunk.free(allocator);
+    var comp = Compiler.forDocument(allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     return vm.interpret(&out_chunk);
@@ -127,5 +133,31 @@ pub fn expectValue(expected: Expected, r: value.Value) !void {
             try std.testing.expectEqualStrings(want, r.asString().chars);
         },
         .nil => try std.testing.expect(r.isNil()),
+    }
+}
+
+/// Runs `run(context, allocator)` once for every allocation it makes, failing that one
+/// allocation. Each run must free everything it allocated, and must either fail or give
+/// exactly what a run without failures gives (`run` returns its result as bytes it
+/// allocated): a run that swallowed a failure and went on with less would hide a bug.
+pub fn expectAllocationFailuresHandled(context: anytype, comptime run: fn (@TypeOf(context), std.mem.Allocator) anyerror![]const u8) !void {
+    const expected = try run(context, std.testing.allocator);
+    defer std.testing.allocator.free(expected);
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        errdefer std.debug.print("with allocation {d} failing\n", .{fail_index});
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        const allocator = failing.allocator();
+        const done = if (run(context, allocator)) |bytes| blk: {
+            defer allocator.free(bytes);
+            if (failing.has_induced_failure) try std.testing.expectEqualStrings(expected, bytes);
+            // A run that reached no failing allocation has seen every allocation fail.
+            break :blk !failing.has_induced_failure;
+        } else |err| blk: {
+            if (!failing.has_induced_failure) return err; // a failure that wasn't induced
+            break :blk false;
+        };
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        if (done) return;
     }
 }

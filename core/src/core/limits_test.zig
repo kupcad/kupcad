@@ -78,7 +78,7 @@ fn locals() !void {
 fn upvalues() !void {
     // A lambda reading one more of its def's variables than it can capture.
     const count = limits.MAX_UPVALUES + 1;
-    try expectCompileMessage(&.{ text("def f\n"), rep("  a{d} = 1\n", count), text("  g = lambda do\n"), rep("    a{d}\n", count), text("  end\nend\n") }, TOO_MANY_VARIABLES);
+    try expectCompileMessage(&.{ text("def f\n"), rep("  a{d} = 1\n", count), text("  g = ->() do\n"), rep("    a{d}\n", count), text("  end\nend\n") }, TOO_MANY_VARIABLES);
 }
 
 fn args() !void {

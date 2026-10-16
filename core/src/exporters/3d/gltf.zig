@@ -141,6 +141,12 @@ pub fn buildGltfBuffer(
 
         var mat_indices = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
         defer mat_indices.deinit();
+        // The index lists are this part's to free until they move into primitives_data,
+        // which can't fail once its room is reserved.
+        errdefer {
+            var lists = mat_indices.valueIterator();
+            while (lists.next()) |list| list.deinit(allocator);
+        }
 
         var i: usize = 0;
         while (i < mesh.tri_verts.len) : (i += 3) {
@@ -176,9 +182,10 @@ pub fn buildGltfBuffer(
             }
         }
 
+        try primitives_data.ensureUnusedCapacity(allocator, mat_indices.count());
         var mat_it = mat_indices.iterator();
         while (mat_it.next()) |entry| {
-            try primitives_data.append(allocator, .{
+            primitives_data.appendAssumeCapacity(.{
                 .material = entry.key_ptr.*,
                 .indices = entry.value_ptr.*,
             });

@@ -25,8 +25,6 @@ pub fn stringLength(vm: *VM, str: *value.ObjString) !value.Value {
 /// String#upcase
 pub fn stringUpcase(vm: *VM, str: *value.ObjString) !value.Value {
     const new_str = try vm.gc.trackingAllocator().alloc(u8, str.chars.len);
-    errdefer vm.gc.trackingAllocator().free(new_str);
-
     for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toUpper(c);
 
     return try vm.allocateStringTakeOwnership(new_str);
@@ -35,8 +33,6 @@ pub fn stringUpcase(vm: *VM, str: *value.ObjString) !value.Value {
 /// String#downcase
 pub fn stringDowncase(vm: *VM, str: *value.ObjString) !value.Value {
     const new_str = try vm.gc.trackingAllocator().alloc(u8, str.chars.len);
-    errdefer vm.gc.trackingAllocator().free(new_str);
-
     for (str.chars, 0..) |c, i| new_str[i] = std.ascii.toLower(c);
 
     return try vm.allocateStringTakeOwnership(new_str);
@@ -79,8 +75,6 @@ pub fn stringReplace(vm: *VM, str: *value.ObjString, target_obj: *value.ObjStrin
     const r_str = replace_obj.chars;
 
     const replaced = try std.mem.replaceOwned(u8, vm.gc.trackingAllocator(), str.chars, t_str, r_str);
-    errdefer vm.gc.trackingAllocator().free(replaced);
-
     return try vm.allocateStringTakeOwnership(replaced);
 }
 

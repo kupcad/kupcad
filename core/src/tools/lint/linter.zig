@@ -400,6 +400,7 @@ pub const Linter = struct {
 
         if (root == .none) return;
         self.root = root;
+        defer for (self.rules.items) |rule| rule.deinit(self.allocator);
 
         // Establish the global scope
         try self.pushScope();

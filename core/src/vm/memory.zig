@@ -391,6 +391,9 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// The string of `chars` (allocated with the tracking allocator), interned. It takes
+    /// `chars` whatever happens: a duplicate's and a failure's are freed here, so a caller
+    /// must not free them (four natives did, on failure, a second time).
     pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| {
             self.trackingAllocator().free(chars); // Safely free the duplicate via tracker

@@ -51,16 +51,16 @@ pub const BrepUnsupportedRule = struct {
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .checkEOF = checkEOF,
+                .deinit = deinit,
             },
         };
     }
 
-    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *BrepUnsupportedRule = @ptrCast(@alignCast(ptr));
-        self.scoped.deinit(engine.allocator);
-        self.methods.deinit(engine.allocator);
-        self.shapes.deinit(engine.allocator);
+        self.scoped.deinit(allocator);
+        self.methods.deinit(allocator);
+        self.shapes.deinit(allocator);
         self.* = .{};
     }
 

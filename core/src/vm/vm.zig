@@ -1334,6 +1334,7 @@ pub const VM = struct {
         return try self.allocateStringTakeOwnership(heap_chars);
     }
 
+    /// Takes `chars` even when it fails (see GC.takeString).
     pub fn allocateStringTakeOwnership(self: *VM, chars: []u8) !value.Value {
         // gc.takeString adopts the slice (no second copy) and interns it; nothing allocates
         // after it here, so the value needs no rooting before it is returned.
