@@ -305,12 +305,6 @@ pub const lsp_completions = buildLspCompletions();
 
 /// The host fallback for a method no class defines: every built-in method is bound on a
 /// class, so this only reports it.
-pub fn cadInvokeHandler(vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = arg_count;
-    _ = args;
-    return util.notDefinedFor(vm, method_name, receiver);
-}
-
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
     const is_3d = a.isGeometry() and b.isGeometry();
     const is_2d = a.isCrossSection() and b.isCrossSection();

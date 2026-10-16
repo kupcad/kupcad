@@ -2415,24 +2415,9 @@ pub const VM = struct {
             return self.callValue(receiver, arg_count, base_slot, call.has_block, call.has_kwargs);
         }
 
-        // --- 3. The host's invoke handler (the default one only reports NoMethodError) ---
-        if (self.host.invoke_handler) |handler| {
-            const caller_depth = self.frames.items.len;
-            const throw_seq = self.throw_seq;
-            const result = handler(self, receiver, method_name_str, arg_count, args_ptr) catch |err| {
-                if (self.alreadyThrown(throw_seq, caller_depth)) |res| return res;
-                return self.nativeFailed(method_name_str, err);
-            };
-
-            self.popAndRelease(arg_count + 1);
-
-            // Absorb the native +1 reference directly
-            self.stack.ptr[self.stack_top] = result;
-            self.stack_top += 1;
-            return .ok;
-        } else {
-            return self.raiseError(.NoMethodError, "No invoke handler registered for method '{s}'.", .{method_name_str});
-        }
+        // Nothing answers it. The host's invoke handler only ever said this, and without one
+        // the VM said "No invoke handler registered".
+        return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method_name_str, self.typeName(receiver) });
     }
 
     inline fn executeUnpackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {

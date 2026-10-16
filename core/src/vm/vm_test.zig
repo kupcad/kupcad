@@ -10855,12 +10855,6 @@ fn raiseThenFail(v_ptr: *anyopaque, call: value.NativeArgs) anyerror!value.Value
     return error.RuntimeError;
 }
 
-fn raiseThenFailInvoke(vm_ptr: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value {
-    _ = receiver;
-    _ = method_name;
-    return raiseThenFail(vm_ptr, .{ .ptr = args, .count = arg_count, .name = "raise_then_fail" });
-}
-
 /// Defines `RaisingInit`, a class whose native `initialize` raises.
 fn defineRaisingInitClass(vm: *VM) !void {
     const name_val = try vm.allocateString("RaisingInit");
@@ -10876,11 +10870,11 @@ fn defineRaisingInitClass(vm: *VM) !void {
 
 test "VM: exception raised by a native is thrown once and execution continues" {
     // Each native boundary that raises: a stdlib method (Array#reduce without a block),
-    // a native constructor, and the host invoke handler (CAD kernel methods).
+    // a native constructor, and a method nothing answers.
     const cases = [_]struct { expr: []const u8, message: []const u8 }{
         .{ .expr = "[].reduce", .message = "reduce requires a block" },
         .{ .expr = "RaisingInit.new", .message = native_raise_message },
-        .{ .expr = "5.not_a_method", .message = native_raise_message },
+        .{ .expr = "5.not_a_method", .message = "undefined method 'not_a_method' for Number" },
     };
     for (cases) |case| {
         errdefer std.debug.print("failing case: {s}\n", .{case.expr});
@@ -10889,7 +10883,6 @@ test "VM: exception raised by a native is thrown once and execution continues" {
         try registry.registerStandardLibrary(&vm);
         vm.mute_errors = true;
         try defineRaisingInitClass(&vm);
-        vm.host.invoke_handler = raiseThenFailInvoke;
 
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);

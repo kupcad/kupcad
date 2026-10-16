@@ -232,7 +232,6 @@ The `Host` interface (`vm/host.zig`) decouples the VM runtime core from OS depen
 ```zig
 pub const Host = struct {
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
-    invoke_handler: ?*const fn (vm: *VM, receiver: value.Value, method_name: []const u8, arg_count: u8, args: [*]value.Value) anyerror!value.Value = null,
     mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
     import_handler: ?*const fn (vm: *VM, path: []const u8) anyerror!value.Value = null,
     print_handler: ?*const fn (vm: *VM, message: []const u8) void = null,
@@ -242,7 +241,6 @@ pub const Host = struct {
 
 * `print_handler`: Intercepts calls from `puts()`, `print()`, and `inspect()`. Routes output to stdout in CLI mode or UI widgets in WebAssembly/GUI modes.
 * `binary_handler`: Handles CSG binary operations between geometry objects.
-* `invoke_handler`: Routes native geometry method calls (`.translate()`, `.on_face()`, `.bbox()`).
 * `mesh_destructor`: Called when `ObjGeometry` handles are freed by the GC to release C++ mesh memory.
 * `import_handler`: Handles file system import requests (`import "lib.kup"`).
 
