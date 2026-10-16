@@ -39,7 +39,7 @@ pub const Doctor = struct {
         const stmt = try self.store.db.prepare("PRAGMA quick_check");
         defer stmt.deinit();
 
-        if (try stmt.one(struct { result: []const u8 }, .{}, .{})) |row| {
+        if (try stmt.one(struct { result: []const u8 }, .{})) |row| {
             if (std.mem.eql(u8, row.result, "ok")) {
                 self.printer.print("OK\n", .{});
                 return;
@@ -115,13 +115,13 @@ pub const Doctor = struct {
             var stmt = try self.store.db.prepare("SELECT 1 FROM files WHERE hash = ?");
             defer stmt.deinit();
 
-            if (try stmt.one(struct { val: i32 }, .{entry.name}, .{}) == null) {
+            if (try stmt.one(struct { val: i32 }, .{entry.name}) == null) {
                 // File exists physically but not in DB. Re-register it.
                 const stat = try dir.statFile(self.io, entry.name, .{});
                 const size: i64 = @intCast(stat.size);
                 const created_at: i64 = @intCast(now);
 
-                try self.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES (?, ?, ?)", .{ entry.name, size, created_at }, .{});
+                try self.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES (?, ?, ?)", .{ entry.name, size, created_at });
                 orphan_count += 1;
             }
         }

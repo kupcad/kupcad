@@ -13,7 +13,7 @@ test "Store: initializes and runs SQLite migrations in-memory" {
 
     const stmt = try store.db.prepare("PRAGMA user_version");
     defer stmt.deinit();
-    const row = try stmt.one(struct { user_version: i32 }, .{}, .{});
+    const row = try stmt.one(struct { user_version: i32 }, .{});
 
     try testing.expect(row != null);
     try testing.expectEqual(store_mod.SCHEMA_VERSION, row.?.user_version);
@@ -37,7 +37,7 @@ test "Store: registerPackage records metadata and file hashes for lookup" {
 
     const pkg_stmt = try store.db.prepare("SELECT provider, integrity FROM packages WHERE id = 'github.com-kupcad-std'");
     defer pkg_stmt.deinit();
-    const pkg_row = (try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8 }, .{}, .{})) orelse return error.MissingRow;
+    const pkg_row = (try pkg_stmt.one(struct { provider: []const u8, integrity: []const u8 }, .{})) orelse return error.MissingRow;
     try testing.expectEqualStrings("github", pkg_row.provider);
     try testing.expectEqualStrings("sha256-mockhash", pkg_row.integrity);
 
@@ -67,7 +67,7 @@ test "Store: re-registering a commit refreshes metadata and replaces the file ma
 
     const stmt = try store.db.prepare("SELECT COUNT(*) AS count, MAX(integrity) AS integrity FROM packages WHERE id = 'pkg-a'");
     defer stmt.deinit();
-    const row = (try stmt.one(struct { count: i64, integrity: []const u8 }, .{}, .{})) orelse return error.MissingRow;
+    const row = (try stmt.one(struct { count: i64, integrity: []const u8 }, .{})) orelse return error.MissingRow;
     try testing.expectEqual(@as(i64, 1), row.count);
     try testing.expectEqualStrings("sha256-new", row.integrity);
 
@@ -88,7 +88,7 @@ test "Store: gracefully handles packages with zero files" {
 
     const stmt = try store.db.prepare("SELECT id FROM packages WHERE id = 'meta-pkg'");
     defer stmt.deinit();
-    const row = try stmt.one(struct { id: []const u8 }, .{}, .{});
+    const row = try stmt.one(struct { id: []const u8 }, .{});
 
     try testing.expect(row != null);
     try testing.expectEqualStrings("meta-pkg", row.?.id);
@@ -209,7 +209,7 @@ test "Store: migrates v2 databases to the composite package key" {
             "INSERT INTO meta VALUES ('last_prune_time', '42')",
             "PRAGMA user_version = 2",
         };
-        for (v2_schema) |sql| try db.exec(sql, .{}, .{});
+        for (v2_schema) |sql| try db.exec(sql, .{});
     }
 
     var store = try Store.init(testing.io, db_path);
@@ -222,7 +222,7 @@ test "Store: migrates v2 databases to the composite package key" {
     {
         const stmt = try store.db.prepare("SELECT provider, integrity, created_at FROM packages WHERE id = 'pkg' AND commit_sha = 'old'");
         defer stmt.deinit();
-        const row = (try stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{}, .{})) orelse return error.TestMissingRow;
+        const row = (try stmt.one(struct { provider: []const u8, integrity: []const u8, created_at: i64 }, .{})) orelse return error.TestMissingRow;
         try testing.expectEqualStrings("http", row.provider);
         try testing.expectEqualStrings("sha256-old", row.integrity);
         try testing.expectEqual(@as(i64, 7), row.created_at);
@@ -285,11 +285,11 @@ test "Store: a write waits for another connection's lock instead of failing" {
     var writer = try Store.init(testing.io, db_path);
     defer writer.deinit();
 
-    try holder.db.exec("BEGIN IMMEDIATE", .{}, .{});
+    try holder.db.exec("BEGIN IMMEDIATE", .{});
     const Release = struct {
         fn run(store: *Store) void {
             testing.io.sleep(.fromMilliseconds(100), .awake) catch {};
-            store.db.exec("COMMIT", .{}, .{}) catch @panic("COMMIT failed");
+            store.db.exec("COMMIT", .{}) catch @panic("COMMIT failed");
         }
     };
     const releaser = try std.Thread.spawn(.{}, Release.run, .{&holder});
@@ -335,7 +335,19 @@ test "Store: a query step that fails is an error, not the end of the rows" {
     defer store.deinit();
     const stmt = try store.db.prepare("SELECT abs(-9223372036854775808) AS v");
     defer stmt.deinit();
-    try testing.expectError(error.SqliteError, stmt.one(struct { v: i64 }, .{}, .{}));
+    try testing.expectError(error.SqliteError, stmt.one(struct { v: i64 }, .{}));
     var rows = try stmt.iterator(struct { v: i64 }, .{});
     try testing.expectError(error.SqliteError, rows.next());
+}
+
+test "Store: an argument with no placeholder to bind to is an error, not ignored" {
+    // Binding returned codes nobody read: a value SQLite refused left its `?` NULL and the
+    // statement ran anyway.
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    try testing.expectError(error.SqliteError, store.db.exec("SELECT ?", .{ "one", "two" }));
+    const stmt = try store.db.prepare("SELECT ? + ?");
+    defer stmt.deinit();
+    const row = (try stmt.one(struct { sum: i64 }, .{ 2, 3 })) orelse return error.MissingRow;
+    try testing.expectEqual(@as(i64, 5), row.sum);
 }

@@ -42,12 +42,12 @@ test "Doctor: healMissingBlobs evicts blob and package records when physical fil
     // 3. Verify DB eviction for missing physical files
     const stmt1 = try store.db.prepare("SELECT 1 FROM files WHERE hash = 'missing_hash'");
     defer stmt1.deinit();
-    const row1 = try stmt1.one(struct { val: i32 }, .{}, .{});
+    const row1 = try stmt1.one(struct { val: i32 }, .{});
     try testing.expect(row1 == null);
 
     const stmt2 = try store.db.prepare("SELECT 1 FROM package_files WHERE file_hash = 'missing_hash'");
     defer stmt2.deinit();
-    const row2 = try stmt2.one(struct { val: i32 }, .{}, .{});
+    const row2 = try stmt2.one(struct { val: i32 }, .{});
     try testing.expect(row2 == null);
 
     // The package itself is evicted too, otherwise it still looks cached and
@@ -93,7 +93,7 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
     const stmt = try store.db.prepare("SELECT size FROM files WHERE hash = 'orphan_hash'");
     defer stmt.deinit();
 
-    const row = try stmt.one(struct { size: i64 }, .{}, .{});
+    const row = try stmt.one(struct { size: i64 }, .{});
     try testing.expect(row != null);
     try testing.expectEqual(@as(i64, 11), row.?.size); // "orphan data".len == 11
 }
@@ -117,7 +117,7 @@ test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
     defer store.deinit();
 
     const evil_name = "zz' OR '1'='1";
-    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{}, .{});
+    try store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{});
     for ([_][]const u8{ "keep", evil_name }, [_][]const u8{ "k", "x" }) |hash, data| {
         const path = try cafs.blobPath(hash);
         defer testing.allocator.free(path);
@@ -131,5 +131,5 @@ test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
 
     const stmt = try store.db.prepare("SELECT 1 FROM files WHERE hash = ?");
     defer stmt.deinit();
-    try testing.expect((try stmt.one(struct { v: i32 }, .{evil_name}, .{})) != null);
+    try testing.expect((try stmt.one(struct { v: i32 }, .{evil_name})) != null);
 }

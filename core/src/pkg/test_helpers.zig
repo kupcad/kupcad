@@ -101,5 +101,5 @@ pub fn freeMap(map: *std.StringHashMap([]const u8)) void {
 pub fn countRows(store: *Store, sql: []const u8) !i64 {
     const stmt = try store.db.prepare(sql);
     defer stmt.deinit();
-    return (try stmt.one(struct { n: i64 }, .{}, .{})).?.n;
+    return (try stmt.one(struct { n: i64 }, .{})).?.n;
 }

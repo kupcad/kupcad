@@ -79,7 +79,7 @@ pub const GarbageCollector = struct {
         // Update last_prune_time in meta table (Unix epoch seconds)
         var now_buf: [32]u8 = undefined;
         const now_str = try std.fmt.bufPrint(&now_buf, "{d}", .{now_sec});
-        try self.store.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{now_str}, .{});
+        try self.store.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{now_str});
     }
 
     /// Executed post-install. Only runs if 7 days have passed since the last prune.
@@ -88,7 +88,7 @@ pub const GarbageCollector = struct {
         defer stmt.deinit();
 
         var last_prune: i64 = 0;
-        if (try stmt.one(struct { value: []const u8 }, .{}, .{})) |row| {
+        if (try stmt.one(struct { value: []const u8 }, .{})) |row| {
             last_prune = std.fmt.parseInt(i64, row.value, 10) catch 0;
         }
 

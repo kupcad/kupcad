@@ -25,8 +25,7 @@ pub const Db = struct {
 
     /// Runs `sql` once with `args`. A statement run for each of many rows is prepared
     /// once with `prepare` and run with `Stmt.exec`.
-    pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
-        _ = options;
+    pub fn exec(self: Db, sql: []const u8, args: anytype) !void {
         const stmt = try self.prepare(sql);
         defer stmt.deinit();
         try stmt.exec(args);
@@ -57,39 +56,41 @@ pub const Stmt = struct {
         _ = sqlite.sqlite3_finalize(self.handle);
     }
 
-    fn bindArgs(self: Stmt, args: anytype) void {
-        const ArgsType = @TypeOf(args);
-        const args_info = @typeInfo(ArgsType);
-        if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
-            inline for (args, 1..) |arg, idx| {
-                const ArgType = @TypeOf(arg);
-                if (@typeInfo(ArgType) == .pointer) {
-                    const slice: []const u8 = arg;
-                    _ = sqlite.sqlite3_bind_text(self.handle, @intCast(idx), slice.ptr, @intCast(slice.len), null);
-                } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
-                    _ = sqlite.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg));
-                }
-            }
+    /// Binds `args`, a tuple of strings and integers, to the statement's `?`s in order. A
+    /// type it can't bind is a compile error, and a bind SQLite refuses (more arguments than
+    /// placeholders) an error: both were skipped, leaving that placeholder NULL.
+    fn bindArgs(self: Stmt, args: anytype) !void {
+        const args_info = @typeInfo(@TypeOf(args));
+        if (args_info != .@"struct" or !args_info.@"struct".is_tuple) @compileError("SQL arguments are a tuple, such as .{ id, name }");
+        inline for (args, 1..) |arg, idx| {
+            const ArgType = @TypeOf(arg);
+            const rc = if (@typeInfo(ArgType) == .pointer) text: {
+                const slice: []const u8 = arg;
+                break :text sqlite.sqlite3_bind_text(self.handle, @intCast(idx), slice.ptr, @intCast(slice.len), null);
+            } else if (ArgType == i64 or ArgType == i32 or ArgType == usize or ArgType == comptime_int)
+                sqlite.sqlite3_bind_int64(self.handle, @intCast(idx), @intCast(arg))
+            else
+                @compileError("an SQL argument is a string or an integer, not " ++ @typeName(ArgType));
+            if (rc != sqlite.SQLITE_OK) return error.SqliteError;
         }
     }
 
     /// Resets the statement and binds `args`, ready to step.
-    fn rebind(self: Stmt, args: anytype) void {
+    fn rebind(self: Stmt, args: anytype) !void {
         _ = sqlite.sqlite3_reset(self.handle);
         _ = sqlite.sqlite3_clear_bindings(self.handle);
-        self.bindArgs(args);
+        try self.bindArgs(args);
     }
 
     /// Runs the statement with `args` for its effect (an insert, a delete).
     pub fn exec(self: Stmt, args: anytype) !void {
-        self.rebind(args);
+        try self.rebind(args);
         const rc = sqlite.sqlite3_step(self.handle);
         if (rc != sqlite.SQLITE_DONE and rc != sqlite.SQLITE_ROW) return error.SqliteError;
     }
 
-    pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
-        _ = options;
-        self.rebind(args);
+    pub fn one(self: Stmt, comptime T: type, args: anytype) !?T {
+        try self.rebind(args);
         return readRow(T, self.handle);
     }
 
@@ -110,13 +111,16 @@ pub const Stmt = struct {
                 @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
             } else if (field_type == i32 or field_type == i64) {
                 @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(handle, @intCast(i)));
+            } else {
+                // A field of another type was skipped and read as whatever was in memory.
+                @compileError("an SQL row field is a []const u8, an i32 or an i64, not " ++ @typeName(field_type));
             }
         }
         return result;
     }
 
     pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
-        self.rebind(args);
+        try self.rebind(args);
         return Iterator(T){ .stmt = self };
     }
 
@@ -156,7 +160,7 @@ pub const Store = struct {
             // statement makes schema changes (DROP TABLE) fail with SQLITE_LOCKED.
             const integrity_stmt = try db.prepare("PRAGMA quick_check");
             defer integrity_stmt.deinit();
-            const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{}, .{});
+            const integrity_res = try integrity_stmt.one(struct { result: []const u8 }, .{});
             if (integrity_res) |res| {
                 if (!std.mem.eql(u8, res.result, "ok")) {
                     log.err("the package index {s} is corrupted (PRAGMA quick_check failed); delete it to let the next install rebuild it", .{db_path});
@@ -177,15 +181,15 @@ pub const Store = struct {
         const current_version = blk: {
             const version_stmt = try self.db.prepare("PRAGMA user_version");
             defer version_stmt.deinit();
-            const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{}, .{});
+            const current_version_row = try version_stmt.one(struct { user_version: i32 }, .{});
             break :blk if (current_version_row) |row| row.user_version else 0;
         };
 
         if (current_version < SCHEMA_VERSION) {
             log.info("Upgrading database schema from v{d} to v{d}...\n", .{ current_version, SCHEMA_VERSION });
 
-            try self.db.exec("BEGIN TRANSACTION", .{}, .{});
-            errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
+            try self.db.exec("BEGIN TRANSACTION", .{});
+            errdefer self.db.exec("ROLLBACK", .{}) catch |err| log.err("Rollback failed: {}", .{err});
             if (current_version < 1) {
                 try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS packages (
@@ -194,14 +198,14 @@ pub const Store = struct {
                     \\    provider TEXT NOT NULL,
                     \\    created_at INTEGER NOT NULL
                     \\)
-                , .{}, .{});
+                , .{});
                 try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS files (
                     \\    hash TEXT PRIMARY KEY,
                     \\    size INTEGER NOT NULL,
                     \\    created_at INTEGER NOT NULL
                     \\)
-                , .{}, .{});
+                , .{});
                 try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS package_files (
                     \\    package_id TEXT NOT NULL,
@@ -211,16 +215,16 @@ pub const Store = struct {
                     \\    PRIMARY KEY (package_id, commit_sha, file_path),
                     \\    FOREIGN KEY (file_hash) REFERENCES files(hash)
                     \\)
-                , .{}, .{});
+                , .{});
                 try self.db.exec(
                     \\CREATE TABLE IF NOT EXISTS meta (
                     \\    key TEXT PRIMARY KEY,
                     \\    value TEXT NOT NULL
                     \\)
-                , .{}, .{});
+                , .{});
             }
             if (current_version < 2) {
-                try self.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT NOT NULL DEFAULT ''", .{}, .{});
+                try self.db.exec("ALTER TABLE packages ADD COLUMN integrity TEXT NOT NULL DEFAULT ''", .{});
             }
             if (current_version < 3) {
                 // v3: a package may be cached at several commits. The v1 schema keyed
@@ -235,29 +239,29 @@ pub const Store = struct {
                     \\    integrity TEXT NOT NULL DEFAULT '',
                     \\    PRIMARY KEY (id, commit_sha)
                     \\)
-                , .{}, .{});
+                , .{});
                 try self.db.exec(
                     \\INSERT INTO packages_v3 (id, commit_sha, provider, created_at, integrity)
                     \\SELECT id, commit_sha, provider, created_at, integrity FROM packages
-                , .{}, .{});
-                try self.db.exec("DROP TABLE packages", .{}, .{});
-                try self.db.exec("ALTER TABLE packages_v3 RENAME TO packages", .{}, .{});
+                , .{});
+                try self.db.exec("DROP TABLE packages", .{});
+                try self.db.exec("ALTER TABLE packages_v3 RENAME TO packages", .{});
                 // File mappings for commits that the old schema dropped are unreachable.
-                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
+                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{});
             }
             if (current_version < 4) {
-                try self.db.exec("ALTER TABLE packages ADD COLUMN last_used INTEGER NOT NULL DEFAULT 0", .{}, .{});
-                try self.db.exec("UPDATE packages SET last_used = created_at", .{}, .{});
+                try self.db.exec("ALTER TABLE packages ADD COLUMN last_used INTEGER NOT NULL DEFAULT 0", .{});
+                try self.db.exec("UPDATE packages SET last_used = created_at", .{});
             }
             if (current_version < 5) {
                 // Their files were indexed under the archive's top folder (`repo-<sha>/main.kup`),
                 // which no import could reach; forget them so the next install fetches them again.
-                try self.db.exec("DELETE FROM packages WHERE provider IN ('github', 'gitlab', 'gitea')", .{}, .{});
-                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
+                try self.db.exec("DELETE FROM packages WHERE provider IN ('github', 'gitlab', 'gitea')", .{});
+                try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{});
             }
             var pragma_buf: [48]u8 = undefined;
-            try self.db.exec(try std.fmt.bufPrint(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{}, .{});
-            try self.db.exec("COMMIT", .{}, .{});
+            try self.db.exec(try std.fmt.bufPrint(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{});
+            try self.db.exec("COMMIT", .{});
         }
     }
 
@@ -360,19 +364,19 @@ pub const Store = struct {
     /// it, so a later install re-downloads the package instead of treating a
     /// partially-deleted package as cached.
     pub fn evictBlob(self: *Store, hash: []const u8) !void {
-        try self.db.exec("BEGIN TRANSACTION", .{}, .{});
-        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
+        try self.db.exec("BEGIN TRANSACTION", .{});
+        errdefer self.db.exec("ROLLBACK", .{}) catch |err| log.err("Rollback failed: {}", .{err});
 
         try self.db.exec(
             \\DELETE FROM packages WHERE EXISTS (
             \\    SELECT 1 FROM package_files pf
             \\    WHERE pf.package_id = packages.id AND pf.commit_sha = packages.commit_sha AND pf.file_hash = ?
             \\)
-        , .{hash}, .{});
-        try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{}, .{});
-        try self.db.exec("DELETE FROM files WHERE hash = ?", .{hash}, .{});
+        , .{hash});
+        try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{});
+        try self.db.exec("DELETE FROM files WHERE hash = ?", .{hash});
 
-        try self.db.exec("COMMIT", .{}, .{});
+        try self.db.exec("COMMIT", .{});
     }
 
     /// Whether a package that an install used at or after `since` (Unix seconds) has the
@@ -385,7 +389,7 @@ pub const Store = struct {
         ;
         var stmt = try self.db.prepare(stmt_sql);
         defer stmt.deinit();
-        return (try stmt.one(struct { val: i32 }, .{ hash, since }, .{})) != null;
+        return (try stmt.one(struct { val: i32 }, .{ hash, since })) != null;
     }
 
     /// Checks whether a package commit_sha exists in the offline store
@@ -396,7 +400,7 @@ pub const Store = struct {
         var stmt = try self.db.prepare(stmt_sql);
         defer stmt.deinit();
 
-        const row = try stmt.one(struct { val: i32 }, .{ pkg_id, commit_sha }, .{});
+        const row = try stmt.one(struct { val: i32 }, .{ pkg_id, commit_sha });
         return row != null;
     }
 
@@ -445,8 +449,8 @@ pub const Store = struct {
         integrity: []const u8,
         files_map: *std.StringHashMap([]const u8),
     ) !void {
-        try self.db.exec("BEGIN TRANSACTION", .{}, .{});
-        errdefer self.db.exec("ROLLBACK", .{}, .{}) catch |err| log.err("Rollback failed: {}", .{err});
+        try self.db.exec("BEGIN TRANSACTION", .{});
+        errdefer self.db.exec("ROLLBACK", .{}) catch |err| log.err("Rollback failed: {}", .{err});
 
         const now_ns = std.Io.Clock.real.now(self.io).nanoseconds;
         const now: i64 = @intCast(@divTrunc(now_ns, std.time.ns_per_s));
@@ -459,10 +463,10 @@ pub const Store = struct {
             \\VALUES (?, ?, ?, ?, ?, ?)
             \\ON CONFLICT(id, commit_sha) DO UPDATE SET provider = excluded.provider, integrity = excluded.integrity, last_used = excluded.last_used
         ;
-        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now, now }, .{});
+        try self.db.exec(pkg_stmt, .{ pkg_id, commit_sha, provider_name, integrity, now, now });
 
         // Replace (not merge) the file mapping so it exactly matches the verified content.
-        try self.db.exec("DELETE FROM package_files WHERE package_id = ? AND commit_sha = ?", .{ pkg_id, commit_sha }, .{});
+        try self.db.exec("DELETE FROM package_files WHERE package_id = ? AND commit_sha = ?", .{ pkg_id, commit_sha });
 
         // Two statements for the whole package; they were prepared again for every file.
         const file_stmt = try self.db.prepare(
@@ -483,6 +487,6 @@ pub const Store = struct {
             try file_stmt.exec(.{ file_hash, now });
             try mapping_stmt.exec(.{ pkg_id, commit_sha, file_path, file_hash });
         }
-        try self.db.exec("COMMIT", .{}, .{});
+        try self.db.exec("COMMIT", .{});
     }
 };

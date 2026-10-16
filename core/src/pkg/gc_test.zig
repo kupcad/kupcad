@@ -65,7 +65,7 @@ test "GarbageCollector: prune(true) removes orphaned files and index records" {
 
     const path = try fx.writeBlob("stale_hash", "old data");
     defer testing.allocator.free(path);
-    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('stale_hash', 8, 0)", .{}, .{});
+    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('stale_hash', 8, 0)", .{});
 
     var gc = fx.gc();
     try gc.prune(true);
@@ -73,7 +73,7 @@ test "GarbageCollector: prune(true) removes orphaned files and index records" {
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, path, .{}));
     const stmt = try fx.store.db.prepare("SELECT 1 FROM files WHERE hash = 'stale_hash'");
     defer stmt.deinit();
-    try testing.expect((try stmt.one(struct { val: i32 }, .{}, .{})) == null);
+    try testing.expect((try stmt.one(struct { val: i32 }, .{})) == null);
 }
 
 test "GarbageCollector: prune(false) skips files younger than 7 days" {
@@ -146,7 +146,7 @@ test "GarbageCollector: prune binds blob names as SQL parameters" {
 
     const evil_name = "zz' OR '1'='1";
     // Only the evil blob is physically present and unreferenced; 'keep' is just a row.
-    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{}, .{});
+    try fx.store.db.exec("INSERT INTO files (hash, size, created_at) VALUES ('keep', 0, 0)", .{});
     testing.allocator.free(try fx.writeBlob(evil_name, "x"));
 
     var gc = fx.gc();
@@ -185,7 +185,7 @@ test "GarbageCollector: prune(false) keeps the blobs of a package an install jus
     try testing.expect(try fx.store.hasPackage("pkg", "c1"));
 
     // Once no install has used the package for the retention period, it goes.
-    try fx.store.db.exec("UPDATE packages SET last_used = 0", .{}, .{});
+    try fx.store.db.exec("UPDATE packages SET last_used = 0", .{});
     try gc.prune(false);
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, path, .{}));
     try testing.expect(!try fx.store.hasPackage("pkg", "c1"));
