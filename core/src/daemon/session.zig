@@ -253,6 +253,8 @@ pub const ScriptSession = struct {
         defer out_chunk.free(self.allocator);
 
         self.vm.line_index = &doc.line_index;
+        // The Document goes away with this call; the pointer used to outlive it.
+        defer self.vm.line_index = null;
         try registry.registerStandardLibrary(&self.vm);
         try api.injectParamsIntoVm(&self.vm, self.params);
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
+const Printer = @import("../log.zig").Printer;
 
 const log = std.log.scoped(.pkg);
 
@@ -13,13 +14,16 @@ pub const GarbageCollector = struct {
     io: std.Io,
     cafs: *Cafs,
     store: *Store,
+    /// Where the results go (what was pruned).
+    printer: Printer,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store) GarbageCollector {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store, printer: Printer) GarbageCollector {
         return .{
             .allocator = allocator,
             .io = io,
             .cafs = cafs,
             .store = store,
+            .printer = printer,
         };
     }
 
@@ -70,7 +74,7 @@ pub const GarbageCollector = struct {
             try self.store.evictBlob(entry.name);
         }
 
-        log.info("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
+        self.printer.print("Pruned {d} files, freeing {d} bytes.\n", .{ pruned_count, bytes_freed });
 
         // Update last_prune_time in meta table (Unix epoch seconds)
         var now_buf: [32]u8 = undefined;
@@ -92,7 +96,7 @@ pub const GarbageCollector = struct {
         const now_sec = @divFloor(now_ts.nanoseconds, std.time.ns_per_s);
 
         if (now_sec - last_prune > RETENTION_SECONDS) {
-            log.info("Running scheduled background cleanup...\n", .{});
+            self.printer.print("Running scheduled background cleanup...\n", .{});
             try self.prune(false);
         }
     }

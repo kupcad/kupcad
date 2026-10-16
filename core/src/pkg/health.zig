@@ -1,6 +1,7 @@
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
 const Store = @import("store.zig").Store;
+const Printer = @import("../log.zig").Printer;
 
 const log = std.log.scoped(.pkg);
 
@@ -9,35 +10,38 @@ pub const Doctor = struct {
     io: std.Io,
     cafs: *Cafs,
     store: *Store,
+    /// Where the report goes (each check and what was healed).
+    printer: Printer,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store) Doctor {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store, printer: Printer) Doctor {
         return .{
             .allocator = allocator,
             .io = io,
             .cafs = cafs,
             .store = store,
+            .printer = printer,
         };
     }
 
     /// Audits and heals the CAFS and database state
     pub fn run(self: *Doctor) !void {
-        log.info("Running KupCAD Doctor...\n", .{});
+        self.printer.print("Running KupCAD Doctor...\n", .{});
 
         try self.checkDbIntegrity();
         try self.healMissingBlobs();
         try self.healOrphanedBlobs();
 
-        log.info("System health check complete.\n", .{});
+        self.printer.print("System health check complete.\n", .{});
     }
 
     fn checkDbIntegrity(self: *Doctor) !void {
-        log.info("[1/3] Checking SQLite integrity... ", .{});
+        self.printer.print("[1/3] Checking SQLite integrity... ", .{});
         const stmt = try self.store.db.prepare("PRAGMA quick_check");
         defer stmt.deinit();
 
         if (try stmt.one(struct { result: []const u8 }, .{}, .{})) |row| {
             if (std.mem.eql(u8, row.result, "ok")) {
-                log.info("OK\n", .{});
+                self.printer.print("OK\n", .{});
                 return;
             }
         }
@@ -47,7 +51,7 @@ pub const Doctor = struct {
     }
 
     fn healMissingBlobs(self: *Doctor) !void {
-        log.info("[2/3] Scanning for missing physical files... ", .{});
+        self.printer.print("[2/3] Scanning for missing physical files... ", .{});
 
         const query = "SELECT hash FROM files";
         var stmt = try self.store.db.prepare(query);
@@ -85,12 +89,12 @@ pub const Doctor = struct {
         if (missing_count > 0) {
             log.warn("Evicted {d} missing blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
         } else {
-            log.info("OK\n", .{});
+            self.printer.print("OK\n", .{});
         }
     }
 
     fn healOrphanedBlobs(self: *Doctor) !void {
-        log.info("[3/3] Scanning for orphaned physical files... ", .{});
+        self.printer.print("[3/3] Scanning for orphaned physical files... ", .{});
 
         const files_path = try self.allocator.print("{s}/files", .{self.cafs.global_dir_path});
         defer self.allocator.free(files_path);
@@ -125,7 +129,7 @@ pub const Doctor = struct {
         if (orphan_count > 0) {
             log.warn("Re-indexed {d} orphaned blobs.\n", .{orphan_count});
         } else {
-            log.info("OK\n", .{});
+            self.printer.print("OK\n", .{});
         }
     }
 };

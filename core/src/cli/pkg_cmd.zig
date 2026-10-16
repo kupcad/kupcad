@@ -85,13 +85,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     switch (command) {
         .init => unreachable, // handled above: needs neither the store nor a manifest
         .prune => {
-            var gc = GC.init(allocator, init.io, &cafs, &store);
+            var gc = GC.init(allocator, init.io, &cafs, &store, .{ .io = init.io });
             const force = if (args_iter.next()) |f| std.mem.eql(u8, f, "--force") else false;
             try gc.prune(force);
             return .success;
         },
         .doctor => {
-            var doc = Doctor.init(allocator, init.io, &cafs, &store);
+            var doc = Doctor.init(allocator, init.io, &cafs, &store, .{ .io = init.io });
             try doc.run();
             return .success;
         },
@@ -167,7 +167,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     try lockfile.save(fs);
     log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});
 
-    var gc = GC.init(allocator, init.io, cafs, store);
+    var gc = GC.init(allocator, init.io, cafs, store, .{ .io = init.io });
     try gc.lazyPrune();
     return .success;
 }

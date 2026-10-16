@@ -24,7 +24,9 @@ test "Doctor: healMissingBlobs evicts blob and package records when physical fil
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
-    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
 
     // 1. Register a package whose blob is not on disk
     var files = std.StringHashMap([]const u8).init(testing.allocator);
@@ -34,6 +36,8 @@ test "Doctor: healMissingBlobs evicts blob and package records when physical fil
 
     // 2. Heal
     try doc.run(); // Executes all healing routines
+    // The report is printed, not logged (release builds hide info logging).
+    try testing.expect(std.mem.indexOf(u8, out.written(), "System health check complete.") != null);
 
     // 3. Verify DB eviction for missing physical files
     const stmt1 = try store.db.prepare("SELECT 1 FROM files WHERE hash = 'missing_hash'");
@@ -69,7 +73,9 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
     var store = try Store.init(testing.io, ":memory:");
     defer store.deinit();
 
-    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
 
     // 1. Seed physical file WITHOUT creating a DB record
     const cwd = std.Io.Dir.cwd();
@@ -118,7 +124,9 @@ test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
         try writeAbs(path, data);
     }
 
-    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    var doc = Doctor.init(testing.allocator, testing.io, &cafs, &store, .{ .io = testing.io, .capture = &out.writer });
     try doc.run();
 
     const stmt = try store.db.prepare("SELECT 1 FROM files WHERE hash = ?");

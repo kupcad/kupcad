@@ -51,3 +51,15 @@ pub fn printStdout(io: std.Io, comptime fmt: []const u8, args: anytype) void {
     stdout.print(fmt, args) catch return;
     stdout.flush() catch return;
 }
+
+/// Prints a command's results to stdout, or into `capture` under test. Results printed
+/// with `log.info` disappeared from release builds, which hide info logging: the shipped
+/// `kupcad pkg doctor` printed nothing on success.
+pub const Printer = struct {
+    io: std.Io,
+    capture: ?*std.Io.Writer = null,
+
+    pub fn print(self: Printer, comptime fmt: []const u8, args: anytype) void {
+        if (self.capture) |w| w.print(fmt, args) catch {} else printStdout(self.io, fmt, args);
+    }
+};

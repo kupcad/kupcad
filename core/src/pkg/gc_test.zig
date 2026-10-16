@@ -13,8 +13,12 @@ const Fixture = struct {
     mem_vfs: MemoryVfs,
     cafs: Cafs,
     store: Store,
+    /// What the collector printed.
+    out: std.Io.Writer.Allocating,
 
     fn init(self: *Fixture) !void {
+        self.out = .init(testing.allocator);
+        errdefer self.out.deinit();
         self.tmp = testing.tmpDir(.{});
         errdefer self.tmp.cleanup();
         self.tmp_path = try self.tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
@@ -27,6 +31,7 @@ const Fixture = struct {
     }
 
     fn deinit(self: *Fixture) void {
+        self.out.deinit();
         self.store.deinit();
         self.cafs.deinit();
         self.mem_vfs.deinit();
@@ -35,7 +40,7 @@ const Fixture = struct {
     }
 
     fn gc(self: *Fixture) GarbageCollector {
-        return GarbageCollector.init(testing.allocator, testing.io, &self.cafs, &self.store);
+        return GarbageCollector.init(testing.allocator, testing.io, &self.cafs, &self.store, .{ .io = testing.io, .capture = &self.out.writer });
     }
 
     /// Writes a blob just now (age 0) and returns its absolute path (caller frees).

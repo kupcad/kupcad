@@ -100,7 +100,7 @@ pub const Reporter = @import("reporter.zig").Reporter;
 
 /// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
 /// and a caret), then a one-line summary.
-fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, reporter: Reporter) !void {
+pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, reporter: Reporter) !void {
     const mod = &session.workspace.modules.items[@backingInt(failure.module)];
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
