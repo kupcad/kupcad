@@ -128,3 +128,18 @@ test "Value: fmtNumber spells non-finite numbers the same on every platform" {
         try testing.expectEqualStrings(case.text, w.buffered());
     }
 }
+
+test "Value: a NaN of any payload is a number, never a tag or a pointer" {
+    // QNAN covers bit 50, so a NaN with that payload bit set read as a tagged value: a
+    // positive one as nil or a boolean, a negative one as an object pointer. Such a NaN
+    // comes from an f32 NaN widened to f64 (f32 bit 21 lands on bit 50), as in an STL.
+    const payloads = [_]u64{ 0x7FFC000000000001, 0x7FFC000000000002, 0x7FFC000000000003, 0xFFFC000000001234, 0xFFFFFFFFFFFFFFFF, 0x7FF8000000000000 };
+    for (payloads) |bits| {
+        const v = value.Value.initNumber(@bitCast(bits));
+        try testing.expect(v.isNumber());
+        try testing.expect(!v.isNil() and !v.isBool() and !v.isObject());
+        try testing.expect(std.math.isNan(v.asNumber()));
+    }
+    const widened: f64 = @floatCast(@as(f32, @bitCast(@as(u32, 0x7FE00001))));
+    try testing.expect(value.Value.initNumber(widened).isNumber());
+}

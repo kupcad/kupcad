@@ -26,6 +26,12 @@ const VAL_NIL: u64 = QNAN | TAG_NIL;
 const VAL_FALSE: u64 = QNAN | TAG_FALSE;
 const VAL_TRUE: u64 = QNAN | TAG_TRUE;
 const TAG_OBJ: u64 = SIGN_BIT | QNAN;
+/// The one NaN a number Value holds. Any other NaN may carry payload bits that QNAN
+/// tests for (bit 50 is one of them), which made it read as nil, a boolean or a pointer.
+const CANONICAL_NAN: u64 = 0x7FF8000000000000;
+comptime {
+    if (CANONICAL_NAN & QNAN == QNAN) @compileError("the canonical NaN must not look like a tagged value");
+}
 
 /// Identifies the specific type of a heap-allocated Object.
 pub const ObjType = enum(u8) {
@@ -345,6 +351,8 @@ pub const Value = packed struct {
     // --- Constructors ---
 
     pub inline fn initNumber(num: f64) Value {
+        // Every NaN is the canonical one (see CANONICAL_NAN).
+        if (std.math.isNan(num)) return .{ .val = CANONICAL_NAN };
         // Normalize -0.0 to +0.0 to protect Map invariants
         const normalized: f64 = if (num == 0.0) 0.0 else num;
         return .{ .val = @bitCast(normalized) };

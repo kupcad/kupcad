@@ -117,6 +117,10 @@ flowchart TD
 
 ```
 
+### Values
+
+A `Value` is 8 bytes, NaN-boxed (`core/value.zig`): a number is its IEEE 754 bits, and nil, the booleans and heap pointers live in the quiet-NaN space `QNAN` marks (a pointer with the sign bit set too). So a number must never look like that space: `initNumber` turns every NaN into one canonical NaN (and -0.0 into 0.0). A NaN with payload bit 50 set, which an f32 NaN widened to f64 can carry (an STL coordinate), used to read as nil, a boolean or, with the sign bit, a pointer.
+
 ### Segregated DOD Object Tracking
 
 Instead of a single heterogeneous linked list, `memory.GC` organizes object allocations into 18 dedicated `ArrayListUnmanaged` arrays (`strings`, `geometries`, `closures`, `instances`, etc.).
