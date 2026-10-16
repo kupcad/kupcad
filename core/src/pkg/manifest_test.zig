@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Manifest = @import("manifest.zig").Manifest;
+const string_map = @import("string_map.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
 test "Manifest: initializes with default values" {
@@ -148,4 +149,20 @@ test "Manifest: setDependency adds an alias or replaces what it named" {
     try manifest.setDependency("bolts", "github.com/kupcad/bolts");
     try testing.expectEqual(@as(u32, 2), manifest.dependencies.count());
     try testing.expectEqualStrings("github.com/kupcad/std@v2", manifest.dependencies.get("std").?);
+}
+
+test "Manifest: a dependency's manifest gives its dependencies, checked as the project's are" {
+    // The resolver parsed a dependency's kupcad.json by hand, a copy of Manifest.load's.
+    var deps = try Manifest.parseDependencies(testing.allocator, "{ \"dependencies\": { \"screws\": \"github.com/kupcad/screws@v1\" } }");
+    defer string_map.deinitOwned(testing.allocator, &deps);
+    try testing.expectEqualStrings("github.com/kupcad/screws@v1", deps.get("screws").?);
+
+    var none = try Manifest.parseDependencies(testing.allocator, "{}");
+    defer string_map.deinitOwned(testing.allocator, &none);
+    try testing.expectEqual(@as(u32, 0), none.count());
+
+    for ([_][]const u8{ "[]", "{ \"dependencies\": [] }", "{ \"dependencies\": { \"a\": 1 } }", "not json" }) |bad| {
+        try testing.expectError(error.InvalidManifest, Manifest.parseDependencies(testing.allocator, bad));
+    }
+    try testing.expectError(error.InvalidAlias, Manifest.parseDependencies(testing.allocator, "{ \"dependencies\": { \"../escape\": \"x\" } }"));
 }

@@ -19,6 +19,7 @@ const HttpProvider = @import("providers/http.zig").HttpProvider;
 const LocalProvider = @import("providers/local.zig").LocalProvider;
 const validate = @import("validate.zig");
 const limits = @import("limits.zig");
+const string_map = @import("string_map.zig");
 const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
 
 /// Hex chars of the content integrity used as the pseudo-commit of http/local archives.
@@ -325,23 +326,15 @@ pub const Resolver = struct {
         const json_data = try self.cafs.readBlob(self.allocator, manifest_hash, limits.MAX_MANIFEST_BYTES);
         defer self.allocator.free(json_data);
 
-        var parsed_json = std.json.parseFromSlice(std.json.Value, self.allocator, json_data, .{}) catch return error.InvalidManifest;
-        defer parsed_json.deinit();
-
-        if (parsed_json.value != .object) return error.InvalidManifest;
-
-        if (parsed_json.value.object.get("dependencies")) |deps| {
-            if (deps != .object) return error.InvalidManifest;
-
-            var dep_it = deps.object.iterator();
+        // Parsed and checked as the project's own manifest is (Manifest.parseDependencies).
+        var deps = try Manifest.parseDependencies(self.allocator, json_data);
+        defer string_map.deinitOwned(self.allocator, &deps);
+        {
+            var dep_it = deps.iterator();
             while (dep_it.next()) |dep_entry| {
-                if (dep_entry.value_ptr.* != .string) return error.InvalidManifest;
-                // Alias becomes a symlink name inside the store; never trust it raw.
-                try validate.validateAlias(dep_entry.key_ptr.*);
-
                 const dep_alias = try self.allocator.dupe(u8, dep_entry.key_ptr.*);
                 errdefer self.allocator.free(dep_alias);
-                const dep_url = try self.allocator.dupe(u8, dep_entry.value_ptr.*.string);
+                const dep_url = try self.allocator.dupe(u8, dep_entry.value_ptr.*);
                 errdefer self.allocator.free(dep_url);
                 const p_id = try self.allocator.dupe(u8, pkg_id);
 

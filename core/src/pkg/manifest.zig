@@ -62,23 +62,38 @@ pub const Manifest = struct {
             .dependencies = StringMap.init(allocator),
         };
         errdefer manifest.deinit();
-
-        if (root.get("dependencies")) |deps_val| {
-            if (deps_val != .object) return error.InvalidManifest;
-            var it = deps_val.object.iterator();
-            while (it.next()) |entry| {
-                if (entry.value_ptr.* != .string) return error.InvalidManifest;
-                // Aliases become symlink names under .kupcad/pkg/.
-                try validate.validateAlias(entry.key_ptr.*);
-                const key = try allocator.dupe(u8, entry.key_ptr.*);
-                errdefer allocator.free(key);
-                const val = try allocator.dupe(u8, entry.value_ptr.*.string);
-                errdefer allocator.free(val);
-                try manifest.dependencies.put(key, val);
-            }
-        }
-
+        try readDependencies(allocator, root, &manifest.dependencies);
         return manifest;
+    }
+
+    /// The `dependencies` of the kupcad.json in `json_bytes` (alias -> URL, owned): what the
+    /// resolver reads from a dependency's own manifest, which needn't name a version.
+    pub fn parseDependencies(allocator: std.mem.Allocator, json_bytes: []const u8) !StringMap {
+        var parsed = std.json.parseFromSlice(std.json.Value, allocator, json_bytes, .{}) catch return error.InvalidManifest;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.InvalidManifest;
+        var deps = StringMap.init(allocator);
+        errdefer string_map.deinitOwned(allocator, &deps);
+        try readDependencies(allocator, parsed.value.object, &deps);
+        return deps;
+    }
+
+    /// Adds `root`'s dependencies to `out`. A malformed entry is an error, never skipped, so
+    /// a broken dependency tree can't pass for a complete one, and every alias is checked:
+    /// it becomes a link name under PACKAGE_DIR.
+    fn readDependencies(allocator: std.mem.Allocator, root: std.json.ObjectMap, out: *StringMap) !void {
+        const deps_val = root.get("dependencies") orelse return;
+        if (deps_val != .object) return error.InvalidManifest;
+        var it = deps_val.object.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.* != .string) return error.InvalidManifest;
+            try validate.validateAlias(entry.key_ptr.*);
+            const key = try allocator.dupe(u8, entry.key_ptr.*);
+            errdefer allocator.free(key);
+            const val = try allocator.dupe(u8, entry.value_ptr.*.string);
+            errdefer allocator.free(val);
+            try out.put(key, val);
+        }
     }
 
     /// Records `alias` as depending on `url`, replacing what the alias named before.
