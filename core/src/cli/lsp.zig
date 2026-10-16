@@ -825,7 +825,9 @@ pub const Handler = struct {
                     sym_kind = .Module;
                 },
                 .assignment => {
-                    if (doc.parents[i] == .none) {
+                    // The script's own variables: its block's statements (the check for no
+                    // parent at all listed none, since the block is every statement's parent).
+                    if (doc.parents[i] == doc.tree.root) {
                         const assign = doc.tree.assignment(node);
                         if (assign.name != .none) sym_name = doc.tree.getString(assign.name);
                         sym_kind = .Variable;

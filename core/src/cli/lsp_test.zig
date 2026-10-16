@@ -348,3 +348,89 @@ test "LSP: positions are UTF-8 or UTF-16, never UTF-32, whatever the client offe
         try testing.expectEqual(offer.chosen, server.handler.offset_encoding);
     }
 }
+
+test "LSP: formatting answers the whole document formatted, and nothing for one that doesn't parse" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "x=1+2\ncube( x )\n");
+    const options: lsp.types.FormattingOptions = .{ .tabSize = 2, .insertSpaces = true };
+    const edits = (try s.handler.@"textDocument/formatting"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .options = options })) orelse return error.NoEdits;
+    try testing.expectEqual(@as(usize, 1), edits.len);
+    try testing.expectEqualStrings("x = 1 + 2\ncube(x)\n", edits[0].newText);
+    try testing.expectEqual(@as(u32, 0), edits[0].range.start.line);
+    try testing.expectEqual(@as(u32, 0), edits[0].range.start.character);
+
+    try s.change(URI, "x = )\n");
+    const none = try s.handler.@"textDocument/formatting"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .options = options });
+    try testing.expect(none == null or none.?.len == 0);
+}
+
+test "LSP: inlay hints name a built-in's positional arguments" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "cylinder(2, 5)\n");
+    const hints = (try s.handler.@"textDocument/inlayHint"(s.arena.allocator(), .{
+        .textDocument = .{ .uri = URI },
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 1, .character = 0 } },
+    })) orelse return error.NoHints;
+    try testing.expectEqual(@as(usize, 2), hints.len);
+    try testing.expectEqualStrings("r:", hints[0].label.string);
+    try testing.expectEqual(@as(u32, 9), hints[0].position.character);
+    try testing.expectEqualStrings("h:", hints[1].label.string);
+}
+
+test "LSP: completion offers methods after a dot and globals elsewhere" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "part = cube(1)\npart.tra\ncu");
+    const Labels = struct {
+        fn of(items: []const lsp.types.completion.Item, label: []const u8) ?lsp.types.completion.Item {
+            for (items) |item| if (std.mem.eql(u8, item.label, label)) return item;
+            return null;
+        }
+    };
+    const after_dot = (try s.handler.@"textDocument/completion"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 1, .character = 8 } })).?.completion_items;
+    try testing.expectEqual(lsp.types.completion.Item.Kind.Method, Labels.of(after_dot, "translate").?.kind.?);
+    try testing.expect(Labels.of(after_dot, "cube") == null);
+    const global = (try s.handler.@"textDocument/completion"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 2, .character = 2 } })).?.completion_items;
+    try testing.expectEqual(lsp.types.completion.Item.Kind.Function, Labels.of(global, "cube").?.kind.?);
+    try testing.expect(Labels.of(global, "translate") == null);
+}
+
+test "LSP: document symbols list the defs, classes, modules and top-level variables" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "def plate(w)\n  inner = w\n  cube(inner)\nend\nclass Box\nend\nmodule Parts\nend\nwidth = 3\nplate(width)");
+    const result = (try s.handler.@"textDocument/documentSymbol"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI } })) orelse return error.NoSymbols;
+    const symbols = result.document_symbols;
+    var names: std.ArrayListUnmanaged(u8) = .empty;
+    defer names.deinit(testing.allocator);
+    for (symbols) |sym| try names.print(testing.allocator, "{s}:{t} ", .{ sym.name, sym.kind });
+    try testing.expectEqualStrings("plate:Function Box:Class Parts:Module width:Variable ", names.items);
+}
+
+test "LSP: a code action fixes the finding on the requested lines" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "unused = 5\ncube(1)\n");
+    const result = (try s.handler.@"textDocument/codeAction"(s.arena.allocator(), .{
+        .textDocument = .{ .uri = URI },
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } },
+        .context = .{ .diagnostics = &.{} },
+    })) orelse return error.NoActions;
+    var renames: usize = 0;
+    for (result) |r| {
+        const action = r.code_action;
+        const edits = action.edit.?.changes.?.map.get(URI).?;
+        if (std.mem.indexOf(u8, action.title, "_unused") != null) {
+            renames += 1;
+            try testing.expectEqualStrings("_unused", edits[0].newText);
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), renames);
+}

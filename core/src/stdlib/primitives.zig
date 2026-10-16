@@ -578,6 +578,12 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         error.InvalidUtf8 => {
             return vm.fail(.ValueError, "text: the String isn't valid UTF-8", .{});
         },
+        error.MissingGlyph => {
+            const cp = text_mod.firstMissingGlyph(&face, text_str) orelse 0;
+            // A control character (a line break: text is one line) is named by its code alone.
+            if (cp < 0x20 or cp == 0x7F) return vm.fail(.ValueError, "text: the font '{s}' has no glyph for U+{X:0>4} (text is one line, without control characters)", .{ font_name, cp });
+            return vm.fail(.ValueError, "text: the font '{s}' has no glyph for '{u}' (U+{X:0>4})", .{ font_name, cp, cp });
+        },
         else => {
             return vm.fail(.RuntimeError, "Failed to extract text contours", .{});
         },

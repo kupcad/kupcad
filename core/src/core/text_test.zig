@@ -125,3 +125,11 @@ test "Text: a String that isn't valid UTF-8 is an error, not an assertion" {
     const face = try text.getFaceByName("sans");
     try testing.expectError(error.InvalidUtf8, text.extractText(testing.allocator, &face, "A\xFFB", 10.0, 0.1, .left, .baseline));
 }
+
+test "Text: a character the font has no glyph for is an error, named by firstMissingGlyph" {
+    // It was left out: `text("中")` made an empty sketch, `text("a😀b")` an "ab".
+    const face = try text.getFaceByName("sans");
+    try testing.expectError(error.MissingGlyph, text.extractText(testing.allocator, &face, "a\u{1F600}b", 10.0, 0.1, .left, .baseline));
+    try testing.expectEqual(@as(?u21, 0x1F600), text.firstMissingGlyph(&face, "a\u{1F600}b"));
+    try testing.expectEqual(@as(?u21, null), text.firstMissingGlyph(&face, "Привет é"));
+}

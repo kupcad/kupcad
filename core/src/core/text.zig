@@ -157,6 +157,15 @@ fn closePath(ptr: *anyopaque) void {
 }
 
 /// The Main Extraction Engine
+/// The first character of `text_str` (valid UTF-8) that `face` has no glyph for.
+pub fn firstMissingGlyph(face: *const tatfi.Face, text_str: []const u8) ?u21 {
+    var iter = (std.unicode.Utf8View.init(text_str) catch return null).iterator();
+    while (iter.nextCodepoint()) |cp| {
+        if (face.glyph_index(cp) == null) return cp;
+    }
+    return null;
+}
+
 pub fn extractText(
     allocator: std.mem.Allocator,
     face: *const tatfi.Face,
@@ -202,16 +211,17 @@ pub fn extractText(
     const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
     var iter = view.iterator();
     while (iter.nextCodepoint()) |cp| {
-        if (face.glyph_index(cp)) |glyph_id| {
-            // Extract outlines and route to flattener
-            _ = face.outline_glyph(gpa_val, glyph_id, builder);
-            if (ctx.failed) return error.OutOfMemory;
-            try ctx.flushContour();
+        // A character the font lacks was left out without a word: `text("中")` made an
+        // empty sketch. firstMissingGlyph names it.
+        const glyph_id = face.glyph_index(cp) orelse return error.MissingGlyph;
+        // Extract outlines and route to flattener
+        _ = face.outline_glyph(gpa_val, glyph_id, builder);
+        if (ctx.failed) return error.OutOfMemory;
+        try ctx.flushContour();
 
-            // Advance cursor for next letter
-            if (face.glyph_hor_advance(gpa_val, glyph_id)) |adv| {
-                ctx.cursor_x += @as(f64, @floatFromInt(adv)) * scale;
-            }
+        // Advance cursor for next letter
+        if (face.glyph_hor_advance(gpa_val, glyph_id)) |adv| {
+            ctx.cursor_x += @as(f64, @floatFromInt(adv)) * scale;
         }
     }
 

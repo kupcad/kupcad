@@ -29,6 +29,7 @@ test {
 
     // Compiler
     _ = @import("compiler/compiler_test.zig");
+    _ = @import("compiler/wide_operands_test.zig");
 
     // Core
     _ = @import("core/ast_test.zig");

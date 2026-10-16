@@ -283,8 +283,10 @@ pub const compiler_intrinsics = buildCompilerIntrinsics();
 
 /// A flat array of all valid standard library names, methods, and classes for LSP.
 /// Automatically deduplicates overlapping names by leveraging the compiler_intrinsics map in O(N) time.
-fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 {
-    var arr: [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 = undefined;
+/// What the editor completes outside a call chain: the namespaces and the global functions.
+/// A solid's methods are completed after a dot; offered here, each was a NameError.
+fn buildLspCompletions() [core_namespaces.len + global_functions.len][]const u8 {
+    var arr: [core_namespaces.len + global_functions.len][]const u8 = undefined;
     var idx: usize = 0;
 
     for (core_namespaces) |ns| {
@@ -293,10 +295,6 @@ fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_meth
     }
     for (global_functions) |gf| {
         arr[idx] = gf.name;
-        idx += 1;
-    }
-    for (mesh_methods) |mm| {
-        arr[idx] = mm.name;
         idx += 1;
     }
 

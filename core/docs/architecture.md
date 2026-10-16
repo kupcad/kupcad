@@ -423,6 +423,13 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 `src/wasm_test.zig` drives the exports as the browser does: a build the instruction cap stops (`DEFAULT_INSTRUCTION_LIMIT` is the interactive one on wasm32) leaves the next build working; thirty rounds of build, check, format and a failing build leave the module's linear memory (`@wasmMemorySize`) where three left it; a build imports the files `put_file_wasm` put in the VFS, and fails naming the file after `clear_vfs_wasm`; `check_code_wasm`'s JSON gives each finding a one-based `line` and `col`, the `offset` and `length` of what it marks, a `severity` and a `message`, and `extract_params_wasm`'s is the `UiSchema` (`meta`, then each parameter's `name`, `type`, `default_value` and `validate`); and scripts of strings, maps, closures and instances run under GC stress with 32-bit pointers. A size finding now marks the whole literal, sign and all (`Linter.nodeLoc`), where it marked only the `-`.
 
+## 21. Coverage of the Rare Paths
+
+* **Wide operands:** `src/compiler/wide_operands_test.zig` compiles and runs one construct per wide opcode, each behind an array of 300 constants (also inside the bodies that keep their own, and as an earlier keyword's default, read before a method's body), or with 300 locals, elements, entries or `when` values; a guard fails to compile when a wide opcode has no case. All of them gave the right answer.
+* **`CAD.with_config` nesting:** an inner block changes only what it names and restores the outer block's settings, an error leaving both restores what was there before, and the block's value is the call's.
+* **`text`:** a character the font has no glyph for (`中`, an emoji, a line break) is a `ValueError` naming it (`text.firstMissingGlyph`); it was left out without a word, so `text("中")` made an empty sketch.
+* **The language server's handlers**, through `cli/lsp_test.zig`'s server: formatting, inlay hints, completion, document symbols and code actions. Completion outside a chain offered every solid method, each a `NameError` there (`manifest.lsp_completions` is the namespaces and global functions now), and document symbols left out the script's top-level variables (their parent is the script's block, not none).
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |

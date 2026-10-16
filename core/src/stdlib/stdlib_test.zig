@@ -1317,6 +1317,55 @@ test "Stdlib: two keywords for one option are an error, not one silently ignored
     });
 }
 
+test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found" {
+    // An 8-sided cylinder of radius 1 has area 2·√2, a 64-sided one 32·sin(π/32).
+    const vol = "vol = -> { cylinder(r: 1, h: 1).volume }\n";
+    try expectGlobalR(&.{
+        .{ .src = vol ++
+            \\r = []
+            \\got = CAD.with_config(resolution: { segments: 8 }) do
+            \\  CAD.with_config(resolution: { segments: 64 }) do
+            \\    r.push(vol.call)
+            \\  end
+            \\  r.push(vol.call)
+            \\  :block_value
+            \\end
+            \\r.push(got == :block_value ? 1 : 0)
+        , .expected = .{ .nums = &.{ 32 * @sin(std.math.pi / 32.0), 2 * std.math.sqrt2, 1 } } },
+        // An error leaving both blocks restores what was there before the outer one.
+        .{ .src = vol ++
+            \\base = vol.call
+            \\begin
+            \\  CAD.with_config(resolution: { segments: 8 }) do
+            \\    CAD.with_config(resolution: { segments: 64 }) do
+            \\      raise "boom"
+            \\    end
+            \\  end
+            \\rescue => e
+            \\end
+            \\r = vol.call == base
+        , .expected = .{ .boolean = true } },
+        // An inner block changes only what it names: the outer engine holds inside it.
+        .{ .src =
+        \\b = nil
+        \\CAD.with_config(engine: :brep) do
+        \\  CAD.with_config(resolution: { segments: 8 }) do
+        \\    b = cube(1)
+        \\  end
+        \\end
+        \\
+        ++ comptime test_support.rescued("b.volume"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+    });
+}
+
+test "Stdlib: text draws accented and Cyrillic letters, and refuses a character the font lacks" {
+    try expectGlobalR(&.{
+        .{ .src = "r = text(\"Привет é\", size: 10).extrude(1).volume > text(\"Привет\", size: 10).extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = test_support.rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '中' (U+4E2D)" } },
+        .{ .src = test_support.rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
+    });
+}
+
 test "Stdlib: revolve takes segments and sizes them to the profile" {
     // revolve assumed a 10 mm profile radius for its segment count, and took no segments:.
     const seg8 = "v = nil\nCAD.with_config(resolution: { min_angle: 1, min_length: 1 }) do\n  v = ";
