@@ -216,6 +216,24 @@ test "kupcad: check names each finding's rule, at the level .kupcad.json gives i
     });
 }
 
+test "kupcad: check --fix doesn't print what the script prints" {
+    // Telling whether a fix changes the model runs the script, and its `puts` reached the
+    // terminal (and, in the test suite, corrupted the test runner's protocol).
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "chatty.kup", .data = "spare = 1\nputs(\"from the script\")\ninspect(cube(1))\ncube(1)\n" });
+    const run = try kupcad(sb.path, &.{ "check", "--fix", "chatty.kup" });
+    defer run.deinit();
+    errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
+    try testing.expectEqual(@as(u8, 0), run.code);
+    try testing.expect(std.mem.indexOf(u8, run.stderr, "Fixed 1 problem") != null);
+    try testing.expect(std.mem.indexOf(u8, run.stdout, "from the script") == null and std.mem.indexOf(u8, run.stderr, "from the script") == null);
+    try testing.expect(std.mem.indexOf(u8, run.stdout, "Geometry") == null);
+    const fixed = try sb.tmp.dir.readFileAlloc(testing.io, "chatty.kup", testing.allocator, .limited(1024));
+    defer testing.allocator.free(fixed);
+    try testing.expect(std.mem.startsWith(u8, fixed, "_spare = 1\n"));
+}
+
 test "kupcad: check run in a subfolder uses the project's .kupcad.json above it" {
     var sb = try Sandbox.init();
     defer sb.deinit();

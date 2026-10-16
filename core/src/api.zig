@@ -170,7 +170,8 @@ pub fn fixKeepsModel(allocator: std.mem.Allocator, io: std.Io, original: ?u64, c
 /// operation, number and setting below them, by content, and need no kernel work), its
 /// ghosts' meshes and its materials. Null when it can't be told: the script doesn't parse
 /// or compile, fails, passes the interactive limits, or leaves a shape with no DAG node.
-/// The script runs with every write discarded, so one that exports leaves no file.
+/// The script runs with every write discarded, so one that exports leaves no file, and
+/// with its output dropped: `kupcad check --fix` printed what the script `puts`.
 fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
@@ -185,6 +186,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
     vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
     try registry.registerStandardLibrary(&vm);
+    vm.host.print_handler = null; // puts, print, inspect, benchmark
 
     var program = chunk.Chunk.init();
     defer program.free(allocator);
