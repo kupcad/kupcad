@@ -7,7 +7,6 @@ const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
 const error_kind = @import("vm/error_kind.zig");
 const extractor = @import("tools/doc/extractor.zig");
-const profiler_mod = @import("vm/profiler.zig");
 const geom = @import("kernel/geometry_handle.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
@@ -159,36 +158,6 @@ pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, c
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     return checkDocument(allocator, io, &doc, config);
-}
-
-pub fn benchmarkScript(allocator: std.mem.Allocator, source: []const u8, io: std.Io, writer: anytype) !void {
-    var doc = try Document.parse(allocator, source);
-    defer doc.deinit();
-    if (doc.diagnostics.len > 0) return error.ParseError;
-
-    var vm = try VM.init(allocator, io);
-    defer vm.deinit();
-
-    vm.line_index = &doc.line_index;
-    vm.mute_errors = true; // Mute VM stderr output during benchmarks and tests
-    try registry.registerStandardLibrary(&vm);
-
-    var p = profiler_mod.Profiler.init(allocator, io);
-    defer p.deinit();
-    vm.profiler = &p;
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(allocator);
-
-    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
-    defer comp.deinit();
-    try comp.compile(doc.tree.root);
-
-    const result = vm.interpret(&out_chunk);
-    if (result != .ok) {
-        return error.RuntimeError;
-    }
-    try p.dumpProfile(writer);
 }
 
 /// Scans a parsed document and extracts all parameter definitions and docstrings.

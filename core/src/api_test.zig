@@ -30,55 +30,6 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expectEqual(@as(?usize, 1), found.get("unreachable-code"));
 }
 
-test "API: benchmarkScript completes successfully on valid code" {
-    const source =
-        \\def calculate_val(a)
-        \\  a * 3.0
-        \\end
-        \\
-        \\c = cube(5.0)
-        \\val = calculate_val(2.0)
-        \\c.translate(val, 0.0, 0.0)
-    ;
-
-    var out: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer out.deinit();
-
-    try api.benchmarkScript(testing.allocator, source, testing.io, &out.writer);
-    try testing.expect(out.written().len > 0);
-}
-
-test "API: benchmarkScript propagates errors on syntax failure" {
-    const invalid_source = "def broken_syntax(";
-
-    var out: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer out.deinit();
-
-    try testing.expectError(error.ParseError, api.benchmarkScript(testing.allocator, invalid_source, testing.io, &out.writer));
-}
-
-test "API: benchmarkScript propagates error.RuntimeError on VM runtime failure" {
-    const runtime_err_source =
-        \\def bad_fn()
-        \\  undefined_var + 10
-        \\end
-        \\bad_fn()
-    ;
-
-    var out: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer out.deinit();
-
-    try testing.expectError(error.RuntimeError, api.benchmarkScript(testing.allocator, runtime_err_source, testing.io, &out.writer));
-}
-
-test "API: benchmarkScript handles empty source code cleanly" {
-    var out: std.Io.Writer.Allocating = .init(testing.allocator);
-    defer out.deinit();
-
-    // Ensures zero-instruction scripts compile and profile without underflowing or panicking
-    try api.benchmarkScript(testing.allocator, "", testing.io, &out.writer);
-}
-
 // The parser recovers from `y = )` by dropping the statement; building that tree used to
 // export the cube as if the script were fine.
 const syntax_broken_source =
