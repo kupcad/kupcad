@@ -27,7 +27,7 @@ fn defaultPrintHandler(vm: *VM, message: []const u8) void {
 fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !*value.ObjClass {
     const name_str = try vm.gc.internStatic(vm, name);
     const class_obj = try vm.gc.allocateClass(vm, name_str, superclass);
-    try vm.globals.put(vm.allocator, name, value.Value.initObj(&class_obj.obj));
+    try vm.setGlobal(name, value.Value.initObj(&class_obj.obj));
     return class_obj;
 }
 
@@ -139,7 +139,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Set up GC module (as an instance of a pseudo-class)
     const gc_class = try defineBuiltinClass(vm, "GC", vm.object_class);
     const gc_inst = try vm.gc.allocateInstance(vm, gc_class);
-    try vm.globals.put(vm.allocator, "GC", value.Value.initObj(&gc_inst.obj));
+    try vm.setGlobal("GC", value.Value.initObj(&gc_inst.obj));
 
     // Bootstrap Standard Modules
     // Set up Math module (as an instance of a pseudo-class to support property access)
@@ -147,16 +147,16 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     const math_inst = try vm.gc.allocateInstance(vm, math_class);
     const math_constants = [_]struct { []const u8, f64 }{ .{ "PI", std.math.pi }, .{ "TAU", std.math.tau }, .{ "E", std.math.e } };
     for (math_constants) |c| try vm.setInstanceField(math_inst, try vm.staticString(c[0]), value.Value.initNumber(c[1]), null);
-    try vm.globals.put(vm.allocator, "Math", value.Value.initObj(&math_inst.obj));
+    try vm.setGlobal("Math", value.Value.initObj(&math_inst.obj));
 
     // Set up CAD settings module (as a pseudo-class)
     const cad_module = try defineBuiltinClass(vm, "CAD", vm.object_class);
     const cad_inst = try vm.gc.allocateInstance(vm, cad_module);
-    try vm.globals.put(vm.allocator, "CAD", value.Value.initObj(&cad_inst.obj));
+    try vm.setGlobal("CAD", value.Value.initObj(&cad_inst.obj));
 
     // Initialize the empty Global Parameters Map for CLI injection
     const params_map = try vm.gc.allocateMap(vm);
-    try vm.globals.put(vm.allocator, "params", value.Value.initObj(&params_map.obj));
+    try vm.setGlobal("params", value.Value.initObj(&params_map.obj));
 
     // Bind Core Class Methods Natively
     try core_classes.registerCoreClasses(vm);

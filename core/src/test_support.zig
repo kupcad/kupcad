@@ -19,6 +19,7 @@ const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
 const value = @import("core/value.zig");
+const disassembler = @import("tools/dev/disassembler.zig");
 
 /// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
 pub const NUMBER_TOLERANCE = 1e-9;
@@ -160,4 +161,26 @@ pub fn expectAllocationFailuresHandled(context: anytype, comptime run: fn (@Type
         try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
         if (done) return;
     }
+}
+
+/// The opcodes `c` starts with must be `expected`, in order, whatever their operands
+/// (instructions are stepped over with the disassembler, which knows each one's length:
+/// byte offsets broke whenever an operand changed).
+pub fn expectOps(c: *const chunk.Chunk, expected: []const chunk.OpCode) !void {
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var offset: usize = 0;
+    for (expected, 0..) |op, n| {
+        errdefer std.debug.print("instruction {d} at byte {d}\n", .{ n, offset });
+        try std.testing.expect(offset < c.code.items.len);
+        try std.testing.expectEqual(op, @as(chunk.OpCode, @fromBackingInt(c.code.items[offset])));
+        offset = try disassembler.disassembleInstruction(c, offset, &sink.writer);
+    }
+}
+
+/// Where the `n`th instruction of `c` starts.
+pub fn instructionAt(c: *const chunk.Chunk, n: usize) !usize {
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var offset: usize = 0;
+    for (0..n) |_| offset = try disassembler.disassembleInstruction(c, offset, &sink.writer);
+    return offset;
 }

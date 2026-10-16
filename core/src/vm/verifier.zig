@@ -14,6 +14,7 @@ pub const VerifierError = error{
     InvalidJumpOffset,
     InvalidConstantIndex,
     InvalidInlineCacheIndex,
+    InvalidGlobalCacheIndex,
     /// A local or upvalue slot outside the function's frame or closure.
     InvalidSlot,
     OutOfMemory,
@@ -65,6 +66,10 @@ fn checkInlineCache(c: *const chunk.Chunk, code: []const u8, at: usize) Verifier
     if (readU16(code, at) >= c.inline_caches.items.len) return error.InvalidInlineCacheIndex;
 }
 
+fn checkGlobalCache(c: *const chunk.Chunk, code: []const u8, at: usize) VerifierError!void {
+    if (readU16(code, at) >= c.global_caches.items.len) return error.InvalidGlobalCacheIndex;
+}
+
 fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: Scope, depth: usize) VerifierError!void {
     if (depth > MAX_NESTED_CHUNK_DEPTH) return error.CorruptedBytecode;
 
@@ -96,7 +101,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 1-byte constant index
-            .op_constant, .op_get_global, .op_define_global, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => {
+            .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => {
                 if (ip + 1 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, code[ip]);
                 ip += 1;
@@ -121,7 +126,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 2-byte constant index
-            .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => {
+            .op_constant_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => {
                 if (ip + 2 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, readU16(code, ip));
                 ip += 2;
@@ -158,6 +163,22 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
                 if (ip + 3 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, readU16(code, ip + 1));
                 ip += 3;
+            },
+
+            // 1-byte name constant + 2-byte GlobalCache
+            .op_get_global, .op_define_global => {
+                if (ip + 3 > len) return error.OutOfBoundsRead;
+                try checkConstant(c, code[ip]);
+                try checkGlobalCache(c, code, ip + 1);
+                ip += 3;
+            },
+
+            // 2-byte name constant + 2-byte GlobalCache
+            .op_get_global_wide, .op_define_global_wide => {
+                if (ip + 4 > len) return error.OutOfBoundsRead;
+                try checkConstant(c, readU16(code, ip));
+                try checkGlobalCache(c, code, ip + 2);
+                ip += 4;
             },
 
             // 1-byte name constant + 2-byte Inline Cache

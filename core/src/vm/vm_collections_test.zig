@@ -603,7 +603,7 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         vm.mute_errors = true;
         // Scripts can't make Infinity (arithmetic raises RangeError), but a host can pass
         // one in, as `--param x=inf` does.
-        try vm.globals.put(vm.allocator, "inf_v", value.Value.initNumber(std.math.inf(f64)));
+        try vm.setGlobal("inf_v", value.Value.initNumber(std.math.inf(f64)));
 
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);

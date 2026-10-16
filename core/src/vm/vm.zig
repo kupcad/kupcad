@@ -46,6 +46,12 @@ const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);
 /// 2^63: the smallest float magnitude outside i64 (-2^63 itself still fits).
 const I64_FLOAT_BOUND: f64 = 0x1p63;
 
+/// Where global generations come from, for every VM in the process: unique across them, so
+/// a GlobalCache filled under one VM (a chunk can outlive it) never matches another's. A
+/// usize, as wasm32 has no 64-bit atomics: a generation is taken per new name, not per run
+/// of a loop, so even 32 bits don't wrap in practice.
+var next_global_generation = std.atomic.Value(usize).init(1);
+
 pub const MethodLookupResult = struct {
     method: ?value.Value,
     is_private: bool,
@@ -126,6 +132,11 @@ pub const VM = struct {
     debugger_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
+    /// The generation of the global tables' layout (`globals`, `shadowed_builtins`, the
+    /// module namespaces): a new one whenever a name is added or removed, which can move
+    /// every slot, so each site's GlobalCache knows when to look its name up again.
+    /// Assigning an existing name keeps it: that is the loop, and it stays a slot write.
+    global_generation: usize = 0,
     // Owned copies of the global names defined by bytecode (see defineGlobal); keys
     // registered by the host are static literals and are not in here.
     owned_global_keys: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -272,6 +283,7 @@ pub const VM = struct {
                 .vfs = native_vfs.vfs(),
                 .gc = memory.GC.init(allocator),
                 .globals = .empty,
+                .global_generation = next_global_generation.fetchAdd(1, .monotonic),
                 .modules = .empty,
                 .strings = .empty,
                 .symbols = .empty,
@@ -656,12 +668,15 @@ pub const VM = struct {
                 },
                 .op_get_global, .op_get_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_global_wide);
-                    if (self.lookupGlobal(frame, name_str)) |val| {
-                        self.push(val);
-                    } else {
-                        if (self.raiseError(.NameError, "Undefined variable '{s}'", .{name_str}) != .ok) return .runtime_error;
-                        continue;
+                    const cache = readGlobalCache(exec_chunk, frame);
+                    if (cache.generation != self.global_generation) {
+                        const slot = self.globalSlot(frame, name_str) orelse {
+                            if (self.raiseError(.NameError, "Undefined variable '{s}'", .{name_str}) != .ok) return .runtime_error;
+                            continue;
+                        };
+                        cache.* = .{ .generation = self.global_generation, .slot = slot };
                     }
+                    self.push(cache.slot.*);
                 },
                 .op_get_index => {
                     const res = self.executeGetIndex();
@@ -1057,11 +1072,16 @@ pub const VM = struct {
                 },
                 .op_define_global, .op_define_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
+                    const cache = readGlobalCache(exec_chunk, frame);
                     const val = self.pop();
-                    if (frame.closure.function.namespace) |ns| {
-                        ns.define(self.allocator, name_str, val) catch |err| return self.allocationFailed(err);
+                    if (cache.generation == self.global_generation) {
+                        cache.slot.* = val;
                     } else {
-                        self.defineGlobal(name_str, val) catch |err| return self.allocationFailed(err);
+                        const slot = if (frame.closure.function.namespace) |ns|
+                            self.defineInNamespace(ns, name_str, val) catch |err| return self.allocationFailed(err)
+                        else
+                            self.defineGlobal(name_str, val) catch |err| return self.allocationFailed(err);
+                        cache.* = .{ .generation = self.global_generation, .slot = slot };
                     }
                 },
                 .op_get_ivar, .op_get_ivar_wide => {
@@ -1381,7 +1401,20 @@ pub const VM = struct {
     /// never collected, so the value needs no rooting while the global is added.
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
         const native_obj = try self.gc.allocateNative(name, function);
-        try self.globals.put(self.allocator, name, value.Value.initObj(&native_obj.obj));
+        try self.setGlobal(name, value.Value.initObj(&native_obj.obj));
+    }
+
+    /// Sets the global `name` (not copied: it must outlive the VM) as the host's: a native,
+    /// a class or a library object, which modules see too. A script's own top-level
+    /// variables are defined by op_define_global (defineGlobal).
+    pub fn setGlobal(self: *VM, name: []const u8, val: value.Value) !void {
+        try self.globals.put(self.allocator, name, val);
+        self.globalsChanged();
+    }
+
+    /// A new generation of the global tables' layout: every site looks its name up again.
+    fn globalsChanged(self: *VM) void {
+        self.global_generation = next_global_generation.fetchAdd(1, .monotonic);
     }
 
     /// `name` (a literal, outliving the VM) as an interned string that is never collected;
@@ -1425,43 +1458,67 @@ pub const VM = struct {
     /// Global assignment from bytecode. Like the import cache, new keys are owned
     /// copies: the name comes from a constant ObjString that is swept once its chunk
     /// is freed, while the global lives on into the next run of a reused VM.
-    /// `name = val` at the top of the main script. Every assignment of a top-level
-    /// variable comes here, so the common case, a name the script defined before, is one
-    /// lookup in `globals` and one in `script_defined_globals`; the bookkeeping (the owned
-    /// key, the shadowed builtin) is done the first time a name is seen.
-    fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !void {
-        const gop = try self.globals.getOrPut(self.allocator, name);
-        if (!gop.found_existing) {
-            errdefer self.globals.removeByPtr(gop.key_ptr);
-            const owned = try self.allocator.dupe(u8, name);
-            errdefer self.allocator.free(owned);
-            try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
-            try self.script_defined_globals.put(self.allocator, owned, {});
-            self.owned_global_keys.appendAssumeCapacity(owned);
-            gop.key_ptr.* = owned;
-        } else if (!self.script_defined_globals.contains(name)) {
-            // The main script is shadowing a builtin: keep the original for modules.
-            try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
-            try self.shadowed_builtins.put(self.allocator, gop.key_ptr.*, gop.value_ptr.*);
-            self.script_defined_globals.putAssumeCapacity(gop.key_ptr.*, {});
+    /// `name = val` at the top of the main script, when its site's GlobalCache is stale:
+    /// the first time a name is seen it does the bookkeeping (the owned key, the shadowed
+    /// builtin). Returns the variable's slot, for the site to write to from then on.
+    fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !*value.Value {
+        if (self.globals.getEntry(name)) |entry| {
+            if (!self.script_defined_globals.contains(name)) {
+                // The main script is shadowing a builtin: keep the original for modules.
+                try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
+                try self.shadowed_builtins.put(self.allocator, entry.key_ptr.*, entry.value_ptr.*);
+                self.script_defined_globals.putAssumeCapacity(entry.key_ptr.*, {});
+                self.globalsChanged();
+            }
+            entry.value_ptr.* = val;
+            return entry.value_ptr;
         }
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
+        try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
+        const gop = try self.globals.getOrPut(self.allocator, owned);
         gop.value_ptr.* = val;
+        self.script_defined_globals.putAssumeCapacity(owned, {});
+        self.owned_global_keys.appendAssumeCapacity(owned);
+        self.globalsChanged();
+        return gop.value_ptr;
+    }
+
+    /// A module's top-level `name = val`, in its namespace; returns the variable's slot.
+    fn defineInNamespace(self: *VM, ns: *value.Namespace, name: []const u8, val: value.Value) !*value.Value {
+        if (ns.globals.getPtr(name)) |slot| {
+            slot.* = val;
+            return slot;
+        }
+        try ns.define(self.allocator, name, val);
+        self.globalsChanged();
+        return ns.globals.getPtr(name).?;
     }
 
     /// Resolves a top-level name for code running in `frame`. Main-script code sees
     /// `globals`. Module code sees its own namespace, then builtins, but never the main
     /// script's variables or another module's.
     fn lookupGlobal(self: *VM, frame: *const CallFrame, name: []const u8) ?value.Value {
-        const ns = frame.closure.function.namespace orelse return self.globals.get(name);
-        if (ns.globals.get(name)) |val| return val;
-        return self.builtinGlobal(name);
+        return (self.globalSlot(frame, name) orelse return null).*;
+    }
+
+    /// Where `name` lives for code running in `frame` (see lookupGlobal); the slot stays
+    /// put until the global tables' layout changes (`global_generation`).
+    fn globalSlot(self: *VM, frame: *const CallFrame, name: []const u8) ?*value.Value {
+        const ns = frame.closure.function.namespace orelse return self.globals.getPtr(name);
+        return ns.globals.getPtr(name) orelse self.builtinSlot(name);
     }
 
     /// A top-level name as module code sees it: the builtin, also when the main script
     /// has shadowed it (`cube = 5`), and never the main script's own variables.
     pub fn builtinGlobal(self: *const VM, name: []const u8) ?value.Value {
-        if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.get(name);
-        return self.globals.get(name);
+        return (self.builtinSlot(name) orelse return null).*;
+    }
+
+    fn builtinSlot(self: *const VM, name: []const u8) ?*value.Value {
+        if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.getPtr(name);
+        return self.globals.getPtr(name);
     }
 
     fn newModuleNamespace(self: *VM) !*value.Namespace {
@@ -2146,6 +2203,7 @@ pub const VM = struct {
         if (namespace.globals.get("__exports__")) |exp_mod| {
             final_res = exp_mod;
             namespace.remove(self.allocator, "__exports__");
+            self.globalsChanged();
         }
 
         // 7. Cache the actual finalized module and yield result
@@ -3848,6 +3906,12 @@ pub const VM = struct {
     }
 
     // --- Inline Caching Helpers ---
+
+    inline fn readGlobalCache(exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.GlobalCache {
+        const idx = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+        frame.ip += 2;
+        return &exec_chunk.global_caches.items[idx];
+    }
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;

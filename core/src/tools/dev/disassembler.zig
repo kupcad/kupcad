@@ -74,16 +74,24 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         // Property ops carry a trailing 16-bit inline-cache index after the constant
         .op_get_property, .op_set_property, .op_get_ivar => {
             const next = try constantInstruction(@tagName(op), c, offset, false, writer);
-            return inlineCacheOperand(c, next, writer);
+            return cacheOperand("ic", next, c, writer);
         },
         .op_get_property_wide, .op_set_property_wide, .op_get_ivar_wide => {
             const next = try constantInstruction(@tagName(op), c, offset, true, writer);
-            return inlineCacheOperand(c, next, writer);
+            return cacheOperand("ic", next, c, writer);
         },
-        .op_constant, .op_get_global, .op_define_global, .op_class, .op_method, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var, .op_module, .op_set_member, .op_defined => {
+        .op_get_global, .op_define_global => {
+            const next = try constantInstruction(@tagName(op), c, offset, false, writer);
+            return cacheOperand("global cache", next, c, writer);
+        },
+        .op_get_global_wide, .op_define_global_wide => {
+            const next = try constantInstruction(@tagName(op), c, offset, true, writer);
+            return cacheOperand("global cache", next, c, writer);
+        },
+        .op_constant, .op_class, .op_method, .op_import, .op_class_method, .op_get_class_var, .op_set_class_var, .op_module, .op_set_member, .op_defined => {
             return constantInstruction(@tagName(op), c, offset, false, writer);
         },
-        .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_class_wide, .op_method_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_set_member_wide, .op_defined_wide => {
+        .op_constant_wide, .op_class_wide, .op_method_wide, .op_import_wide, .op_class_method_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_module_wide, .op_set_member_wide, .op_defined_wide => {
             return constantInstruction(@tagName(op), c, offset, true, writer);
         },
         .op_call, .op_super_invoke, .op_yield => return callInstruction(@tagName(op), c, offset, writer),
@@ -122,11 +130,11 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         },
         .op_invoke => {
             const next = try invokeInstruction(@tagName(op), c, offset, false, writer);
-            return inlineCacheOperand(c, next, writer);
+            return cacheOperand("ic", next, c, writer);
         },
         .op_invoke_wide => {
             const next = try invokeInstruction(@tagName(op), c, offset, true, writer);
-            return inlineCacheOperand(c, next, writer);
+            return cacheOperand("ic", next, c, writer);
         },
         .op_switch => return switchInstruction(@tagName(op), c, offset, false, writer),
         .op_switch_wide => return switchInstruction(@tagName(op), c, offset, true, writer),
@@ -177,9 +185,10 @@ fn readJump(c: *const chunk.Chunk, at: usize) usize {
         c.code.items[at + 3];
 }
 
-fn inlineCacheOperand(c: *const chunk.Chunk, offset: usize, writer: anytype) !usize {
-    const ic_idx = (@as(u16, c.code.items[offset]) << 8) | c.code.items[offset + 1];
-    try writer.print("{s: <21}| ic {d}\n", .{ "", ic_idx });
+/// The 16-bit cache index after an instruction's constant (`label`: "ic" or "global cache").
+fn cacheOperand(label: []const u8, offset: usize, c: *const chunk.Chunk, writer: anytype) !usize {
+    const idx = (@as(u16, c.code.items[offset]) << 8) | c.code.items[offset + 1];
+    try writer.print("{s: <21}| {s} {d}\n", .{ "", label, idx });
     return offset + 2;
 }
 

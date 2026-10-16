@@ -19,6 +19,7 @@ const InterpretResult = @import("vm.zig").InterpretResult;
 const ErrorKind = @import("error_kind.zig").ErrorKind;
 const helpers = @import("vm_test_helpers.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
+const writeGlobalOp = helpers.writeGlobalOp;
 const compileAndRun = helpers.compileAndRun;
 const expectGlobalString = helpers.expectGlobalString;
 
@@ -34,8 +35,7 @@ test "VM: Math module namespace and functions" {
     const math_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("Math"));
     const pi_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("PI"));
 
-    try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, @intCast(math_str), 0);
+    try writeGlobalOp(&out_chunk, .op_get_global, math_str);
     try out_chunk.writeOp(testing.allocator, .op_get_property, 0);
     try out_chunk.write(testing.allocator, @intCast(pi_str), 0);
 
@@ -58,8 +58,7 @@ test "VM: Math module namespace and functions" {
     const sin_str = try out_chunk.addConstant(testing.allocator, try vm.allocateString("sin"));
     const arg_0 = try out_chunk.addConstant(testing.allocator, value.Value.initNumber(0));
 
-    try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, @intCast(math_str), 0); // Receiver (Math)
+    try writeGlobalOp(&out_chunk, .op_get_global, math_str); // Receiver (Math)
     try out_chunk.writeOp(testing.allocator, .op_constant, 0);
     try out_chunk.write(testing.allocator, @intCast(arg_0), 0); // Argument (0)
 
@@ -666,7 +665,7 @@ test "VM: super correctly resolves and executes Native C++ methods" {
     vm.push(base_name); // Protect from GC
     const name_str: *value.ObjString = @alignCast(@fieldParentPtr("obj", base_name.asObj()));
     const base_class = try vm.gc.allocateClass(&vm, name_str, null);
-    try vm.globals.put(vm.allocator, "NativeBase", value.Value.initObj(&base_class.obj));
+    try vm.setGlobal("NativeBase", value.Value.initObj(&base_class.obj));
     _ = vm.pop();
 
     // Bind a native method to it that returns 42

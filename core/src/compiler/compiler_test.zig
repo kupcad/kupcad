@@ -9,6 +9,9 @@ const Compiler = @import("compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
+const support = @import("../test_support.zig");
+const expectOps = support.expectOps;
+const instructionAt = support.instructionAt;
 
 const RunResult = struct {
     status: @import("../vm/vm.zig").InterpretResult,
@@ -150,20 +153,8 @@ test "Compiler: compiles compound assignment (x += 5)" {
     defer comp.deinit();
     try comp.compile(assign_node);
 
-    // Bytecode expected for `x += 5` at top level:
-    // op_get_global (x)
-    // op_constant (5)
-    // op_add
-    // op_define_global (x)
-    // op_nil
-    // op_return
-
-    try testing.expectEqual(@as(usize, 9), out_chunk.code.items.len);
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_define_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_constant, .op_add, .op_dup, .op_define_global, .op_return });
+    try testing.expectEqual(try instructionAt(&out_chunk, 6), out_chunk.code.items.len); // and nothing else
 }
 
 test "Compiler: compiles safe navigation method call (obj&.cut())" {
@@ -195,16 +186,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     defer comp.deinit();
     try comp.compile(safe_call);
 
-    // Bytecode expected:
-    // op_get_global (obj)
-    // op_jump_if_nil (Safely skip the invoke if true!) (uses 4-byte offset now)
-    // op_invoke ('cut')
-    // op_return
-
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_jump_if_nil, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
-    // op_invoke shifted 1 byte right due to 4-byte jump offset
-    try testing.expectEqual(chunk.OpCode.op_invoke, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_jump_if_nil, .op_invoke, .op_return });
 }
 
 test "Compiler: compiles string interpolation" {
@@ -299,13 +281,7 @@ test "Compiler: compiles namespace access (Hardware::Screw)" {
     defer comp.deinit();
     try comp.compile(namespace_node);
 
-    // Expected Bytecode:
-    // 0: op_get_global ("Hardware")
-    // 2: op_get_property ("Screw")
-    // 4: op_return
-
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_get_property, .op_return });
 }
 
 test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
@@ -333,19 +309,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     defer comp.deinit();
     try comp.compile(rescue_node);
 
-    // Expected Bytecode:
-    // 0: op_setup_rescue (jump to rescue block on error) (uses 4-byte offset now)
-    // 4: op_get_local (x)
-    // 6: op_pop_rescue (success path, remove frame)
-    // 7: op_jump (skip rescue block)
-    // 11: op_pop (rescue block start: pop the thrown error payload)
-    // 12: op_constant (0)
-    // 14: op_return
-
-    try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_pop_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_jump, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_pop, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[13])));
+    try expectOps(&out_chunk, &.{ .op_setup_rescue, .op_get_global, .op_pop_rescue, .op_jump, .op_pop, .op_constant, .op_return });
 }
 
 test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
@@ -920,24 +884,7 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
     try comp.script_globals.put(testing.allocator, "obj", {});
     try comp.compile(prop_assign);
 
-    // Expected Bytecode:
-    // 0: op_get_global ("obj")
-    // 2: op_dup
-    // 3: op_get_property ("x")
-    // 5: IC High               <-- Inline Cache!
-    // 6: IC Low                <-- Inline Cache!
-    // 7: op_constant (10)
-    // 9: op_add
-    // 10: op_set_property ("x")
-    // 12: IC High              <-- Inline Cache!
-    // 13: IC Low               <-- Inline Cache!
-    // 14: op_return
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_dup, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_get_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[3])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[7])));
-    try testing.expectEqual(chunk.OpCode.op_add, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[9])));
-    try testing.expectEqual(chunk.OpCode.op_set_property, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[10])));
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_dup, .op_get_property, .op_constant, .op_add, .op_set_property, .op_return });
 }
 
 test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
@@ -968,23 +915,7 @@ test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
 
     try comp.compile(idx_assign);
 
-    // Expected Bytecode:
-    // 0: op_get_global ("arr")
-    // 2: op_constant (1)
-    // 4: op_dup_two            <-- Duplicates BOTH target and index
-    // 5: op_get_index
-    // 6: op_constant (2)
-    // 8: op_multiply
-    // 9: op_set_index          <-- Consumes the duplicated target/index and the new result
-    // 10: op_return
-
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_dup_two, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
-    try testing.expectEqual(chunk.OpCode.op_get_index, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[5])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[6])));
-    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[8])));
-    try testing.expectEqual(chunk.OpCode.op_set_index, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[9])));
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_constant, .op_dup_two, .op_get_index, .op_constant, .op_multiply, .op_set_index, .op_return });
 }
 
 test "Compiler: compiles unary NOT operator gracefully" {
@@ -1059,11 +990,10 @@ test "Compiler: compiles STL asset import interception" {
 
     try comp.compile(import_node);
 
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_constant, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[2])));
-    try testing.expectEqual(chunk.OpCode.op_call, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
-    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[5]); // 1 argument
-    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[6]); // no block, no spread
+    try expectOps(&out_chunk, &.{ .op_get_global, .op_constant, .op_call, .op_dup, .op_define_global, .op_pop, .op_nil, .op_return });
+    const call = try instructionAt(&out_chunk, 2);
+    try testing.expectEqual(@as(u8, 1), out_chunk.code.items[call + 1]); // 1 argument
+    try testing.expectEqual(@as(u8, 0), out_chunk.code.items[call + 2]); // no block, no spread
 }
 
 test "Compiler: Local variable names are exported to chunk metadata for REPL introspection" {
@@ -1520,8 +1450,10 @@ test "Compiler Guardrail: Inline-cache indexes past 16 bits are a compile error"
     // Regression: the u16 inline-cache operand used to overflow silently
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(testing.allocator);
-    try buf.appendSlice(testing.allocator, "x = 1\n");
-    for (0..limits.MAX_INLINE_CACHES + 2) |_| try buf.appendSlice(testing.allocator, "x.foo\n");
+    // A local's calls, so only the method caches grow (a global's reads have caches too).
+    try buf.appendSlice(testing.allocator, "def f\n  x = 1\n");
+    for (0..limits.MAX_INLINE_CACHES + 2) |_| try buf.appendSlice(testing.allocator, "  x.foo\n");
+    try buf.appendSlice(testing.allocator, "end\n");
 
     var doc = try Document.parse(testing.allocator, buf.items);
     defer doc.deinit();

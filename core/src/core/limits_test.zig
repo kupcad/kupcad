@@ -156,8 +156,11 @@ fn tokens() !void {
 
 fn inlineCaches() !void {
     // The limit is the highest cache index, so one more call than it allows is two past it.
+    // A local's calls inside a def, so only the method caches grow.
     const allowed = limits.MAX_INLINE_CACHES + 1;
-    try expectCompileMessage(&.{ text("a = [1]\n"), rep("a.length\n", allowed + 1) }, std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{allowed}));
+    try expectCompileMessage(&.{ text("def f\n  a = [1]\n"), rep("  a.length\n", allowed + 1), text("end\n") }, std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{allowed}));
+    // The same index for each read or assignment of a top-level variable (GlobalCache).
+    try expectCompileMessage(&.{ text("a = 1\n"), rep("a\n", allowed) }, std.fmt.comptimePrint("too many uses of top-level variables in one script (at most {d})", .{allowed}));
 }
 
 fn jumpTableCases() !void {

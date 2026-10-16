@@ -19,6 +19,7 @@ const InterpretResult = @import("vm.zig").InterpretResult;
 const ErrorKind = @import("error_kind.zig").ErrorKind;
 const helpers = @import("vm_test_helpers.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
+const writeGlobalOp = helpers.writeGlobalOp;
 
 test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     var vm = try VM.init(testing.allocator, testing.io);
@@ -33,8 +34,7 @@ test "VM: Execute native CAD function (cube) generates symbolic DAG node" {
     const name_idx = try out_chunk.addConstant(testing.allocator, cube_name);
     _ = vm.pop();
 
-    try out_chunk.writeOp(testing.allocator, .op_get_global, 0);
-    try out_chunk.write(testing.allocator, @intCast(name_idx), 0);
+    try writeGlobalOp(&out_chunk, .op_get_global, name_idx);
     try out_chunk.writeOp(testing.allocator, .op_call, 0);
     try out_chunk.write(testing.allocator, 0, 0);
     try out_chunk.write(testing.allocator, 0, 0); // CallFlags

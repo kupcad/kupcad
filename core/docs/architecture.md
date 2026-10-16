@@ -163,6 +163,9 @@ pub const InlineCache = struct {
 * **Monomorphic Hit:** If the receiver's `ObjClass` matches `cached_class_1`, field access or method dispatch executes in $O(1)$ time bypassing table lookup.
 * **Polymorphic Graduation:** If a second receiver class is encountered, slot 2 (`cached_class_2`) is populated to accelerate multi-type call sites without cache thrashing.
 
+
+**Global caches.** `op_get_global` and `op_define_global` carry a second 16-bit index, of the site's `GlobalCache` (`chunk.zig`): the slot its name resolved to (`VM.globalSlot`, in `globals`, a module's namespace or `shadowed_builtins`) and the VM's `global_generation` at the time. While the generation is unchanged a read is one load and an assignment one store; reads hashed the name every time, so a loop over top-level variables ran twice as long as the same loop over locals (1M iterations, ReleaseFast: 105 ms, now 57 ms; locals 47 ms). A new generation is taken whenever a table's layout can move a slot: a new name (`defineGlobal`, `defineInNamespace`, `setGlobal` for the host's globals), a builtin the main script shadows, a removal. Assigning a name that exists goes through `getEntry`/`getPtr`, which never rehash. Generations come from one process-wide counter, so a cache filled under one VM never matches another's.
+
 ### Dictionary Interning & The Scratch Arena
 
 * **Strict Value Dictionaries:** All object dictionaries (`methods`, `class_fields`, `instance_fields`, `map`) strictly require GC-tracked `Value` types (Interned Strings or Symbols) as keys rather than raw `[]const u8` slices. This guarantees that dynamically generated dictionary keys are safely traced during the GC Mark phase.

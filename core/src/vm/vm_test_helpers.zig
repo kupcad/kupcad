@@ -61,3 +61,13 @@ pub fn compileAndRunStressed(vm: *VM, out_chunk: *chunk.Chunk, source: []const u
     defer vm.gc.stress = false;
     return compileAndRun(vm, out_chunk, source);
 }
+
+/// `op` (op_get_global or op_define_global) naming constant `name_idx`, with the global
+/// cache the instruction carries, as the compiler emits it (emitter.emitGetGlobal).
+pub fn writeGlobalOp(c: *chunk.Chunk, op: chunk.OpCode, name_idx: usize) !void {
+    try c.writeOp(testing.allocator, op, 0);
+    try c.write(testing.allocator, @intCast(name_idx), 0);
+    const cache = try c.addGlobalCache(testing.allocator);
+    try c.write(testing.allocator, @intCast(cache >> 8), 0);
+    try c.write(testing.allocator, @intCast(cache & 0xff), 0);
+}

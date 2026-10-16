@@ -44,6 +44,7 @@ pub const CompileError = error{
     AstTooDeep,
     TooManyParameters,
     TooManyInlineCaches,
+    TooManyGlobalCaches,
     /// `yield`, `block_given?` or `super` where there is no method to refer to.
     OutsideMethod,
 };
@@ -71,6 +72,7 @@ fn describeError(err: CompileError) []const u8 {
         error.TooManyArguments => std.fmt.comptimePrint("a call takes at most {d} arguments", .{limits.MAX_ARGS}),
         error.TooManyParameters => std.fmt.comptimePrint("a function takes at most {d} parameters", .{limits.MAX_ARGS}),
         error.TooManyInlineCaches => std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{limits.MAX_INLINE_CACHES + 1}),
+        error.TooManyGlobalCaches => std.fmt.comptimePrint("too many uses of top-level variables in one script (at most {d})", .{limits.MAX_INLINE_CACHES + 1}),
         error.AstTooDeep => "the code is nested too deeply",
         error.UnexpectedBlock => "a call takes one block: a &block argument or a do/{ } block, not both",
         error.ProtectedSymbol => "a built-in name can't be redefined",
@@ -186,6 +188,8 @@ pub const Compiler = struct {
     pub const simulatePush = emitter_mod.simulatePush;
     pub const simulatePop = emitter_mod.simulatePop;
     pub const emitInlineCacheIndex = emitter_mod.emitInlineCacheIndex;
+    pub const emitGetGlobal = emitter_mod.emitGetGlobal;
+    pub const emitDefineGlobal = emitter_mod.emitDefineGlobal;
     pub const emitByte = emitter_mod.emitByte;
     pub const emitOp = emitter_mod.emitOp;
     pub const emitBinaryOp = emitter_mod.emitBinaryOp;
@@ -456,7 +460,7 @@ pub const Compiler = struct {
             // Bare identifier that is not a known variable or constant:
             // In Ruby/KupCAD, this is a 0-argument function/method invocation!
             const name_idx = try self.makeStringConstant(name_str);
-            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+            try self.emitGetGlobal(name_idx);
             try self.emitCall(.op_call, .{ .count = 0 });
             self.simulatePop(1); // Consumes function pointer
             self.simulatePush(1); // Pushes function return value
@@ -695,7 +699,7 @@ pub const Compiler = struct {
 
         // Get the root of the namespace
         const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
-        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, root_idx);
+        try self.emitGetGlobal(root_idx);
 
         // Chain property accesses for the rest of the namespace path
         for (path[1..]) |segment_id| {
@@ -719,7 +723,7 @@ pub const Compiler = struct {
         if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
             const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
             const func_idx = try self.makeStringConstant(func_name);
-            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, func_idx);
+            try self.emitGetGlobal(func_idx);
 
             const asset_path = try import_path.resolveFile(self.allocator, importer, path_str);
             defer self.allocator.free(asset_path);
@@ -793,7 +797,7 @@ pub const Compiler = struct {
                 }
 
                 try self.emitOp(.op_dup);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, alias_idx);
+                try self.emitDefineGlobal(alias_idx);
                 try self.imported_symbols.put(self.allocator, alias_str, {}); // Track securely
             }
 
@@ -814,10 +818,10 @@ pub const Compiler = struct {
             const export_str_idx = try self.makeStringConstant("exports");
             try self.emitOpWithOperand(.op_module, .op_module_wide, export_str_idx);
             try self.emitOp(.op_dup);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, mod_name);
+            try self.emitDefineGlobal(mod_name);
             self.has_export_module = true;
         } else {
-            try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, mod_name);
+            try self.emitGetGlobal(mod_name);
         }
 
         for (symbols) |pair| {
@@ -863,7 +867,7 @@ pub const Compiler = struct {
                 }
 
                 const name_idx = try self.makeStringConstant(self.tree.getString(def_name_id));
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+                try self.emitDefineGlobal(name_idx);
                 try self.emitOp(.op_nil);
             } else {
                 const slot = self.getNextLocalSlot();
@@ -1728,7 +1732,7 @@ pub const Compiler = struct {
             try self.addLocal(name_id, slot);
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, slot);
         } else {
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitDefineGlobal(name_idx);
             try self.emitOp(.op_nil);
         }
     }
@@ -1762,7 +1766,7 @@ pub const Compiler = struct {
         if (self.active_namespaces > 1) {
             try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
         } else {
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+            try self.emitDefineGlobal(name_idx);
             try self.emitOp(.op_nil);
         }
     }
@@ -2202,7 +2206,7 @@ pub const Compiler = struct {
                         const skip_jump = try self.emitJump(.op_jump_if_false);
                         try self.emitOp(.op_pop); // pop true
 
-                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, fq_idx);
+                        try self.emitGetGlobal(fq_idx);
                         try end_jumps.append(self.allocator, try self.emitJump(.op_jump));
 
                         self.patchJump(skip_jump);
@@ -2214,12 +2218,12 @@ pub const Compiler = struct {
                     }
 
                     const global_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, global_idx);
+                    try self.emitGetGlobal(global_idx);
 
                     for (end_jumps.items) |jmp| self.patchJump(jmp);
                 } else {
                     const name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                    try self.emitGetGlobal(name_idx);
                 }
             },
             .class_var => {
@@ -2243,7 +2247,7 @@ pub const Compiler = struct {
             },
             .global, .new_local => {
                 const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                try self.emitGetGlobal(name_idx);
             },
         }
     }
@@ -2294,12 +2298,12 @@ pub const Compiler = struct {
                 const fq_name_idx = try self.makeStringConstant(fq_name);
 
                 try self.emitOp(.op_dup);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
+                try self.emitDefineGlobal(fq_name_idx);
 
                 if (self.namespace_stack.items.len == 0) {
                     try self.emitOp(.op_dup);
                     const short_name_idx = try self.makeStringConstant(name_str);
-                    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, short_name_idx);
+                    try self.emitDefineGlobal(short_name_idx);
                 }
             },
             .class_var => {
@@ -2335,7 +2339,7 @@ pub const Compiler = struct {
                 }
                 try self.emitOp(.op_dup);
                 const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+                try self.emitDefineGlobal(name_idx);
             },
             .new_local => {
                 const slot = self.getNextLocalSlot();
@@ -2570,7 +2574,7 @@ pub const Compiler = struct {
         if (!std.mem.eql(u8, fq_name, short_name)) {
             const fq_name_idx = try self.makeStringConstant(fq_name);
             try self.emitOp(.op_dup);
-            try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, fq_name_idx);
+            try self.emitDefineGlobal(fq_name_idx);
         }
     }
 

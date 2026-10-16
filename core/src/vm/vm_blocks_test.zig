@@ -17,6 +17,7 @@ const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 const InterpretResult = @import("vm.zig").InterpretResult;
 const ErrorKind = @import("error_kind.zig").ErrorKind;
+const support = @import("../test_support.zig");
 const helpers = @import("vm_test_helpers.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
 
@@ -1538,7 +1539,7 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
     defer vm.deinit();
 
     // 1. INJECT global 'x' into the live VM memory
-    try vm.globals.put(testing.allocator, "x", value.Value.initNumber(100.0));
+    try vm.setGlobal("x", value.Value.initNumber(100.0));
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1550,8 +1551,7 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
 
     // 2. Verify Bytecode: It should NOT emit op_call(0).
     // It should securely fetch 'x' via op_get_global.
-    try testing.expectEqual(chunk.OpCode.op_get_global, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expectEqual(chunk.OpCode.op_multiply, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[4])));
+    try support.expectOps(&out_chunk, &.{ .op_get_global, .op_constant, .op_multiply });
 
     // 3. Verify Execution: 100 * 5 = 500
     const res = try executeAndAssertStack(&vm, &out_chunk, 1);

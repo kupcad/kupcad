@@ -639,3 +639,14 @@ test "VM Debugger: stepping with no one to answer runs the script to the end" {
     try testing.expect(!vm.step_mode);
     try testing.expectEqual(@as(f64, 30), vm.globals.get("z").?.asNumber());
 }
+
+test "VM: a top-level variable's cached slot follows its assignments and the table's growth" {
+    // Each global read and assignment caches where its variable lives (GlobalCache). New
+    // names in the middle of a loop make the table grow, which moves every slot: the sites
+    // that cached one must look again, not read freed memory.
+    const support = @import("../test_support.zig");
+    try support.expectScripts(&.{
+        .{ .src = "i = 0\nwhile i < 10\n  i += 1\nend\nr = i", .expected = .{ .num = 10 } },
+        .{ .src = "total = 0\ni = 0\nwhile i < 10\n  total = total + i\n  if i == 3\n    g0 = 1\n    g1 = 1\n    g2 = 1\n    g3 = 1\n    g4 = 1\n    g5 = 1\n    g6 = 1\n    g7 = 1\n    g8 = 1\n    g9 = 1\n    g10 = 1\n    g11 = 1\n    g12 = 1\n    g13 = 1\n    g14 = 1\n    g15 = 1\n    g16 = 1\n    g17 = 1\n    g18 = 1\n    g19 = 1\n    g20 = 1\n    g21 = 1\n    g22 = 1\n    g23 = 1\n    g24 = 1\n    g25 = 1\n    g26 = 1\n    g27 = 1\n    g28 = 1\n    g29 = 1\n    g30 = 1\n    g31 = 1\n    g32 = 1\n    g33 = 1\n    g34 = 1\n    g35 = 1\n    g36 = 1\n    g37 = 1\n    g38 = 1\n    g39 = 1\n    g40 = 1\n    g41 = 1\n    g42 = 1\n    g43 = 1\n    g44 = 1\n    g45 = 1\n    g46 = 1\n    g47 = 1\n    g48 = 1\n    g49 = 1\n    g50 = 1\n    g51 = 1\n    g52 = 1\n    g53 = 1\n    g54 = 1\n    g55 = 1\n    g56 = 1\n    g57 = 1\n    g58 = 1\n    g59 = 1\n    g60 = 1\n    g61 = 1\n    g62 = 1\n    g63 = 1\n  end\n  i += 1\nend\nr = total + g63", .expected = .{ .num = 46 } },
+    });
+}

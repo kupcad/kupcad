@@ -55,7 +55,7 @@ fn defineRaisingInitClass(vm: *VM) !void {
     vm.push(name_val);
     defer _ = vm.pop();
     const class_obj = try vm.gc.allocateClass(vm, name_val.asString(), vm.object_class);
-    try vm.globals.put(vm.allocator, "RaisingInit", value.Value.initObj(&class_obj.obj));
+    try vm.setGlobal("RaisingInit", value.Value.initObj(&class_obj.obj));
 
     const init_fn = try vm.gc.allocateNative("raise_then_fail", raiseThenFail);
     const init_key = try vm.allocateString("initialize");
@@ -1274,7 +1274,7 @@ test "VM: Nested native boundaries unwind exceptions safely without stack corrup
     }.run;
 
     const native_obj = try vm.gc.allocateNative("run_closure", native_runner);
-    try vm.globals.put(vm.allocator, "run_closure", value.Value.initObj(&native_obj.obj));
+    try vm.setGlobal("run_closure", value.Value.initObj(&native_obj.obj));
 
     // Script with nested native boundary re-entrancy:
     // Outer script -> Native run_closure -> Closure -> Native run_closure -> Closure -> raise
@@ -1351,7 +1351,7 @@ test "VM: handled exceptions do not accumulate unwind entries" {
     vm.mute_errors = true;
 
     const native_obj = try vm.gc.allocateNative("probe_unwind_len", probeUnwindLen);
-    try vm.globals.put(vm.allocator, "probe_unwind", value.Value.initObj(&native_obj.obj));
+    try vm.setGlobal("probe_unwind", value.Value.initObj(&native_obj.obj));
     probed_unwind_len = 0;
 
     var out_chunk = chunk.Chunk.init();

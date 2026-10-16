@@ -102,8 +102,10 @@ test "Verifier: Rejects out-of-range constant indexes" {
     // or, for 2-byte operands, 0x0100.
     const cases = [_][]const u8{
         &.{ opByte(.op_constant), 7 },
-        &.{ opByte(.op_get_global), 7 },
-        &.{ opByte(.op_define_global), 7 },
+        // global access: name constant, then a (valid) global cache index
+        &.{ opByte(.op_get_global), 7, 0, 0 },
+        &.{ opByte(.op_define_global), 7, 0, 0 },
+        &.{ opByte(.op_get_global_wide), 0x01, 0x00, 0, 0 },
         &.{ opByte(.op_import), 7 },
         &.{ opByte(.op_class), 7 },
         &.{ opByte(.op_method), 7 },
@@ -121,9 +123,27 @@ test "Verifier: Rejects out-of-range constant indexes" {
         defer c.free(testing.allocator);
         _ = try c.addConstant(testing.allocator, value.Value.initNumber(1));
         _ = try c.addInlineCache(testing.allocator);
+        _ = try c.addGlobalCache(testing.allocator);
         try chunkFrom(&c, bytes);
         try c.writeOp(testing.allocator, .op_return, 0);
         try testing.expectError(error.InvalidConstantIndex, verifier.verifyChunk(testing.allocator, &c));
+    }
+}
+
+test "Verifier: Rejects out-of-range global cache indexes" {
+    // Name constant 0 is valid; the global cache index (0) is only valid once a cache exists.
+    for ([_][]const u8{
+        &.{ opByte(.op_get_global), 0, 0, 0 },
+        &.{ opByte(.op_define_global), 0, 0, 0 },
+        &.{ opByte(.op_get_global_wide), 0, 0, 0, 0 },
+        &.{ opByte(.op_define_global_wide), 0, 0, 0, 0 },
+    }) |bytes| {
+        var c = chunk.Chunk.init();
+        defer c.free(testing.allocator);
+        _ = try c.addConstant(testing.allocator, value.Value.initNumber(1));
+        try chunkFrom(&c, bytes);
+        try c.writeOp(testing.allocator, .op_return, 0);
+        try testing.expectError(error.InvalidGlobalCacheIndex, verifier.verifyChunk(testing.allocator, &c));
     }
 }
 
