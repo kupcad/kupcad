@@ -439,6 +439,8 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             if (!active_faces.contains(@intCast(i))) continue;
 
             var emitted_face_ids = std.ArrayListUnmanaged(u32).empty;
+            // The face's ids are this iteration's to free until face_map takes them.
+            errdefer emitted_face_ids.deinit(allocator);
 
             const outer_loop_id = t.face_loops.items[face.loops_start];
             const outer_loop = t.loops.items[@backingInt(outer_loop_id)];

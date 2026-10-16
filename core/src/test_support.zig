@@ -151,7 +151,9 @@ pub fn expectAllocationFailuresHandled(context: anytype, comptime run: fn (@Type
     const expected = try run(context, std.testing.allocator);
     defer std.testing.allocator.free(expected);
     var checked: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 0 });
-    defer std.debug.assert(checked.deinit() == 0);
+    // A leak is the failing allocator's to report (every allocation goes through it), as a
+    // failed test; asserting here as well turned that into an abort.
+    defer _ = checked.deinitLog(false);
     var fail_index: usize = 0;
     while (true) : (fail_index += 1) {
         errdefer std.debug.print("with allocation {d} failing\n", .{fail_index});

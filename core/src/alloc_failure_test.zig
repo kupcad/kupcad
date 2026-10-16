@@ -34,12 +34,13 @@ test "allocation failures: format" {
 }
 
 test "allocation failures: build every format" {
-    // Not STEP: Locus's exporter leaks a face's id list when an allocation fails before
-    // face_map takes it (operations/step_export.zig), and Locus is fixed on its own.
     const parts = "[cube(2).material(color: \"#FF0000\"), sphere(1, segments: 8).translate(x: 4), (cube(2) - cylinder(r: 0.5, h: 5)).translate(y: 4)]";
+    // STEP is exact geometry, which the B-Rep engine builds: a hull of flat solids.
+    const exact_part = "CAD.config(engine: :brep)\nbatch_hull([cube(6, 6, 1, center: true), cube(2, 2, 4, center: true)])";
     for ([_]BuildCase{
         .{ .source = parts, .format = .glb },
         .{ .source = parts, .format = .gltf, .draco = true },
+        .{ .source = exact_part, .format = .step },
     }) |case| {
         errdefer std.debug.print("format: {s}\n", .{@tagName(case.format)});
         try support.expectAllocationFailuresHandled(case, build);
