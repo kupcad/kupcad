@@ -112,6 +112,10 @@ pub const OpCode = enum(u8) {
     op_shift_left,
     op_shift_right,
     op_negate,
+    /// Unary `+`: the number itself (a TypeError for anything else).
+    op_positive,
+    /// Unary `~`: the bitwise complement of the number's i64, as the binary bitwise ops read it.
+    op_bitwise_not,
 
     // Logical
     op_not,

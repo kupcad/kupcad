@@ -303,33 +303,43 @@ pub fn build(b: *std.Build) void {
     build_info.addOption([]const u8, "version", @import("build.zig.zon").version);
     mod.addOptions("build_info", build_info);
 
-    mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
-    mod.addIncludePath(b.path("vendor/manifold/include"));
-    mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
-    mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
-    mod.addIncludePath(b.path("vendor/draco/src"));
-    mod.addIncludePath(b.path("vendor/eigen"));
-    mod.addIncludePath(b.path("vendor/sqlite"));
-    mod.addIncludePath(b.path("src/bindings"));
-    mod.addIncludePath(b.path("src"));
+    // The C and C++ libraries (Clipper2, Manifold, oneTBB, SQLite, Draco) and KupCAD's
+    // bindings to them, as one static library the module links. Outside the Zig module, a
+    // fuzzing build (`zig build test --fuzz`), which instruments what the test compiles,
+    // leaves them alone: clang's coverage hooks for C and C++ aren't in Zig's fuzzer.
+    const native_mod = b.createModule(.{
+        .target = active_target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
+    });
+    native_mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
+    native_mod.addIncludePath(b.path("vendor/manifold/include"));
+    native_mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
+    native_mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
+    native_mod.addIncludePath(b.path("vendor/draco/src"));
+    native_mod.addIncludePath(b.path("vendor/eigen"));
+    native_mod.addIncludePath(b.path("vendor/sqlite"));
+    native_mod.addIncludePath(b.path("src/bindings"));
+    native_mod.addIncludePath(b.path("src"));
 
     const clipper_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
         &.{ "-std=c++17", "-fno-exceptions" });
 
-    mod.addCSourceFiles(.{
+    native_mod.addCSourceFiles(.{
         .files = clipper_sources,
         .flags = clipper_flags,
     });
 
-    mod.addCSourceFiles(.{
+    native_mod.addCSourceFiles(.{
         .files = manifold_sources,
         .flags = manifold_flags,
     });
 
     if (enable_parallel and !is_wasm) {
-        mod.addIncludePath(b.path("vendor/oneTBB/include"));
+        native_mod.addIncludePath(b.path("vendor/oneTBB/include"));
 
         const tbb_flags: []const []const u8 = if (is_macos)
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
@@ -340,7 +350,7 @@ pub fn build(b: *std.Build) void {
         else
             // Fallback for ARM Linux, Windows on ARM, etc.
             &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
-        mod.addCSourceFiles(.{
+        native_mod.addCSourceFiles(.{
             .files = tbb_sources,
             .flags = tbb_flags,
         });
@@ -356,35 +366,41 @@ pub fn build(b: *std.Build) void {
     else
         &.{ "-std=c99", "-DNDEBUG", "-DSQLITE_THREADSAFE=1", "-DSQLITE_OMIT_LOAD_EXTENSION" };
 
-    mod.addCSourceFile(.{
+    native_mod.addCSourceFile(.{
         .file = b.path("vendor/sqlite/sqlite3.c"),
         .flags = sqlite_flags,
     });
-
-    const sqlite_mod = b.createModule(.{
-        .root_source_file = b.path("vendor/sqlite/sqlite_bindings.zig"),
-        .target = active_target,
-        .optimize = optimize,
-    });
-
-    mod.addImport("sqlite", sqlite_mod);
 
     const drako_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
         &.{ "-std=c++17", "-fno-exceptions" });
 
-    mod.addCSourceFiles(.{
+    native_mod.addCSourceFiles(.{
         .files = draco_sources,
         .flags = drako_flags,
     });
 
     const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 
-    mod.addCSourceFiles(.{
+    native_mod.addCSourceFiles(.{
         .files = kupcad_bindings,
         .flags = kupcad_flags,
     });
+
+    const native = b.addLibrary(.{
+        .linkage = .static,
+        .name = "kupcad_native",
+        .root_module = native_mod,
+    });
+    mod.linkLibrary(native);
+
+    const sqlite_mod = b.createModule(.{
+        .root_source_file = b.path("vendor/sqlite/sqlite_bindings.zig"),
+        .target = active_target,
+        .optimize = optimize,
+    });
+    mod.addImport("sqlite", sqlite_mod);
 
     // ====================================================================
     // Targets

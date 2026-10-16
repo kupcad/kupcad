@@ -966,3 +966,32 @@ test "Formatter: the checked API accepts the constructs it used to refuse" {
         try testing.expectEqualStrings(source, formatted);
     }
 }
+
+test "Formatter: a comment ending the file without a newline stays on its own line" {
+    // It was glued to the statement above (`x = 1# c`, a blank line before it lost), and
+    // formatting that again added a space: found by the front-end fuzz test.
+    try expectStableFormat("x = 1\n\n# c", "x = 1\n\n# c\n");
+    try expectStableFormat("x = 1\n# c", "x = 1\n# c\n");
+    try expectStableFormat("def f\n  1\nend\n# c", "def f\n  1\nend\n# c\n");
+}
+
+test "Formatter: a call on an expression with no name keeps its form" {
+    // `(f)(2)` (which fails when run: a lambda takes .call) was printed `(f).(2)`, which
+    // doesn't parse, so the formatter refused the file: found by the front-end fuzz test.
+    try expectStableFormat("(1) (2)", "(1)(2)\n");
+    try expectStableFormat("x = (a + b)()", "x = (a + b)()\n");
+    try expectStableFormat("y = (a + b)(1, 2).first", "y = (a + b)(1, 2).first\n");
+}
+
+test "Formatter: a multiple assignment to one name keeps its comma" {
+    // `a, = list` took the first element; printed `a = list`, it assigned the whole list,
+    // so the formatter refused the file: found by the front-end fuzz test.
+    try expectStableFormat("a, = [1, 2]", "a, = [1, 2]\n");
+}
+
+test "Formatter: an assignment passed as an argument keeps its arguments" {
+    // Laid out over lines it took a trailing comma, `b = 5,`, which read back as b = [5, ...]:
+    // found by the front-end fuzz test.
+    try expectStableFormat("o a,\nb = 5\n", "o(\n  a,\n  b = 5,\n)\n");
+    try expectStableFormat("o(b = 5, 6)", "o(b = 5, 6)\n");
+}

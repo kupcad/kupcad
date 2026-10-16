@@ -1,0 +1,41 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    # The front end (lexer, parser, linter, compiler, formatter) on generated input, from
+    # the corpus in core/src/frontend/fuzz_test.zig. A plain test run replays the corpus
+    # on every platform; searching from it runs here.
+    name: Fuzz the front end (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@v1
+        with:
+          zig-version-file: .tool-versions
+
+      - name: Fuzz
+        working-directory: core
+        run: zig build test --fuzz=2M -Dtest-filter="fuzz:"
+
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash
+          path: core/.zig-cache/f/
+          if-no-files-found: ignore

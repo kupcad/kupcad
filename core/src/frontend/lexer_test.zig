@@ -332,8 +332,10 @@ test "KupCAD Lexer: Hash label vs Symbol ambiguity without spaces" {
 test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // Unclosed standard string
     var lexer1 = Lexer.init("\"unclosed string...", 0);
-    // Because it never finds the closing quote, consumeStringBody safely hits
-    // the end of the buffer and returns .eof
+    // It never finds the closing quote: the rest of the file is an unterminated string.
+    const unclosed = lexer1.next();
+    try testing.expectEqual(.unterminated_string, unclosed.tag);
+    try testing.expectEqualStrings("unclosed string...", unclosed.lexeme);
     try testing.expectEqual(.eof, lexer1.next().tag);
 
     // Unclosed string interpolation
@@ -347,6 +349,20 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
 
     // The interpolation was never closed with `}` and hits EOF safely
     try testing.expectEqual(.eof, lexer2.next().tag);
+
+    // Closed after the interpolation, the string's rest still isn't.
+    var lexer3 = Lexer.init("'one' :\"two\" %w[three \"a #{1} b", 0);
+    try testing.expectEqual(.string, lexer3.next().tag);
+    try testing.expectEqual(.symbol, lexer3.next().tag);
+    try testing.expectEqual(.unterminated_string, lexer3.next().tag);
+    var lexer4 = Lexer.init("\"a #{1} b", 0);
+    try testing.expectEqual(.string_start, lexer4.next().tag);
+    try testing.expectEqual(.number, lexer4.next().tag);
+    try testing.expectEqual(.unterminated_string, lexer4.next().tag);
+    for ([_][]const u8{ "'open", ":'open", "%q(open" }) |source| {
+        var lexer = Lexer.init(source, 0);
+        try testing.expectEqual(.unterminated_string, lexer.next().tag);
+    }
 }
 
 test "KupCAD Lexer: Hexadecimal, Octal, Binary, and Underscore Floats" {
@@ -629,15 +645,16 @@ test "Lexer: Heredoc with dash and tilde modifiers (<<-TEXT, <<~TEXT)" {
     });
 }
 
-test "KupCAD Lexer: Unclosed Heredoc at EOF does not panic" {
+test "KupCAD Lexer: an unclosed heredoc at EOF is a token of its own, naming the terminator" {
+    // It read as a string, so a file that lost its terminator line ran without a word.
     const source =
         \\val = <<EOF
         \\Line 1
         \\Line 2
     ;
     try expectTokens(source, &.{
-        t(.ident, "val"),             t(.equal, "="),
-        t(.string, "Line 1\nLine 2"), t(.eof, ""),
+        t(.ident, "val"),                t(.equal, "="),
+        t(.unterminated_heredoc, "EOF"), t(.eof, ""),
     });
 }
 
@@ -922,15 +939,14 @@ test "Lexer: String interpolation limits" {
         try std.testing.expect(valid_token.tag != .invalid);
     }
 
-    // One level deeper yields an .invalid token instead of overflowing the stack
+    // One level deeper yields an .interpolation_too_deep token instead of overflowing the stack
     const invalid_source = try buildNestedString(allocator, max_depth + 1);
     defer allocator.free(invalid_source);
     var invalid_lexer = Lexer.init(invalid_source, 0);
     var invalid_token = invalid_lexer.next();
     var hit_error = false;
     while (invalid_token.tag != .eof) : (invalid_token = invalid_lexer.next()) {
-        if (invalid_token.tag == .invalid) {
-            try testing.expectEqualStrings("Interpolation depth exceeded", invalid_token.lexeme);
+        if (invalid_token.tag == .interpolation_too_deep) {
             hit_error = true;
             break;
         }

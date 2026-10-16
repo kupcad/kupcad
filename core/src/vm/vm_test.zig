@@ -11378,3 +11378,14 @@ test "VM Debugger: stepping with no one to answer runs the script to the end" {
     try testing.expect(!vm.step_mode);
     try testing.expectEqual(@as(f64, 30), vm.globals.get("z").?.asNumber());
 }
+
+test "VM: unary + and ~ work on numbers and reject the rest" {
+    // Both parsed, but the compiler had no case for them: "internal compiler error".
+    const support = @import("../test_support.zig");
+    try support.expectScripts(&.{
+        .{ .src = "r = [~5, +3, ~-1, +(-2), ~2.9]", .expected = .{ .nums = &.{ -6, 3, 0, -2, -3 } } },
+        .{ .src = support.rescued("~\"s\""), .expected = .{ .str = "TypeError: unary '~' expects a number, got String" } },
+        .{ .src = support.rescued("+nil"), .expected = .{ .str = "TypeError: unary '+' expects a number, got nil" } },
+        .{ .src = support.rescued("~1e300"), .expected = .{ .str = "RangeError: Bitwise operand 1e300 is not a finite 64-bit integer." } },
+    });
+}

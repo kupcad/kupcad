@@ -50,6 +50,8 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_shift_left,
         .op_shift_right,
         .op_negate,
+        .op_positive,
+        .op_bitwise_not,
         .op_not,
         .op_equal,
         .op_greater,

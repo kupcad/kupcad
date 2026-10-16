@@ -275,7 +275,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
         // --- Pops 1, Pushes 1 (Net: 0) ---
         // Unary modifiers that consume a value and replace it with a mutated version.
         // op_set_member pops a class, peeks at the namespace, attaches it, and pushes the class back.
-        .op_negate, .op_not, .op_is_nil, .op_set_member, .op_set_member_wide => 0,
+        .op_negate, .op_positive, .op_bitwise_not, .op_not, .op_is_nil, .op_set_member, .op_set_member_wide => 0,
 
         // --- Pushes 2 (Net: +2) ---
         // Duplicates the top two values on the stack.

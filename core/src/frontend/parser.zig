@@ -83,6 +83,10 @@ pub const Parser = struct {
     /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
     /// block, which swallowed the loop's body. Brackets inside the header clear it again.
     in_loop_header: bool = false,
+    /// Set while parsing one item of a comma-separated list (an argument, an array element,
+    /// a map value), where an assignment takes one value: `f(b = 5, 6)` passes two
+    /// arguments, as in Ruby. It made `b` the array [5, 6]. A statement clears it again.
+    in_list_item: bool = false,
     scope_depth: u32 = 0,
     ast_depth: usize = 0,
 
@@ -183,6 +187,28 @@ pub const Parser = struct {
             .length = self.tokens.lengths[idx],
             .file_id = 0,
         };
+    }
+
+    /// Whether the lexer made `t` for text it couldn't read.
+    fn isLexError(t: Tag) bool {
+        return switch (t) {
+            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => true,
+            else => false,
+        };
+    }
+
+    /// Reports what the lexer couldn't read at token `idx`. Every such token used to be
+    /// reported as "Interpolation depth exceeded", and an unclosed string or heredoc not at all.
+    fn reportLexError(self: *Parser, idx: u24) void {
+        const loc = self.getLoc(idx);
+        const text = self.tokens.lexeme(self.source, idx);
+        switch (self.tokens.tags[idx]) {
+            .invalid => self.reportError(loc, "Unexpected character '{s}'", .{text}),
+            .unterminated_string => self.reportError(loc, "This string is never closed before the end of the file", .{}),
+            .unterminated_heredoc => self.reportError(loc, "This heredoc is never closed: no line '{s}' before the end of the file", .{text}),
+            .interpolation_too_deep => self.reportError(loc, "Interpolation depth exceeded", .{}),
+            else => unreachable,
+        }
     }
 
     pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
@@ -459,6 +485,9 @@ pub const Parser = struct {
         // real tree depth so legitimately deep code isn't rejected early.
         self.skipIgnored();
         const start_idx = self.tok_idx;
+        const outer_list_item = self.in_list_item;
+        self.in_list_item = false;
+        defer self.in_list_item = outer_list_item;
 
         var stmt = switch (self.tag(0)) {
             .keyword_import => try self.parseImportOrExportStatement(false),
@@ -591,7 +620,7 @@ pub const Parser = struct {
             if (target.tag == .identifier) try self.declareLocal(target.main_token);
         }
         self.advance();
-        const value = try self.parseExpressionList();
+        const value = if (self.in_list_item) try self.parseExpression(.none) else try self.parseExpressionList();
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
         switch (left_node.tag) {
             .identifier => {
@@ -1330,7 +1359,7 @@ pub const Parser = struct {
             self.advance();
             self.advance();
         }
-        const val = try self.parseExpression(.none);
+        const val = try self.parseListItem();
         return .{ .name = arg_name, .value = val, .modifier = mod };
     }
 
@@ -1429,8 +1458,16 @@ pub const Parser = struct {
             const inner = try self.parseExpression(.none);
             return self.b.splatExpr(inner, star_tok) catch ParseError.OutOfMemory;
         } else {
-            return self.parseExpression(.none);
+            return self.parseListItem();
         }
+    }
+
+    /// One item of a comma-separated list (see `in_list_item`).
+    fn parseListItem(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.in_list_item;
+        self.in_list_item = true;
+        defer self.in_list_item = outer;
+        return self.parseExpression(.none);
     }
 
     fn parseHashEntry(self: *Parser) ParseError!ast.HashEntry {
@@ -1459,7 +1496,7 @@ pub const Parser = struct {
                     self.advance();
                 } else return ParseError.UnexpectedToken;
             }
-            return .{ .key = key, .value = try self.parseExpression(.none) };
+            return .{ .key = key, .value = try self.parseListItem() };
         }
     }
 
@@ -1535,8 +1572,8 @@ pub const Parser = struct {
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
-            .invalid => {
-                self.reportError(self.getLoc(start_tok), "Interpolation depth exceeded", .{});
+            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => {
+                self.reportLexError(start_tok);
                 left = try self.b.invalidNode(start_tok);
             },
             else => {
@@ -1609,8 +1646,8 @@ pub const Parser = struct {
         while (true) {
             self.skipIgnored();
 
-            if (self.tag(0) == .invalid) {
-                self.reportError(self.getLoc(self.tok_idx), "Interpolation depth exceeded", .{});
+            if (isLexError(self.tag(0))) {
+                self.reportLexError(self.tok_idx);
                 try self.scratch_nodes.append(self.allocator, try self.b.invalidNode(self.tok_idx));
                 self.advance();
                 break;
@@ -1629,6 +1666,8 @@ pub const Parser = struct {
                 const is_end = (self.tag(0) == .string_end);
                 self.advance();
                 if (is_end) break;
+            } else if (isLexError(self.tag(0))) {
+                continue; // reported at the top: the string's rest never closes, say
             } else {
                 return ParseError.UnexpectedToken;
             }

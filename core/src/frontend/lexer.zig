@@ -8,7 +8,14 @@ const utils = @import("utils.zig");
 
 pub const Tag = enum {
     eof,
+    /// A character that starts no token.
     invalid,
+    /// A string, quoted symbol or %-literal the file ends inside; the token is the rest of it.
+    unterminated_string,
+    /// A heredoc whose terminator line never comes; the token is the terminator's name.
+    unterminated_heredoc,
+    /// `#{` nested deeper than the lexer tracks.
+    interpolation_too_deep,
     newline,
     semicolon,
     ident,
@@ -370,8 +377,9 @@ pub const Lexer = struct {
             self.advance();
         }
 
+        if (self.index == self.buffer.len) return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[full_start..] };
         const inner_end = self.index;
-        if (self.index < self.buffer.len) self.advance(); // consume close delim
+        self.advance(); // consume close delim
 
         const tag: Tag = if (!has_letter or kind == 'q') .string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
 
@@ -523,6 +531,8 @@ pub const Lexer = struct {
             }
 
             const terminator = self.buffer[term_start..term_end];
+            var terminator_loc = start_loc;
+            terminator_loc.offset = @intCast(term_start);
             self.index = term_end; // Skip past the terminator declaration
 
             // Advance to the end of the current line and consume newline
@@ -555,10 +565,7 @@ pub const Lexer = struct {
                 self.advanceLine();
             }
 
-            // Unclosed Heredoc EOF recovery
-            var content_loc = start_loc;
-            content_loc.offset = @intCast(content_start);
-            return .{ .tag = .string, .loc = content_loc, .lexeme = self.buffer[content_start..self.buffer.len] };
+            return .{ .tag = .unterminated_heredoc, .loc = terminator_loc, .lexeme = terminator };
         }
 
         // Fallback: It wasn't a valid Heredoc terminator, so it's just a Left Shift <<
@@ -579,7 +586,9 @@ pub const Lexer = struct {
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
         if (quote == '\'') {
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '\'');
+            const start = self.index;
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '\'') orelse
+                return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start..] };
             var content_loc = start_loc;
             content_loc.offset += 1;
             return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
@@ -607,7 +616,8 @@ pub const Lexer = struct {
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
             const content_offset = self.index + 1; // skip quote in AST offset
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote);
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote) orelse
+                return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start_loc.offset..] };
 
             var content_loc = start_loc;
             content_loc.offset = @intCast(content_offset);
@@ -664,7 +674,7 @@ pub const Lexer = struct {
                 self.advance();
 
                 if (self.interp_depth >= self.interp_stack.len) {
-                    return .{ .tag = .invalid, .loc = start_loc, .lexeme = "Interpolation depth exceeded" };
+                    return .{ .tag = .interpolation_too_deep, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
                 }
                 self.interp_stack[self.interp_depth] = .{
                     .brace_depth = self.brace_depth,
@@ -694,7 +704,7 @@ pub const Lexer = struct {
             }
             self.advance();
         }
-        return self.makeToken(.eof);
+        return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start..] };
     }
 
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {

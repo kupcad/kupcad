@@ -173,11 +173,13 @@ pub const LexerUtils = struct {
         return .{ .lexeme = "/", .kind = .slash };
     }
 
+    /// The text between `quote` at `index` and the next unescaped `quote`, leaving `index`
+    /// past it; null when the buffer ends first (`index` is then at its end).
     pub fn consumeQuotedString(
         buffer: []const u8,
         index: *usize,
         quote: u8,
-    ) []const u8 {
+    ) ?[]const u8 {
         index.* += 1;
         const start = index.*;
         while (index.* < buffer.len) {
@@ -190,14 +192,11 @@ pub const LexerUtils = struct {
                 continue;
             }
             if (c == quote) {
-                break;
+                index.* += 1;
+                return buffer[start .. index.* - 1];
             }
             index.* += 1;
         }
-        const lexeme = buffer[start..index.*];
-        if (index.* < buffer.len) {
-            index.* += 1;
-        }
-        return lexeme;
+        return null;
     }
 };

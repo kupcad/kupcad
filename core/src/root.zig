@@ -67,6 +67,7 @@ test {
     _ = @import("frontend/docstring_test.zig");
     _ = @import("frontend/lexer_test.zig");
     _ = @import("frontend/parser_test.zig");
+    _ = @import("frontend/fuzz_test.zig");
 
     // Kernels
     _ = @import("kernel/engines/manifold/driver_test.zig");

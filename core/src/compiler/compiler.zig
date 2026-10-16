@@ -914,8 +914,9 @@ pub const Compiler = struct {
         try self.compileNode(un_expr.operand);
         switch (un_expr.op) {
             .negate => try self.emitOp(.op_negate),
+            .positive => try self.emitOp(.op_positive),
+            .bitwise_not => try self.emitOp(.op_bitwise_not),
             .not => try self.emitOp(.op_not),
-            else => return error.UnknownNode,
         }
     }
 

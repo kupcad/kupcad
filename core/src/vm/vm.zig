@@ -604,6 +604,26 @@ pub const VM = struct {
                     }
                     self.push(value.Value.initNumber(-a.asNumber()));
                 },
+                .op_positive => {
+                    const a = self.pop();
+                    if (!a.isNumber()) {
+                        if (self.raiseError(.TypeError, "unary '+' expects a number, got {s}", .{self.typeName(a)}) != .ok) return .runtime_error;
+                        continue;
+                    }
+                    self.push(a);
+                },
+                .op_bitwise_not => {
+                    const a = self.pop();
+                    if (!a.isNumber()) {
+                        if (self.raiseError(.TypeError, "unary '~' expects a number, got {s}", .{self.typeName(a)}) != .ok) return .runtime_error;
+                        continue;
+                    }
+                    const int = bitwiseOperand(a.asNumber()) orelse {
+                        if (self.raiseError(.RangeError, "Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(a.asNumber())}) != .ok) return .runtime_error;
+                        continue;
+                    };
+                    self.push(value.Value.initNumber(@floatFromInt(~int)));
+                },
                 .op_not => {
                     self.push(value.Value.initBool(isFalsey(self.pop())));
                 },
