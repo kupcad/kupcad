@@ -111,9 +111,10 @@ fn inner_check(source: []const u8) ![]const u8 {
     try out.writer.writeAll("[");
     for (diags, 0..) |d, i| {
         if (i > 0) try out.writer.writeAll(",");
+        const at = line_index.humanPosition(d.loc.offset);
         const flat_diag = .{
-            .line = line_index.getLine(d.loc.offset) + 1,
-            .col = line_index.getUtf8Column(d.loc.offset) + 1,
+            .line = at.line,
+            .col = at.column,
             .offset = d.loc.offset,
             .length = d.loc.length,
             .severity = d.severity.toString(),

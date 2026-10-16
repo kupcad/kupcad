@@ -228,7 +228,7 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
 
 /// A diagnostic as `textDocument/publishDiagnostics` sends it.
 const PublishedDiagnostic = struct {
-    const Position = struct { line: u32, character: u32 };
+    const Position = lsp.types.Position;
 
     range: struct { start: Position, end: Position },
     severity: u32,
@@ -498,8 +498,10 @@ pub const Handler = struct {
         return self.offset_encoding == .@"utf-8";
     }
 
-    inline fn getColumn(self: *const Handler, line_index: *const api.LineIndex, offset: u32) u32 {
-        return if (self.useUtf8()) line_index.getUtf8Column(offset) else line_index.getUtf16Column(offset);
+    /// `offset` as the editor counts it (lsp_actions.position, in the negotiated encoding).
+    fn lspPosition(self: *const Handler, line_index: *const api.LineIndex, offset: u32) lsp.types.Position {
+        const at = lsp_actions.position(line_index, offset, if (self.useUtf8()) .utf8 else .utf16);
+        return .{ .line = at.line, .character = at.character };
     }
 
     pub fn @"textDocument/didOpen"(
@@ -589,15 +591,11 @@ pub const Handler = struct {
         };
 
         const line_index = &doc.line_index;
-        const end_offset: u32 = @intCast(source.len);
-        const end_line = line_index.getLine(end_offset);
-        const end_char = self.getColumn(line_index, end_offset);
-
         var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
             .range = .{
                 .start = .{ .line = 0, .character = 0 },
-                .end = .{ .line = end_line, .character = end_char },
+                .end = self.lspPosition(line_index, @intCast(source.len)),
             },
             .newText = formatted,
         });
@@ -714,7 +712,7 @@ pub const Handler = struct {
                 .type => try arena.print(": {s}", .{hint.name}),
             };
             try hints.append(arena, .{
-                .position = .{ .line = line_index.getLine(hint.offset), .character = self.getColumn(line_index, hint.offset) },
+                .position = self.lspPosition(line_index, hint.offset),
                 .label = .{ .string = label },
                 .kind = if (hint.kind == .parameter) .Parameter else .Type,
                 .paddingLeft = false,
@@ -841,16 +839,7 @@ pub const Handler = struct {
                 const length = doc.tokens.lengths[node.main_token];
                 const end_offset = start_offset + length;
 
-                const start_pos = lsp.types.Position{
-                    .line = line_index.getLine(start_offset),
-                    .character = self.getColumn(line_index, start_offset),
-                };
-                const end_pos = lsp.types.Position{
-                    .line = line_index.getLine(end_offset),
-                    .character = self.getColumn(line_index, end_offset),
-                };
-
-                const range = lsp.types.Range{ .start = start_pos, .end = end_pos };
+                const range = lsp.types.Range{ .start = self.lspPosition(line_index, start_offset), .end = self.lspPosition(line_index, end_offset) };
 
                 try symbols.append(arena, .{
                     .name = name,
@@ -933,28 +922,16 @@ pub const Handler = struct {
         var lsp_diags: std.ArrayListUnmanaged(PublishedDiagnostic) = .empty;
 
         for (diags) |d| {
-            const start_line = line_index.getLine(d.loc.offset);
-            const start_char = self.getColumn(line_index, d.loc.offset);
-
-            var end_line = start_line;
-            var end_char = start_char;
-
-            if (d.loc.length > 0) {
-                // Standard multi-character token
-                const end_offset = d.loc.offset + d.loc.length;
-                end_line = line_index.getLine(end_offset);
-                end_char = self.getColumn(line_index, end_offset);
-            } else {
-                // Zero-length token (EOF, missing semicolon, etc)
-                // Draw a 1-character wide squiggly explicitly on the same line
-                end_char = start_char + 1;
-            }
+            const start = self.lspPosition(line_index, d.loc.offset);
+            // A zero-length finding (end of file, a missing token) gets a one-character
+            // squiggle on its line.
+            const end = if (d.loc.length > 0)
+                self.lspPosition(line_index, d.loc.offset + d.loc.length)
+            else
+                lsp.types.Position{ .line = start.line, .character = start.character + 1 };
 
             try lsp_diags.append(arena, .{
-                .range = .{
-                    .start = .{ .line = start_line, .character = start_char },
-                    .end = .{ .line = end_line, .character = end_char },
-                },
+                .range = .{ .start = start, .end = end },
                 .severity = switch (d.severity) {
                     .@"error" => 1,
                     .warning => 2,

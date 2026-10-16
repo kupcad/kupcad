@@ -54,8 +54,9 @@ pub const Report = struct {
 };
 
 pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!void {
-    const line = r.line_index.getLine(r.offset) + 1;
-    const col = r.line_index.getUtf8Column(r.offset) + 1;
+    const at = r.line_index.humanPosition(r.offset);
+    const line = at.line;
+    const col = at.column;
     const sev_color = style.severity(r.severity);
 
     try w.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}", .{ style.cyan, r.file_path, line, col, style.reset, sev_color, r.severity.toChar(), style.reset, r.message });

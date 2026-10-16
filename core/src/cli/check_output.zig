@@ -28,11 +28,8 @@ const Position = struct {
     utf16_column: u32,
 
     fn at(line_index: *const api.LineIndex, offset: u32) Position {
-        return .{
-            .line = line_index.getLine(offset) + 1,
-            .column = line_index.getUtf8Column(offset) + 1,
-            .utf16_column = line_index.getUtf16Column(offset) + 1,
-        };
+        const pos = line_index.humanPosition(offset);
+        return .{ .line = pos.line, .column = pos.column, .utf16_column = line_index.getUtf16Column(offset) + 1 };
     }
 };
 

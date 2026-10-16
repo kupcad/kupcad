@@ -60,6 +60,13 @@ pub const LineIndex = struct {
         return std.mem.trimEnd(u8, source[start..end], "\r\n");
     }
 
+    /// Where `offset` is as compilers print it: the 1-based line and 1-based UTF-8 column
+    /// (`file:line:column`). The terminal report, `--format json` and the browser build
+    /// each worked it out themselves.
+    pub fn humanPosition(self: *const LineIndex, offset: u32) struct { line: u32, column: u32 } {
+        return .{ .line = self.getLine(offset) + 1, .column = self.getUtf8Column(offset) + 1 };
+    }
+
     /// Returns the 0-indexed UTF-8 byte column.
     /// (Use this if the LSP client successfully negotiates "utf-8" PositionEncodingKind).
     pub fn getUtf8Column(self: *const LineIndex, offset: u32) u32 {

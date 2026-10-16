@@ -58,3 +58,16 @@ test "LineIndex: safely handles empty strings" {
     try testing.expectEqual(@as(u32, 0), index.getUtf8Column(0));
     try testing.expectEqual(@as(u32, 0), index.getUtf16Column(0));
 }
+
+test "LineIndex: humanPosition is the 1-based line and UTF-8 column compilers print" {
+    const source = "a = 1\nμ = 2\n";
+    const index = try LineIndex.init(testing.allocator, source);
+    defer index.deinit(testing.allocator);
+    const first = index.humanPosition(0);
+    try testing.expectEqual(@as(u32, 1), first.line);
+    try testing.expectEqual(@as(u32, 1), first.column);
+    // "μ" is two bytes: the `=` after it is byte column 4 of line 2.
+    const eq = index.humanPosition(@intCast(std.mem.lastIndexOfScalar(u8, source, '=').?));
+    try testing.expectEqual(@as(u32, 2), eq.line);
+    try testing.expectEqual(@as(u32, 4), eq.column);
+}

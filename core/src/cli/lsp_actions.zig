@@ -59,7 +59,8 @@ fn disableAction(arena: std.mem.Allocator, source: []const u8, line_index: *cons
     return .{ .title = try std.fmt.allocPrint(arena, "Disable {s} for this line", .{rule}), .preferred = false, .edits = edits };
 }
 
-fn position(line_index: *const api.LineIndex, offset: u32, encoding: Encoding) Position {
+/// `offset` as the editor counts it: 0-based line, and columns in `encoding`.
+pub fn position(line_index: *const api.LineIndex, offset: u32, encoding: Encoding) Position {
     return .{
         .line = line_index.getLine(offset),
         .character = switch (encoding) {
