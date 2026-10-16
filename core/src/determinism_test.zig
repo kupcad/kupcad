@@ -7,6 +7,7 @@ const std = @import("std");
 const testing = std.testing;
 const api = @import("api.zig");
 const manifold = @import("bindings/manifold.zig");
+const support = @import("test_support.zig");
 const examples = @import("examples");
 
 /// Large enough for Manifold's algorithms to run in parallel: a fine sphere with a ring of
@@ -32,16 +33,25 @@ test "determinism: a build gives the same bytes every time, on one thread or man
 
     for (cases.items) |case| {
         errdefer std.debug.print("format {s}, script:\n{s}\n", .{ @tagName(case.format), case.source });
-        const first = try api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format });
+        const first = try build(case);
         defer testing.allocator.free(first);
-        const second = try api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format });
+        const second = try build(case);
         defer testing.allocator.free(second);
         try testing.expectEqualSlices(u8, first, second);
 
         manifold.setMaxThreads(1);
         defer manifold.setMaxThreads(null);
-        const serial = try api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format });
+        const serial = try build(case);
         defer testing.allocator.free(serial);
         try testing.expectEqualSlices(u8, first, serial);
     }
+}
+
+/// Runs the script on a VM whose output is dropped (the examples print, and the test
+/// runner's stdout is its protocol) and exports its model as `kupcad build` would.
+fn build(case: Case) ![]const u8 {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm, case.source));
+    return api.exportModelFromVm(testing.allocator, &vm, case.format, false);
 }
