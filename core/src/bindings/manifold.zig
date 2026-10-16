@@ -294,11 +294,6 @@ pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f
     return manifold_trim_by_plane(manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
 }
 
-pub fn splitByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f64) [2]?*ManifoldObj {
-    const pair = manifold_split_by_plane(manifold_alloc_manifold(), manifold_alloc_manifold(), obj, nx, ny, nz, offset_dist);
-    return .{ pair.first, pair.second };
-}
-
 pub fn crossSectionBoolean(a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
     return manifold_cross_section_boolean(manifold_alloc_cross_section(), a, b, op);
 }

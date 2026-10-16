@@ -337,10 +337,6 @@ pub inline fn trimByPlane(handle: geom.GeometryHandle, nx: f64, ny: f64, nz: f64
     return dispatch("trimByPlaneFn", handle, .{ nx, ny, nz, offset_dist });
 }
 
-pub inline fn splitByPlane(handle: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair {
-    return dispatch("splitByPlaneFn", handle, .{ nx, ny, nz, offset_dist });
-}
-
 pub inline fn slice(handle: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
     return dispatch("sliceFn", handle, .{height});
 }
@@ -378,18 +374,9 @@ pub inline fn numVerts(handle: geom.GeometryHandle) usize {
     return dispatch("numVertsFn", handle, .{});
 }
 
-pub inline fn numTris(handle: geom.GeometryHandle) usize {
-    return dispatch("numTrisFn", handle, .{});
-}
-
 /// Deep copy; the caller owns the returned handle.
 pub inline fn clone(handle: geom.GeometryHandle) ?geom.GeometryHandle {
     return dispatch("cloneFn", handle, .{});
-}
-
-/// Deep copy; the caller owns the returned handle.
-pub inline fn cloneCrossSection(handle: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    return dispatch("cloneCrossSectionFn", handle, .{});
 }
 
 pub fn destruct(handle: geom.GeometryHandle) void {

@@ -87,8 +87,6 @@ pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
 pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
 pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
-pub const RotatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
-pub const ScalePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
@@ -538,8 +536,6 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub const getRotatePayload = getTranslatePayload;
-    pub const getScalePayload = getTranslatePayload;
     pub const getMirrorPayload = getTranslatePayload;
 
     pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {

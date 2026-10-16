@@ -452,10 +452,6 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
     return receiver;
 }
 
-pub fn nativeExportGltf(vm: *VM, path_str: []const u8, target: value.Value, draco_opt: ?bool) !value.Value {
-    return meshExportGltf(vm, target, path_str, draco_opt);
-}
-
 fn appendU32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, word: u32) !void {
     var bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &bytes, word, .little);

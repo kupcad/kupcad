@@ -94,8 +94,6 @@ pub const OpCode = enum(u8) {
     op_get_global_wide,
     op_define_global,
     op_define_global_wide,
-    op_set_global,
-    op_set_global_wide,
 
     // Math
     op_add,

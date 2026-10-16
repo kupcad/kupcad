@@ -478,16 +478,6 @@ fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dis
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
-fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) geom.SolidPair {
-    std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return geom.SolidPair{ .first = null, .second = null };
-    const pair = manifold.splitByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset_dist);
-    return geom.SolidPair{
-        .first = if (pair[0] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[0]) } else null,
-        .second = if (pair[1] != null) geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(pair[1]) } else null,
-    };
-}
-
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
     std.debug.assert(a.engine == .manifold);
     if (@intFromPtr(a.ptr) == 0) return null;
@@ -647,12 +637,6 @@ fn numVertsImpl(handle: geom.GeometryHandle) usize {
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
-fn numTrisImpl(handle: geom.GeometryHandle) usize {
-    std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0;
-    return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));
-}
-
 // --- Copies ---
 
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
@@ -660,13 +644,6 @@ fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.copy(@ptrCast(@alignCast(a.ptr))) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
-}
-
-fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    std.debug.assert(cs.engine == .manifold);
-    if (@intFromPtr(cs.ptr) == 0) return null;
-    const ptr = manifold.crossSectionCopy(@ptrCast(@alignCast(cs.ptr))) orelse return null;
-    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 // --- Destructors ---
@@ -747,7 +724,6 @@ pub const driver = struct {
     pub const hullFn = hullImpl;
     pub const loftFn = loftImpl;
     pub const trimByPlaneFn = trimByPlaneImpl;
-    pub const splitByPlaneFn = splitByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const genusFn = genusImpl;
     pub const minkowskiFn = minkowskiImpl;
@@ -769,11 +745,9 @@ pub const driver = struct {
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
     pub const numVertsFn = numVertsImpl;
-    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const setMaterialFn = setMaterialImpl;
     pub const cloneFn = cloneImpl;
-    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
 };

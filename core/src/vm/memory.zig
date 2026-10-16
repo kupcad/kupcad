@@ -25,7 +25,6 @@ pub const GC = struct {
     bound_methods: std.ArrayListUnmanaged(*value.ObjBoundMethod) = .empty,
     natives: std.ArrayListUnmanaged(*value.ObjNative) = .empty,
     ranges: std.ArrayListUnmanaged(*value.ObjRange) = .empty,
-    breps: std.ArrayListUnmanaged(*value.ObjBrep) = .empty,
     bboxes: std.ArrayListUnmanaged(*value.ObjBBox) = .empty,
 
     geometries: std.ArrayListUnmanaged(*value.ObjGeometry) = .empty,
@@ -80,7 +79,6 @@ pub const GC = struct {
         self.bound_methods.deinit(self.allocator);
         self.natives.deinit(self.allocator);
         self.ranges.deinit(self.allocator);
-        self.breps.deinit(self.allocator);
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
@@ -177,7 +175,7 @@ pub const GC = struct {
                 self.arrays.items.len + self.maps.items.len + self.functions.items.len +
                 self.classes.items.len + self.modules.items.len + self.instances.items.len +
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
-                self.natives.items.len + self.ranges.items.len + self.breps.items.len +
+                self.natives.items.len + self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
                 self.assemblies.items.len + self.workplanes.items.len;
 
@@ -388,7 +386,6 @@ pub const GC = struct {
             .concrete => |h| h,
         };
         ptr.cached_bbox = null;
-        ptr.cached_topology = null;
         return ptr;
     }
 
@@ -640,7 +637,6 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjUpvalue, &self.upvalues);
         self.sweepList(vm, value.ObjNative, &self.natives);
         self.sweepList(vm, value.ObjRange, &self.ranges);
-        self.sweepList(vm, value.ObjBrep, &self.breps);
         self.sweepList(vm, value.ObjBBox, &self.bboxes);
         self.sweepList(vm, value.ObjString, &self.strings);
         self.sweepList(vm, value.ObjSymbol, &self.symbols);
@@ -702,7 +698,6 @@ pub const GC = struct {
             },
             .geometry => {
                 const geom_obj: *value.ObjGeometry = @alignCast(@fieldParentPtr("obj", obj));
-                if (geom_obj.cached_topology) |cache| self.allocator.destroy(cache);
                 if (geom_obj.cached_handle) |handle| {
                     if (vm.host.mesh_destructor) |destructor| destructor(handle);
                 }
@@ -782,12 +777,6 @@ pub const GC = struct {
             .bound_method => self.destroyObject(value.ObjBoundMethod, @alignCast(@fieldParentPtr("obj", obj))),
             .range => self.destroyObject(value.ObjRange, @alignCast(@fieldParentPtr("obj", obj))),
             .bbox => self.destroyObject(value.ObjBBox, @alignCast(@fieldParentPtr("obj", obj))),
-            .brep => {
-                const brep_obj: *value.ObjBrep = @alignCast(@fieldParentPtr("obj", obj));
-                brep_obj.data.deinit(self.allocator);
-                self.allocator.destroy(brep_obj.data);
-                self.destroyObject(value.ObjBrep, brep_obj);
-            },
         }
     }
 };

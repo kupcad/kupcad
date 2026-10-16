@@ -1,6 +1,5 @@
 const std = @import("std");
 const dag = @import("../vm/dag.zig");
-const locus_topo_arena = @import("../locus/src/topology/arena.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
@@ -28,21 +27,11 @@ const VAL_FALSE: u64 = QNAN | TAG_FALSE;
 const VAL_TRUE: u64 = QNAN | TAG_TRUE;
 const TAG_OBJ: u64 = SIGN_BIT | QNAN;
 
-/// Identifies the primitive type of a Value.
-pub const ValueTag = enum(u8) {
-    number,
-    boolean,
-    nil,
-    symbol,
-    object, // Points to a heap-allocated Obj
-};
-
 /// Identifies the specific type of a heap-allocated Object.
 pub const ObjType = enum(u8) {
     string,
     symbol,
     native,
-    brep,
     array,
     map,
     function,
@@ -258,12 +247,6 @@ pub const ObjRange = struct {
     is_exclusive: bool,
 };
 
-pub const Vec3 = struct {
-    x: f32,
-    y: f32,
-    z: f32,
-};
-
 pub const GeometryState = union(enum) {
     symbolic: dag.DAGNodeIndex,
     concrete: geom.GeometryHandle,
@@ -276,11 +259,6 @@ pub const BBox = struct {
     max_x: f64,
     max_y: f64,
     max_z: f64,
-};
-
-pub const TopologyCache = struct {
-    is_populated: bool,
-    // Future: HashMap mapping FaceFilters to cached FaceHandles
 };
 
 pub const ObjWorkplane = struct {
@@ -301,7 +279,6 @@ pub const ObjGeometry = struct {
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,
     cached_bbox: ?BBox = null,
-    cached_topology: ?*TopologyCache,
 
     pub fn isConcrete(self: *const ObjGeometry) bool {
         return self.cached_handle != null;
@@ -353,11 +330,6 @@ pub const ObjNative = struct {
     function: NativeFn,
     /// The name scripts call it by (static: names come from the stdlib tables).
     name: []const u8,
-};
-
-pub const ObjBrep = struct {
-    obj: Obj,
-    data: *locus_topo_arena.TopologyArena, // Pointer to the pure Zig B-Rep data
 };
 
 pub const ObjBBox = struct {
@@ -431,18 +403,11 @@ pub const Value = packed struct {
         return self.isObject() and self.asObj().obj_type == .range;
     }
 
-    pub inline fn isBrep(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .brep;
-    }
-
     pub inline fn isGeometry(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .geometry;
     }
     pub inline fn isCrossSection(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .cross_section;
-    }
-    pub inline fn isWorkplane(self: Value) bool {
-        return self.isObject() and self.asObj().obj_type == .workplane;
     }
     pub inline fn isInstance(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .instance;
@@ -504,9 +469,6 @@ pub const Value = packed struct {
     pub inline fn asCrossSection(self: Value) *ObjCrossSection {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
-    pub inline fn asWorkplane(self: Value) *ObjWorkplane {
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
     pub inline fn asInstance(self: Value) *ObjInstance {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
@@ -547,11 +509,6 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
-    pub inline fn asBrep(self: Value) *ObjBrep {
-        std.debug.assert(self.isBrep());
-        return @alignCast(@fieldParentPtr("obj", self.asObj()));
-    }
-
     pub inline fn asBBox(self: Value) *ObjBBox {
         std.debug.assert(self.isBBox());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
@@ -579,11 +536,6 @@ pub const Value = packed struct {
             return self.asNumber() == other.asNumber();
         }
         return false;
-    }
-
-    // Alias eql to isEqual to support any lingering tests using the old naming convention
-    pub inline fn eql(self: Value, other: Value) bool {
-        return self.isEqual(other);
     }
 
     pub inline fn isFalsey(self: Value) bool {

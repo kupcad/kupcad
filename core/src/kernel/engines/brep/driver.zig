@@ -564,30 +564,6 @@ fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f6
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
 }
 
-fn splitByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) geom.SolidPair {
-    if (@intFromPtr(a.ptr) == 0) return .{ .first = null, .second = null };
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-
-    // On failure both halves are null: returning the whole input as one "half" was wrong geometry.
-    const dest_a = BrepSolid.create(backend_allocator, env) catch return .{ .first = null, .second = null };
-    const dest_b = BrepSolid.create(backend_allocator, env) catch {
-        dest_a.destroy();
-        return .{ .first = null, .second = null };
-    };
-
-    const pair = locus_slicing.splitByPlane(backend_allocator, &dest_a.t_arena, &dest_a.g_arena, &dest_b.t_arena, &dest_b.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, nx, ny, nz, offset, env) catch {
-        dest_a.destroy();
-        dest_b.destroy();
-        return .{ .first = null, .second = null };
-    };
-
-    dest_a.solid_id = pair.first;
-    dest_b.solid_id = pair.second;
-
-    return .{ .first = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_a) }, .second = geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_b) } };
-}
-
 fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     if (@intFromPtr(a.ptr) == 0) return null;
     return buildHullFromHandles(&[_]geom.GeometryHandle{a});
@@ -827,13 +803,6 @@ fn numVertsImpl(handle: geom.GeometryHandle) usize {
     return solid.t_arena.vertices.items.len;
 }
 
-fn numTrisImpl(handle: geom.GeometryHandle) usize {
-    std.debug.assert(handle.engine == .brep_native);
-    if (@intFromPtr(handle.ptr) == 0) return 0;
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
-    return solid.t_arena.faces.items.len;
-}
-
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     _ = tolerance;
     // No-op for B-Rep, but must still return a NEW handle (single-owner rule, see kernel.zig).
@@ -849,12 +818,6 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     if (@intFromPtr(a.ptr) == 0) return null;
     const copy = solidOf(a.ptr).clone() catch return null;
-    return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
-}
-
-fn cloneCrossSectionImpl(cs: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
-    if (@intFromPtr(cs.ptr) == 0) return null;
-    const copy = solidOf(cs.ptr).clone() catch return null;
     return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
 }
 
@@ -940,7 +903,6 @@ pub const driver = struct {
     pub const loftFn = loftImpl;
     pub const decomposeFn = decomposeImpl;
     pub const trimByPlaneFn = trimByPlaneImpl;
-    pub const splitByPlaneFn = splitByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const genusFn = genusImpl;
     pub const transformMatrixFn = transformMatrixImpl;
@@ -962,10 +924,8 @@ pub const driver = struct {
     pub const rayCastFn = rayCastImpl;
     pub const polygonFn = polygonImpl;
     pub const numVertsFn = numVertsImpl;
-    pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const cloneFn = cloneImpl;
-    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
     pub const setMaterialFn = setMaterialImpl;

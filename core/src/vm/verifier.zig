@@ -91,7 +91,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 1-byte constant index
-            .op_constant, .op_get_global, .op_define_global, .op_set_global, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => {
+            .op_constant, .op_get_global, .op_define_global, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => {
                 if (ip + 1 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, code[ip]);
                 ip += 1;
@@ -116,7 +116,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
             },
 
             // 2-byte constant index
-            .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_set_global_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => {
+            .op_constant_wide, .op_get_global_wide, .op_define_global_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => {
                 if (ip + 2 > len) return error.OutOfBoundsRead;
                 try checkConstant(c, readU16(code, ip));
                 ip += 2;

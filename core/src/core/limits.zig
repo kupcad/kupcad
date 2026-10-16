@@ -11,7 +11,6 @@ pub const MAX_HASH_ENTRIES: usize = MAX_CONSTANTS / 2; // 32_767
 pub const MAX_AST_DEPTH: usize = 1500;
 
 // Runtime Execution Limits
-pub const INITIAL_STACK_CAPACITY: usize = 1024;
 /// Most instructions one run may take where a person waits on it: the browser's worker and
 /// the editor's language server, which answers nothing else while a script runs. A script
 /// that loops forever stops with an error there instead of hanging them.

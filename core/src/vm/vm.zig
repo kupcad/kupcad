@@ -1579,10 +1579,6 @@ pub const VM = struct {
                         self.push(value.Value.initNil()); // Incompatible types yield nil
                     }
                 },
-                else => {
-                    self.runtimeError("Runtime Error: Unhandled OpCode {}\n", .{op});
-                    return .runtime_error;
-                },
             }
         }
 
@@ -2159,23 +2155,6 @@ pub const VM = struct {
     pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {
         _ = self;
         return map.map.getIndex(key);
-    }
-
-    pub fn findMapKeyByString(self: *VM, map: *value.ObjMap, search_str: []const u8) ?usize {
-        _ = self; // Included for future-proofing or if VM context is needed later
-        const keys = map.map.keys();
-        for (keys, 0..) |k, i| {
-            if (k.isObject()) {
-                if (k.asObj().obj_type == .string) {
-                    const str = k.asString();
-                    if (std.mem.eql(u8, str.chars, search_str)) return i;
-                } else if (k.asObj().obj_type == .symbol) {
-                    const sym = k.asSymbol();
-                    if (std.mem.eql(u8, sym.chars, search_str)) return i;
-                }
-            }
-        }
-        return null;
     }
 
     const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);

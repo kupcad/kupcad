@@ -6,11 +6,7 @@ const primitives = @import("primitives.zig");
 const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
-const io_mod = @import("io.zig");
-const diagnostics_mod = @import("diagnostics.zig");
-const debug_mod = @import("debug.zig");
 const object_mod = @import("classes/object.zig");
-const params_mod = @import("params.zig");
 const kernel = @import("../kernel/kernel.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {

@@ -26,7 +26,6 @@ fn countObjects(gc: *GC) usize {
     count += gc.bound_methods.items.len;
     count += gc.natives.items.len;
     count += gc.ranges.items.len;
-    count += gc.breps.items.len;
     count += gc.geometries.items.len;
     count += gc.cross_sections.items.len;
     count += gc.workplanes.items.len;

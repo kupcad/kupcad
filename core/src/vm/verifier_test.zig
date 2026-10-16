@@ -104,7 +104,6 @@ test "Verifier: Rejects out-of-range constant indexes" {
         &.{ opByte(.op_constant), 7 },
         &.{ opByte(.op_get_global), 7 },
         &.{ opByte(.op_define_global), 7 },
-        &.{ opByte(.op_set_global), 7 },
         &.{ opByte(.op_import), 7 },
         &.{ opByte(.op_class), 7 },
         &.{ opByte(.op_method), 7 },

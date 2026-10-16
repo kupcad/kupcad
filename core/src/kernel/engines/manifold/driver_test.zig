@@ -407,29 +407,6 @@ test "Manifold Driver: slice extracts 2D cross section from 3D geometry" {
     try testing.expectApproxEqAbs(@as(f64, 320.0), vol, 1e-5);
 }
 
-test "Manifold Driver: splitByPlane returns valid SolidPair" {
-    const handle = driver.driver.cubeFn(10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
-    defer driver.driver.destructFn(handle);
-
-    // Split using a plane at Z=0
-    const pair = driver.driver.splitByPlaneFn(handle, 0.0, 0.0, 1.0, 0.0);
-
-    // Make sure we safely free both halves
-    try testing.expect(pair.first != null);
-    try testing.expect(pair.second != null);
-    defer {
-        driver.driver.destructFn(pair.first.?);
-        driver.driver.destructFn(pair.second.?);
-    }
-
-    // Each half should be exactly 500 volume
-    const vol1 = driver.driver.volumeFn(pair.first.?);
-    const vol2 = driver.driver.volumeFn(pair.second.?);
-
-    try testing.expectApproxEqAbs(@as(f64, 500.0), vol1, 1e-5);
-    try testing.expectApproxEqAbs(@as(f64, 500.0), vol2, 1e-5);
-}
-
 test "Manifold Driver: simplify reduces coplanar triangle count on sliced meshes" {
     // Create a 10x10 2D square
     const sq = driver.driver.squareFn(10.0, 10.0, true) orelse return error.SqFailed;

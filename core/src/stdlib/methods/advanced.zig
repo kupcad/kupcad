@@ -111,11 +111,6 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         return error.RuntimeError;
     }
 
-    if (receiver.cached_topology == null) {
-        receiver.cached_topology = try vm.allocator.create(value.TopologyCache);
-        receiver.cached_topology.?.* = .{ .is_populated = true };
-    }
-
     const tolerance = vm.config().tolerance;
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
