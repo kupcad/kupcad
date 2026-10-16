@@ -63,6 +63,11 @@ pub const ObjType = enum(u8) {
 pub const Obj = struct {
     obj_type: ObjType,
     is_marked: bool,
+
+    /// The object this header begins: `obj.as(ObjArray)` for one whose obj_type is .array.
+    pub inline fn as(self: *Obj, comptime T: type) *T {
+        return @alignCast(@fieldParentPtr("obj", self));
+    }
 };
 
 /// A heap-allocated String Object.
@@ -409,6 +414,10 @@ pub const Value = packed struct {
 
     pub inline fn isMap(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .map;
+    }
+
+    pub inline fn isFunction(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .function;
     }
 
     pub inline fn isRange(self: Value) bool {

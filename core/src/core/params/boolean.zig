@@ -15,8 +15,8 @@ pub fn normalize(val: value.Value) !bool {
     }
 
     // Normalize string keywords
-    if (val.isObject() and val.asObj().obj_type == .string) {
-        const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj()))).chars;
+    if (val.isString()) {
+        const str = val.asString().chars;
         if (std.mem.eql(u8, str, "true") or std.mem.eql(u8, str, "1")) return true;
         if (std.mem.eql(u8, str, "false") or std.mem.eql(u8, str, "0")) return false;
     }

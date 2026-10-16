@@ -259,8 +259,8 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
 
                 // Safety: Assume it's an ObjFunction to verify the upvalue size payload.
                 // If it isn't, the script is corrupt.
-                if (func_val.isObject() and func_val.asObj().obj_type == .function) {
-                    const func_obj: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", func_val.asObj()));
+                if (func_val.isFunction()) {
+                    const func_obj = func_val.asFunction();
                     if (ip + (func_obj.upvalue_count * UPVALUE_DESCRIPTOR_SIZE) > len) return error.OutOfBoundsRead;
                     // Each upvalue captures one of this frame's locals or one of its upvalues.
                     for (0..func_obj.upvalue_count) |_| {

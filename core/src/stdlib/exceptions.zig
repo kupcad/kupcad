@@ -65,7 +65,7 @@ pub fn registerExceptions(vm: *VM) !void {
     // Base Exception. The class names are static strings, never collected, so nothing
     // needs rooting while the classes are made.
     const exc_name = try vm.staticString("Exception");
-    const exc_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", exc_name.asObj()))), vm.object_class);
+    const exc_class = try vm.gc.allocateClass(vm, exc_name.asString(), vm.object_class);
 
     // Note: vm.globals.put safely stays vm.allocator because globals are tied to VM lifetime, not sandbox GC
     try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
@@ -86,13 +86,13 @@ pub fn registerExceptions(vm: *VM) !void {
 
     // StandardError < Exception
     const std_name = try vm.staticString("StandardError");
-    const std_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", std_name.asObj()))), exc_class);
+    const std_class = try vm.gc.allocateClass(vm, std_name.asString(), exc_class);
     try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
 
     // One class per runtime error kind; the VM keeps them for raiseError.
     inline for (comptime std.meta.fieldNames(ErrorKind)) |err_name| {
         const name_val = try vm.staticString(err_name);
-        const err_class = try vm.gc.allocateClass(vm, @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", name_val.asObj()))), std_class);
+        const err_class = try vm.gc.allocateClass(vm, name_val.asString(), std_class);
         try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));
         vm.error_classes.set(@field(ErrorKind, err_name), err_class);
     }

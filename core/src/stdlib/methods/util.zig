@@ -224,7 +224,7 @@ pub fn autoSegments(vm: *VM, radius: f64) i32 {
 
 /// The trailing kwargs map of a native call, if any.
 pub fn trailingKwargs(args: []const value.Value) ?*value.ObjMap {
-    if (args.len > 0 and args[args.len - 1].isObject() and args[args.len - 1].asObj().obj_type == .map) {
+    if (args.len > 0 and args[args.len - 1].isMap()) {
         return args[args.len - 1].asMap();
     }
     return null;
@@ -234,8 +234,8 @@ pub fn trailingKwargs(args: []const value.Value) ?*value.ObjMap {
 fn keyName(k: value.Value) ?[]const u8 {
     if (!k.isObject()) return null;
     return switch (k.asObj().obj_type) {
-        .string => @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars,
-        .symbol => @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", k.asObj()))).chars,
+        .string => k.asString().chars,
+        .symbol => k.asSymbol().chars,
         else => null,
     };
 }

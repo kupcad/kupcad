@@ -26,11 +26,11 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == *value.ObjSymbol) return if (val.isSymbol()) val.asSymbol() else error.WrongType;
     if (T == *value.ObjArray) return if (val.isArray()) val.asArray() else error.WrongType;
     if (T == *value.ObjMap) return if (val.isMap()) val.asMap() else error.WrongType;
-    if (T == *value.ObjRange) return if (val.isObject() and val.asObj().obj_type == .range) val.asRange() else error.WrongType;
+    if (T == *value.ObjRange) return if (val.isRange()) val.asRange() else error.WrongType;
     if (T == *value.ObjClosure) return if (val.isClosure()) val.asClosure() else error.WrongType;
     if (T == *value.ObjInstance) return if (val.isInstance()) val.asInstance() else error.WrongType;
     if (T == *value.ObjClass) return if (val.isClass()) val.asClass() else error.WrongType;
-    if (T == *value.ObjBBox) return if (val.isObject() and val.asObj().obj_type == .bbox) @alignCast(@fieldParentPtr("obj", val.asObj())) else error.WrongType;
+    if (T == *value.ObjBBox) return if (val.isBBox()) val.asBBox() else error.WrongType;
 
     // --- Strongly Typed Geometry Pointers for DAG Continuity ---
     if (T == *value.ObjGeometry) return if (val.isGeometry()) val.asGeometry() else error.WrongType;

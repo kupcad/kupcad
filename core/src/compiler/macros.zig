@@ -28,7 +28,7 @@ pub fn emitAttrReader(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     func.chunk = child_chunk;
 
     const str_val = try comp.vm.allocateString(clean_name);
-    func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    func.name = str_val.asString();
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
     defer child_comp.deinit();
@@ -84,7 +84,7 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
     const setter_name = std.fmt.bufPrint(&name_buf, "{s}=", .{clean_name}) catch return error.OutOfMemory;
 
     const str_val = try comp.vm.allocateString(setter_name);
-    func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+    func.name = str_val.asString();
 
     var child_comp = @TypeOf(comp.*).init(comp.allocator, comp.tree, comp.symbols, comp.token_starts, child_chunk, comp.vm);
     defer child_comp.deinit();

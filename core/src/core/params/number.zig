@@ -8,8 +8,8 @@ pub fn normalize(val: value.Value) !f64 {
     if (val.isNumber()) return val.asNumber();
 
     // Auto-coerce string injections from the CLI (e.g., --param width="10.5")
-    if (val.isObject() and val.asObj().obj_type == .string) {
-        const str = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj()))).chars;
+    if (val.isString()) {
+        const str = val.asString().chars;
         if (std.fmt.parseFloat(f64, str)) |num| {
             return num;
         } else |_| {}

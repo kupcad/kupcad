@@ -2658,7 +2658,7 @@ pub const Compiler = struct {
         // Assign the method name so `super()` can dynamically look up the hierarchy
         if (func_name) |n| {
             const str_val = try self.vm.allocateString(n);
-            func.name = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", str_val.asObj())));
+            func.name = str_val.asString();
         }
 
         var positional_count: usize = 0;

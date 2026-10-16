@@ -306,9 +306,9 @@ pub const VM = struct {
         errdefer vm.deinit();
 
         // preallocate true, false and nil strings
-        vm.static_true = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("true")).asObj())));
-        vm.static_false = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("false")).asObj())));
-        vm.static_nil = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("nil")).asObj())));
+        vm.static_true = (try vm.allocateString("true")).asString();
+        vm.static_false = (try vm.allocateString("false")).asString();
+        vm.static_nil = (try vm.allocateString("nil")).asString();
 
         return vm;
     }
@@ -654,7 +654,7 @@ pub const VM = struct {
                     const index = self.stack[self.stack_top - 2];
                     const target = self.stack[self.stack_top - 3];
 
-                    if (target.isObject() and target.asObj().obj_type == .array and index.isNumber()) {
+                    if (target.isArray() and index.isNumber()) {
                         const arr = target.asArray();
                         if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
                             arr.items.items[idx] = val;
@@ -664,7 +664,7 @@ pub const VM = struct {
                             if (self.indexError("Array", index, arr.items.items.len) != .ok) return .runtime_error;
                             continue;
                         }
-                    } else if (target.isObject() and target.asObj().obj_type == .map) {
+                    } else if (target.isMap()) {
                         const map = target.asMap();
                         self.mapSet(map, index, val) catch return self.raiseError(.OutOfMemoryError, "Map set failed", .{});
                         self.stack_top -= 3; // Safely pop all three
@@ -775,7 +775,7 @@ pub const VM = struct {
                     const target_val = self.stack[self.stack_top - 2];
                     const target_arr = target_val.asArray();
 
-                    if (source_val.isObject() and source_val.asObj().obj_type == .array) {
+                    if (source_val.isArray()) {
                         const source_arr = source_val.asArray();
                         target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseError(.OutOfMemoryError, "Array spread failed", .{});
                         target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
@@ -804,7 +804,7 @@ pub const VM = struct {
                     const target_val = self.stack[self.stack_top - 2];
                     const target_map = target_val.asMap();
 
-                    if (source_val.isObject() and source_val.asObj().obj_type == .map) {
+                    if (source_val.isMap()) {
                         const source_map = source_val.asMap();
                         const keys = source_map.map.keys();
                         const values = source_map.map.values();
@@ -1083,7 +1083,7 @@ pub const VM = struct {
 
                     const val = self.pop();
 
-                    if (val.isObject() and val.asObj().obj_type == .array) {
+                    if (val.isArray()) {
                         const arr = val.asArray();
                         for (0..count) |i| {
                             // If the array doesn't have enough items, pad with nil
@@ -1566,7 +1566,7 @@ pub const VM = struct {
                     // Safely check if the caller provided a map
                     if (frame.base_slot + map_slot < self.stack_top) {
                         const map_val = self.stack[frame.base_slot + map_slot];
-                        if (map_val.isObject() and map_val.asObj().obj_type == .map) {
+                        if (map_val.isMap()) {
                             const name_val = exec_chunk.constants.items[name_idx];
                             const map = map_val.asMap();
 
@@ -1588,7 +1588,7 @@ pub const VM = struct {
                         const bn = b.asNumber();
                         const cmp: f64 = if (an < bn) -1.0 else if (an > bn) 1.0 else 0.0;
                         self.push(value.Value.initNumber(cmp));
-                    } else if (a.isObject() and b.isObject() and a.asObj().obj_type == .string and b.asObj().obj_type == .string) {
+                    } else if (a.isString() and b.isString()) {
                         const a_str = a.asString().chars;
                         const b_str = b.asString().chars;
                         const order = std.mem.order(u8, a_str, b_str);
@@ -2225,7 +2225,7 @@ pub const VM = struct {
 
             self.push(value.Value.initNumber(@floatFromInt(res)));
             return .ok;
-        } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .string and b_val.asObj().obj_type == .string) {
+        } else if (op == .op_add and a_val.isString() and b_val.isString()) {
             const a_str = a_val.asString().chars;
             const b_str = b_val.asString().chars;
 
@@ -2249,7 +2249,7 @@ pub const VM = struct {
 
             self.push(str_val);
             return .ok;
-        } else if (op == .op_add and a_val.isObject() and b_val.isObject() and a_val.asObj().obj_type == .array and b_val.asObj().obj_type == .array) {
+        } else if (op == .op_add and a_val.isArray() and b_val.isArray()) {
             self.push(a_val);
             self.push(b_val);
 
@@ -2448,7 +2448,7 @@ pub const VM = struct {
 
         const val = self.stack[self.stack_top - 1];
 
-        if (val.isObject() and val.asObj().obj_type == .array) {
+        if (val.isArray()) {
             const arr = val.asArray();
             const total = arr.items.items.len;
 
@@ -2565,7 +2565,7 @@ pub const VM = struct {
         if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
             const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
             self.push(value.Value.initObj(&range_obj.obj));
-        } else if (start_val.isObject() and start_val.asObj().obj_type == .string and end_val.isObject() and end_val.asObj().obj_type == .string) {
+        } else if (start_val.isString() and end_val.isString()) {
             // Re-root the strings to prevent GC sweep
             self.push(start_val);
             self.push(end_val);
@@ -2661,7 +2661,7 @@ pub const VM = struct {
             if (!is_string) break :blk target.asArray().items.items[i];
             const span = charSpan(chars, i, 1);
             break :blk self.allocateString(chars[span.start..span.end]) catch return .runtime_error;
-        } else if (index.isObject() and index.asObj().obj_type == .range) blk: {
+        } else if (index.isRange()) blk: {
             const range = index.asRange();
             if (range.step != 1.0) return self.raiseError(.ArgumentError, "a stepped Range can't index {s} {s}", .{ if (is_string) "a" else "an", kind });
             const span = rangeSpan(range, len) orelse break :blk value.Value.initNil();
@@ -3210,7 +3210,7 @@ pub const VM = struct {
                     var str_val: ?value.Value = null;
 
                     // If it's already a string, use it directly!
-                    if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+                    if (err_val.isString()) {
                         str_val = err_val;
                     } else {
                         // Otherwise, stringify the value (a number, an Array, ...). On the heap:
@@ -3264,7 +3264,7 @@ pub const VM = struct {
             defer _ = self.pop();
 
             // We removed the [Uncaught Exception] header
-            if (err_val.isObject() and err_val.asObj().obj_type == .string) {
+            if (err_val.isString()) {
                 const str = err_val.asString().chars;
                 self.reportError("RuntimeError: {s}", .{str});
                 self.printStacktrace();
@@ -3278,7 +3278,7 @@ pub const VM = struct {
                 if (inst.class.instance_layout.get(msg_key)) |idx| {
                     if (idx < inst.fields.items.len) {
                         const msg_val = inst.fields.items[idx];
-                        if (msg_val.isObject() and msg_val.asObj().obj_type == .string) {
+                        if (msg_val.isString()) {
                             const str = msg_val.asString().chars;
                             self.reportError("{s}: {s}", .{ inst.class.name.chars, str });
                             printed = true;
@@ -3294,10 +3294,10 @@ pub const VM = struct {
                 if (inst.class.instance_layout.get(bt_key)) |bt_idx| {
                     if (bt_idx < inst.fields.items.len) {
                         const bt_val = inst.fields.items[bt_idx];
-                        if (bt_val.isObject() and bt_val.asObj().obj_type == .array) {
+                        if (bt_val.isArray()) {
                             const arr_obj = bt_val.asArray();
                             for (arr_obj.items.items) |frame_val| {
-                                if (frame_val.isObject() and frame_val.asObj().obj_type == .string) {
+                                if (frame_val.isString()) {
                                     const frame_str = frame_val.asString().chars;
                                     self.reportError("{s}", .{frame_str});
                                 }
@@ -3364,7 +3364,7 @@ pub const VM = struct {
                 return case_val.asClass() == self.number_class;
             }
             return false;
-        } else if (case_val.isObject() and case_val.asObj().obj_type == .range) {
+        } else if (case_val.isRange()) {
             const range = case_val.asRange();
             if (!test_val.isNumber()) return false;
             const n = test_val.asNumber();
@@ -3601,7 +3601,7 @@ pub const VM = struct {
         case_count: usize,
         test_val: value.Value,
     ) SwitchMatch {
-        const test_type: u8 = if (test_val.isNumber()) 0 else if (test_val.isObject() and test_val.asObj().obj_type == .string) 1 else 2;
+        const test_type: u8 = if (test_val.isNumber()) 0 else if (test_val.isString()) 1 else 2;
         if (test_type >= 2) return .{ .matched = false, .jump_offset = 0 };
 
         var low: usize = 0;

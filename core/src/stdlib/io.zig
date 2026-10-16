@@ -64,8 +64,8 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
                 const tos_key = try vm.allocateString("to_s");
 
                 if (inst.class.methods.get(inspect_key) orelse inst.class.methods.get(tos_key)) |m_val| {
-                    if (m_val.isObject() and m_val.asObj().obj_type == .native) {
-                        const native_obj: *value.ObjNative = @alignCast(@fieldParentPtr("obj", m_val.asObj()));
+                    if (m_val.isNative()) {
+                        const native_obj = m_val.asNative();
 
                         // Push `arg` onto the VM stack so `vm.getReceiver(args_ptr)` safely resolves `arg`!
                         vm.push(arg);

@@ -255,8 +255,8 @@ pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
     vm.push(value.Value.initObj(&new_arr.obj));
 
     for (arr.items.items) |item| {
-        if (item.isObject() and item.asObj().obj_type == .array) {
-            const inner_arr: *value.ObjArray = @alignCast(@fieldParentPtr("obj", item.asObj()));
+        if (item.isArray()) {
+            const inner_arr = item.asArray();
             for (inner_arr.items.items) |inner_item| {
                 try new_arr.items.append(vm.gc.trackingAllocator(), inner_item);
             }

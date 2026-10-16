@@ -63,8 +63,8 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     // --- CLI / HOST INJECTION ---
     var injected_val = default_val;
     if (vm.globals.get("params")) |global_params| {
-        if (global_params.isObject() and global_params.asObj().obj_type == .map) {
-            const p_map: *value.ObjMap = @alignCast(@fieldParentPtr("obj", global_params.asObj()));
+        if (global_params.isMap()) {
+            const p_map = global_params.asMap();
             if (vm.findMapKey(p_map, sym_key)) |idx| {
                 injected_val = p_map.map.values()[idx];
             }

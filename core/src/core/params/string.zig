@@ -4,13 +4,13 @@
 const value = @import("../value.zig");
 
 pub fn normalize(val: value.Value) ![]const u8 {
-    if (val.isObject() and val.asObj().obj_type == .string) {
-        return @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", val.asObj()))).chars;
+    if (val.isString()) {
+        return val.asString().chars;
     }
 
     // Allow Symbol interpolation mappings
-    if (val.isObject() and val.asObj().obj_type == .symbol) {
-        return @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", val.asObj()))).chars;
+    if (val.isSymbol()) {
+        return val.asSymbol().chars;
     }
 
     return error.InvalidType;

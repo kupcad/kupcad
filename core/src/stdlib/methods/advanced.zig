@@ -89,11 +89,8 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     if (dir_arg.isArray()) {
         direction = try util.parseNumberArray(3, vm, dir_arg, .{ .method = "on_face", .name = "the direction" }, 3, 0.0);
         try util.requireNonZeroVector(vm, direction, "on_face", "direction");
-    } else if (dir_arg.isObject() and (dir_arg.asObj().obj_type == .symbol or dir_arg.asObj().obj_type == .string)) {
-        const dir_str = if (dir_arg.asObj().obj_type == .symbol)
-            @as(*value.ObjSymbol, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars
-        else
-            @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", dir_arg.asObj()))).chars;
+    } else if (dir_arg.isSymbol() or dir_arg.isString()) {
+        const dir_str = if (dir_arg.isSymbol()) dir_arg.asSymbol().chars else dir_arg.asString().chars;
 
         if (std.mem.eql(u8, dir_str, "top")) {
             direction = .{ 0, 0, 1 };

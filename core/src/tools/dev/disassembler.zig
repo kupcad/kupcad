@@ -149,7 +149,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
             try writer.writeAll("\n");
 
             const func_val = c.constants.items[constant];
-            const func_obj: *value.ObjFunction = @alignCast(@fieldParentPtr("obj", func_val.asObj()));
+            const func_obj = func_val.asFunction();
 
             for (0..func_obj.upvalue_count) |_| {
                 const is_local = c.code.items[new_offset];
