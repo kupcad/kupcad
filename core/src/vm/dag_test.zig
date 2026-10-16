@@ -90,7 +90,7 @@ test "DAG: a raw hash collision does not merge different nodes" {
     const c1 = try builder.addCube(1, 1, 1, false);
 
     // Simulate a 64-bit collision: cube(2)'s hash already maps to cube(1).
-    try builder.dedup_map.put(builder.arena.allocator(), c2_hash, c1);
+    try builder.dedup_map.put(builder.gpa, c2_hash, c1);
 
     const c2 = try builder.addCube(2, 2, 2, false);
     try std.testing.expect(c2 != c1);

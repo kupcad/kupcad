@@ -91,7 +91,9 @@ pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
 
 pub const DAGBuilder = struct {
-    arena: std.heap.ArenaAllocator,
+    /// The tables below grow as the script builds geometry; they were in an arena, which
+    /// keeps every outgrown buffer until the end, so a DAG held about twice its size.
+    gpa: std.mem.Allocator,
     nodes: std.ArrayListUnmanaged(DAGNode) = .empty,
     extra_data: std.ArrayListUnmanaged(u32) = .empty,
     numbers: std.ArrayListUnmanaged(f64) = .empty,
@@ -112,17 +114,25 @@ pub const DAGBuilder = struct {
     /// The settings new nodes get; the VM sets it whenever its config changes.
     current_settings: SettingsId = 0,
 
-    pub fn init(child_allocator: std.mem.Allocator) DAGBuilder {
-        return .{ .arena = std.heap.ArenaAllocator.init(child_allocator) };
+    pub fn init(gpa: std.mem.Allocator) DAGBuilder {
+        return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *DAGBuilder) void {
         for (self.concrete_handles.items) |h| kernel.destruct(h);
-        self.arena.deinit(); // Instant O(1) bulk free of all DAG memory!
+        self.nodes.deinit(self.gpa);
+        self.extra_data.deinit(self.gpa);
+        self.numbers.deinit(self.gpa);
+        self.poly_points.deinit(self.gpa);
+        self.poly_faces.deinit(self.gpa);
+        self.concrete_handles.deinit(self.gpa);
+        self.node_hashes.deinit(self.gpa);
+        self.dedup_map.deinit(self.gpa);
+        self.settings_table.deinit(self.gpa);
     }
 
     inline fn allocator(self: *DAGBuilder) std.mem.Allocator {
-        return self.arena.allocator();
+        return self.gpa;
     }
 
     // --- Settings ---

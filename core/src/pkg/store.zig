@@ -23,33 +23,17 @@ const ORPHAN_PACKAGE_FILES_SQL =
 pub const Db = struct {
     handle: ?*sqlite.sqlite3,
 
+    /// Runs `sql` once with `args`. A statement run for each of many rows is prepared
+    /// once with `prepare` and run with `Stmt.exec`.
     pub fn exec(self: Db, sql: []const u8, args: anytype, options: anytype) !void {
         _ = options;
-        // SQLite takes the statement's length, so the text needs no copy (one went through
-        // the page allocator per statement).
-        var stmt: ?*sqlite.sqlite3_stmt = null;
-        const rc_prep = sqlite.sqlite3_prepare_v2(self.handle, sql.ptr, @intCast(sql.len), &stmt, null);
-        if (rc_prep != sqlite.SQLITE_OK or stmt == null) return error.SqliteError;
-        defer _ = sqlite.sqlite3_finalize(stmt);
-
-        const ArgsType = @TypeOf(args);
-        const args_info = @typeInfo(ArgsType);
-        if (args_info == .@"struct" and args_info.@"struct".is_tuple) {
-            inline for (args, 1..) |arg, idx| {
-                const ArgType = @TypeOf(arg);
-                if (@typeInfo(ArgType) == .pointer) {
-                    const slice: []const u8 = arg;
-                    _ = sqlite.sqlite3_bind_text(stmt, @intCast(idx), slice.ptr, @intCast(slice.len), null);
-                } else if (ArgType == i64 or ArgType == i32 or ArgType == usize) {
-                    _ = sqlite.sqlite3_bind_int64(stmt, @intCast(idx), @intCast(arg));
-                }
-            }
-        }
-
-        const rc = sqlite.sqlite3_step(stmt);
-        if (rc != sqlite.SQLITE_DONE and rc != sqlite.SQLITE_ROW) return error.SqliteError;
+        const stmt = try self.prepare(sql);
+        defer stmt.deinit();
+        try stmt.exec(args);
     }
 
+    /// SQLite takes the statement's length, so the text needs no copy (one went through
+    /// the page allocator per statement).
     pub fn prepare(self: Db, sql: []const u8) !Stmt {
         var stmt_handle: ?*sqlite.sqlite3_stmt = null;
         const rc = sqlite.sqlite3_prepare_v2(self.handle, sql.ptr, @intCast(sql.len), &stmt_handle, null);
@@ -89,12 +73,23 @@ pub const Stmt = struct {
         }
     }
 
-    pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
-        _ = options;
+    /// Resets the statement and binds `args`, ready to step.
+    fn rebind(self: Stmt, args: anytype) void {
         _ = sqlite.sqlite3_reset(self.handle);
         _ = sqlite.sqlite3_clear_bindings(self.handle);
         self.bindArgs(args);
+    }
 
+    /// Runs the statement with `args` for its effect (an insert, a delete).
+    pub fn exec(self: Stmt, args: anytype) !void {
+        self.rebind(args);
+        const rc = sqlite.sqlite3_step(self.handle);
+        if (rc != sqlite.SQLITE_DONE and rc != sqlite.SQLITE_ROW) return error.SqliteError;
+    }
+
+    pub fn one(self: Stmt, comptime T: type, args: anytype, options: anytype) !?T {
+        _ = options;
+        self.rebind(args);
         return readRow(T, self.handle);
     }
 
@@ -121,10 +116,7 @@ pub const Stmt = struct {
     }
 
     pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
-        _ = sqlite.sqlite3_reset(self.handle);
-        _ = sqlite.sqlite3_clear_bindings(self.handle);
-        self.bindArgs(args);
-
+        self.rebind(args);
         return Iterator(T){ .stmt = self };
     }
 
@@ -472,22 +464,24 @@ pub const Store = struct {
         // Replace (not merge) the file mapping so it exactly matches the verified content.
         try self.db.exec("DELETE FROM package_files WHERE package_id = ? AND commit_sha = ?", .{ pkg_id, commit_sha }, .{});
 
+        // Two statements for the whole package; they were prepared again for every file.
+        const file_stmt = try self.db.prepare(
+            \\INSERT OR IGNORE INTO files (hash, size, created_at)
+            \\VALUES (?, 0, ?)
+        );
+        defer file_stmt.deinit();
+        const mapping_stmt = try self.db.prepare(
+            \\INSERT OR IGNORE INTO package_files (package_id, commit_sha, file_path, file_hash)
+            \\VALUES (?, ?, ?, ?)
+        );
+        defer mapping_stmt.deinit();
+
         var files_it = files_map.iterator();
         while (files_it.next()) |entry| {
             const file_path = entry.key_ptr.*;
             const file_hash = entry.value_ptr.*;
-
-            const file_stmt =
-                \\INSERT OR IGNORE INTO files (hash, size, created_at)
-                \\VALUES (?, 0, ?)
-            ;
-            try self.db.exec(file_stmt, .{ file_hash, now }, .{});
-
-            const mapping_stmt =
-                \\INSERT OR IGNORE INTO package_files (package_id, commit_sha, file_path, file_hash)
-                \\VALUES (?, ?, ?, ?)
-            ;
-            try self.db.exec(mapping_stmt, .{ pkg_id, commit_sha, file_path, file_hash }, .{});
+            try file_stmt.exec(.{ file_hash, now });
+            try mapping_stmt.exec(.{ pkg_id, commit_sha, file_path, file_hash });
         }
         try self.db.exec("COMMIT", .{}, .{});
     }

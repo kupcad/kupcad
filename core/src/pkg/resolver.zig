@@ -30,6 +30,9 @@ pub const Resolver = struct {
     store: *Store,
     manifest: *Manifest,
     lockfile: *Lockfile,
+    /// One HTTP client for every package: the connections are pooled and the system's
+    /// root certificates are loaded once (a client per package loaded them per package).
+    fetcher: Fetcher,
 
     // Concurrency Primitives
     mutex: std.Io.Mutex = .init,
@@ -50,10 +53,12 @@ pub const Resolver = struct {
             .store = store,
             .manifest = manifest,
             .lockfile = lockfile,
+            .fetcher = Fetcher.init(allocator, io),
         };
     }
 
     pub fn deinit(self: *Resolver) void {
+        self.fetcher.deinit();
         var it = self.visited.keyIterator();
         while (it.next()) |k| self.allocator.free(k.*);
         self.visited.deinit(self.allocator);
@@ -194,9 +199,6 @@ pub const Resolver = struct {
         pinned_commit: ?[]const u8,
         pinned_integrity: ?[]const u8,
     ) !void {
-        var fetcher = Fetcher.init(self.allocator, self.io);
-        defer fetcher.deinit();
-
         // 1. Commit: pinned by the lockfile, resolved via the provider API, or (for
         //    http/local archives without commits) derived from the content below.
         var commit_sha: ?[]const u8 = null;
@@ -204,12 +206,12 @@ pub const Resolver = struct {
         if (pinned_commit) |c| {
             commit_sha = try self.allocator.dupe(u8, c);
         } else if (parsed.constraint != null) {
-            var release = try fetcher.resolveRange(parsed);
+            var release = try self.fetcher.resolveRange(parsed);
             defer release.deinit(self.allocator);
             log.info("{s}@{s} resolved to tag {s}", .{ pkg_id, parsed.ref, release.tag });
             commit_sha = try self.allocator.dupe(u8, release.commit);
         } else if (parsed.provider.isGitHost()) {
-            commit_sha = try fetcher.fetchCommitSha(parsed);
+            commit_sha = try self.fetcher.fetchCommitSha(parsed);
         }
 
         // A pin taken before lockfile 3.0.0 hashed a git host archive with its top folder,
@@ -224,7 +226,7 @@ pub const Resolver = struct {
             defer self.mutex.unlock(self.io);
             cached = try self.store.getPackageFiles(self.allocator, pkg_id, c);
         };
-        var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(&fetcher, parsed, commit_sha);
+        var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(parsed, commit_sha);
         defer archive.deinit(self.allocator);
         const files = &archive.files;
 
@@ -290,7 +292,7 @@ pub const Resolver = struct {
         if (manifest_hash) |h| try self.spawnTransitiveDependencies(pkg_id, h);
     }
 
-    fn downloadPackage(self: *Resolver, fetcher: *Fetcher, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !cafs_mod.Archive {
+    fn downloadPackage(self: *Resolver, parsed: provider.ParsedPackage, commit_sha: ?[]const u8) !cafs_mod.Archive {
         switch (parsed.provider) {
             .github, .gitlab, .gitea => {
                 const archive_url = switch (parsed.provider) {
@@ -299,17 +301,17 @@ pub const Resolver = struct {
                     else => try GiteaProvider.formatArchiveUrl(self.allocator, parsed, commit_sha.?),
                 };
                 defer self.allocator.free(archive_url);
-                return fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
+                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
             .http => {
                 const archive_url = try HttpProvider.formatArchiveUrl(self.allocator, parsed, "");
                 defer self.allocator.free(archive_url);
-                return fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
+                return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
             .local => {
                 const path = try LocalProvider.formatArchiveUrl(self.allocator, self.io, parsed, "");
                 defer self.allocator.free(path);
-                return fetcher.openLocalArchive(path, self.cafs);
+                return self.fetcher.openLocalArchive(path, self.cafs);
             },
         }
     }
