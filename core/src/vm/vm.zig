@@ -228,61 +228,73 @@ pub const VM = struct {
     pub const MAX_STACK_STRING_LEN: usize = 1024;
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !VM {
-        var config_stack = std.ArrayListUnmanaged(dag.SettingsId).empty;
-        try config_stack.append(allocator, 0); // the default settings
+        // Each allocation is released if a later one fails, until the VM owns them all (a VM
+        // that ran out of memory while starting leaked everything it had allocated so far).
+        var vm = vm: {
+            var config_stack = std.ArrayListUnmanaged(dag.SettingsId).empty;
+            errdefer config_stack.deinit(allocator);
+            try config_stack.append(allocator, 0); // the default settings
 
-        // Pre-allocate a massive 64K stack (512KB of contiguous memory)
-        const initial_stack = try allocator.alloc(value.Value, 65536);
+            // Pre-allocate a massive 64K stack (512KB of contiguous memory)
+            const initial_stack = try allocator.alloc(value.Value, 65536);
+            errdefer allocator.free(initial_stack);
 
-        // Pre-allocate 4,096 frames (~128KB of contiguous memory)
-        var frames = std.ArrayListUnmanaged(CallFrame).empty;
-        try frames.ensureTotalCapacity(allocator, 4096);
+            // Pre-allocate 4,096 frames (~128KB of contiguous memory)
+            var frames = std.ArrayListUnmanaged(CallFrame).empty;
+            errdefer frames.deinit(allocator);
+            try frames.ensureTotalCapacity(allocator, 4096);
 
-        // Pre-allocate rescue frames
-        var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
-        try rescue_frames.ensureTotalCapacity(allocator, 256);
+            // Pre-allocate rescue frames
+            var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
+            errdefer rescue_frames.deinit(allocator);
+            try rescue_frames.ensureTotalCapacity(allocator, 256);
 
-        // Dynamically allocate the NativeVfs so its memory address stays valid
-        const native_vfs = try allocator.create(NativeVfs);
-        native_vfs.* = NativeVfs.init(io, std.Io.Dir.cwd());
+            // Dynamically allocate the NativeVfs so its memory address stays valid
+            const native_vfs = try allocator.create(NativeVfs);
+            errdefer allocator.destroy(native_vfs);
+            native_vfs.* = NativeVfs.init(io, std.Io.Dir.cwd());
 
-        var vm = VM{
-            .allocator = allocator,
-            .io = io,
-            .stack = initial_stack,
-            .stack_top = 0,
-            .frames = frames,
-            .native_vfs_ptr = native_vfs,
-            .vfs = native_vfs.vfs(),
-            .gc = memory.GC.init(allocator),
-            .globals = .empty,
-            .modules = .empty,
-            .strings = .empty,
-            .symbols = .empty,
-            .open_upvalues = null,
-            .profiler = null,
-            .config_stack = config_stack,
-            .line_index = null,
-            .debugger_step_handler = null,
-            .step_mode = false,
-            .rescue_frames = rescue_frames,
-            .param_registry = .{},
-            .param_lookup = .empty,
-            .host = .{},
-            .materials = .empty,
-            .display_list = .empty,
-            .dag_builder = dag.DAGBuilder.init(allocator),
-            .dag_cache = .empty,
-            .mute_errors = builtin.is_test,
-            .scratch_arena = std.heap.ArenaAllocator.init(allocator),
-            .static_true = null,
-            .static_false = null,
-            .static_nil = null,
-            .unwind_stack = .empty,
-            .instruction_count = 0,
-            .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
-            .import_depth = 0,
+            break :vm VM{
+                .allocator = allocator,
+                .io = io,
+                .stack = initial_stack,
+                .stack_top = 0,
+                .frames = frames,
+                .native_vfs_ptr = native_vfs,
+                .vfs = native_vfs.vfs(),
+                .gc = memory.GC.init(allocator),
+                .globals = .empty,
+                .modules = .empty,
+                .strings = .empty,
+                .symbols = .empty,
+                .open_upvalues = null,
+                .profiler = null,
+                .config_stack = config_stack,
+                .line_index = null,
+                .debugger_step_handler = null,
+                .step_mode = false,
+                .rescue_frames = rescue_frames,
+                .param_registry = .{},
+                .param_lookup = .empty,
+                .host = .{},
+                .materials = .empty,
+                .display_list = .empty,
+                .dag_builder = dag.DAGBuilder.init(allocator),
+                .dag_cache = .empty,
+                .mute_errors = builtin.is_test,
+                .scratch_arena = std.heap.ArenaAllocator.init(allocator),
+                .static_true = null,
+                .static_false = null,
+                .static_nil = null,
+                .unwind_stack = .empty,
+                .instruction_count = 0,
+                .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
+                .import_depth = 0,
+            };
         };
+
+        // From here the VM owns everything above, and deinit releases it.
+        errdefer vm.deinit();
 
         // preallocate true, false and nil strings
         vm.static_true = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", (try vm.allocateString("true")).asObj())));

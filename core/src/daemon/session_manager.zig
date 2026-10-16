@@ -111,7 +111,9 @@ pub const SessionManager = struct {
 
         // Heavy Allocation (Occurs OUTSIDE the critical section to prevent stalling other threads)
         const new_session = try self.allocator.create(ScriptSession);
+        errdefer self.allocator.destroy(new_session);
         new_session.* = try ScriptSession.init(self.allocator, self.io);
+        errdefer new_session.deinit();
 
         // 2nd Check: Acquire lock for mutation
         self.mutex.lockUncancelable(self.io);
@@ -125,34 +127,33 @@ pub const SessionManager = struct {
             return session;
         }
 
-        // Evict if threshold is hit (safe because we hold the lock)
-        if (self.sessions.count() >= self.max_sessions) {
-            try self.evictLRU();
-        }
+        // Room in both first: a session in the map but not in the queue could never be
+        // evicted, and one in neither leaked (the session was lost on a failed insert).
+        try self.sessions.ensureUnusedCapacity(self.allocator, 1);
+        try self.lru_queue.ensureUnusedCapacity(self.allocator, 1);
 
-        try self.sessions.put(self.allocator, session_id, new_session);
-        try self.lru_queue.append(self.allocator, session_id);
+        // Evict if threshold is hit (safe because we hold the lock)
+        if (self.sessions.count() >= self.max_sessions) self.evictLRU();
+
+        self.sessions.putAssumeCapacityNoClobber(session_id, new_session);
+        self.lru_queue.appendAssumeCapacity(session_id);
 
         log.info("Initialized new session for {s} (ID: {x})", .{ canonical_path, session_id });
         return new_session;
     }
 
+    /// Moves `session_id` to the most recently used end of the queue, in place: removing
+    /// and appending it again could fail to allocate and drop it from the queue for good.
     pub fn markUsed(self: *SessionManager, session_id: u64) void {
-        for (self.lru_queue.items, 0..) |id, i| {
-            if (id == session_id) {
-                _ = self.lru_queue.orderedRemove(i);
-                self.lru_queue.append(self.allocator, session_id) catch |err| {
-                    log.err("OOM appending to LRU queue: {}", .{err});
-                };
-                return;
-            }
-        }
+        const items = self.lru_queue.items;
+        const i = std.mem.indexOfScalar(u64, items, session_id) orelse return;
+        std.mem.rotate(u64, items[i..], 1);
     }
 
     /// Evicts the least recently used session that is NOT pinned. Caller must hold `mutex`.
     /// If every session is pinned, nothing is evicted and the cache temporarily exceeds
     /// `max_sessions` (a soft limit) rather than freeing memory someone still uses.
-    pub fn evictLRU(self: *SessionManager) !void {
+    pub fn evictLRU(self: *SessionManager) void {
         var idx: usize = 0;
         while (idx < self.lru_queue.items.len and self.isPinned(self.lru_queue.items[idx])) idx += 1;
         if (idx == self.lru_queue.items.len) {
