@@ -304,6 +304,8 @@ pub fn build(b: *std.Build) void {
     // Every VM collects at every object allocation, so a value a native or the VM forgot to
     // root is swept at once wherever a test runs a script (the nightly job; slow).
     build_info.addOption(bool, "gc_stress", b.option(bool, "gc-stress", "Collect garbage at every allocation in every VM, to find unrooted values (slow)") orelse false);
+    // Whether oneTBB is built in, for the tests that check both kernels run on it.
+    build_info.addOption(bool, "tbb", enable_parallel and !is_wasm);
     mod.addOptions("build_info", build_info);
 
     // The C and C++ libraries (Clipper2, Manifold, oneTBB, SQLite, Draco) and KupCAD's
@@ -384,9 +386,10 @@ pub fn build(b: *std.Build) void {
         .flags = drako_flags,
     });
 
-    // KUPCAD_TBB: oneTBB is built in, so kupcad_set_max_threads can cap its threads.
+    // oneTBB is built in: KUPCAD_TBB lets kupcad_set_max_threads cap its threads, and
+    // LOCUS_TBB runs Locus's parallel_for on them.
     const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, if (enable_parallel and !is_wasm)
-        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1" }
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1", "-DLOCUS_TBB=1" }
     else
         &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 

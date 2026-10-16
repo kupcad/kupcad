@@ -40,6 +40,8 @@ pub const operations = struct {
 };
 
 test {
+    _ = @import("parallel_test.zig");
+
     _ = @import("geometry/interning_test.zig");
 
     _ = @import("operations/generators_test.zig");
