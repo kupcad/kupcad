@@ -2384,6 +2384,16 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
     try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "kit.step"));
 }
 
+test "Stdlib: every export refuses a Sketch the same way" {
+    // Each export collected its parts its own way, and glTF answered a Sketch with a
+    // TypeError of its own wording.
+    try expectGlobalR(&.{
+        .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for CrossSection" } },
+    });
+}
+
 test "Stdlib: each Assembly method gives back what the manifest says it does" {
     const manifest = @import("manifest.zig");
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };

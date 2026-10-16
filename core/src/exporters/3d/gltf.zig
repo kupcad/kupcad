@@ -10,6 +10,7 @@ const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
+const receiver_parts = @import("parts.zig");
 
 // --- GLTF & Draco Configuration Constants ---
 const GLTF_COMPONENT_TYPE_FLOAT = 5126;
@@ -433,19 +434,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
 
     const use_draco = draco_opt orelse false;
 
-    if (receiver.isGeometry()) {
-        try handles.append(vm.allocator, try vm.ensureConcrete(receiver));
-    } else if (receiver.isAssembly()) {
-        for (receiver.asAssembly().parts.items.items) |part| {
-            if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
-        }
-    } else if (receiver.isArray()) {
-        for (receiver.asArray().items.items) |part| {
-            if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
-        }
-    } else {
-        return vm.fail(.TypeError, "export_gltf expects a Geometry, an Assembly or an Array of them, got {s}", .{util.typeName(vm, receiver)});
-    }
+    try receiver_parts.receiverParts(vm, receiver, "export_gltf", &handles);
 
     for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
     const bytes = try buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, Container.forPath(filepath));

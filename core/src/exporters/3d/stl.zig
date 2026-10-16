@@ -9,6 +9,7 @@ const util = @import("../../stdlib/methods/util.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const error_kind = @import("../../vm/error_kind.zig");
+const receiver_parts = @import("parts.zig");
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
 // a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
@@ -198,11 +199,7 @@ pub fn buildStlOfParts(allocator: std.mem.Allocator, vm: *VM, parts: []const geo
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
     defer parts.deinit(vm.allocator);
-    if (receiver.isGeometry()) {
-        try parts.append(vm.allocator, try vm.ensureConcrete(receiver));
-    } else if (receiver.isAssembly()) {
-        for (receiver.asAssembly().parts.items.items) |part| try parts.append(vm.allocator, try vm.ensureConcrete(part));
-    } else return util.notDefinedFor(vm, "export_stl", receiver);
+    try receiver_parts.receiverParts(vm, receiver, "export_stl", &parts);
 
     const stl_bytes = buildStlOfParts(vm.allocator, vm, parts.items) catch |err| switch (err) {
         error.NoGeometry => {
