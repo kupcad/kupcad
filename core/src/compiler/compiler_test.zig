@@ -1823,6 +1823,63 @@ test "Compiler: Constant Folding optimizer" {
     try std.testing.expect(!has_math);
 }
 
+/// The constants `source` compiles to (the main chunk's).
+fn compiledConstants(allocator: std.mem.Allocator, source: []const u8, out: *std.ArrayListUnmanaged(f64)) !void {
+    var vm = try VM.init(allocator, std.testing.io);
+    defer vm.deinit();
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(allocator);
+    var comp = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    for (main_chunk.constants.items) |c| if (c.isNumber()) try out.append(allocator, c.asNumber());
+}
+
+test "Compiler: a negated literal, and arithmetic on one, is a single constant" {
+    // `-5 * 2` is `(-5) * 2` to the parser, with a negation under the multiplication;
+    // the fold stopped at the negation, so 5 and 2 were constants and three ops ran.
+    const cases = [_]struct { src: []const u8, folded: f64 }{
+        .{ .src = "x = -5 * 2", .folded = -10 },
+        .{ .src = "x = -(3 + 4)", .folded = -7 },
+        .{ .src = "x = 2 - -3", .folded = 5 },
+        .{ .src = "x = --8", .folded = 8 },
+    };
+    for (cases) |case| {
+        var numbers: std.ArrayListUnmanaged(f64) = .empty;
+        defer numbers.deinit(std.testing.allocator);
+        try compiledConstants(std.testing.allocator, case.src, &numbers);
+        try std.testing.expectEqualSlices(f64, &.{case.folded}, numbers.items);
+    }
+}
+
+test "Compiler: equal literals share one constant slot" {
+    // Numbers, strings (by text) and symbols each have one slot however often they appear.
+    var numbers: std.ArrayListUnmanaged(f64) = .empty;
+    defer numbers.deinit(std.testing.allocator);
+    try compiledConstants(std.testing.allocator, "x = [1, 1, 1, 2.5, 2.5, -1, -1]", &numbers);
+    try std.testing.expectEqualSlices(f64, &.{ 1, 2.5, -1 }, numbers.items);
+
+    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    defer vm.deinit();
+    var doc = try Document.parse(std.testing.allocator, "x = [\"a\", \"a\", :s, :s, \"b\"]");
+    defer doc.deinit();
+    var main_chunk = chunk.Chunk.init();
+    defer main_chunk.free(std.testing.allocator);
+    var comp = Compiler.init(std.testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &main_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    var strings: usize = 0;
+    var symbols: usize = 0;
+    for (main_chunk.constants.items) |c| {
+        if (c.isString()) strings += 1;
+        if (c.isSymbol()) symbols += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 3), strings); // "a", "b" and the name "x"
+    try std.testing.expectEqual(@as(usize, 1), symbols);
+}
+
 test "Compiler: Jump patch alignments for nested and/or" {
     // Each jump carries a 4-byte offset; the listed opcodes must sit exactly at
     // these offsets or a jump would land inside an operand.

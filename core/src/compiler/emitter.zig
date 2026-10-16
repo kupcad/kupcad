@@ -74,11 +74,14 @@ pub fn emitOp(self: *Compiler, op: chunk.OpCode) CompileError!void {
     }
 }
 
+/// The slot of `val` in the chunk's constants, added if it has none. Equal constants
+/// share a slot: a number, a symbol (interned) or any other value by its bits, a string
+/// by its text. Each lookup is one hash; a scan of the constants comparing values made
+/// compiling a 4000-number literal quadratic.
 pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
-    // Linear scan over constants to reuse existing matching values
-    for (self.current_chunk.constants.items, 0..) |existing, i| {
-        if (self.vm.valuesEqual(existing, val)) return i;
-    }
+    const bits: u64 = @bitCast(val);
+    const known = if (val.isString()) self.string_slots.get(val.asString().chars) else self.constant_slots.get(bits);
+    if (known) |slot| return slot;
 
     // A top-level chunk (no ObjFunction yet) is not reachable from any root until
     // interpret()/op_import wraps it; register it so heap constants survive a GC
@@ -87,6 +90,10 @@ pub fn makeConstant(self: *Compiler, val: value.Value) CompileError!usize {
     if (val.isObject() and self.function == null) self.vm.gc.trackChunk(self.current_chunk) catch return error.OutOfMemory;
     const index = self.current_chunk.addConstant(self.allocator, val) catch return error.OutOfMemory;
     if (index > limits.MAX_CONSTANTS) return error.TooManyConstants;
+    (if (val.isString())
+        self.string_slots.put(self.allocator, val.asString().chars, @intCast(index))
+    else
+        self.constant_slots.put(self.allocator, bits, @intCast(index))) catch return error.OutOfMemory;
     return index;
 }
 

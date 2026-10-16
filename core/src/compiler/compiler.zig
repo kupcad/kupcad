@@ -126,6 +126,11 @@ pub const Compiler = struct {
     // Enclosing rescue/ensure regions of the current function, innermost last
     unwind_stack: std.ArrayListUnmanaged(UnwindEntry) = .empty,
 
+    /// The slot of each constant of `current_chunk` (emitter.makeConstant): strings by
+    /// their text, every other value by its bits.
+    string_slots: std.StringHashMapUnmanaged(u32) = .empty,
+    constant_slots: std.AutoHashMapUnmanaged(u64, u32) = .empty,
+
     // --- DOD Zero-Waste Compilation Buffers ---
     scratch_ops: std.ArrayListUnmanaged(ast.BinaryOp) = .empty,
     scratch_rights: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
@@ -236,6 +241,8 @@ pub const Compiler = struct {
         self.scratch_rights.deinit(self.allocator);
         self.namespace_stack.deinit(self.allocator);
         self.namespace_selfs.deinit(self.allocator);
+        self.string_slots.deinit(self.allocator);
+        self.constant_slots.deinit(self.allocator);
     }
 
     // --- Compilation Engine ---
@@ -353,7 +360,7 @@ pub const Compiler = struct {
             .def_stmt, .lambda_expr => try self.compileDefStmt(node, node_idx),
             .index_access => try self.compileIndexAccess(node),
             .index_assignment => try self.compileIndexAssignment(node),
-            .unary_op => try self.compileUnaryOp(node),
+            .unary_op => try self.compileUnaryOp(node, node_idx),
             .binary_op => try self.compileBinaryOp(node_idx),
             .array_literal => try self.compileArrayLiteral(node),
             .hash_literal => try self.compileHashLiteral(node),
@@ -886,8 +893,9 @@ pub const Compiler = struct {
         try self.emitOp(.op_set_index);
     }
 
-    fn compileUnaryOp(self: *Compiler, node: *const ast.Node) CompileError!void {
+    fn compileUnaryOp(self: *Compiler, node: *const ast.Node, node_idx: ast.NodeIndex) CompileError!void {
         const un_expr = self.tree.unaryExpr(node);
+        if (self.tryConstantFold(node_idx)) |folded| return self.emitConstant(value.Value.initNumber(folded));
         try self.compileNode(un_expr.operand);
         switch (un_expr.op) {
             .negate => try self.emitOp(.op_negate),
@@ -899,6 +907,12 @@ pub const Compiler = struct {
     fn tryConstantFold(self: *Compiler, node_idx: ast.NodeIndex) ?f64 {
         const node = self.tree.getNode(node_idx) orelse return null;
         if (node.tag == .number) return self.tree.number(node);
+        if (node.tag == .unary_op) {
+            // `-5` is a negation of the literal 5 to the parser; folded, it is one constant.
+            const un = self.tree.unaryExpr(node);
+            if (un.op != .negate) return null;
+            return -(self.tryConstantFold(un.operand) orelse return null);
+        }
         if (node.tag == .binary_op) {
             const bin = self.tree.binaryExpr(node);
             const left = self.tryConstantFold(bin.left) orelse return null;

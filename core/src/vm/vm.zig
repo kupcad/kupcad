@@ -1670,21 +1670,26 @@ pub const VM = struct {
     /// Global assignment from bytecode. Like the import cache, new keys are owned
     /// copies: the name comes from a constant ObjString that is swept once its chunk
     /// is freed, while the global lives on into the next run of a reused VM.
+    /// `name = val` at the top of the main script. Every assignment of a top-level
+    /// variable comes here, so the common case, a name the script defined before, is one
+    /// lookup in `globals` and one in `script_defined_globals`; the bookkeeping (the owned
+    /// key, the shadowed builtin) is done the first time a name is seen.
     fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !void {
-        try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
-        try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
         const gop = try self.globals.getOrPut(self.allocator, name);
         if (!gop.found_existing) {
-            gop.key_ptr.* = self.allocator.dupe(u8, name) catch |err| {
-                self.globals.removeByPtr(gop.key_ptr);
-                return err;
-            };
-            self.owned_global_keys.appendAssumeCapacity(gop.key_ptr.*);
+            errdefer self.globals.removeByPtr(gop.key_ptr);
+            const owned = try self.allocator.dupe(u8, name);
+            errdefer self.allocator.free(owned);
+            try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
+            try self.script_defined_globals.put(self.allocator, owned, {});
+            self.owned_global_keys.appendAssumeCapacity(owned);
+            gop.key_ptr.* = owned;
         } else if (!self.script_defined_globals.contains(name)) {
             // The main script is shadowing a builtin: keep the original for modules.
+            try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
             try self.shadowed_builtins.put(self.allocator, gop.key_ptr.*, gop.value_ptr.*);
+            self.script_defined_globals.putAssumeCapacity(gop.key_ptr.*, {});
         }
-        self.script_defined_globals.putAssumeCapacity(gop.key_ptr.*, {});
         gop.value_ptr.* = val;
     }
 
