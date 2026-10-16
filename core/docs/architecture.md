@@ -434,6 +434,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 The VM's tests are split by topic: `vm/vm_test.zig` (the core: running scripts end to end, the dispatch loop, inline caches, globals, REPL locals, the debugger and the profiler), `vm_runtime_test.zig` (stack and frames, the instruction budget, GC and ARC, the scratch arena, memory limits), `vm_exceptions_test.zig`, `vm_cad_test.zig`, `vm_classes_test.zig`, `vm_blocks_test.zig` (callables and argument passing), `vm_strings_test.zig`, `vm_collections_test.zig` and `vm_syntax_test.zig` (operators, assignments, control flow). What several share is in `vm_test_helpers.zig`; a helper only one topic uses stays in its file.
 
+## 23. Crash Reports
+
+`src/crash_report.zig` is the executable's panic handler (`pub const panic` in `main.zig`) and, when `KUPCAD_CRASH_DIR` is set, its handler for SIGSEGV, SIGBUS, SIGILL, SIGFPE and SIGABRT (`crash_report.enable`, called with the subcommand once it is known). A report is written with fixed buffers and libc's `open`/`write`, since the process may be out of memory and a signal handler may call nothing else; a panic adds the stack (`std.debug.writeCurrentStackTrace`), then goes on to Zig's own panic handler, and a signal handler puts back the handler it replaced and returns, so the fault recurs, or the abort raises again, and the process ends as it would have. One report per process. The report holds no script text, path or argument but the subcommand.
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |

@@ -16,9 +16,12 @@ const Outcome = outcome_mod.Outcome;
 const log_helpers = @import("log.zig");
 const cli_args = @import("cli/args.zig");
 const Args = cli_args.Args;
+const crash_report = @import("crash_report.zig");
 
 // Export std_options for the compiler
 pub const std_options = log_helpers.std_options;
+/// A panic writes a crash report first when KUPCAD_CRASH_DIR asks for one (crash_report.zig).
+pub const panic = std.debug.FullPanic(crash_report.panic);
 
 const Command = struct {
     name: []const u8,
@@ -98,6 +101,7 @@ fn dispatch(init: std.process.Init) !Outcome {
     }
     for (COMMANDS) |c| {
         if (!std.mem.eql(u8, name, c.name)) continue;
+        crash_report.enable(init.environ_map, c.name);
         if (cli_args.wantsHelp(argv[1..])) {
             log_helpers.printStdout(init.io, "{s}", .{c.usage});
             return .success;
@@ -111,6 +115,7 @@ fn dispatch(init: std.process.Init) !Outcome {
 
 test {
     _ = @import("main_test.zig");
+    _ = @import("crash_report_test.zig");
     _ = @import("cli/lsp.zig");
     _ = @import("cli/lsp_test.zig");
     _ = @import("cli/lsp_inbox_test.zig");

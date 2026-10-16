@@ -352,3 +352,55 @@ test "kupcad: check --max-warnings fails a run with more warnings than that" {
         .{ .args = &.{ "check", "unused.kup", "--format" }, .code = 1, .contains = "Missing value after '--format'" },
     });
 }
+
+/// The crash reports `dir` holds, read and concatenated (caller frees), and how many.
+fn crashReports(dir: std.Io.Dir) !struct { text: []u8, count: usize } {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    errdefer out.deinit();
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(testing.io)) |entry| {
+        if (!std.mem.startsWith(u8, entry.name, "kupcad-crash-")) continue;
+        count += 1;
+        const text = try dir.readFileAlloc(testing.io, entry.name, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(text);
+        try out.writer.writeAll(text);
+    }
+    return .{ .text = try out.toOwnedSlice(), .count = count };
+}
+
+test "kupcad: KUPCAD_CRASH_DIR captures a panic and an abort, and nothing is written without it" {
+    if (!@import("builtin").os.tag.isDarwin() and @import("builtin").os.tag != .linux) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "crashes");
+    const crash_dir = try std.fs.path.join(testing.allocator, &.{ sb.path, "crashes" });
+    defer testing.allocator.free(crash_dir);
+
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR", "KUPCAD_CRASH_DIR" }) |name| _ = env.swapRemove(name);
+
+    // Off by default: a crash leaves nothing behind.
+    const unreported = try kupcadIn(sb.path, &.{ "dev", "crash", "abort" }, &env);
+    defer unreported.deinit();
+    var dir = try sb.tmp.dir.openDir(testing.io, "crashes", .{ .iterate = true });
+    defer dir.close(testing.io);
+    const none = try crashReports(dir);
+    defer testing.allocator.free(none.text);
+    try testing.expectEqual(@as(usize, 0), none.count);
+
+    try env.put("KUPCAD_CRASH_DIR", crash_dir);
+    for ([_][]const u8{ "panic", "abort" }) |how| {
+        const run = try kupcadIn(sb.path, &.{ "dev", "crash", how }, &env);
+        defer run.deinit();
+        try testing.expect(run.code != 0);
+        try testing.expect(std.mem.indexOf(u8, run.stderr, "kupcad: writing a crash report to ") != null);
+    }
+    const reports = try crashReports(dir);
+    defer testing.allocator.free(reports.text);
+    try testing.expectEqual(@as(usize, 2), reports.count);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "\ncommand: dev\n") != null);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "panic: kupcad dev crash: a deliberate panic\nstack:\n") != null);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "signal: SIGABRT\n") != null);
+}
