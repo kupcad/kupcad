@@ -1,4 +1,10 @@
 #include <manifold/manifoldc.h>
+#include <cstddef>
+
+#if KUPCAD_TBB
+#include <memory>
+#include <tbb/global_control.h>
+#endif
 
 // Reason why we have this method here
 // The Zig compiler incorrectly calculates register exhaustion when calling C functions with a large number of mixed arguments (specifically floating-point values and structs). Instead of utilizing remaining available hardware registers, Zig prematurely spills the arguments onto the stack. When the C++ function pops them off expecting the strict x86_64 System V ABI layout, the memory offsets are misaligned, causing the values to scramble or merge with adjacent variables
@@ -12,6 +18,18 @@ extern "C" {
         return false;
 #else
         return true;
+#endif
+    }
+
+    // Caps the threads Manifold's parallel algorithms (oneTBB's) may use; 0 lifts the cap.
+    // Without oneTBB (wasm, -Dmanifold_parallel=false) everything runs on one thread anyway.
+    void kupcad_set_max_threads(size_t threads) {
+#if KUPCAD_TBB
+        static std::unique_ptr<tbb::global_control> control;
+        control.reset();
+        if (threads > 0) control = std::make_unique<tbb::global_control>(tbb::global_control::max_allowed_parallelism, threads);
+#else
+        (void)threads;
 #endif
     }
 

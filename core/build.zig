@@ -384,7 +384,11 @@ pub fn build(b: *std.Build) void {
         .flags = drako_flags,
     });
 
-    const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
+    // KUPCAD_TBB: oneTBB is built in, so kupcad_set_max_threads can cap its threads.
+    const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, if (enable_parallel and !is_wasm)
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1" }
+    else
+        &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
 
     native_mod.addCSourceFiles(.{
         .files = kupcad_bindings,

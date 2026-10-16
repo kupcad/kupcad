@@ -411,6 +411,10 @@ The exporters' tests read every format back. An STL is parsed (the reader welds 
 
 `src/kernel/parity_test.zig` runs each primitive and keyword the B-Rep engine takes on both engines and requires the same box (a cylinder with sides in a multiple of 4, so Manifold's polygon reaches the circle's extremes), and runs arguments one engine refuses on the other, requiring the same error. B-Rep measures nothing yet, so its box is read from its STEP export: every `VERTEX_POINT`, and each `CIRCLE` by its centre, normal and radius (along an axis it reaches its radius times the sine of the angle to its normal). A shape B-Rep can't make is a `NotImplementedError` (see Engine features), never a different shape. It found `d:` silently beating `r:` (and `radius:` both, `size:` an `x:`) whatever their order, on both engines; two keywords for one option are now an `ArgumentError` (`ALIAS_GROUPS` in `stdlib/primitives.zig`).
 
+## 18. Determinism
+
+`src/determinism_test.zig` builds each example (STEP for the exact one, glb for the rest) and a model large enough for Manifold's algorithms to run in parallel, twice, then once with oneTBB held to one thread (`manifold.setMaxThreads`, through `kupcad_set_max_threads` and `tbb::global_control`; the bindings get `-DKUPCAD_TBB=1` when oneTBB is built in), and requires the same bytes each time. Locus's `parallel_for` (`locus/src/bindings/parallel_c.cpp`) runs serially in every build: it parallelizes only under `MANIFOLD_PAR == 1`, which the bindings aren't compiled with.
+
 ## Architecture Summary Matrix
 
 | Component         | Primary Responsibility                    | Memory Strategy                  | Key Safety Invariants                                  |
