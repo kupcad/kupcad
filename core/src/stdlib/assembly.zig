@@ -28,6 +28,9 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
     return struct {
         fn call(vm: *VM, parts: *value.ObjArray) !value.Value {
             if (parts.items.items.len == 0) {
+                // The union of nothing is the empty Solid (it was an error, though a list of
+                // optional parts all left out is an ordinary outcome); a hull of nothing isn't a shape.
+                if (tag == .union_op) return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addEmpty(true) });
                 _ = vm.raiseError(.ArgumentError, name ++ " needs at least one Solid, got an empty Array", .{});
                 return error.RuntimeError;
             }

@@ -2188,9 +2188,13 @@ test "Stdlib: booleans and hull take only shapes of the receiver's kind, nil inc
         try expectGlobalR(&.{.{ .src = comptime rescued(case[0]), .expected = .{ .str = case[1] } }});
     }
     try expectGlobalR(&.{
-        // The way to pass optional parts, and an empty list leaves the receiver as it is.
+        // The way to pass optional parts; an empty list is set theory's: a union with or a
+        // difference by nothing is the receiver, an intersection with nothing is empty.
         .{ .src = "boss = nil\nr = cube(2).union([boss, cube(1).translate(5, 0, 0)].compact).volume", .expected = .{ .num = 9 } },
         .{ .src = "r = cube(2).union([]).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = cube(2).difference([]).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = cube(2).intersection([]).volume", .expected = .{ .num = 0 } },
+        .{ .src = "r = square(2).intersection([]).extrude(1).volume", .expected = .{ .num = 0 } },
         .{ .src = "r = square(2).union(square(1).translate(5, 0)).extrude(1).volume", .expected = .{ .num = 5 } },
     });
 }
@@ -2282,5 +2286,18 @@ test "Stdlib: scale(s) is uniform, rotate(a) turns about z, and a transform take
         .{ .src = "r = cube(2).translate([1, 2, 3]).bbox.min", .expected = .{ .nums = &.{ 1, 2, 3 } } },
         .{ .src = "r = square(2).translate([1, 2]).extrude(1).bbox.min", .expected = .{ .nums = &.{ 1, 2, 0 } } },
         .{ .src = comptime rescued("cube(1).translate([1, 2, 3, 4])"), .expected = .{ .str = "ArgumentError: translate expects at most 3 numbers (x, y, z), got 4" } },
+    });
+}
+
+test "Stdlib: union([]) is the empty Solid, a valid part that renders nothing" {
+    // It raised an ArgumentError, though a list of optional parts all left out is an
+    // ordinary outcome of procedural generation. The B-Rep engine has no empty solid yet.
+    try test_support.expectScripts(&.{
+        .{ .src = "r = union([]).volume", .expected = .{ .num = 0 } },
+        .{ .src = "r = (cube(1) + union([])).volume", .expected = .{ .num = 1 } },
+        .{ .src = "r = (cube(1) - union([])).volume", .expected = .{ .num = 1 } },
+        .{ .src = "parts = [nil, nil].compact\nr = union(parts).empty?", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("batch_hull([])"), .expected = .{ .str = "ArgumentError: batch_hull needs at least one Solid, got an empty Array" } },
+        .{ .src = comptime rescued("CAD.with_config(engine: :brep) do\n  union([]).volume\nend"), .expected = .{ .str = brepLacks(.empty) } },
     });
 }

@@ -291,6 +291,16 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             // consume their inputs and always return new handles (kernel.zig).
             switch (node.tag) {
                 // --- Leaf Geometry 3D ---
+                .empty_solid => {
+                    try vm.requireFeature(config.engine, .empty);
+                    const handle = kernel.empty(&config) orelse return kernelFailed(vm, node.tag);
+                    try v_stack.pushOwned(.{ .geometry = handle });
+                },
+                .empty_sketch => {
+                    try vm.requireFeature(config.engine, .empty);
+                    const handle = kernel.emptySketch(&config) orelse return kernelFailed(vm, node.tag);
+                    try v_stack.pushOwned(.{ .cross_section = handle });
+                },
                 .cube => {
                     const p = vm.dag_builder.getCubeDimensions(node);
                     const handle = kernel.cube(&config, p.x, p.y, p.z, p.center) orelse return kernelFailed(vm, node.tag);

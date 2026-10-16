@@ -911,6 +911,7 @@ pub fn supports(feature: kernel.Feature) bool {
         .faces,
         .mesh,
         .materials,
+        .empty,
         => false,
     };
 }

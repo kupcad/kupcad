@@ -58,11 +58,14 @@ pub const Feature = enum {
     faces,
     mesh,
     materials,
+    /// An empty shape: a union of nothing, an intersection with nothing.
+    empty,
 
     /// What the engine can't do, as it reads after "can't": "the brep engine can't
     /// measure volume yet".
     pub fn describe(self: Feature) []const u8 {
         return switch (self) {
+            .empty => "make an empty shape (union([]), an intersection with nothing)",
             .transform => "move, turn, scale or mirror shapes (translate, rotate, scale, mirror, transform)",
             .boolean => "combine solids (union, difference, intersection)",
             .extrude => "extrude sketches",
@@ -120,7 +123,7 @@ pub const Feature = enum {
             .min_gap => &.{"min_gap"},
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf" },
-            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials => &.{},
+            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };
@@ -169,6 +172,21 @@ inline fn dispatch(comptime fn_name: []const u8, handle: anytype, args: anytype)
 
 // Solids are created under the active config (`CAD.config`); everything derived from one
 // keeps the settings it was created with.
+
+/// The solid with nothing in it. Only Manifold has one (kernel.supports(engine, .empty)).
+pub inline fn empty(config: *const EngineConfig) ?geom.GeometryHandle {
+    return switch (config.engine) {
+        .manifold => manifold_driver.driver.emptyFn(),
+        .brep_native => null,
+    };
+}
+
+pub inline fn emptySketch(config: *const EngineConfig) ?geom.CrossSectionHandle {
+    return switch (config.engine) {
+        .manifold => manifold_driver.driver.emptySketchFn(),
+        .brep_native => null,
+    };
+}
 
 pub inline fn cube(config: *const EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     switch (config.engine) {

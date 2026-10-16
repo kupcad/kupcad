@@ -68,6 +68,8 @@ extern fn manifold_cross_section_copy(mem: ?*ManifoldCrossSection, cs: ?*Manifol
 extern fn manifold_alloc_rect() ?*ManifoldRect;
 extern fn manifold_delete_rect(r: ?*ManifoldRect) void;
 extern fn manifold_cube(mem: ?*ManifoldObj, x: f64, y: f64, z: f64, center: c_int) ?*ManifoldObj;
+extern fn manifold_empty(mem: ?*ManifoldObj) ?*ManifoldObj;
+extern fn manifold_cross_section_empty(mem: ?*ManifoldCrossSection) ?*ManifoldCrossSection;
 extern fn manifold_cylinder(mem: ?*ManifoldObj, height: f64, radiusLow: f64, radiusHigh: f64, circularSegments: c_int, center: c_int) ?*ManifoldObj;
 extern fn manifold_sphere(mem: ?*ManifoldObj, radius: f64, circularSegments: c_int) ?*ManifoldObj;
 extern fn manifold_boolean(mem: ?*ManifoldObj, a: ?*ManifoldObj, b: ?*ManifoldObj, op: OpType) ?*ManifoldObj;
@@ -184,6 +186,15 @@ extern fn manifold_num_tri(m: ?*ManifoldObj) usize;
 
 pub fn cube(x: f64, y: f64, z: f64, center: bool) ?*ManifoldObj {
     return manifold_cube(manifold_alloc_manifold(), x, y, z, if (center) 1 else 0);
+}
+
+/// The solid with nothing in it: what a union of nothing or an intersection with nothing is.
+pub fn empty() ?*ManifoldObj {
+    return manifold_empty(manifold_alloc_manifold());
+}
+
+pub fn emptyCrossSection() ?*ManifoldCrossSection {
+    return manifold_cross_section_empty(manifold_alloc_cross_section());
 }
 
 pub fn cylinder(r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?*ManifoldObj {

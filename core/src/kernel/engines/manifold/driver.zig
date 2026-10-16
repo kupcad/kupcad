@@ -48,6 +48,16 @@ fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]c
 
 // --- Primitives Generation ---
 
+fn emptyImpl() ?geom.GeometryHandle {
+    const ptr = manifold.empty() orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
+fn emptySketchImpl() ?geom.CrossSectionHandle {
+    const ptr = manifold.emptyCrossSection() orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn cubeImpl(x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
     const ptr = manifold.cube(x, y, z, center) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
@@ -445,6 +455,8 @@ fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.Cro
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
+    // Sweeping the empty Sketch gives the empty Solid (Manifold rejects empty polygons).
+    if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl();
     const ptr = manifold.extrude(@ptrCast(@alignCast(cs.ptr)), height, slices, twist_degrees, scale_x, scale_y) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -452,6 +464,7 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
+    if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl();
     const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), segments, revolve_degrees) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -711,6 +724,8 @@ pub fn supports(feature: kernel.Feature) bool {
 pub const driver = struct {
     pub const problemFn = problemImpl;
     pub const cubeFn = cubeImpl;
+    pub const emptyFn = emptyImpl;
+    pub const emptySketchFn = emptySketchImpl;
     pub const cylinderFn = cylinderImpl;
     pub const sphereFn = sphereImpl;
     pub const booleanFn = booleanImpl;

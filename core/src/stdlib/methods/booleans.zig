@@ -14,8 +14,14 @@ inline fn gatherAndBalance(vm: *VM, receiver: value.Value, args: []const value.V
     try scratch.append(alloc, if (is_3d) receiver.asGeometry().dag_idx else receiver.asCrossSection().dag_idx);
     try appendOperands(vm, alloc, &scratch, args, is_3d, name);
 
-    // Nothing to combine with (`a.union([])`, an empty list of optional parts)
-    if (scratch.items.len == 1) return receiver;
+    // Nothing to combine with (`a.union([])`, a list of optional parts all left out): as
+    // set theory has it, a union with or a difference by nothing is `a`, and an
+    // intersection with nothing is empty (it used to be `a` too).
+    if (scratch.items.len == 1) {
+        if (tag != .intersection_op and tag != .cs_intersection_op) return receiver;
+        const empty_idx = try vm.dag_builder.addEmpty(is_3d);
+        return if (is_3d) try vm.allocateGeometry(.{ .symbolic = empty_idx }) else try vm.allocateCrossSection(empty_idx);
+    }
 
     const new_idx = try vm.dag_builder.addBalancedChain(tag, scratch.items);
 

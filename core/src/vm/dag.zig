@@ -13,6 +13,9 @@ pub const SettingsId = u16;
 pub const CONCRETE_NODE_SENTINEL: DAGNodeIndex = std.math.maxInt(u32);
 
 pub const DAGTag = enum(u8) {
+    /// A shape with nothing in it (no payload): `union([])`, `a.intersection([])`.
+    empty_solid,
+    empty_sketch,
     cube,
     cylinder,
     sphere,
@@ -64,6 +67,7 @@ pub fn scriptName(tag: DAGTag) []const u8 {
         .transform_matrix, .cs_transform => "transform",
         .polygons_even_odd => "polygon",
         .set_material => "material",
+        .empty_solid, .empty_sketch => "empty",
         .concrete => "geometry",
     };
 }
@@ -255,6 +259,12 @@ pub const DAGBuilder = struct {
         try self.extra_data.appendSlice(alloc, targets);
 
         return try self.appendNodeWithRollback(.{ .tag = .batch_union_op, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// The empty Solid (`is_3d`) or Sketch.
+    pub fn addEmpty(self: *DAGBuilder, is_3d: bool) !DAGNodeIndex {
+        const snap = self.snapshot();
+        return try self.appendNodeWithRollback(.{ .tag = if (is_3d) .empty_solid else .empty_sketch, .flags = 0, .data = 0 }, snap);
     }
 
     pub fn addCube(self: *DAGBuilder, x: f64, y: f64, z: f64, center: bool) !DAGNodeIndex {
@@ -642,6 +652,7 @@ pub const DAGBuilder = struct {
         hasher.update(std.mem.asBytes(&self.settings(node.settings).resultHash()));
 
         switch (node.tag) {
+            .empty_solid, .empty_sketch => {}, // the tag says it all
             .cube => {
                 const p = self.getCubeDimensions(node);
                 hasher.update(std.mem.asBytes(&p.x));
@@ -805,6 +816,7 @@ pub const DAGBuilder = struct {
         const ex = self.extra_data.items;
 
         return switch (a.tag) {
+            .empty_solid, .empty_sketch => true,
             .cube => self.numbersEql(a.data, b.data, 3),
             .cylinder => self.numbersEql(a.data, b.data, 4),
             .sphere, .square, .circle => self.numbersEql(a.data, b.data, 2),
