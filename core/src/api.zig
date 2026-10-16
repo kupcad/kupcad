@@ -188,6 +188,25 @@ pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMapUnmanaged(f64)) 
     }
 }
 
+/// The model a run left, as the exporters see it: the solid on the stack, or the solids
+/// of an assembly or an array there, each evaluated, after the ghosted items (the display
+/// list). Handles are borrowed from the VM.
+pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayListUnmanaged(geom.GeometryHandle)) !void {
+    try out.appendSlice(allocator, vm.display_list.items);
+    if (vm.stack_top == 0) return;
+    const final_val = vm.stack[0];
+    if (final_val.isGeometry()) return out.append(allocator, try vm.ensureConcrete(final_val));
+    const items: []const value.Value = if (final_val.isAssembly())
+        final_val.asAssembly().parts.items.items
+    else if (final_val.isArray())
+        final_val.asArray().items.items
+    else
+        &.{};
+    for (items) |part| {
+        if (part.isGeometry()) try out.append(allocator, try vm.ensureConcrete(part));
+    }
+}
+
 /// Extracts evaluated Geometry from the VM stack/display list and routes it to the requested 3D exporter.
 /// A failure the script can read about (an engine that can't mesh, a failed union) is
 /// raised in the VM first, so `vm.last_error` says what went wrong.
@@ -202,33 +221,13 @@ pub fn exportModelFromVm(
     const is_step = std.mem.eql(u8, format, "step");
     if (!is_stl and !is_gltf and !is_step) return error.UnsupportedFormat;
 
-    // The model: the value the script left on the stack, a solid or an assembly's or an
-    // array's parts.
-    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
-    defer parts.deinit(allocator);
-    if (vm.stack_top > 0) {
-        const final_val = vm.stack[0];
-        if (final_val.isGeometry()) {
-            try parts.append(allocator, try vm.ensureConcrete(final_val));
-        } else {
-            const items: []const value.Value = if (final_val.isAssembly())
-                final_val.asAssembly().parts.items.items
-            else if (final_val.isArray())
-                final_val.asArray().items.items
-            else
-                &.{};
-            for (items) |part| {
-                if (part.isGeometry()) try parts.append(allocator, try vm.ensureConcrete(part));
-            }
-        }
-    }
-
     // Ghosted items (the display list) are exported beside the model.
     var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
     defer export_handles.deinit(allocator);
-    try export_handles.appendSlice(allocator, vm.display_list.items);
-    try export_handles.appendSlice(allocator, parts.items);
+    try modelParts(allocator, vm, &export_handles);
     if (export_handles.items.len == 0) return error.NoGeometry;
+    // The model without its ghosts, which modelParts puts first.
+    const parts = export_handles.items[vm.display_list.items.len..];
 
     if (is_step) {
         try step_exporter.requireExactParts(vm, export_handles.items);
@@ -244,12 +243,12 @@ pub fn exportModelFromVm(
     }
 
     // STL holds one mesh: the model's parts are united, the ghosts left out.
-    switch (parts.items.len) {
+    switch (parts.len) {
         0 => return error.NoGeometry,
-        1 => return stl_exporter.buildStlBuffer(allocator, parts.items[0]),
+        1 => return stl_exporter.buildStlBuffer(allocator, parts[0]),
         else => {
-            try vm.requireFeature(parts.items[0].engine, .boolean);
-            const united = kernel.batchBoolean(allocator, parts.items, .union_op) orelse {
+            try vm.requireFeature(parts[0].engine, .boolean);
+            const united = kernel.batchBoolean(allocator, parts, .union_op) orelse {
                 _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
                 return error.RuntimeError;
             };

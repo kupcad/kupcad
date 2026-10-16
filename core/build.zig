@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// The example models in ../examples, built and fingerprinted by src/examples_test.zig
+/// (which also checks that every example there is listed here).
+const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "robot_mount_bracket", "standoff", "text" };
+
 const clipper_sources = &[_][]const u8{
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp",
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.offset.cpp",
@@ -504,10 +508,20 @@ pub fn build(b: *std.Build) void {
 
         const test_filters = b.option([]const []const u8, "test-filter", "Filter tests by name") orelse &.{};
         // Lint snapshot tests rewrite their expected output instead of comparing with it.
-        const update_snapshots = b.option(bool, "update-snapshots", "Rewrite the lint snapshots (src/tools/lint/snapshots) from the current output") orelse false;
+        const update_snapshots = b.option(bool, "update-snapshots", "Rewrite the lint and example snapshots (src/tools/lint/snapshots, src/examples.snap) from the current output") orelse false;
         const snapshot_options = b.addOptions();
         snapshot_options.addOption(bool, "update", update_snapshots);
         mod.addOptions("lint_snapshot_options", snapshot_options);
+
+        // The examples are outside the module, so each comes in as an import (the build
+        // reruns the test when one changes).
+        const examples_options = b.addOptions();
+        examples_options.addOption([]const []const u8, "names", &EXAMPLES);
+        examples_options.addOption(bool, "update", update_snapshots);
+        mod.addOptions("examples", examples_options);
+        for (EXAMPLES) |name| {
+            mod.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
+        }
 
         const mod_tests = b.addTest(.{
             .root_module = mod,

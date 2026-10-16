@@ -30,6 +30,7 @@ test {
     _ = @import("core/visitor_test.zig");
     _ = @import("registration_test.zig");
     _ = @import("tools/bench_test.zig");
+    _ = @import("examples_test.zig");
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");
