@@ -3,8 +3,8 @@
 const std = @import("std");
 const linter_mod = @import("linter.zig");
 const Config = @import("config.zig").Config;
-const parser_mod = @import("../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
+const parser_mod = @import("../../frontend/parser.zig");
+const lexer_mod = @import("../../frontend/lexer.zig");
 
 /// The engine after linting `source`; its diagnostics are the findings. Caller deinits.
 pub fn lint(allocator: std.mem.Allocator, source: []const u8, config: Config) !linter_mod.Linter {

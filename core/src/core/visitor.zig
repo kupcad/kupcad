@@ -139,7 +139,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
             try walk(Context, ctx, tree, rm.expr);
             try walk(Context, ctx, tree, rm.rescue_expr);
         },
-        .splat_expr, .double_splat_expr, .each_expr, .return_stmt, .break_stmt, .next_stmt => {
+        .splat_expr, .double_splat_expr, .return_stmt, .break_stmt, .next_stmt => {
             try walk(Context, ctx, tree, tree.nodeIndex(node));
         },
     }

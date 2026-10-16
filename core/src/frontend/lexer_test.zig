@@ -3,7 +3,7 @@ const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
 const Lexer = lexer_mod.Lexer;
 
-const test_utils = @import("../test_utils.zig");
+const test_utils = @import("test_utils.zig");
 const t = test_utils.t;
 
 fn expectTokens(source: []const u8, expected: anytype) !void {

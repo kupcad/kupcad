@@ -51,11 +51,9 @@ test {
     _ = @import("exporters/3d/stl_test.zig");
 
     // Frontends
-    _ = @import("frontend/kupcad/docstring_test.zig");
-    _ = @import("frontend/kupcad/lexer_test.zig");
-    _ = @import("frontend/kupcad/parser_test.zig");
-    _ = @import("frontend/openscad/lexer_test.zig");
-    _ = @import("frontend/openscad/parser_test.zig");
+    _ = @import("frontend/docstring_test.zig");
+    _ = @import("frontend/lexer_test.zig");
+    _ = @import("frontend/parser_test.zig");
 
     // Kernels
     _ = @import("kernel/engines/manifold/driver_test.zig");

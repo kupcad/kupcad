@@ -1,9 +1,9 @@
 const std = @import("std");
 const lexer_mod = @import("lexer.zig");
-const limits = @import("../../core/limits.zig");
-const ast = @import("../../core/ast.zig");
-const common_token = @import("../../core/token.zig");
-const common_errors = @import("../../core/errors.zig");
+const limits = @import("../core/limits.zig");
+const ast = @import("../core/ast.zig");
+const common_token = @import("../core/token.zig");
+const common_errors = @import("../core/errors.zig");
 const docstring = @import("docstring.zig");
 
 const Tag = lexer_mod.Tag;
@@ -909,7 +909,7 @@ pub const Parser = struct {
         const body = try self.parseBlock(&.{.keyword_end});
         _ = try self.expect(.keyword_end);
         const targets = try self.b.addLhsExprs(self.scratch_lhs_exprs.items[s_len..]);
-        return self.b.forStmt(targets, iterable, body, false, start_tok) catch ParseError.OutOfMemory;
+        return self.b.forStmt(targets, iterable, body, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parseDefStatement(self: *Parser, is_private: bool) ParseError!ast.NodeIndex {

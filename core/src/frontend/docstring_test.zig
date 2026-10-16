@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const ast = @import("../../core/ast.zig");
+const ast = @import("../core/ast.zig");
 const DocstringParser = @import("docstring.zig").DocstringParser;
 
 const dummy_token: u24 = 0;

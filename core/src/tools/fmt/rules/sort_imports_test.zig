@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const ast = @import("../../../core/ast.zig");
-const lexer_mod = @import("../../../frontend/kupcad/lexer.zig");
-const parser_mod = @import("../../../frontend/kupcad/parser.zig");
+const lexer_mod = @import("../../../frontend/lexer.zig");
+const parser_mod = @import("../../../frontend/parser.zig");
 const SortImportsRule = @import("sort_imports.zig").SortImportsRule;
 
 test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {

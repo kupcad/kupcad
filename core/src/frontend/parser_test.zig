@@ -1,14 +1,14 @@
 const std = @import("std");
 const testing = std.testing;
-const ast = @import("../../core/ast.zig");
-const chunk = @import("../../vm/chunk.zig");
-const limits = @import("../../core/limits.zig");
-const registry = @import("../../stdlib/registry.zig");
-const token = @import("../../core/token.zig");
-const Compiler = @import("../../compiler/compiler.zig").Compiler;
-const Document = @import("../../core/document.zig").Document;
-const VM = @import("../../vm/vm.zig").VM;
-const ParserTest = @import("../test_utils.zig").ParserTest;
+const ast = @import("../core/ast.zig");
+const chunk = @import("../vm/chunk.zig");
+const limits = @import("../core/limits.zig");
+const registry = @import("../stdlib/registry.zig");
+const token = @import("../core/token.zig");
+const Compiler = @import("../compiler/compiler.zig").Compiler;
+const Document = @import("../core/document.zig").Document;
+const VM = @import("../vm/vm.zig").VM;
+const ParserTest = @import("test_utils.zig").ParserTest;
 const lexer = @import("lexer.zig");
 const Lexer = lexer.Lexer;
 const Parser = @import("parser.zig").Parser;
@@ -2260,7 +2260,7 @@ test "KupCAD Parser: Diagnostics Line and Column Tracking" {
     const diag = pt.parser.diagnostics.list.items[0];
     try testing.expectEqualStrings("Invalid expression starting with '}'", diag.message);
 
-    const line_index = try @import("../../core/line_index.zig").LineIndex.init(pt.arena.allocator(), source);
+    const line_index = try @import("../core/line_index.zig").LineIndex.init(pt.arena.allocator(), source);
 
     // LineIndex returns a 0-based index. "x = 10 + }" is on physical line 2, which corresponds to index 1.
     try testing.expectEqual(@as(u32, 1), line_index.getLine(diag.loc.offset));

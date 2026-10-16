@@ -1,5 +1,5 @@
 const std = @import("std");
-const kupcad_lexer = @import("frontend/kupcad/lexer.zig");
+const kupcad_lexer = @import("frontend/lexer.zig");
 const manifest = @import("stdlib/manifest.zig");
 const array_class = @import("stdlib/classes/array.zig");
 const map_class = @import("stdlib/classes/map.zig");

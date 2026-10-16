@@ -5,8 +5,8 @@ const resolver = @import("resolver.zig");
 const errors = @import("errors.zig");
 
 // Use the existing KupCAD parser test utility
-const Lexer = @import("../frontend/kupcad/lexer.zig").Lexer;
-const Parser = @import("../frontend/kupcad/parser.zig").Parser;
+const Lexer = @import("../frontend/lexer.zig").Lexer;
+const Parser = @import("../frontend/parser.zig").Parser;
 const ParserTest = @import("../frontend/test_utils.zig").ParserTest;
 const KTest = ParserTest(Lexer, Parser);
 

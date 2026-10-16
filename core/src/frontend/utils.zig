@@ -98,25 +98,21 @@ pub const LexerUtils = struct {
         return false;
     }
 
-    pub inline fn isIdentChar(c: u8, comptime is_openscad: bool) bool {
+    pub inline fn isIdentChar(c: u8) bool {
         if (std.ascii.isAlphanumeric(c)) return true;
         if (c == '_' or c == '$') return true;
-        if (!is_openscad and (c == '?' or c == '!' or c == '@')) return true;
+        if (c == '?' or c == '!' or c == '@') return true;
         if (c >= 0x80) return true; // Allow UTF-8 continuation bytes
         return false;
     }
 
-    pub fn consumeIdentLexeme(
-        buffer: []const u8,
-        index: *usize,
-        comptime is_openscad: bool,
-    ) []const u8 {
+    pub fn consumeIdentLexeme(buffer: []const u8, index: *usize) []const u8 {
         const start = index.*;
         while (index.* < buffer.len) {
             const c = buffer[index.*];
             if (c < 0x80) {
                 // Standard ASCII parsing
-                if (isIdentChar(c, is_openscad)) {
+                if (isIdentChar(c)) {
                     index.* += 1;
                 } else {
                     break;
@@ -136,7 +132,7 @@ pub const LexerUtils = struct {
         }
 
         // Allow exactly one '?' or '!' strictly as a terminal identifier suffix
-        if (!is_openscad and index.* < buffer.len) {
+        if (index.* < buffer.len) {
             const c = buffer[index.*];
             if (c == '?' or c == '!') {
                 index.* += 1;

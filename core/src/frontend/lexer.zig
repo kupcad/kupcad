@@ -1,6 +1,6 @@
 const std = @import("std");
-const common_token = @import("../../core/token.zig");
-const utils = @import("../utils.zig");
+const common_token = @import("../core/token.zig");
+const utils = @import("utils.zig");
 
 pub const Tag = enum {
     eof,
@@ -167,7 +167,7 @@ inline fn isIdentStart(c: u8) bool {
 }
 
 inline fn isIdentChar(c: u8) bool {
-    return utils.LexerUtils.isIdentChar(c, false);
+    return utils.LexerUtils.isIdentChar(c);
 }
 
 pub const InterpState = struct {
@@ -564,7 +564,7 @@ pub const Lexer = struct {
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const is_constant = std.ascii.isUpper(self.peek());
-        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index, false);
+        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index);
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             // `self` stays a keyword after `def`, for `def self.name`.

@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const linter = @import("linter.zig");
-const parser_mod = @import("../../frontend/kupcad/parser.zig");
-const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
+const parser_mod = @import("../../frontend/parser.zig");
+const lexer_mod = @import("../../frontend/lexer.zig");
 const limits = @import("../../core/limits.zig");
 const lint_testing = @import("testing.zig");
 

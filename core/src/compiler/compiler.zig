@@ -382,7 +382,6 @@ pub const Compiler = struct {
             // half-built `for` parsed and then did nothing. A new tag is a Zig compile error.
             // Arrays, calls and hashes compile their splats themselves.
             .splat_expr, .double_splat_expr => return self.fail(error.UnknownNode, "'*' and '**' only spread values inside an array, a hash or a call's arguments", .{}),
-            .each_expr => return self.fail(error.UnknownNode, "OpenSCAD's 'each' isn't supported", .{}),
             // Documents with parse errors are never compiled.
             .invalid => return error.UnknownNode,
         }
@@ -1953,7 +1952,6 @@ pub const Compiler = struct {
     /// loop's value is the iterable, or what `break` passes.
     fn compileForStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
         const fs = self.tree.forStmt(node);
-        if (fs.is_intersection) return self.fail(error.UnknownNode, "intersection_for isn't supported", .{});
         const targets = self.tree.getLhsExprs(fs.targets);
         try self.declareTargets(targets);
 

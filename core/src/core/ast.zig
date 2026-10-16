@@ -98,7 +98,6 @@ pub const Tag = enum(u8) {
     splat_expr,
     double_splat_expr,
     defined_expr,
-    each_expr,
     rescue_modifier,
     interpolated_string,
 };
@@ -255,8 +254,6 @@ pub const ForStmt = struct {
     targets: Span, // Span of LhsExpr
     iterable: NodeIndex,
     body: NodeIndex,
-    /// OpenSCAD's intersection_for, which KupCAD doesn't run.
-    is_intersection: bool = false,
 };
 
 pub const CaseStmt = struct {
@@ -615,7 +612,6 @@ pub const Tree = struct {
             .targets = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .iterable = @fromBackingInt(self.extra_data.items[base + 2]),
             .body = @fromBackingInt(self.extra_data.items[base + 3]),
-            .is_intersection = self.extra_data.items[base + 4] != 0,
         };
     }
 
@@ -1089,8 +1085,8 @@ pub const Builder = struct {
         return self.createNode(.while_stmt, main_token, data_idx);
     }
 
-    pub fn forStmt(self: *Builder, targets: Span, iterable: NodeIndex, body: NodeIndex, is_intersection: bool, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ targets, iterable, body, is_intersection });
+    pub fn forStmt(self: *Builder, targets: Span, iterable: NodeIndex, body: NodeIndex, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ targets, iterable, body });
         return self.createNode(.for_stmt, main_token, data_idx);
     }
 
@@ -1182,10 +1178,6 @@ pub const Builder = struct {
 
     pub fn doubleSplatExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
         return self.createNode(.double_splat_expr, main_token, @backingInt(expr));
-    }
-
-    pub fn eachExpr(self: *Builder, expr: NodeIndex, main_token: u24) !NodeIndex {
-        return self.createNode(.each_expr, main_token, @backingInt(expr));
     }
 
     pub fn addDocString(self: *Builder, doc: DocString) !u32 {

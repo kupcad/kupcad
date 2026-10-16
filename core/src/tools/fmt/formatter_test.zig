@@ -2,8 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 
 const LineIndex = @import("../../core/line_index.zig").LineIndex;
-const lexer_mod = @import("../../frontend/kupcad/lexer.zig");
-const parser_mod = @import("../../frontend/kupcad/parser.zig");
+const lexer_mod = @import("../../frontend/lexer.zig");
+const parser_mod = @import("../../frontend/parser.zig");
 const Formatter = @import("formatter.zig").Formatter;
 const FormatterConfig = @import("config.zig").Config;
 

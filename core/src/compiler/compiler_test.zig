@@ -2193,19 +2193,12 @@ fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex) ![]con
     return testing.allocator.dupe(u8, comp.errorDiagnostic().?.message);
 }
 
-fn strayEach(b: *ast.Builder) anyerror!ast.NodeIndex {
-    return b.eachExpr(try b.number("1", 0), 0);
-}
-
 fn straySplat(b: *ast.Builder) anyerror!ast.NodeIndex {
     return b.splatExpr(try b.number("1", 0), 0);
 }
 
 test "Compiler: a node it can't compile is an error, not nil" {
     // Unhandled nodes used to compile to nil: a half-built `for` parsed and did nothing.
-    const each_msg = try compileFailure(strayEach);
-    defer testing.allocator.free(each_msg);
-    try testing.expectEqualStrings("OpenSCAD's 'each' isn't supported", each_msg);
     const splat_msg = try compileFailure(straySplat);
     defer testing.allocator.free(splat_msg);
     try testing.expectEqualStrings("'*' and '**' only spread values inside an array, a hash or a call's arguments", splat_msg);

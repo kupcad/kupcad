@@ -1,5 +1,5 @@
 const std = @import("std");
-const ast = @import("../../core/ast.zig");
+const ast = @import("../core/ast.zig");
 
 pub const DocstringParser = struct {
     allocator: std.mem.Allocator,
