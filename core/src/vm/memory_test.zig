@@ -422,6 +422,31 @@ test "GC: an allocation the memory limit refuses raises an error the script can 
     try support.expectValue(.{ .str = try std.fmt.bufPrint(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
 }
 
+test "GC: a rescued allocation failure goes on in the handler, not out of the run" {
+    // An instruction whose own allocation failed (spreading an array here) returned the
+    // rescue's result from the run itself: a rescued OutOfMemoryError ended the script as if
+    // it had finished, before the handler and everything after it.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.setMemoryLimit(vm.gc.bytes_allocated + 256 * 1024);
+    const source =
+        \\big = (1..20000).to_a
+        \\r = begin
+        \\  both = [*big, *big]
+        \\  "no error"
+        \\rescue OutOfMemoryError => e
+        \\  "rescued"
+        \\end
+        \\after = "ran on"
+    ;
+    const result = try support.runOn(&vm, source);
+    errdefer std.debug.print("last error: {s}\n", .{vm.last_error orelse "-"});
+    try std.testing.expectEqual(.ok, result);
+    try support.expectValue(.{ .str = "rescued" }, vm.globals.get("r") orelse return error.MissingGlobal);
+    try support.expectValue(.{ .str = "ran on" }, vm.globals.get("after") orelse return error.MissingGlobal);
+}
+
 test "GC: the standard library's natives and names live with the VM, outside the sweep" {
     // Each native and each name was its own GC allocation, freed at teardown: a VM cost about
     // 850 allocations before running anything, and the test suite most of its time.
