@@ -103,6 +103,7 @@ test {
     _ = @import("tools/fmt/stability_test.zig");
     _ = @import("cli/pkg_cmd_test.zig");
     _ = @import("cli/doc_test.zig");
+    _ = @import("cli/check_output_test.zig");
     _ = @import("core/string_escape.zig");
     _ = @import("tools/fmt/rules/sort_imports_test.zig");
 
