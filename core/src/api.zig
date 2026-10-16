@@ -9,6 +9,8 @@ const error_kind = @import("vm/error_kind.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const geom = @import("kernel/geometry_handle.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
+const ReadOnlyVfs = @import("vfs/readonly.zig").ReadOnlyVfs;
+const limits = @import("core/limits.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const equivalence = @import("tools/fmt/equivalence.zig");
 const Linter = @import("tools/lint/linter.zig").Linter;
@@ -29,6 +31,8 @@ pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
 const MAX_FIX_PASSES = 10;
+/// How deep modelFingerprint follows Arrays of shapes inside Arrays (an Array can hold itself).
+const MAX_MODEL_NESTING = 64;
 
 /// Formats a parsed Document; the caller owns the result. It is checked before it is
 /// returned: it must parse, mean the same program (tools/fmt/equivalence.zig) and keep
@@ -111,13 +115,17 @@ fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) 
 
 /// `source` with every safe lint fix applied (`kupcad check --fix`). It repeats until
 /// nothing more applies (one fix can make room for another) and keeps a pass only if the
-/// result has no more syntax or compile errors than before, so a fix can never break the
-/// model. Caller owns `source`; `fixes` counts the findings resolved.
+/// result has no more syntax or compile errors than before and builds the same model
+/// (fixKeepsModel), so a fix can never break or change the part. Caller owns `source`;
+/// `fixes` counts the findings resolved.
 pub fn fixCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, config: LinterConfig) !FixResult {
     var current = try allocator.dupe(u8, source);
     errdefer allocator.free(current);
     var fixes: usize = 0;
     var pass: usize = 0;
+    // The model of `source`, taken the first time a pass has something to apply.
+    var original_model: ?u64 = null;
+    var model_taken = false;
     while (pass < MAX_FIX_PASSES) : (pass += 1) {
         const diags = try checkCode(allocator, io, current, config);
         defer freeDiagnostics(allocator, diags);
@@ -126,7 +134,11 @@ pub fn fixCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, con
 
         const after = try checkCode(allocator, io, applied.source, config);
         defer freeDiagnostics(allocator, after);
-        if (errorCount(after) > errorCount(diags)) {
+        if (!model_taken) {
+            original_model = try modelFingerprint(allocator, io, source);
+            model_taken = true;
+        }
+        if (errorCount(after) > errorCount(diags) or !try fixKeepsModel(allocator, io, original_model, applied.source)) {
             allocator.free(applied.source);
             return .{ .source = current, .fixes = fixes, .refused = true };
         }
@@ -140,9 +152,80 @@ pub fn fixCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, con
 pub const FixResult = struct {
     source: []u8,
     fixes: usize,
-    /// A pass was dropped because it would have added errors (a bug in a rule's fix).
+    /// A pass was dropped because it would have added errors or changed the model (a bug
+    /// in a rule's fix).
     refused: bool,
 };
+
+/// Whether `candidate` builds the model whose fingerprint is `original`. When the original
+/// can't be told (its script fails, or it leaves a shape with no DAG node) there is nothing
+/// to compare and only the error count guards the fix; a candidate that fails where the
+/// original ran changed it.
+pub fn fixKeepsModel(allocator: std.mem.Allocator, io: std.Io, original: ?u64, candidate: []const u8) !bool {
+    const before = original orelse return true;
+    const after = try modelFingerprint(allocator, io, candidate) orelse return false;
+    return after == before;
+}
+
+/// A hash of the model `source` builds: its shapes' DAG node hashes (which cover every
+/// operation, number and setting below them, by content, and need no kernel work), its
+/// ghosts' meshes and its materials. Null when it can't be told: the script doesn't parse
+/// or compile, fails, passes the interactive limits, or leaves a shape with no DAG node.
+/// The script runs with every write discarded, so one that exports leaves no file.
+fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+    if (doc.diagnostics.len > 0) return null;
+
+    var vm = try VM.init(allocator, io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+    var sandbox = ReadOnlyVfs.init(vm.vfs, null);
+    vm.vfs = sandbox.vfs();
+    vm.line_index = &doc.line_index;
+    vm.instruction_limit = limits.INTERACTIVE_INSTRUCTION_LIMIT;
+    vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+    try registry.registerStandardLibrary(&vm);
+
+    var program = chunk.Chunk.init();
+    defer program.free(allocator);
+    var compiler = Compiler.init(allocator, &doc.tree, doc.symbols, doc.tokens.starts, &program, &vm);
+    defer compiler.deinit();
+    compiler.compile(doc.tree.root) catch return null;
+    if (vm.interpret(&program) != .ok) return null;
+
+    var hasher = std.hash.Wyhash.init(0);
+    if (vm.stack_top > 0 and !hashShapes(&hasher, &vm, vm.stack[0], 0)) return null;
+    for (vm.display_list.items) |ghost| {
+        if (!(kernel.hashMesh(&hasher, allocator, ghost) catch return null)) hasher.update(std.mem.asBytes(&ghost.engine));
+    }
+    for (vm.materials.items) |m| m.hashInto(&hasher);
+    return hasher.final();
+}
+
+/// modelFingerprint, for tests that compare models (api_test.zig).
+pub fn modelFingerprintForTest(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
+    if (!@import("builtin").is_test) @compileError("tests only");
+    return modelFingerprint(allocator, io, source);
+}
+
+/// Feeds the DAG hashes of the shapes in `val` (a shape, or an Array or assembly of them)
+/// to `hasher`; false for a shape that has no DAG node.
+fn hashShapes(hasher: *std.hash.Wyhash, vm: *const VM, val: value.Value, depth: usize) bool {
+    const hashes = vm.dag_builder.node_hashes.items;
+    const node: ?u32 = if (val.isGeometry()) val.asGeometry().dag_idx else if (val.isCrossSection()) val.asCrossSection().dag_idx else null;
+    if (node) |idx| {
+        if (idx >= hashes.len) return false;
+        hasher.update(std.mem.asBytes(&hashes[idx]));
+        return true;
+    }
+    const items: []const value.Value = if (val.isAssembly()) val.asAssembly().parts.items.items else if (val.isArray()) val.asArray().items.items else return true;
+    if (depth >= MAX_MODEL_NESTING) return false;
+    for (items) |item| {
+        if (!hashShapes(hasher, vm, item, depth + 1)) return false;
+    }
+    return true;
+}
 
 /// Syntax and compile errors: the findings no rule made.
 fn errorCount(diags: []const LinterDiagnostic) usize {

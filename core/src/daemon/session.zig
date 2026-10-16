@@ -322,31 +322,13 @@ pub const ScriptSession = struct {
     fn fingerprintOutput(self: *ScriptSession, handle: ?geom.GeometryHandle, source: []const u8) !u64 {
         var hasher = std.hash.Wyhash.init(0);
         var meshed = false;
-        if (handle) |h| meshed = try hashMesh(&hasher, self.allocator, h);
+        if (handle) |h| meshed = try kernel.hashMesh(&hasher, self.allocator, h);
         for (self.vm.display_list.items) |ghost| {
-            if (try hashMesh(&hasher, self.allocator, ghost)) meshed = true;
+            if (try kernel.hashMesh(&hasher, self.allocator, ghost)) meshed = true;
         }
         if (!meshed) hasher.update(source);
-        for (self.vm.materials.items) |mat| {
-            hasher.update(&mat.rgb);
-            hasher.update(std.mem.asBytes(&mat.alpha));
-            hasher.update(std.mem.asBytes(&mat.roughness));
-            hasher.update(std.mem.asBytes(&mat.metallic));
-            hasher.update(std.mem.asBytes(&mat.transmission));
-            hasher.update(std.mem.asBytes(&mat.role));
-        }
+        for (self.vm.materials.items) |mat| mat.hashInto(&hasher);
         return hasher.final();
-    }
-
-    /// Feeds a handle's mesh to `hasher`; false when the engine can't mesh it.
-    fn hashMesh(hasher: *std.hash.Wyhash, allocator: std.mem.Allocator, handle: geom.GeometryHandle) !bool {
-        if (!kernel.supports(handle.engine, .mesh)) return false;
-        const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
-        defer allocator.free(mesh.vert_props);
-        defer allocator.free(mesh.tri_verts);
-        hasher.update(std.mem.sliceAsBytes(mesh.vert_props));
-        hasher.update(std.mem.sliceAsBytes(mesh.tri_verts));
-        return true;
     }
 
     pub fn cancel(self: *ScriptSession) void {

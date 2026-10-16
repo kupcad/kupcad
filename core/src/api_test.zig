@@ -233,3 +233,49 @@ test "API: an STL of several parts is their union; glTF keeps them apart" {
     defer testing.allocator.free(glb);
     try testing.expectEqualStrings("glTF", glb[0..4]);
 }
+
+/// fixKeepsModel with `original` built from `before`.
+fn keepsModel(before: []const u8, after: []const u8) !bool {
+    return api.fixKeepsModel(testing.allocator, testing.io, try api.modelFingerprintForTest(testing.allocator, testing.io, before), after);
+}
+
+test "API: a lint fix is kept only when it builds the same model" {
+    // fixCode guarded fixes by the error count alone, so a fix that changed the part
+    // (dropped a ghost, a material, an engine setting, a size) was written back.
+    try testing.expect(try keepsModel("x = 1\ncube(10)\n", "_x = 1\ncube(10)\n"));
+    try testing.expect(try keepsModel("a = cube(10)\nb = a.translate(1, 0, 0)\nb\n", "_a = cube(10)\nb = _a.translate(1, 0, 0)\nb\n"));
+    const changed = [_][2][]const u8{
+        .{ "cube(10)\n", "cube(11)\n" },
+        .{ "cube(10).material(color: \"#ff0000\")\n", "cube(10).material(color: \"#00ff00\")\n" },
+        .{ "g = cube(5).ghost\ncube(10)\n", "cube(10)\n" },
+        .{ "CAD.config(engine: :brep)\ncube(10)\n", "cube(10)\n" },
+        .{ "[cube(1), cube(2)]\n", "[cube(1)]\n" },
+        .{ "cube(10)\n", "cube(\n" }, // no longer parses
+        .{ "cube(10)\n", "cube(10).undefined_thing\n" }, // fails where the original ran
+    };
+    for (changed) |c| {
+        errdefer std.debug.print("{s}  ->  {s}\n", .{ c[0], c[1] });
+        try testing.expect(!try keepsModel(c[0], c[1]));
+    }
+    // Nothing to compare when the original itself fails: the error count still guards.
+    try testing.expect(try keepsModel("cube(10).undefined_thing\n", "cube(11)\n"));
+}
+
+test "API: telling a model runs it with every write discarded" {
+    const probe = "fingerprint_probe.stl";
+    _ = try api.modelFingerprintForTest(testing.allocator, testing.io, "cube(1).export_stl(\"" ++ probe ++ "\")\n");
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, probe, .{}));
+}
+
+test "API: fixCode fixes every finding over as many passes as it takes, and then nothing" {
+    const source = "a = 1\nb = 2\nc = cube(3)\ncube(10)\n";
+    const first = try api.fixCode(testing.allocator, testing.io, source, .{});
+    defer testing.allocator.free(first.source);
+    try testing.expect(!first.refused);
+    try testing.expectEqual(@as(usize, 3), first.fixes);
+    try testing.expectEqualStrings("_a = 1\n_b = 2\n_c = cube(3)\ncube(10)\n", first.source);
+    const again = try api.fixCode(testing.allocator, testing.io, first.source, .{});
+    defer testing.allocator.free(again.source);
+    try testing.expectEqual(@as(usize, 0), again.fixes);
+    try testing.expectEqualStrings(first.source, again.source);
+}

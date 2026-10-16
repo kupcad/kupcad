@@ -380,6 +380,18 @@ pub inline fn numTris(handle: geom.GeometryHandle) ?usize {
     return dispatch("numTrisFn", handle, .{});
 }
 
+/// Feeds `handle`'s mesh (positions and triangles) to `hasher`; false when the engine
+/// has no mesh of it (supports(engine, .mesh)).
+pub fn hashMesh(hasher: *std.hash.Wyhash, allocator: std.mem.Allocator, handle: geom.GeometryHandle) error{MeshExtractionFailed}!bool {
+    if (!supports(handle.engine, .mesh)) return false;
+    const mesh = getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+    defer allocator.free(mesh.vert_props);
+    defer allocator.free(mesh.tri_verts);
+    hasher.update(std.mem.sliceAsBytes(mesh.vert_props));
+    hasher.update(std.mem.sliceAsBytes(mesh.tri_verts));
+    return true;
+}
+
 /// Deep copy; the caller owns the returned handle.
 pub inline fn clone(handle: geom.GeometryHandle) ?geom.GeometryHandle {
     return dispatch("cloneFn", handle, .{});

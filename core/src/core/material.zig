@@ -11,6 +11,16 @@ pub const MaterialDef = struct {
     metallic: f64 = 0.0,
     transmission: f64 = 0.0,
     role: MaterialRole = .standard,
+
+    /// Feeds every property to `hasher`, for fingerprints of what a model shows.
+    pub fn hashInto(self: MaterialDef, hasher: *std.hash.Wyhash) void {
+        hasher.update(&self.rgb);
+        hasher.update(std.mem.asBytes(&self.alpha));
+        hasher.update(std.mem.asBytes(&self.roughness));
+        hasher.update(std.mem.asBytes(&self.metallic));
+        hasher.update(std.mem.asBytes(&self.transmission));
+        hasher.update(std.mem.asBytes(&self.role));
+    }
 };
 
 /// The sRGB bytes of "#RRGGBB" or "#RGB" (each digit doubled), or null for anything else.

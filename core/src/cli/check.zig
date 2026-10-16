@@ -193,7 +193,7 @@ fn fixFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, sour
     const c = totals.reporter.err_style;
     const result = try api.fixCode(allocator, io, source, totals.config);
     if (result.refused) {
-        totals.reporter.err("{s}{s}: a fix would have broken this file and was left out; please report it{s}\n", .{ c.yellow, file_path, c.reset });
+        totals.reporter.err("{s}{s}: a fix would have broken or changed the model in this file and was left out; please report it{s}\n", .{ c.yellow, file_path, c.reset });
     }
     if (std.mem.eql(u8, result.source, source)) {
         allocator.free(result.source);
