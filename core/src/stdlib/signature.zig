@@ -8,6 +8,9 @@ pub const Signature = struct {
     keywords: []const []const u8 = &.{},
     /// Parameters, by position or keyword, that must be greater than zero.
     sizes: []const []const u8 = &.{},
+    /// Parameters that must be greater than zero when the receiver is a Solid: a sketch's
+    /// `offset` may shrink it, a solid's can't.
+    solid_sizes: []const []const u8 = &.{},
     /// What a lone positional argument means when it sets more than the first parameter
     /// (`cube(5)` is a 5 mm cube, not one 5 mm in x): the name hints show for it.
     single: ?[]const u8 = null,

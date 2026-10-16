@@ -1,2 +1,3 @@
 1:10 W [nonpositive-size] cube expects x to be greater than zero, got -5
 2:23 W [nonpositive-size] cylinder expects h to be greater than zero, got 0
+4:20 W [nonpositive-size] a Solid's offset expects delta to be greater than zero, got -1
