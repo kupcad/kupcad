@@ -392,8 +392,12 @@ test "GC: garbage is collected before the memory limit stops a script" {
     const support = @import("../test_support.zig");
     var vm = try support.initVm();
     defer vm.deinit();
-    vm.setMemoryLimit(vm.gc.bytes_allocated + 256 * 1024);
-    try std.testing.expectEqual(.ok, try support.runOn(&vm, "i = 0\nwhile i < 100000\n  g = (0..i)\n  i += 1\nend"));
+    const headroom = 256 * 1024;
+    vm.setMemoryLimit(vm.gc.bytes_allocated + headroom);
+    // Garbage enough to fill the limit four times over.
+    var buf: [64]u8 = undefined;
+    const source = try std.fmt.bufPrint(&buf, "i = 0\nwhile i < {d}\n  g = (0..i)\n  i += 1\nend", .{4 * headroom / @sizeOf(value.ObjRange)});
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
 }
 
 test "GC: an allocation the memory limit refuses raises an error the script can rescue" {

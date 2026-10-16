@@ -16,7 +16,7 @@ const support = @import("../test_support.zig");
 /// The budget the runaway-loop and runaway-heap cases run under: the interactive limits
 /// themselves would take seconds of a Debug test run to reach, and the mechanism is the same.
 const SMALL_INSTRUCTION_BUDGET: usize = 10_000;
-const SMALL_MEMORY_BUDGET: usize = 1024 * 1024;
+const SMALL_MEMORY_BUDGET: usize = 256 * 1024;
 
 /// One check per limit, by the limit's name.
 const CASES = .{

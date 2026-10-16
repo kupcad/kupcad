@@ -141,13 +141,21 @@ pub fn expectValue(expected: Expected, r: value.Value) !void {
 /// allocation. Each run must free everything it allocated, and must either fail or give
 /// exactly what a run without failures gives (`run` returns its result as bytes it
 /// allocated): a run that swallowed a failure and went on with less would hide a bug.
+///
+/// The runs allocate through a checking allocator that records no stack traces: the
+/// testing allocator captures one on every allocation and free (by DWARF unwinding on
+/// macOS, about 20 µs), and a sweep that replays a run once per allocation spent most of
+/// its time there. Double frees and writes after free are still caught, and leaks are
+/// counted by the failing allocator.
 pub fn expectAllocationFailuresHandled(context: anytype, comptime run: fn (@TypeOf(context), std.mem.Allocator) anyerror![]const u8) !void {
     const expected = try run(context, std.testing.allocator);
     defer std.testing.allocator.free(expected);
+    var checked: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 0 });
+    defer std.debug.assert(checked.deinit() == 0);
     var fail_index: usize = 0;
     while (true) : (fail_index += 1) {
         errdefer std.debug.print("with allocation {d} failing\n", .{fail_index});
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
+        var failing = std.testing.FailingAllocator.init(checked.allocator(), .{ .fail_index = fail_index });
         const allocator = failing.allocator();
         const done = if (run(context, allocator)) |bytes| blk: {
             defer allocator.free(bytes);
