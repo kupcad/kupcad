@@ -112,6 +112,14 @@ pub const Layout = union(enum) {
     polyhedron,
     /// `data` is the node's slot in concrete_leaves.
     concrete,
+
+    /// Whether the payload's parts can be of different lengths from node to node.
+    pub fn variesInLength(self: Layout) bool {
+        return switch (self) {
+            .operand_list, .polygon, .polygons => true,
+            else => false,
+        };
+    }
 };
 
 pub fn layoutOf(tag: DAGTag) Layout {
@@ -176,7 +184,8 @@ const PayloadParts = struct {
     layout: Layout,
     step: u32 = 0,
 
-    fn next(self: *PayloadParts) ?PayloadPart {
+    // Inline: it runs for every node a script builds, a few times each.
+    inline fn next(self: *PayloadParts) ?PayloadPart {
         defer self.step += 1;
         const b = self.b;
         const extra = b.extra_data.items;
@@ -1000,16 +1009,18 @@ pub const DAGBuilder = struct {
         // By content, not id: the hash keys the result cache, which outlives the table.
         hasher.update(std.mem.asBytes(&self.settings(node.settings).resultHash()));
 
-        // Every variable-length part with its length, so payloads split differently (a
-        // polygon's contours [3 pts][5 pts] and [4 pts][4 pts]) never hash alike.
+        // Where the layout lets a part's length vary, the length too, so payloads split
+        // differently (a polygon's contours [3 pts][5 pts] and [4 pts][4 pts]) never hash
+        // alike; elsewhere the tag fixes it.
         var parts = self.payloadParts(node);
+        const sized = parts.layout.variesInLength();
         while (parts.next()) |part| switch (part) {
             .operands => |operands| {
-                hasher.update(std.mem.asBytes(&@as(u64, operands.len)));
+                if (sized) hasher.update(std.mem.asBytes(&@as(u64, operands.len)));
                 for (operands) |operand| hasher.update(std.mem.asBytes(&(try self.childHash(operand))));
             },
             .numbers => |numbers| {
-                hasher.update(std.mem.asBytes(&@as(u64, numbers.len)));
+                if (sized) hasher.update(std.mem.asBytes(&@as(u64, numbers.len)));
                 hasher.update(std.mem.sliceAsBytes(numbers));
             },
             .value => |v| hasher.update(std.mem.asBytes(&v)),
