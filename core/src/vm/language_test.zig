@@ -395,3 +395,14 @@ fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {
     _ = vm;
     captured_output.appendSlice(testing.allocator, message) catch @panic("out of memory capturing output");
 }
+
+test "Language: rescue names a class by its scoped path, or lexically inside its module" {
+    // `rescue Parts::MyError` was a syntax error, and `rescue MyError` inside module Parts
+    // looked the name up as a bare global, which a class defined in a module doesn't get.
+    const parts = "module Parts\n  class MyError < StandardError\n  end\n  def self.attempt\n    begin\n      raise MyError, \"inner\"\n    rescue MyError => e\n      e.message\n    end\n  end\nend\n";
+    try expectScripts(&.{
+        .{ .src = parts ++ "r = begin\n  raise Parts::MyError, \"x\"\nrescue Parts::MyError => e\n  e.message\nend", .expected = .{ .str = "x" } },
+        .{ .src = parts ++ "r = Parts.attempt", .expected = .{ .str = "inner" } },
+        .{ .src = parts ++ "r = begin\n  raise \"other\"\nrescue Parts::MyError => e\n  \"wrong\"\nrescue => e\n  e.message\nend", .expected = .{ .str = "other" } },
+    });
+}

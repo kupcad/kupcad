@@ -1344,9 +1344,10 @@ pub const Compiler = struct {
                 if (errors.len > 0) {
                     for (errors) |err_id| {
                         self.current_stack_depth = error_depth; // Reset for each type check
-                        const name_idx = try self.makeStringConstant(self.tree.getString(err_id));
                         try self.emitOp(.op_dup); // Copy error payload
-                        try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+                        // The class as a constant: found through the enclosing namespaces (a
+                        // `rescue MyError` inside `module Parts`) or by its `Parts::MyError` path.
+                        try self.emitVariableLoad(err_id, null);
                         try self.emitOp(.op_is_instance);
 
                         const skip_jump = try self.emitJump(.op_jump_if_false);

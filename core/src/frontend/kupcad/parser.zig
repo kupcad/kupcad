@@ -706,19 +706,7 @@ pub const Parser = struct {
     /// given. A line break after the name ends a bare `export m1` rather than being skipped
     /// in search of `as` (that ran `export m1` into the next line's statement).
     fn parseAliasPair(self: *Parser) ParseError!void {
-        const path_start_tok = self.tok_idx;
-        if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
-        self.advance();
-        while (self.tag(0) == .colon_colon) {
-            self.advance();
-            if (self.tag(0) != .constant and self.tag(0) != .ident) return ParseError.UnexpectedToken;
-            self.advance();
-        }
-
-        const p_start = self.tokens.starts[path_start_tok];
-        const prev_tok = self.tok_idx - 1;
-        const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
-        const orig_id = try self.b.intern(self.source[p_start..p_end]);
+        const orig_id = try self.parseScopedName();
         var alias_id = orig_id;
 
         if (self.skipIgnoredBefore(&.{.keyword_as})) {
@@ -1676,9 +1664,9 @@ pub const Parser = struct {
             if (self.tag(0) == .constant or self.tag(0) == .ident) {
                 const str_s_len = self.scratch_strings.items.len;
                 defer self.scratch_strings.shrinkRetainingCapacity(str_s_len);
+                // `rescue Parts::MyError => e`: a scoped class name, as written
                 while (self.tag(0) == .constant or self.tag(0) == .ident) {
-                    try self.scratch_strings.append(self.allocator, try self.b.intern(self.lexeme(0)));
-                    self.advance();
+                    try self.scratch_strings.append(self.allocator, try self.parseScopedName());
                     if (self.tag(0) == .comma) self.advance() else break;
                 }
                 errors_span = try self.b.addStringLists(self.scratch_strings.items[str_s_len..]);
@@ -1726,6 +1714,23 @@ pub const Parser = struct {
         const left_main_token = self.b.tree.getNode(left).?.main_token;
         const rescue_expr = try self.parseExpression(self.getInfixPrecedence(.keyword_rescue));
         return self.b.rescueModifier(left, rescue_expr, left_main_token) catch ParseError.OutOfMemory;
+    }
+
+    /// `Name` or `Mod::Inner::Name` at the current token, interned as written (`::`
+    /// included), so the compiler resolves it like any constant.
+    fn parseScopedName(self: *Parser) ParseError!ast.StringId {
+        const path_start_tok = self.tok_idx;
+        if (self.tag(0) != .ident and self.tag(0) != .constant) return ParseError.UnexpectedToken;
+        self.advance();
+        while (self.tag(0) == .colon_colon) {
+            self.advance();
+            if (self.tag(0) != .constant and self.tag(0) != .ident) return ParseError.UnexpectedToken;
+            self.advance();
+        }
+        const p_start = self.tokens.starts[path_start_tok];
+        const prev_tok = self.tok_idx - 1;
+        const p_end = self.tokens.starts[prev_tok] + self.tokens.lengths[prev_tok];
+        return self.b.intern(self.source[p_start..p_end]);
     }
 
     fn parseTopLevelScopeResolution(self: *Parser) ParseError!ast.NodeIndex {
