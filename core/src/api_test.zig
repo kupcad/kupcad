@@ -41,28 +41,28 @@ const syntax_broken_source =
 test "API: buildModel rejects a script with syntax errors instead of dropping statements" {
     try testing.expectError(
         error.SyntaxError,
-        api.buildModel(testing.allocator, testing.io, syntax_broken_source, "stl", false, null, null),
+        api.buildModel(testing.allocator, testing.io, syntax_broken_source, .{ .format = .stl }),
     );
 }
 
-test "API: buildModelWithDiagnostic reports the first syntax error as line:col: message" {
+test "API: buildModel with a diagnostic reports the first syntax error as line:col: message" {
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
         error.SyntaxError,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, syntax_broken_source, "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, syntax_broken_source, .{ .format = .stl, .diagnostic = &diag }),
     );
     try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", diag.message.?);
 }
 
-test "API: buildModelWithDiagnostic reports a compile error as line:col: message" {
+test "API: buildModel with a diagnostic reports a compile error as line:col: message" {
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
         error.ProtectedSymbol,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, "w = 1\ncube = 5", "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, "w = 1\ncube = 5", .{ .format = .stl, .diagnostic = &diag }),
     );
     try testing.expectEqualStrings("2:1: 'cube' is a built-in and can't be assigned", diag.message.?);
 }
@@ -78,11 +78,11 @@ test "API: checkCode reports compile errors as well as syntax errors and lints" 
     try testing.expect(found);
 }
 
-test "API: buildModelWithDiagnostic returns model bytes and no message for a valid script" {
+test "API: buildModel with a diagnostic returns model bytes and no message for a valid script" {
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);
 
-    const bytes = try api.buildModelWithDiagnostic(testing.allocator, testing.io, "cube(10)", "stl", false, null, null, &diag);
+    const bytes = try api.buildModel(testing.allocator, testing.io, "cube(10)", .{ .format = .stl, .diagnostic = &diag });
     defer testing.allocator.free(bytes);
 
     // 80-byte header + u32 triangle count + 12 triangles of 50 bytes each
@@ -90,7 +90,7 @@ test "API: buildModelWithDiagnostic returns model bytes and no message for a val
     try testing.expect(diag.message == null);
 }
 
-test "API: buildModelWithDiagnostic reports the uncaught runtime error, not a rescued one" {
+test "API: buildModel with a diagnostic reports the uncaught runtime error, not a rescued one" {
     // Math.sign reports its error before failing; once that is rescued, the report must
     // not shadow the error that actually ends the run.
     const source =
@@ -107,12 +107,12 @@ test "API: buildModelWithDiagnostic reports the uncaught runtime error, not a re
 
     try testing.expectError(
         error.RuntimeError,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
     try testing.expectEqualStrings("RuntimeError: Plate too thin", diag.message.?);
 }
 
-test "API: buildModelWithDiagnostic reports VM runtime errors as the CLI prints them" {
+test "API: buildModel with a diagnostic reports VM runtime errors as the CLI prints them" {
     const source =
         \\def bad_fn()
         \\  undefined_var + 10
@@ -125,26 +125,26 @@ test "API: buildModelWithDiagnostic reports VM runtime errors as the CLI prints 
 
     try testing.expectError(
         error.RuntimeError,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
     // One class prefix (it used to read "RuntimeError: Runtime Error: ...") and the real cause.
     try testing.expectEqualStrings("NameError: Undefined variable 'undefined_var'", diag.message.?);
 }
 
-test "API: buildModelWithDiagnostic keeps a native's own message over the generic boundary error" {
+test "API: buildModel with a diagnostic keeps a native's own message over the generic boundary error" {
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
         error.RuntimeError,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, "Math.sign(\"x\")", "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, "Math.sign(\"x\")", .{ .format = .stl, .diagnostic = &diag }),
     );
     const msg = diag.message.?;
     try testing.expect(std.mem.indexOf(u8, msg, "Math.sign expects a number") != null);
     try testing.expect(std.mem.indexOf(u8, msg, "Native Execution Error") == null);
 }
 
-test "API: buildModelWithDiagnostic sets no message when nothing was reported" {
+test "API: buildModel with a diagnostic sets no message when nothing was reported" {
     // A rescued native report must not resurface as the reason for a later export failure.
     const source =
         \\begin
@@ -159,12 +159,12 @@ test "API: buildModelWithDiagnostic sets no message when nothing was reported" {
 
     try testing.expectError(
         error.NoGeometry,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
     try testing.expect(diag.message == null);
 }
 
-test "API: buildModelWithDiagnostic reports an error raised while exporting" {
+test "API: buildModel with a diagnostic reports an error raised while exporting" {
     // Geometry is lazy, so the run succeeds and the engine mismatch only surfaces when
     // the export evaluates the DAG: `part` is a concrete Manifold leaf, `cube(1)` is B-Rep.
     const source =
@@ -177,7 +177,7 @@ test "API: buildModelWithDiagnostic reports an error raised while exporting" {
 
     try testing.expectError(
         error.RuntimeError,
-        api.buildModelWithDiagnostic(testing.allocator, testing.io, source, "stl", false, null, null, &diag),
+        api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
     try testing.expectEqualStrings(
         "GeometryError: can't combine manifold and brep geometry in one operation",
@@ -191,11 +191,11 @@ test "API: a model the engine can't mesh says so, for every mesh format" {
     inline for (.{ "stl", "glb", "gltf" }) |format| {
         var diag: api.BuildDiagnostic = .{};
         defer diag.deinit(testing.allocator);
-        try testing.expectError(error.RuntimeError, api.buildModelWithDiagnostic(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", format, false, null, null, &diag));
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", .{ .format = api.ExportFormat.parse(format).?, .diagnostic = &diag }));
         try testing.expectEqualStrings(expected, diag.message.?);
     }
     // STEP is what the B-Rep engine exports.
-    const step = try api.buildModel(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", "step", false, null, null);
+    const step = try api.buildModel(testing.allocator, testing.io, "CAD.config(engine: :brep)\ncube(10)", .{ .format = .step });
     defer testing.allocator.free(step);
     try testing.expect(std.mem.startsWith(u8, step, "ISO-10303-21;"));
 }
@@ -218,18 +218,18 @@ test "API: a STEP build refuses a part that isn't exact geometry, instead of dro
     for (cases) |case| {
         var diag: api.BuildDiagnostic = .{};
         defer diag.deinit(testing.allocator);
-        try testing.expectError(error.RuntimeError, api.buildModelWithDiagnostic(testing.allocator, testing.io, case.src, "step", false, null, null, &diag));
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.src, .{ .format = .step, .diagnostic = &diag }));
         try testing.expectEqualStrings(case.message, diag.message.?);
     }
 }
 
 test "API: an STL of several parts is their union; glTF keeps them apart" {
     const source = "[cube(10), cube(10).translate(5, 0, 0)]";
-    const stl = try api.buildModel(testing.allocator, testing.io, source, "stl", false, null, null);
+    const stl = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl });
     defer testing.allocator.free(stl);
     // One closed 15 x 10 x 10 box: the overlap is gone, so fewer than 2 x 12 triangles.
     try testing.expect(std.mem.readInt(u32, stl[80..84], .little) < 24);
-    const glb = try api.buildModel(testing.allocator, testing.io, source, "glb", false, null, null);
+    const glb = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .glb });
     defer testing.allocator.free(glb);
     try testing.expectEqualStrings("glTF", glb[0..4]);
 }

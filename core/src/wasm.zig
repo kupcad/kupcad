@@ -146,7 +146,8 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
 fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
     // File access still goes through the in-memory VFS override; the Io is only used for
     // clocks/stdio by stdlib diagnostics and the debugger.
-    return try api.buildModelWithDiagnostic(allocator, wasmIo(), source, format, use_draco, null, getMemVfs().vfs(), diagnostic);
+    const export_format = api.ExportFormat.parse(format) orelse return error.UnsupportedFormat;
+    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .vfs = getMemVfs().vfs(), .diagnostic = diagnostic });
 }
 
 // --- WASM Export Boundaries ---

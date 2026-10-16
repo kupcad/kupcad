@@ -86,13 +86,13 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         if (h.engine != .brep_native) exact = false;
     }
 
-    const format = if (exact) "step" else "glb";
+    const format: api.ExportFormat = if (exact) .step else .glb;
     const bytes = api.exportModelFromVm(allocator, &vm, format, false) catch |err| {
-        std.debug.print("{s} export failed: {s} {s}\n", .{ format, @errorName(err), vm.last_error orelse "" });
+        std.debug.print("{t} export failed: {s} {s}\n", .{ format, @errorName(err), vm.last_error orelse "" });
         return err;
     };
     defer allocator.free(bytes);
-    try w.print("  exports {s}\n", .{format});
+    try w.print("  exports {t}\n", .{format});
 }
 
 /// Line by line, token by token; `key=a,b,c` values compare as numbers within the key's

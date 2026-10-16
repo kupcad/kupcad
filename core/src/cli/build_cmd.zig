@@ -31,9 +31,8 @@ pub const USAGE =
     \\
 ;
 
-/// Formats `build` can write. Tag names are what `--format` accepts and what
-/// `api.exportModelFromVm` expects.
-const Format = enum { stl, glb, gltf, step };
+/// Formats `build` can write; the tag names are what `--format` accepts.
+const Format = api.ExportFormat;
 
 /// Used only when no `-o` is given and no `--format` either.
 const DEFAULT_FORMAT: Format = .glb;
@@ -159,7 +158,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 reporter.err("Error: Missing format after {s}\n", .{arg});
                 return .failure;
             };
-            explicit_format = std.meta.stringToEnum(Format, name) orelse {
+            explicit_format = Format.parse(name) orelse {
                 reporter.err("Error: Unsupported format '{s}'. Allowed: {s}\n", .{ name, FORMAT_LIST });
                 return .failure;
             };
@@ -252,7 +251,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     // --- 5. Export Resulting Geometry ---
     // Use the shared DRY helper to pull from the VM stack and create the binary file
     // A failure the script can read about was raised (and reported) by the VM.
-    const output_bytes = api.exportModelFromVm(allocator, &session.vm, format_name, use_draco) catch |err| {
+    const output_bytes = api.exportModelFromVm(allocator, &session.vm, format, use_draco) catch |err| {
         reporter.err("Export failed: {}\n", .{err});
         return .failure;
     };

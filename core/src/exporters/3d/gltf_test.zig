@@ -139,7 +139,7 @@ test "GLTF: multi-part exports are valid and each part keeps its own material" {
     ;
     for ([_]bool{ false, true }) |use_draco| {
         errdefer std.debug.print("draco: {}\n", .{use_draco});
-        const bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, "glb", use_draco, null, null);
+        const bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .glb, .draco = use_draco });
         defer std.testing.allocator.free(bytes);
         var glb = try parseGlb(bytes);
         defer glb.deinit();
@@ -196,7 +196,7 @@ fn number(v: std.json.Value) f64 {
 }
 
 test "GLTF: a model without materials uses only the default material" {
-    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "[cube(1), sphere(1).translate(x: 3)]", "glb", false, null, null);
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "[cube(1), sphere(1).translate(x: 3)]", .{ .format = .glb });
     defer std.testing.allocator.free(bytes);
     var glb = try parseGlb(bytes);
     defer glb.deinit();
@@ -226,7 +226,7 @@ test "GLTF: a .gltf export is JSON with the buffer embedded, the same scene as .
     const source = "[cube(2), cube(2).translate(x: 5).material(color: \"#FF0000\")]";
     for ([_]bool{ false, true }) |use_draco| {
         errdefer std.debug.print("draco: {}\n", .{use_draco});
-        const json_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, "gltf", use_draco, null, null);
+        const json_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .gltf, .draco = use_draco });
         defer std.testing.allocator.free(json_bytes);
         try std.testing.expectEqual(@as(u8, '{'), json_bytes[0]);
         var bin: []u8 = &.{};
@@ -235,7 +235,7 @@ test "GLTF: a .gltf export is JSON with the buffer embedded, the same scene as .
         defer doc.deinit();
         try expectValidLayout(&doc);
 
-        const glb_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, "glb", use_draco, null, null);
+        const glb_bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .glb, .draco = use_draco });
         defer std.testing.allocator.free(glb_bytes);
         var glb = try parseGlb(glb_bytes);
         defer glb.deinit();
@@ -257,7 +257,7 @@ test "GLTF: export_gltf picks the container from the file extension" {
 
 test "GLTF: the scene is in metres and Y-up, as glTF defines" {
     // KupCAD works in millimetres, Z-up; a 10 mm cube used to open elsewhere as 10 m.
-    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "cube(10)", "glb", false, null, null);
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, "cube(10)", .{ .format = .glb });
     defer std.testing.allocator.free(bytes);
     var glb = try parseGlb(bytes);
     defer glb.deinit();

@@ -297,19 +297,31 @@ pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayListUnma
     }
 }
 
+/// The formats a model exports to. The tag names are what `kupcad build --format` and the
+/// browser build call them; the format travelled as a string, compared at every use.
+pub const ExportFormat = enum {
+    stl,
+    glb,
+    gltf,
+    step,
+
+    /// The format named `name`, or null for a name that is none.
+    pub fn parse(name: []const u8) ?ExportFormat {
+        return std.meta.stringToEnum(ExportFormat, name);
+    }
+};
+
 /// Extracts evaluated Geometry from the VM stack/display list and routes it to the requested 3D exporter.
 /// A failure the script can read about (an engine that can't mesh, a failed union) is
 /// raised in the VM first, so `vm.last_error` says what went wrong.
 pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
     vm: *VM,
-    format: []const u8,
+    format: ExportFormat,
     use_draco: bool,
 ) ![]const u8 {
-    const is_stl = std.mem.eql(u8, format, "stl");
-    const is_gltf = std.mem.eql(u8, format, "glb") or std.mem.eql(u8, format, "gltf");
-    const is_step = std.mem.eql(u8, format, "step");
-    if (!is_stl and !is_gltf and !is_step) return error.UnsupportedFormat;
+    const is_gltf = format == .glb or format == .gltf;
+    const is_step = format == .step;
 
     // Ghosted items (the display list) are exported beside the model.
     var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
@@ -328,7 +340,7 @@ pub fn exportModelFromVm(
     for (export_handles.items) |h| try vm.requireFeature(h.engine, .mesh);
     if (is_gltf) {
         // GLTF handles multiple distinct meshes naturally
-        const container: gltf_exporter.Container = if (std.mem.eql(u8, format, "gltf")) .gltf else .glb;
+        const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
         return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco, container);
     }
 
@@ -356,32 +368,26 @@ pub fn formatDiagnostic(allocator: std.mem.Allocator, line_index: *const LineInd
     return diagnostic.formatLine(allocator, line_index);
 }
 
-/// Runs `source` and exports the resulting geometry as `format`. Caller owns the bytes.
-/// Fails with error.SyntaxError if the script does not parse cleanly.
-pub fn buildModel(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    source: []const u8,
-    format: []const u8,
-    use_draco: bool,
-    cli_params: ?std.StringHashMap(f64),
-    vfs_override: ?Vfs,
-) ![]const u8 {
-    return buildModelWithDiagnostic(allocator, io, source, format, use_draco, cli_params, vfs_override, null);
-}
+/// How buildModel builds: what it exports to, and what it runs the script with.
+pub const BuildOptions = struct {
+    format: ExportFormat,
+    /// Compress glb and gltf meshes with Draco.
+    draco: bool = false,
+    /// Values for `param(:name, ...)`, as `--param name=value` gives them.
+    params: ?std.StringHashMap(f64) = null,
+    /// The filesystem imports and exports go through (the native one when null).
+    vfs: ?Vfs = null,
+    /// When the build fails with a message, `diagnostic.message` is set to it. Pass a
+    /// fresh `.{}`.
+    diagnostic: ?*BuildDiagnostic = null,
+};
 
-/// `buildModel` that also explains a failure: when the build fails with a message and
-/// `diagnostic` is given, `diagnostic.message` is set to it. Pass a fresh `.{}`.
-pub fn buildModelWithDiagnostic(
-    allocator: std.mem.Allocator,
-    io: std.Io,
-    source: []const u8,
-    format: []const u8,
-    use_draco: bool,
-    cli_params: ?std.StringHashMap(f64),
-    vfs_override: ?Vfs,
-    diagnostic: ?*BuildDiagnostic,
-) ![]const u8 {
+/// Runs `source` and exports the resulting geometry as `options.format`. Caller owns the
+/// bytes. Fails with error.SyntaxError if the script does not parse cleanly. It took its
+/// options as eight positional parameters, in two functions.
+pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, options: BuildOptions) ![]const u8 {
+    const format = options.format;
+    const diagnostic = options.diagnostic;
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
 
@@ -395,19 +401,19 @@ pub fn buildModelWithDiagnostic(
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
 
-    if (vfs_override) |vfs| vm.vfs = vfs;
+    if (options.vfs) |vfs| vm.vfs = vfs;
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
 
     // STEP requires exact B-Rep geometry, not polygonal Manifold meshes
-    if (std.mem.eql(u8, format, "step")) {
+    if (format == .step) {
         var settings = vm.config();
         settings.engine = .brep_native;
         try vm.setConfig(settings);
     }
 
     // Inject parameters securely
-    if (cli_params) |cli_p| {
+    if (options.params) |cli_p| {
         try injectParamsIntoVm(&vm, cli_p.unmanaged);
     }
 
@@ -433,7 +439,7 @@ pub fn buildModelWithDiagnostic(
     vm.clearLastError();
 
     // Geometry is evaluated lazily, so kernel errors (e.g. the mesh budget) surface here.
-    return exportModelFromVm(allocator, &vm, format, use_draco) catch |err| {
+    return exportModelFromVm(allocator, &vm, format, options.draco) catch |err| {
         if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
         return err;
     };
