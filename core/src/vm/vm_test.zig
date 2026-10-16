@@ -4842,6 +4842,50 @@ test "VM: Inline Caching correctly populates and accelerates method invocations"
     try testing.expect(populated_method_caches >= 1);
 }
 
+test "VM: a reader read as a property is cached at its site like a call" {
+    // `b.width` with `def width` found no field, then looked the method up from scratch
+    // on every read (class chain, then the private name).
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+
+    const source =
+        \\class Box
+        \\  def initialize(w)
+        \\    @w = w
+        \\  end
+        \\  def width
+        \\    @w
+        \\  end
+        \\end
+        \\b = Box.new(3)
+        \\total = 0
+        \\i = 0
+        \\while i < 3
+        \\  total = total + b.width
+        \\  i = i + 1
+        \\end
+        \\total
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.init(testing.allocator, &doc.tree, doc.symbols, doc.tokens.starts, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    const result = try executeAndAssertStack(&vm, &out_chunk, 1);
+    try testing.expectEqual(@as(f64, 9.0), result.asNumber());
+
+    // The read site caches Box's `width` closure.
+    const box = vm.globals.get("Box").?.asClass();
+    var cached_reader = false;
+    for (out_chunk.inline_caches.items) |ic| if (ic.cachedMethod(box)) |m| {
+        if (m.isClosure() and std.mem.eql(u8, m.asClosure().function.name.?.chars, "width")) cached_reader = true;
+    };
+    try testing.expect(cached_reader);
+}
+
 test "VM: Polymorphic inline cache correctly overwrites when receiver class changes" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

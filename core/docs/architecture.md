@@ -139,7 +139,7 @@ This prevents open upvalues from dangling or pointing to deallocated stack memor
 
 ### Inline Caching (IC)
 
-Property getters/setters (`op_get_property`, `op_set_property`) and method invocations (`op_invoke`) use a **2-Way Polymorphic Inline Cache (PIC)** (`InlineCache` in `chunk.zig`).
+Property getters/setters (`op_get_property`, `op_set_property`) and method invocations (`op_invoke`) use a **2-Way Polymorphic Inline Cache (PIC)** (`InlineCache` in `chunk.zig`). A property read whose name is a method of the receiver's class (a reader, `b.width` with `def width`) caches that method at the read site, as a call site does (`InlineCache.cachedMethod`); it used to find no field and look the method up from scratch, class chain and private name, on every read.
 
 ```zig
 pub const InlineCache = struct {

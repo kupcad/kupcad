@@ -175,6 +175,13 @@ pub const InlineCache = struct {
         return null;
     }
 
+    /// The method cached for `class` at this site, if the name is one of its methods.
+    pub fn cachedMethod(self: *const InlineCache, class: *value.ObjClass) ?value.Value {
+        if (self.cached_class_1 == class and !self.cached_val_1.isNil()) return self.cached_val_1;
+        if (self.cached_class_2 == class and !self.cached_val_2.isNil()) return self.cached_val_2;
+        return null;
+    }
+
     /// Records that `name` is `class`'s field at `offset` (or its method `method`) here.
     pub fn remember(self: *InlineCache, class: *value.ObjClass, method: value.Value, offset: usize) void {
         if (self.cached_class_1 == null or self.cached_class_1 == class) {

@@ -1174,8 +1174,10 @@ pub const VM = struct {
                         }
 
                         // --- 2. Method Fallback: a reader is called (`q.p ||= 6` read the
-                        // attr_accessor's reader as a value, a truthy method object, and kept it)
-                        if (self.findMethodWithPrivacy(instance.class, name_val, null).method) |method_val| {
+                        // attr_accessor's reader as a value, a truthy method object, and kept it).
+                        // The site's cache remembers the method, as a call site's does: without
+                        // it every read walked the class chain and tried the private name.
+                        if (self.findMethodWithPrivacy(instance.class, name_val, ic).method) |method_val| {
                             if (method_val.isNative()) {
                                 const res = self.executeNative(method_val.asNative(), 0, self.stack.ptr + self.stack_top, false);
                                 if (res != .ok) return res;
@@ -3366,6 +3368,9 @@ pub const VM = struct {
 
         if (ic.fieldOffset(instance.class)) |cached| {
             offset = cached;
+        } else if (ic.cachedMethod(instance.class) != null) {
+            // The site reads a method of this class (a reader): no field to look up.
+            return null;
         } else if (instance.class.instance_layout.get(name)) |idx| {
             ic.remember(instance.class, value.Value.initNil(), idx);
             offset = idx;
@@ -3808,14 +3813,7 @@ pub const VM = struct {
 
     inline fn findMethodCached(self: *VM, class: *value.ObjClass, name: value.Value, ic: *chunk.InlineCache) ?value.Value {
         self.refreshInlineCache(ic);
-        // Fast Path (Monomorphic)
-        if (ic.cached_class_1 == class) {
-            if (!ic.cached_val_1.isNil()) return ic.cached_val_1;
-        }
-        // Fast Path (Polymorphic)
-        else if (ic.cached_class_2 == class) {
-            if (!ic.cached_val_2.isNil()) return ic.cached_val_2;
-        }
+        if (ic.cachedMethod(class)) |cached| return cached;
 
         // Slow Path (Traverse inheritance hierarchy)
         if (self.findMethod(class, name)) |method_val| {
