@@ -14,8 +14,7 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
     if (!value.Value.isFalsey(condition)) return value.Value.initNil();
 
     const err_class = error_class orelse vm.error_classes.get(.AssertionError) orelse {
-        _ = vm.raiseError(.RuntimeError, "AssertionError class not found", .{});
-        return error.RuntimeError;
+        return vm.fail(.RuntimeError, "AssertionError class not found", .{});
     };
 
     const msg_val = if (block) |closure|
@@ -59,8 +58,7 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
 
 fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !value.Value {
     if (msg.isString()) return msg;
-    _ = vm.raiseError(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{util.typeName(vm, msg)});
-    return error.RuntimeError;
+    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{util.typeName(vm, msg)});
 }
 
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {

@@ -1779,15 +1779,13 @@ pub const VM = struct {
     /// Raises the GeometryError for one operation given geometry of two engines.
     pub fn requireSameEngine(self: *VM, a: geom.EngineType, b: geom.EngineType) error{RuntimeError}!void {
         if (a == b) return;
-        _ = self.raiseError(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
-        return error.RuntimeError;
+        return self.fail(.GeometryError, "can't combine {s} and {s} geometry in one operation", .{ a.scriptName(), b.scriptName() });
     }
 
     /// Raises NotImplementedError unless `engine` has `feature` (see kernel.Feature).
     pub fn requireFeature(self: *VM, engine: geom.EngineType, feature: kernel.Feature) error{RuntimeError}!void {
         if (kernel.supports(engine, feature)) return;
-        _ = self.raiseError(.NotImplementedError, error_kind.UNSUPPORTED_FMT, .{ engine.scriptName(), feature.describe() });
-        return error.RuntimeError;
+        return self.fail(.NotImplementedError, error_kind.UNSUPPORTED_FMT, .{ engine.scriptName(), feature.describe() });
     }
 
     /// For a feature the result can do without (materials): warns, once per run, that
@@ -2636,8 +2634,7 @@ pub const VM = struct {
             try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ map.keys()[i], map.values()[i] });
             return true;
         }
-        _ = self.raiseError(.TypeError, "for expects an Array, a Range or a Map, got {s}", .{self.typeName(iterable)});
-        return error.RuntimeError;
+        return self.fail(.TypeError, "for expects an Array, a Range or a Map, got {s}", .{self.typeName(iterable)});
     }
 
     fn executeGetIndex(self: *VM) InterpretResult {
@@ -3093,8 +3090,7 @@ pub const VM = struct {
             if (self.findMethod(val.asInstance().class, name)) |method| if (method.isClosure()) {
                 const shown = try self.callMethodSync(val, method.asClosure(), &.{});
                 if (!shown.isString()) {
-                    _ = self.raiseError(.TypeError, "{s}#to_s must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
-                    return error.RuntimeError;
+                    return self.fail(.TypeError, "{s}#to_s must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
                 }
                 return writer.writeAll(shown.asString().chars);
             };
@@ -3667,6 +3663,13 @@ pub const VM = struct {
     /// The class name is not part of the message (it's printed from the class for uncaught
     /// errors), so `fmt` must not start with a kind prefix or end in a newline; both are
     /// rejected at compile time.
+    /// Raises `kind` (raiseError) and gives the error a native returns once it has: what
+    /// `_ = vm.raiseError(...); return error.RuntimeError;` spelled out at every site.
+    pub fn fail(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
+        _ = self.raiseError(kind, fmt, args);
+        return error.RuntimeError;
+    }
+
     pub fn raiseError(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) InterpretResult {
         comptime {
             checkMessageLayout(fmt);

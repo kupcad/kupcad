@@ -108,24 +108,20 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         } else if (std.mem.eql(u8, dir_str, "right")) {
             direction = .{ 1, 0, 0 };
         } else {
-            _ = vm.raiseError(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
         }
     } else {
-        _ = vm.raiseError(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
     }
 
     const tolerance = vm.config().tolerance;
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
-        _ = vm.raiseError(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
-        return error.RuntimeError;
+        return vm.fail(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
     };
 
     if (faces.len == 0) {
-        _ = vm.raiseError(.ValueError, "on_face found no planar face facing [{f}, {f}, {f}]", .{ value.fmtNumber(direction[0]), value.fmtNumber(direction[1]), value.fmtNumber(direction[2]) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "on_face found no planar face facing [{f}, {f}, {f}]", .{ value.fmtNumber(direction[0]), value.fmtNumber(direction[1]), value.fmtNumber(direction[2]) });
     }
 
     return try vm.allocateWorkplane(receiver, faces[0].centroid, faces[0].normal);
@@ -137,8 +133,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     const parsed = try util.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
     const positional = parsed.positional;
     if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
-        _ = vm.raiseError(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
     }
 
     // Unset normal components are 0 once any is given, so split_by_plane(nz: 1)
@@ -188,8 +183,7 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
     try vm.requireFeature(handle.engine, .decompose);
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
     const parts = kernel.decompose(vm.allocator, handle) orelse {
-        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"decompose"});
-        return error.RuntimeError;
+        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"decompose"});
     };
     defer vm.allocator.free(parts);
 
@@ -245,8 +239,7 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
     // cache owns). Registering it as a `.concrete` leaf hands ownership to the
     // DAG builder and keeps the result usable in later DAG ops.
     const simplified_handle = kernel.simplify(handle, tol) orelse {
-        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"simplify"});
-        return error.RuntimeError;
+        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"simplify"});
     };
     const leaf_idx = vm.dag_builder.addConcrete(simplified_handle) catch |err| {
         kernel.destruct(simplified_handle);

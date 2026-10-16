@@ -81,8 +81,7 @@ fn objectMethod(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Va
     const query_val = try vm.allocateString(method_name);
     const class = classOrObject(vm, receiver);
     const method_val = (if (class) |c| vm.findMethod(c, query_val) else null) orelse {
-        _ = vm.raiseError(.NameError, "undefined method '{s}' for {s}", .{ method_name, util.typeName(vm, receiver) });
-        return error.RuntimeError;
+        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, util.typeName(vm, receiver) });
     };
     const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val);
     return value.Value.initObj(&bound.obj);

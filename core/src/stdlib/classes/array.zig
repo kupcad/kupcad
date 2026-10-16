@@ -20,8 +20,7 @@ pub fn arrayNew(vm: *VM, class: value.Value, size_num: ?f64, fill: ?value.Value)
     _ = class;
     const size = size_num orelse 0;
     if (!(size >= 0) or @trunc(size) != size or size > @as(f64, @floatFromInt(limits.MAX_RANGE_MATERIALIZE))) {
-        _ = vm.raiseError(.ValueError, "Array.new size must be a whole number from 0 to {d}, got {f}", .{ limits.MAX_RANGE_MATERIALIZE, value.fmtNumber(size) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "Array.new size must be a whole number from 0 to {d}, got {f}", .{ limits.MAX_RANGE_MATERIALIZE, value.fmtNumber(size) });
     }
     const arr = try vm.gc.allocateArray(vm);
     vm.push(value.Value.initObj(&arr.obj));
@@ -68,8 +67,7 @@ pub fn arrayUnshift(vm: *VM, arr: *value.ObjArray, val: value.Value) !value.Valu
 /// elements available (so start == size yields []).
 pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !value.Value {
     if (std.math.isNan(start_num) or std.math.isNan(len_num)) {
-        _ = vm.raiseError(.ValueError, "Array#slice arguments must be numbers, got NaN.", .{});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "Array#slice arguments must be numbers, got NaN.", .{});
     }
     // Resolve everything in f64 first: @intFromFloat on a negative or huge value
     // panics in Debug and is UB in ReleaseFast, and an unclamped length used to
@@ -150,8 +148,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 /// Array#reduce(initial_val, block) / Array#reduce(block)
 pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, block: ?*value.ObjClosure) !value.Value {
     if (block == null) {
-        _ = vm.raiseError(.ArgumentError, "reduce requires a block.", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "reduce requires a block.", .{});
     }
 
     // SAFETY: acc_val is conditionally initialized below based on `initial_val` presence or array length.
@@ -288,12 +285,11 @@ fn arrayExtreme(vm: *VM, arr: *value.ObjArray, comptime name: []const u8, compti
     const items = arr.items.items;
     if (items.len == 0) return value.Value.initNil();
     var best = items[0];
-    if (!best.isNumber() and !best.isString()) return typeError(vm, name ++ " needs Numbers or Strings, got {s} at index 0", .{vm.typeName(best)});
+    if (!best.isNumber() and !best.isString()) return vm.fail(.TypeError, name ++ " needs Numbers or Strings, got {s} at index 0", .{vm.typeName(best)});
     for (items, 0..) |item, i| {
-        if (item.isNumber() != best.isNumber()) return typeError(vm, name ++ " can't compare {s} with {s}", .{ vm.typeName(best), vm.typeName(item) });
+        if (item.isNumber() != best.isNumber()) return vm.fail(.TypeError, name ++ " can't compare {s} with {s}", .{ vm.typeName(best), vm.typeName(item) });
         if (item.isNumber() and std.math.isNan(item.asNumber())) {
-            _ = vm.raiseError(.MathError, name ++ ": the Array holds NaN at index {d}", .{i});
-            return error.RuntimeError;
+            return vm.fail(.MathError, name ++ ": the Array holds NaN at index {d}", .{i});
         }
         const order = if (item.isNumber()) std.math.order(item.asNumber(), best.asNumber()) else std.mem.order(u8, item.asString().chars, best.asString().chars);
         if (order == wanted) best = item;
@@ -307,20 +303,14 @@ pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
     var sum: f64 = 0.0;
     var all_finite = true;
     for (arr.items.items, 0..) |item, i| {
-        if (!item.isNumber()) return typeError(vm, "sum needs Numbers, got {s} at index {d}", .{ vm.typeName(item), i });
+        if (!item.isNumber()) return vm.fail(.TypeError, "sum needs Numbers, got {s} at index {d}", .{ vm.typeName(item), i });
         if (!std.math.isFinite(item.asNumber())) all_finite = false;
         sum += item.asNumber();
     }
     if (all_finite and !std.math.isFinite(sum)) {
-        _ = vm.raiseError(.RangeError, "sum overflowed the Number range", .{});
-        return error.RuntimeError;
+        return vm.fail(.RangeError, "sum overflowed the Number range", .{});
     }
     return value.Value.initNumber(sum);
-}
-
-fn typeError(vm: *VM, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
-    _ = vm.raiseError(.TypeError, fmt, args);
-    return error.RuntimeError;
 }
 
 /// How Array#sort orders two values: natively for Numbers or Strings, else by the block,
@@ -351,15 +341,13 @@ const SortOrder = struct {
                 .value => |v| v,
             };
             if (!res.isNumber()) {
-                _ = self.vm.raiseError(.TypeError, "sort block must return a Number (-1, 0, 1).", .{});
-                return error.RuntimeError;
+                return self.vm.fail(.TypeError, "sort block must return a Number (-1, 0, 1).", .{});
             }
             return res.asNumber() < 0;
         }
         if (a.isNumber() and b.isNumber()) return a.asNumber() < b.asNumber();
         if (a.isString() and b.isString()) return std.mem.order(u8, a.asString().chars, b.asString().chars) == .lt;
-        _ = self.vm.raiseError(.ArgumentError, "sort can't compare {s} with {s}; give it a block", .{ self.vm.typeName(a), self.vm.typeName(b) });
-        return error.RuntimeError;
+        return self.vm.fail(.ArgumentError, "sort can't compare {s} with {s}; give it a block", .{ self.vm.typeName(a), self.vm.typeName(b) });
     }
 };
 
@@ -402,12 +390,10 @@ pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
             } else if (inner_items.len == 1) {
                 try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
             } else {
-                _ = vm.raiseError(.ArgumentError, "empty array cannot be converted to key-value pair.", .{});
-                return error.RuntimeError;
+                return vm.fail(.ArgumentError, "empty array cannot be converted to key-value pair.", .{});
             }
         } else {
-            _ = vm.raiseError(.ArgumentError, "wrong element type (expected array).", .{});
-            return error.RuntimeError;
+            return vm.fail(.ArgumentError, "wrong element type (expected array).", .{});
         }
     }
 

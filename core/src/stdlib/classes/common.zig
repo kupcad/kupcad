@@ -7,7 +7,6 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const geom = @import("../../kernel/geometry_handle.zig");
 const util = @import("../methods/util.zig");
-const ErrorKind = @import("../../vm/error_kind.zig").ErrorKind;
 const Signature = @import("../signature.zig").Signature;
 
 /// Defines a native class method mapping
@@ -115,7 +114,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             if (has_receiver) {
                 const receiver = args.receiver();
                 call_args[1] = unboxValue(param_types[1].?, receiver, vm) catch |err| {
-                    if (err == error.WrongType) return raise(vm, .TypeError, "{s} can't be called on {s}", .{ args.name, util.typeName(vm, receiver) });
+                    if (err == error.WrongType) return vm.fail(.TypeError, "{s} can't be called on {s}", .{ args.name, util.typeName(vm, receiver) });
                     return err;
                 };
             }
@@ -135,7 +134,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
                     call_args[slot] = null;
                 } else {
                     call_args[slot] = unboxValue(T.?, given[next], vm) catch |err| {
-                        if (err == error.WrongType) return raise(vm, .TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, util.typeName(vm, given[next]) });
+                        if (err == error.WrongType) return vm.fail(.TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, util.typeName(vm, given[next]) });
                         return err;
                     };
                     next += 1;
@@ -143,7 +142,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             }
             if (has_block_param) {
                 if (last_type == *value.ObjClosure) {
-                    call_args[param_types.len - 1] = args.block() orelse return raise(vm, .ArgumentError, "{s} requires a block", .{args.name});
+                    call_args[param_types.len - 1] = args.block() orelse return vm.fail(.ArgumentError, "{s} requires a block", .{args.name});
                 } else {
                     call_args[param_types.len - 1] = args.block();
                 }
@@ -182,26 +181,21 @@ fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []c
     const has_keywords = util.trailingKwargs(given) != null;
     const positional = given.len - @intFromBool(has_keywords);
     if (sig.rest == null and positional > sig.positional.len) {
-        if (sig.positional.len == 0) return raise(vm, .ArgumentError, "{s} takes no positional arguments, got {d}", .{ name, positional });
+        if (sig.positional.len == 0) return vm.fail(.ArgumentError, "{s} takes no positional arguments, got {d}", .{ name, positional });
         const names = comptime blk: {
             var list: []const u8 = "";
             for (sig.positional, 0..) |p, i| list = list ++ (if (i == 0) "" else ", ") ++ p;
             break :blk list;
         };
         const noun = if (sig.positional.len == 1) "argument" else "arguments";
-        return raise(vm, .ArgumentError, "{s} takes at most {d} positional {s} ({s}), got {d}", .{ name, sig.positional.len, noun, names, positional });
+        return vm.fail(.ArgumentError, "{s} takes at most {d} positional {s} ({s}), got {d}", .{ name, sig.positional.len, noun, names, positional });
     }
-    if (has_keywords and sig.keywords.len == 0) return raise(vm, .ArgumentError, "{s} takes no keywords", .{name});
-}
-
-fn raise(vm: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
-    _ = vm.raiseError(kind, fmt, args);
-    return error.RuntimeError;
+    if (has_keywords and sig.keywords.len == 0) return vm.fail(.ArgumentError, "{s} takes no keywords", .{name});
 }
 
 fn arityError(vm: *VM, name: []const u8, required: usize, max: ?usize, given: usize) error{RuntimeError} {
     const noun = if (required == 1) "argument" else "arguments";
-    if (max == null) return raise(vm, .ArgumentError, "{s} expects at least {d} {s}, got {d}", .{ name, required, noun, given });
-    if (max.? == required) return raise(vm, .ArgumentError, "{s} expects {d} {s}, got {d}", .{ name, required, noun, given });
-    return raise(vm, .ArgumentError, "{s} expects {d} to {d} arguments, got {d}", .{ name, required, max.?, given });
+    if (max == null) return vm.fail(.ArgumentError, "{s} expects at least {d} {s}, got {d}", .{ name, required, noun, given });
+    if (max.? == required) return vm.fail(.ArgumentError, "{s} expects {d} {s}, got {d}", .{ name, required, noun, given });
+    return vm.fail(.ArgumentError, "{s} expects {d} to {d} arguments, got {d}", .{ name, required, max.?, given });
 }

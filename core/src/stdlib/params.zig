@@ -14,19 +14,12 @@ const boolean_param = @import("../core/params/boolean.zig");
 const string_param = @import("../core/params/string.zig");
 const choice_param = @import("../core/params/choice.zig");
 
-/// A parameter value of the wrong type (TypeError) or out of its declared range (ValueError).
-fn paramError(vm: *VM, comptime kind: anytype, comptime fmt: []const u8, err_args: anytype) error{RuntimeError} {
-    _ = vm.raiseError(kind, fmt, err_args);
-    return error.RuntimeError;
-}
-
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
 /// declares it, taking the host's injected value (`--param name=v`) over the default.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     const parsed = try util.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
     if (parsed.positional.len != 1) {
-        _ = vm.raiseError(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});
     }
 
     const name = try util.requireName(vm, parsed.positional[0], "param", "the parameter name");
@@ -40,8 +33,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
         if (vm.param_lookup.get(sym_key)) |idx| {
             return vm.param_registry.items(.current_value)[idx];
         }
-        _ = vm.raiseError(.NameError, "parameter :{s} is used before it is defined", .{sym_chars});
-        return error.RuntimeError;
+        return vm.fail(.NameError, "parameter :{s} is used before it is defined", .{sym_chars});
     }
 
     // --- SETTER MODE (Extract Configs) ---
@@ -57,8 +49,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     var choices_array: ?*value.ObjArray = null;
     if (parsed.opts.validate) |rules| {
         if (!rules.isMap()) {
-            _ = vm.raiseError(.TypeError, "param expects a Map for validate, got {s}", .{util.typeName(vm, rules)});
-            return error.RuntimeError;
+            return vm.fail(.TypeError, "param expects a Map for validate, got {s}", .{util.typeName(vm, rules)});
         }
         const checks = try util.parseKwargs(struct { min: ?f64 = null, max: ?f64 = null, in: ?value.Value = null }, vm, &.{rules}, "param validate");
         if (checks.opts.min) |n| min_val = n;
@@ -84,27 +75,27 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     switch (p_type) {
         .number => {
             const num = number_param.normalize(injected_val) catch {
-                return paramError(vm, .TypeError, "parameter :{s} expects a number", .{sym_chars});
+                return vm.fail(.TypeError, "parameter :{s} expects a number", .{sym_chars});
             };
             injected_val = value.Value.initNumber(num);
 
             number_param.validate(num, min_val, max_val) catch |err| {
                 switch (err) {
-                    error.BelowMin => return paramError(vm, .ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) }),
-                    error.AboveMax => return paramError(vm, .ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) }),
+                    error.BelowMin => return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) }),
+                    error.AboveMax => return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) }),
                     else => unreachable,
                 }
             };
         },
         .boolean => {
             const b = boolean_param.normalize(injected_val) catch {
-                return paramError(vm, .TypeError, "parameter :{s} expects true or false", .{sym_chars});
+                return vm.fail(.TypeError, "parameter :{s} expects true or false", .{sym_chars});
             };
             injected_val = value.Value.initBool(b);
         },
         .string, .symbol => {
             const str = string_param.normalize(injected_val) catch {
-                return paramError(vm, .TypeError, "parameter :{s} expects a String", .{sym_chars});
+                return vm.fail(.TypeError, "parameter :{s} expects a String", .{sym_chars});
             };
             injected_val = try vm.allocateString(str);
         },
@@ -112,7 +103,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
 
     if (choices_array) |arr| {
         choice_param.validate(vm, injected_val, arr) catch {
-            return paramError(vm, .ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
+            return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
         };
     }
 

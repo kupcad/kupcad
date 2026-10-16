@@ -16,8 +16,7 @@ const iterationCount = sequence.iterationCount;
 fn materializeCount(vm: *VM, span: Span, method: []const u8) !usize {
     const n = try validatedCount(vm, span, method);
     if (n > @as(f64, @floatFromInt(limits.MAX_RANGE_MATERIALIZE))) {
-        _ = vm.raiseError(.ValueError, "{s} would build an array of {d} values (limit {d}); iterate with each instead", .{ method, n, limits.MAX_RANGE_MATERIALIZE });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} would build an array of {d} values (limit {d}); iterate with each instead", .{ method, n, limits.MAX_RANGE_MATERIALIZE });
     }
     // Finite, non-negative and bounded by the check above (which fits usize on wasm32).
     return @intFromFloat(n);
@@ -26,8 +25,7 @@ fn materializeCount(vm: *VM, span: Span, method: []const u8) !usize {
 /// Integral receiver/argument check for Number#times/upto/downto.
 pub fn requireInteger(vm: *VM, n: f64, method: []const u8) !void {
     if (!std.math.isFinite(n) or @trunc(n) != n) {
-        _ = vm.raiseError(.ValueError, "{s} requires an integer, got {f}", .{ method, value.fmtNumber(n) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} requires an integer, got {f}", .{ method, value.fmtNumber(n) });
     }
 }
 
@@ -48,8 +46,7 @@ pub fn callBlock(vm: *VM, block: *value.ObjClosure, args: []const value.Value) !
 
 pub fn requireBlock(vm: *VM, block: ?*value.ObjClosure, method: []const u8) !*value.ObjClosure {
     return block orelse {
-        _ = vm.raiseError(.ArgumentError, "{s} requires a block", .{method});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "{s} requires a block", .{method});
     };
 }
 

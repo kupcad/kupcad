@@ -23,14 +23,12 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         transmission: ?f64 = null,
     }, sig.MATERIAL.keywords, vm, args, "material");
     if (parsed.positional.len == args.len) {
-        _ = vm.raiseError(.ArgumentError, "material requires keyword arguments (e.g. color: \"#FF0000\")", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "material requires keyword arguments (e.g. color: \"#FF0000\")", .{});
     }
     const opts = parsed.opts;
     const defaults = MaterialDef{};
     const rgb = if (opts.color) |text| material.parseHexColor(text) orelse {
-        _ = vm.raiseError(.ValueError, "material color must be \"#RRGGBB\" or \"#RGB\", got \"{s}\"", .{text});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "material color must be \"#RRGGBB\" or \"#RGB\", got \"{s}\"", .{text});
     } else defaults.rgb;
     const mat_def = MaterialDef{
         .rgb = rgb,
@@ -51,8 +49,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
 /// Material factors are fractions: `roughness: 5` used to be accepted as is.
 fn unitInterval(vm: *VM, comptime name: []const u8, n: f64) !f64 {
     if (n >= 0.0 and n <= 1.0) return n;
-    _ = vm.raiseError(.ValueError, "material " ++ name ++ " must be between 0 and 1, got {f}", .{value.fmtNumber(n)});
-    return error.RuntimeError;
+    return vm.fail(.ValueError, "material " ++ name ++ " must be between 0 and 1, got {f}", .{value.fmtNumber(n)});
 }
 
 /// ensureConcrete only BORROWS the handle from vm.dag_cache, and nothing roots
@@ -61,8 +58,7 @@ fn unitInterval(vm: *VM, comptime name: []const u8, n: f64) !f64 {
 fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
     const borrowed = try vm.ensureConcrete(ghost_geom);
     const owned = kernel.clone(borrowed) orelse {
-        _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"ghost"});
-        return error.RuntimeError;
+        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"ghost"});
     };
     vm.display_list.append(vm.allocator, owned) catch |err| {
         kernel.destruct(owned);
@@ -118,8 +114,7 @@ pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
 /// used to be passed through (or dropped) without being shown.
 fn requireSolidResult(vm: *VM, result: value.Value, method: []const u8) !void {
     if (result.isGeometry()) return;
-    _ = vm.raiseError(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, util.typeName(vm, result) });
-    return error.RuntimeError;
+    return vm.fail(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, util.typeName(vm, result) });
 }
 
 /// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model
@@ -140,7 +135,6 @@ pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
 
 fn requireBlock(vm: *VM, block: ?*value.ObjClosure, comptime name: []const u8) !*value.ObjClosure {
     return block orelse {
-        _ = vm.raiseError(.ArgumentError, name ++ " requires a block", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, name ++ " requires a block", .{});
     };
 }

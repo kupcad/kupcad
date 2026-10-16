@@ -119,16 +119,14 @@ fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm
 /// Validates a user-supplied index into an array of length `len`.
 fn checkedIndex(vm: *VM, raw: f64, len: usize, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw < 0.0 or @trunc(raw) != raw or raw >= @as(f64, @floatFromInt(len)) or raw > std.math.maxInt(u32)) {
-        _ = vm.raiseError(.ValueError, "{s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} index {f} is out of range (0..{d})", .{ what, value.fmtNumber(raw), len });
     }
     return @intFromFloat(raw);
 }
 
 fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: []const u8) !void {
     if (count < min) {
-        _ = vm.raiseError(.ValueError, "{s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} needs at least {d} {s}, got {d}", .{ method, min, what, count });
     }
 }
 
@@ -137,12 +135,10 @@ fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: 
 fn requireSides(vm: *VM, opts: GeomOptions, method: []const u8) !i32 {
     const sides = opts.sides.?;
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
-        _ = vm.raiseError(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
     }
     if (opts.segments != 0) {
-        _ = vm.raiseError(.ArgumentError, "{s} takes sides: (a faceted shape) or segments: (how smooth a round one is), not both", .{method});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "{s} takes sides: (a faceted shape) or segments: (how smooth a round one is), not both", .{method});
     }
     return sides;
 }
@@ -286,8 +282,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     if (opts.sides != null) {
         const sides = try requireSides(vm, opts, "cylinder");
         if (opts.round_r != null or opts.chamfer != null) {
-            _ = vm.raiseError(.ArgumentError, "cylinder takes sides: or round_r:/chamfer:, not both yet", .{});
-            return error.RuntimeError;
+            return vm.fail(.ArgumentError, "cylinder takes sides: or round_r:/chamfer:, not both yet", .{});
         }
         // A prism (a frustum when r2 differs): the polygon swept up, narrowing to r2.
         const outline = try addRegularPolygon(vm, sides, r1);
@@ -371,8 +366,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = try util.parseKwargsSubset(struct { paths: ?value.Value = null }, POLYGON.keywords, vm, args, "polygon");
     if (parsed.positional.len < 1) {
-        _ = vm.raiseError(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
     }
     const pt_arr = try util.requireArray(vm, args[0], "polygon", "points");
     try requireMinCount(vm, pt_arr.len, MIN_CONTOUR_POINTS, "polygon", "points");
@@ -462,8 +456,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     try util.requirePositive(vm, minor_r, "torus", "minor_r");
     if (minor_r >= major_r) {
         // The tube would reach (or cross) the axis and the revolved solid would intersect itself.
-        _ = vm.raiseError(.ValueError, "torus needs minor_r smaller than major_r, got minor_r {f} and major_r {f}", .{ value.fmtNumber(minor_r), value.fmtNumber(major_r) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "torus needs minor_r smaller than major_r, got minor_r {f} and major_r {f}", .{ value.fmtNumber(minor_r), value.fmtNumber(major_r) });
     }
 
     // Create a 2D circle using the minor radius
@@ -488,8 +481,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     const points_arg = parsed.opts.points orelse if (pos.len > 0) pos[0] else null;
     const faces_arg = parsed.opts.faces orelse if (pos.len > 1) pos[1] else null;
     if (points_arg == null or faces_arg == null) {
-        _ = vm.raiseError(.ArgumentError, "polyhedron expects a points Array and a faces Array", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "polyhedron expects a points Array and a faces Array", .{});
     }
     const pts_val = try util.requireArray(vm, points_arg.?, "polyhedron", "points");
     const faces_val = try util.requireArray(vm, faces_arg.?, "polyhedron", "faces");
@@ -508,8 +500,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     for (faces_val, faces, 0..) |f, *face, i| {
         // A quad used to be silently truncated to its first triangle.
         if (f.isArray() and f.asArray().items.items.len != POLYHEDRON_FACE_LEN) {
-            _ = vm.raiseError(.ValueError, "polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
         }
         const raw = try util.parseNumberArray(POLYHEDRON_FACE_LEN, vm, f, .{
             .method = "polyhedron",
@@ -534,8 +525,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         valign: text_mod.VAlign = .baseline,
     }, TEXT.keywords, vm, args, "text");
     if (parsed.positional.len == 0 or !args[0].isString()) {
-        _ = vm.raiseError(.ArgumentError, "text() expects a String as its first argument", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "text() expects a String as its first argument", .{});
     }
     const text_str = args[0].asString().chars;
     const opts = parsed.opts;
@@ -553,24 +543,20 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     // point count grows ~sqrt(size / tolerance) per curve; a vanishing tolerance
     // (e.g. 1e-300, whose square underflows to 0) never terminates in practice.
     if (tolerance < size * MIN_TEXT_TOLERANCE_RATIO) {
-        _ = vm.raiseError(.ValueError, "'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "'tolerance' must be at least size * {d} ({d}), got {f}", .{ MIN_TEXT_TOLERANCE_RATIO, size * MIN_TEXT_TOLERANCE_RATIO, value.fmtNumber(tolerance) });
     }
 
     const alloc = vm.scratch_arena.allocator();
 
     const face = text_mod.getFaceByName(font_name) catch {
-        _ = vm.raiseError(.RuntimeError, "Failed to load font '{s}'", .{font_name});
-        return error.RuntimeError;
+        return vm.fail(.RuntimeError, "Failed to load font '{s}'", .{font_name});
     };
     var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
         error.InvalidUtf8 => {
-            _ = vm.raiseError(.ValueError, "text: the String isn't valid UTF-8", .{});
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "text: the String isn't valid UTF-8", .{});
         },
         else => {
-            _ = vm.raiseError(.RuntimeError, "Failed to extract text contours", .{});
-            return error.RuntimeError;
+            return vm.fail(.RuntimeError, "Failed to extract text contours", .{});
         },
     };
     defer polygons.deinit(alloc);

@@ -59,8 +59,7 @@ pub fn rangeLast(vm: *VM, r: *value.ObjRange) !value.Value {
 /// Range#step(n): a new range with the same bounds and step `n`.
 pub fn rangeStep(vm: *VM, r: *value.ObjRange, step: f64) !value.Value {
     if (!std.math.isFinite(step) or step == 0) {
-        _ = vm.raiseError(.ValueError, "Range#step requires a finite, non-zero step, got {f}", .{value.fmtNumber(step)});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "Range#step requires a finite, non-zero step, got {f}", .{value.fmtNumber(step)});
     }
     const out = try vm.gc.allocateRange(vm, r.start, r.end, step, r.is_exclusive);
     return value.Value.initObj(&out.obj);

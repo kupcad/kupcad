@@ -26,8 +26,7 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
         if (vec[2] != 0.0) {
-            _ = vm.raiseError(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
         }
         const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, vec[0], vec[1] };
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
@@ -62,8 +61,7 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
     _ = args;
     if (vec[0] != 0.0 or vec[1] != 0.0) {
-        _ = vm.raiseError(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
     }
     return vec[2];
 }
@@ -82,8 +80,7 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     const checked_axes: usize = if (receiver.isCrossSection()) 2 else 3;
     for (vec[0..checked_axes]) |f| {
         if (!(@abs(f) >= std.math.floatMin(f64))) {
-            _ = vm.raiseError(.ValueError, "scale factors must be non-zero, got [{f}, {f}, {f}]", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]), value.fmtNumber(vec[2]) });
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "scale factors must be non-zero, got [{f}, {f}, {f}]", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]), value.fmtNumber(vec[2]) });
         }
     }
     if (receiver.isGeometry()) {
@@ -106,12 +103,10 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         if (std.mem.indexOfScalar(u8, "xyzXYZ", c) == null) break false;
     } else true;
     if (!valid) {
-        _ = vm.raiseError(.ValueError, "center axes are some of x, y and z, got \"{s}\"", .{axes_str});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "center axes are some of x, y and z, got \"{s}\"", .{axes_str});
     }
     if (axes_arg != null and receiver.isCrossSection() and std.mem.indexOfAny(u8, axes_str, "zZ") != null) {
-        _ = vm.raiseError(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
     }
 
     const bbox = try util.boundsOf(vm, receiver, "center");
@@ -147,8 +142,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
 pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     // Signature: align(target, axes, my_align, target_align = my_align, offset = 0.0)
     if (args.len < 3 or !args[1].isString() or !args[2].isString()) {
-        _ = vm.raiseError(.ArgumentError, "align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
     }
 
     const target = args[0];
@@ -164,16 +158,14 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
             // Allow skipping target_align: align(target, axes, my_align, offset)
             offset = try util.requireNumber(vm, args[3], "align", "offset");
         } else if (!args[3].isNil()) { // nil keeps target_align = my_align
-            _ = vm.raiseError(.TypeError, "align expects a String target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
-            return error.RuntimeError;
+            return vm.fail(.TypeError, "align expects a String target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
         }
     }
     if (args.len > 4) offset = try util.requireNumber(vm, args[4], "align", "offset");
 
     // The target used to be evaluated as a Geometry whatever it was.
     if (!target.isGeometry() and !target.isCrossSection()) {
-        _ = vm.raiseError(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{util.typeName(vm, target)});
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{util.typeName(vm, target)});
     }
     const my_bbox = try util.boundsOf(vm, receiver, "align");
     const target_bbox = try util.boundsOf(vm, target, "align");
@@ -201,14 +193,12 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
         var my_pt: f64 = 0.0;
         if (std.mem.eql(u8, my_align_str, "min")) my_pt = my_min else if (std.mem.eql(u8, my_align_str, "max")) my_pt = my_max else if (std.mem.eql(u8, my_align_str, "center")) my_pt = my_center else {
-            _ = vm.raiseError(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{my_align_str});
-            return error.RuntimeError;
+            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{my_align_str});
         }
 
         var target_pt: f64 = 0.0;
         if (std.mem.eql(u8, target_align_str, "min")) target_pt = target_min else if (std.mem.eql(u8, target_align_str, "max")) target_pt = target_max else if (std.mem.eql(u8, target_align_str, "center")) target_pt = target_center else {
-            _ = vm.raiseError(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{target_align_str});
-            return error.RuntimeError;
+            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{target_align_str});
         }
 
         const delta = target_pt - my_pt + offset;
@@ -238,8 +228,7 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     } else if (receiver.isCrossSection()) {
         // A Sketch mirrors across the line through the origin with normal (x, y).
         if (vec[2] != 0.0) {
-            _ = vm.raiseError(.ValueError, "a Sketch can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "a Sketch can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
         }
         const len = std.math.hypot(vec[0], vec[1]);
         const nx = vec[0] / len;
@@ -254,8 +243,7 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (args.len < 1) {
-        _ = vm.raiseError(.ArgumentError, "transform expects a flat matrix Array", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "transform expects a flat matrix Array", .{});
     }
     if (receiver.isGeometry()) {
         const mat = try parseMatrix(MATRIX_3D_LEN, vm, args[0]);
@@ -290,8 +278,7 @@ fn requireInvertible(vm: *VM, det: f64) !void {
     // `!(>=)` also catches a NaN determinant (inf - inf from huge entries) and a
     // subnormal one, which flattens the shape as surely as an exact 0.
     if (!(@abs(det) >= std.math.floatMin(f64))) {
-        _ = vm.raiseError(.ValueError, "transform matrix is singular (determinant {f}), which flattens the shape", .{value.fmtNumber(det)});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "transform matrix is singular (determinant {f}), which flattens the shape", .{value.fmtNumber(det)});
     }
 }
 
@@ -301,8 +288,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const auto = parsed.opts.auto;
 
     if (parsed.positional.len < 1) {
-        _ = vm.raiseError(.ArgumentError, "resize() requires an array of target dimensions [x, y, z]", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "resize() requires an array of target dimensions [x, y, z]", .{});
     }
     // Missing trailing dimensions are 0, which means "keep" (or "auto" with auto: true).
     const target = try util.parseNumberArray(3, vm, args[0], .{
@@ -312,8 +298,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     }, 1, 0.0);
     for (target, 0..) |t, i| {
         if (t < 0.0) {
-            _ = vm.raiseError(.ValueError, "resize dimensions must be >= 0 (0 keeps that axis), got {f} at component {d}", .{ value.fmtNumber(t), i });
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "resize dimensions must be >= 0 (0 keeps that axis), got {f} at component {d}", .{ value.fmtNumber(t), i });
         }
     }
     const target_x = target[0];
@@ -353,8 +338,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 /// but NaN/inf/huge values would hit @intFromFloat UB or build millions of DAG nodes.
 fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
     if (!std.math.isFinite(raw) or raw > @as(f64, @floatFromInt(limits.MAX_PATTERN_COUNT))) {
-        _ = vm.raiseError(.ValueError, "{s} 'count' must be a finite number <= {d}, got {f}", .{ what, limits.MAX_PATTERN_COUNT, value.fmtNumber(raw) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} 'count' must be a finite number <= {d}, got {f}", .{ what, limits.MAX_PATTERN_COUNT, value.fmtNumber(raw) });
     }
     if (raw < 1.0) return 0;
     return @intFromFloat(raw);
@@ -363,8 +347,7 @@ fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_linear", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
-        _ = vm.raiseError(.ArgumentError, "repeat_linear requires a 'count' number", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "repeat_linear requires a 'count' number", .{});
     }
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_linear");
@@ -374,8 +357,7 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
     // A nil step (e.g. a forwarded optional parameter) means no offset, as it did before.
     if (args.len > 2 and args[1].isArray()) {
         // They were ignored: `repeat_linear(3, [10, 0, 0], z: 5)` stepped 10 in x only.
-        _ = vm.raiseError(.ArgumentError, "repeat_linear takes the step as an Array or as x, y, z, not both", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "repeat_linear takes the step as an Array or as x, y, z, not both", .{});
     }
     const step: [3]f64 = if (args.len > 1 and args[1].isNil())
         @splat(0.0)
@@ -423,8 +405,7 @@ const Copies = struct {
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_polar", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
-        _ = vm.raiseError(.ArgumentError, "repeat_polar requires a 'count' number", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "repeat_polar requires a 'count' number", .{});
     }
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");

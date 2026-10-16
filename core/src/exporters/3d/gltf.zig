@@ -444,8 +444,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
             if (part.isGeometry()) try handles.append(vm.allocator, try vm.ensureConcrete(part));
         }
     } else {
-        _ = vm.raiseError(.TypeError, "export_gltf expects a Geometry, an Assembly or an Array of them, got {s}", .{util.typeName(vm, receiver)});
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "export_gltf expects a Geometry, an Assembly or an Array of them, got {s}", .{util.typeName(vm, receiver)});
     }
 
     for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);

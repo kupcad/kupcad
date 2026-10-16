@@ -11,8 +11,7 @@ pub fn numberRound(vm: *VM, receiver: value.Value, decimals_opt: ?f64) !value.Va
     const num = receiver.asNumber();
     const decimals = decimals_opt orelse 0.0;
     if (!std.math.isFinite(decimals)) {
-        _ = vm.raiseError(.ValueError, "round: the number of decimals must be finite, got {f}", .{value.fmtNumber(decimals)});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "round: the number of decimals must be finite, got {f}", .{value.fmtNumber(decimals)});
     }
     if (decimals == 0.0) return value.Value.initNumber(@round(num));
 
@@ -143,8 +142,7 @@ pub fn numberBetween(vm: *VM, receiver: value.Value, lo: f64, hi: f64) !value.Va
 /// `lo <= hi`, else an ArgumentError naming `name` (a NaN bound fails it too).
 pub fn requireOrdered(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !void {
     if (!(lo <= hi)) {
-        _ = vm.raiseError(.ArgumentError, name ++ " needs its low bound first, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, name ++ " needs its low bound first, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
     }
 }
 

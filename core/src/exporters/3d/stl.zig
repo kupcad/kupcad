@@ -186,8 +186,7 @@ pub fn buildStlOfParts(allocator: std.mem.Allocator, vm: *VM, parts: []const geo
         else => {
             try vm.requireFeature(parts[0].engine, .boolean);
             const united = kernel.batchBoolean(allocator, parts, .union_op) orelse {
-                _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
-                return error.RuntimeError;
+                return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
             };
             defer kernel.destruct(united);
             return buildStlBuffer(allocator, united);
@@ -207,8 +206,7 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
 
     const stl_bytes = buildStlOfParts(vm.allocator, vm, parts.items) catch |err| switch (err) {
         error.NoGeometry => {
-            _ = vm.raiseError(.GeometryError, "export_stl: the model is empty, there is nothing to write to '{s}'", .{filepath});
-            return error.RuntimeError;
+            return vm.fail(.GeometryError, "export_stl: the model is empty, there is nothing to write to '{s}'", .{filepath});
         },
         else => return err,
     };
@@ -221,14 +219,12 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
 
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
     const file_buf = vm.vfs.readFile(vm.allocator, path_str) catch |err| {
-        _ = vm.raiseError(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
-        return error.RuntimeError;
+        return vm.fail(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
     };
     defer vm.allocator.free(file_buf);
 
     var stl_mesh = parseStlBuffer(vm.allocator, file_buf) catch |err| {
-        _ = vm.raiseError(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
-        return error.RuntimeError;
+        return vm.fail(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
     };
     defer stl_mesh.deinit(vm.allocator);
 

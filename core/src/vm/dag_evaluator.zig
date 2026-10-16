@@ -101,8 +101,7 @@ fn crossSectionOf(entry: StackEntry) !geom.CrossSectionHandle {
 /// A kernel operation returned no result: raise a rescuable GeometryError naming the
 /// operation. Drivers never substitute an operand for a failed result (kernel.zig).
 fn kernelFailed(vm: *VM, tag: dag.DAGTag) error{RuntimeError} {
-    _ = vm.raiseError(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{dag.scriptName(tag)});
-    return error.RuntimeError;
+    return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{dag.scriptName(tag)});
 }
 
 /// Raises the vertex-limit error when `verts` passes `limit`. `estimated` is set for a
@@ -311,8 +310,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
         var frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
 
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {
-            _ = vm.raiseError(.RuntimeError, "internal error: geometry node {d} is out of range", .{frame.node_idx});
-            return error.RuntimeError;
+            return vm.fail(.RuntimeError, "internal error: geometry node {d} is out of range", .{frame.node_idx});
         }
 
         // --- O(1) DAG Node Caching ---
@@ -548,8 +546,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                     // ones; a concave profile would be filled in silently.
                     inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
                         if (kernel.crossSectionIsConvex(profile[1]) == false) {
-                            _ = vm.raiseError(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
-                            return error.RuntimeError;
+                            return vm.fail(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
                         }
                     }
                     const p = vm.dag_builder.getLoftPayload(node);
@@ -675,8 +672,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
                 // solid is its operand's, already checked (isPureTransform).
                 if (!isPureTransform(node.tag)) {
                     if (kernel.problem(top.value.geometry)) |reason| {
-                        _ = vm.raiseError(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason });
-                        return error.RuntimeError; // still owned -> destroyed by errdefer
+                        return vm.fail(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason }); // still owned -> destroyed by errdefer
                     }
                     // On error the result is still owned, so the errdefer destroys it.
                     try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);

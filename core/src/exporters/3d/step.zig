@@ -50,8 +50,7 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
     try requireExactParts(vm, export_handles.items);
 
     const step_bytes = buildStepBuffer(vm.allocator, export_handles.items) catch |err| {
-        _ = vm.raiseError(.GeometryError, "export_step could not write the STEP file ({s})", .{@errorName(err)});
-        return error.RuntimeError;
+        return vm.fail(.GeometryError, "export_step could not write the STEP file ({s})", .{@errorName(err)});
     };
     defer vm.allocator.free(step_bytes);
 
@@ -62,6 +61,5 @@ pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !val
 
 pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {
     _ = path_str;
-    _ = vm.raiseError(.NotImplementedError, "import_step is not supported yet", .{});
-    return error.RuntimeError;
+    return vm.fail(.NotImplementedError, "import_step is not supported yet", .{});
 }

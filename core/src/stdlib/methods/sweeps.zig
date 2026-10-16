@@ -55,8 +55,7 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
     const segments = if (opts.segments > 0) opts.segments else blk: {
         const profile = try vm.ensureConcreteCrossSection(receiver);
         if (!kernel.supports(profile.engine, .sketch_measure)) {
-            _ = vm.raiseError(.NotImplementedError, "the {s} engine can't measure the profile to choose revolve's segments yet; pass segments:", .{profile.engine.scriptName()});
-            return error.RuntimeError;
+            return vm.fail(.NotImplementedError, "the {s} engine can't measure the profile to choose revolve's segments yet; pass segments:", .{profile.engine.scriptName()});
         }
         const bounds = kernel.crossSectionBounds(profile);
         break :blk util.autoSegments(vm, @max(@abs(bounds.min[0]), @abs(bounds.max[0])));
@@ -87,12 +86,10 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "loft", receiver);
     if (args.len < 2) {
-        _ = vm.raiseError(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
     }
     if (!args[0].isCrossSection()) {
-        _ = vm.raiseError(.TypeError, "loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
     }
 
     const cs_top = args[0].asCrossSection();

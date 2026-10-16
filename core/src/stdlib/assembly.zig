@@ -15,21 +15,18 @@ const util = @import("methods/util.zig");
 pub fn nativeAssemble(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = try util.parseKwargs(struct { name: ?value.Value = null, parts: ?value.Value = null }, vm, args, "assemble");
     if (parsed.positional.len > 0) {
-        _ = vm.raiseError(.ArgumentError, "assemble takes only keywords (name:, parts:), got {d} positional arguments", .{parsed.positional.len});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "assemble takes only keywords (name:, parts:), got {d} positional arguments", .{parsed.positional.len});
     }
     const name = parsed.opts.name orelse value.Value.initNil();
     const parts = parsed.opts.parts orelse value.Value.initNil();
     if (!name.isString()) {
-        _ = vm.raiseError(.TypeError, "assemble expects a String for name, got {s}", .{util.typeName(vm, name)});
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "assemble expects a String for name, got {s}", .{util.typeName(vm, name)});
     }
     _ = try util.requireArray(vm, parts, "assemble", "parts");
     for (parts.asArray().items.items, 0..) |part, i| {
         if (part.isGeometry()) continue;
         const hint = if (part.isAssembly()) "; to nest an assembly, give its .parts" else if (part.isNil()) "; leave out the nils with .compact" else "";
-        _ = vm.raiseError(.TypeError, "assemble expects only Solids in parts, got {s} at index {d}{s}", .{ util.typeName(vm, part), i, hint });
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "assemble expects only Solids in parts, got {s} at index {d}{s}", .{ util.typeName(vm, part), i, hint });
     }
 
     const own_parts = try copyArray(vm, parts.asArray());
@@ -64,8 +61,7 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
                 // The union of nothing is the empty Solid (it was an error, though a list of
                 // optional parts all left out is an ordinary outcome); a hull of nothing isn't a shape.
                 if (tag == .union_op) return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addEmpty(true) });
-                _ = vm.raiseError(.ArgumentError, name ++ " needs at least one Solid, got an empty Array", .{});
-                return error.RuntimeError;
+                return vm.fail(.ArgumentError, name ++ " needs at least one Solid, got an empty Array", .{});
             }
 
             var scratch_indices = std.ArrayListUnmanaged(u32).empty;
@@ -73,8 +69,7 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
             for (parts.items.items, 0..) |part, i| {
                 if (!part.isGeometry()) {
                     const hint = if (part.isNil()) "; leave out the nils with .compact" else "";
-                    _ = vm.raiseError(.TypeError, name ++ " expects only Solids, got {s} at index {d}{s}", .{ util.typeName(vm, part), i, hint });
-                    return error.RuntimeError;
+                    return vm.fail(.TypeError, name ++ " expects only Solids, got {s} at index {d}{s}", .{ util.typeName(vm, part), i, hint });
                 }
                 try scratch_indices.append(vm.allocator, part.asGeometry().dag_idx);
             }

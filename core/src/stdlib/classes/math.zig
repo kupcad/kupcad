@@ -70,12 +70,10 @@ fn result(vm: *VM, comptime name: []const u8, args: []const f64, res: f64) !valu
         if (!std.math.isFinite(a)) return value.Value.initNumber(res);
     }
     if (std.math.isNan(res)) {
-        _ = vm.raiseError(.MathError, name ++ "({f}) has no real result", .{ArgList{ .args = args }});
-        return error.RuntimeError;
+        return vm.fail(.MathError, name ++ "({f}) has no real result", .{ArgList{ .args = args }});
     }
     if (std.math.isInf(res)) {
-        _ = vm.raiseError(.RangeError, name ++ "({f}) is infinite", .{ArgList{ .args = args }});
-        return error.RuntimeError;
+        return vm.fail(.RangeError, name ++ "({f}) is infinite", .{ArgList{ .args = args }});
     }
     return value.Value.initNumber(res);
 }
@@ -165,8 +163,7 @@ fn atan2d(y: f64, x: f64) f64 {
 fn mathSnap(vm: *VM, receiver: value.Value, x: f64, step: f64) !value.Value {
     _ = receiver;
     if (!(step > 0) or !std.math.isFinite(step)) {
-        _ = vm.raiseError(.ValueError, "Math.snap step must be a finite number greater than zero, got {f}", .{value.fmtNumber(step)});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "Math.snap step must be a finite number greater than zero, got {f}", .{value.fmtNumber(step)});
     }
     return result(vm, "Math.snap", &.{ x, step }, @round(x / step) * step);
 }
@@ -190,8 +187,7 @@ fn mathSmoothstep(vm: *VM, receiver: value.Value, edge0: f64, edge1: f64, x: f64
 
 fn requireSpan(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !void {
     if (lo == hi) {
-        _ = vm.raiseError(.ValueError, name ++ " needs a range of two different numbers, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, name ++ " needs a range of two different numbers, got {f} and {f}", .{ value.fmtNumber(lo), value.fmtNumber(hi) });
     }
 }
 
@@ -201,8 +197,7 @@ fn mathClose(vm: *VM, receiver: value.Value, a: f64, b: f64, tolerance: ?f64) !v
     _ = receiver;
     const tol = tolerance orelse DEFAULT_TOLERANCE;
     if (!(tol >= 0)) {
-        _ = vm.raiseError(.ValueError, "Math.close? tolerance must be zero or more, got {f}", .{value.fmtNumber(tol)});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "Math.close? tolerance must be zero or more, got {f}", .{value.fmtNumber(tol)});
     }
     return value.Value.initBool(@abs(a - b) <= tol);
 }
@@ -222,8 +217,7 @@ fn gcdOf(vm: *VM, comptime name: []const u8, a: f64, b: f64) !u64 {
     try iteration.requireInteger(vm, a, name);
     try iteration.requireInteger(vm, b, name);
     if (@abs(a) > MAX_EXACT_INT or @abs(b) > MAX_EXACT_INT) {
-        _ = vm.raiseError(.RangeError, name ++ " works on whole numbers up to 2^53, got {f} and {f}", .{ value.fmtNumber(a), value.fmtNumber(b) });
-        return error.RuntimeError;
+        return vm.fail(.RangeError, name ++ " works on whole numbers up to 2^53, got {f} and {f}", .{ value.fmtNumber(a), value.fmtNumber(b) });
     }
     var x: u64 = @intFromFloat(@abs(a));
     var y: u64 = @intFromFloat(@abs(b));

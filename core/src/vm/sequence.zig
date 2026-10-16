@@ -49,12 +49,10 @@ pub const Span = struct {
 /// value count as an f64, or raises a rescuable ValueError.
 pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
     if (!std.math.isFinite(span.start) or !std.math.isFinite(span.end) or !std.math.isFinite(span.step)) {
-        _ = vm.raiseError(.ValueError, "{s} requires finite bounds and step, got {f}..{f} step {f}", .{ method, value.fmtNumber(span.start), value.fmtNumber(span.end), value.fmtNumber(span.step) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} requires finite bounds and step, got {f}..{f} step {f}", .{ method, value.fmtNumber(span.start), value.fmtNumber(span.end), value.fmtNumber(span.step) });
     }
     if (span.step == 0) {
-        _ = vm.raiseError(.ValueError, "{s} step can't be 0", .{method});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} step can't be 0", .{method});
     }
     return span.count();
 }
@@ -63,8 +61,7 @@ pub fn validatedCount(vm: *VM, span: Span, method: []const u8) !f64 {
 pub fn iterationCount(vm: *VM, span: Span, method: []const u8) !u64 {
     const n = try validatedCount(vm, span, method);
     if (n > @as(f64, @floatFromInt(MAX_EXACT_COUNT))) {
-        _ = vm.raiseError(.ValueError, "{s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, MAX_EXACT_COUNT });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} would iterate {d} times, more than the {d} distinct values a float can count", .{ method, n, MAX_EXACT_COUNT });
     }
     // Finite, non-negative and at most 2^53, so the cast is defined.
     return @intFromFloat(n);

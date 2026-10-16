@@ -31,15 +31,13 @@ pub fn typeName(vm: *VM, val: value.Value) []const u8 {
 }
 
 fn typeError(vm: *VM, method: []const u8, expected: []const u8, what: []const u8, got: value.Value) error{RuntimeError} {
-    _ = vm.raiseError(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
-    return error.RuntimeError;
+    return vm.fail(.TypeError, "{s} expects {s} for {s}, got {s}", .{ method, expected, what, typeName(vm, got) });
 }
 
 /// A method for Solids only called on a Sketch, or the other way round: the same
 /// NoMethodError as for any method the receiver doesn't have.
 pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{RuntimeError} {
-    _ = vm.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
-    return error.RuntimeError;
+    return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
 }
 
 /// The bounding box of a Solid, or of a Sketch (flat, at z = 0).
@@ -54,16 +52,14 @@ pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.Boundi
     const solid = try vm.ensureConcrete(receiver);
     try vm.requireFeature(solid.engine, .bounding_box);
     return kernel.boundingBox(solid) orelse {
-        _ = vm.raiseError(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
-        return error.RuntimeError;
+        return vm.fail(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
     };
 }
 
 /// Rejects NaN and infinities, which no kernel can place or tessellate.
 pub fn requireFinite(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n)) {
-        _ = vm.raiseError(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ method, what, value.fmtNumber(n) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ method, what, value.fmtNumber(n) });
     }
 }
 
@@ -79,8 +75,7 @@ pub fn requireNumber(vm: *VM, val: value.Value, method: []const u8, what: []cons
 /// infinities are rejected too since no kernel can tessellate them.
 pub fn requirePositive(vm: *VM, n: f64, method: []const u8, what: []const u8) !void {
     if (!std.math.isFinite(n) or n <= 0.0) {
-        _ = vm.raiseError(.ValueError, "{s} expects {s} to be a finite number greater than zero, got {f}", .{ method, what, value.fmtNumber(n) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} expects {s} to be a finite number greater than zero, got {f}", .{ method, what, value.fmtNumber(n) });
     }
 }
 
@@ -137,8 +132,7 @@ fn elementError(vm: *VM, arg: NumberArray, i: usize, item: value.Value) error{Ru
     else
         std.fmt.bufPrint(&buf, "{s} ({s} {d})", .{ arg.elem, arg.index_label, i }) catch arg.elem;
     if (!item.isNumber()) return typeError(vm, arg.method, "a number", what, item);
-    _ = vm.raiseError(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
-    return error.RuntimeError;
+    return vm.fail(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
 }
 
 /// Reads an Array of `min_len..N` finite numbers. Missing trailing entries are
@@ -185,8 +179,7 @@ pub fn requireNonZeroVector(vm: *VM, v: [3]f64, method: []const u8, what: []cons
     const len2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     if (!(len2 >= std.math.floatMin(f64))) {
         const f = value.fmtNumber;
-        _ = vm.raiseError(.ValueError, "{s} expects a non-zero {s}, got [{f}, {f}, {f}]", .{ method, what, f(v[0]), f(v[1]), f(v[2]) });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "{s} expects a non-zero {s}, got [{f}, {f}, {f}]", .{ method, what, f(v[0]), f(v[1]), f(v[2]) });
     }
 }
 
@@ -202,18 +195,14 @@ pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
     const t = @trunc(val);
     const shown = value.fmtNumber(val);
     if (!std.math.isFinite(val)) {
-        _ = vm.raiseError(.ValueError, "'{s}' must be a finite number, got {f}", .{ name, shown });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "'{s}' must be a finite number, got {f}", .{ name, shown });
     }
     if (t < @as(f64, @floatFromInt(std.math.minInt(I)))) {
-        if (std.math.minInt(I) == 0) {
-            _ = vm.raiseError(.ValueError, "'{s}' can't be negative, got {f}", .{ name, shown });
-        } else _ = vm.raiseError(.ValueError, "'{s}' is too small, got {f}", .{ name, shown });
-        return error.RuntimeError;
+        if (std.math.minInt(I) == 0) return vm.fail(.ValueError, "'{s}' can't be negative, got {f}", .{ name, shown });
+        return vm.fail(.ValueError, "'{s}' is too small, got {f}", .{ name, shown });
     }
     if (t > @as(f64, @floatFromInt(std.math.maxInt(I)))) {
-        _ = vm.raiseError(.ValueError, "'{s}' is too large, got {f}", .{ name, shown });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "'{s}' is too large, got {f}", .{ name, shown });
     }
     return @intFromFloat(t);
 }
@@ -222,8 +211,7 @@ pub fn checkedInt(comptime I: type, vm: *VM, val: f64, name: []const u8) !I {
 /// callers that resolve it from the engine config afterwards.
 pub fn requireSegmentCount(vm: *VM, segs: i32, name: []const u8) !void {
     if (segs < 0 or segs > limits.MAX_SEGMENTS) {
-        _ = vm.raiseError(.ValueError, "'{s}' must be between 0 and {d}, got {d}", .{ name, limits.MAX_SEGMENTS, segs });
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "'{s}' must be between 0 and {d}, got {d}", .{ name, limits.MAX_SEGMENTS, segs });
     }
 }
 
@@ -261,8 +249,7 @@ pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: [
     const parsed = try parseKwargsSubset(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, &VEC3_NAMES, vm, args, method);
     const positional = if (parsed.positional.len == 1 and parsed.positional[0].isArray()) parsed.positional[0].asArray().items.items else parsed.positional;
     if (positional.len > VEC3_LEN) {
-        _ = vm.raiseError(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, positional.len });
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, positional.len });
     }
 
     var vec: [VEC3_LEN]f64 = @splat(default_val);
@@ -332,8 +319,7 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
     next_key: while (it.next()) |entry| {
         const key = entry.key_ptr.*;
         const name = keyName(key) orelse {
-            _ = vm.raiseError(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
-            return error.RuntimeError;
+            return vm.fail(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
         };
         inline for (accepted) |field_name| {
             if (std.mem.eql(u8, name, field_name)) {
@@ -341,8 +327,7 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
                 continue :next_key;
             }
         }
-        _ = vm.raiseError(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ method, name, comptime joinNames(accepted) });
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ method, name, comptime joinNames(accepted) });
     }
     return .{ .opts = opts, .positional = args[0 .. args.len - 1] };
 }
@@ -364,8 +349,7 @@ fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name
     if (@typeInfo(F) == .@"enum") {
         const tag = try requireName(vm, v, method, name);
         return std.meta.stringToEnum(F, tag) orelse {
-            _ = vm.raiseError(.ValueError, "{s} {s} must be {s}, got '{s}'", .{ method, name, comptime joinChoices(nameList(F)), tag });
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "{s} {s} must be {s}, got '{s}'", .{ method, name, comptime joinChoices(nameList(F)), tag });
         };
     }
     @compileError("parseKwargs: unsupported field type " ++ @typeName(F));

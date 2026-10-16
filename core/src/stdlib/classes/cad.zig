@@ -30,8 +30,7 @@ fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !Engine
     const s = parsed.opts;
     var next = config;
     if (s.engine) |name| next.engine = EngineType.fromScriptName(name) orelse {
-        _ = vm.raiseError(.ValueError, "CAD.config engine must be manifold or brep, got '{s}'", .{name});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "CAD.config engine must be manifold or brep, got '{s}'", .{name});
     };
     if (s.tolerance) |t| next.tolerance = t;
     if (s.max_vertices) |n| next.max_vertices = n;
@@ -39,8 +38,7 @@ fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !Engine
     if (s.manifold) |v| next.manifold = try applyGroup(engine_config.ManifoldConfig, vm, v, next.manifold, "CAD.config manifold");
     if (s.brep) |v| next.brep = try applyGroup(engine_config.BRepConfig, vm, v, next.brep, "CAD.config brep");
     if (next.problem()) |reason| {
-        _ = vm.raiseError(.ValueError, "CAD.config: {s}", .{reason});
-        return error.RuntimeError;
+        return vm.fail(.ValueError, "CAD.config: {s}", .{reason});
     }
     return next;
 }
@@ -48,8 +46,7 @@ fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !Engine
 /// `current` with the settings of the Map `v` applied; its keys are T's fields.
 fn applyGroup(comptime T: type, vm: *VM, v: value.Value, current: T, what: []const u8) !T {
     if (!v.isMap()) {
-        _ = vm.raiseError(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, util.typeName(vm, v) });
-        return error.RuntimeError;
+        return vm.fail(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, util.typeName(vm, v) });
     }
     return (try util.parseKwargsOnto(T, current, vm, &.{v}, what)).opts;
 }
@@ -91,8 +88,7 @@ fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Val
 fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block: ?*value.ObjClosure) !value.Value {
     _ = receiver;
     const body = block orelse {
-        _ = vm.raiseError(.ArgumentError, "CAD.with_config requires a block", .{});
-        return error.RuntimeError;
+        return vm.fail(.ArgumentError, "CAD.with_config requires a block", .{});
     };
 
     // Inherit the current config, then apply overrides

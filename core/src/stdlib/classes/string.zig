@@ -55,8 +55,7 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
     if (delim_str.len == 0) {
         // Into its characters, as in Ruby (an empty delimiter tripped an assertion).
         const view = std.unicode.Utf8View.init(str.chars) catch {
-            _ = vm.raiseError(.ValueError, "split: the String isn't valid UTF-8", .{});
-            return error.RuntimeError;
+            return vm.fail(.ValueError, "split: the String isn't valid UTF-8", .{});
         };
         var chars = view.iterator();
         while (chars.nextCodepointSlice()) |ch| {
