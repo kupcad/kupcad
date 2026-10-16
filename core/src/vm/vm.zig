@@ -426,14 +426,14 @@ pub const VM = struct {
         self.clearLastError();
         self.frames.clearRetainingCapacity();
         // Start small (64 initial frames) and let it grow dynamically
-        self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
+        self.frames.ensureTotalCapacity(self.allocator, 64) catch |err| return self.allocationFailed(err);
         self.stack_top = 0;
 
         // The dispatch loop indexes constants/caches and follows jumps unchecked
         // for speed, so malformed bytecode must be rejected once, up front.
         if (!self.verifyBytecode(execution_chunk)) return .compile_error;
 
-        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        const func = self.gc.allocateFunction(self) catch |err| return self.allocationFailed(err);
         func.chunk = execution_chunk;
         func.owns_chunk = false;
         func.upvalue_count = 0;
@@ -441,7 +441,7 @@ pub const VM = struct {
 
         // Protect func from GC during allocateClosure
         self.push(value.Value.initObj(&func.obj));
-        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+        const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
 
         // Swap func for closure on stack
         _ = self.pop();
@@ -454,7 +454,7 @@ pub const VM = struct {
 
         // Pad the top-level script frame for its local variables (slot 0 holds the closure)
         const locals_to_pad = if (func.local_count > 1) func.local_count - 1 else 0;
-        self.reserveFrame(func, locals_to_pad) catch return .runtime_error;
+        self.reserveFrame(func, locals_to_pad) catch |err| return self.allocationFailed(err);
         for (0..locals_to_pad) |_| self.push(value.Value.initNil());
 
         self.frames.appendAssumeCapacity(.{
@@ -624,10 +624,10 @@ pub const VM = struct {
 
                     if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
                     } else {
                         if (self.raiseError(.TypeError, "Cannot attach member to non-namespace.", .{}) != .ok) return .runtime_error;
                         continue;
@@ -681,7 +681,7 @@ pub const VM = struct {
                         .stack_top = self.stack_top,
                         .frame_count = self.frames.items.len,
                         .upvalue_ptr = self.open_upvalues,
-                    }) catch return .runtime_error;
+                    }) catch |err| return self.allocationFailed(err);
                 },
                 .op_pop_rescue => {
                     _ = self.rescue_frames.pop();
@@ -696,7 +696,7 @@ pub const VM = struct {
                 },
                 .op_build_array, .op_build_array_wide => {
                     const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
-                    const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                    const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                     const arr_val = value.Value.initObj(&arr_obj.obj);
 
                     // Root the array BEFORE allocating internal capacity to prevent GC sweeps
@@ -719,7 +719,7 @@ pub const VM = struct {
                 },
                 .op_build_map, .op_build_map_wide => {
                     const pair_count = self.readOperand(exec_chunk, frame, op == .op_build_map_wide);
-                    const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
+                    const map_obj = self.gc.allocateMap(self) catch |err| return self.allocationFailed(err);
                     const map_val = value.Value.initObj(&map_obj.obj);
 
                     // Root the map BEFORE allocating internal capacity to prevent GC sweeps
@@ -919,7 +919,7 @@ pub const VM = struct {
                     const func_val = exec_chunk.constants.items[func_idx];
                     const func_obj = func_val.asFunction();
 
-                    const closure = self.gc.allocateClosure(self, func_obj) catch return .runtime_error;
+                    const closure = self.gc.allocateClosure(self, func_obj) catch |err| return self.allocationFailed(err);
                     const closure_val = value.Value.initObj(&closure.obj);
 
                     // Push the closure to the stack BEFORE capturing upvalues to ensure GC safety
@@ -938,7 +938,7 @@ pub const VM = struct {
 
                         if (is_local == 1) {
                             // Capture directly from the parent's stack slot
-                            closure.upvalues[i] = self.captureUpvalue(&self.stack[frame.base_slot + index]) catch return .runtime_error;
+                            closure.upvalues[i] = self.captureUpvalue(&self.stack[frame.base_slot + index]) catch |err| return self.allocationFailed(err);
                         } else {
                             // Pass down an upvalue that the parent already captured
                             closure.upvalues[i] = frame.closure.upvalues[index];
@@ -983,7 +983,7 @@ pub const VM = struct {
                 },
                 .op_module, .op_module_wide => {
                     const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_module_wide);
-                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch return .runtime_error;
+                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch |err| return self.allocationFailed(err);
                     self.push(value.Value.initObj(&mod_obj.obj));
                 },
                 .op_mixin => {
@@ -1003,7 +1003,7 @@ pub const VM = struct {
                     }
                     const class_obj = class_val.asClass();
 
-                    class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch return .runtime_error;
+                    class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch |err| return self.allocationFailed(err);
                     self.method_epoch +%= 1;
                 },
                 .op_class, .op_class_wide => {
@@ -1019,7 +1019,7 @@ pub const VM = struct {
                     }
 
                     // Ensure new classes inherit from Object by default
-                    const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch return .runtime_error;
+                    const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch |err| return self.allocationFailed(err);
                     self.push(value.Value.initObj(&class_obj.obj));
                 },
                 .op_method, .op_method_wide => {
@@ -1028,10 +1028,10 @@ pub const VM = struct {
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
+                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
                         if (method.isClosure()) method.asClosure().home_class = receiver_val.asClass();
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
                     } else return .runtime_error;
                     self.method_epoch +%= 1;
                 },
@@ -1039,9 +1039,9 @@ pub const VM = struct {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
                     const val = self.pop();
                     if (frame.closure.function.namespace) |ns| {
-                        ns.define(self.allocator, name_str, val) catch return .runtime_error;
+                        ns.define(self.allocator, name_str, val) catch |err| return self.allocationFailed(err);
                     } else {
-                        self.defineGlobal(name_str, val) catch return .runtime_error;
+                        self.defineGlobal(name_str, val) catch |err| return self.allocationFailed(err);
                     }
                 },
                 .op_get_ivar, .op_get_ivar_wide => {
@@ -1073,20 +1073,20 @@ pub const VM = struct {
                         const instance = receiver.asInstance();
 
                         // --- Property Fast/Slow Path ---
-                        self.setInstanceField(instance, name_val, val, ic) catch return .runtime_error;
+                        self.setInstanceField(instance, name_val, val, ic) catch |err| return self.allocationFailed(err);
 
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isClass()) {
                         const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
+                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
                     } else if (receiver.isModule()) {
                         const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
+                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
                         self.stack[self.stack_top - 2] = val;
                         self.stack_top -= 1;
                         continue;
@@ -1137,9 +1137,9 @@ pub const VM = struct {
                     const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
 
                     if (receiver_val.isClass()) {
-                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
+                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
                     } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
+                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
                     } else {
                         if (self.raiseError(.TypeError, "Can only define singleton methods on classes or modules.", .{}) != .ok) return .runtime_error;
                         continue;
@@ -1205,7 +1205,7 @@ pub const VM = struct {
                             target_class = if (homeMethod(frame)) |home| (home.home_class orelse c) else c;
                         }
 
-                        target_class.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
+                        target_class.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
 
                         self.push(val); // Yield the assigned value
                     } else {
@@ -1260,7 +1260,7 @@ pub const VM = struct {
                         const self_val = self.frameSelf(frame);
                         if (self_val.isInstance()) {
                             const inst = self_val.asInstance();
-                            const clean_val = self.allocateString(name_str[1..]) catch return .runtime_error;
+                            const clean_val = self.allocateString(name_str[1..]) catch |err| return self.allocationFailed(err);
                             if (inst.class.instance_layout.get(clean_val)) |idx| is_def = idx < inst.fields.items.len;
                         }
                     } else {
@@ -1728,7 +1728,7 @@ pub const VM = struct {
             self.runtimeError("Call stack overflow: deeper than {d} calls (a recursion that never ends?).", .{self.max_call_frames});
             return .runtime_error;
         }
-        self.frames.ensureUnusedCapacity(self.allocator, 1) catch return .runtime_error;
+        self.frames.ensureUnusedCapacity(self.allocator, 1) catch |err| return self.allocationFailed(err);
 
         var provided_args = arg_count;
         var block_val: ?value.Value = null;
@@ -1752,7 +1752,7 @@ pub const VM = struct {
         if (func.is_method) if (self.arityError(closure, provided_args)) |res| return res;
 
         // Execute unified padding logic
-        self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch return .runtime_error;
+        self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch |err| return self.allocationFailed(err);
 
         if (self.profiler) |p| {
             p.enterFrame(self.closureName(closure)) catch |err| {
@@ -1945,13 +1945,13 @@ pub const VM = struct {
                 var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
                 @memcpy(stack_buf[0..a_str.len], a_str);
                 @memcpy(stack_buf[a_str.len..total_len], b_str);
-                str_val = self.allocateString(stack_buf[0..total_len]) catch return .runtime_error;
+                str_val = self.allocateString(stack_buf[0..total_len]) catch |err| return self.allocationFailed(err);
             } else {
-                const heap_buf = self.allocator.alloc(u8, total_len) catch return .runtime_error;
+                const heap_buf = self.allocator.alloc(u8, total_len) catch |err| return self.allocationFailed(err);
                 defer self.allocator.free(heap_buf);
                 @memcpy(heap_buf[0..a_str.len], a_str);
                 @memcpy(heap_buf[a_str.len..total_len], b_str);
-                str_val = self.allocateString(heap_buf) catch return .runtime_error;
+                str_val = self.allocateString(heap_buf) catch |err| return self.allocationFailed(err);
             }
 
             self.push(str_val);
@@ -1962,10 +1962,10 @@ pub const VM = struct {
 
             const a_arr = a_val.asArray();
             const b_arr = b_val.asArray();
-            const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const new_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
             const new_val = value.Value.initObj(&new_arr.obj);
 
-            new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
+            new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch |err| return self.allocationFailed(err);
             new_arr.items.appendSliceAssumeCapacity(a_arr.items.items);
             new_arr.items.appendSliceAssumeCapacity(b_arr.items.items);
 
@@ -2062,7 +2062,7 @@ pub const VM = struct {
 
         // 3. Compile it into its own top-level scope: its variables, defs and
         // classes live there, and only exported names reach the importer.
-        const namespace = self.newModuleNamespace() catch return .runtime_error;
+        const namespace = self.newModuleNamespace() catch |err| return self.allocationFailed(err);
         const compile_module = self.host.compile_module orelse {
             if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
             return null;
@@ -2090,7 +2090,7 @@ pub const VM = struct {
         }
 
         // 5. Setup Closure
-        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        const func = self.gc.allocateFunction(self) catch |err| return self.allocationFailed(err);
         func.chunk = heap_chunk;
         func.owns_chunk = true;
         func.local_count = heap_chunk.local_count;
@@ -2099,13 +2099,13 @@ pub const VM = struct {
 
         // Root func while allocateClosure may collect
         self.push(value.Value.initObj(&func.obj));
-        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+        const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
         _ = self.pop();
 
         // --- CIRCULAR DEPENDENCY: the import in progress. (A nil in the cache
         // used to mark it, so a module whose value is nil, one ending in a def or
         // a puts, was "circular" the second time it was imported.)
-        self.loading_modules.put(self.allocator, path_str, {}) catch return .runtime_error;
+        self.loading_modules.put(self.allocator, path_str, {}) catch |err| return self.allocationFailed(err);
         defer _ = self.loading_modules.remove(path_str);
 
         // 6. Execute synchronously
@@ -2128,7 +2128,7 @@ pub const VM = struct {
         }
 
         // 7. Cache the actual finalized module and yield result
-        self.cacheModule(path_str, final_res) catch return .runtime_error;
+        self.cacheModule(path_str, final_res) catch |err| return self.allocationFailed(err);
         self.push(final_res);
         return null;
     }
@@ -2227,7 +2227,7 @@ pub const VM = struct {
         // outside a def, so it exists).
         const home = homeMethod(frame) orelse return self.raiseError(.TypeError, "super can only be called inside a method", .{});
         const method_name_str = if (home.function.name) |n| n.chars else "";
-        const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
+        const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch |err| return self.allocationFailed(err);
 
         const receiver = self.stack[base_slot];
 
@@ -2437,7 +2437,7 @@ pub const VM = struct {
                 if (i < total) self.push(arr.items.items[i]) else self.push(value.Value.initNil());
             }
 
-            const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const splat_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
             const splat_val = value.Value.initObj(&splat_arr.obj);
             self.push(splat_val);
 
@@ -2471,18 +2471,18 @@ pub const VM = struct {
             if (pre_count > 0) {
                 self.push(val);
                 for (1..pre_count) |_| self.push(value.Value.initNil());
-                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                const empty_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&empty_arr.obj));
                 for (0..post_count) |_| self.push(value.Value.initNil());
             } else if (post_count > 0) {
-                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                const empty_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&empty_arr.obj));
                 for (0..post_count - 1) |_| self.push(value.Value.initNil());
                 self.push(val);
             } else {
-                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&arr_obj.obj));
-                arr_obj.items.append(self.gc.trackingAllocator(), val) catch return .runtime_error;
+                arr_obj.items.append(self.gc.trackingAllocator(), val) catch |err| return self.allocationFailed(err);
                 _ = self.pop();
                 self.push(value.Value.initObj(&arr_obj.obj));
             }
@@ -2505,7 +2505,7 @@ pub const VM = struct {
             splat_size = total_args_passed - fixed_arity - trailing_arity;
         }
 
-        const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+        const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
         const arr_val = value.Value.initObj(&arr_obj.obj);
 
         self.push(arr_val);
@@ -2544,7 +2544,7 @@ pub const VM = struct {
         const start_val = self.pop();
 
         if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
-            const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
+            const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch |err| return self.allocationFailed(err);
             self.push(value.Value.initObj(&range_obj.obj));
         } else if (start_val.isString() and end_val.isString()) {
             // Re-root the strings to prevent GC sweep
@@ -2555,7 +2555,7 @@ pub const VM = struct {
             const e_str = end_val.asString().chars;
 
             if (s_str.len == 1 and e_str.len == 1) {
-                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 const arr_val = value.Value.initObj(&arr_obj.obj);
                 self.push(arr_val); // Protect from GC while building
 
@@ -2565,8 +2565,8 @@ pub const VM = struct {
 
                 while (curr < limit) : (curr += 1) {
                     const char_slice = &[_]u8{@intCast(curr)};
-                    const char_str = self.allocateString(char_slice) catch return .runtime_error;
-                    arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch return .runtime_error;
+                    const char_str = self.allocateString(char_slice) catch |err| return self.allocationFailed(err);
+                    arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch |err| return self.allocationFailed(err);
                 }
 
                 // Cleanup the protected values
@@ -2641,18 +2641,18 @@ pub const VM = struct {
             const i = self.resolveArrayIndex(len, index) catch return self.indexError(kind, index, len);
             if (!is_string) break :blk target.asArray().items.items[i];
             const span = charSpan(chars, i, 1);
-            break :blk self.allocateString(chars[span.start..span.end]) catch return .runtime_error;
+            break :blk self.allocateString(chars[span.start..span.end]) catch |err| return self.allocationFailed(err);
         } else if (index.isRange()) blk: {
             const range = index.asRange();
             if (range.step != 1.0) return self.raiseError(.ArgumentError, "a stepped Range can't index {s} {s}", .{ if (is_string) "a" else "an", kind });
             const span = rangeSpan(range, len) orelse break :blk value.Value.initNil();
             if (is_string) {
                 const bytes = charSpan(chars, span.start, span.end - span.start);
-                break :blk self.allocateString(chars[bytes.start..bytes.end]) catch return .runtime_error;
+                break :blk self.allocateString(chars[bytes.start..bytes.end]) catch |err| return self.allocationFailed(err);
             }
             // `index` stays on the stack, keeping the Range rooted while the Array is built
-            const slice = self.gc.allocateArray(self) catch return .runtime_error;
-            slice.items.appendSlice(self.gc.trackingAllocator(), target.asArray().items.items[span.start..span.end]) catch return .runtime_error;
+            const slice = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
+            slice.items.appendSlice(self.gc.trackingAllocator(), target.asArray().items.items[span.start..span.end]) catch |err| return self.allocationFailed(err);
             break :blk value.Value.initObj(&slice.obj);
         } else {
             return self.raiseError(.TypeError, "{s} index must be an integer or a Range, got {s}", .{ kind, self.typeName(index) });
@@ -2918,10 +2918,10 @@ pub const VM = struct {
             const hint = if (class_obj == self.proc_class) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
             return self.raiseError(.NoMethodError, "undefined method 'new' for {s}{s}", .{ class_obj.name.chars, hint });
         }
-        const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+        const instance = self.gc.allocateInstance(self, class_obj) catch |err| return self.allocationFailed(err);
         self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
-        const init_name_val = self.allocateString("initialize") catch return .runtime_error;
+        const init_name_val = self.allocateString("initialize") catch |err| return self.allocationFailed(err);
         const init_method = self.findMethod(class_obj, init_name_val) orelse {
             if (arg_count > 0) return self.raiseError(.ArgumentError, "Expected 0 args for default constructor.", .{});
             return .ok;
@@ -3056,7 +3056,7 @@ pub const VM = struct {
                 else => return self.alreadyThrown(throw_seq, depth) orelse .runtime_error,
             };
         }
-        const merged = self.allocateString(out.written()) catch return .runtime_error;
+        const merged = self.allocateString(out.written()) catch |err| return self.allocationFailed(err);
         self.popAndRelease(count);
         self.push(merged);
         return .ok;
@@ -3206,7 +3206,7 @@ pub const VM = struct {
 
                     if (str_val) |s_val| {
                         self.push(s_val); // Protect until the instance holds it
-                        const msg_key = self.allocateString("message") catch return .runtime_error;
+                        const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
                         self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
                             self.reportError("Error setting exception message: {}", .{err});
                         };
@@ -3215,7 +3215,7 @@ pub const VM = struct {
                         // --- EAGER BACKTRACE CAPTURE ---
                         if (self.buildBacktrace() catch null) |bt_arr| {
                             self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                            const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                            const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
                             self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
                                 self.reportError("Error setting exception backtrace: {}", .{err});
                             };
@@ -3253,7 +3253,7 @@ pub const VM = struct {
                 const inst = err_val.asInstance();
                 var printed = false;
 
-                const msg_key = self.allocateString("message") catch return .runtime_error;
+                const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
 
                 // Format: ClassName: Message
                 if (inst.class.instance_layout.get(msg_key)) |idx| {
@@ -3270,7 +3270,7 @@ pub const VM = struct {
 
                 // Print First-Class Backtrace seamlessly
                 var printed_bt = false;
-                const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
 
                 if (inst.class.instance_layout.get(bt_key)) |bt_idx| {
                     if (bt_idx < inst.fields.items.len) {
@@ -3667,7 +3667,7 @@ pub const VM = struct {
 
                 if (self.allocateString(msg) catch null) |str_val| {
                     self.push(str_val); // Protect until the instance holds it
-                    const msg_key = self.allocateString("message") catch return .runtime_error;
+                    const msg_key = self.allocateString("message") catch return self.raisingOutOfMemory();
                     self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
                         self.reportError("Error setting exception message: {}", .{err});
                     };
@@ -3676,7 +3676,7 @@ pub const VM = struct {
                     // --- EAGER BACKTRACE CAPTURE ---
                     if (self.buildBacktrace() catch null) |bt_arr| {
                         self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                        const bt_key = self.allocateString("backtrace") catch return .runtime_error;
+                        const bt_key = self.allocateString("backtrace") catch return self.raisingOutOfMemory();
                         self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
                             self.reportError("Error setting exception backtrace: {}", .{err});
                         };
@@ -3699,6 +3699,24 @@ pub const VM = struct {
             self.runtimeError("Fatal: out of memory while raising an error.", .{});
             return .runtime_error;
         }
+    }
+
+    /// An allocation the run needed failed: raises an OutOfMemoryError the script may rescue,
+    /// naming the memory limit when one is set (it refused the allocation, or the system ran
+    /// out first). Such a run used to stop with no message at all. `err` can only be
+    /// OutOfMemory, so a call that fails in other ways doesn't compile against it.
+    fn allocationFailed(self: *VM, err: error{OutOfMemory}) InterpretResult {
+        switch (err) {
+            error.OutOfMemory => {},
+        }
+        if (self.gc.max_memory_limit) |limit| return self.raiseError(.OutOfMemoryError, "the script exceeded its memory limit of {d} bytes", .{limit});
+        return self.raiseError(.OutOfMemoryError, "out of memory", .{});
+    }
+
+    /// The same while an error is being raised or reported, where raising one would recurse.
+    fn raisingOutOfMemory(self: *VM) InterpretResult {
+        self.runtimeError("Fatal: out of memory while raising an error.", .{});
+        return .runtime_error;
     }
 
     pub fn runtimeError(self: *VM, comptime fmt: []const u8, args: anytype) void {

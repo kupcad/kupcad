@@ -375,6 +375,39 @@ test "GC: a script past its memory limit stops with a Sandbox Error" {
     }
 }
 
+test "GC: garbage is collected before the memory limit stops a script" {
+    // Collection ran only past the 1 MB growth threshold, so under a lower limit (or near a
+    // 1 GiB one) a loop that kept nothing stopped with a Sandbox Error once its garbage
+    // reached the limit. Ranges are objects alone, so each allocation meets the check.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.setMemoryLimit(vm.gc.bytes_allocated + 256 * 1024);
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, "i = 0\nwhile i < 100000\n  g = (0..i)\n  i += 1\nend"));
+}
+
+test "GC: an allocation the memory limit refuses raises an error the script can rescue" {
+    // The dispatch loop ended the run with no message when an allocation failed.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const limit = vm.gc.bytes_allocated + 256 * 1024;
+    vm.setMemoryLimit(limit);
+    const source =
+        \\s = "x"
+        \\r = begin
+        \\  while true
+        \\    s = s + s
+        \\  end
+        \\rescue OutOfMemoryError => e
+        \\  e.message
+        \\end
+    ;
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
+    var buf: [96]u8 = undefined;
+    try support.expectValue(.{ .str = try std.fmt.bufPrint(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
+}
+
 test "GC: the standard library's natives and names live with the VM, outside the sweep" {
     // Each native and each name was its own GC allocation, freed at teardown: a VM cost about
     // 850 allocations before running anything, and the test suite most of its time.

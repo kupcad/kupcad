@@ -70,7 +70,7 @@ fn describeError(err: CompileError) []const u8 {
         error.TooManyLocals => std.fmt.comptimePrint("too many variables in one function (at most {d}, and {d} captured from outside)", .{ limits.MAX_LOCALS, limits.MAX_UPVALUES }),
         error.TooManyArguments => std.fmt.comptimePrint("a call takes at most {d} arguments", .{limits.MAX_ARGS}),
         error.TooManyParameters => std.fmt.comptimePrint("a function takes at most {d} parameters", .{limits.MAX_ARGS}),
-        error.TooManyInlineCaches => std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{limits.MAX_INLINE_CACHES}),
+        error.TooManyInlineCaches => std.fmt.comptimePrint("too many method calls in one script (at most {d})", .{limits.MAX_INLINE_CACHES + 1}),
         error.AstTooDeep => "the code is nested too deeply",
         error.UnexpectedBlock => "a call takes one block: a &block argument or a do/{ } block, not both",
         error.ProtectedSymbol => "a built-in name can't be redefined",
@@ -128,6 +128,9 @@ pub const Compiler = struct {
 
     upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
     locals: std.ArrayListUnmanaged(Local) = .empty,
+    /// Each named local's slot, by name (ids are interned, so one per name): a lookup
+    /// scanned every local before, and a def with tens of thousands of them took minutes.
+    local_slots: std.AutoHashMapUnmanaged(ast.StringId, u16) = .empty,
     loops: std.ArrayListUnmanaged(LoopState) = .empty,
     // Enclosing rescue/ensure regions of the current function, innermost last
     unwind_stack: std.ArrayListUnmanaged(UnwindEntry) = .empty,
@@ -243,6 +246,7 @@ pub const Compiler = struct {
         self.script_globals.deinit(self.allocator);
         self.imported_symbols.deinit(self.allocator);
         self.locals.deinit(self.allocator);
+        self.local_slots.deinit(self.allocator);
         for (self.loops.items) |*loop| {
             loop.exit_jumps.deinit(self.allocator);
         }
@@ -1050,6 +1054,9 @@ pub const Compiler = struct {
         }
 
         if (!has_splat) {
+            if (entries.len > limits.MAX_HASH_ENTRIES) {
+                return self.fail(error.TooManyConstants, "a map literal holds at most {d} entries; add the rest with []=", .{limits.MAX_HASH_ENTRIES});
+            }
             for (entries) |entry| {
                 const key_node = self.tree.getNode(entry.key).?;
                 if (key_node.tag == .identifier) {
@@ -1061,8 +1068,6 @@ pub const Compiler = struct {
                 }
                 try self.compileNode(entry.value);
             }
-
-            if (entries.len > limits.MAX_HASH_ENTRIES) return error.TooManyConstants;
 
             try self.emitOpWithOperand(.op_build_map, .op_build_map_wide, entries.len);
 

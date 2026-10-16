@@ -211,9 +211,16 @@ pub const GC = struct {
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
     }
 
+    /// The heap size past which the next allocation collects first: the growth threshold, or
+    /// the memory limit when that is lower, so a script whose garbage reaches the limit has
+    /// it collected instead of stopping with a Sandbox Error while it holds almost nothing.
+    fn collectionThreshold(self: *const GC) usize {
+        return @min(self.next_gc_threshold, self.max_memory_limit orelse std.math.maxInt(usize));
+    }
+
     /// Generic allocator that appends directly to the specific tracking list
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T), obj_type: value.ObjType) !*T {
-        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
+        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.collectionThreshold()) {
             self.collectGarbage(vm, false);
         }
 

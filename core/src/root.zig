@@ -42,6 +42,7 @@ test {
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");
+    _ = @import("core/limits_test.zig");
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");
     _ = @import("core/workspace_test.zig");
