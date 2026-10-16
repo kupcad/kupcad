@@ -16,6 +16,7 @@ const array_class_mod = @import("classes/array.zig");
 const string_class_mod = @import("classes/string.zig");
 const map_class_mod = @import("classes/map.zig");
 const kernel = @import("../kernel/kernel.zig");
+const module_compiler = @import("../compiler/module_compiler.zig");
 
 fn defaultPrintHandler(vm: *VM, message: []const u8) void {
     std.Io.File.stderr().writeStreamingAll(vm.io, message) catch return;
@@ -165,5 +166,6 @@ pub fn registerStandardLibrary(vm: *VM) !void {
         .binary_handler = manifest.cadBinaryHandler,
         .print_handler = defaultPrintHandler,
         .mesh_destructor = kernel.destruct,
+        .compile_module = module_compiler.compileModule,
     };
 }

@@ -8,6 +8,7 @@ const registry = @import("../stdlib/registry.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const module_compiler = @import("../compiler/module_compiler.zig");
 
 const LIB_C =
     \\c = 3
@@ -35,6 +36,8 @@ test "VM: op_import correctly evaluates and destructures modules" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -83,6 +86,8 @@ test "VM: op_import resolves transitive dependencies securely via Modules" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -119,6 +124,8 @@ test "VM: op_import caches evaluated modules to prevent redundant execution" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -147,6 +154,8 @@ test "VM: op_import safely halts on package runtime errors" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -177,6 +186,8 @@ test "VM: op_import safely returns empty modules for blank files" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -201,6 +212,8 @@ test "VM: op_import destructuring throws RuntimeError for missing exports" {
     const main_source = "import { func_b } from \"./pkg.kup\"";
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -225,6 +238,8 @@ test "VM: op_import safely aborts on missing package files" {
     const main_source = "import \"./does_not_exist.kup\"";
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -254,6 +269,8 @@ test "VM: op_import destructuring a primitive export throws RuntimeError" {
     const main_source = "import { x } from \"./prim.kup\"";
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -282,6 +299,8 @@ test "VM: op_import safely aborts on infinite circular dependencies" {
     const main_source = "import \"./ping.kup\"";
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -326,6 +345,8 @@ test "VM: op_import caches by reference allowing cross-file state sharing" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -364,6 +385,8 @@ test "VM: op_import supports destructuring multiple exports perfectly" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -412,6 +435,8 @@ test "VM: op_import supports exporting Classes and Modules securely" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -456,6 +481,8 @@ test "VM: op_import closures maintain upvalues to private package state" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -500,6 +527,8 @@ test "VM: op_import merges multiple sequential export statements" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -537,6 +566,8 @@ test "VM: op_import allows exporting aliased primitives and references" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -579,6 +610,8 @@ test "VM: op_import resolves non-relative package imports from workspace" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -606,6 +639,8 @@ test "VM: op_import routes STL asset imports to native handler" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -664,6 +699,8 @@ test "VM: op_import supports nested namespace re-exports" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -694,6 +731,8 @@ test "VM: op_import detects multi-level circular dependencies (A -> B -> C -> A)
     const main_source = "import \"./a.kup\"";
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -746,6 +785,8 @@ test "VM: op_import supports cross-file class inheritance hierarchy" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -785,6 +826,8 @@ test "VM: op_import supports barrel re-exports from multiple files" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -815,6 +858,8 @@ test "VM: op_import supports symbol aliasing via 'as'" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -840,6 +885,8 @@ test "Compiler: op_import rejects symbol collisions" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
 
     var doc = try Document.parse(testing.allocator, main_source);
@@ -863,6 +910,8 @@ test "VM: op_import catches self-import cycles gracefully" {
     try mem_vfs.vfs().writeFile("self.kup", "import \"./self.kup\"");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -897,6 +946,8 @@ test "VM: op_import supports aliased exports (export { internal as public })" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -932,6 +983,8 @@ test "VM: op_import supports multiple aliases in a single import statement" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -957,6 +1010,8 @@ test "Compiler: op_import rejects symbol collisions in top-level scope" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
 
     var doc = try Document.parse(testing.allocator, main_source);
@@ -989,6 +1044,8 @@ test "VM: op_import supports chained aliased re-exports across modules" {
     ;
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
 
@@ -1033,6 +1090,8 @@ test "VM: op_import cached module results survive GC and re-import" {
     try mem_vfs.vfs().writeFile("mod.kup", "Payload = [\"payload\", \"more\"]\nexport Payload");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
@@ -1062,6 +1121,8 @@ test "VM: op_import exception raised inside an imported module is rescued by the
     try mem_vfs.vfs().writeFile("boom.kup", "raise \"module failed\"");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
@@ -1101,6 +1162,8 @@ test "VM: op_import of a module that fails to compile does not leak its chunk" {
     try mem_vfs.vfs().writeFile("bad.kup", "x = \"keep\"\ncube = 1");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
@@ -1133,6 +1196,8 @@ fn runWithModules(files: []const ModuleFile, main: []const u8) !f64 {
     for (files) |f| try mem_vfs.vfs().writeFile(f.path, f.source);
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
@@ -1193,6 +1258,8 @@ test "VM: a module still sees a builtin the main script shadowed" {
     try mem_vfs.vfs().writeFile("lib.kup", "def read\n  helper_val\nend\nexport read");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
@@ -1212,6 +1279,8 @@ test "VM: module namespace values survive GC" {
     try mem_vfs.vfs().writeFile("lib.kup", "s = \"str\" + \"ing\"\nparts = [s, s + \"!\"]\ndef get\n  parts[1]\nend\nexport get");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
@@ -1231,6 +1300,8 @@ test "VM: importing a module that fails to compile names where and why" {
     try mem_vfs.vfs().writeFile("bad.kup", "x = 1\ncube = 5\nexport x");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     vm.vfs = mem_vfs.vfs();
     vm.mute_errors = true;
@@ -1267,6 +1338,8 @@ test "VM: a relative import is read next to the file that imports it" {
     try mem_vfs.vfs().writeFile("lib/units.kup", "unit = 2\nexport unit");
 
     var vm = try VM.init(testing.allocator, testing.io);
+
+    vm.host.compile_module = module_compiler.compileModule; // as the standard library registers it
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
@@ -1282,4 +1355,25 @@ test "VM: a relative import is read next to the file that imports it" {
     try comp.compile(doc.tree.root);
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
     try testing.expectEqual(@as(f64, 6), vm.globals.get("r").?.asNumber());
+}
+
+test "VM: a host that registered no module compiler refuses an import by name" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("lib.kup", "x = 1\n");
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+    vm.mute_errors = true;
+
+    var doc = try Document.parse(testing.allocator, "import \"./lib.kup\"\n");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
+    defer comp.deinit();
+    try comp.compile(doc.tree.root);
+    try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
+    // A bare VM has no error classes, so the kind reads as a RuntimeError; the words are the point.
+    try testing.expect(std.mem.endsWith(u8, vm.last_error.?, "this host can't compile modules, so 'lib.kup' can't be imported"));
 }

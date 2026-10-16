@@ -13,6 +13,8 @@ const VM = @import("vm.zig").VM;
 pub const Host = struct {
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
     mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
-    import_handler: ?*const fn (vm: *VM, path: []const u8) anyerror!value.Value = null,
+    /// Compiles an imported module's source into its own namespace (see
+    /// compiler/module_compiler.zig); the chunk is the caller's. Without one, imports fail.
+    compile_module: ?*const fn (vm: *VM, path: []const u8, source: []const u8, namespace: *value.Namespace) anyerror!*chunk.Chunk = null,
     print_handler: ?*const fn (vm: *VM, message: []const u8) void = null,
 };

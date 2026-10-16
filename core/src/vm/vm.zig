@@ -22,8 +22,6 @@ const material_mod = @import("../core/material.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
-const Document = @import("../core/document.zig").Document;
-const Compiler = @import("../compiler/compiler.zig").Compiler;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const sequence = @import("sequence.zig");
@@ -902,12 +900,6 @@ pub const VM = struct {
 
                     // 2. Fetch from VFS
                     const source = self.vfs.readFile(self.allocator, path_str) catch {
-                        if (self.host.import_handler) |handler| {
-                            const module_obj = handler(self, path_str) catch return .runtime_error;
-                            self.cacheModule(path_str, module_obj) catch return .runtime_error;
-                            self.push(module_obj);
-                            continue;
-                        }
                         if (self.raiseError(.ImportError, "Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     };
@@ -921,43 +913,28 @@ pub const VM = struct {
                     self.import_depth += 1;
                     defer self.import_depth -= 1;
 
-                    // 3. Parse Document
-                    var doc = Document.parse(self.allocator, source) catch {
-                        if (self.raiseError(.ImportError, "Parse error in '{s}'", .{path_str}) != .ok) return .runtime_error;
+                    // 3. Compile it into its own top-level scope: its variables, defs and
+                    // classes live there, and only exported names reach the importer.
+                    const namespace = self.newModuleNamespace() catch return .runtime_error;
+                    const compile_module = self.host.compile_module orelse {
+                        if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
                         continue;
                     };
-                    defer doc.deinit();
-
-                    if (doc.diagnostics.len > 0) {
-                        if (self.raiseError(.ImportError, "Syntax errors in '{s}'", .{path_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    // 4. Compile recursively
-                    const heap_chunk = self.allocator.create(chunk.Chunk) catch return .runtime_error;
-                    heap_chunk.* = chunk.Chunk.init();
+                    const caller_depth = self.frames.items.len;
+                    const throw_seq = self.throw_seq;
+                    const heap_chunk = compile_module(self, path_str, source, namespace) catch {
+                        if (self.alreadyThrown(throw_seq, caller_depth)) |res| {
+                            if (res != .ok) return res;
+                            continue;
+                        }
+                        return .runtime_error;
+                    };
                     // `errdefer` never fires here (this function returns InterpretResult, not an
                     // error union), so ownership is tracked explicitly until a function owns the chunk.
                     var chunk_owned_by_func = false;
                     defer if (!chunk_owned_by_func) {
                         heap_chunk.free(self.allocator);
                         self.allocator.destroy(heap_chunk);
-                    };
-
-                    // The module's own top-level scope: its variables, defs and classes live
-                    // here, and only exported names reach the importer.
-                    const namespace = self.newModuleNamespace() catch return .runtime_error;
-
-                    var comp = Compiler.forDocument(self.allocator, &doc, heap_chunk, self);
-                    defer comp.deinit();
-                    comp.module_namespace = namespace;
-                    comp.module_path = path_str; // its own imports are its neighbours
-
-                    comp.compile(doc.tree.root) catch |err| {
-                        const where = if (comp.errorDiagnostic()) |d| d.formatLine(self.allocator, &doc.line_index) catch null else null;
-                        defer if (where) |w| self.allocator.free(w);
-                        if (self.raiseError(.ImportError, "could not compile '{s}': {s}", .{ path_str, where orelse @errorName(err) }) != .ok) return .runtime_error;
-                        continue;
                     };
 
                     if (!self.verifyBytecode(heap_chunk)) {

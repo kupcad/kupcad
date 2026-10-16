@@ -233,7 +233,7 @@ The `Host` interface (`vm/host.zig`) decouples the VM runtime core from OS depen
 pub const Host = struct {
     binary_handler: ?*const fn (vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value = null,
     mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
-    import_handler: ?*const fn (vm: *VM, path: []const u8) anyerror!value.Value = null,
+    compile_module: ?*const fn (vm: *VM, path: []const u8, source: []const u8, namespace: *value.Namespace) anyerror!*chunk.Chunk = null,
     print_handler: ?*const fn (vm: *VM, message: []const u8) void = null,
 };
 
@@ -242,7 +242,7 @@ pub const Host = struct {
 * `print_handler`: Intercepts calls from `puts()`, `print()`, and `inspect()`. Routes output to stdout in CLI mode or UI widgets in WebAssembly/GUI modes.
 * `binary_handler`: Handles CSG binary operations between geometry objects.
 * `mesh_destructor`: Called when `ObjGeometry` handles are freed by the GC to release C++ mesh memory.
-* `import_handler`: Handles file system import requests (`import "lib.kup"`).
+* `compile_module`: Compiles an imported module (`import "lib.kup"`) into its own namespace (`compiler/module_compiler.zig`, registered by the standard library). The VM reads the file, checks the cache, the depth limit and cycles, verifies and runs the chunk; parsing and compiling are the host's, so the VM doesn't import the compiler (they imported each other).
 
 ### Native Functions
 
