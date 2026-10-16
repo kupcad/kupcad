@@ -99,23 +99,29 @@ pub const Stmt = struct {
         _ = sqlite.sqlite3_clear_bindings(self.handle);
         self.bindArgs(args);
 
-        const rc = sqlite.sqlite3_step(self.handle);
-        if (rc == sqlite.SQLITE_ROW) {
-            // SAFETY: All fields are immediately populated via reflection from sqlite3_column_* below.
-            var result: T = undefined;
-            inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
-                const filed_type = @typeInfo(T).@"struct".field_types[i];
-                if (filed_type == []const u8) {
-                    const ptr = sqlite.sqlite3_column_text(self.handle, @intCast(i));
-                    const len = sqlite.sqlite3_column_bytes(self.handle, @intCast(i));
-                    @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
-                } else if (filed_type == i32 or filed_type == i64) {
-                    @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(self.handle, @intCast(i)));
-                }
+        return readRow(T, self.handle);
+    }
+
+    /// Steps `handle` once: the next row, null when there are none, and a step that fails
+    /// (busy, I/O, corruption, an overflowing expression) is an error. It used to read as
+    /// "no more rows", so a package could be linked from half its files and reported done.
+    fn readRow(comptime T: type, handle: *sqlite.sqlite3_stmt) !?T {
+        const rc = sqlite.sqlite3_step(handle);
+        if (rc == sqlite.SQLITE_DONE) return null;
+        if (rc != sqlite.SQLITE_ROW) return error.SqliteError;
+        // SAFETY: All fields are immediately populated via reflection from sqlite3_column_* below.
+        var result: T = undefined;
+        inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+            const field_type = @typeInfo(T).@"struct".field_types[i];
+            if (field_type == []const u8) {
+                const ptr = sqlite.sqlite3_column_text(handle, @intCast(i));
+                const len = sqlite.sqlite3_column_bytes(handle, @intCast(i));
+                @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
+            } else if (field_type == i32 or field_type == i64) {
+                @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(handle, @intCast(i)));
             }
-            return result;
         }
-        return null;
+        return result;
     }
 
     pub fn iterator(self: Stmt, comptime T: type, args: anytype) !Iterator(T) {
@@ -131,23 +137,7 @@ pub const Stmt = struct {
             stmt: Stmt,
 
             pub fn next(self: *@This()) !?T {
-                const rc = sqlite.sqlite3_step(self.stmt.handle);
-                if (rc == sqlite.SQLITE_ROW) {
-                    // SAFETY: All fields are immediately populated via reflection from sqlite3_column_* below.
-                    var result: T = undefined;
-                    inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
-                        const filed_type = @typeInfo(T).@"struct".field_types[i];
-                        if (filed_type == []const u8) {
-                            const ptr = sqlite.sqlite3_column_text(self.stmt.handle, @intCast(i));
-                            const len = sqlite.sqlite3_column_bytes(self.stmt.handle, @intCast(i));
-                            @field(result, field_name) = if (ptr != null) ptr[0..@intCast(len)] else "";
-                        } else if (filed_type == i32 or filed_type == i64) {
-                            @field(result, field_name) = @intCast(sqlite.sqlite3_column_int64(self.stmt.handle, @intCast(i)));
-                        }
-                    }
-                    return result;
-                }
-                return null;
+                return readRow(T, self.stmt.handle);
             }
         };
     }

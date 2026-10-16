@@ -61,3 +61,27 @@ test "Validate: a self-hosted git server says which API it speaks" {
     defer testing.allocator.free(b);
     try testing.expectEqualStrings(a, b);
 }
+
+test "pkgId: tells apart packages whose names run together, and one repository at two refs" {
+    // `github.com/a-b/c` and `github.com/a/b-c` were both `github.com-a-b-c`, and a
+    // repository at two refs was one package.
+    const specs = [_][]const u8{ "github.com/a-b/c", "github.com/a/b-c", "github.com/a/b-c@v2", "github.com/a/b-c@main" };
+    var ids: [specs.len][]const u8 = undefined;
+    for (specs, &ids) |spec, *id| id.* = try (try ParsedPackage.parse(spec)).pkgId(testing.allocator);
+    defer for (ids) |id| testing.allocator.free(id);
+    for (ids[0..3], 0..) |id, i| {
+        for (ids[0..i]) |earlier| try testing.expect(!std.mem.eql(u8, earlier, id));
+    }
+    // The default ref spelled out is the same package, and the id still reads as the location.
+    try testing.expectEqualStrings(ids[1], ids[3]);
+    try testing.expect(std.mem.startsWith(u8, ids[0], "github.com-a-b-c-"));
+    try testing.expect(std.mem.startsWith(u8, ids[1], "github.com-a-b-c-"));
+}
+
+test "ParsedPackage: a .zip URL is refused, with a reason" {
+    // It was accepted and then extracted as a gzip'd tarball.
+    const provider_mod = @import("providers/provider.zig");
+    try testing.expectError(error.UnsupportedArchive, ParsedPackage.parse("https://example.com/parts.zip"));
+    try testing.expectEqualStrings("only .tar.gz archives can be installed, not .zip", provider_mod.describeParseError(error.UnsupportedArchive));
+    try testing.expectEqual(.http, (try ParsedPackage.parse("https://example.com/parts.tar.gz")).provider);
+}

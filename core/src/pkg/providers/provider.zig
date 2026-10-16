@@ -5,6 +5,8 @@ const ArchiveLayout = @import("../cafs.zig").ArchiveLayout;
 
 /// Length of the hex digest prefix used to derive ids for URL/path based packages.
 const URL_ID_HEX_LEN = 16;
+/// Hex digits of the location-and-ref hash that ends a git-host package id.
+const REF_ID_HEX_LEN = 8;
 
 /// The first character of a ref that is a version range rather than a branch, tag or commit.
 const RANGE_OPERATORS = "^~>=";
@@ -65,7 +67,9 @@ pub const ParsedPackage = struct {
             return .{ .provider = .local, .domain = "", .user = "", .repo = path, .ref = "" };
         }
 
-        if (std.mem.endsWith(u8, requested_url, ".tar.gz") or std.mem.endsWith(u8, requested_url, ".zip")) {
+        // Only gzip'd tarballs are extracted: a .zip was accepted here and then read as one.
+        if (std.mem.endsWith(u8, requested_url, ".zip")) return error.UnsupportedArchive;
+        if (std.mem.endsWith(u8, requested_url, ".tar.gz")) {
             try validateArchiveUrl(requested_url);
             return .{ .provider = .http, .domain = "", .user = "", .repo = requested_url, .ref = "" };
         }
@@ -119,14 +123,23 @@ pub const ParsedPackage = struct {
         };
     }
 
-    /// Stable, filesystem-safe identifier for the package (used as a store folder name).
-    /// URL/path based packages hash their location so no URL characters reach the filesystem.
+    /// Stable, filesystem-safe identifier for the package at its ref: the key of its
+    /// kupcad.lock entry and store rows. A git-host package reads as its location, and a
+    /// hash of location and ref keeps it unambiguous: `github.com/a-b/c` and
+    /// `github.com/a/b-c` were both `github.com-a-b-c`, and one repository at two refs was
+    /// one package, whichever install worker finished first. URL/path based packages
+    /// hash their location so no URL characters reach the filesystem.
     pub fn pkgId(self: ParsedPackage, allocator: std.mem.Allocator) ![]const u8 {
-        if (self.provider.isGitHost()) {
-            return allocator.print("{s}-{s}-{s}", .{ self.domain, self.user, self.repo });
-        }
+        var hasher = std.crypto.hash.sha2.Sha256.init(.{});
         var digest: [std.crypto.hash.sha2.Sha256.digest_length]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(self.repo, &digest, .{});
+        if (self.provider.isGitHost()) {
+            for ([_][]const u8{ self.domain, "/", self.user, "/", self.repo, "@", self.ref }) |part| hasher.update(part);
+            hasher.final(&digest);
+            const hex = std.fmt.bytesToHex(digest, .lower);
+            return allocator.print("{s}-{s}-{s}-{s}", .{ self.domain, self.user, self.repo, hex[0..REF_ID_HEX_LEN] });
+        }
+        hasher.update(self.repo);
+        hasher.final(&digest);
         const hex = std.fmt.bytesToHex(digest, .lower);
         return allocator.print("{s}-{s}", .{ @tagName(self.provider), hex[0..URL_ID_HEX_LEN] });
     }
@@ -147,6 +160,7 @@ pub fn describeParseError(err: anyerror) []const u8 {
         error.ProviderMismatch => "the prefix names another API than that host's",
         error.InvalidHost => "the host must be a plain name such as github.com (no port, no IP address)",
         error.InvalidRef => "the part after @ must be a branch, tag, commit or version",
+        error.UnsupportedArchive => "only .tar.gz archives can be installed, not .zip",
         else => "expected <host>/<user>/<repo>[@ref], file:<path>, or an http(s) URL of a .tar.gz",
     };
 }

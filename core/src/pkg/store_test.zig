@@ -327,3 +327,15 @@ test "Store: a database that can't be opened is an open error, and its handle is
     // handle SQLite hands back for a failed open was never closed.
     try testing.expectError(error.SqliteOpenFailed, Store.init(testing.io, "/nonexistent-kupcad-dir/index.db"));
 }
+
+test "Store: a query step that fails is an error, not the end of the rows" {
+    // SQLITE_ERROR and friends read as "no more rows": linkWorkspace could link a partial
+    // package and report success. abs() of the smallest integer fails at step time.
+    var store = try Store.init(testing.io, ":memory:");
+    defer store.deinit();
+    const stmt = try store.db.prepare("SELECT abs(-9223372036854775808) AS v");
+    defer stmt.deinit();
+    try testing.expectError(error.SqliteError, stmt.one(struct { v: i64 }, .{}, .{}));
+    var rows = try stmt.iterator(struct { v: i64 }, .{});
+    try testing.expectError(error.SqliteError, rows.next());
+}
