@@ -19,9 +19,14 @@ const Run = struct {
     }
 };
 
-/// Runs `kupcad args...` with `cwd` as its working directory, in `env` if given.
+/// Runs `kupcad args...` with `cwd` as its working directory, in the test's own
+/// environment without the colour variables: the developer's shell (CLICOLOR_FORCE=1 is
+/// common) used to colour the piped output these tests read.
 fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
-    return kupcadIn(cwd, args, null);
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR" }) |name| _ = env.swapRemove(name);
+    return kupcadIn(cwd, args, &env);
 }
 
 fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.Environ.Map) !Run {

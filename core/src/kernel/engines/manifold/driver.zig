@@ -623,11 +623,14 @@ fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh
     const mesh_mem = manifold.allocMeshGL();
     defer manifold.deleteMeshGL(mesh_mem);
     const mesh = manifold.getMeshGL(mesh_mem, obj) orelse return error.MeshUnavailable;
+    // An empty solid has nothing to copy, and copying it is undefined behaviour: the C
+    // binding memcpy's from the vector's data pointer, null for an empty vector on Linux,
+    // which UBSan traps (CI aborted exporting the empty Solid; macOS never saw it).
     const vert_props = try allocator.alloc(f32, manifold.meshGLVertPropertiesLength(mesh));
     errdefer allocator.free(vert_props);
-    _ = manifold.meshGLVertProperties(vert_props.ptr, mesh);
+    if (vert_props.len > 0) _ = manifold.meshGLVertProperties(vert_props.ptr, mesh);
     const tri_verts = try allocator.alloc(u32, manifold.meshGLTriLength(mesh));
-    _ = manifold.meshGLTriVerts(tri_verts.ptr, mesh);
+    if (tri_verts.len > 0) _ = manifold.meshGLTriVerts(tri_verts.ptr, mesh);
     return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = manifold.meshGLNumProp(mesh) };
 }
 

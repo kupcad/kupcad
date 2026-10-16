@@ -527,3 +527,15 @@ test "Manifold Driver: getMesh leaves nothing allocated when an allocation fails
         try testing.expect(driver.driver.getMeshFn(failing.allocator(), c) == null);
     }
 }
+
+test "Manifold Driver: the empty solid's mesh is copied out as nothing, not from a null pointer" {
+    // The C binding memcpy's from the vector's data pointer, null for an empty vector on
+    // Linux; UBSan aborted the export of the empty Solid there.
+    const e = driver.driver.emptyFn() orelse return error.EmptyFailed;
+    defer driver.driver.destructFn(e);
+    const mesh = driver.driver.getMeshFn(testing.allocator, e) orelse return error.MeshFailed;
+    defer testing.allocator.free(mesh.vert_props);
+    defer testing.allocator.free(mesh.tri_verts);
+    try testing.expectEqual(@as(usize, 0), mesh.vert_props.len);
+    try testing.expectEqual(@as(usize, 0), mesh.tri_verts.len);
+}
