@@ -121,3 +121,55 @@ test "MemoryVfs: deleteFile removes the file, and keeps content a hard link shar
     try testing.expectEqualStrings("cube(1)", kept);
     try testing.expect(mem.deleteFile("b.kup"));
 }
+
+test "MemoryVfs: writing over a hard-linked path leaves the other link its content" {
+    // The write freed the shared content under the other link.
+    var mem = MemoryVfs.init(testing.allocator);
+    defer mem.deinit();
+    const fs = mem.vfs();
+
+    try fs.writeFile("a.kup", "shared");
+    try fs.hardLink("a.kup", "b.kup");
+    try fs.writeFile("a.kup", "own");
+
+    const a = try fs.readFile(testing.allocator, "a.kup");
+    defer testing.allocator.free(a);
+    const b = try fs.readFile(testing.allocator, "b.kup");
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings("own", a);
+    try testing.expectEqualStrings("shared", b);
+}
+
+test "MemoryVfs: a link onto an existing path replaces it without leaking" {
+    // The old node's content and the new copy of the path were both left behind.
+    var mem = MemoryVfs.init(testing.allocator);
+    defer mem.deinit();
+    const fs = mem.vfs();
+
+    try fs.writeFile("src.kup", "source");
+    try fs.writeFile("taken.kup", "old");
+    try fs.hardLink("src.kup", "taken.kup");
+    const linked = try fs.readFile(testing.allocator, "taken.kup");
+    defer testing.allocator.free(linked);
+    try testing.expectEqualStrings("source", linked);
+
+    try fs.writeFile("other.kup", "old");
+    try fs.symLink("src.kup", "other.kup");
+    try testing.expectEqual(.symlink, mem.nodes.get("other.kup").?.kind);
+    try testing.expectEqualStrings("src.kup", mem.nodes.get("other.kup").?.content.?);
+    try testing.expectEqual(@as(u32, 3), mem.nodes.count());
+}
+
+test "MemoryVfs: node replacement survives allocation failure" {
+    try testing.checkAllAllocationFailures(testing.allocator, struct {
+        fn run(allocator: std.mem.Allocator) !void {
+            var mem = MemoryVfs.init(allocator);
+            defer mem.deinit();
+            const fs = mem.vfs();
+            try fs.writeFile("a.kup", "one");
+            try fs.hardLink("a.kup", "b.kup");
+            try fs.writeFile("a.kup", "two");
+            try fs.symLink("a.kup", "b.kup");
+        }
+    }.run, .{});
+}

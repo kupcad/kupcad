@@ -21,20 +21,14 @@ pub const MemoryVfs = struct {
     }
 
     pub fn deinit(self: *MemoryVfs) void {
-        // Track addresses we have already freed to prevent double-frees from hard links
-        var freed_ptrs = std.AutoHashMap(usize, void).init(self.allocator);
-        defer freed_ptrs.deinit();
-
         var it = self.nodes.iterator();
         while (it.next()) |entry| {
             if (entry.value_ptr.content) |c| {
-                const ptr_val = @intFromPtr(c.ptr);
-                if (!freed_ptrs.contains(ptr_val)) {
-                    self.allocator.free(c);
-                    freed_ptrs.put(ptr_val, {}) catch @panic("OOM tracking double-frees");
-                }
+                // Content hard links share is freed by the last node holding it; nothing
+                // here allocates (a tracking map used to, and panicked when it couldn't).
+                entry.value_ptr.content = null;
+                self.releaseContent(c);
             }
-            // Free the path string (key)
             self.allocator.free(entry.key_ptr.*);
         }
         self.nodes.deinit();
@@ -44,16 +38,37 @@ pub const MemoryVfs = struct {
     /// there is none. Content a hard link still shares is kept for it.
     pub fn deleteFile(self: *MemoryVfs, path: []const u8) bool {
         const entry = self.nodes.fetchRemove(path) orelse return false;
-        if (entry.value.content) |c| {
-            var shared = false;
-            var it = self.nodes.valueIterator();
-            while (it.next()) |node| {
-                if (node.content) |other| shared = shared or other.ptr == c.ptr;
-            }
-            if (!shared) self.allocator.free(c);
-        }
+        if (entry.value.content) |c| self.releaseContent(c);
         self.allocator.free(entry.key);
         return true;
+    }
+
+    /// Frees `content` unless a node still shares it (a hard link).
+    fn releaseContent(self: *MemoryVfs, content: []const u8) void {
+        var it = self.nodes.valueIterator();
+        while (it.next()) |node| {
+            if (node.content) |other| if (other.ptr == content.ptr) return;
+        }
+        self.allocator.free(content);
+    }
+
+    /// Puts `node` at `path`, which gets its own copy of the path when new. What was
+    /// there is released first, unless a hard link still shares its content: a write
+    /// over a linked path freed the content under the other link, and a link onto an
+    /// existing path leaked both the old node's content and the new path copy.
+    fn replaceNode(self: *MemoryVfs, path: []const u8, node: MemoryNode) !void {
+        const gop = try self.nodes.getOrPut(path);
+        if (gop.found_existing) {
+            const old = gop.value_ptr.*;
+            gop.value_ptr.* = node;
+            if (old.content) |c| self.releaseContent(c);
+            return;
+        }
+        gop.key_ptr.* = self.allocator.dupe(u8, path) catch |err| {
+            self.nodes.removeByPtr(gop.key_ptr);
+            return err;
+        };
+        gop.value_ptr.* = node;
     }
 
     pub fn vfs(self: *MemoryVfs) Vfs {
@@ -86,42 +101,26 @@ pub const MemoryVfs = struct {
         return try allocator.dupe(u8, node.content.?);
     }
 
+    /// Writes `data` at `path`. A path hard-linked to another gets content of its own
+    /// (the other keeps what they shared).
     fn writeFile(ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
-
-        // Check if file exists and free existing allocations to prevent memory leaks on overwrite
-        if (self.nodes.getEntry(path)) |entry| {
-            if (entry.value_ptr.content) |c| {
-                self.allocator.free(c);
-            }
-            const data_dup = try self.allocator.dupe(u8, data);
-            entry.value_ptr.content = data_dup;
-            entry.value_ptr.kind = .file;
-            return;
-        }
-
-        const path_dup = try self.allocator.dupe(u8, path);
-        errdefer self.allocator.free(path_dup);
         const data_dup = try self.allocator.dupe(u8, data);
         errdefer self.allocator.free(data_dup);
-
-        try self.nodes.put(path_dup, .{ .kind = .file, .content = data_dup });
+        try self.replaceNode(path, .{ .kind = .file, .content = data_dup });
     }
 
     fn hardLink(ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
-        var source_node = self.nodes.getPtr(old_path) orelse return error.FileNotFound;
+        const source_node = self.nodes.getPtr(old_path) orelse return error.FileNotFound;
         source_node.nlink += 1;
-        const new_path_dup = try self.allocator.dupe(u8, new_path);
-        try self.nodes.put(new_path_dup, source_node.*);
+        try self.replaceNode(new_path, source_node.*);
     }
 
     fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
         const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
-        const link_dup = try self.allocator.dupe(u8, link_path);
-        errdefer self.allocator.free(link_dup);
         const target_dup = try self.allocator.dupe(u8, target_path);
         errdefer self.allocator.free(target_dup);
-        try self.nodes.put(link_dup, .{ .kind = .symlink, .content = target_dup });
+        try self.replaceNode(link_path, .{ .kind = .symlink, .content = target_dup });
     }
 };
