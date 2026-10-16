@@ -12,6 +12,7 @@ const paths = @import("../pkg/paths.zig");
 const log_helpers = @import("../log.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const Reporter = @import("reporter.zig").Reporter;
 const validate = @import("../pkg/validate.zig");
 const limits = @import("../pkg/limits.zig");
 
@@ -38,6 +39,21 @@ pub const USAGE = blk: {
 
 const Subcommand = enum { init, add, install, prune, doctor };
 
+/// `kupcad pkg init`: a fresh kupcad.json, unless the project has one (it was overwritten,
+/// dependencies and all, with exit status 0).
+pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !Outcome {
+    if (fs.readFile(allocator, "kupcad.json")) |existing| {
+        allocator.free(existing);
+        reporter.err("Error: kupcad.json already exists here; nothing changed. Edit it, or `kupcad pkg add` a dependency.\n", .{});
+        return .failure;
+    } else |err| if (err != error.FileNotFound) return err;
+    var manifest = Manifest.init(allocator, "new-project");
+    defer manifest.deinit();
+    try manifest.save(fs);
+    reporter.out("Initialized kupcad.json\n", .{});
+    return .success;
+}
+
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     // Validate the subcommand before touching the manifest or the global store, so a typo
     // gets a usage message rather than a manifest error.
@@ -53,13 +69,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var native_vfs = NativeVfs.init(init.io, std.Io.Dir.cwd());
     const fs = native_vfs.vfs();
 
-    if (command == .init) {
-        var manifest = Manifest.init(allocator, "new-project");
-        defer manifest.deinit();
-        try manifest.save(fs);
-        log_helpers.printStdout(init.io, "Initialized kupcad.json\n", .{});
-        return .success;
-    }
+    if (command == .init) return initManifest(allocator, fs, .forProcess(init));
 
     const global_dir = try paths.getGlobalDir(allocator, init.environ_map);
     defer allocator.free(global_dir);

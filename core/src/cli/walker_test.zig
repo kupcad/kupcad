@@ -60,3 +60,28 @@ test "Walker: paths that can't be read are counted, and the rest are still walke
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, out.written());
 }
+
+test "Walker: hidden directories are skipped, a hidden path named outright is not" {
+    // The walk descended into .git and .kupcad/pkg/.store, so `fmt --write .` rewrote
+    // the installed dependencies.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, ".kupcad/pkg/.store/x");
+    try tmp.dir.createDirPath(testing.io, ".git");
+    try tmp.dir.createDirPath(testing.io, "parts");
+    for ([_][]const u8{ "a.kup", "parts/b.kup", ".kupcad/pkg/.store/x/dep.kup", ".git/hook.kup", "parts/.hidden.kup" }) |name| {
+        try tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = "x" });
+    }
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+
+    var ctx = WalkerContext{};
+    try testing.expectEqual(@as(usize, 0), try walker.walkPaths(.{ .io = testing.io }, testing.allocator, &.{root}, &ctx, testProcessFn));
+    try testing.expectEqual(@as(usize, 3), ctx.kup_files_found); // a, parts/b and the hidden *file* parts/.hidden.kup
+
+    const named = try std.fs.path.join(testing.allocator, &.{ root, ".kupcad/pkg/.store/x/dep.kup" });
+    defer testing.allocator.free(named);
+    ctx = .{};
+    try testing.expectEqual(@as(usize, 0), try walker.walkPaths(.{ .io = testing.io }, testing.allocator, &.{named}, &ctx, testProcessFn));
+    try testing.expectEqual(@as(usize, 1), ctx.kup_files_found);
+}
