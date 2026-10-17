@@ -377,7 +377,6 @@ pub const Formatter = struct {
                 try self.out.appendSlice(self.allocator, if (b) "true" else "false");
             },
             .nil => try self.out.appendSlice(self.allocator, "nil"),
-            .undef => try self.out.appendSlice(self.allocator, "undef"),
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(node.data))),
             .array_literal => {

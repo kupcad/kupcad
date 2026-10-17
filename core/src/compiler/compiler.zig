@@ -409,7 +409,6 @@ pub const Compiler = struct {
                 const val = self.tree.boolean(node);
                 if (val) try self.emitOp(.op_true) else try self.emitOp(.op_false);
             },
-            .undef => try self.emitOp(.op_nil),
 
             // Extracted Node Handlers
             .identifier => try self.compileIdentifier(node, node_idx),

@@ -4515,6 +4515,20 @@ test "KupCAD Parser: a bare $ is an unexpected character" {
     try expectSingleDiagnostic("x = $\n", "Unexpected character '$'");
 }
 
+test "Parser: an empty argument is a syntax error, as an empty element is" {
+    // `f(, 1)` passed an `undef` (left from the OpenSCAD front end) that ran as nil and
+    // printed as the name `undef`, so the formatter changed the program (found by the fuzzer).
+    for ([_][]const u8{ "f(, 1)", "f(,)", "f(1, , 2)", "f(, k: 2)" }) |source| {
+        errdefer std.debug.print("source: {s}\n", .{source});
+        try expectSingleDiagnostic(source, "Invalid expression starting with ','");
+    }
+    // A trailing comma is still allowed.
+    var pt = try KTest.init("f(1,)");
+    defer pt.deinit();
+    _ = try pt.parser.parseProgram();
+    try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+}
+
 test "Parser: an assignment in an argument or an element takes one value" {
     // `f(b = 5, 6)` made b the array [5, 6] and passed one argument, and `f(b = 5,)` an
     // array with an invalid element, unreported. A statement still takes the list.

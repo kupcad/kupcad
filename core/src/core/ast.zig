@@ -67,7 +67,6 @@ pub const Tag = enum(u8) {
     identifier,
     symbol,
     nil,
-    undef,
     self_expr,
     assignment,
     multiple_assignment,
@@ -1016,10 +1015,6 @@ pub const Builder = struct {
 
     pub fn nilNode(self: *Builder, main_token: u24) !NodeIndex {
         return self.createNode(.nil, main_token, 0);
-    }
-
-    pub fn undefNode(self: *Builder, main_token: u24) !NodeIndex {
-        return self.createNode(.undef, main_token, 0);
     }
 
     pub fn selfExprNode(self: *Builder, main_token: u24) !NodeIndex {

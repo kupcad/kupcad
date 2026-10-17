@@ -1404,10 +1404,6 @@ pub const Parser = struct {
     }
 
     fn parseNamedArg(self: *Parser) ParseError!ast.NamedArg {
-        if (self.tag(0) == .comma or self.tag(0) == .r_paren) {
-            const val = try self.b.undefNode(self.tok_idx);
-            return .{ .name = .none, .value = val, .modifier = null };
-        }
         const mod = self.parseArgModifier();
         var arg_name: ast.StringId = .none;
         if (self.atLabel()) {
