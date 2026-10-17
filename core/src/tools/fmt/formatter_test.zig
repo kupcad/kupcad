@@ -276,6 +276,21 @@ test "Formatter: Unary Operators and Splats (no extra spaces)" {
     try expectFormat(source, expected);
 }
 
+test "Formatter: a minus before a call on a number keeps applying last" {
+    // `- 3.abs` is -(3.abs), but `-3.abs` is (-3).abs: printed without the space, the
+    // minus became part of the number (found by the fuzzer).
+    const source = "a = - 3.abs\nb = - 2[0].m\nc = - 2.m ** 2\nd = - 2 ** 2\ne = -3.abs";
+    const expected =
+        \\a = -(3.abs)
+        \\b = -(2[0].m)
+        \\c = -(2.m ** 2)
+        \\d = -2 ** 2
+        \\e = (-3).abs
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
 test "Formatter: Property and Index Assignment" {
     const source = "obj . x  =  10\narr[0]= 5";
     const expected =

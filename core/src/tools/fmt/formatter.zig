@@ -1148,7 +1148,39 @@ pub const Formatter = struct {
             .bitwise_not => "~",
         };
         try self.out.appendSlice(self.allocator, op_str);
+        // `-3.abs` is (-3).abs, a negative literal, so -(3.abs) keeps parentheses: printed
+        // as `-3.abs` (from `- 3.abs`), it was another program.
+        if (u.op == .negate and startsWithCallOnNumber(tree, u.operand)) {
+            try self.out.append(self.allocator, '(');
+            try self.formatNode(tree, u.operand);
+            try self.out.append(self.allocator, ')');
+            return;
+        }
         try self.formatOperand(tree, u.operand, .unary);
+    }
+
+    /// Whether a node, printed, starts with a number that a call or indexing applies to
+    /// (`3.abs`, `2[0].m`, `2.m ** 2`); `2 ** 2` alone doesn't.
+    fn startsWithCallOnNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) bool {
+        var idx = node_idx;
+        var called = false;
+        while (idx != .none and !tree.isGrouped(idx)) {
+            const node = tree.getNode(idx) orelse return false;
+            switch (node.tag) {
+                .number => return called,
+                .method_call => {
+                    idx = tree.methodCall(node).receiver;
+                    called = true;
+                },
+                .index_access => {
+                    idx = tree.indexAccess(node).target;
+                    called = true;
+                },
+                .binary_op => idx = tree.binaryExpr(node).left,
+                else => return false,
+            }
+        }
+        return false;
     }
 
     fn formatTernaryOp(self: *Formatter, tree: *const ast.Tree, t: ast.TernaryExpr) Error!void {

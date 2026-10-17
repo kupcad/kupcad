@@ -37,7 +37,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crash
-          path: core/.zig-cache/f/
+          # setup-zig points Zig's cache at the checkout's root, not core/.
+          path: ${{ env.ZIG_LOCAL_CACHE_DIR }}/f/
           if-no-files-found: ignore
 
   gc-stress:

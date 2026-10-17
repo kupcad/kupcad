@@ -632,6 +632,11 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
     try registry.registerStandardLibrary(&vm);
     const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
     const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+    // The sketch object comes first, as in a script: made after the evaluation, its
+    // allocation collected (under -Dgc-stress) while nothing referred to the node, and
+    // evicted the result the test then looks for.
+    const sketch = try vm.allocateCrossSection(offset_idx);
+    vm.push(sketch);
 
     const first = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
     try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
@@ -640,8 +645,6 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
     try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
 
     // While a sketch object refers to the node, a collection keeps it; then evicts it.
-    const sketch = try vm.allocateCrossSection(offset_idx);
-    vm.push(sketch);
     vm.gc.collectGarbage(&vm, false);
     try testing.expect(vm.cs_cache.contains(vm.dag_builder.node_hashes.items[offset_idx]));
     _ = vm.pop();
