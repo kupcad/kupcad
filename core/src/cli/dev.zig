@@ -30,10 +30,12 @@ pub const USAGE =
     \\  lex-dump <file>  Dump the raw Lexer token stream (.lex)
     \\  bench <file>     Time parse, compile, VM run and geometry evaluation (medians over
     \\                   --repeat N runs, 5 by default; --no-profile, --no-eval, --json)
+    \\  crash panic|abort  End the process with a panic or an abort, to check that
+    \\                   KUPCAD_CRASH_DIR captures crash reports
     \\
 ;
 
-const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench };
+const Subcommand = enum { @"ast-dump", disasm, @"lex-dump", bench, crash };
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const name = args_iter.next() orelse {
@@ -50,7 +52,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         .disasm => executeDisasm(init, allocator, args_iter),
         .@"lex-dump" => executeLexDump(init, allocator, args_iter),
         .bench => executeBench(init, allocator, args_iter),
+        .crash => executeCrash(init, args_iter),
     };
+}
+
+/// Ends the process the two ways a crash does: a Zig panic, or an abort (what the C++
+/// kernel does when it fails, built without exceptions).
+fn executeCrash(init: std.process.Init, args_iter: *Args) Outcome {
+    const how = args_iter.next() orelse "";
+    if (std.mem.eql(u8, how, "panic")) @panic("kupcad dev crash: a deliberate panic");
+    if (std.mem.eql(u8, how, "abort")) std.c.abort();
+    log_helpers.printStderr(init.io, "Usage: kupcad dev crash panic|abort\n", .{});
+    return .failure;
 }
 
 fn executeAstDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {

@@ -8,3 +8,5 @@
 38:10 W [brep-unsupported] +: the brep engine can't combine solids (union, difference, intersection) yet, so this fails when the script runs
 38:16 W [brep-unsupported] extrude: the brep engine can't extrude sketches yet, so this fails when the script runs
 39:11 W [brep-unsupported] -: the brep engine can't combine sketches (union, difference, intersection) yet, so this fails when the script runs
+41:9 W [brep-unsupported] offset: the brep engine can't take Minkowski sums (minkowski, a solid's offset) yet, so this fails when the script runs
+42:11 W [brep-unsupported] offset: the brep engine can't offset sketches yet, so this fails when the script runs

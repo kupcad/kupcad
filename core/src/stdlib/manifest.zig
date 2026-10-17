@@ -170,10 +170,9 @@ pub const mesh_methods = [_]MeshMethod{
     method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid),
     method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid),
     method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid),
-    method("fillet_edges", .transform, methods.meshFilletEdges, &sig.FILLET_EDGES, .receiver),
     method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver),
     method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver),
-    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .sketch),
+    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver),
     method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver),
     method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number),
     method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean),
@@ -182,7 +181,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver),
     method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
     method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
-    method("ghost", .transform, methods.meshGhost, &sig.NONE, .nothing),
+    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
@@ -194,6 +193,10 @@ pub const mesh_methods = [_]MeshMethod{
 pub const assembly_methods = [_]MeshMethod{
     method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
     method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
+    // Placing a whole subassembly: its bounds, and every part moved alike.
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
@@ -279,8 +282,10 @@ pub const compiler_intrinsics = buildCompilerIntrinsics();
 
 /// A flat array of all valid standard library names, methods, and classes for LSP.
 /// Automatically deduplicates overlapping names by leveraging the compiler_intrinsics map in O(N) time.
-fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 {
-    var arr: [core_namespaces.len + global_functions.len + mesh_methods.len][]const u8 = undefined;
+/// What the editor completes outside a call chain: the namespaces and the global functions.
+/// A solid's methods are completed after a dot; offered here, each was a NameError.
+fn buildLspCompletions() [core_namespaces.len + global_functions.len][]const u8 {
+    var arr: [core_namespaces.len + global_functions.len][]const u8 = undefined;
     var idx: usize = 0;
 
     for (core_namespaces) |ns| {
@@ -289,10 +294,6 @@ fn buildLspCompletions() [core_namespaces.len + global_functions.len + mesh_meth
     }
     for (global_functions) |gf| {
         arr[idx] = gf.name;
-        idx += 1;
-    }
-    for (mesh_methods) |mm| {
-        arr[idx] = mm.name;
         idx += 1;
     }
 

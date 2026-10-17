@@ -9,7 +9,15 @@ const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
+const geom = @import("../kernel/geometry_handle.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
+const build_info = @import("build_info");
+
+/// How far past the memory limit an OutOfMemoryError may allocate while it is raised (its
+/// instance, message and backtrace), so a script that filled the limit is still told why, and
+/// can rescue it. Raising it used to fail too, and the run ended with "out of memory while
+/// raising an error". Only the raise gets it: the heap never passes the limit by more.
+pub const OUT_OF_MEMORY_RESERVE: usize = 64 * 1024;
 
 pub const GC = struct {
     allocator: std.mem.Allocator,
@@ -51,13 +59,16 @@ pub const GC = struct {
 
     // Hard Sandbox Memory Limit
     max_memory_limit: ?usize,
+    /// An OutOfMemoryError is being raised: it may use OUT_OF_MEMORY_RESERVE past the limit.
+    raising_out_of_memory: bool = false,
 
     // --- GC State ---
     is_gc_running: bool = false,
 
-    /// Test-only: collect on every object allocation so unrooted temporaries
-    /// are swept deterministically instead of only past the byte threshold.
-    stress: bool = false,
+    /// Collect on every object allocation, so unrooted temporaries are swept at once
+    /// instead of only past the byte threshold: set by a test, or for every VM by a
+    /// `-Dgc-stress` build.
+    stress: bool = build_info.gc_stress,
 
     /// Chunks whose constant pools are roots (see chunk.ChunkRegistry).
     live_chunks: chunk.ChunkRegistry = .{},
@@ -121,8 +132,8 @@ pub const GC = struct {
 
     fn trackAlloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
         const self: *GC = @ptrCast(@alignCast(ctx));
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + len > limit) return null;
+        if (self.memoryCap()) |cap| {
+            if (self.bytes_allocated + len > cap) return null;
         }
         const res = self.allocator.rawAlloc(len, ptr_align, ret_addr) orelse return null;
         self.bytes_allocated += len;
@@ -133,8 +144,8 @@ pub const GC = struct {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
             const diff = new_len - buf.len;
-            if (self.max_memory_limit) |limit| {
-                if (self.bytes_allocated + diff > limit) return false;
+            if (self.memoryCap()) |cap| {
+                if (self.bytes_allocated + diff > cap) return false;
             }
             if (self.allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
                 self.bytes_allocated += diff;
@@ -154,8 +165,8 @@ pub const GC = struct {
         const self: *GC = @ptrCast(@alignCast(ctx));
         if (new_len > buf.len) {
             const diff = new_len - buf.len;
-            if (self.max_memory_limit) |limit| {
-                if (self.bytes_allocated + diff > limit) return null;
+            if (self.memoryCap()) |cap| {
+                if (self.bytes_allocated + diff > cap) return null;
             }
             if (self.allocator.rawRemap(buf, buf_align, new_len, ret_addr)) |new_ptr| {
                 self.bytes_allocated += diff;
@@ -211,17 +222,29 @@ pub const GC = struct {
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
     }
 
+    /// The most the heap may hold now: the memory limit, and the reserve on top while an
+    /// OutOfMemoryError is raised; null without a limit.
+    fn memoryCap(self: *const GC) ?usize {
+        const limit = self.max_memory_limit orelse return null;
+        return if (self.raising_out_of_memory) limit +| OUT_OF_MEMORY_RESERVE else limit;
+    }
+
+    /// The heap size past which the next allocation collects first: the growth threshold, or
+    /// the memory cap when that is lower, so a script whose garbage reaches the limit has it
+    /// collected instead of stopping while it holds almost nothing.
+    fn collectionThreshold(self: *const GC) usize {
+        return @min(self.next_gc_threshold, self.memoryCap() orelse std.math.maxInt(usize));
+    }
+
     /// Generic allocator that appends directly to the specific tracking list
     inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T), obj_type: value.ObjType) !*T {
-        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.next_gc_threshold) {
+        if (self.stress or self.bytes_allocated + @sizeOf(T) > self.collectionThreshold()) {
             self.collectGarbage(vm, false);
         }
 
-        if (self.max_memory_limit) |limit| {
-            if (self.bytes_allocated + @sizeOf(T) > limit) {
-                vm.reportError("Sandbox Error: Script exceeded maximum memory limit of {d} bytes.", .{limit});
-                return error.OutOfMemory;
-            }
+        // The run raises the OutOfMemoryError that names the limit (VM.allocationFailed).
+        if (self.memoryCap()) |cap| {
+            if (self.bytes_allocated + @sizeOf(T) > cap) return error.OutOfMemory;
         }
 
         const ptr = try self.allocator.create(T);
@@ -384,6 +407,9 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// The string of `chars` (allocated with the tracking allocator), interned. It takes
+    /// `chars` whatever happens: a duplicate's and a failure's are freed here, so a caller
+    /// must not free them (four natives did, on failure, a second time).
     pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
         if (vm.strings.get(chars)) |existing| {
             self.trackingAllocator().free(chars); // Safely free the duplicate via tracker
@@ -417,7 +443,6 @@ pub const GC = struct {
     pub fn allocateCrossSection(self: *GC, vm: *VM, dag_idx: u32) !*value.ObjCrossSection {
         const ptr = try self.allocateObject(vm, value.ObjCrossSection, &self.cross_sections, .cross_section);
         ptr.dag_idx = dag_idx;
-        ptr.cached_handle = null;
         return ptr;
     }
 
@@ -671,41 +696,34 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
 
         // --- CACHE EVICTION ---
-        var live_hashes = std.AutoHashMap(u64, void).init(self.allocator);
-        defer live_hashes.deinit();
-
-        var keys_to_remove = std.ArrayListUnmanaged(u64).empty;
-        defer keys_to_remove.deinit(self.allocator);
-
-        // Pre-allocate tracking arrays to their maximum theoretical bounds.
-        // If we lack memory to compute evictions, safely skip clearing the cache this cycle.
-        // The DAG cache will just be evaluated and cleaned up on the next GC run.
-        live_hashes.ensureTotalCapacity(@intCast(self.geometries.items.len)) catch return;
-        keys_to_remove.ensureTotalCapacity(self.allocator, vm.dag_cache.count()) catch return;
-
+        // Results no live solid or sketch refers to. Without room to work it out, nothing
+        // is evicted this cycle: the next collection tries again.
+        var live: std.AutoHashMapUnmanaged(u64, void) = .empty;
+        defer live.deinit(self.allocator);
+        live.ensureTotalCapacity(self.allocator, @intCast(self.geometries.items.len + self.cross_sections.items.len)) catch return;
+        const hashes = vm.dag_builder.node_hashes.items;
         for (self.geometries.items) |geom_ptr| {
-            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL) {
-                if (geom_ptr.dag_idx < vm.dag_builder.node_hashes.items.len) {
-                    const hash = vm.dag_builder.node_hashes.items[geom_ptr.dag_idx];
-                    live_hashes.putAssumeCapacity(hash, {});
-                }
-            }
+            if (geom_ptr.dag_idx != CONCRETE_NODE_SENTINEL and geom_ptr.dag_idx < hashes.len) live.putAssumeCapacity(hashes[geom_ptr.dag_idx], {});
         }
+        for (self.cross_sections.items) |cs_ptr| {
+            if (cs_ptr.dag_idx < hashes.len) live.putAssumeCapacity(hashes[cs_ptr.dag_idx], {});
+        }
+        self.evictUnreferenced(geom.GeometryHandle, &vm.dag_cache, &live, kernel.destruct);
+        self.evictUnreferenced(geom.CrossSectionHandle, &vm.cs_cache, &live, kernel.destructCrossSection);
+    }
 
-        var cache_it = vm.dag_cache.iterator();
-        while (cache_it.next()) |entry| {
-            // Keys are node hashes (which cover the node's settings).
-            if (!live_hashes.contains(entry.key_ptr.*)) {
-                // Destruct C++ handle immediately
-                kernel.destruct(entry.value_ptr.*);
-                keys_to_remove.appendAssumeCapacity(entry.key_ptr.*);
-            }
+    /// Destroys the results in `cache` whose node isn't `live`, and drops them.
+    fn evictUnreferenced(self: *GC, comptime Handle: type, cache: *std.AutoHashMapUnmanaged(u64, Handle), live: *const std.AutoHashMapUnmanaged(u64, void), comptime destroy: anytype) void {
+        var stale: std.ArrayListUnmanaged(u64) = .empty;
+        defer stale.deinit(self.allocator);
+        stale.ensureTotalCapacity(self.allocator, cache.count()) catch return;
+        var it = cache.iterator();
+        while (it.next()) |entry| {
+            if (live.contains(entry.key_ptr.*)) continue;
+            destroy(entry.value_ptr.*);
+            stale.appendAssumeCapacity(entry.key_ptr.*);
         }
-
-        // Remove stale keys safely outside the iterator loop
-        for (keys_to_remove.items) |key| {
-            _ = vm.dag_cache.remove(key);
-        }
+        for (stale.items) |key| _ = cache.remove(key);
     }
 
     inline fn destroyObject(self: *GC, comptime T: type, ptr: *T) void {
@@ -732,9 +750,7 @@ pub const GC = struct {
                 self.destroyObject(value.ObjWorkplane, wp_obj);
             },
             .cross_section => {
-                const cs_obj = obj.as(value.ObjCrossSection);
-                if (cs_obj.cached_handle) |handle| kernel.destructCrossSection(handle);
-                self.destroyObject(value.ObjCrossSection, cs_obj);
+                self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));
             },
             .string => {
                 const str_obj = obj.as(value.ObjString);

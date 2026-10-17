@@ -139,3 +139,128 @@ test "DAG: a node records the settings it was made under, and they tell it apart
         break :blk try builder.addCube(1, 1, 1, false);
     });
 }
+
+test "DAG: operandsOf gives each node's operands, whatever its layout" {
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const cube = try b.addCube(1, 1, 1, false);
+    const ball = try b.addSphere(1, 8);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const cases = [_]struct { node: dag.DAGNodeIndex, operands: []const dag.DAGNodeIndex }{
+        .{ .node = cube, .operands = &.{} },
+        .{ .node = try b.addBinary(.difference_op, cube, ball), .operands = &.{ cube, ball } },
+        .{ .node = try b.addBatchUnion(&.{ ball, cube }), .operands = &.{ ball, cube } },
+        .{ .node = try b.addHull(ball), .operands = &.{ball} },
+        .{ .node = try b.addTranslate(cube, 1, 2, 3), .operands = &.{cube} },
+        .{ .node = try b.addSetMaterial(ball, 1), .operands = &.{ball} },
+        .{ .node = try b.addLoft(small, big, 4), .operands = &.{ small, big } },
+        .{ .node = try b.addExtrude(big, 2, 0, 0, 1, 1), .operands = &.{big} },
+        .{ .node = try b.addPolygon(@constCast(&[_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 } })), .operands = &.{} },
+        .{ .node = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } }), .operands = &.{} },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("node: {s}\n", .{@tagName(b.nodes.items[case.node].tag)});
+        try std.testing.expectEqualSlices(dag.DAGNodeIndex, case.operands, b.operandsOf(b.nodes.items[case.node]));
+    }
+}
+
+test "DAG: compaction keeps the live nodes with their payloads, hashes and meshes" {
+    const kernel = @import("../kernel/kernel.zig");
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    // One node of each layout, with dead nodes between them.
+    const dead_cube = try b.addCube(9, 9, 9, false);
+    const cube = try b.addCube(1, 2, 3, true);
+    b.current_settings = try b.internSettings(.{ .tolerance = 0.01 });
+    const ball = try b.addSphere(1.5, 12);
+    b.current_settings = 0;
+    _ = try b.addTranslate(dead_cube, 1, 1, 1);
+    const cut = try b.addBinary(.difference_op, cube, ball);
+    const many = try b.addBatchUnion(&.{ cube, ball, cut });
+    const moved = try b.addTranslate(many, 1, 2, 3);
+    const tinted = try b.addSetMaterial(moved, 2);
+    const hulled = try b.addHull(tinted);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const lofted = try b.addLoft(small, big, 4);
+    const outline = try b.addPolygon(@constCast(&[_][2]f64{ .{ 0, 0 }, .{ 3, 0 }, .{ 0, 3 } }));
+    const two = [_][]const [2]f64{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } };
+    const holed = try b.addPolygonsEvenOdd(&two);
+    const shifted = try b.addCrossSectionTransform(holed, .{ 1, 0, 0, 1, 5, 5 });
+    const tetra = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } });
+    const dead_leaf = try b.addConcrete(kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed);
+    const leaf = try b.addConcrete(kernel.cube(&.{}, 2, 2, 2, false) orelse return error.KernelFailed);
+    const empty = try b.addEmpty(true);
+    _ = dead_leaf;
+
+    const roots = [_]dag.DAGNodeIndex{ hulled, lofted, outline, shifted, tetra, leaf, empty };
+    var live = try b.liveNodes(std.testing.allocator, &roots);
+    defer live.deinit(std.testing.allocator);
+    const hashes_before = try std.testing.allocator.dupe(u64, b.node_hashes.items);
+    defer std.testing.allocator.free(hashes_before);
+    const nodes_before = b.nodes.items.len;
+
+    const renumbered = try b.compact(&live);
+    defer std.testing.allocator.free(renumbered);
+
+    try std.testing.expectEqual(live.count(), b.nodes.items.len);
+    try std.testing.expect(b.nodes.items.len < nodes_before);
+    try std.testing.expectEqual(@as(usize, 1), b.held_leaves);
+    for (0..nodes_before) |old| {
+        if (!live.isSet(old)) {
+            try std.testing.expectEqual(std.math.maxInt(dag.DAGNodeIndex), renumbered[old]);
+            continue;
+        }
+        const new = renumbered[old];
+        errdefer std.debug.print("node {d} ({s}), now {d}\n", .{ old, @tagName(b.nodes.items[new].tag), new });
+        // The hash covers the payload and the operands' hashes: equal, the copy is whole.
+        try std.testing.expectEqual(hashes_before[old], b.node_hashes.items[new]);
+        try std.testing.expectEqual(hashes_before[old], try b.recomputedHash(new));
+    }
+    try std.testing.expectEqual(@as(dag.SettingsId, 1), b.nodes.items[renumbered[ball]].settings);
+    // An identical node is still found, at its new index.
+    try std.testing.expectEqual(renumbered[cube], try b.addCube(1, 2, 3, true));
+    try std.testing.expectEqual(renumbered[moved], try b.addTranslate(renumbered[many], 1, 2, 3));
+}
+
+test "DAG: a node is found again exactly when every part of its payload matches" {
+    // Hashing and equality both read the payload by its layout (payloadParts); each layout
+    // here is built twice alike, then with one part changed.
+    const kernel = @import("../kernel/kernel.zig");
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const cube = try b.addCube(1, 1, 1, false);
+    const ball = try b.addSphere(1, 8);
+    const small = try b.addSquare(1, 1, true);
+    const big = try b.addSquare(2, 2, true);
+    const tri = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 1 } };
+    const moved_tri = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 0, 2 } };
+    const pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
+    const moved_pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 2 } };
+    const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } };
+    const contours = [_][]const [2]f64{ &tri, &tri };
+    const moved_contours = [_][]const [2]f64{ &tri, &moved_tri };
+    const cases = [_]struct { layout: []const u8, first: dag.DAGNodeIndex, again: dag.DAGNodeIndex, changed: []const dag.DAGNodeIndex }{
+        .{ .layout = "numbers", .first = try b.addCube(1, 2, 3, false), .again = try b.addCube(1, 2, 3, false), .changed = &.{ try b.addCube(1, 2, 4, false), try b.addCube(1, 2, 3, true) } },
+        .{ .layout = "operands", .first = try b.addBinary(.difference_op, cube, ball), .again = try b.addBinary(.difference_op, cube, ball), .changed = &.{try b.addBinary(.difference_op, ball, cube)} },
+        .{ .layout = "operand_list", .first = try b.addBatchUnion(&.{ cube, ball }), .again = try b.addBatchUnion(&.{ cube, ball }), .changed = &.{try b.addBatchUnion(&.{ cube, ball, cube })} },
+        .{ .layout = "target_numbers", .first = try b.addTranslate(cube, 1, 2, 3), .again = try b.addTranslate(cube, 1, 2, 3), .changed = &.{ try b.addTranslate(ball, 1, 2, 3), try b.addTranslate(cube, 1, 2, 4), try b.addRotate(cube, 1, 2, 3) } },
+        .{ .layout = "target_value", .first = try b.addSetMaterial(cube, 1), .again = try b.addSetMaterial(cube, 1), .changed = &.{try b.addSetMaterial(cube, 2)} },
+        .{ .layout = "loft", .first = try b.addLoft(small, big, 3), .again = try b.addLoft(small, big, 3), .changed = &.{ try b.addLoft(small, big, 4), try b.addLoft(big, small, 3) } },
+        .{ .layout = "polygon", .first = try b.addPolygon(@constCast(&tri)), .again = try b.addPolygon(@constCast(&tri)), .changed = &.{try b.addPolygon(@constCast(&moved_tri))} },
+        .{ .layout = "polygons", .first = try b.addPolygonsEvenOdd(&contours), .again = try b.addPolygonsEvenOdd(&contours), .changed = &.{ try b.addPolygonsEvenOdd(&moved_contours), try b.addPolygonsEvenOdd(contours[0..1]) } },
+        .{ .layout = "polyhedron", .first = try b.addPolyhedron(&pts, &faces), .again = try b.addPolyhedron(&pts, &faces), .changed = &.{try b.addPolyhedron(&moved_pts, &faces)} },
+        .{ .layout = "none", .first = try b.addEmpty(true), .again = try b.addEmpty(true), .changed = &.{try b.addEmpty(false)} },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("layout: {s}\n", .{case.layout});
+        try std.testing.expectEqual(case.first, case.again);
+        for (case.changed) |changed| try std.testing.expect(changed != case.first and b.node_hashes.items[changed] != b.node_hashes.items[case.first]);
+    }
+    // Two leaves are two nodes, even of one mesh's copies.
+    const mesh = kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed;
+    const leaf = try b.addConcrete(mesh);
+    const other = try b.addConcrete(kernel.clone(mesh) orelse return error.KernelFailed);
+    try std.testing.expect(leaf != other and b.node_hashes.items[leaf] != b.node_hashes.items[other]);
+}

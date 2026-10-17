@@ -10,6 +10,7 @@ const ast = @import("../core/ast.zig");
 const common_token = @import("../core/token.zig");
 const common_errors = @import("../core/errors.zig");
 const docstring = @import("docstring.zig");
+const string_escape = @import("../core/string_escape.zig");
 
 const Tag = lexer_mod.Tag;
 const Diagnostics = common_errors.Diagnostics;
@@ -83,6 +84,10 @@ pub const Parser = struct {
     /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
     /// block, which swallowed the loop's body. Brackets inside the header clear it again.
     in_loop_header: bool = false,
+    /// Set while parsing one item of a comma-separated list (an argument, an array element,
+    /// a map value), where an assignment takes one value: `f(b = 5, 6)` passes two
+    /// arguments, as in Ruby. It made `b` the array [5, 6]. A statement clears it again.
+    in_list_item: bool = false,
     scope_depth: u32 = 0,
     ast_depth: usize = 0,
 
@@ -183,6 +188,57 @@ pub const Parser = struct {
             .length = self.tokens.lengths[idx],
             .file_id = 0,
         };
+    }
+
+    /// Whether the lexer made `t` for text it couldn't read.
+    fn isLexError(t: Tag) bool {
+        return switch (t) {
+            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => true,
+            else => false,
+        };
+    }
+
+    /// The node of the string piece `raw` (token `tok`), its escapes decoded. An invalid
+    /// escape is reported where it is and leaves an invalid node.
+    fn stringNode(self: *Parser, raw: []const u8, tok: u24) ParseError!ast.NodeIndex {
+        var problem: string_escape.Problem = undefined;
+        return self.b.stringNodeUnescaped(raw, tok, &problem) catch |err| switch (err) {
+            error.InvalidEscape => {
+                self.reportEscape(tok, problem);
+                return self.b.invalidNode(tok) catch ParseError.OutOfMemory;
+            },
+            error.OutOfMemory => ParseError.OutOfMemory,
+        };
+    }
+
+    /// Reports the invalid escape `problem` found in the string token `tok`, at the escape.
+    fn reportEscape(self: *Parser, tok: u24, problem: string_escape.Problem) void {
+        var loc = self.getLoc(tok);
+        loc.offset += @intCast(problem.offset);
+        loc.length = @intCast(problem.len);
+        switch (problem.kind) {
+            .unknown => if (problem.value > 0 and problem.value < 0x80 and std.ascii.isPrint(@intCast(problem.value)))
+                self.reportError(loc, "Unknown escape '\\{c}' in a string; write '\\\\' for a backslash", .{@as(u8, @intCast(problem.value))})
+            else
+                self.reportError(loc, "A backslash in a string must start an escape (\\n, \\t, \\u{{...}} and the like); write '\\\\' for a backslash", .{}),
+            .malformed_unicode => self.reportError(loc, "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{{1F600}})", .{}),
+            .surrogate => self.reportError(loc, "U+{X:0>4} is a UTF-16 surrogate, not a character", .{problem.value}),
+            .beyond_unicode => self.reportError(loc, "U+{X} is past the last Unicode character, U+10FFFF", .{problem.value}),
+        }
+    }
+
+    /// Reports what the lexer couldn't read at token `idx`. Every such token used to be
+    /// reported as "Interpolation depth exceeded", and an unclosed string or heredoc not at all.
+    fn reportLexError(self: *Parser, idx: u24) void {
+        const loc = self.getLoc(idx);
+        const text = self.tokens.lexeme(self.source, idx);
+        switch (self.tokens.tags[idx]) {
+            .invalid => self.reportError(loc, "Unexpected character '{s}'", .{text}),
+            .unterminated_string => self.reportError(loc, "This string is never closed before the end of the file", .{}),
+            .unterminated_heredoc => self.reportError(loc, "This heredoc is never closed: no line '{s}' before the end of the file", .{text}),
+            .interpolation_too_deep => self.reportError(loc, "Interpolation depth exceeded", .{}),
+            else => unreachable,
+        }
     }
 
     pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
@@ -459,6 +515,9 @@ pub const Parser = struct {
         // real tree depth so legitimately deep code isn't rejected early.
         self.skipIgnored();
         const start_idx = self.tok_idx;
+        const outer_list_item = self.in_list_item;
+        self.in_list_item = false;
+        defer self.in_list_item = outer_list_item;
 
         var stmt = switch (self.tag(0)) {
             .keyword_import => try self.parseImportOrExportStatement(false),
@@ -591,7 +650,7 @@ pub const Parser = struct {
             if (target.tag == .identifier) try self.declareLocal(target.main_token);
         }
         self.advance();
-        const value = try self.parseExpressionList();
+        const value = if (self.in_list_item) try self.parseExpression(.none) else try self.parseExpressionList();
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
         switch (left_node.tag) {
             .identifier => {
@@ -765,14 +824,16 @@ pub const Parser = struct {
                 self.advance();
                 has_from = true;
             }
-        } else if (self.tag(0) == .string) {
+        } else if (self.tag(0) == .string or self.tag(0) == .raw_string) {
             has_from = true;
         } else {
             return ParseError.UnexpectedToken;
         }
 
         if (has_from) {
-            const path_idx = try self.expect(.string);
+            // In single quotes or double: a path is its text either way.
+            const path_idx = if (self.tag(0) == .raw_string) self.tok_idx else try self.expect(.string);
+            if (path_idx == self.tok_idx) self.advance(); // the raw string, which expect didn't take
             path_node = try self.b.intern(self.tokens.lexeme(self.source, path_idx));
             // `with { ... }` may follow on the next line; otherwise the line break ends the import.
             if (self.skipIgnoredBefore(&.{.keyword_with})) {
@@ -1330,7 +1391,7 @@ pub const Parser = struct {
             self.advance();
             self.advance();
         }
-        const val = try self.parseExpression(.none);
+        const val = try self.parseListItem();
         return .{ .name = arg_name, .value = val, .modifier = mod };
     }
 
@@ -1429,8 +1490,16 @@ pub const Parser = struct {
             const inner = try self.parseExpression(.none);
             return self.b.splatExpr(inner, star_tok) catch ParseError.OutOfMemory;
         } else {
-            return self.parseExpression(.none);
+            return self.parseListItem();
         }
+    }
+
+    /// One item of a comma-separated list (see `in_list_item`).
+    fn parseListItem(self: *Parser) ParseError!ast.NodeIndex {
+        const outer = self.in_list_item;
+        self.in_list_item = true;
+        defer self.in_list_item = outer;
+        return self.parseExpression(.none);
     }
 
     fn parseHashEntry(self: *Parser) ParseError!ast.HashEntry {
@@ -1459,7 +1528,7 @@ pub const Parser = struct {
                     self.advance();
                 } else return ParseError.UnexpectedToken;
             }
-            return .{ .key = key, .value = try self.parseExpression(.none) };
+            return .{ .key = key, .value = try self.parseListItem() };
         }
     }
 
@@ -1496,7 +1565,15 @@ pub const Parser = struct {
                 self.advance();
                 self.skipComments();
 
-                left = try self.b.stringNodeUnescaped(raw_lexeme, str_tok);
+                left = try self.stringNode(raw_lexeme, str_tok);
+            },
+            .raw_string => {
+                const str_tok = self.tok_idx;
+                const raw_lexeme = self.tokens.lexeme(self.source, str_tok);
+                self.advance();
+                self.skipComments();
+                // The delimiter is the byte before the text: the quote, or %q's bracket.
+                left = try self.b.stringNodeRaw(raw_lexeme, str_tok, self.source[self.tokens.starts[str_tok] - 1]);
             },
             .symbol => {
                 self.advance();
@@ -1535,8 +1612,8 @@ pub const Parser = struct {
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
-            .invalid => {
-                self.reportError(self.getLoc(start_tok), "Interpolation depth exceeded", .{});
+            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => {
+                self.reportLexError(start_tok);
                 left = try self.b.invalidNode(start_tok);
             },
             else => {
@@ -1603,14 +1680,14 @@ pub const Parser = struct {
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
 
         const raw_start = self.lexeme(0);
-        try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_start, start_tok));
+        try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_start, start_tok));
         self.advance();
 
         while (true) {
             self.skipIgnored();
 
-            if (self.tag(0) == .invalid) {
-                self.reportError(self.getLoc(self.tok_idx), "Interpolation depth exceeded", .{});
+            if (isLexError(self.tag(0))) {
+                self.reportLexError(self.tok_idx);
                 try self.scratch_nodes.append(self.allocator, try self.b.invalidNode(self.tok_idx));
                 self.advance();
                 break;
@@ -1625,10 +1702,12 @@ pub const Parser = struct {
 
             if (self.tag(0) == .string_end or self.tag(0) == .string_mid) {
                 const raw_part = self.lexeme(0);
-                try self.scratch_nodes.append(self.allocator, try self.b.stringNodeUnescaped(raw_part, self.tok_idx));
+                try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_part, self.tok_idx));
                 const is_end = (self.tag(0) == .string_end);
                 self.advance();
                 if (is_end) break;
+            } else if (isLexError(self.tag(0))) {
+                continue; // reported at the top: the string's rest never closes, say
             } else {
                 return ParseError.UnexpectedToken;
             }

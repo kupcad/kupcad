@@ -1,18 +1,7 @@
 //! `LexerUtils`, the scanning helpers lexer.zig reads its source with: whitespace, numbers,
-//! identifiers, quoted strings, and a `/` that may be division or start a comment.
+//! identifiers and quoted strings.
 
 const std = @import("std");
-
-pub const SlashKind = enum {
-    slash,
-    comment,
-    block_comment,
-};
-
-pub const SlashResult = struct {
-    lexeme: []const u8,
-    kind: SlashKind,
-};
 
 pub const LexerUtils = struct {
     pub fn skipWhitespace(buffer: []const u8, index: *usize, comptime skip_newlines: bool) void {
@@ -145,39 +134,13 @@ pub const LexerUtils = struct {
         return buffer[start..index.*];
     }
 
-    pub fn consumeSlashOrComment(
-        buffer: []const u8,
-        index: *usize,
-    ) SlashResult {
-        const start = index.*;
-        index.* += 1;
-
-        if (index.* < buffer.len) {
-            if (buffer[index.*] == '/') {
-                while (index.* < buffer.len and buffer[index.*] != '\n') {
-                    index.* += 1;
-                }
-                return .{ .lexeme = buffer[start..index.*], .kind = .comment };
-            } else if (buffer[index.*] == '*') {
-                index.* += 1;
-                while (index.* < buffer.len) {
-                    if (buffer[index.*] == '*' and index.* + 1 < buffer.len and buffer[index.* + 1] == '/') {
-                        index.* += 2;
-                        break;
-                    }
-                    index.* += 1;
-                }
-                return .{ .lexeme = buffer[start..index.*], .kind = .block_comment };
-            }
-        }
-        return .{ .lexeme = "/", .kind = .slash };
-    }
-
+    /// The text between `quote` at `index` and the next unescaped `quote`, leaving `index`
+    /// past it; null when the buffer ends first (`index` is then at its end).
     pub fn consumeQuotedString(
         buffer: []const u8,
         index: *usize,
         quote: u8,
-    ) []const u8 {
+    ) ?[]const u8 {
         index.* += 1;
         const start = index.*;
         while (index.* < buffer.len) {
@@ -190,14 +153,11 @@ pub const LexerUtils = struct {
                 continue;
             }
             if (c == quote) {
-                break;
+                index.* += 1;
+                return buffer[start .. index.* - 1];
             }
             index.* += 1;
         }
-        const lexeme = buffer[start..index.*];
-        if (index.* < buffer.len) {
-            index.* += 1;
-        }
-        return lexeme;
+        return null;
     }
 };

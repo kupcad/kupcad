@@ -3,6 +3,8 @@
 //! `repeat_polar`. Listed in `manifest.zig`.
 
 const std = @import("std");
+const geom = @import("../../kernel/geometry_handle.zig");
+const assembly = @import("../assembly.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
@@ -21,6 +23,7 @@ const MATRIX_2D_LEN = 6;
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try util.parseVec3(vm, args, 0.0, "translate");
+    if (receiver.isAssembly()) return assembly.translated(vm, receiver, vec);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -94,6 +97,21 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     return util.notDefinedFor(vm, "scale", receiver);
 }
 
+/// The move that puts the center of `bbox` at the origin on the axes in `axes` (x, y, z).
+fn centerShift(bbox: geom.BoundingBox, axes: []const u8) [3]f64 {
+    var shift: [3]f64 = @splat(0);
+    for (axes) |c| {
+        const axis: usize = switch (c) {
+            'x', 'X' => 0,
+            'y', 'Y' => 1,
+            'z', 'Z' => 2,
+            else => continue,
+        };
+        shift[axis] = -(bbox.min[axis] + (bbox.max[axis] - bbox.min[axis]) / 2.0);
+    }
+    return shift;
+}
+
 /// center(axes = "xyz"): moves the bounds' center to the origin on the axes named, a
 /// String or Symbol of x, y and z (`center(:xy)`).
 pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value.Value {
@@ -109,25 +127,10 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         return vm.fail(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
     }
 
-    const bbox = try util.boundsOf(vm, receiver, "center");
+    const shift = centerShift(try util.boundsOf(vm, receiver, "center"), axes_str);
+    const tx, const ty, const tz = shift;
 
-    const cx = bbox.min[0] + (bbox.max[0] - bbox.min[0]) / 2.0;
-    const cy = bbox.min[1] + (bbox.max[1] - bbox.min[1]) / 2.0;
-    const cz = bbox.min[2] + (bbox.max[2] - bbox.min[2]) / 2.0;
-
-    var tx: f64 = 0;
-    var ty: f64 = 0;
-    var tz: f64 = 0;
-
-    for (axes_str) |c| {
-        switch (c) {
-            'x', 'X' => tx = -cx,
-            'y', 'Y' => ty = -cy,
-            'z', 'Z' => tz = -cz,
-            else => {},
-        }
-    }
-
+    if (receiver.isAssembly()) return assembly.translated(vm, receiver, shift);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });

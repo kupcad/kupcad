@@ -68,3 +68,18 @@ test "gen_grammar: `in` is highlighted as a keyword after `for`, and only there"
 fn rule_keywords(root: std.json.Value) []const u8 {
     return root.object.get("repository").?.object.get("keywords").?.object.get("match").?.string;
 }
+
+test "gen_grammar: a \\u escape is highlighted whole" {
+    const json = try gen_grammar.generateTextMateJson(testing.allocator);
+    defer testing.allocator.free(json);
+    // In the JSON, each backslash of the pattern is written twice
+    try testing.expect(std.mem.indexOf(u8, json, "\\\\\\\\(?:u\\\\{[0-9A-Fa-f]{1,6}\\\\}|u[0-9A-Fa-f]{4}|.)") != null);
+}
+
+test "gen_grammar: single-quoted strings are strings, with only \\\\ and \\' as escapes" {
+    const json = try gen_grammar.generateTextMateJson(testing.allocator);
+    defer testing.allocator.free(json);
+    try testing.expect(std.mem.indexOf(u8, json, "string.quoted.single.kupcad") != null);
+    // In the JSON, each backslash of the pattern is written twice
+    try testing.expect(std.mem.indexOf(u8, json, "\"\\\\\\\\['\\\\\\\\]\"") != null);
+}

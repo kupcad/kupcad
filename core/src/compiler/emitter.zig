@@ -55,11 +55,32 @@ pub fn simulatePop(self: *Compiler, count: usize) void {
 
 pub fn emitInlineCacheIndex(self: *Compiler) CompileError!void {
     const ic_idx = self.current_chunk.addInlineCache(self.allocator) catch return error.OutOfMemory;
-    // The index is a 16-bit operand; a larger one would silently alias an earlier
-    // call site's cache and dispatch to the wrong method.
-    if (ic_idx > limits.MAX_INLINE_CACHES) return error.TooManyInlineCaches;
-    try self.emitByte(@intCast((ic_idx >> 8) & 0xff));
-    try self.emitByte(@intCast(ic_idx & 0xff));
+    try emitCacheIndex(self, ic_idx, error.TooManyInlineCaches);
+}
+
+/// `op_get_global name` and its site's GlobalCache index.
+pub fn emitGetGlobal(self: *Compiler, name_idx: usize) CompileError!void {
+    try self.emitOpWithOperand(.op_get_global, .op_get_global_wide, name_idx);
+    try emitGlobalCacheIndex(self);
+}
+
+/// `op_define_global name` and its site's GlobalCache index.
+pub fn emitDefineGlobal(self: *Compiler, name_idx: usize) CompileError!void {
+    try self.emitOpWithOperand(.op_define_global, .op_define_global_wide, name_idx);
+    try emitGlobalCacheIndex(self);
+}
+
+fn emitGlobalCacheIndex(self: *Compiler) CompileError!void {
+    const idx = self.current_chunk.addGlobalCache(self.allocator) catch return error.OutOfMemory;
+    try emitCacheIndex(self, idx, error.TooManyGlobalCaches);
+}
+
+/// A cache's index as the instruction's 16-bit operand; a larger one would alias an
+/// earlier site's cache (a method call would dispatch to the wrong method).
+fn emitCacheIndex(self: *Compiler, idx: usize, too_many: CompileError) CompileError!void {
+    if (idx > limits.MAX_INLINE_CACHES) return too_many;
+    try self.emitByte(@intCast((idx >> 8) & 0xff));
+    try self.emitByte(@intCast(idx & 0xff));
 }
 
 pub fn emitByte(self: *Compiler, byte: u8) CompileError!void {
@@ -275,7 +296,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
         // --- Pops 1, Pushes 1 (Net: 0) ---
         // Unary modifiers that consume a value and replace it with a mutated version.
         // op_set_member pops a class, peeks at the namespace, attaches it, and pushes the class back.
-        .op_negate, .op_not, .op_is_nil, .op_set_member, .op_set_member_wide => 0,
+        .op_negate, .op_positive, .op_bitwise_not, .op_not, .op_is_nil, .op_set_member, .op_set_member_wide => 0,
 
         // --- Pushes 2 (Net: +2) ---
         // Duplicates the top two values on the stack.

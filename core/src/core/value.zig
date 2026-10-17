@@ -297,7 +297,6 @@ pub const ObjGeometry = struct {
 pub const ObjCrossSection = struct {
     obj: Obj,
     dag_idx: u32,
-    cached_handle: ?geom.CrossSectionHandle,
 };
 
 pub const ObjAssembly = struct {

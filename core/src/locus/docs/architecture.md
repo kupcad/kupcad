@@ -104,6 +104,10 @@ For rendering and spatial querying, exact B-Rep geometry must be converted into 
 * **Even/Odd Winding Culling:** Internal holes are culled from the resulting mesh by evaluating centroid raycasts against the 2D boundaries.
 * **3D Re-Evaluation:** The surviving 2D UV triangles are fed back into the mathematical surface equations to map them into exact 3D space.
 
+## 7. Parallel Loops
+
+`parallel.parallelFor(start, end, Context, ctx, func)` calls `func(i, ctx)` once for each index of the range, in no particular order: on oneTBB's threads where the build has oneTBB (native builds; the bindings are compiled with `LOCUS_TBB`), and in order on the calling thread where it hasn't (WebAssembly, or `-Dmanifold_parallel=false`). `func` must be safe to run alongside itself, and each index's work independent of the others'. `spreadsOverThreads()` says which it is. No operation uses it yet. Its tests check that every index runs exactly once and, with oneTBB, on more than one thread; KupCAD's B-Rep driver tests check that Locus runs on oneTBB whenever the build has it (the backend tested a flag only Manifold was compiled with, so it ran serially).
+
 ---
 
 ## Architecture Summary Matrix

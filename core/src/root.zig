@@ -8,6 +8,8 @@ pub const chunk = @import("vm/chunk.zig");
 pub const value = @import("core/value.zig");
 pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
+/// For the WebAssembly tests (wasm_test.zig), which run scripts through this module.
+pub const test_support = @import("test_support.zig");
 pub const std_options = @import("log.zig").std_options;
 pub const SessionManager = @import("daemon/session_manager.zig").SessionManager;
 
@@ -20,11 +22,14 @@ pub const LineIndex = api.LineIndex;
 
 test {
     _ = @import("api_test.zig");
+    _ = @import("alloc_failure_test.zig");
+    _ = @import("determinism_test.zig");
     _ = @import("gen_grammar_test.zig");
     _ = @import("log_test.zig");
 
     // Compiler
     _ = @import("compiler/compiler_test.zig");
+    _ = @import("compiler/wide_operands_test.zig");
 
     // Core
     _ = @import("core/ast_test.zig");
@@ -38,9 +43,11 @@ test {
     _ = @import("pkg/providers/git_host_test.zig");
     _ = @import("pkg/clock_test.zig");
     _ = @import("core/owned_keys_test.zig");
+    _ = @import("pkg/string_map_test.zig");
     _ = @import("core/engine_config_test.zig");
     _ = @import("core/line_index_test.zig");
     _ = @import("core/limit_allocator_test.zig");
+    _ = @import("core/limits_test.zig");
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");
     _ = @import("core/workspace_test.zig");
@@ -64,6 +71,7 @@ test {
     _ = @import("frontend/docstring_test.zig");
     _ = @import("frontend/lexer_test.zig");
     _ = @import("frontend/parser_test.zig");
+    _ = @import("frontend/fuzz_test.zig");
 
     // Kernels
     _ = @import("kernel/engines/manifold/driver_test.zig");
@@ -81,6 +89,9 @@ test {
 
     // Kernels
     _ = @import("kernel/kernel_test.zig");
+    _ = @import("kernel/mesh_check_test.zig");
+    _ = @import("kernel/parity_test.zig");
+    _ = @import("kernel/invariants_test.zig");
 
     // Package Manager & Registry
     _ = @import("pkg/manifest_test.zig");
@@ -144,6 +155,15 @@ test {
     _ = @import("vm/validation_test.zig");
     _ = @import("vm/verifier_test.zig");
     _ = @import("vm/vm_test.zig");
+    _ = @import("vm/instruction_hooks_test.zig");
+    _ = @import("vm/vm_runtime_test.zig");
+    _ = @import("vm/vm_exceptions_test.zig");
+    _ = @import("vm/vm_cad_test.zig");
+    _ = @import("vm/vm_classes_test.zig");
+    _ = @import("vm/vm_blocks_test.zig");
+    _ = @import("vm/vm_strings_test.zig");
+    _ = @import("vm/vm_collections_test.zig");
+    _ = @import("vm/vm_syntax_test.zig");
 
     // locus
     _ = @import("locus/src/root.zig");

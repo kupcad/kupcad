@@ -10,6 +10,17 @@ const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 
+/// The names of one option. Two of a group in one call are an error: `d:` silently beat
+/// `r:`, `radius:` both, `size:` an `x:`.
+const ALIAS_GROUPS = [_][]const []const u8{
+    &.{ "r", "d", "radius" },
+    &.{ "r1", "d1" },
+    &.{ "r2", "d2" },
+    &.{ "size", "x" },
+    &.{ "size", "y" },
+    &.{ "size", "z" },
+};
+
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
 
@@ -105,6 +116,9 @@ const GeomOptions = struct {
 /// The primitives share GeomOptions; each accepts only the keywords it lists.
 /// `base` holds what the positional arguments set; keywords override it.
 fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm: *VM, args: []const value.Value, method: []const u8) !util.Parsed(GeomOptions) {
+    inline for (ALIAS_GROUPS) |group| {
+        if (comptime acceptsAll(accepted, group)) try util.requireOneOf(vm, args, group, method);
+    }
     var parsed = try util.parseKwargsOver(GeomOptions, base, accepted, vm, args, method);
     const opts = &parsed.opts;
     if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
@@ -114,6 +128,15 @@ fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm
     if (opts.radius) |radius| opts.r = radius;
     try util.requireSegmentCount(vm, opts.segments, "segments");
     return parsed;
+}
+
+fn acceptsAll(comptime accepted: []const []const u8, comptime names: []const []const u8) bool {
+    for (names) |name| {
+        for (accepted) |a| {
+            if (std.mem.eql(u8, a, name)) break;
+        } else return false;
+    }
+    return true;
 }
 
 /// Validates a user-supplied index into an array of length `len`.
@@ -554,6 +577,12 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
         error.InvalidUtf8 => {
             return vm.fail(.ValueError, "text: the String isn't valid UTF-8", .{});
+        },
+        error.MissingGlyph => {
+            const cp = text_mod.firstMissingGlyph(&face, text_str) orelse 0;
+            // A control character (a line break: text is one line) is named by its code alone.
+            if (cp < 0x20 or cp == 0x7F) return vm.fail(.ValueError, "text: the font '{s}' has no glyph for U+{X:0>4} (text is one line, without control characters)", .{ font_name, cp });
+            return vm.fail(.ValueError, "text: the font '{s}' has no glyph for '{u}' (U+{X:0>4})", .{ font_name, cp, cp });
         },
         else => {
             return vm.fail(.RuntimeError, "Failed to extract text contours", .{});

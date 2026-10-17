@@ -71,6 +71,12 @@ jobs:
         if: matrix.core_task == 'test:core'
         run: pnpm check:examples
 
+      - name: Validate exported glTF with the Khronos validator
+        if: matrix.name == 'linux debug'
+        run: |
+          pnpm install --frozen-lockfile --filter kupcad
+          pnpm check:gltf
+
       - name: Run wasm tests
         if: matrix.wasm_task != ''
         run: pnpm ${{ matrix.wasm_task }}

@@ -16,45 +16,22 @@ pub fn exceptionInit(vm: *VM, receiver: value.Value, message_opt: ?value.Value) 
     const instance = receiver.asInstance();
 
     const msg = message_opt orelse try vm.allocateString(instance.class.name.chars);
-    const msg_key = try vm.allocateString("message");
-    try vm.setInstanceField(instance, msg_key, msg, null);
-
-    // --- EAGER BACKTRACE CAPTURE ---
-    if (vm.buildBacktrace()) |bt_arr| {
-        const bt_key = try vm.allocateString("backtrace");
-        try vm.setInstanceField(instance, bt_key, value.Value.initObj(&bt_arr.obj), null);
-    } else |_| {}
-
+    try vm.setErrorFields(instance, msg);
     return receiver;
 }
 
 // e.message()
 pub fn exceptionMessage(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
-    const msg_key = try vm.allocateString("message");
-
-    if (instance.class.instance_layout.get(msg_key)) |idx| {
-        if (idx < instance.fields.items.len) {
-            return instance.fields.items[idx];
-        }
-    }
-    // Fallback to the class name if no message was set
-    return try vm.allocateString(instance.class.name.chars);
+    // The class name, if no message was set
+    return try vm.errorField(instance, "message") orelse try vm.allocateString(instance.class.name.chars);
 }
 
 // e.backtrace()
 pub fn exceptionBacktrace(vm: *VM, receiver: value.Value) !value.Value {
     const instance = receiver.asInstance();
-    const bt_key = try vm.allocateString("backtrace");
-
-    // Pull the pre-calculated backtrace!
-    if (instance.class.instance_layout.get(bt_key)) |idx| {
-        if (idx < instance.fields.items.len) {
-            return instance.fields.items[idx];
-        }
-    }
-
-    // Fallback to empty array if something went wrong during capture
+    if (try vm.errorField(instance, "backtrace")) |backtrace| return backtrace;
+    // Empty, if the backtrace couldn't be captured
     const arr_obj = try vm.gc.allocateArray(vm);
     return value.Value.initObj(&arr_obj.obj);
 }
@@ -68,7 +45,7 @@ pub fn registerExceptions(vm: *VM) !void {
     const exc_class = try vm.gc.allocateClass(vm, exc_name.asString(), vm.object_class);
 
     // Note: vm.globals.put safely stays vm.allocator because globals are tied to VM lifetime, not sandbox GC
-    try vm.globals.put(vm.allocator, "Exception", value.Value.initObj(&exc_class.obj));
+    try vm.setGlobal("Exception", value.Value.initObj(&exc_class.obj));
 
     const init_fn = try vm.gc.allocateNative("Exception#initialize", common.wrapMethod(exceptionInit));
     const init_key = try vm.staticString("initialize");
@@ -87,13 +64,13 @@ pub fn registerExceptions(vm: *VM) !void {
     // StandardError < Exception
     const std_name = try vm.staticString("StandardError");
     const std_class = try vm.gc.allocateClass(vm, std_name.asString(), exc_class);
-    try vm.globals.put(vm.allocator, "StandardError", value.Value.initObj(&std_class.obj));
+    try vm.setGlobal("StandardError", value.Value.initObj(&std_class.obj));
 
     // One class per runtime error kind; the VM keeps them for raiseError.
     inline for (comptime std.meta.fieldNames(ErrorKind)) |err_name| {
         const name_val = try vm.staticString(err_name);
         const err_class = try vm.gc.allocateClass(vm, name_val.asString(), std_class);
-        try vm.globals.put(vm.allocator, err_name, value.Value.initObj(&err_class.obj));
+        try vm.setGlobal(err_name, value.Value.initObj(&err_class.obj));
         vm.error_classes.set(@field(ErrorKind, err_name), err_class);
     }
 }

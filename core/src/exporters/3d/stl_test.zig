@@ -73,3 +73,24 @@ test "STL: an empty solid is an error, not a file with no triangles" {
     const handle = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addBinary(.difference_op, inner, outer));
     try testing.expectError(error.NoGeometry, stl.buildStlBuffer(testing.allocator, handle));
 }
+
+test "STL: every exported solid reads back closed and consistently oriented" {
+    // The reader welds equal positions, so a closed solid's triangles share their edges.
+    const api = @import("../../api.zig");
+    const mesh_check = @import("../../kernel/mesh_check.zig");
+    for ([_][]const u8{
+        "cube(10)",
+        "sphere(5)",
+        "cylinder(r: 3, h: 8)",
+        "cube(10) - cylinder(r: 3, h: 30).translate(x: 5, y: 5, z: -10)",
+        "cube(10) + sphere(4).translate(x: 10, y: 5, z: 5)",
+        "[cube(2), sphere(1).translate(x: 5)]",
+    }) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        const bytes = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl });
+        defer testing.allocator.free(bytes);
+        var mesh = try stl.parseStlBuffer(testing.allocator, bytes);
+        defer mesh.deinit(testing.allocator);
+        try mesh_check.expectClosed(testing.allocator, mesh.faces);
+    }
+}

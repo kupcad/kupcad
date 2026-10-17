@@ -156,6 +156,14 @@ pub fn cppAssertsEnabled() bool {
     return kupcad_cpp_asserts_enabled();
 }
 
+extern fn kupcad_set_max_threads(threads: usize) void;
+
+/// Caps the threads Manifold's parallel algorithms may use (null lifts the cap): for a test
+/// that compares a parallel run with one on a single thread.
+pub fn setMaxThreads(threads: ?usize) void {
+    kupcad_set_max_threads(threads orelse 0);
+}
+
 extern fn manifold_num_vert(m: ?*ManifoldObj) usize;
 extern fn manifold_status(m: ?*ManifoldObj) Status;
 

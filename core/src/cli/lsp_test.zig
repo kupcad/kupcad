@@ -9,9 +9,7 @@ const documentPath = @import("lsp.zig").documentPath;
 const FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const kernel = @import("../kernel/kernel.zig");
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
-const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
+const SessionPreview = @import("lsp_preview.zig").SessionPreview;
 
 const URI = "file:///work/part.kup";
 
@@ -40,23 +38,18 @@ const Outbox = struct {
     }
 };
 
-/// A server with no viewport, its documents only in memory. Lives in place: the handler
-/// keeps pointers to the rest.
+/// A server with no viewport, running its scripts in this process, its documents only in
+/// memory. Lives in place: the handler keeps pointers to the rest.
 const Server = struct {
-    mem_vfs: MemoryVfs,
-    sandbox: ReadOnlyVfs,
-    session: ScriptSession,
+    preview: SessionPreview,
     outbox: Outbox,
     handler: Handler,
     arena: std.heap.ArenaAllocator,
 
     fn init(self: *Server) !void {
-        self.mem_vfs = MemoryVfs.init(testing.allocator);
-        self.sandbox = ReadOnlyVfs.init(self.mem_vfs.vfs(), null);
-        self.session = try ScriptSession.init(testing.allocator, testing.io);
-        self.session.vm.vfs = self.sandbox.vfs();
+        try self.preview.init(testing.allocator, testing.io, false);
         self.outbox = .{};
-        self.handler = Handler.init(testing.allocator, testing.io, &self.outbox.transport, &self.session, null, &self.mem_vfs, &self.sandbox, null);
+        self.handler = Handler.init(testing.allocator, testing.io, &self.outbox.transport, self.preview.preview(), null);
         self.arena = std.heap.ArenaAllocator.init(testing.allocator);
     }
 
@@ -64,8 +57,7 @@ const Server = struct {
         self.arena.deinit();
         self.handler.deinit();
         self.outbox.deinit();
-        self.session.deinit();
-        self.mem_vfs.deinit();
+        self.preview.deinit();
     }
 
     fn open(self: *Server, uri: []const u8, text: []const u8) !void {
@@ -118,7 +110,7 @@ test "LSP: editing a document logs nothing above debug" {
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "publishDiagnostics") != null);
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1") != null);
     try server.change(URI, "undefined_thing(1)\n"); // doesn't run
-    server.session.vm.mute_errors = true; // its runtime error would print to the test log
+    server.preview.session.vm.mute_errors = true; // its runtime error would print to the test log
     server.settle();
     // A runtime error is the preview's to report, not a diagnostic: the document is clean.
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
@@ -135,7 +127,7 @@ test "LSP: closing a document clears its diagnostics and forgets its module" {
 
     try server.open(URI, "cube(-1)\n"); // nonpositive-size
     try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "nonpositive-size") != null);
-    try testing.expectEqual(@as(usize, 1), server.session.workspace.modules.items.len);
+    try testing.expectEqual(@as(usize, 1), server.preview.session.workspace.modules.items.len);
 
     try server.close(URI);
     // An editor keeps showing what it was last sent for a closed file.
@@ -143,13 +135,13 @@ test "LSP: closing a document clears its diagnostics and forgets its module" {
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":\"" ++ URI ++ "\",\"diagnostics\":[]}}",
         server.outbox.last(),
     );
-    try testing.expectEqual(@as(usize, 0), server.session.workspace.modules.items.len);
-    try testing.expectEqual(@as(usize, 0), server.session.nodes.items.len);
-    try testing.expectError(error.FileNotFound, server.mem_vfs.vfs().readFile(testing.allocator, URI));
+    try testing.expectEqual(@as(usize, 0), server.preview.session.workspace.modules.items.len);
+    try testing.expectEqual(@as(usize, 0), server.preview.session.nodes.items.len);
+    try testing.expectError(error.FileNotFound, server.preview.documents.vfs().readFile(testing.allocator, "/work/part.kup"));
 
     // Opening it again starts over.
     try server.open(URI, "cube(1)\n");
-    try testing.expectEqual(@as(usize, 1), server.session.workspace.modules.items.len);
+    try testing.expectEqual(@as(usize, 1), server.preview.session.workspace.modules.items.len);
 }
 
 test "LSP: documentPath reads file URIs and nothing else" {
@@ -184,14 +176,14 @@ test "LSP: a script that never ends doesn't hang the server" {
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    try testing.expectEqual(limits.INTERACTIVE_INSTRUCTION_LIMIT, server.session.vm.instruction_limit);
+    try testing.expectEqual(limits.INTERACTIVE_INSTRUCTION_LIMIT, server.preview.session.vm.hooks.limit);
 
     // The same stop, sooner, so the test is quick.
-    server.session.vm.instruction_limit = 10_000;
-    server.session.vm.mute_errors = true;
+    server.preview.session.vm.hooks.setLimit(10_000);
+    server.preview.session.vm.mute_errors = true;
     try server.open(URI, "n = 0\nwhile true\n  n += 1\nend\n");
     server.settle(); // returns: the evaluation gave up
-    try testing.expect(server.session.nodes.items[0].is_stale);
+    try testing.expect(server.preview.session.nodes.items[0].is_stale);
 }
 
 test "LSP: edits are evaluated once, when the editor goes quiet" {
@@ -204,11 +196,11 @@ test "LSP: edits are evaluated once, when the editor goes quiet" {
     try server.change(URI, "cube(3)\n");
     // Each keystroke used to evaluate the whole model before the next one was read.
     try testing.expect(server.handler.preview_pending);
-    try testing.expect(server.session.nodes.items[0].cached_handle == null);
+    try testing.expect(server.preview.session.nodes.items[0].cached_handle == null);
 
     server.settle();
     try testing.expect(!server.handler.preview_pending);
-    try testing.expectApproxEqAbs(@as(f64, 27.0), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 27.0), kernel.volume(server.preview.session.nodes.items[0].cached_handle.?), 1e-9);
 }
 
 test "LSP: hovering a document that doesn't compile neither runs it nor logs an error" {
@@ -226,7 +218,7 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
     // The variable is described from the syntax alone; no run happened.
     try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "(variable) x") != null);
     try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "Volume") == null);
-    try testing.expect(server.handler.hover_run == null);
+    try testing.expect(server.preview.hover.?.run == null);
 }
 
 test "LSP: open documents import each other, and editing one re-evaluates its importers" {
@@ -241,14 +233,14 @@ test "LSP: open documents import each other, and editing one re-evaluates its im
     try server.open("file:///work/parts/hw.kup", "def bolt\n  cube(2)\nend\nexport bolt\n");
     try server.open("file:///work/parts/main.kup", "import { bolt } from \"./hw.kup\"\nbolt()\n");
     server.settle();
-    const main_id = server.session.workspace.path_to_id.get("parts/main.kup") orelse return error.TestExpectedModule;
-    const hw_id = server.session.workspace.path_to_id.get("parts/hw.kup") orelse return error.TestExpectedModule;
-    try testing.expectEqualSlices(@TypeOf(hw_id), &.{hw_id}, server.session.workspace.modules.items[@backingInt(main_id)].deps.items);
-    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+    const main_id = server.preview.session.workspace.path_to_id.get("parts/main.kup") orelse return error.TestExpectedModule;
+    const hw_id = server.preview.session.workspace.path_to_id.get("parts/hw.kup") orelse return error.TestExpectedModule;
+    try testing.expectEqualSlices(@TypeOf(hw_id), &.{hw_id}, server.preview.session.workspace.modules.items[@backingInt(main_id)].deps.items);
+    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.preview.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
 
     try server.change("file:///work/parts/hw.kup", "def bolt\n  cube(3)\nend\nexport bolt\n");
     server.settle();
-    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(server.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(server.preview.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
 }
 
 test "LSP: hovers are answered from one run of the document, until something changes" {
@@ -258,14 +250,14 @@ test "LSP: hovers are answered from one run of the document, until something cha
     try server.open(URI, "a = cube(2)\nb = a.translate(1, 0, 0)\n");
 
     try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
-    const run = server.handler.hover_run.?;
+    const run = server.preview.hover.?.run.?;
     // It used to run the whole document again for each hover.
     try testing.expect(std.mem.indexOf(u8, server.hover(URI, 1, 0).?, "**Volume:** `8.00`") != null);
-    try testing.expectEqual(run, server.handler.hover_run.?);
+    try testing.expectEqual(run, server.preview.hover.?.run.?);
 
     // An edit (here, or in a file it imports) makes the next hover run it again.
     try server.change(URI, "a = cube(3)\n");
-    try testing.expect(server.handler.hover_run == null);
+    try testing.expect(server.preview.hover == null);
     try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
 }
 
@@ -306,15 +298,15 @@ test "LSP: a preview a message stopped runs again once the editor is quiet" {
     try server.open(URI, "cube(2)\n");
 
     // As the inbox does when a request arrives during the run.
-    server.session.vm.cancel_token.store(true, .release);
+    server.preview.session.vm.cancel_token.store(true, .release);
     server.handler.evaluatePreview();
     try testing.expect(server.handler.preview_pending);
-    try testing.expect(server.session.nodes.items[0].cached_handle == null);
+    try testing.expect(server.preview.session.nodes.items[0].cached_handle == null);
 
-    server.session.vm.cancel_token.store(false, .release);
+    server.preview.session.vm.cancel_token.store(false, .release);
     server.settle();
     try testing.expect(!server.handler.preview_pending);
-    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.session.nodes.items[0].cached_handle.?), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.preview.session.nodes.items[0].cached_handle.?), 1e-9);
 }
 
 test "LSP: hovering a parameter or local doesn't show a same-named global's facts" {
@@ -347,4 +339,90 @@ test "LSP: positions are UTF-8 or UTF-16, never UTF-32, whatever the client offe
         _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{ .general = .{ .positionEncodings = offer.offered } }, .rootUri = "file:///work" });
         try testing.expectEqual(offer.chosen, server.handler.offset_encoding);
     }
+}
+
+test "LSP: formatting answers the whole document formatted, and nothing for one that doesn't parse" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "x=1+2\ncube( x )\n");
+    const options: lsp.types.FormattingOptions = .{ .tabSize = 2, .insertSpaces = true };
+    const edits = (try s.handler.@"textDocument/formatting"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .options = options })) orelse return error.NoEdits;
+    try testing.expectEqual(@as(usize, 1), edits.len);
+    try testing.expectEqualStrings("x = 1 + 2\ncube(x)\n", edits[0].newText);
+    try testing.expectEqual(@as(u32, 0), edits[0].range.start.line);
+    try testing.expectEqual(@as(u32, 0), edits[0].range.start.character);
+
+    try s.change(URI, "x = )\n");
+    const none = try s.handler.@"textDocument/formatting"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .options = options });
+    try testing.expect(none == null or none.?.len == 0);
+}
+
+test "LSP: inlay hints name a built-in's positional arguments" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "cylinder(2, 5)\n");
+    const hints = (try s.handler.@"textDocument/inlayHint"(s.arena.allocator(), .{
+        .textDocument = .{ .uri = URI },
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 1, .character = 0 } },
+    })) orelse return error.NoHints;
+    try testing.expectEqual(@as(usize, 2), hints.len);
+    try testing.expectEqualStrings("r:", hints[0].label.string);
+    try testing.expectEqual(@as(u32, 9), hints[0].position.character);
+    try testing.expectEqualStrings("h:", hints[1].label.string);
+}
+
+test "LSP: completion offers methods after a dot and globals elsewhere" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "part = cube(1)\npart.tra\ncu");
+    const Labels = struct {
+        fn of(items: []const lsp.types.completion.Item, label: []const u8) ?lsp.types.completion.Item {
+            for (items) |item| if (std.mem.eql(u8, item.label, label)) return item;
+            return null;
+        }
+    };
+    const after_dot = (try s.handler.@"textDocument/completion"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 1, .character = 8 } })).?.completion_items;
+    try testing.expectEqual(lsp.types.completion.Item.Kind.Method, Labels.of(after_dot, "translate").?.kind.?);
+    try testing.expect(Labels.of(after_dot, "cube") == null);
+    const global = (try s.handler.@"textDocument/completion"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI }, .position = .{ .line = 2, .character = 2 } })).?.completion_items;
+    try testing.expectEqual(lsp.types.completion.Item.Kind.Function, Labels.of(global, "cube").?.kind.?);
+    try testing.expect(Labels.of(global, "translate") == null);
+}
+
+test "LSP: document symbols list the defs, classes, modules and top-level variables" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "def plate(w)\n  inner = w\n  cube(inner)\nend\nclass Box\nend\nmodule Parts\nend\nwidth = 3\nplate(width)");
+    const result = (try s.handler.@"textDocument/documentSymbol"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI } })) orelse return error.NoSymbols;
+    const symbols = result.document_symbols;
+    var names: std.ArrayListUnmanaged(u8) = .empty;
+    defer names.deinit(testing.allocator);
+    for (symbols) |sym| try names.print(testing.allocator, "{s}:{t} ", .{ sym.name, sym.kind });
+    try testing.expectEqualStrings("plate:Function Box:Class Parts:Module width:Variable ", names.items);
+}
+
+test "LSP: a code action fixes the finding on the requested lines" {
+    var s: Server = undefined;
+    try s.init();
+    defer s.deinit();
+    try s.open(URI, "unused = 5\ncube(1)\n");
+    const result = (try s.handler.@"textDocument/codeAction"(s.arena.allocator(), .{
+        .textDocument = .{ .uri = URI },
+        .range = .{ .start = .{ .line = 0, .character = 0 }, .end = .{ .line = 0, .character = 0 } },
+        .context = .{ .diagnostics = &.{} },
+    })) orelse return error.NoActions;
+    var renames: usize = 0;
+    for (result) |r| {
+        const action = r.code_action;
+        const edits = action.edit.?.changes.?.map.get(URI).?;
+        if (std.mem.indexOf(u8, action.title, "_unused") != null) {
+            renames += 1;
+            try testing.expectEqualStrings("_unused", edits[0].newText);
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), renames);
 }

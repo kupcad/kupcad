@@ -22,7 +22,6 @@ const validate = @import("validate.zig");
 const limits = @import("limits.zig");
 const string_map = @import("string_map.zig");
 const PACKAGE_DIR = @import("../core/import_path.zig").PACKAGE_DIR;
-const owned_keys = @import("../core/owned_keys.zig");
 
 /// Hex chars of the content integrity used as the pseudo-commit of http/local archives.
 const CONTENT_COMMIT_LEN = 40;
@@ -184,13 +183,7 @@ pub const Resolver = struct {
             defer self.mutex.unlock(self.io);
 
             if (self.lockfile.packages.getPtr(pid)) |parent_locked| {
-                // The URL is copied first: copied after the old one was freed, a failed
-                // copy left the map holding the freed one (or no value at all).
-                const url_copy = try self.allocator.dupe(u8, pkg_url);
-                errdefer self.allocator.free(url_copy);
-                const gop = try owned_keys.getOrPutOwned(&parent_locked.dependencies, self.allocator, alias);
-                if (gop.found_existing) self.allocator.free(gop.value_ptr.*);
-                gop.value_ptr.* = url_copy;
+                try string_map.putOwned(self.allocator, &parent_locked.dependencies, alias, pkg_url);
             }
         }
     }

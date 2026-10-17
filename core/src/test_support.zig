@@ -19,6 +19,7 @@ const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
 const value = @import("core/value.zig");
+const disassembler = @import("tools/dev/disassembler.zig");
 
 /// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
 pub const NUMBER_TOLERANCE = 1e-9;
@@ -36,15 +37,21 @@ pub fn initVm() !VM {
 
 /// Compiles and runs `source` on `vm`. A syntax error fails the test.
 pub fn runOn(vm: *VM, source: []const u8) !InterpretResult {
-    var doc = try Document.parse(std.testing.allocator, source);
+    return runWith(std.testing.allocator, vm, source);
+}
+
+/// `runOn`, parsing and compiling with `allocator` (the one `vm` was made with, in a test
+/// that fails allocations).
+pub fn runWith(allocator: std.mem.Allocator, vm: *VM, source: []const u8) !InterpretResult {
+    var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     if (doc.diagnostics.len > 0) {
         std.debug.print("syntax error in test script: {s}\n", .{doc.diagnostics[0].message});
         return error.SyntaxError;
     }
     var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(std.testing.allocator);
-    var comp = Compiler.forDocument(std.testing.allocator, &doc, &out_chunk, vm);
+    defer out_chunk.free(allocator);
+    var comp = Compiler.forDocument(allocator, &doc, &out_chunk, vm);
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     return vm.interpret(&out_chunk);
@@ -86,7 +93,7 @@ pub fn expectScripts(cases: []const ScriptCase) !void {
         errdefer std.debug.print("script:\n{s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
-        vm.zealous_gc = case.gc_stress;
+        vm.hooks.setZealousGc(case.gc_stress);
         try std.testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         const r = vm.globals.get("r") orelse return error.MissingGlobal;
         try expectValue(case.expected, r);
@@ -128,4 +135,62 @@ pub fn expectValue(expected: Expected, r: value.Value) !void {
         },
         .nil => try std.testing.expect(r.isNil()),
     }
+}
+
+/// Runs `run(context, allocator)` once for every allocation it makes, failing that one
+/// allocation. Each run must free everything it allocated, and must either fail or give
+/// exactly what a run without failures gives (`run` returns its result as bytes it
+/// allocated): a run that swallowed a failure and went on with less would hide a bug.
+///
+/// The runs allocate through a checking allocator that records no stack traces: the
+/// testing allocator captures one on every allocation and free (by DWARF unwinding on
+/// macOS, about 20 µs), and a sweep that replays a run once per allocation spent most of
+/// its time there. Double frees and writes after free are still caught, and leaks are
+/// counted by the failing allocator.
+pub fn expectAllocationFailuresHandled(context: anytype, comptime run: fn (@TypeOf(context), std.mem.Allocator) anyerror![]const u8) !void {
+    const expected = try run(context, std.testing.allocator);
+    defer std.testing.allocator.free(expected);
+    var checked: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{ .stack_trace_frames = 0 });
+    // A leak is the failing allocator's to report (every allocation goes through it), as a
+    // failed test; asserting here as well turned that into an abort.
+    defer _ = checked.deinitLog(false);
+    var fail_index: usize = 0;
+    while (true) : (fail_index += 1) {
+        errdefer std.debug.print("with allocation {d} failing\n", .{fail_index});
+        var failing = std.testing.FailingAllocator.init(checked.allocator(), .{ .fail_index = fail_index });
+        const allocator = failing.allocator();
+        const done = if (run(context, allocator)) |bytes| blk: {
+            defer allocator.free(bytes);
+            if (failing.has_induced_failure) try std.testing.expectEqualStrings(expected, bytes);
+            // A run that reached no failing allocation has seen every allocation fail.
+            break :blk !failing.has_induced_failure;
+        } else |err| blk: {
+            if (!failing.has_induced_failure) return err; // a failure that wasn't induced
+            break :blk false;
+        };
+        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+        if (done) return;
+    }
+}
+
+/// The opcodes `c` starts with must be `expected`, in order, whatever their operands
+/// (instructions are stepped over with the disassembler, which knows each one's length:
+/// byte offsets broke whenever an operand changed).
+pub fn expectOps(c: *const chunk.Chunk, expected: []const chunk.OpCode) !void {
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var offset: usize = 0;
+    for (expected, 0..) |op, n| {
+        errdefer std.debug.print("instruction {d} at byte {d}\n", .{ n, offset });
+        try std.testing.expect(offset < c.code.items.len);
+        try std.testing.expectEqual(op, @as(chunk.OpCode, @fromBackingInt(c.code.items[offset])));
+        offset = try disassembler.disassembleInstruction(c, offset, &sink.writer);
+    }
+}
+
+/// Where the `n`th instruction of `c` starts.
+pub fn instructionAt(c: *const chunk.Chunk, n: usize) !usize {
+    var sink: std.Io.Writer.Discarding = .init(&.{});
+    var offset: usize = 0;
+    for (0..n) |_| offset = try disassembler.disassembleInstruction(c, offset, &sink.writer);
+    return offset;
 }

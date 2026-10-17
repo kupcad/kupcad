@@ -67,10 +67,12 @@ pub const ScriptSession = struct {
     params: std.StringHashMapUnmanaged(f64) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !ScriptSession {
+        var vm = try VM.init(allocator, io);
+        vm.runs_many_scripts = true;
         return .{
             .allocator = allocator,
             .workspace = Workspace.init(allocator),
-            .vm = try VM.init(allocator, io),
+            .vm = vm,
         };
     }
 

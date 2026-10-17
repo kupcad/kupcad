@@ -441,3 +441,22 @@ test "ScriptSession: materials and ghosts don't accumulate across runs" {
     try testing.expectEqual(@as(usize, 2), session.vm.materials.items.len);
     try testing.expectEqual(@as(usize, 1), session.vm.display_list.items.len);
 }
+
+test "ScriptSession: a long editing session keeps the geometry graph to what it uses" {
+    // Every edit added its nodes to the graph for good: 200 edits of one part left 609.
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    // Compaction as the graph doubles, from the start rather than past 1 MiB
+    session.vm.dag_builder.compaction_floor = 0;
+    session.vm.dag_builder.compact_at = 0;
+    var buf: [256]u8 = undefined;
+    for (0..200) |i| {
+        const src = try std.fmt.bufPrint(&buf, "a = cube({d}) + sphere(2).translate(x: {d})\nb = a - cylinder(r: 1, h: 30)\nb", .{ 1 + i % 7, i });
+        _ = try session.workspace.upsertModule("part.kup", src);
+        try session.workspace.linkDependencies();
+        try session.buildReverseGraph();
+        try session.markFileEdited("part.kup");
+        try session.evaluateWorkspace();
+    }
+    try testing.expect(session.vm.dag_builder.nodes.items.len < 64);
+}

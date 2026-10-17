@@ -29,6 +29,7 @@ pub const UnusedParamRule = struct {
             .vtable = &.{
                 .checkNode = checkNode,
                 .checkEOF = checkEOF,
+                .deinit = deinit,
             },
         };
     }
@@ -66,13 +67,15 @@ pub const UnusedParamRule = struct {
         }
     }
 
+    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
+        const self: *UnusedParamRule = @ptrCast(@alignCast(ptr));
+        self.dropped.deinit(allocator);
+        self.read.deinit(allocator);
+        self.* = .{};
+    }
+
     fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
         const self: *UnusedParamRule = @ptrCast(@alignCast(ptr));
-        defer {
-            self.dropped.deinit(engine.allocator);
-            self.read.deinit(engine.allocator);
-            self.* = .{};
-        }
         if (self.read_dynamically) return;
         var it = self.dropped.iterator();
         while (it.next()) |entry| {

@@ -12,6 +12,7 @@ const parser = @import("../../frontend/parser.zig");
 const Precedence = parser.Precedence;
 const token_span = @import("../../core/token_span.zig");
 const string_escape = @import("../../core/string_escape.zig");
+const TokenTag = @import("../../frontend/lexer.zig").Tag;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -24,6 +25,7 @@ pub const Formatter = struct {
     source: []const u8,
     token_starts: []const u32,
     token_lengths: []const u32,
+    token_tags: []const TokenTag,
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
@@ -39,15 +41,16 @@ pub const Formatter = struct {
 
     /// A formatter for a parsed document: its source, tokens, line index and comments.
     pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, config: Config) Formatter {
-        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, &doc.line_index, doc.comments, config);
+        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tokens.tags, &doc.line_index, doc.comments, config);
     }
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, token_tags: []const TokenTag, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{
             .allocator = allocator,
             .source = source,
             .token_starts = token_starts,
             .token_lengths = token_lengths,
+            .token_tags = token_tags,
             .line_index = line_index,
             .comments = comments,
             .config = config,
@@ -73,6 +76,14 @@ pub const Formatter = struct {
     }
 
     // --- State & Spacing Helpers ---
+
+    /// The line of a block's closing token, or past every line for one that closes at the
+    /// end of the file (the script's own block): a last comment with no newline after it
+    /// shares the end-of-file token's line, and was glued to the statement above it.
+    fn blockEndLine(self: *const Formatter, end_token: u32) u32 {
+        if (end_token >= self.token_starts.len or self.token_starts[end_token] == self.source.len) return std.math.maxInt(u32);
+        return self.line_index.getLine(self.token_starts[end_token]);
+    }
 
     fn lineOf(self: *const Formatter, tok: u32) u32 {
         if (tok >= self.token_starts.len) return std.math.maxInt(u32);
@@ -146,7 +157,7 @@ pub const Formatter = struct {
         const b = tree.block(node);
         const stmts = tree.getNodes(b.stmts);
         if (stmts.len > 0) return self.line_index.getLine(self.token_starts[token_span.first(tree, stmts[0])]);
-        return if (b.end_token < self.token_starts.len) self.line_index.getLine(self.token_starts[b.end_token]) else std.math.maxInt(u32);
+        return self.blockEndLine(b.end_token);
     }
 
     /// Whether a comment follows code on its line (`when 1 # one`), as opposed to
@@ -329,7 +340,7 @@ pub const Formatter = struct {
             .invalid => return error.SyntaxError,
             .block => {
                 const b = tree.block(node);
-                const end_line = if (b.end_token < self.token_starts.len) self.line_index.getLine(self.token_starts[b.end_token]) else std.math.maxInt(u32);
+                const end_line = self.blockEndLine(b.end_token);
                 try self.formatBlockStmts(tree, tree.getNodes(b.stmts), end_line);
             },
             // As written: `20.0` stays `20.0` (it used to print as `20`), `1_000` and `1e3` keep
@@ -489,7 +500,17 @@ pub const Formatter = struct {
         const raw = self.tokenText(node.main_token);
         var decoded: std.ArrayListUnmanaged(u8) = .empty;
         defer decoded.deinit(self.allocator);
-        try string_escape.unescapeInto(&decoded, self.allocator, raw);
+        if (self.token_tags[node.main_token] == .raw_string) {
+            // Single-quoted or %q, decoded by its own delimiter, the byte before it
+            try string_escape.unescapeRawInto(&decoded, self.allocator, raw, self.source[self.token_starts[node.main_token] - 1]);
+        } else {
+            var problem: string_escape.Problem = undefined;
+            string_escape.unescapeInto(&decoded, self.allocator, raw, &problem) catch |err| switch (err) {
+                // The parser refused it already; there is nothing to reuse
+                error.InvalidEscape => return null,
+                error.OutOfMemory => |e| return e,
+            };
+        }
         return if (std.mem.eql(u8, decoded.items, tree.getString(@fromBackingInt(node.data)))) raw else null;
     }
 
@@ -1044,11 +1065,14 @@ pub const Formatter = struct {
     }
 
     fn formatMultipleAssignment(self: *Formatter, tree: *const ast.Tree, ma: ast.MultipleAssignment) Error!void {
-        for (tree.getLhsExprs(ma.lhs), 0..) |item, idx| {
+        const targets = tree.getLhsExprs(ma.lhs);
+        for (targets, 0..) |item, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
             if (item.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
             try self.out.appendSlice(self.allocator, tree.getString(item.name));
         }
+        // `a, = list` takes the first element; without its comma it assigned the whole list.
+        if (targets.len == 1 and targets[0].modifier == null) try self.out.append(self.allocator, ',');
         try self.out.append(self.allocator, ' ');
         if (ma.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op)); // `a, b += 1` (the operator was dropped)
         try self.out.appendSlice(self.allocator, "= ");
@@ -1186,7 +1210,9 @@ pub const Formatter = struct {
                     const link_line = f.lineOf(c.tree.methodCall(c.tree.getNode(link).?).name_token);
                     // A call stays on the line before where the author put it there, and the
                     // first call stays with a bare name (`Box.new(...)`, `self.part(...)`).
-                    const joins = if (c.author_lines) link_line == prev_line else i == 0 and isBareName(c.tree, c.root);
+                    // A call with no name (`(f)(2)`) is only one on the same line.
+                    const unnamed = c.tree.methodCall(c.tree.getNode(link).?).method_name == .none;
+                    const joins = unnamed or if (c.author_lines) link_line == prev_line else i == 0 and isBareName(c.tree, c.root);
                     if (joins) {
                         try f.formatLink(c.tree, link);
                         prev_line = f.lastLine(c.tree, link);
@@ -1230,7 +1256,10 @@ pub const Formatter = struct {
     /// `.name(args) block` of a call on a receiver.
     fn formatLink(self: *Formatter, tree: *const ast.Tree, link: ast.NodeIndex) Error!void {
         const mc = tree.methodCall(tree.getNode(link).?);
-        try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
+        // A call on an expression with no name, `(f)(2)`, has no dot: it fails when it runs
+        // (a lambda takes .call), but formatting keeps the script as written. `(f).(2)`
+        // didn't parse.
+        if (mc.method_name != .none) try self.out.appendSlice(self.allocator, if (mc.is_safe) "&." else ".");
         try self.formatCallTail(tree, link);
     }
 
@@ -1242,7 +1271,7 @@ pub const Formatter = struct {
         const args = tree.getNamedArgs(mc.args);
         if (args.len > 0) {
             try self.formatArgs(tree, args, if (mc.end_token != 0) mc.end_token else null);
-        } else if (mc.receiver == .none and mc.block == .none) {
+        } else if ((mc.receiver == .none or mc.method_name == .none) and mc.block == .none) {
             try self.out.appendSlice(self.allocator, "()");
         }
         if (mc.block != .none) {

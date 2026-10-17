@@ -1264,7 +1264,7 @@ test "VM: a module still sees a builtin the main script shadowed" {
     try registry.registerStandardLibrary(&vm);
     vm.vfs = mem_vfs.vfs();
     // A host-registered global, like the stdlib's builtins.
-    try vm.globals.put(vm.allocator, "helper_val", value.Value.initNumber(42));
+    try vm.setGlobal("helper_val", value.Value.initNumber(42));
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -1376,4 +1376,25 @@ test "VM: a host that registered no module compiler refuses an import by name" {
     try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
     // A bare VM has no error classes, so the kind reads as a RuntimeError; the words are the point.
     try testing.expect(std.mem.endsWith(u8, vm.last_error.?, "this host can't compile modules, so 'lib.kup' can't be imported"));
+}
+
+test "VM: a module that read a builtin keeps it after the main script takes the name" {
+    // The module's read of `helper_val` caches the builtin's slot; `helper_val = 5` in the
+    // main script then writes the main script's variable there, so the module must look
+    // again (the builtin is kept aside for modules) instead of reading 5.
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try mem_vfs.vfs().writeFile("lib.kup", "def read\n  helper_val\nend\nexport read");
+
+    var vm = try VM.init(testing.allocator, testing.io);
+    vm.host.compile_module = module_compiler.compileModule;
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.vfs = mem_vfs.vfs();
+    try vm.setGlobal("helper_val", value.Value.initNumber(42));
+
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, "import { read } from \"./lib.kup\"\na = read()\nhelper_val = 5\nr = a * 100 + read()"));
+    try testing.expectEqual(@as(f64, 4242), (vm.globals.get("r") orelse return error.MissingGlobal).asNumber());
 }

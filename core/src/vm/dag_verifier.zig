@@ -25,47 +25,45 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
     };
 }
 
-/// Why `node`, about to be added to `b`, is malformed; null when it is sound.
+/// The kind of shape `tag` takes for its operands.
+pub fn operandKind(tag: dag.DAGTag) Kind {
+    return switch (tag) {
+        .cs_union_op, .cs_difference_op, .cs_intersection_op, .extrude, .revolve, .offset, .cs_transform, .loft => .sketch,
+        else => .solid,
+    };
+}
+
+/// Why `node`, about to be added to `b`, is malformed; null when it is sound. The payload is
+/// checked against its tag's layout (dag.layoutOf).
 pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
     if (node.settings != 0 and node.settings > b.settings_table.items.len) return "its settings id names no settings";
     const extra = b.extra_data.items;
-    return switch (node.tag) {
-        .empty_solid, .empty_sketch => null,
-        .cube => numbers(b, node.data, 3),
-        .cylinder => numbers(b, node.data, 4),
-        .sphere, .square, .circle => numbers(b, node.data, 2),
-        .concrete => if (node.data < b.concrete_handles.items.len) null else "it names no concrete handle",
-
-        .union_op, .difference_op, .intersection_op, .minkowski => operands(b, node.data, 2, .solid),
-        .cs_union_op, .cs_difference_op, .cs_intersection_op => operands(b, node.data, 2, .sketch),
-        .batch_union_op, .batch_hull_op => {
+    const kind = operandKind(node.tag);
+    return switch (dag.layoutOf(node.tag)) {
+        .none => null,
+        .numbers => |n| numbers(b, node.data, n),
+        .operands => |n| operands(b, node.data, n, kind),
+        .operand_list => {
             if (node.data >= extra.len) return "its operand count is outside extra_data";
             const count = extra[node.data];
             if (count == 0) return "it has no operands";
-            return operands(b, node.data + 1, count, .solid);
+            return operands(b, node.data + 1, count, kind);
         },
-        .hull, .set_material => operands(b, node.data, 1, .solid),
-        .project_op => operands(b, node.data, 1, .solid),
-
-        .translate, .rotate, .scale, .mirror => targetAndNumbers(b, node.data, .solid, 3),
-        .transform_matrix => targetAndNumbers(b, node.data, .solid, 12),
-        .trim_by_plane => targetAndNumbers(b, node.data, .solid, 4),
-        .slice_op => targetAndNumbers(b, node.data, .solid, 1),
-        .extrude => targetAndNumbers(b, node.data, .sketch, 5),
-        .revolve => targetAndNumbers(b, node.data, .sketch, 2),
-        .offset => targetAndNumbers(b, node.data, .sketch, 1),
-        .cs_transform => targetAndNumbers(b, node.data, .sketch, 6),
+        .target_numbers => |n| targetAndNumbers(b, node.data, kind, n),
+        .target_value => {
+            if (!fits(node.data, 2, extra.len)) return "its operand and value are outside extra_data";
+            return operands(b, node.data, 1, kind);
+        },
         .loft => {
             if (!fits(node.data, 3, extra.len)) return "its operands are outside extra_data";
-            if (operands(b, node.data, 2, .sketch)) |p| return p;
+            if (operands(b, node.data, 2, kind)) |p| return p;
             return numbers(b, extra[node.data + 2], 1);
         },
-
         .polygon => {
             if (!fits(node.data, 2, extra.len)) return "its point range is outside extra_data";
             return numbers(b, extra[node.data], 2 * @as(usize, extra[node.data + 1]));
         },
-        .polygons_even_odd => {
+        .polygons => {
             if (node.data >= extra.len) return "its contour count is outside extra_data";
             const count = extra[node.data];
             if (!fits(node.data + 1, 2 * @as(usize, count), extra.len)) return "its contours are outside extra_data";
@@ -75,7 +73,8 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
             }
             return null;
         },
-        .polyhedron_op => polyhedron(b, node.data),
+        .polyhedron => polyhedron(b, node.data),
+        .concrete => if (node.data < b.concrete_leaves.items.len) null else "it names no concrete leaf",
     };
 }
 

@@ -5,16 +5,26 @@
 const std = @import("std");
 const common_token = @import("../core/token.zig");
 const utils = @import("utils.zig");
+const string_escape = @import("../core/string_escape.zig");
 
 pub const Tag = enum {
     eof,
+    /// A character that starts no token.
     invalid,
+    /// A string, quoted symbol or %-literal the file ends inside; the token is the rest of it.
+    unterminated_string,
+    /// A heredoc whose terminator line never comes; the token is the terminator's name.
+    unterminated_heredoc,
+    /// `#{` nested deeper than the lexer tracks.
+    interpolation_too_deep,
     newline,
     semicolon,
     ident,
     constant,
     number,
     string,
+    /// A single-quoted string or `%q(...)`: only `\\` and its delimiter are escapes, as in Ruby.
+    raw_string,
     string_start,
     string_mid,
     string_end,
@@ -235,6 +245,7 @@ pub const Lexer = struct {
             '#' => self.consumeCommentOrParam(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             '%' => self.consumePercentOrModulo(start_loc),
+            '$' => self.consumeGlobal(start_loc),
             else => {
                 if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
@@ -265,19 +276,9 @@ pub const Lexer = struct {
 
         const open_delim = self.peek();
         self.advance();
-        const close_delim = getClosingDelimiter(open_delim);
+        const close_delim = string_escape.closingDelimiter(open_delim);
         const content_loc = self.getLoc();
         return self.consumeStringBody(content_loc, true, open_delim, close_delim, 1);
-    }
-
-    inline fn getClosingDelimiter(open_delim: u8) u8 {
-        return switch (open_delim) {
-            '[' => ']',
-            '{' => '}',
-            '(' => ')',
-            '<' => '>',
-            else => open_delim,
-        };
     }
 
     fn consumeDot(self: *Lexer, start_loc: common_token.Location) Token {
@@ -345,7 +346,7 @@ pub const Lexer = struct {
         self.advance();
 
         const inner_start = self.index;
-        const close_delim = getClosingDelimiter(open_delim);
+        const close_delim = string_escape.closingDelimiter(open_delim);
 
         const is_paired = (open_delim != close_delim);
         var nesting_depth: u32 = 1;
@@ -370,10 +371,11 @@ pub const Lexer = struct {
             self.advance();
         }
 
+        if (self.index == self.buffer.len) return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[full_start..] };
         const inner_end = self.index;
-        if (self.index < self.buffer.len) self.advance(); // consume close delim
+        self.advance(); // consume close delim
 
-        const tag: Tag = if (!has_letter or kind == 'q') .string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
+        const tag: Tag = if (!has_letter or kind == 'q') .raw_string else if (kind == 'w' or kind == 'W') .percent_w else .percent_i;
 
         if (!has_letter or kind == 'q') {
             // For raw strings (%q), the parser expects exactly the inner content.
@@ -523,6 +525,8 @@ pub const Lexer = struct {
             }
 
             const terminator = self.buffer[term_start..term_end];
+            var terminator_loc = start_loc;
+            terminator_loc.offset = @intCast(term_start);
             self.index = term_end; // Skip past the terminator declaration
 
             // Advance to the end of the current line and consume newline
@@ -555,15 +559,20 @@ pub const Lexer = struct {
                 self.advanceLine();
             }
 
-            // Unclosed Heredoc EOF recovery
-            var content_loc = start_loc;
-            content_loc.offset = @intCast(content_start);
-            return .{ .tag = .string, .loc = content_loc, .lexeme = self.buffer[content_start..self.buffer.len] };
+            return .{ .tag = .unterminated_heredoc, .loc = terminator_loc, .lexeme = terminator };
         }
 
         // Fallback: It wasn't a valid Heredoc terminator, so it's just a Left Shift <<
         self.advance();
         return .{ .tag = .less_less, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+    }
+
+    /// `$name`, a global. A `$` that starts no name is a character the language doesn't use
+    /// (it was a variable named `$`).
+    fn consumeGlobal(self: *Lexer, start_loc: common_token.Location) Token {
+        const next_c: u8 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
+        if (next_c != '$' and utils.LexerUtils.isIdentStart(next_c, false)) return self.consumeIdentOrKeyword(start_loc);
+        return self.consumeChar(.invalid, start_loc);
     }
 
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
@@ -579,10 +588,12 @@ pub const Lexer = struct {
 
     fn consumeString(self: *Lexer, start_loc: common_token.Location, quote: u8) Token {
         if (quote == '\'') {
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '\'');
+            const start = self.index;
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, '\'') orelse
+                return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start..] };
             var content_loc = start_loc;
             content_loc.offset += 1;
-            return .{ .tag = .string, .loc = content_loc, .lexeme = lexeme };
+            return .{ .tag = .raw_string, .loc = content_loc, .lexeme = lexeme };
         }
         self.advance();
         const content_loc = self.getLoc();
@@ -607,7 +618,8 @@ pub const Lexer = struct {
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
             const quote = self.peek();
             const content_offset = self.index + 1; // skip quote in AST offset
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote);
+            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote) orelse
+                return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start_loc.offset..] };
 
             var content_loc = start_loc;
             content_loc.offset = @intCast(content_offset);
@@ -664,7 +676,7 @@ pub const Lexer = struct {
                 self.advance();
 
                 if (self.interp_depth >= self.interp_stack.len) {
-                    return .{ .tag = .invalid, .loc = start_loc, .lexeme = "Interpolation depth exceeded" };
+                    return .{ .tag = .interpolation_too_deep, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
                 }
                 self.interp_stack[self.interp_depth] = .{
                     .brace_depth = self.brace_depth,
@@ -694,7 +706,7 @@ pub const Lexer = struct {
             }
             self.advance();
         }
-        return self.makeToken(.eof);
+        return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start..] };
     }
 
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {

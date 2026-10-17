@@ -352,3 +352,228 @@ test "kupcad: check --max-warnings fails a run with more warnings than that" {
         .{ .args = &.{ "check", "unused.kup", "--format" }, .code = 1, .contains = "Missing value after '--format'" },
     });
 }
+
+/// The crash reports `dir` holds, read and concatenated (caller frees), and how many.
+fn crashReports(dir: std.Io.Dir) !struct { text: []u8, count: usize } {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    errdefer out.deinit();
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(testing.io)) |entry| {
+        if (!std.mem.startsWith(u8, entry.name, "kupcad-crash-")) continue;
+        count += 1;
+        const text = try dir.readFileAlloc(testing.io, entry.name, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(text);
+        try out.writer.writeAll(text);
+    }
+    return .{ .text = try out.toOwnedSlice(), .count = count };
+}
+
+test "kupcad: KUPCAD_CRASH_DIR captures a panic and an abort, and nothing is written without it" {
+    if (!@import("builtin").os.tag.isDarwin() and @import("builtin").os.tag != .linux) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "crashes");
+    const crash_dir = try std.fs.path.join(testing.allocator, &.{ sb.path, "crashes" });
+    defer testing.allocator.free(crash_dir);
+
+    var env = try testing.environ.createMap(testing.allocator);
+    defer env.deinit();
+    for ([_][]const u8{ "CLICOLOR_FORCE", "NO_COLOR", "FORCE_COLOR", "KUPCAD_CRASH_DIR" }) |name| _ = env.swapRemove(name);
+
+    // Off by default: a crash leaves nothing behind.
+    const unreported = try kupcadIn(sb.path, &.{ "dev", "crash", "abort" }, &env);
+    defer unreported.deinit();
+    var dir = try sb.tmp.dir.openDir(testing.io, "crashes", .{ .iterate = true });
+    defer dir.close(testing.io);
+    const none = try crashReports(dir);
+    defer testing.allocator.free(none.text);
+    try testing.expectEqual(@as(usize, 0), none.count);
+
+    try env.put("KUPCAD_CRASH_DIR", crash_dir);
+    for ([_][]const u8{ "panic", "abort" }) |how| {
+        const run = try kupcadIn(sb.path, &.{ "dev", "crash", how }, &env);
+        defer run.deinit();
+        try testing.expect(run.code != 0);
+        try testing.expect(std.mem.indexOf(u8, run.stderr, "kupcad: writing a crash report to ") != null);
+    }
+    const reports = try crashReports(dir);
+    defer testing.allocator.free(reports.text);
+    try testing.expectEqual(@as(usize, 2), reports.count);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "\ncommand: dev\n") != null);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "panic: kupcad dev crash: a deliberate panic\nstack:\n") != null);
+    try testing.expect(std.mem.indexOf(u8, reports.text, "signal: SIGABRT\n") != null);
+}
+
+/// A `kupcad` process the test talks to on its stdin and stdout, its stderr discarded.
+const Conversation = struct {
+    child: std.process.Child,
+    in_buf: [64 * 1024]u8 = undefined,
+    out_buf: [4096]u8 = undefined,
+    reader: std.Io.File.Reader = undefined,
+    writer: std.Io.File.Writer = undefined,
+
+    /// In place: the reader and writer point into it.
+    fn start(self: *Conversation, cwd: []const u8, args: []const []const u8) !void {
+        const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
+        defer testing.allocator.free(exe);
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        defer argv.deinit(testing.allocator);
+        try argv.append(testing.allocator, exe);
+        try argv.appendSlice(testing.allocator, args);
+        self.* = .{ .child = try std.process.spawn(testing.io, .{ .argv = argv.items, .cwd = .{ .path = cwd }, .stdin = .pipe, .stdout = .pipe, .stderr = .ignore }) };
+        self.reader = self.child.stdout.?.readerStreaming(testing.io, &self.in_buf);
+        self.writer = self.child.stdin.?.writerStreaming(testing.io, &self.out_buf);
+    }
+
+    /// Closes its stdin and waits for it to end.
+    fn finish(self: *Conversation) !std.process.Child.Term {
+        self.child.stdin.?.close(testing.io);
+        self.child.stdin = null;
+        return self.child.wait(testing.io);
+    }
+
+    // The preview worker's frames (cli/lsp_worker.zig): kind, u32 length, payload.
+
+    fn sendFrame(self: *Conversation, kind: u8, parts: []const []const u8) !void {
+        var len: u32 = 0;
+        for (parts) |p| len += @intCast(p.len);
+        var header: [5]u8 = undefined;
+        header[0] = kind;
+        std.mem.writeInt(u32, header[1..5], len, .little);
+        try self.writer.interface.writeAll(&header);
+        for (parts) |p| try self.writer.interface.writeAll(p);
+        try self.writer.interface.flush();
+    }
+
+    /// The next frame's payload (caller frees).
+    fn receiveFrame(self: *Conversation) ![]u8 {
+        var header: [5]u8 = undefined;
+        try self.reader.interface.readSliceAll(&header);
+        const payload = try testing.allocator.alloc(u8, std.mem.readInt(u32, header[1..5], .little));
+        errdefer testing.allocator.free(payload);
+        try self.reader.interface.readSliceAll(payload);
+        return payload;
+    }
+
+    // The language server's messages: a Content-Length header, then JSON.
+
+    fn sendJson(self: *Conversation, json: []const u8) !void {
+        try self.writer.interface.print("Content-Length: {d}\r\n\r\n{s}", .{ json.len, json });
+        try self.writer.interface.flush();
+    }
+
+    /// The next message from the server (caller frees).
+    fn receiveJson(self: *Conversation) ![]u8 {
+        var len: usize = 0;
+        while (true) {
+            const line = try self.reader.interface.takeDelimiterInclusive('\n');
+            const trimmed = std.mem.trimEnd(u8, line, "\r\n");
+            if (trimmed.len == 0) break;
+            if (std.ascii.startsWithIgnoreCase(trimmed, "content-length:")) len = try std.fmt.parseInt(usize, std.mem.trim(u8, trimmed["content-length:".len..], " "), 10);
+        }
+        const body = try testing.allocator.alloc(u8, len);
+        errdefer testing.allocator.free(body);
+        try self.reader.interface.readSliceAll(body);
+        return body;
+    }
+
+    /// The server's answer to request `id`; the notifications before it go to `seen`.
+    fn answer(self: *Conversation, id: u32, seen: *std.ArrayListUnmanaged(u8)) ![]u8 {
+        var needle_buf: [32]u8 = undefined;
+        const needle = try std.fmt.bufPrint(&needle_buf, "\"id\":{d},", .{id});
+        while (true) {
+            const msg = try self.receiveJson();
+            if (std.mem.indexOf(u8, msg, needle) != null) return msg;
+            defer testing.allocator.free(msg);
+            try seen.appendSlice(testing.allocator, msg);
+        }
+    }
+};
+
+fn u32Le(n: u32) [4]u8 {
+    var b: [4]u8 = undefined;
+    std.mem.writeInt(u32, &b, n, .little);
+    return b;
+}
+
+test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel and ends with its input" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    var worker: Conversation = undefined;
+    try worker.start(sb.path, &.{ "lsp", "--preview-worker" });
+    errdefer worker.child.kill(testing.io);
+    const UPDATE = 1;
+    const EVALUATE = 3;
+    const CANCEL = 5;
+    const MESH = 0;
+    const CANCELLED = 3;
+
+    const path = "part.kup";
+    try worker.sendFrame(UPDATE, &.{ &u32Le(path.len), path, "a = cube(2)\n" });
+    const updated = try worker.receiveFrame();
+    defer testing.allocator.free(updated);
+    try testing.expectEqualSlices(u8, &.{0}, updated);
+    try worker.sendFrame(EVALUATE, &.{ &.{1}, path });
+    const evaluated = try worker.receiveFrame();
+    defer testing.allocator.free(evaluated);
+    try testing.expectEqual(@as(u8, MESH), evaluated[0]);
+    try testing.expectEqualStrings("glTF", evaluated[1..5]);
+
+    // A run that never ends stops when the server says so, not at the instruction limit.
+    try worker.sendFrame(UPDATE, &.{ &u32Le(path.len), path, "while true\nend\n" });
+    testing.allocator.free(try worker.receiveFrame());
+    try worker.sendFrame(EVALUATE, &.{ &.{1}, path });
+    // Read in order, so it stops this run whenever it lands, even before the run starts.
+    try testing.io.sleep(.fromMilliseconds(10), .awake);
+    try worker.sendFrame(CANCEL, &.{});
+    const stopped = try worker.receiveFrame();
+    defer testing.allocator.free(stopped);
+    try testing.expectEqualSlices(u8, &.{CANCELLED}, stopped);
+
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try worker.finish());
+}
+
+test "kupcad: lsp runs scripts in a worker, and a worker that dies is replaced" {
+    const builtin = @import("builtin");
+    if (builtin.os.tag != .linux and !builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    var server: Conversation = undefined;
+    try server.start(sb.path, &.{"lsp"});
+    errdefer server.child.kill(testing.io);
+    var seen: std.ArrayListUnmanaged(u8) = .empty;
+    defer seen.deinit(testing.allocator);
+
+    var root_buf: [1024]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_buf, "file://{s}", .{sb.path});
+    var msg_buf: [2048]u8 = undefined;
+    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"{s}\"}}}}", .{root}));
+    testing.allocator.free(try server.answer(1, &seen));
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"a = cube(2)\\n\"}}}}}}", .{root}));
+    const hover_fmt = "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"textDocument/hover\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\"}},\"position\":{{\"line\":0,\"character\":0}}}}}}";
+    try server.sendJson(try std.fmt.bufPrint(&msg_buf, hover_fmt, .{ 2, root }));
+    const first = try server.answer(2, &seen);
+    defer testing.allocator.free(first);
+    try testing.expect(std.mem.indexOf(u8, first, "**Volume:** `8.00`") != null);
+
+    // The worker is the server's one child: kill it, as a crash would end it.
+    var pid_buf: [16]u8 = undefined;
+    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.fmt.bufPrint(&pid_buf, "{d}", .{server.child.id.?}) } });
+    testing.allocator.free(pkill.stdout);
+    testing.allocator.free(pkill.stderr);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
+
+    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"a = cube(3)\\n\"}}]}}}}", .{root}));
+    try server.sendJson(try std.fmt.bufPrint(&msg_buf, hover_fmt, .{ 3, root }));
+    const second = try server.answer(3, &seen);
+    defer testing.allocator.free(second);
+    try testing.expect(std.mem.indexOf(u8, second, "**Volume:** `27.00`") != null);
+
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
+    testing.allocator.free(try server.answer(4, &seen));
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    try testing.expect(std.mem.indexOf(u8, seen.items, "the worker process running scripts for the preview and hovers crashed") != null);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
+}

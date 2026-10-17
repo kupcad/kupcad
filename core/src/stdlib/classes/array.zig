@@ -104,11 +104,7 @@ pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !va
         }
     }
 
-    const merged_bytes = try vm.gc.trackingAllocator().dupe(u8, out.written());
-    out.deinit();
-
-    errdefer vm.gc.trackingAllocator().free(merged_bytes);
-    return try vm.allocateStringTakeOwnership(merged_bytes);
+    return vm.allocateStringTakeOwnership(try out.toOwnedSlice());
 }
 
 // The iterators index the receiver afresh on every step and stop at its current length:

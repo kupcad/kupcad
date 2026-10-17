@@ -26,6 +26,20 @@ DracoEncodedBuffer draco_encode_mesh(
 // Frees the memory allocated by draco_encode_mesh
 void draco_free_buffer(DracoEncodedBuffer buf);
 
+// A decoded mesh: positions (3 floats per point) and triangle indices, malloc'd
+typedef struct {
+    float* positions;
+    size_t num_vertices;
+    uint32_t* indices;
+    size_t num_indices;
+} DracoDecodedMesh;
+
+// Decodes a Draco mesh buffer into `out`; returns 0 on success. Used to read exports back
+int draco_decode_mesh(const uint8_t* data, size_t size, DracoDecodedMesh* out);
+
+// Frees the memory allocated by draco_decode_mesh
+void draco_free_decoded_mesh(DracoDecodedMesh* mesh);
+
 #ifdef __cplusplus
 }
 #endif

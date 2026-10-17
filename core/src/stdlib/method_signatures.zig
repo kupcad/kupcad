@@ -33,11 +33,10 @@ pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
 pub const MINKOWSKI = Signature{ .positional = &.{"other"} };
 pub const TRIM_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" } };
 pub const SPLIT_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" }, .keywords = &.{ "nx", "ny", "nz", "offset" } };
-pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta", "join" } };
+pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta", "join" }, .solid_sizes = &.{"delta"} };
 pub const SLICE = Signature{ .positional = &.{"height"} };
 pub const PROJECT = Signature{ .keywords = &.{"cut"} };
 pub const ON_FACE = Signature{ .positional = &.{"direction"} };
-pub const FILLET_EDGES = Signature{ .positional = &.{"r"}, .keywords = &.{"r"}, .sizes = &.{"r"} };
 pub const SIMPLIFY = Signature{ .positional = &.{"tolerance"} };
 
 // --- Inspection ---

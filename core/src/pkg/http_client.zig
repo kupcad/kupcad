@@ -82,11 +82,7 @@ pub const Get = struct {
 /// download panicked on the missing time instead.
 pub fn loadRootCertificates(client: *std.http.Client) !void {
     const io = client.io;
-    {
-        try client.ca_bundle_lock.lockShared(io);
-        defer client.ca_bundle_lock.unlockShared(io);
-        if (client.now != null) return;
-    }
+    if (try hasRootCertificates(client)) return;
     var bundle: std.crypto.Certificate.Bundle = .empty;
     defer bundle.deinit(client.allocator);
     const now = std.Io.Clock.real.now(io);
@@ -94,11 +90,24 @@ pub fn loadRootCertificates(client: *std.http.Client) !void {
         error.Canceled => |e| return e,
         else => return error.CertificateBundleLoadFailure,
     };
-    try client.ca_bundle_lock.lock(io);
-    defer client.ca_bundle_lock.unlock(io);
+    try installRootCertificates(client, &bundle, now);
+}
+
+fn hasRootCertificates(client: *std.http.Client) !bool {
+    try client.ca_bundle_lock.lockShared(client.io);
+    defer client.ca_bundle_lock.unlockShared(client.io);
+    return client.now != null;
+}
+
+/// Gives `client` the certificates in `bundle` (taken: `bundle` is left with the client's
+/// old ones, for the caller to free) and the time to check them at, unless another thread
+/// gave it some first. Apart from reading the system's store, this is all loading does.
+pub fn installRootCertificates(client: *std.http.Client, bundle: *std.crypto.Certificate.Bundle, now: std.Io.Timestamp) !void {
+    try client.ca_bundle_lock.lock(client.io);
+    defer client.ca_bundle_lock.unlock(client.io);
     if (client.now != null) return; // another thread loaded them meanwhile
     client.now = now;
-    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, &bundle);
+    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, bundle);
 }
 
 /// `location` resolved against `base` (in `scratch`), written out whole in `out`.

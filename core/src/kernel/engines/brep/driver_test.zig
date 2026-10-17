@@ -266,3 +266,10 @@ test "BRep Driver: a clone is the same solid, curved surfaces included" {
     defer std.testing.allocator.free(copy_step);
     try std.testing.expectEqualStrings(original_step, copy_step);
 }
+
+test "Driver: Locus's parallel loop runs on oneTBB whenever the build has it" {
+    // parallel_for tested a flag only Manifold's sources were compiled with, so Locus ran
+    // every parallel loop on one thread although oneTBB was linked in.
+    const locus = @import("../../../locus/src/root.zig");
+    try std.testing.expectEqual(@import("build_info").tbb, locus.parallel.spreadsOverThreads());
+}

@@ -112,6 +112,10 @@ pub const OpCode = enum(u8) {
     op_shift_left,
     op_shift_right,
     op_negate,
+    /// Unary `+`: the number itself (a TypeError for anything else).
+    op_positive,
+    /// Unary `~`: the bitwise complement of the number's i64, as the binary bitwise ops read it.
+    op_bitwise_not,
 
     // Logical
     op_not,
@@ -154,6 +158,16 @@ pub const OpCode = enum(u8) {
     op_yield,
     op_block_given,
     op_return,
+};
+
+/// Where one op_get_global or op_define_global site found its variable: the slot in the
+/// table the name resolved to there (VM.globalSlot), good while the VM's global generation
+/// is still `generation`. Every global read used to hash the name; in a loop of top-level
+/// code that made it twice as slow as the same loop on locals.
+pub const GlobalCache = struct {
+    /// 0 until filled: the VM's generations start at 1.
+    generation: usize = 0,
+    slot: *value.Value = undefined,
 };
 
 /// A 2-way polymorphic inline cache at one property or invoke site: per class, the method
@@ -246,6 +260,7 @@ pub const ChunkRegistry = struct {
 pub const Chunk = struct {
     code: std.ArrayListUnmanaged(u8),
     inline_caches: std.ArrayListUnmanaged(InlineCache),
+    global_caches: std.ArrayListUnmanaged(GlobalCache) = .empty,
     debug_spans: std.ArrayListUnmanaged(DebugSpan),
     constants: value.ValueArray,
     max_stack_slots: usize,
@@ -321,10 +336,17 @@ pub const Chunk = struct {
         return idx;
     }
 
+    pub fn addGlobalCache(self: *Chunk, allocator: std.mem.Allocator) !usize {
+        const idx = self.global_caches.items.len;
+        try self.global_caches.append(allocator, .{});
+        return idx;
+    }
+
     pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
         if (self.registry) |r| r.untrack(self);
         self.code.deinit(allocator);
         self.inline_caches.deinit(allocator);
+        self.global_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
         self.local_names.deinit(allocator);

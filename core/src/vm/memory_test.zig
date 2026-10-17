@@ -32,9 +32,17 @@ fn countObjects(gc: *GC) usize {
     return count;
 }
 
+/// For a test that counts objects between the collections it makes itself: none at an
+/// allocation, whatever the build (-Dgc-stress collects at every one) or the heap's growth.
+fn collectOnlyWhenAsked(vm: *VM) void {
+    vm.gc.stress = false;
+    vm.gc.next_gc_threshold = std.math.maxInt(usize);
+}
+
 test "GC: Mark and Sweep reclaims unreferenced primitive objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
     try registry.registerStandardLibrary(&vm);
 
     _ = try vm.allocateString("I am dead");
@@ -77,6 +85,7 @@ test "GC: allocateRange correctly registers and sweeps" {
 test "GC: Basic sweep of unrooted objects" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
 
     _ = try vm.gc.allocateString(&vm, "unrooted1");
     _ = try vm.gc.allocateArray(&vm);
@@ -112,6 +121,7 @@ test "GC: Rooted objects survive the sweep" {
 test "GC Stress: High volume allocations and segmented sweeps" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
 
     // We will allocate 10,000 Arrays and 10,000 Strings (20,000 total objects)
     const total_allocs = 10_000;
@@ -207,7 +217,7 @@ test "GC Sandbox: Enforces max_memory_limit strictly" {
 test "GC: Mass allocation and sweep underflow protection" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
-    vm.zealous_gc = true;
+    vm.hooks.setZealousGc(true);
 
     // Allocate and free multiple batches of dynamic strings and closures
     for (0..500) |i| {
@@ -361,7 +371,7 @@ test "GC: an object whose list entry can't be allocated is freed, not leaked" {
     // testing.allocator reports the object as leaked at deinit if it wasn't destroyed.
 }
 
-test "GC: a script past its memory limit stops with a Sandbox Error" {
+test "GC: a script past its memory limit stops with an OutOfMemoryError" {
     // The GC had the cap all along, but nothing ever set it.
     const support = @import("../test_support.zig");
     for ([_]struct { limit: ?usize, outcome: @import("vm.zig").InterpretResult }{
@@ -372,7 +382,122 @@ test "GC: a script past its memory limit stops with a Sandbox Error" {
         defer vm.deinit();
         vm.setMemoryLimit(case.limit);
         try std.testing.expectEqual(case.outcome, try support.runOn(&vm, "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\nr = a.length"));
+        // The error itself, naming the limit: it used to be a "Sandbox Error" the GC logged
+        // first, and "Array#push ran out of memory" where a built-in's allocation failed.
+        if (case.limit) |limit| {
+            var buf: [96]u8 = undefined;
+            const expected = try std.fmt.bufPrint(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes", .{limit});
+            try std.testing.expect(std.mem.startsWith(u8, vm.last_error orelse "", expected));
+        }
     }
+}
+
+test "GC: a heap filled by small allocations still raises an OutOfMemoryError it can rescue" {
+    // Filled to the byte, the heap had no room left for the error itself: the run ended with
+    // "out of memory while raising an error", which no rescue sees.
+    const support = @import("../test_support.zig");
+    for ([_][]const u8{
+        "a = []\nwhile true\n    a = [a, a]\n  end", // objects
+        "a = []\nwhile true\n    a.push(\"item #{a.length}\")\n  end", // an array's growth, and strings
+    }) |body| {
+        errdefer std.debug.print("body: {s}\n", .{body});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        const limit = vm.gc.bytes_allocated + 256 * 1024;
+        vm.setMemoryLimit(limit);
+        var buf: [256]u8 = undefined;
+        const source = try std.fmt.bufPrint(&buf, "r = begin\n  {s}\nrescue OutOfMemoryError => e\n  e.message\nend\na = nil\nafter = \"ran on\"", .{body});
+        try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
+        var message: [96]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&message, "the script exceeded its memory limit of {d} bytes", .{limit});
+        try std.testing.expect(std.mem.startsWith(u8, vm.globals.get("r").?.asString().chars, expected));
+        try support.expectValue(.{ .str = "ran on" }, vm.globals.get("after").?);
+    }
+}
+
+test "GC: the reserve an OutOfMemoryError is raised with caps the heap, kept errors and all" {
+    // Each error a script rescues and keeps takes some of the reserve; once it is gone the run
+    // stops, the heap never past the limit by more than the reserve.
+    const support = @import("../test_support.zig");
+    const OUT_OF_MEMORY_RESERVE = @import("memory.zig").OUT_OF_MEMORY_RESERVE;
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const limit = vm.gc.bytes_allocated + 128 * 1024;
+    vm.setMemoryLimit(limit);
+    const source =
+        \\kept = []
+        \\while true
+        \\  begin
+        \\    kept.push([kept.length, "item #{kept.length}"])
+        \\  rescue OutOfMemoryError => e
+        \\    kept.push(e)
+        \\  end
+        \\end
+    ;
+    try std.testing.expectEqual(.runtime_error, try support.runOn(&vm, source));
+    try std.testing.expect(vm.gc.bytes_allocated <= limit + OUT_OF_MEMORY_RESERVE);
+}
+
+test "GC: garbage is collected before the memory limit stops a script" {
+    // Collection ran only past the 1 MB growth threshold, so under a lower limit (or near a
+    // 1 GiB one) a loop that kept nothing stopped with a Sandbox Error once its garbage
+    // reached the limit. Ranges are objects alone, so each allocation meets the check.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const headroom = 256 * 1024;
+    vm.setMemoryLimit(vm.gc.bytes_allocated + headroom);
+    // Garbage enough to fill the limit four times over.
+    var buf: [64]u8 = undefined;
+    const source = try std.fmt.bufPrint(&buf, "i = 0\nwhile i < {d}\n  g = (0..i)\n  i += 1\nend", .{4 * headroom / @sizeOf(value.ObjRange)});
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
+}
+
+test "GC: an allocation the memory limit refuses raises an error the script can rescue" {
+    // The dispatch loop ended the run with no message when an allocation failed.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const limit = vm.gc.bytes_allocated + 256 * 1024;
+    vm.setMemoryLimit(limit);
+    const source =
+        \\s = "x"
+        \\r = begin
+        \\  while true
+        \\    s = s + s
+        \\  end
+        \\rescue OutOfMemoryError => e
+        \\  e.message
+        \\end
+    ;
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
+    var buf: [96]u8 = undefined;
+    try support.expectValue(.{ .str = try std.fmt.bufPrint(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
+}
+
+test "GC: a rescued allocation failure goes on in the handler, not out of the run" {
+    // An instruction whose own allocation failed (spreading an array here) returned the
+    // rescue's result from the run itself: a rescued OutOfMemoryError ended the script as if
+    // it had finished, before the handler and everything after it.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.setMemoryLimit(vm.gc.bytes_allocated + 256 * 1024);
+    const source =
+        \\big = (1..20000).to_a
+        \\r = begin
+        \\  both = [*big, *big]
+        \\  "no error"
+        \\rescue OutOfMemoryError => e
+        \\  "rescued"
+        \\end
+        \\after = "ran on"
+    ;
+    const result = try support.runOn(&vm, source);
+    errdefer std.debug.print("last error: {s}\n", .{vm.last_error orelse "-"});
+    try std.testing.expectEqual(.ok, result);
+    try support.expectValue(.{ .str = "rescued" }, vm.globals.get("r") orelse return error.MissingGlobal);
+    try support.expectValue(.{ .str = "ran on" }, vm.globals.get("after") orelse return error.MissingGlobal);
 }
 
 test "GC: the standard library's natives and names live with the VM, outside the sweep" {

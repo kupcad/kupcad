@@ -38,6 +38,8 @@ cut = box - hole
 joined = box + cube(2).extrude(1)   # a solid on either side is enough
 profile = square(4) - circle(r: 1)
 count = 2 - 1                       # numbers: not a boolean
+grown = box.offset(1)               # a solid's offset is a Minkowski sum
+outline = profile.offset(-0.5)      # a sketch's is the kernel's offset
 
 # A class of the script's own may name its methods like the kernel's: nothing to report.
 class Gear
@@ -51,4 +53,4 @@ class Gear
 end
 gear = Gear.new
 teeth = gear.volume + gear.translate(1)
-[cut, joined, profile, count, holder, scoped_part, teeth]
+[cut, joined, profile, count, grown, outline, holder, scoped_part, teeth]

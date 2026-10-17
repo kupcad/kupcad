@@ -55,7 +55,7 @@ test "DAG verifier: names what is wrong with a malformed node" {
     try expectProblem("it has no operands", &b, try nodeWith(&b, .batch_union_op, &.{0}));
     try expectProblem("its numbers are outside the numbers table", &b, try nodeWith(&b, .translate, &.{ cube, 1000 }));
     try expectProblem("its operands are outside extra_data", &b, .{ .tag = .difference_op, .data = @intCast(b.extra_data.items.len) });
-    try expectProblem("it names no concrete handle", &b, .{ .tag = .concrete, .data = 0 });
+    try expectProblem("it names no concrete leaf", &b, .{ .tag = .concrete, .data = 0 });
     try expectProblem("its settings id names no settings", &b, .{ .tag = .empty_solid, .settings = 7 });
 
     // A NaN in the numbers: the evaluator skips checking a moved solid on the promise

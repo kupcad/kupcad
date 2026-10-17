@@ -40,8 +40,22 @@ pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{R
     return vm.fail(.NoMethodError, "undefined method '{s}' for {s}", .{ method, typeName(vm, receiver) });
 }
 
-/// The bounding box of a Solid, or of a Sketch (flat, at z = 0).
+/// The bounding box of a Solid, of a Sketch (flat, at z = 0), or of an Assembly (the box
+/// around all its parts).
 pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.BoundingBox {
+    if (receiver.isAssembly()) {
+        const parts = receiver.asAssembly().parts.items.items;
+        if (parts.len == 0) return vm.fail(.ValueError, "{s}: an empty assembly has no bounds", .{method});
+        var box = try boundsOf(vm, parts[0], method);
+        for (parts[1..]) |part| {
+            const b = try boundsOf(vm, part, method);
+            for (0..3) |axis| {
+                box.min[axis] = @min(box.min[axis], b.min[axis]);
+                box.max[axis] = @max(box.max[axis], b.max[axis]);
+            }
+        }
+        return box;
+    }
     if (receiver.isCrossSection()) {
         const sketch = try vm.ensureConcreteCrossSection(receiver);
         try vm.requireFeature(sketch.engine, .sketch_measure);
@@ -330,6 +344,23 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
         return vm.fail(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ method, name, comptime joinNames(accepted) });
     }
     return .{ .opts = opts, .positional = args[0 .. args.len - 1] };
+}
+
+/// Fails when the call's keywords name one option twice (`r:` and `d:`): which one won was
+/// an accident of the order they were read in.
+pub fn requireOneOf(vm: *VM, args: []const value.Value, comptime names: []const []const u8, method: []const u8) !void {
+    const map = trailingKwargs(args) orelse return;
+    var first: ?[]const u8 = null;
+    var it = map.map.iterator();
+    while (it.next()) |entry| {
+        const name = keyName(entry.key_ptr.*) orelse continue;
+        inline for (names) |alias| {
+            if (std.mem.eql(u8, name, alias)) {
+                if (first) |earlier| return vm.fail(.ArgumentError, "{s} takes {s} or {s}, not both", .{ method, earlier, name });
+                first = name;
+            }
+        }
+    }
 }
 
 fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name: []const u8) !F {

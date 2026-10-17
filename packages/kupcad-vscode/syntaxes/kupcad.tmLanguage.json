@@ -12,6 +12,9 @@
       "include": "#strings"
     },
     {
+      "include": "#single_quoted_strings"
+    },
+    {
       "include": "#method_declarations"
     },
     {
@@ -94,7 +97,7 @@
       "name": "string.quoted.double.kupcad",
       "patterns": [
         {
-          "match": "\\\\.",
+          "match": "\\\\(?:u\\{[0-9A-Fa-f]{1,6}\\}|u[0-9A-Fa-f]{4}|.)",
           "name": "constant.character.escape.kupcad"
         },
         {
@@ -106,6 +109,17 @@
               "include": "$self"
             }
           ]
+        }
+      ]
+    },
+    "single_quoted_strings": {
+      "begin": "'",
+      "end": "'",
+      "name": "string.quoted.single.kupcad",
+      "patterns": [
+        {
+          "match": "\\\\['\\\\]",
+          "name": "constant.character.escape.kupcad"
         }
       ]
     },
@@ -185,7 +199,7 @@
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(class|inspect|is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|times|upto|downto|round|ceil|floor|abs|odd?|even?|zero?|positive?|negative?|integer?|finite?|nan?|infinite?|clamp|between?|invert|sin|cos|tan|asin|acos|atan|atan2|sind|cosd|tand|asind|acosd|atand|atan2d|sqrt|cbrt|exp|log|log2|log10|deg2rad|rad2deg|lerp|hypot|sign|snap|remap|smoothstep|close?|gcd|lcm|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(class|inspect|is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reject|compact|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|times|upto|downto|round|ceil|floor|abs|odd?|even?|zero?|positive?|negative?|integer?|finite?|nan?|infinite?|clamp|between?|invert|sin|cos|tan|asin|acos|atan|atan2|sind|cosd|tand|asind|acosd|atand|atan2d|sqrt|cbrt|exp|log|log2|log10|deg2rad|rad2deg|lerp|hypot|sign|snap|remap|smoothstep|close?|gcd|lcm|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
@@ -197,7 +211,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|helix|loft|fillet_edges|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|helix|loft|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
@@ -205,7 +219,7 @@
       "name": "support.function.csg.kupcad"
     },
     "workplanes": {
-      "match": "(?<![\\\\w])(on_face)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(dummy_wp)(?![\\\\w?!])",
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {

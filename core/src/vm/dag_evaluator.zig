@@ -1,6 +1,6 @@
 //! Evaluates the geometry DAG the VM builds into kernel shapes: a post-order walk on an
-//! explicit stack that reuses results from `vm.dag_cache`, batches chains of unions into one
-//! kernel call, and keeps the shapes it makes within the vertex budget. Entry points
+//! explicit stack that reuses results from `vm.dag_cache` and `vm.cs_cache`, batches chains
+//! of unions into one kernel call, and keeps the shapes it makes within the vertex budget. Entry points
 //! `evaluateDAG` and `evaluateCrossSectionDAG`, called from vm.zig.
 
 const std = @import("std");
@@ -31,9 +31,9 @@ pub const ValueHandle = union(enum) {
 };
 
 /// A value on the intermediate stack plus who owns it.
-/// `owned == false` means vm.dag_cache owns the handle (a cache hit, or a result
-/// already inserted into the cache) and the evaluator must never destroy it.
-/// Cross-sections are never cached, so they stay owned until consumed.
+/// `owned == false` means vm.dag_cache (or vm.cs_cache, for a sketch) owns the handle (a
+/// cache hit, or a result already inserted into the cache) and the evaluator must never
+/// destroy it.
 pub const StackEntry = struct {
     value: ValueHandle,
     owned: bool,
@@ -307,392 +307,393 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     while (f_stack.frames.items.len > 0) {
         if (vm.cancel_token.load(.acquire)) return error.Canceled;
 
-        var frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
-
+        const frame = &f_stack.frames.items[f_stack.frames.items.len - 1];
         if (frame.node_idx >= vm.dag_builder.nodes.items.len) {
             return vm.fail(.RuntimeError, "internal error: geometry node {d} is out of range", .{frame.node_idx});
         }
 
-        // --- O(1) DAG Node Caching ---
         // The hash covers the node's settings, so it is the whole key: the same shape made
         // under another engine, tolerance or resolution is another node.
         const node_hash = vm.dag_builder.node_hashes.items[frame.node_idx];
-        if (vm.dag_cache.get(node_hash)) |cached| {
+        if (try pushCached(vm, &v_stack, node_hash)) {
             _ = f_stack.pop();
-            try v_stack.pushBorrowed(.{ .geometry = cached });
             continue;
         }
 
         const node = vm.dag_builder.nodes.items[frame.node_idx];
-        // The settings the node was made under, whatever is in force now.
-        const config = vm.dag_builder.settings(node.settings);
-
         if (frame.state == .visit) {
+            // Post-order: the operands are evaluated first, and the node when it is met again.
             frame.state = .execute;
-
-            // Push children onto the frame stack (Post-Order Traversal)
-            switch (node.tag) {
-                .union_op => {
-                    try collectUnionOperands(vm, &chain, node);
-                    // Two operands: the plain binary union below. More: a batch of them.
-                    // The count goes on the frame before anything is pushed (pushing may
-                    // move the frames).
-                    if (chain.items.len > 2) frame.operands = @intCast(chain.items.len);
-                    var i: usize = chain.items.len;
-                    while (i > 0) {
-                        i -= 1;
-                        try f_stack.push(chain.items[i]);
-                    }
-                },
-                .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => {
-                    const p = vm.dag_builder.getBinaryPayload(node);
-                    // Push right then left so left evaluates first
-                    try f_stack.push(p.right);
-                    try f_stack.push(p.left);
-                },
-                .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform => {
-                    // All these ops store their child in 'target' as the first payload extra_data
-                    const target_idx = vm.dag_builder.extra_data.items[node.data];
-                    try f_stack.push(target_idx);
-                },
-                .extrude, .revolve => {
-                    const target_idx = vm.dag_builder.extra_data.items[node.data];
-                    try f_stack.push(target_idx);
-                },
-                .loft => {
-                    const p = vm.dag_builder.getLoftPayload(node);
-                    try f_stack.push(p.top);
-                    try f_stack.push(p.base);
-                },
-                .batch_union_op, .batch_hull_op => {
-                    const targets = vm.dag_builder.getBatchUnionPayload(node);
-                    // Push backwards so they evaluate left-to-right
-                    var i: usize = targets.len;
-                    while (i > 0) {
-                        i -= 1;
-                        try f_stack.push(targets[i]);
-                    }
-                },
-                else => {}, // Leaf nodes have no children to visit
-            }
+            try pushOperands(vm, &f_stack, &chain, frame, node);
         } else {
-            // State == .execute
             const operands = frame.operands;
             _ = f_stack.pop();
-
-            // Operands are popped into locals and released by `defer`, so they are
-            // freed (if owned) on both success and error paths. Kernel calls never
-            // consume their inputs and always return new handles (kernel.zig).
-            if (operands > 2) try executeBatch(vm, &v_stack, config, .batch_union_op, operands) else switch (node.tag) {
-                // --- Leaf Geometry 3D ---
-                .empty_solid => {
-                    try vm.requireFeature(config.engine, .empty);
-                    const handle = kernel.empty(&config) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = handle });
-                },
-                .empty_sketch => {
-                    try vm.requireFeature(config.engine, .empty);
-                    const handle = kernel.emptySketch(&config) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .cube => {
-                    const p = vm.dag_builder.getCubeDimensions(node);
-                    const handle = kernel.cube(&config, p.x, p.y, p.z, p.center) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = handle });
-                },
-                .cylinder => {
-                    const p = vm.dag_builder.getCylinderPayload(node);
-                    if (p.r1 != p.r2) try vm.requireFeature(config.engine, .cone);
-                    const handle = kernel.cylinder(&config, p.r1, p.r2, p.height, p.center, p.segments) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = handle });
-                },
-                .sphere => {
-                    try vm.requireFeature(config.engine, .sphere);
-                    const p = vm.dag_builder.getSpherePayload(node);
-                    const handle = kernel.sphere(&config, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = handle });
-                },
-                .polyhedron_op => {
-                    const p = vm.dag_builder.getPolyhedronPayload(node);
-                    const handle = kernel.polyhedron(&config, vm.allocator, p.pts, p.faces) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = handle });
-                },
-
-                .concrete => {
-                    // Owned by dag_builder.concrete_handles: borrow it, never cache it.
-                    if (node.data >= vm.dag_builder.concrete_handles.items.len) return error.RuntimeError;
-                    try v_stack.pushBorrowed(.{ .geometry = vm.dag_builder.concrete_handles.items[node.data] });
-                },
-
-                // --- Binary 3D Ops ---
-                .union_op, .difference_op, .intersection_op, .minkowski => {
-                    const right = v_stack.pop();
-                    defer v_stack.release(right);
-                    const left = v_stack.pop();
-                    defer v_stack.release(left);
-                    const left_handle = try geometryOf(left);
-                    const right_handle = try geometryOf(right);
-                    try vm.requireSameEngine(left_handle.engine, right_handle.engine);
-                    try vm.requireFeature(left_handle.engine, if (node.tag == .minkowski) .minkowski else .boolean);
-                    if (node.tag == .minkowski) {
-                        try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
-                    }
-
-                    const result = switch (node.tag) {
-                        .union_op => kernel.boolean(left_handle, right_handle, .union_op),
-                        .difference_op => kernel.boolean(left_handle, right_handle, .difference_op),
-                        .intersection_op => kernel.boolean(left_handle, right_handle, .intersection_op),
-                        .minkowski => kernel.minkowski(left_handle, right_handle),
-                        else => unreachable,
-                    } orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
-                },
-
-                // --- Batch 3D Ops ---
-                .batch_union_op, .batch_hull_op => {
-                    const targets = vm.dag_builder.getBatchUnionPayload(node);
-                    try executeBatch(vm, &v_stack, config, node.tag, targets.len);
-                },
-
-                // --- Unary 3D Transforms ---
-                .translate, .rotate, .scale, .mirror => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const target_handle = try geometryOf(target);
-                    try vm.requireFeature(target_handle.engine, .transform);
-                    const p = vm.dag_builder.getTranslatePayload(node); // All share same struct layout
-                    const result = switch (node.tag) {
-                        .translate => kernel.translate(target_handle, p.x, p.y, p.z),
-                        .rotate => kernel.rotate(target_handle, p.x, p.y, p.z),
-                        .scale => kernel.scale(target_handle, p.x, p.y, p.z),
-                        .mirror => kernel.mirror(target_handle, p.x, p.y, p.z),
-                        else => unreachable,
-                    };
-                    try v_stack.pushOwned(.{ .geometry = result orelse return kernelFailed(vm, node.tag) });
-                },
-                .transform_matrix => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getTransformPayload(node);
-                    var mat: [12]f64 = undefined;
-                    std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 12]);
-                    const solid = try geometryOf(target);
-                    try vm.requireFeature(solid.engine, .transform);
-                    const result = kernel.transformMatrix(solid, mat) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-                .trim_by_plane => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getTrimByPlanePayload(node);
-                    const solid = try geometryOf(target);
-                    try vm.requireFeature(solid.engine, .trim_by_plane);
-                    const result = kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-                .hull => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const solid = try geometryOf(target);
-                    try requireFlatOrCurvedHull(vm, solid);
-                    const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
-                },
-                .set_material => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getMaterialPayload(node);
-                    const solid = try geometryOf(target);
-                    vm.warnUnsupported(solid.engine, .materials);
-                    const result = kernel.setMaterial(solid, p.material_id) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-
-                // --- 2D to 3D Generation ---
-                .extrude => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getExtrudePayload(node);
-                    const profile = try crossSectionOf(target);
-                    try vm.requireFeature(profile.engine, .extrude);
-                    if (p.twist_degrees != 0) try vm.requireFeature(profile.engine, .extrude_twist);
-                    if (p.scale_x != 1 or p.scale_y != 1) try vm.requireFeature(profile.engine, .extrude_scale);
-                    // A copy of the profile at the bottom, the top and each slice between.
-                    try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.slices, 0))) + 2 }, config.max_vertices);
-                    const result = kernel.extrude(profile, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-                .revolve => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getRevolvePayload(node);
-                    const profile = try crossSectionOf(target);
-                    try vm.requireFeature(profile.engine, .revolve);
-                    // A copy of the profile per segment, and one more to close a partial turn.
-                    try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.segments, 0))) + 1 }, config.max_vertices);
-                    const result = kernel.revolve(profile, p.segments, p.degrees) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-                .loft => {
-                    const top = v_stack.pop();
-                    defer v_stack.release(top);
-                    const base = v_stack.pop();
-                    defer v_stack.release(base);
-                    const top_cs = try crossSectionOf(top);
-                    const base_cs = try crossSectionOf(base);
-                    try vm.requireSameEngine(base_cs.engine, top_cs.engine);
-                    try vm.requireFeature(base_cs.engine, .loft);
-                    // loft is a hull of the two profiles, which is only the true loft for convex
-                    // ones; a concave profile would be filled in silently.
-                    inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
-                        if (kernel.crossSectionIsConvex(profile[1]) == false) {
-                            return vm.fail(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
-                        }
-                    }
-                    const p = vm.dag_builder.getLoftPayload(node);
-                    const result = kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .geometry = result });
-                },
-
-                // --- Leaf Cross Sections 2D ---
-                .square => {
-                    const p = vm.dag_builder.getSquarePayload(node);
-                    const handle = kernel.square(&config, p.x, p.y, p.center) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .circle => {
-                    const p = vm.dag_builder.getCirclePayload(node);
-                    const handle = kernel.circle(&config, p.radius, p.segments) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .polygon => {
-                    const num_idx = vm.dag_builder.extra_data.items[node.data];
-                    const pt_count = vm.dag_builder.extra_data.items[node.data + 1];
-                    var pts = try vm.allocator.alloc([2]f64, pt_count);
-                    defer vm.allocator.free(pts);
-                    for (0..pt_count) |i| {
-                        pts[i][0] = vm.dag_builder.numbers.items[num_idx + (i * 2)];
-                        pts[i][1] = vm.dag_builder.numbers.items[num_idx + (i * 2) + 1];
-                    }
-                    const handle = kernel.polygon(&config, vm.allocator, pts) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .polygons_even_odd => {
-                    const num_contours = vm.dag_builder.extra_data.items[node.data];
-                    var contours = try vm.allocator.alloc([][2]f64, num_contours);
-                    // Empty slots make the deferred free safe after a partial allocation failure.
-                    @memset(contours, &.{});
-                    defer {
-                        for (contours) |c| vm.allocator.free(c);
-                        vm.allocator.free(contours);
-                    }
-
-                    for (0..num_contours) |i| {
-                        const pts_start = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2)];
-                        const pts_len = vm.dag_builder.extra_data.items[node.data + 1 + (i * 2) + 1];
-
-                        var pts = try vm.allocator.alloc([2]f64, pts_len);
-                        for (0..pts_len) |pt_idx| {
-                            pts[pt_idx][0] = vm.dag_builder.numbers.items[pts_start + (pt_idx * 2)];
-                            pts[pt_idx][1] = vm.dag_builder.numbers.items[pts_start + (pt_idx * 2) + 1];
-                        }
-                        contours[i] = pts;
-                    }
-                    const handle = kernel.polygonsEvenOdd(&config, vm.allocator, contours) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-
-                // --- 3D to 2D Generation ---
-                .slice_op => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getSlicePayload(node);
-                    const solid = try geometryOf(target);
-                    try vm.requireFeature(solid.engine, .slice);
-                    const handle = kernel.slice(solid, p.height) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .project_op => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const solid = try geometryOf(target);
-                    try vm.requireFeature(solid.engine, .project);
-                    const handle = kernel.project(solid) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-
-                // --- 2D Ops ---
-                .offset => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getOffsetPayload(node);
-                    const sketch = try crossSectionOf(target);
-                    try vm.requireFeature(sketch.engine, .offset);
-                    const handle = kernel.offset(sketch, p.delta, p.join_type) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .cs_transform => {
-                    const target = v_stack.pop();
-                    defer v_stack.release(target);
-                    const p = vm.dag_builder.getTransformPayload(node);
-                    var mat: [6]f64 = undefined;
-                    std.mem.copyForwards(f64, &mat, vm.dag_builder.numbers.items[p.num_idx .. p.num_idx + 6]);
-                    const sketch = try crossSectionOf(target);
-                    try vm.requireFeature(sketch.engine, .transform);
-                    const handle = kernel.crossSectionTransform(sketch, mat) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-                .cs_union_op, .cs_difference_op, .cs_intersection_op => {
-                    const right = v_stack.pop();
-                    defer v_stack.release(right);
-                    const left = v_stack.pop();
-                    defer v_stack.release(left);
-                    const left_handle = try crossSectionOf(left);
-                    const right_handle = try crossSectionOf(right);
-                    try vm.requireSameEngine(left_handle.engine, right_handle.engine);
-                    try vm.requireFeature(left_handle.engine, .sketch_boolean);
-                    const op: kernel.BooleanOp = switch (node.tag) {
-                        .cs_union_op => .union_op,
-                        .cs_difference_op => .difference_op,
-                        .cs_intersection_op => .intersection_op,
-                        else => unreachable,
-                    };
-                    const handle = kernel.crossSectionBoolean(left_handle, right_handle, op) orelse return kernelFailed(vm, node.tag);
-                    try v_stack.pushOwned(.{ .cross_section = handle });
-                },
-            }
-
-            const top = &v_stack.handles.items[v_stack.handles.items.len - 1];
-
-            // Only freshly computed results move into the cache; borrowed ones
-            // (concrete leaves) already have an owner.
-            if (top.value == .geometry and top.owned) {
-                // Every freshly computed solid is checked here, once: an invalid mesh (e.g. a
-                // non-manifold polyhedron) is an error, not an empty export later. A moved
-                // solid is its operand's, already checked (isPureTransform).
-                if (!isPureTransform(node.tag)) {
-                    if (kernel.problem(top.value.geometry)) |reason| {
-                        return vm.fail(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(node.tag), reason }); // still owned -> destroyed by errdefer
-                    }
-                    // On error the result is still owned, so the errdefer destroys it.
-                    try checkVertexLimit(vm, node.tag, kernel.numVerts(top.value.geometry), config.max_vertices, false);
-                }
-
-                // Ownership moves to the cache only once the put succeeds.
-                try vm.dag_cache.put(vm.allocator, node_hash, top.value.geometry);
-                top.owned = false;
-            }
-            // Cross-sections are intentionally not cached: they stay owned by the
-            // stack and are destroyed by the consuming parent (or returned to the caller).
+            // The settings the node was made under, whatever is in force now.
+            const config = vm.dag_builder.settings(node.settings);
+            if (operands > 2) try executeBatch(vm, &v_stack, config, .batch_union_op, operands) else try executeNode(vm, &v_stack, node, config);
+            try cacheResult(vm, &v_stack, node.tag, node_hash, config);
         }
     }
 
     std.debug.assert(v_stack.handles.items.len == 1);
     const result = v_stack.pop();
     v_stack.handles.deinit(vm.allocator); // Free the dynamic array on success
-    // Geometry results are borrowed from vm.dag_cache; cross-section results are
-    // owned by the caller.
+    // Borrowed from vm.dag_cache (a solid) or vm.cs_cache (a sketch).
     return result.value;
+}
+
+/// Pushes the cached result of the node with `node_hash`, borrowed, if there is one.
+fn pushCached(vm: *VM, v_stack: *IntermediateStack, node_hash: u64) !bool {
+    if (vm.dag_cache.get(node_hash)) |cached| {
+        try v_stack.pushBorrowed(.{ .geometry = cached });
+        return true;
+    }
+    if (vm.cs_cache.get(node_hash)) |cached| {
+        try v_stack.pushBorrowed(.{ .cross_section = cached });
+        return true;
+    }
+    return false;
+}
+
+/// Pushes the frames of `node`'s operands, in reverse so they are evaluated left to right.
+fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayListUnmanaged(dag.DAGNodeIndex), frame: *EvaluationFrame, node: dag.DAGNode) !void {
+    const b = &vm.dag_builder;
+    switch (node.tag) {
+        .union_op => {
+            try collectUnionOperands(vm, chain, node);
+            // Two operands: the plain binary union. More: a batch of them. The count goes
+            // on the frame before anything is pushed (pushing may move the frames).
+            if (chain.items.len > 2) frame.operands = @intCast(chain.items.len);
+            try pushAll(f_stack, chain.items);
+        },
+        .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+            const p = b.getBinaryPayload(node);
+            try pushAll(f_stack, &.{ p.left, p.right });
+        },
+        // Each stores its operand ('target') first in its extra_data payload
+        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
+            try f_stack.push(b.extra_data.items[node.data]);
+        },
+        .loft => {
+            const p = b.getLoftPayload(node);
+            try pushAll(f_stack, &.{ p.base, p.top });
+        },
+        .batch_union_op, .batch_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
+        .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .circle, .polygon, .polygons_even_odd => {},
+    }
+}
+
+/// Pushes a frame for each of `nodes`, the last first, so the first is evaluated first.
+fn pushAll(f_stack: *EvaluationFrameStack, nodes: []const dag.DAGNodeIndex) !void {
+    var i: usize = nodes.len;
+    while (i > 0) {
+        i -= 1;
+        try f_stack.push(nodes[i]);
+    }
+}
+
+/// Builds `node` from its operands, which are on top of `v_stack` (popped and released
+/// here, so they are freed, if owned, on both success and error paths), and pushes the
+/// result. Kernel calls never consume their inputs and always return new handles.
+fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
+    switch (node.tag) {
+        .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
+        .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull, .set_material => try executeSolidOp(vm, v_stack, node, config),
+        .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
+        .extrude, .revolve, .loft => try executeSweep(vm, v_stack, node, config),
+        .slice_op, .project_op, .offset, .cs_transform, .cs_union_op, .cs_difference_op, .cs_intersection_op => try executeSketchOp(vm, v_stack, node),
+    }
+}
+
+/// Pushes a kernel's new solid, or raises its failure.
+fn pushSolid(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, handle: ?geom.GeometryHandle) !void {
+    try v_stack.pushOwned(.{ .geometry = handle orelse return kernelFailed(vm, tag) });
+}
+
+/// Pushes a kernel's new sketch, or raises its failure.
+fn pushSketch(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, handle: ?geom.CrossSectionHandle) !void {
+    try v_stack.pushOwned(.{ .cross_section = handle orelse return kernelFailed(vm, tag) });
+}
+
+/// A shape made from its parameters alone: a primitive solid or sketch, or a concrete leaf.
+fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
+    const b = &vm.dag_builder;
+    switch (node.tag) {
+        .empty_solid => {
+            try vm.requireFeature(config.engine, .empty);
+            try pushSolid(vm, v_stack, node.tag, kernel.empty(&config));
+        },
+        .cube => {
+            const p = b.getCubeDimensions(node);
+            try pushSolid(vm, v_stack, node.tag, kernel.cube(&config, p.x, p.y, p.z, p.center));
+        },
+        .cylinder => {
+            const p = b.getCylinderPayload(node);
+            if (p.r1 != p.r2) try vm.requireFeature(config.engine, .cone);
+            try pushSolid(vm, v_stack, node.tag, kernel.cylinder(&config, p.r1, p.r2, p.height, p.center, p.segments));
+        },
+        .sphere => {
+            try vm.requireFeature(config.engine, .sphere);
+            const p = b.getSpherePayload(node);
+            try pushSolid(vm, v_stack, node.tag, kernel.sphere(&config, p.radius, p.segments));
+        },
+        .polyhedron_op => {
+            const p = b.getPolyhedronPayload(node);
+            try pushSolid(vm, v_stack, node.tag, kernel.polyhedron(&config, vm.allocator, p.pts, p.faces));
+        },
+        .concrete => {
+            // Owned by dag_builder.concrete_leaves: borrow it, never cache it. A released
+            // leaf is reachable from no live shape, so nothing evaluates it.
+            if (node.data >= b.concrete_leaves.items.len) return error.RuntimeError;
+            try v_stack.pushBorrowed(.{ .geometry = b.concrete_leaves.items[node.data].handle orelse return error.RuntimeError });
+        },
+        .empty_sketch => {
+            try vm.requireFeature(config.engine, .empty);
+            try pushSketch(vm, v_stack, node.tag, kernel.emptySketch(&config));
+        },
+        .square => {
+            const p = b.getSquarePayload(node);
+            try pushSketch(vm, v_stack, node.tag, kernel.square(&config, p.x, p.y, p.center));
+        },
+        .circle => {
+            const p = b.getCirclePayload(node);
+            try pushSketch(vm, v_stack, node.tag, kernel.circle(&config, p.radius, p.segments));
+        },
+        .polygon => {
+            const pts = try readPoints(vm, b.extra_data.items[node.data], b.extra_data.items[node.data + 1]);
+            defer vm.allocator.free(pts);
+            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts));
+        },
+        .polygons_even_odd => {
+            const contours = try vm.allocator.alloc([][2]f64, b.extra_data.items[node.data]);
+            // Empty slots make the deferred free safe after a partial allocation failure.
+            @memset(contours, &.{});
+            defer {
+                for (contours) |c| vm.allocator.free(c);
+                vm.allocator.free(contours);
+            }
+            for (contours, 0..) |*contour, i| {
+                const at = node.data + 1 + i * 2;
+                contour.* = try readPoints(vm, b.extra_data.items[at], b.extra_data.items[at + 1]);
+            }
+            try pushSketch(vm, v_stack, node.tag, kernel.polygonsEvenOdd(&config, vm.allocator, contours));
+        },
+        else => unreachable,
+    }
+}
+
+/// `count` points of a polygon (x, y each) from the builder's numbers at `start`.
+fn readPoints(vm: *VM, start: u32, count: u32) ![][2]f64 {
+    const numbers = vm.dag_builder.numbers.items;
+    const pts = try vm.allocator.alloc([2]f64, count);
+    for (pts, 0..) |*pt, i| pt.* = .{ numbers[start + i * 2], numbers[start + i * 2 + 1] };
+    return pts;
+}
+
+/// A solid made from solids: a boolean or Minkowski sum of two, or one moved or changed.
+fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
+    const b = &vm.dag_builder;
+    switch (node.tag) {
+        .union_op, .difference_op, .intersection_op, .minkowski => {
+            const right = v_stack.pop();
+            defer v_stack.release(right);
+            const left = v_stack.pop();
+            defer v_stack.release(left);
+            const left_handle = try geometryOf(left);
+            const right_handle = try geometryOf(right);
+            try vm.requireSameEngine(left_handle.engine, right_handle.engine);
+            try vm.requireFeature(left_handle.engine, if (node.tag == .minkowski) .minkowski else .boolean);
+            if (node.tag == .minkowski) {
+                try checkEstimatedVertices(vm, node.tag, &.{ kernel.numVerts(left_handle), kernel.numVerts(right_handle) }, config.max_vertices);
+            }
+            const result = switch (node.tag) {
+                .union_op => kernel.boolean(left_handle, right_handle, .union_op),
+                .difference_op => kernel.boolean(left_handle, right_handle, .difference_op),
+                .intersection_op => kernel.boolean(left_handle, right_handle, .intersection_op),
+                .minkowski => kernel.minkowski(left_handle, right_handle),
+                else => unreachable,
+            } orelse return kernelFailed(vm, node.tag);
+            try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
+        },
+        .translate, .rotate, .scale, .mirror => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .transform);
+            const p = b.getTranslatePayload(node); // All share same struct layout
+            try pushSolid(vm, v_stack, node.tag, switch (node.tag) {
+                .translate => kernel.translate(solid, p.x, p.y, p.z),
+                .rotate => kernel.rotate(solid, p.x, p.y, p.z),
+                .scale => kernel.scale(solid, p.x, p.y, p.z),
+                .mirror => kernel.mirror(solid, p.x, p.y, p.z),
+                else => unreachable,
+            });
+        },
+        .transform_matrix => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getTransformPayload(node);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .transform);
+            try pushSolid(vm, v_stack, node.tag, kernel.transformMatrix(solid, b.numbers.items[p.num_idx..][0..12].*));
+        },
+        .trim_by_plane => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getTrimByPlanePayload(node);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .trim_by_plane);
+            try pushSolid(vm, v_stack, node.tag, kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset));
+        },
+        .hull => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const solid = try geometryOf(target);
+            try requireFlatOrCurvedHull(vm, solid);
+            const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
+            try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
+        },
+        .set_material => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getMaterialPayload(node);
+            const solid = try geometryOf(target);
+            vm.warnUnsupported(solid.engine, .materials);
+            try pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
+        },
+        else => unreachable,
+    }
+}
+
+/// A solid swept from sketches: extruded, revolved or lofted.
+fn executeSweep(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
+    const b = &vm.dag_builder;
+    switch (node.tag) {
+        .extrude => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getExtrudePayload(node);
+            const profile = try crossSectionOf(target);
+            try vm.requireFeature(profile.engine, .extrude);
+            if (p.twist_degrees != 0) try vm.requireFeature(profile.engine, .extrude_twist);
+            if (p.scale_x != 1 or p.scale_y != 1) try vm.requireFeature(profile.engine, .extrude_scale);
+            // A copy of the profile at the bottom, the top and each slice between.
+            try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.slices, 0))) + 2 }, config.max_vertices);
+            try pushSolid(vm, v_stack, node.tag, kernel.extrude(profile, p.height, p.slices, p.twist_degrees, p.scale_x, p.scale_y));
+        },
+        .revolve => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getRevolvePayload(node);
+            const profile = try crossSectionOf(target);
+            try vm.requireFeature(profile.engine, .revolve);
+            // A copy of the profile per segment, and one more to close a partial turn.
+            try checkEstimatedVertices(vm, node.tag, &.{ kernel.crossSectionNumVerts(profile), @as(usize, @intCast(@max(p.segments, 0))) + 1 }, config.max_vertices);
+            try pushSolid(vm, v_stack, node.tag, kernel.revolve(profile, p.segments, p.degrees));
+        },
+        .loft => {
+            const top = v_stack.pop();
+            defer v_stack.release(top);
+            const base = v_stack.pop();
+            defer v_stack.release(base);
+            const top_cs = try crossSectionOf(top);
+            const base_cs = try crossSectionOf(base);
+            try vm.requireSameEngine(base_cs.engine, top_cs.engine);
+            try vm.requireFeature(base_cs.engine, .loft);
+            // loft is a hull of the two profiles, which is only the true loft for convex
+            // ones; a concave profile would be filled in silently.
+            inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
+                if (kernel.crossSectionIsConvex(profile[1]) == false) {
+                    return vm.fail(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
+                }
+            }
+            const p = b.getLoftPayload(node);
+            try pushSolid(vm, v_stack, node.tag, kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height));
+        },
+        else => unreachable,
+    }
+}
+
+/// A sketch made from a solid (a slice, a projection) or from sketches.
+fn executeSketchOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !void {
+    const b = &vm.dag_builder;
+    switch (node.tag) {
+        .slice_op => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getSlicePayload(node);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .slice);
+            try pushSketch(vm, v_stack, node.tag, kernel.slice(solid, p.height));
+        },
+        .project_op => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .project);
+            try pushSketch(vm, v_stack, node.tag, kernel.project(solid));
+        },
+        .offset => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getOffsetPayload(node);
+            const sketch = try crossSectionOf(target);
+            try vm.requireFeature(sketch.engine, .offset);
+            try pushSketch(vm, v_stack, node.tag, kernel.offset(sketch, p.delta, p.join_type));
+        },
+        .cs_transform => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getTransformPayload(node);
+            const sketch = try crossSectionOf(target);
+            try vm.requireFeature(sketch.engine, .transform);
+            try pushSketch(vm, v_stack, node.tag, kernel.crossSectionTransform(sketch, b.numbers.items[p.num_idx..][0..6].*));
+        },
+        .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+            const right = v_stack.pop();
+            defer v_stack.release(right);
+            const left = v_stack.pop();
+            defer v_stack.release(left);
+            const left_handle = try crossSectionOf(left);
+            const right_handle = try crossSectionOf(right);
+            try vm.requireSameEngine(left_handle.engine, right_handle.engine);
+            try vm.requireFeature(left_handle.engine, .sketch_boolean);
+            const op: kernel.BooleanOp = switch (node.tag) {
+                .cs_union_op => .union_op,
+                .cs_difference_op => .difference_op,
+                .cs_intersection_op => .intersection_op,
+                else => unreachable,
+            };
+            try pushSketch(vm, v_stack, node.tag, kernel.crossSectionBoolean(left_handle, right_handle, op));
+        },
+        else => unreachable,
+    }
+}
+
+/// Moves the fresh result on top of `v_stack` into its cache, once checked. A borrowed
+/// one (a concrete leaf) already has an owner.
+fn cacheResult(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, node_hash: u64, config: EngineConfig) !void {
+    const top = &v_stack.handles.items[v_stack.handles.items.len - 1];
+    if (!top.owned) return;
+    switch (top.value) {
+        .geometry => |solid| {
+            // Every freshly computed solid is checked here, once: an invalid mesh (e.g. a
+            // non-manifold polyhedron) is an error, not an empty export later. A moved
+            // solid is its operand's, already checked (isPureTransform). On error the
+            // result is still owned, so the evaluator's errdefer destroys it.
+            if (!isPureTransform(tag)) {
+                if (kernel.problem(solid)) |reason| {
+                    return vm.fail(.GeometryError, error_kind.INVALID_RESULT_FMT, .{ dag.scriptName(tag), reason });
+                }
+                try checkVertexLimit(vm, tag, kernel.numVerts(solid), config.max_vertices, false);
+            }
+            // Ownership moves to the cache only once the put succeeds.
+            try vm.dag_cache.put(vm.allocator, node_hash, solid);
+        },
+        .cross_section => |sketch| try vm.cs_cache.put(vm.allocator, node_hash, sketch),
+        .array => return,
+    }
+    top.owned = false;
 }
 
 /// Returns a geometry handle BORROWED from vm.dag_cache (the cache owns it and the
@@ -700,15 +701,13 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
 /// handle beyond the current operation must kernel.clone it.
 pub fn evaluateDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.GeometryHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
-    if (final_val == .cross_section) {
-        // Cross-sections are never cached, so this one is ours to free.
-        final_val.destruct(vm.allocator);
-        return error.RuntimeError;
-    }
+    // A sketch's result is the cs_cache's, like a solid's is the dag_cache's.
+    if (final_val == .cross_section) return error.RuntimeError;
     return final_val.geometry;
 }
 
-/// Returns a cross-section handle OWNED by the caller.
+/// Returns a cross-section handle BORROWED from vm.cs_cache, as evaluateDAG's is from
+/// vm.dag_cache.
 pub fn evaluateCrossSectionDAG(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!geom.CrossSectionHandle {
     const final_val = try evaluateInternal(vm, root_node_idx);
     // A geometry result is owned by vm.dag_cache; leave it there (freeing it here

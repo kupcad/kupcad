@@ -349,9 +349,8 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     // 2. Add a 2D Offset operation
     const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
 
-    // 3. Evaluate explicitly requesting a 2D CrossSectionHandle
+    // 3. Evaluate explicitly requesting a 2D CrossSectionHandle (borrowed from vm.cs_cache)
     const handle = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
-    defer kernel.destructCrossSection(handle);
 
     try testing.expectEqual(.manifold, handle.engine);
 
@@ -455,6 +454,11 @@ test "DAG Evaluator: RAM budgeting traps complex meshes" {
 test "DAG Evaluator: evaluation error keeps cache-owned operands alive" {
     var vm = try initVm();
     defer vm.deinit(); // the cached cube used to be freed twice here
+    // Nothing in a script holds the cube, so a collection would rightly evict its cached
+    // handle; this checks the cache across an error, with no collection (not even under
+    // -Dgc-stress, whose collections also leave the growth threshold low).
+    vm.gc.stress = false;
+    vm.gc.next_gc_threshold = std.math.maxInt(usize);
 
     // Cache the cube, then make a sphere under a vertex budget it blows.
     const cube_idx = try vm.dag_builder.addCube(1, 1, 1, false);
@@ -542,7 +546,7 @@ test "DAG Evaluator: rejects a DAG mixing engines" {
 test "DAG Evaluator: decompose/simplify results feed later DAG ops" {
     var vm = try initVm();
     defer vm.deinit();
-    vm.zealous_gc = true; // concrete handles must survive collection of their ObjGeometry
+    vm.hooks.setZealousGc(true); // concrete handles must survive collection of their ObjGeometry
 
     try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm, "result = cube(10).decompose[0].translate(x: 1).volume"), 1e-6);
     try testing.expectApproxEqAbs(@as(f64, 1000.0), try evalVolume(&vm,
@@ -619,4 +623,110 @@ test "DAG Builder: Polyhedron CSE uses O(1) precomputed hash correctly" {
     // perfectly deduplicate them.
     try testing.expectEqual(node1, node2);
     try testing.expectEqual(@as(usize, 1), vm.dag_builder.nodes.items.len);
+}
+
+test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing refers to it" {
+    // Sketches weren't cached: one extruded ten times was computed ten times.
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+
+    const first = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
+    try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
+    // A solid made from it reads the cached sketch too.
+    _ = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addExtrude(offset_idx, 5.0, 0, 0.0, 1.0, 1.0));
+    try testing.expectEqual(first.ptr, (try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx)).ptr);
+
+    // While a sketch object refers to the node, a collection keeps it; then evicts it.
+    const sketch = try vm.allocateCrossSection(offset_idx);
+    vm.push(sketch);
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expect(vm.cs_cache.contains(vm.dag_builder.node_hashes.items[offset_idx]));
+    _ = vm.pop();
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(@as(usize, 0), vm.cs_cache.count());
+}
+
+test "DAG: a simplify or decompose mesh is released after the run that drops its last shape" {
+    // Concrete leaves kept their meshes until the VM went: in the editor's long-lived
+    // worker, one more per run of a script that simplifies.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.runs_many_scripts = true;
+    for (0..20) |_| try testing.expectEqual(.ok, try support.runOn(&vm, "part = cube(2).simplify\nr = part.volume"));
+    try testing.expectEqual(@as(usize, 1), vm.dag_builder.held_leaves);
+
+    // A shape still live keeps its mesh into the next run.
+    try testing.expectEqual(.ok, try support.runOn(&vm, "r = part.translate(x: 1).volume"));
+    try support.expectValue(.{ .num = 8 }, vm.globals.get("r").?);
+
+    try testing.expectEqual(.ok, try support.runOn(&vm, "parts = (cube(1) + cube(1).translate(x: 3)).decompose\npart = nil"));
+    try testing.expectEqual(@as(usize, 2), vm.dag_builder.held_leaves);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "parts = nil"));
+    try testing.expectEqual(@as(usize, 0), vm.dag_builder.held_leaves);
+}
+
+test "DAG: a mesh is kept while the native that made it still builds on it" {
+    // Releasing in a collection would free a simplify result the native had made but not
+    // yet given an object; it happens after the run, when no native is running.
+    const support = @import("../test_support.zig");
+    const cases = [_]struct { src: []const u8, expected: support.Expected }{
+        .{ .src = "r = cube(2).simplify.translate(x: 1).volume", .expected = .{ .num = 8 } },
+        .{ .src = "r = (cube(1) + cube(1).translate(x: 3)).decompose.map { |p| p.volume }", .expected = .{ .nums = &.{ 1, 1 } } },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        // A collection at every allocation, the natives' own included
+        vm.gc.stress = true;
+        try testing.expectEqual(.ok, try support.runOn(&vm, case.src));
+        try support.expectValue(case.expected, vm.globals.get("r").?);
+    }
+}
+
+test "DAG: shapes kept across runs still build after the graph is compacted" {
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    vm.runs_many_scripts = true;
+    // Compact after every run
+    vm.dag_builder.compaction_floor = 0;
+    vm.dag_builder.compact_at = 0;
+    try testing.expectEqual(.ok, try support.runOn(&vm, "keep = cube(3).translate(x: 1)\nleaf = cube(2).simplify\nsketch = square(2).offset(1)"));
+    var buf: [128]u8 = undefined;
+    for (0..30) |i| {
+        const src = try std.fmt.bufPrint(&buf, "tmp = cube({d}) + sphere(1).translate(x: {d})\nr = tmp.volume > 0", .{ i + 1, i });
+        try testing.expectEqual(.ok, try support.runOn(&vm, src));
+    }
+    try testing.expect(vm.dag_builder.nodes.items.len < 20);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "r = [keep.volume, leaf.translate(y: 1).volume, sketch.extrude(1).volume > 4, tmp.volume > 27]"));
+    const r = vm.globals.get("r").?.asArray().items.items;
+    try testing.expectEqual(@as(f64, 27), r[0].asNumber());
+    try testing.expectEqual(@as(f64, 8), r[1].asNumber());
+    try testing.expect(r[2].asBool() and r[3].asBool());
+}
+
+test "DAG: only a VM that runs many scripts tidies its graph, and a mostly live one isn't copied" {
+    const support = @import("../test_support.zig");
+    // One script and done (a build): tidying would be work for nothing.
+    var once = try support.initVm();
+    defer once.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&once, "part = cube(2).simplify\npart = nil"));
+    try testing.expectEqual(@as(usize, 1), once.dag_builder.held_leaves);
+
+    // A graph that is all live is left as it is, the next try put off until it doubles.
+    var session = try support.initVm();
+    defer session.deinit();
+    session.runs_many_scripts = true;
+    session.dag_builder.compaction_floor = 0;
+    session.dag_builder.compact_at = 0;
+    try testing.expectEqual(.ok, try support.runOn(&session, "parts = (1..40).map { |i| cube(i).translate(x: i) }"));
+    const nodes = session.dag_builder.nodes.items.len;
+    try testing.expectEqual(.ok, try support.runOn(&session, "r = parts.length"));
+    try testing.expectEqual(nodes, session.dag_builder.nodes.items.len);
+    try testing.expect(session.dag_builder.compact_at >= 2 * session.dag_builder.tableBytes());
 }

@@ -332,8 +332,10 @@ test "KupCAD Lexer: Hash label vs Symbol ambiguity without spaces" {
 test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // Unclosed standard string
     var lexer1 = Lexer.init("\"unclosed string...", 0);
-    // Because it never finds the closing quote, consumeStringBody safely hits
-    // the end of the buffer and returns .eof
+    // It never finds the closing quote: the rest of the file is an unterminated string.
+    const unclosed = lexer1.next();
+    try testing.expectEqual(.unterminated_string, unclosed.tag);
+    try testing.expectEqualStrings("unclosed string...", unclosed.lexeme);
     try testing.expectEqual(.eof, lexer1.next().tag);
 
     // Unclosed string interpolation
@@ -347,6 +349,20 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
 
     // The interpolation was never closed with `}` and hits EOF safely
     try testing.expectEqual(.eof, lexer2.next().tag);
+
+    // Closed after the interpolation, the string's rest still isn't.
+    var lexer3 = Lexer.init("'one' :\"two\" %w[three \"a #{1} b", 0);
+    try testing.expectEqual(.raw_string, lexer3.next().tag);
+    try testing.expectEqual(.symbol, lexer3.next().tag);
+    try testing.expectEqual(.unterminated_string, lexer3.next().tag);
+    var lexer4 = Lexer.init("\"a #{1} b", 0);
+    try testing.expectEqual(.string_start, lexer4.next().tag);
+    try testing.expectEqual(.number, lexer4.next().tag);
+    try testing.expectEqual(.unterminated_string, lexer4.next().tag);
+    for ([_][]const u8{ "'open", ":'open", "%q(open" }) |source| {
+        var lexer = Lexer.init(source, 0);
+        try testing.expectEqual(.unterminated_string, lexer.next().tag);
+    }
 }
 
 test "KupCAD Lexer: Hexadecimal, Octal, Binary, and Underscore Floats" {
@@ -576,16 +592,16 @@ test "KupCAD Lexer: Percent Q (%Q) interpolates like double quotes" {
 test "KupCAD Lexer: Percent q (%q) ignores interpolation like single quotes" {
     // Verifies that %q treats '#{...}' purely as raw text
     try expectTokens("str = %q[Value: #{1 + 2}]", &.{
-        t(.ident, "str"),              t(.equal, "="),
-        t(.string, "Value: #{1 + 2}"), t(.eof, ""),
+        t(.ident, "str"),                  t(.equal, "="),
+        t(.raw_string, "Value: #{1 + 2}"), t(.eof, ""),
     });
 }
 
 test "KupCAD Lexer: Percent Q and q support identical delimiters and nesting" {
     // Verifies that the Q/q modifiers safely inherit the pairing/nesting algorithms
     try expectTokens("a = %Q|hello|\nb = %q(a (b) c)", &.{
-        t(.ident, "a"), t(.equal, "="), t(.string, "hello"),   t(.newline, "\n"),
-        t(.ident, "b"), t(.equal, "="), t(.string, "a (b) c"), t(.eof, ""),
+        t(.ident, "a"), t(.equal, "="), t(.string, "hello"),       t(.newline, "\n"),
+        t(.ident, "b"), t(.equal, "="), t(.raw_string, "a (b) c"), t(.eof, ""),
     });
 }
 
@@ -629,15 +645,16 @@ test "Lexer: Heredoc with dash and tilde modifiers (<<-TEXT, <<~TEXT)" {
     });
 }
 
-test "KupCAD Lexer: Unclosed Heredoc at EOF does not panic" {
+test "KupCAD Lexer: an unclosed heredoc at EOF is a token of its own, naming the terminator" {
+    // It read as a string, so a file that lost its terminator line ran without a word.
     const source =
         \\val = <<EOF
         \\Line 1
         \\Line 2
     ;
     try expectTokens(source, &.{
-        t(.ident, "val"),             t(.equal, "="),
-        t(.string, "Line 1\nLine 2"), t(.eof, ""),
+        t(.ident, "val"),                t(.equal, "="),
+        t(.unterminated_heredoc, "EOF"), t(.eof, ""),
     });
 }
 
@@ -922,15 +939,14 @@ test "Lexer: String interpolation limits" {
         try std.testing.expect(valid_token.tag != .invalid);
     }
 
-    // One level deeper yields an .invalid token instead of overflowing the stack
+    // One level deeper yields an .interpolation_too_deep token instead of overflowing the stack
     const invalid_source = try buildNestedString(allocator, max_depth + 1);
     defer allocator.free(invalid_source);
     var invalid_lexer = Lexer.init(invalid_source, 0);
     var invalid_token = invalid_lexer.next();
     var hit_error = false;
     while (invalid_token.tag != .eof) : (invalid_token = invalid_lexer.next()) {
-        if (invalid_token.tag == .invalid) {
-            try testing.expectEqualStrings("Interpolation depth exceeded", invalid_token.lexeme);
+        if (invalid_token.tag == .interpolation_too_deep) {
             hit_error = true;
             break;
         }
@@ -960,4 +976,12 @@ test "Lexer: lexAll frees what it allocated when an allocation fails" {
     // Its three lists registered their errdefers after reserving capacity, so a failure on
     // the second list leaked the first.
     try testing.checkAllAllocationFailures(testing.allocator, lexAllWith, .{"x = cube(10).translate(1, 2, 3)\nputs x\n"});
+}
+
+test "KupCAD Lexer: a bare $ is a character the language doesn't use, $name a global" {
+    // `$` alone lexed as a variable named `$`.
+    try expectTokens("$ = 1", &.{ t(.invalid, "$"), t(.equal, "="), t(.number, "1"), t(.eof, "") });
+    try expectTokens("$", &.{ t(.invalid, "$"), t(.eof, "") });
+    try expectTokens("$$x", &.{ t(.invalid, "$"), t(.ident, "$x"), t(.eof, "") });
+    try expectTokens("$x + $_y", &.{ t(.ident, "$x"), t(.plus, "+"), t(.ident, "$_y"), t(.eof, "") });
 }

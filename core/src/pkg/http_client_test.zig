@@ -120,13 +120,24 @@ test "HTTP client: Get stops after MAX_REDIRECTS" {
     try testing.expectEqual(http_client.MAX_REDIRECTS + 1, server.served);
 }
 
-test "HTTP client: HTTPS requests load the system's root certificates first" {
+test "HTTP client: root certificates are installed once, with the time to check them at" {
     // Opening the connection ourselves (for the timeout) skipped std's own loading, so
-    // every HTTPS download panicked on the missing certificate time.
+    // every HTTPS download panicked on the missing certificate time. An empty bundle stands
+    // in for the system's store, which the test used to read, so it passed or failed with
+    // the machine it ran on.
     var client = std.http.Client{ .allocator = testing.allocator, .io = testing.io };
     defer client.deinit();
     try testing.expect(client.now == null);
-    try http_client.loadRootCertificates(&client);
-    try testing.expect(client.now != null);
-    try http_client.loadRootCertificates(&client); // once
+    var first: std.crypto.Certificate.Bundle = .empty;
+    defer first.deinit(testing.allocator);
+    const when: std.Io.Timestamp = .{ .nanoseconds = 1_700_000_000 * std.time.ns_per_s };
+    try http_client.installRootCertificates(&client, &first, when);
+    try testing.expectEqual(when.nanoseconds, client.now.?.nanoseconds);
+
+    // A second load keeps the first: the client is already set up.
+    var second: std.crypto.Certificate.Bundle = .empty;
+    defer second.deinit(testing.allocator);
+    try http_client.installRootCertificates(&client, &second, .{ .nanoseconds = 0 });
+    try testing.expectEqual(when.nanoseconds, client.now.?.nanoseconds);
+    try http_client.loadRootCertificates(&client); // returns at once, reading nothing
 }

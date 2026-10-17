@@ -1,4 +1,5 @@
 #include "draco_c.h"
+#include "draco/compression/decode.h"
 #include "draco/compression/encode.h"
 #include "draco/mesh/mesh.h"
 #include <cstdlib>
@@ -68,6 +69,47 @@ void draco_free_buffer(DracoEncodedBuffer buf) {
     if (buf.data) {
         free(const_cast<uint8_t*>(buf.data));
     }
+}
+
+int draco_decode_mesh(const uint8_t* data, size_t size, DracoDecodedMesh* out) {
+    *out = { nullptr, 0, nullptr, 0 };
+    draco::DecoderBuffer buffer;
+    buffer.Init(reinterpret_cast<const char*>(data), size);
+    draco::Decoder decoder;
+    auto decoded = decoder.DecodeMeshFromBuffer(&buffer);
+    if (!decoded.ok()) return 1;
+    const std::unique_ptr<draco::Mesh> mesh = std::move(decoded).value();
+    const draco::PointAttribute* att = mesh->GetNamedAttribute(draco::GeometryAttribute::POSITION);
+    if (!att || att->num_components() != kPositionDimensions) return 1;
+
+    const size_t num_vertices = mesh->num_points();
+    const size_t num_indices = mesh->num_faces() * kVerticesPerFace;
+    out->positions = static_cast<float*>(malloc(num_vertices * kPositionDimensions * sizeof(float)));
+    out->indices = static_cast<uint32_t*>(malloc(num_indices * sizeof(uint32_t)));
+    if (!out->positions || !out->indices) {
+        draco_free_decoded_mesh(out);
+        return 1;
+    }
+    for (size_t i = 0; i < num_vertices; ++i) {
+        const draco::AttributeValueIndex value = att->mapped_index(draco::PointIndex(static_cast<uint32_t>(i)));
+        if (!att->ConvertValue<float, kPositionDimensions>(value, out->positions + i * kPositionDimensions)) {
+            draco_free_decoded_mesh(out);
+            return 1;
+        }
+    }
+    for (size_t f = 0; f < mesh->num_faces(); ++f) {
+        const draco::Mesh::Face& face = mesh->face(draco::FaceIndex(static_cast<uint32_t>(f)));
+        for (int k = 0; k < kVerticesPerFace; ++k) out->indices[f * kVerticesPerFace + k] = face[k].value();
+    }
+    out->num_vertices = num_vertices;
+    out->num_indices = num_indices;
+    return 0;
+}
+
+void draco_free_decoded_mesh(DracoDecodedMesh* mesh) {
+    free(mesh->positions);
+    free(mesh->indices);
+    *mesh = { nullptr, 0, nullptr, 0 };
 }
 
 }

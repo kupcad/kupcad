@@ -34,14 +34,14 @@ pub const UnknownKeywordRule = struct {
             .ptr = self,
             .vtable = &.{
                 .checkNode = checkNode,
-                .checkEOF = checkEOF,
+                .deinit = deinit,
             },
         };
     }
 
-    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *UnknownKeywordRule = @ptrCast(@alignCast(ptr));
-        self.shapes.deinit(engine.allocator);
+        self.shapes.deinit(allocator);
     }
 
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {

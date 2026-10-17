@@ -23,14 +23,14 @@ pub const UnusedVarsRule = struct {
                 .checkNode = checkNode,
                 .enterScope = enterScope,
                 .exitScope = exitScope,
-                .checkEOF = checkEOF,
+                .deinit = deinit,
             },
         };
     }
 
-    fn checkEOF(ptr: *anyopaque, engine: *linter.Linter) !void {
+    fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
-        self.members.deinit(engine.allocator);
+        self.members.deinit(allocator);
         self.* = .{};
     }
 

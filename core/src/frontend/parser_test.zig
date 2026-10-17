@@ -4472,3 +4472,77 @@ test "Parser: statements on one line need a ';' between them" {
         try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
     }
 }
+
+test "KupCAD Parser: an unclosed literal or a stray character is reported for what it is" {
+    // An unclosed heredoc or single-quoted string ran as if closed at the end of the file,
+    // and any character the lexer couldn't read was "Interpolation depth exceeded".
+    try expectSingleDiagnostic("x = <<~EOS\n  line\n", "This heredoc is never closed: no line 'EOS' before the end of the file");
+    for ([_][]const u8{ "x = \"abc\n", "x = 'abc\n", "x = :\"abc\n", "x = %w[a b\n", "x = \"a #{1} b\n" }) |source| {
+        errdefer std.debug.print("source: {s}\n", .{source});
+        try expectSingleDiagnostic(source, "This string is never closed before the end of the file");
+    }
+    try expectSingleDiagnostic("x = 1\n`\n", "Unexpected character '`'");
+}
+
+test "KupCAD Parser: an escape a string can't hold is a syntax error at the escape" {
+    // `\q` stood for `q`, so "C:\data" was "C:data" without a word; `\u` wasn't an escape.
+    const cases = [_]struct { src: []const u8, message: []const u8, at: []const u8 }{
+        .{ .src = "x = \"C:\\data\"", .message = "Unknown escape '\\d' in a string; write '\\\\' for a backslash", .at = "\\d" },
+        .{ .src = "x = \"#{1} and \\z\"", .message = "Unknown escape '\\z'", .at = "\\z" },
+        .{ .src = "x = <<~EOS\n  a\\1\nEOS\n", .message = "Unknown escape '\\1'", .at = "\\1" },
+        .{ .src = "x = \"\\u12\"", .message = "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{1F600})", .at = "\\u12" },
+        .{ .src = "x = \"\\u{}\"", .message = "'\\u' takes 4 hex digits", .at = "\\u{}" },
+        .{ .src = "x = \"\\uDBFF\"", .message = "U+DBFF is a UTF-16 surrogate, not a character", .at = "\\uDBFF" },
+        .{ .src = "x = \"\\u{110000}\"", .message = "U+110000 is past the last Unicode character, U+10FFFF", .at = "\\u{110000}" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.src});
+        try expectSingleDiagnostic(case.src, case.message);
+        var doc = try Document.parse(testing.allocator, case.src);
+        defer doc.deinit();
+        const loc = doc.diagnostics[0].loc;
+        try testing.expectEqualStrings(case.at, case.src[loc.offset..][0..loc.length]);
+    }
+}
+
+test "KupCAD Parser: a bare $ is an unexpected character" {
+    try expectSingleDiagnostic("x = $\n", "Unexpected character '$'");
+}
+
+test "Parser: an assignment in an argument or an element takes one value" {
+    // `f(b = 5, 6)` made b the array [5, 6] and passed one argument, and `f(b = 5,)` an
+    // array with an invalid element, unreported. A statement still takes the list.
+    for ([_]struct { src: []const u8, count: usize }{
+        .{ .src = "o(b = 5, 6)", .count = 2 },
+        .{ .src = "o b = 5, 6", .count = 2 },
+        .{ .src = "o(b = 5,\n)", .count = 1 },
+        .{ .src = "o(k: b = 5, j: 6)", .count = 2 },
+    }) |case| {
+        var pt = try KTest.init(case.src);
+        defer pt.deinit();
+        const node = try lastStatement(&pt, case.src);
+        const mc = pt.parser.b.tree.methodCall(node);
+        try testing.expectEqual(case.count, mc.args.end - mc.args.start);
+        try testing.expectEqual(ast.Tag.assignment, pt.getNode(pt.parser.b.tree.getNamedArgs(mc.args)[0].value).tag);
+    }
+    for ([_][]const u8{ "[b = 5, 6]", "{ k: b = 5, j: 6 }" }) |src| {
+        var pt = try KTest.init(src);
+        defer pt.deinit();
+        _ = try lastStatement(&pt, src);
+    }
+    // Inside a lambda's body, a statement again.
+    var pt = try KTest.init("f(-> do\n  y = 1, 2\nend)");
+    defer pt.deinit();
+    _ = try lastStatement(&pt, "f(-> do\n  y = 1, 2\nend)");
+    var doc = try Document.parse(testing.allocator, "y = 1, 2\nr = y.length");
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+}
+
+test "KupCAD Parser: an import's path may be single-quoted" {
+    try compileOnly("import { a } from './a.kup'\n");
+    var pt = try KTest.init("import './b.kup'\n");
+    defer pt.deinit();
+    _ = try pt.parser.parseProgram();
+    try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
+}

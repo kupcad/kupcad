@@ -163,6 +163,7 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#docstring" },
             .{ .include = "#comments" },
             .{ .include = "#strings" },
+            .{ .include = "#single_quoted_strings" },
             .{ .include = "#method_declarations" },
             .{ .include = "#hash_keys" },
             .{ .include = "#block_parameters" },
@@ -201,7 +202,8 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                 .end = "\"",
                 .name = "string.quoted.double.kupcad",
                 .patterns = .{
-                    .{ .match = "\\\\.", .name = "constant.character.escape.kupcad" },
+                    // A whole \u{1F600} or \u00e9, or a backslash and the character after it
+                    .{ .match = "\\\\(?:u\\{[0-9A-Fa-f]{1,6}\\}|u[0-9A-Fa-f]{4}|.)", .name = "constant.character.escape.kupcad" },
                     .{
                         .begin = "#\\{",
                         .end = "\\}",
@@ -210,6 +212,15 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                             .{ .include = "$self" },
                         },
                     },
+                },
+            },
+            // Only \\ and \' are escapes in single quotes, and nothing is interpolated.
+            .single_quoted_strings = .{
+                .begin = "'",
+                .end = "'",
+                .name = "string.quoted.single.kupcad",
+                .patterns = .{
+                    .{ .match = "\\\\['\\\\]", .name = "constant.character.escape.kupcad" },
                 },
             },
             .symbols = .{

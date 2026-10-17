@@ -90,13 +90,13 @@ pub fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize
 }
 
 pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!void {
-    // Allow anonymous padding slots (.none) to bypass deduplication ---
-    if (name_id != .none) {
-        for (self.locals.items) |loc| {
-            if (loc.name_id == name_id) return;
-        }
-    }
+    // Anonymous padding slots (.none) are never deduplicated.
+    if (name_id != .none and self.local_slots.contains(name_id)) return;
     if (self.locals.items.len >= limits.MAX_LOCALS) return error.TooManyLocals;
+    if (name_id != .none) try self.local_slots.put(self.allocator, name_id, slot);
+    errdefer if (name_id != .none) {
+        _ = self.local_slots.remove(name_id);
+    };
     try self.locals.append(self.allocator, .{ .name_id = name_id, .slot = slot });
     if (slot > self.max_local_slot) self.max_local_slot = slot;
 
@@ -111,16 +111,9 @@ pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!
 }
 
 pub fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {
-    const target_str = self.tree.getString(name_id);
-    var i: usize = self.locals.items.len;
-    while (i > 0) {
-        i -= 1;
-        const loc = self.locals.items[i];
-        if (loc.name_id != .none) {
-            if (std.mem.eql(u8, self.tree.getString(loc.name_id), target_str)) return loc.slot;
-        }
-    }
+    if (self.local_slots.get(name_id)) |slot| return slot;
 
+    const target_str = self.tree.getString(name_id);
     for (self.seeded_locals, 0..) |seeded_name, idx| {
         if (std.mem.eql(u8, seeded_name, target_str)) return @intCast(idx + self.seeded_slot_offset);
     }

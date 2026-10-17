@@ -12,6 +12,7 @@ const error_kind = @import("error_kind.zig");
 pub const ErrorKind = error_kind.ErrorKind;
 const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
+const InstructionHooks = @import("instruction_hooks.zig").InstructionHooks;
 const value = @import("../core/value.zig");
 const parameters = @import("../core/parameters.zig");
 const host_mod = @import("host.zig");
@@ -45,6 +46,12 @@ const MAX_TRAILING_CALL_VALUES = 2;
 const BITWISE_INT_BITS: i64 = @bitSizeOf(i64);
 /// 2^63: the smallest float magnitude outside i64 (-2^63 itself still fits).
 const I64_FLOAT_BOUND: f64 = 0x1p63;
+
+/// Where global generations come from, for every VM in the process: unique across them, so
+/// a GlobalCache filled under one VM (a chunk can outlive it) never matches another's. A
+/// usize, as wasm32 has no 64-bit atomics: a generation is taken per new name, not per run
+/// of a loop, so even 32 bits don't wrap in practice.
+var next_global_generation = std.atomic.Value(usize).init(1);
 
 pub const MethodLookupResult = struct {
     method: ?value.Value,
@@ -126,6 +133,11 @@ pub const VM = struct {
     debugger_handler: ?*const fn (vm: *VM) void = null,
 
     globals: std.StringHashMapUnmanaged(value.Value),
+    /// The generation of the global tables' layout (`globals`, `shadowed_builtins`, the
+    /// module namespaces): a new one whenever a name is added or removed, which can move
+    /// every slot, so each site's GlobalCache knows when to look its name up again.
+    /// Assigning an existing name keeps it: that is the loop, and it stays a slot write.
+    global_generation: usize = 0,
     // Owned copies of the global names defined by bytecode (see defineGlobal); keys
     // registered by the host are static literals and are not in here.
     owned_global_keys: std.ArrayListUnmanaged([]const u8) = .empty,
@@ -155,13 +167,17 @@ pub const VM = struct {
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
+    /// Every evaluated solid by its node's hash, until the GC finds no solid referring to
+    /// the node (memory.zig). The evaluator reuses them; callers borrow them.
     dag_cache: std.AutoHashMapUnmanaged(u64, geom.GeometryHandle) = .empty,
+    /// The same for sketches: one used by several solids (a profile extruded ten times) was
+    /// evaluated again for each of them.
+    cs_cache: std.AutoHashMapUnmanaged(u64, geom.CrossSectionHandle) = .empty,
     mute_errors: bool = false,
     /// The first error reported since the run started or the last exception was rescued,
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
     /// `mute_errors`, so embedders (api, wasm) can show it. Owned by `allocator`.
     last_error: ?[]u8 = null,
-    step_mode: bool = false,
 
     // std classes
     string_class: ?*value.ObjClass = null,
@@ -191,6 +207,10 @@ pub const VM = struct {
     scratch_arena: std.heap.ArenaAllocator,
     /// How many runUntil calls are active (more than one while a native runs a block).
     run_depth: u32 = 0,
+    /// The VM runs script after script (a session: the editor's worker, the REPL), so after
+    /// each run it frees the geometry its shapes no longer use (tidyGeometryGraph). A VM that
+    /// runs one script and goes skips it.
+    runs_many_scripts: bool = false,
     static_true: ?*value.ObjString = null,
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
@@ -216,12 +236,11 @@ pub const VM = struct {
 
     // safety for infinite loops
     instruction_count: usize,
-    instruction_limit: usize,
+    /// The instruction budget, zealous GC and debugger stepping, behind one flag.
+    hooks: InstructionHooks,
     import_depth: u8 = 0,
     // max call stack
     max_call_frames: usize = 100_000,
-    /// Set to true during tests to brutally expose unrooted allocations
-    zealous_gc: bool = false,
 
     cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -272,6 +291,7 @@ pub const VM = struct {
                 .vfs = native_vfs.vfs(),
                 .gc = memory.GC.init(allocator),
                 .globals = .empty,
+                .global_generation = next_global_generation.fetchAdd(1, .monotonic),
                 .modules = .empty,
                 .strings = .empty,
                 .symbols = .empty,
@@ -280,7 +300,6 @@ pub const VM = struct {
                 .config_stack = config_stack,
                 .line_index = null,
                 .debugger_step_handler = null,
-                .step_mode = false,
                 .rescue_frames = rescue_frames,
                 .param_registry = .{},
                 .param_lookup = .empty,
@@ -296,7 +315,11 @@ pub const VM = struct {
                 .static_nil = null,
                 .unwind_stack = .empty,
                 .instruction_count = 0,
-                .instruction_limit = limits.DEFAULT_INSTRUCTION_LIMIT,
+                .hooks = hooks: {
+                    var hooks: InstructionHooks = .{};
+                    hooks.setLimit(limits.DEFAULT_INSTRUCTION_LIMIT);
+                    break :hooks hooks;
+                },
                 .import_depth = 0,
             };
         };
@@ -326,6 +349,7 @@ pub const VM = struct {
 
         self.clearDagCache();
         self.dag_cache.deinit(self.allocator);
+        self.cs_cache.deinit(self.allocator);
 
         self.allocator.destroy(self.native_vfs_ptr);
 
@@ -426,14 +450,14 @@ pub const VM = struct {
         self.clearLastError();
         self.frames.clearRetainingCapacity();
         // Start small (64 initial frames) and let it grow dynamically
-        self.frames.ensureTotalCapacity(self.allocator, 64) catch return .runtime_error;
+        self.frames.ensureTotalCapacity(self.allocator, 64) catch |err| return self.allocationFailed(err);
         self.stack_top = 0;
 
         // The dispatch loop indexes constants/caches and follows jumps unchecked
         // for speed, so malformed bytecode must be rejected once, up front.
         if (!self.verifyBytecode(execution_chunk)) return .compile_error;
 
-        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        const func = self.gc.allocateFunction(self) catch |err| return self.allocationFailed(err);
         func.chunk = execution_chunk;
         func.owns_chunk = false;
         func.upvalue_count = 0;
@@ -441,7 +465,7 @@ pub const VM = struct {
 
         // Protect func from GC during allocateClosure
         self.push(value.Value.initObj(&func.obj));
-        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+        const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
 
         // Swap func for closure on stack
         _ = self.pop();
@@ -454,7 +478,7 @@ pub const VM = struct {
 
         // Pad the top-level script frame for its local variables (slot 0 holds the closure)
         const locals_to_pad = if (func.local_count > 1) func.local_count - 1 else 0;
-        self.reserveFrame(func, locals_to_pad) catch return .runtime_error;
+        self.reserveFrame(func, locals_to_pad) catch |err| return self.allocationFailed(err);
         for (0..locals_to_pad) |_| self.push(value.Value.initNil());
 
         self.frames.appendAssumeCapacity(.{
@@ -470,11 +494,85 @@ pub const VM = struct {
 
         const res = self.run();
         self.clearUnwindState();
+        self.tidyGeometryGraph();
         return res;
+    }
+
+    /// After an outermost run, when no native holds node indices of its own: releases the
+    /// meshes of concrete leaves (simplify, decompose) no live shape is made from, and
+    /// compacts the graph once it has doubled since the last time. The meshes stayed until
+    /// the VM went, a mesh per run in the editor's long-lived worker, and so did every node.
+    fn tidyGeometryGraph(self: *VM) void {
+        if (!self.runs_many_scripts or self.run_depth != 0) return;
+        if (self.dag_builder.held_leaves == 0 and !self.dag_builder.wantsCompaction()) return;
+        // The shapes still live, and nothing else
+        self.gc.collectGarbage(self, false);
+        var roots: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+        defer roots.deinit(self.allocator);
+        // Without room to work it out, the next run tries again.
+        roots.ensureTotalCapacity(self.allocator, self.gc.geometries.items.len + self.gc.cross_sections.items.len) catch return;
+        for (self.gc.geometries.items) |g| {
+            if (g.dag_idx != dag.CONCRETE_NODE_SENTINEL) roots.appendAssumeCapacity(g.dag_idx);
+        }
+        for (self.gc.cross_sections.items) |cs| roots.appendAssumeCapacity(cs.dag_idx);
+        var live = self.dag_builder.liveNodes(self.allocator, roots.items) catch return;
+        defer live.deinit(self.allocator);
+        self.dag_builder.releaseUnreachableLeaves(&live);
+        if (self.dag_builder.wantsCompaction()) {
+            // Copying a graph that is mostly live frees little: wait until it doubles again.
+            if (2 * live.count() <= self.dag_builder.nodes.items.len) self.compactGeometryGraph(&live) else self.dag_builder.postponeCompaction();
+        }
+    }
+
+    /// Compacts the graph to its `live` nodes and moves every shape to its node's new index.
+    fn compactGeometryGraph(self: *VM, live: *const std.DynamicBitSetUnmanaged) void {
+        // Without room to compact, the next run tries again.
+        const renumbered = self.dag_builder.compact(live) catch return;
+        defer self.dag_builder.gpa.free(renumbered);
+        for (self.gc.geometries.items) |g| {
+            if (g.dag_idx != dag.CONCRETE_NODE_SENTINEL) g.dag_idx = renumbered[g.dag_idx];
+        }
+        for (self.gc.cross_sections.items) |cs| cs.dag_idx = renumbered[cs.dag_idx];
     }
 
     pub fn run(self: *VM) InterpretResult {
         return self.runUntil(0);
+    }
+
+    /// The instruction hooks that are on (see InstructionHooks): the budget, zealous GC and
+    /// the debugger's stop at a new line. A result ends the run.
+    fn beforeInstruction(self: *VM, frame: *const CallFrame, exec_chunk: *const chunk.Chunk, previous_line: *?u32) ?InterpretResult {
+        if (self.hooks.limit > 0) {
+            self.instruction_count += 1;
+            if (self.instruction_count > self.hooks.limit) {
+                self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.hooks.limit});
+                return .execution_limit_exceeded;
+            }
+        }
+        // A full collection before the instruction: a value a native forgot to root is
+        // swept now, and the next instruction to use it fails.
+        if (self.hooks.zealous_gc) self.gc.collectGarbage(self, false);
+        if (self.hooks.step) {
+            const li = self.line_index orelse return null;
+            const current_line = li.getLine(exec_chunk.getOffset(frame.ip));
+            const prev = previous_line.* orelse {
+                // The first instruction of this step.
+                previous_line.* = current_line;
+                return null;
+            };
+            if (current_line == prev) return null;
+            if (self.debugger_step_handler) |handler| {
+                // A new line: the debugger takes over, then the step goes on from it.
+                handler(self);
+                previous_line.* = current_line;
+            } else {
+                // Nobody to pause for (a host armed stepping without a handler): the run
+                // goes on, as debugger() does without a host. It used to end here with a
+                // `paused` result no caller could resume.
+                self.hooks.setStep(false);
+            }
+        }
+        return null;
     }
 
     pub fn runUntil(self: *VM, target_depth: usize) InterpretResult {
@@ -491,53 +589,15 @@ pub const VM = struct {
 
         while (self.frames.items.len > target_depth) {
 
-            // Cancellation Token Check (Instant UI / Ctrl+C Interrupt)
-            if (self.cancel_token.load(.acquire)) return .runtime_error;
-
-            // Gas Check
-            if (self.instruction_limit > 0) {
-                self.instruction_count += 1;
-                if (self.instruction_count > self.instruction_limit) {
-                    self.runtimeError("Execution limit: the run took more than {d} instructions, the budget where this host runs scripts; a loop that never ends, or a model too heavy for it.", .{self.instruction_limit});
-                    return .execution_limit_exceeded;
-                }
-            }
-
-            if (self.zealous_gc) {
-                // Run a full Mark-and-Sweep before executing the opcode.
-                // If ANY native method forgot to root a temporary object, it will be
-                // swept right now, and the next instruction will immediately crash.
-                self.gc.collectGarbage(self, false);
-            }
+            // A relaxed load: the flag publishes nothing, the run only has to see it soon.
+            if (self.cancel_token.load(.monotonic)) return .runtime_error;
 
             var frame = &self.frames.items[self.frames.items.len - 1];
             const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
 
-            // --- DEBUGGER: Step Mechanics ---
-            if (self.step_mode) {
-                if (self.line_index) |li| {
-                    const current_offset = exec_chunk.getOffset(frame.ip);
-                    const current_line = li.getLine(current_offset);
-
-                    if (previous_line) |prev| {
-                        if (current_line != prev) {
-                            // We crossed a line boundary! Invoke the REPL.
-                            if (self.debugger_step_handler) |handler| {
-                                handler(self);
-                                // After debugger returns, update tracking so it doesn't loop forever on the same line
-                                previous_line = current_line;
-                            } else {
-                                // Nobody to pause for (a host armed stepping without a handler):
-                                // the run goes on, as debugger() does without a host. It used to
-                                // end here with a `paused` result no caller could resume.
-                                self.step_mode = false;
-                            }
-                        }
-                    } else {
-                        // Initialize tracking on the first instruction of this step
-                        previous_line = current_line;
-                    }
-                }
+            if (self.hooks.active) {
+                @branchHint(.unlikely); // off unless a host, a test or the debugger turns a hook on
+                if (self.beforeInstruction(frame, exec_chunk, &previous_line)) |stop| return stop;
             }
 
             // Prevent runaway instruction pointer
@@ -548,6 +608,9 @@ pub const VM = struct {
 
             const op: chunk.OpCode = @fromBackingInt(instruction);
 
+            // The short, frequent instructions are written out here; the others are
+            // `execute*` functions, whose .ok means the run goes on (an error they raised was
+            // rescued, and the loop resumes at its handler) and anything else ends it.
             switch (op) {
                 .op_nil => self.push(value.Value.initNil()),
                 .op_true => self.push(value.Value.initBool(true)),
@@ -588,22 +651,9 @@ pub const VM = struct {
                     frame.ip += 2;
                     self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
                 },
-                .op_add, .op_subtract, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right => {
-                    const res = self.executeBinaryArithmetic(op);
-                    if (res != .ok) return res;
-                },
-                .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => {
-                    const res = self.executeNumericBinary(op);
-                    if (res != .ok) return res;
-                },
-                .op_negate => {
-                    const a = self.pop();
-                    if (!a.isNumber()) {
-                        if (self.raiseError(.TypeError, "unary '-' expects a number, got {s}", .{self.typeName(a)}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    self.push(value.Value.initNumber(-a.asNumber()));
-                },
+                .op_add, .op_subtract, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right => if (ended(self.executeBinaryArithmetic(op))) |res| return res,
+                .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => if (ended(self.executeNumericBinary(op))) |res| return res,
+                .op_negate, .op_positive, .op_bitwise_not => if (ended(self.executeUnary(op))) |res| return res,
                 .op_not => {
                     self.push(value.Value.initBool(isFalsey(self.pop())));
                 },
@@ -617,138 +667,56 @@ pub const VM = struct {
                     const test_val = self.pop();
                     self.push(value.Value.initBool(self.valuesCaseEqual(case_val, test_val)));
                 },
-                .op_set_member, .op_set_member_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_set_member_wide);
-                    const val = self.pop();
-                    const receiver = self.stack[self.stack_top - 1]; // Peek at namespace (Module/Class)
-
-                    if (receiver.isModule()) {
-                        const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
-                    } else if (receiver.isClass()) {
-                        const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
-                    } else {
-                        if (self.raiseError(.TypeError, "Cannot attach member to non-namespace.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    self.push(val); // Push the namespace back to maintain stack equilibrium
-                },
+                .op_cmp => self.executeCompare(),
                 .op_get_global, .op_get_global_wide => {
                     const name_str = self.readStringOperand(exec_chunk, frame, op == .op_get_global_wide);
-                    if (self.lookupGlobal(frame, name_str)) |val| {
-                        self.push(val);
-                    } else {
-                        if (self.raiseError(.NameError, "Undefined variable '{s}'", .{name_str}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                },
-                .op_get_index => {
-                    const res = self.executeGetIndex();
-                    if (res != .ok) return res;
-                },
-                .op_set_index => {
-                    // Peek instead of Pop to keep everything rooted during potential reallocation
-                    const val = self.stack[self.stack_top - 1];
-                    const index = self.stack[self.stack_top - 2];
-                    const target = self.stack[self.stack_top - 3];
-
-                    if (target.isArray() and index.isNumber()) {
-                        const arr = target.asArray();
-                        if (self.resolveArrayIndex(arr.items.items.len, index)) |idx| {
-                            arr.items.items[idx] = val;
-                            self.stack_top -= 3; // Safely pop all three
-                            self.push(val);
-                        } else |_| {
-                            if (self.indexError("Array", index, arr.items.items.len) != .ok) return .runtime_error;
+                    const cache = readGlobalCache(exec_chunk, frame);
+                    if (cache.generation != self.global_generation) {
+                        const slot = self.globalSlot(frame, name_str) orelse {
+                            if (ended(self.raiseError(.NameError, "Undefined variable '{s}'", .{name_str}))) |res| return res;
                             continue;
-                        }
-                    } else if (target.isMap()) {
-                        const map = target.asMap();
-                        self.mapSet(map, index, val) catch return self.raiseError(.OutOfMemoryError, "Map set failed", .{});
-                        self.stack_top -= 3; // Safely pop all three
-                        self.push(val);
+                        };
+                        cache.* = .{ .generation = self.global_generation, .slot = slot };
+                    }
+                    self.push(cache.slot.*);
+                },
+                .op_define_global, .op_define_global_wide => {
+                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
+                    const cache = readGlobalCache(exec_chunk, frame);
+                    const val = self.pop();
+                    if (cache.generation == self.global_generation) {
+                        cache.slot.* = val;
                     } else {
-                        if (self.raiseError(.TypeError, "{s} doesn't support index assignment ([]=)", .{self.typeName(target)}) != .ok) return .runtime_error;
-                        continue;
+                        const defined = if (frame.closure.function.namespace) |ns| self.defineInNamespace(ns, name_str, val) else self.defineGlobal(name_str, val);
+                        const slot = defined catch |err| {
+                            if (ended(self.allocationFailed(err))) |res| return res;
+                            continue;
+                        };
+                        cache.* = .{ .generation = self.global_generation, .slot = slot };
                     }
                 },
+                .op_get_index => if (ended(self.executeGetIndex())) |res| return res,
+                .op_set_index => if (ended(self.executeSetIndex())) |res| return res,
                 .op_setup_rescue => {
-                    // Properly read the 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
                     self.rescue_frames.append(self.allocator, .{
                         .handler_ip = frame.ip + offset,
                         .stack_top = self.stack_top,
                         .frame_count = self.frames.items.len,
                         .upvalue_ptr = self.open_upvalues,
-                    }) catch return .runtime_error;
+                    }) catch |err| if (ended(self.allocationFailed(err))) |res| return res;
                 },
                 .op_pop_rescue => {
                     _ = self.rescue_frames.pop();
                 },
-                .op_throw => {
-                    const res = self.executeThrow();
-                    if (res != .ok) return res;
-                },
+                .op_throw => if (ended(self.executeThrow())) |res| return res,
                 .op_break_block => {
                     self.pending_break = .{ .value = self.pop(), .target = self.blockReceiverFrame(frame.closure) };
                     if (self.carryBreak(target_depth)) |res| return res;
                 },
-                .op_build_array, .op_build_array_wide => {
-                    const item_count = self.readOperand(exec_chunk, frame, op == .op_build_array_wide);
-                    const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
-                    const arr_val = value.Value.initObj(&arr_obj.obj);
-
-                    // Root the array BEFORE allocating internal capacity to prevent GC sweeps
-                    self.push(arr_val);
-                    arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch {
-                        return self.raiseError(.OutOfMemoryError, "Failed to build array", .{});
-                    };
-
-                    // The elements were pushed before arr_val, so they sit below it
-                    const start_idx = self.stack_top - 1 - item_count;
-
-                    // Slice AFTER capacity allocation to guarantee memory addresses are valid
-                    arr_obj.items.appendSliceAssumeCapacity(self.stack[start_idx .. start_idx + item_count]);
-
-                    // Pop the protected arr_val, physically shrink the stack to remove the consumed elements,
-                    // and push arr_val back to the new top
-                    _ = self.pop();
-                    self.shrinkStack(start_idx);
-                    self.push(arr_val);
-                },
-                .op_build_map, .op_build_map_wide => {
-                    const pair_count = self.readOperand(exec_chunk, frame, op == .op_build_map_wide);
-                    const map_obj = self.gc.allocateMap(self) catch return .runtime_error;
-                    const map_val = value.Value.initObj(&map_obj.obj);
-
-                    // Root the map BEFORE allocating internal capacity to prevent GC sweeps
-                    self.push(map_val);
-                    map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
-                        return self.raiseError(.OutOfMemoryError, "Failed to build map", .{});
-                    };
-
-                    const start_idx = self.stack_top - 1 - (pair_count * 2);
-                    var i: usize = 0;
-                    while (i < pair_count * 2) : (i += 2) {
-                        const key = self.stack[start_idx + i];
-                        const val = self.stack[start_idx + i + 1];
-
-                        self.mapSet(map_obj, key, val) catch {
-                            return self.raiseError(.OutOfMemoryError, "Failed to insert map key", .{});
-                        };
-                    }
-
-                    // Pop the protected map_val, physically shrink the stack to remove the consumed pairs,
-                    // and push map_val back to the new top
-                    _ = self.pop();
-                    self.shrinkStack(start_idx);
-                    self.push(map_val);
-                },
-                .op_build_range => {
-                    const res = self.executeBuildRange(frame, exec_chunk);
-                    if (res != .ok) return res;
-                },
+                .op_build_array, .op_build_array_wide => if (ended(self.executeBuildArray(frame, exec_chunk, op == .op_build_array_wide))) |res| return res,
+                .op_build_map, .op_build_map_wide => if (ended(self.executeBuildMap(frame, exec_chunk, op == .op_build_map_wide))) |res| return res,
+                .op_build_range => if (ended(self.executeBuildRange(frame, exec_chunk))) |res| return res,
                 .op_is_nil => {
                     const val = self.pop();
                     self.push(value.Value.initBool(val.isNil()));
@@ -756,72 +724,36 @@ pub const VM = struct {
                 .op_interpolate => {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
-                    const res = self.executeInterpolate(count);
-                    if (res != .ok) return res;
+                    if (ended(self.executeInterpolate(count))) |res| return res;
                 },
                 .op_array_push => {
                     // Peek instead of Pop to keep `val` rooted during potential reallocation
                     const val = self.stack[self.stack_top - 1];
-                    const arr_val = self.stack[self.stack_top - 2];
-                    const arr = arr_val.asArray();
-                    arr.items.append(self.gc.trackingAllocator(), val) catch return self.raiseError(.OutOfMemoryError, "Array push failed", .{});
-                    // Safely pop only the pushed value; target array stays on top
-                    _ = self.pop();
-                },
-                .op_array_spread => {
-                    // Peek instead of Pop to keep `source_val` rooted during potential reallocation
-                    const source_val = self.stack[self.stack_top - 1];
-                    const target_val = self.stack[self.stack_top - 2];
-                    const target_arr = target_val.asArray();
-
-                    if (source_val.isArray()) {
-                        const source_arr = source_val.asArray();
-                        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseError(.OutOfMemoryError, "Array spread failed", .{});
-                        target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
-                    } else {
-                        if (self.raiseError(.TypeError, "only an Array can be spread with *", .{}) != .ok) return .runtime_error;
+                    const arr = self.stack[self.stack_top - 2].asArray();
+                    arr.items.append(self.gc.trackingAllocator(), val) catch {
+                        if (ended(self.raiseOutOfMemory("building an Array", .{}))) |res| return res;
                         continue;
-                    }
-                    // Safely pop only the spread source array; target array stays on top
+                    };
+                    // Pop only the pushed value; the array stays on top
                     _ = self.pop();
                 },
+                .op_array_spread => if (ended(self.executeArraySpread())) |res| return res,
                 .op_map_insert => {
                     // Peek instead of Pop to keep values rooted during potential reallocation
                     const val = self.stack[self.stack_top - 1];
                     const key = self.stack[self.stack_top - 2];
-                    const map_val = self.stack[self.stack_top - 3];
-                    const map = map_val.asMap();
-
-                    self.mapSet(map, key, val) catch return self.raiseError(.OutOfMemoryError, "Map insert failed", .{});
-                    // Safely pop both key and val; target map stays on top
-                    _ = self.pop();
-                    _ = self.pop();
-                },
-                .op_map_spread => {
-                    // Peek instead of Pop to keep `source_val` rooted during potential reallocation
-                    const source_val = self.stack[self.stack_top - 1];
-                    const target_val = self.stack[self.stack_top - 2];
-                    const target_map = target_val.asMap();
-
-                    if (source_val.isMap()) {
-                        const source_map = source_val.asMap();
-                        const keys = source_map.map.keys();
-                        const values = source_map.map.values();
-
-                        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
-
-                        for (keys, 0..) |key, i| {
-                            self.mapSet(target_map, key, values[i]) catch return self.raiseError(.OutOfMemoryError, "Map spread failed", .{});
-                        }
-                    } else {
-                        if (self.raiseError(.TypeError, "only a Map can be spread with **", .{}) != .ok) return .runtime_error;
+                    const map = self.stack[self.stack_top - 3].asMap();
+                    self.mapSet(map, key, val) catch {
+                        if (ended(self.raiseOutOfMemory("building a Map", .{}))) |res| return res;
                         continue;
-                    }
-                    // Safely pop only the spread source map; target map stays on top
+                    };
+                    // Pop both key and val; the map stays on top
+                    _ = self.pop();
                     _ = self.pop();
                 },
+                .op_map_spread => if (ended(self.executeMapSpread())) |res| return res,
+                .op_set_member, .op_set_member_wide => if (ended(self.executeSetMember(frame, exec_chunk, op == .op_set_member_wide))) |res| return res,
                 .op_jump => {
-                    // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
                     frame.ip += offset;
                 },
@@ -832,22 +764,24 @@ pub const VM = struct {
                     }
                 },
                 .op_jump_if_nil => {
-                    // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
                     // Peek at the receiver. If it is nil, take the jump
-                    const val = self.stack[self.stack_top - 1];
-                    if (val.isNil()) {
+                    if (self.stack[self.stack_top - 1].isNil()) {
                         frame.ip += offset;
                     }
                 },
                 .op_jump_if_not_nil => {
-                    // Properly read 3-byte offset
                     const offset = self.readJumpOffset(exec_chunk, frame);
-                    const val = self.stack[self.stack_top - 1];
-                    if (!val.isNil()) {
+                    if (!self.stack[self.stack_top - 1].isNil()) {
                         frame.ip += offset;
                     }
                 },
+                .op_loop => {
+                    const offset = self.readJumpOffset(exec_chunk, frame);
+                    frame.ip -= offset; // Jump backwards
+                },
+                .op_switch, .op_switch_wide => self.executeSwitch(frame, exec_chunk, op == .op_switch_wide),
+                .op_for_next => if (ended(self.executeForNext(frame, exec_chunk))) |res| return res,
                 .op_dup => {
                     const val = self.stack[self.stack_top - 1];
                     self.push(val);
@@ -857,31 +791,6 @@ pub const VM = struct {
                     const a = self.stack[self.stack_top - 2];
                     self.push(a); // Push copies in the exact same order
                     self.push(b);
-                },
-                .op_for_next => {
-                    const slot = self.readOperand(exec_chunk, frame, true);
-                    const exit_offset = self.readJumpOffset(exec_chunk, frame);
-                    const taken = self.getLocal(frame, slot + 1).asNumber();
-                    // As for a native: a raised error may be rescued, unwinding past this frame.
-                    const caller_depth = self.frames.items.len;
-                    const throw_seq = self.throw_seq;
-                    const more = self.pushForElement(self.getLocal(frame, slot), @intFromFloat(taken)) catch |err| {
-                        if (self.alreadyThrown(throw_seq, caller_depth)) |res| {
-                            if (res != .ok) return res;
-                            continue;
-                        }
-                        return self.nativeFailed("for", err);
-                    };
-                    if (more) {
-                        self.setLocal(frame, slot + 1, value.Value.initNumber(taken + 1));
-                    } else {
-                        frame.ip += exit_offset;
-                    }
-                },
-                .op_loop => {
-                    // Properly read 3-byte offset
-                    const offset = self.readJumpOffset(exec_chunk, frame);
-                    frame.ip -= offset; // Jump backwards
                 },
                 .op_import, .op_import_wide => {
                     if (self.executeImport(frame, exec_chunk, op == .op_import_wide)) |out| return out;
@@ -899,52 +808,7 @@ pub const VM = struct {
                 .op_close_upvalue => {
                     self.closeUpvalues(&self.stack[self.stack_top - 1]);
                 },
-                .op_switch, .op_switch_wide => {
-                    const test_val = self.pop();
-                    const case_count = self.readOperand(exec_chunk, frame, op == .op_switch_wide);
-
-                    const match = searchJumpTable(exec_chunk, frame.ip, case_count, test_val);
-
-                    frame.ip += case_count * 6; // Fast-forward past the 6-byte jump table entries
-                    const default_offset = self.readJumpOffset(exec_chunk, frame);
-
-                    if (match.matched) {
-                        frame.ip += match.jump_offset;
-                    } else {
-                        frame.ip += default_offset;
-                    }
-                },
-                .op_closure, .op_closure_wide => {
-                    const func_idx = self.readOperand(exec_chunk, frame, op == .op_closure_wide);
-                    const func_val = exec_chunk.constants.items[func_idx];
-                    const func_obj = func_val.asFunction();
-
-                    const closure = self.gc.allocateClosure(self, func_obj) catch return .runtime_error;
-                    const closure_val = value.Value.initObj(&closure.obj);
-
-                    // Push the closure to the stack BEFORE capturing upvalues to ensure GC safety
-                    self.push(closure_val);
-                    closure.home = homeMethod(frame);
-                    closure.home_self = self.frameSelf(frame);
-                    closure.home_block = self.frameBlock(frame);
-
-                    // Iterate over the operands to wire up the captured variables
-                    for (0..func_obj.upvalue_count) |i| {
-                        const is_local = exec_chunk.code.items[frame.ip];
-                        frame.ip += 1;
-                        // Read 16-bit upvalue index
-                        const index = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-                        frame.ip += 2;
-
-                        if (is_local == 1) {
-                            // Capture directly from the parent's stack slot
-                            closure.upvalues[i] = self.captureUpvalue(&self.stack[frame.base_slot + index]) catch return .runtime_error;
-                        } else {
-                            // Pass down an upvalue that the parent already captured
-                            closure.upvalues[i] = frame.closure.upvalues[index];
-                        }
-                    }
-                },
+                .op_closure, .op_closure_wide => if (ended(self.executeClosure(frame, exec_chunk, op == .op_closure_wide))) |res| return res,
                 .op_return => {
                     const result = self.pop();
                     // Constructor intercepts the return and yields `self` instead of the function's result
@@ -957,93 +821,22 @@ pub const VM = struct {
                         return .ok;
                     }
                 },
-                .op_unpack => {
-                    const count = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-
-                    const val = self.pop();
-
-                    if (val.isArray()) {
-                        const arr = val.asArray();
-                        for (0..count) |i| {
-                            // If the array doesn't have enough items, pad with nil
-                            if (i < arr.items.items.len) {
-                                self.push(arr.items.items[i]);
-                            } else {
-                                self.push(value.Value.initNil());
-                            }
-                        }
-                    } else {
-                        // If it's not an array, assign the value to the first slot, then nil for the rest
-                        self.push(val);
-                        for (1..count) |_| {
-                            self.push(value.Value.initNil());
-                        }
-                    }
-                },
+                .op_unpack => self.executeUnpack(frame, exec_chunk),
+                .op_unpack_splat => if (ended(self.executeUnpackSplat(frame, exec_chunk))) |res| return res,
+                .op_pack_splat => if (ended(self.executePackSplat(frame, exec_chunk))) |res| return res,
                 .op_module, .op_module_wide => {
                     const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_module_wide);
-                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch return .runtime_error;
+                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch |err| {
+                        if (ended(self.allocationFailed(err))) |res| return res;
+                        continue;
+                    };
                     self.push(value.Value.initObj(&mod_obj.obj));
                 },
-                .op_mixin => {
-                    const module_val = self.pop();
-                    if (!module_val.isModule()) {
-                        if (self.raiseError(.TypeError, "include needs a Module, got {s}", .{self.typeName(module_val)}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    const class_val = self.stack[self.stack_top - 1]; // Peek at class
-                    if (!class_val.isClass()) {
-                        // `include M` in a module body, or outside any class: it stopped the run
-                        // with no message and nothing to rescue.
-                        const where = if (class_val.isModule()) "include can't add a module to another module; include it in each class that needs it" else "include is only valid inside a class body";
-                        if (self.raiseError(.TypeError, "{s}", .{where}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    const class_obj = class_val.asClass();
-
-                    class_obj.included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch return .runtime_error;
-                    self.method_epoch +%= 1;
-                },
-                .op_class, .op_class_wide => {
-                    const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_class_wide);
-
-                    // RE-OPEN the class if it is visible from this scope (a module can reopen
-                    // its own classes and builtins, not the importer's classes)
-                    if (self.lookupGlobal(frame, name_str_obj.chars)) |existing| {
-                        if (existing.isClass()) {
-                            self.push(existing);
-                            continue;
-                        }
-                    }
-
-                    // Ensure new classes inherit from Object by default
-                    const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch return .runtime_error;
-                    self.push(value.Value.initObj(&class_obj.obj));
-                },
-                .op_method, .op_method_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_method_wide);
-                    const method = self.pop(); // The closure
-                    const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
-
-                    if (receiver_val.isClass()) {
-                        receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
-                        if (method.isClosure()) method.asClosure().home_class = receiver_val.asClass();
-                    } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
-                    } else return .runtime_error;
-                    self.method_epoch +%= 1;
-                },
-                .op_define_global, .op_define_global_wide => {
-                    const name_str = self.readStringOperand(exec_chunk, frame, op == .op_define_global_wide);
-                    const val = self.pop();
-                    if (frame.closure.function.namespace) |ns| {
-                        ns.define(self.allocator, name_str, val) catch return .runtime_error;
-                    } else {
-                        self.defineGlobal(name_str, val) catch return .runtime_error;
-                    }
-                },
+                .op_class, .op_class_wide => if (ended(self.executeClass(frame, exec_chunk, op == .op_class_wide))) |res| return res,
+                .op_inherit => if (ended(self.executeInherit())) |res| return res,
+                .op_mixin => if (ended(self.executeMixin())) |res| return res,
+                .op_method, .op_method_wide => if (ended(self.executeDefineMethod(frame, exec_chunk, op == .op_method_wide))) |res| return res,
+                .op_class_method, .op_class_method_wide => if (ended(self.executeDefineClassMethod(frame, exec_chunk, op == .op_class_method_wide))) |res| return res,
                 .op_get_ivar, .op_get_ivar_wide => {
                     // `@x`: this instance's field, nil when unset. It went through
                     // op_get_property, whose method fallback handed back a method named like
@@ -1061,51 +854,9 @@ pub const VM = struct {
                 .op_get_property, .op_get_property_wide => {
                     if (self.executeGetProperty(frame, exec_chunk, op == .op_get_property_wide)) |out| return out;
                 },
-                .op_set_property, .op_set_property_wide => {
-                    const is_wide = op == .op_set_property_wide;
-                    const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
-                    const ic = self.readInlineCache(exec_chunk, frame);
-
-                    const receiver = self.stack[self.stack_top - 2];
-                    const val = self.stack[self.stack_top - 1];
-
-                    if (receiver.isInstance()) {
-                        const instance = receiver.asInstance();
-
-                        // --- Property Fast/Slow Path ---
-                        self.setInstanceField(instance, name_val, val, ic) catch return .runtime_error;
-
-                        self.stack[self.stack_top - 2] = val;
-                        self.stack_top -= 1;
-                        continue;
-                    } else if (receiver.isClass()) {
-                        const cls = receiver.asClass();
-                        cls.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
-                        self.stack[self.stack_top - 2] = val;
-                        self.stack_top -= 1;
-                        continue;
-                    } else if (receiver.isModule()) {
-                        const mod = receiver.asModule();
-                        mod.methods.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
-                        self.stack[self.stack_top - 2] = val;
-                        self.stack_top -= 1;
-                        continue;
-                    }
-
-                    if (self.raiseError(.TypeError, "Only instances have properties.", .{}) != .ok) return .runtime_error;
-                    continue;
-                },
-                .op_inherit => {
-                    const super_val = self.pop();
-                    if (!super_val.isClass()) {
-                        // `class A < x` with no class: it stopped the run with no message.
-                        if (self.raiseError(.TypeError, "a superclass must be a Class, got {s}", .{self.typeName(super_val)}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    const sub_val = self.stack[self.stack_top - 1];
-                    sub_val.asClass().superclass = super_val.asClass();
-                    self.method_epoch +%= 1;
-                },
+                .op_set_property, .op_set_property_wide => if (ended(self.executeSetProperty(frame, exec_chunk, op == .op_set_property_wide))) |res| return res,
+                .op_get_class_var, .op_get_class_var_wide => if (ended(self.executeGetClassVar(frame, exec_chunk, op == .op_get_class_var_wide))) |res| return res,
+                .op_set_class_var, .op_set_class_var_wide => if (ended(self.executeSetClassVar(frame, exec_chunk, op == .op_set_class_var_wide))) |res| return res,
                 .op_call => {
                     const res = self.executeCall(frame, exec_chunk);
                     if (self.afterCall(res, target_depth)) |out| return out;
@@ -1113,14 +864,6 @@ pub const VM = struct {
                 .op_invoke, .op_invoke_wide => {
                     const res = self.executeInvoke(frame, exec_chunk, op == .op_invoke_wide);
                     if (self.afterCall(res, target_depth)) |out| return out;
-                },
-                .op_unpack_splat => {
-                    const res = self.executeUnpackSplat(frame, exec_chunk);
-                    if (res != .ok) return res;
-                },
-                .op_pack_splat => {
-                    const res = self.executePackSplat(frame, exec_chunk);
-                    if (res != .ok) return res;
                 },
                 .op_super_invoke => {
                     if (self.executeSuperInvoke(frame, exec_chunk, target_depth)) |out| return out;
@@ -1131,195 +874,451 @@ pub const VM = struct {
                 .op_block_given => {
                     self.push(value.Value.initBool(self.frameBlock(frame).isClosure()));
                 },
-                .op_class_method, .op_class_method_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_class_method_wide);
-                    const method = self.pop();
-                    const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
-
-                    if (receiver_val.isClass()) {
-                        receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
-                    } else if (receiver_val.isModule()) {
-                        receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch return .runtime_error;
-                    } else {
-                        if (self.raiseError(.TypeError, "Can only define singleton methods on classes or modules.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                    self.method_epoch +%= 1;
-                },
-                .op_get_class_var, .op_get_class_var_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_get_class_var_wide);
-                    const name_str = name_val.asString().chars;
-                    const receiver = self.pop(); // Explicitly pop receiver from stack
-
-                    const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
-
-                    if (class_obj) |c| {
-                        var current: ?*value.ObjClass = c;
-                        var found_val: ?value.Value = null;
-
-                        // Search up the hierarchy
-                        while (current) |cls| {
-                            if (cls.class_fields.get(name_val)) |val| {
-                                found_val = val;
-                                break;
-                            }
-                            current = cls.superclass;
-                        }
-
-                        if (found_val) |v| {
-                            self.push(v);
-                        } else {
-                            if (self.raiseError(.NameError, "Undefined class variable '{s}'.", .{name_str}) != .ok) return .runtime_error;
-                            continue;
-                        }
-                    } else {
-                        if (self.raiseError(.RuntimeError, "Receiver has no class context.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                },
-                .op_set_class_var, .op_set_class_var_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_set_class_var_wide);
-                    const receiver = self.pop(); // Pop explicit receiver
-                    const val = self.pop(); // Pop RHS value
-
-                    const class_obj = if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
-
-                    if (class_obj) |c| {
-                        var current: ?*value.ObjClass = c;
-                        var target_class: *value.ObjClass = c;
-
-                        // Update the variable if it exists anywhere in the hierarchy
-                        var found = false;
-                        while (current) |cls| {
-                            if (cls.class_fields.contains(name_val)) {
-                                target_class = cls;
-                                found = true;
-                                break;
-                            }
-                            current = cls.superclass;
-                        }
-
-                        // A new variable belongs to the class whose code assigns it (binding it to
-                        // the root class leaked it into every unrelated class).
-                        if (!found) {
-                            target_class = if (homeMethod(frame)) |home| (home.home_class orelse c) else c;
-                        }
-
-                        target_class.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch return .runtime_error;
-
-                        self.push(val); // Yield the assigned value
-                    } else {
-                        if (self.raiseError(.RuntimeError, "Receiver has no class context.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-                },
-                .op_is_instance => {
-                    const class_val = self.pop();
-                    const thrown_val = self.pop();
-
-                    if (!class_val.isClass()) {
-                        if (self.raiseError(.TypeError, "Rescue type must be a Class.", .{}) != .ok) return .runtime_error;
-                        continue;
-                    }
-
-                    var match = false;
-                    if (thrown_val.isInstance()) {
-                        match = isSubclassOf(thrown_val.asInstance().class, class_val.asClass());
-                    } else if (thrown_val.isClass()) {
-                        // Allows naturally catching un-instantiated exception classes (e.g., `raise(ArgumentError)`)
-                        match = isSubclassOf(thrown_val.asClass(), class_val.asClass());
-                    } else {
-                        // If user threw a primitive string instead of an Error object
-                        match = false;
-                    }
-                    self.push(value.Value.initBool(match));
-                },
-                .op_defined, .op_defined_wide => {
-                    const name_val = self.readValueOperand(exec_chunk, frame, op == .op_defined_wide);
-                    const name_str = name_val.asString().chars;
-                    var is_def = false;
-
-                    if (std.mem.startsWith(u8, name_str, "@@")) {
-                        // Class Variable Check: Grab `self` and walk the class hierarchy
-                        const self_val = self.getLocal(frame, 0);
-                        const class_obj = if (self_val.isInstance()) self_val.asInstance().class else if (self_val.isClass()) self_val.asClass() else null;
-                        if (class_obj) |c| {
-                            var current: ?*value.ObjClass = c;
-                            while (current) |cls| {
-                                if (cls.class_fields.contains(name_val)) {
-                                    is_def = true;
-                                    break;
-                                }
-                                current = cls.superclass;
-                            }
-                        }
-                    } else if (std.mem.startsWith(u8, name_str, "@")) {
-                        // An instance variable this instance has been given. The class layout
-                        // alone said yes once any instance of the class had set it, and a
-                        // block's frame slot 0 (the block) stood in for self.
-                        const self_val = self.frameSelf(frame);
-                        if (self_val.isInstance()) {
-                            const inst = self_val.asInstance();
-                            const clean_val = self.allocateString(name_str[1..]) catch return .runtime_error;
-                            if (inst.class.instance_layout.get(clean_val)) |idx| is_def = idx < inst.fields.items.len;
-                        }
-                    } else {
-                        // Global / Native Check (Globals still use string keys)
-                        is_def = self.lookupGlobal(frame, name_str) != null;
-                    }
-
-                    self.push(if (is_def) value.Value.initBool(true) else value.Value.initNil());
-                },
-                .op_extract_kwarg, .op_extract_kwarg_wide => {
-                    const map_slot = exec_chunk.code.items[frame.ip];
-                    frame.ip += 1;
-
-                    const name_idx = self.readOperand(exec_chunk, frame, op == .op_extract_kwarg_wide);
-                    var extracted = value.Value.initNil();
-
-                    // Safely check if the caller provided a map
-                    if (frame.base_slot + map_slot < self.stack_top) {
-                        const map_val = self.stack[frame.base_slot + map_slot];
-                        if (map_val.isMap()) {
-                            const name_val = exec_chunk.constants.items[name_idx];
-                            const map = map_val.asMap();
-
-                            // Native O(1) Hash Map extraction
-                            if (map.map.get(name_val)) |v| {
-                                extracted = v;
-                            }
-                        }
-                    }
-
-                    self.push(extracted);
-                },
-                .op_cmp => {
-                    const b = self.pop();
-                    const a = self.pop();
-
-                    if (a.isNumber() and b.isNumber()) {
-                        const an = a.asNumber();
-                        const bn = b.asNumber();
-                        const cmp: f64 = if (an < bn) -1.0 else if (an > bn) 1.0 else 0.0;
-                        self.push(value.Value.initNumber(cmp));
-                    } else if (a.isString() and b.isString()) {
-                        const a_str = a.asString().chars;
-                        const b_str = b.asString().chars;
-                        const order = std.mem.order(u8, a_str, b_str);
-                        const cmp: f64 = switch (order) {
-                            .lt => -1.0,
-                            .gt => 1.0,
-                            .eq => 0.0,
-                        };
-                        self.push(value.Value.initNumber(cmp));
-                    } else {
-                        self.push(value.Value.initNil()); // Incompatible types yield nil
-                    }
-                },
+                .op_is_instance => if (ended(self.executeIsInstance())) |res| return res,
+                .op_defined, .op_defined_wide => if (ended(self.executeDefined(frame, exec_chunk, op == .op_defined_wide))) |res| return res,
+                .op_extract_kwarg, .op_extract_kwarg_wide => self.executeExtractKwarg(frame, exec_chunk, op == .op_extract_kwarg_wide),
             }
         }
 
         return .ok;
+    }
+
+    /// What ends the run after an instruction gave `res`: nothing when it is .ok (an error
+    /// it raised was rescued, and the loop goes on at the handler).
+    inline fn ended(res: InterpretResult) ?InterpretResult {
+        return if (res == .ok) null else res;
+    }
+
+    /// `-x`, `+x` and `~x` on the number on top of the stack.
+    fn executeUnary(self: *VM, op: chunk.OpCode) InterpretResult {
+        const a = self.pop();
+        if (!a.isNumber()) {
+            const symbol = switch (op) {
+                .op_negate => "-",
+                .op_positive => "+",
+                else => "~",
+            };
+            return self.raiseError(.TypeError, "unary '{s}' expects a number, got {s}", .{ symbol, self.typeName(a) });
+        }
+        switch (op) {
+            .op_negate => self.push(value.Value.initNumber(-a.asNumber())),
+            .op_positive => self.push(a),
+            .op_bitwise_not => {
+                const int = bitwiseOperand(a.asNumber()) orelse {
+                    return self.raiseError(.RangeError, "Bitwise operand {f} is not a finite 64-bit integer.", .{value.fmtNumber(a.asNumber())});
+                };
+                self.push(value.Value.initNumber(@floatFromInt(~int)));
+            },
+            else => unreachable,
+        }
+        return .ok;
+    }
+
+    /// `a <=> b`: -1, 0 or 1 for two numbers or two strings, nil for anything else.
+    fn executeCompare(self: *VM) void {
+        const b = self.pop();
+        const a = self.pop();
+        const order: ?std.math.Order = if (a.isNumber() and b.isNumber())
+            // Not std.math.order, which ranks NaN above every number: here it compares equal
+            (if (a.asNumber() < b.asNumber()) .lt else if (a.asNumber() > b.asNumber()) .gt else .eq)
+        else if (a.isString() and b.isString())
+            std.mem.order(u8, a.asString().chars, b.asString().chars)
+        else
+            null;
+        self.push(if (order) |o| value.Value.initNumber(switch (o) {
+            .lt => -1.0,
+            .eq => 0.0,
+            .gt => 1.0,
+        }) else value.Value.initNil());
+    }
+
+    fn executeSetIndex(self: *VM) InterpretResult {
+        // Peek instead of Pop to keep everything rooted during potential reallocation
+        const val = self.stack[self.stack_top - 1];
+        const index = self.stack[self.stack_top - 2];
+        const target = self.stack[self.stack_top - 3];
+
+        if (target.isArray() and index.isNumber()) {
+            const arr = target.asArray();
+            const idx = self.resolveArrayIndex(arr.items.items.len, index) catch return self.indexError("Array", index, arr.items.items.len);
+            arr.items.items[idx] = val;
+        } else if (target.isMap()) {
+            self.mapSet(target.asMap(), index, val) catch return self.raiseOutOfMemory("Map#[]=", .{});
+        } else {
+            return self.raiseError(.TypeError, "{s} doesn't support index assignment ([]=)", .{self.typeName(target)});
+        }
+        self.stack_top -= 3; // Pop all three
+        self.push(val);
+        return .ok;
+    }
+
+    fn executeBuildArray(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const item_count = self.readOperand(exec_chunk, frame, is_wide);
+        const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
+        const arr_val = value.Value.initObj(&arr_obj.obj);
+
+        // Root the array BEFORE allocating internal capacity to prevent GC sweeps
+        self.push(arr_val);
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), item_count) catch {
+            return self.raiseOutOfMemory("building an Array", .{});
+        };
+
+        // The elements were pushed before arr_val, so they sit below it
+        const start_idx = self.stack_top - 1 - item_count;
+
+        // Slice AFTER capacity allocation to guarantee memory addresses are valid
+        arr_obj.items.appendSliceAssumeCapacity(self.stack[start_idx .. start_idx + item_count]);
+
+        // Pop the protected arr_val, physically shrink the stack to remove the consumed elements,
+        // and push arr_val back to the new top
+        _ = self.pop();
+        self.shrinkStack(start_idx);
+        self.push(arr_val);
+        return .ok;
+    }
+
+    fn executeBuildMap(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const pair_count = self.readOperand(exec_chunk, frame, is_wide);
+        const map_obj = self.gc.allocateMap(self) catch |err| return self.allocationFailed(err);
+        const map_val = value.Value.initObj(&map_obj.obj);
+
+        // Root the map BEFORE allocating internal capacity to prevent GC sweeps
+        self.push(map_val);
+        map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
+            return self.raiseOutOfMemory("building a Map", .{});
+        };
+
+        const start_idx = self.stack_top - 1 - (pair_count * 2);
+        var i: usize = 0;
+        while (i < pair_count * 2) : (i += 2) {
+            const key = self.stack[start_idx + i];
+            const val = self.stack[start_idx + i + 1];
+
+            self.mapSet(map_obj, key, val) catch {
+                return self.raiseOutOfMemory("building a Map", .{});
+            };
+        }
+
+        // Pop the protected map_val, physically shrink the stack to remove the consumed pairs,
+        // and push map_val back to the new top
+        _ = self.pop();
+        self.shrinkStack(start_idx);
+        self.push(map_val);
+        return .ok;
+    }
+
+    /// `*source` in an array literal: appends the source's elements to the array below it.
+    fn executeArraySpread(self: *VM) InterpretResult {
+        // Peek instead of Pop to keep `source_val` rooted during potential reallocation
+        const source_val = self.stack[self.stack_top - 1];
+        const target_arr = self.stack[self.stack_top - 2].asArray();
+        if (!source_val.isArray()) return self.raiseError(.TypeError, "only an Array can be spread with *", .{});
+        const source_arr = source_val.asArray();
+        target_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), target_arr.items.items.len + source_arr.items.items.len) catch return self.raiseOutOfMemory("spreading an Array with *", .{});
+        target_arr.items.appendSliceAssumeCapacity(source_arr.items.items);
+        // Pop only the spread source; the array stays on top
+        _ = self.pop();
+        return .ok;
+    }
+
+    /// `**source` in a map literal: copies the source's entries into the map below it.
+    fn executeMapSpread(self: *VM) InterpretResult {
+        // Peek instead of Pop to keep `source_val` rooted during potential reallocation
+        const source_val = self.stack[self.stack_top - 1];
+        const target_map = self.stack[self.stack_top - 2].asMap();
+        if (!source_val.isMap()) return self.raiseError(.TypeError, "only a Map can be spread with **", .{});
+        const source_map = source_val.asMap();
+        const keys = source_map.map.keys();
+        const values = source_map.map.values();
+        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
+        for (keys, values) |key, val| {
+            self.mapSet(target_map, key, val) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
+        }
+        // Pop only the spread source; the map stays on top
+        _ = self.pop();
+        return .ok;
+    }
+
+    /// `Name::member = value` in a module or class body.
+    fn executeSetMember(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const val = self.pop();
+        const receiver = self.stack[self.stack_top - 1]; // Peek at namespace (Module/Class)
+
+        if (receiver.isModule()) {
+            receiver.asModule().methods.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
+        } else if (receiver.isClass()) {
+            receiver.asClass().class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
+        } else {
+            return self.raiseError(.TypeError, "Cannot attach member to non-namespace.", .{});
+        }
+        self.push(val); // Push the namespace back to maintain stack equilibrium
+        return .ok;
+    }
+
+    /// A `case` on literals: jumps to the matching case's code, or the default's.
+    fn executeSwitch(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) void {
+        const test_val = self.pop();
+        const case_count = self.readOperand(exec_chunk, frame, is_wide);
+        const match = searchJumpTable(exec_chunk, frame.ip, case_count, test_val);
+        frame.ip += case_count * 6; // Fast-forward past the 6-byte jump table entries
+        const default_offset = self.readJumpOffset(exec_chunk, frame);
+        frame.ip += if (match.matched) match.jump_offset else default_offset;
+    }
+
+    /// One step of a `for` loop: the next element, or out of the loop.
+    fn executeForNext(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const slot = self.readOperand(exec_chunk, frame, true);
+        const exit_offset = self.readJumpOffset(exec_chunk, frame);
+        const taken = self.getLocal(frame, slot + 1).asNumber();
+        // As for a native: a raised error may be rescued, unwinding past this frame.
+        const caller_depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        const more = self.pushForElement(self.getLocal(frame, slot), @intFromFloat(taken)) catch |err| {
+            return self.alreadyThrown(throw_seq, caller_depth) orelse self.nativeFailed("for", err);
+        };
+        if (more) {
+            self.setLocal(frame, slot + 1, value.Value.initNumber(taken + 1));
+        } else {
+            frame.ip += exit_offset;
+        }
+        return .ok;
+    }
+
+    /// A closure of a function constant, capturing the variables its descriptors name.
+    fn executeClosure(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const func_idx = self.readOperand(exec_chunk, frame, is_wide);
+        const func_obj = exec_chunk.constants.items[func_idx].asFunction();
+
+        const closure = self.gc.allocateClosure(self, func_obj) catch |err| return self.allocationFailed(err);
+        // Push the closure to the stack BEFORE capturing upvalues to ensure GC safety
+        self.push(value.Value.initObj(&closure.obj));
+        closure.home = homeMethod(frame);
+        closure.home_self = self.frameSelf(frame);
+        closure.home_block = self.frameBlock(frame);
+
+        // Iterate over the operands to wire up the captured variables
+        for (0..func_obj.upvalue_count) |i| {
+            const is_local = exec_chunk.code.items[frame.ip];
+            // 16-bit upvalue index
+            const index = (@as(u16, exec_chunk.code.items[frame.ip + 1]) << 8) | exec_chunk.code.items[frame.ip + 2];
+            frame.ip += 3;
+            closure.upvalues[i] = if (is_local == 1)
+                // Capture directly from the parent's stack slot
+                self.captureUpvalue(&self.stack[frame.base_slot + index]) catch |err| return self.allocationFailed(err)
+            else
+                // Pass down an upvalue that the parent already captured
+                frame.closure.upvalues[index];
+        }
+        return .ok;
+    }
+
+    /// `a, b = value`: an Array's first elements (nil past its end), or the value then nils.
+    fn executeUnpack(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) void {
+        const count = exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+        const val = self.pop();
+        if (val.isArray()) {
+            const items = val.asArray().items.items;
+            for (0..count) |i| self.push(if (i < items.len) items[i] else value.Value.initNil());
+        } else {
+            self.push(val);
+            for (1..count) |_| self.push(value.Value.initNil());
+        }
+    }
+
+    /// `class Name`: reopens the class visible by that name here (a module can reopen its own
+    /// classes and builtins, not the importer's), or makes one under Object.
+    fn executeClass(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, is_wide);
+        if (self.lookupGlobal(frame, name_str_obj.chars)) |existing| {
+            if (existing.isClass()) {
+                self.push(existing);
+                return .ok;
+            }
+        }
+        const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch |err| return self.allocationFailed(err);
+        self.push(value.Value.initObj(&class_obj.obj));
+        return .ok;
+    }
+
+    /// `class A < B`: B becomes the superclass of the class below it on the stack.
+    fn executeInherit(self: *VM) InterpretResult {
+        const super_val = self.pop();
+        if (!super_val.isClass()) {
+            // `class A < x` with no class: it stopped the run with no message.
+            return self.raiseError(.TypeError, "a superclass must be a Class, got {s}", .{self.typeName(super_val)});
+        }
+        self.stack[self.stack_top - 1].asClass().superclass = super_val.asClass();
+        self.method_epoch +%= 1;
+        return .ok;
+    }
+
+    /// `include M` in a class body.
+    fn executeMixin(self: *VM) InterpretResult {
+        const module_val = self.pop();
+        if (!module_val.isModule()) {
+            return self.raiseError(.TypeError, "include needs a Module, got {s}", .{self.typeName(module_val)});
+        }
+        const class_val = self.stack[self.stack_top - 1]; // Peek at class
+        if (!class_val.isClass()) {
+            // `include M` in a module body, or outside any class: it stopped the run
+            // with no message and nothing to rescue.
+            const where = if (class_val.isModule()) "include can't add a module to another module; include it in each class that needs it" else "include is only valid inside a class body";
+            return self.raiseError(.TypeError, "{s}", .{where});
+        }
+        class_val.asClass().included_modules.append(self.gc.trackingAllocator(), module_val.asModule()) catch |err| return self.allocationFailed(err);
+        self.method_epoch +%= 1;
+        return .ok;
+    }
+
+    /// `def name` in a class or module body: the closure on top becomes its method.
+    fn executeDefineMethod(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const method = self.pop(); // The closure
+        const receiver_val = self.stack[self.stack_top - 1]; // Peek at class or module
+
+        if (receiver_val.isClass()) {
+            receiver_val.asClass().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
+            if (method.isClosure()) method.asClosure().home_class = receiver_val.asClass();
+        } else if (receiver_val.isModule()) {
+            receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
+        } else return .runtime_error;
+        self.method_epoch +%= 1;
+        return .ok;
+    }
+
+    /// `def self.name` in a class or module body.
+    fn executeDefineClassMethod(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const method = self.pop();
+        const receiver_val = self.stack[self.stack_top - 1]; // Peek at target
+
+        if (receiver_val.isClass()) {
+            receiver_val.asClass().class_methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
+        } else if (receiver_val.isModule()) {
+            receiver_val.asModule().methods.put(self.gc.trackingAllocator(), name_val, method) catch |err| return self.allocationFailed(err);
+        } else {
+            return self.raiseError(.TypeError, "Can only define singleton methods on classes or modules.", .{});
+        }
+        self.method_epoch +%= 1;
+        return .ok;
+    }
+
+    /// `obj.name = value`: an instance's field, a class's class field, or a module's member.
+    fn executeSetProperty(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const ic = self.readInlineCache(exec_chunk, frame);
+        const receiver = self.stack[self.stack_top - 2];
+        const val = self.stack[self.stack_top - 1];
+
+        if (receiver.isInstance()) {
+            self.setInstanceField(receiver.asInstance(), name_val, val, ic) catch |err| return self.allocationFailed(err);
+        } else if (receiver.isClass()) {
+            receiver.asClass().class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
+        } else if (receiver.isModule()) {
+            receiver.asModule().methods.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
+        } else {
+            return self.raiseError(.TypeError, "Only instances have properties.", .{});
+        }
+        // The assignment's value replaces the receiver
+        self.stack[self.stack_top - 2] = val;
+        self.stack_top -= 1;
+        return .ok;
+    }
+
+    /// The class `receiver` is or belongs to, for its class variables.
+    fn classContext(receiver: value.Value) ?*value.ObjClass {
+        return if (receiver.isInstance()) receiver.asInstance().class else if (receiver.isClass()) receiver.asClass() else null;
+    }
+
+    /// The class from `class` up whose class fields hold `name`.
+    fn classVarOwner(class: *value.ObjClass, name: value.Value) ?*value.ObjClass {
+        var current: ?*value.ObjClass = class;
+        while (current) |cls| : (current = cls.superclass) {
+            if (cls.class_fields.contains(name)) return cls;
+        }
+        return null;
+    }
+
+    /// `@@name`, looked up from the receiver's class through its superclasses.
+    fn executeGetClassVar(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const receiver = self.pop();
+        const class = classContext(receiver) orelse return self.raiseError(.RuntimeError, "Receiver has no class context.", .{});
+        const owner = classVarOwner(class, name_val) orelse return self.raiseError(.NameError, "Undefined class variable '{s}'.", .{name_val.asString().chars});
+        self.push(owner.class_fields.get(name_val).?);
+        return .ok;
+    }
+
+    /// `@@name = value`: updates the variable wherever the hierarchy has it; a new one belongs
+    /// to the class whose code assigns it (binding it to the root class leaked it into every
+    /// unrelated class).
+    fn executeSetClassVar(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const receiver = self.pop();
+        const val = self.pop();
+        const class = classContext(receiver) orelse return self.raiseError(.RuntimeError, "Receiver has no class context.", .{});
+        const target = classVarOwner(class, name_val) orelse if (homeMethod(frame)) |home| (home.home_class orelse class) else class;
+        target.class_fields.put(self.gc.trackingAllocator(), name_val, val) catch |err| return self.allocationFailed(err);
+        self.push(val); // Yield the assigned value
+        return .ok;
+    }
+
+    /// `rescue Klass`: whether the thrown value is a Klass (an instance, or a class raised
+    /// before it was instantiated, as `raise(ArgumentError)` once was).
+    fn executeIsInstance(self: *VM) InterpretResult {
+        const class_val = self.pop();
+        const thrown_val = self.pop();
+        if (!class_val.isClass()) return self.raiseError(.TypeError, "Rescue type must be a Class.", .{});
+        const thrown_class: ?*value.ObjClass = if (thrown_val.isInstance()) thrown_val.asInstance().class else if (thrown_val.isClass()) thrown_val.asClass() else null;
+        self.push(value.Value.initBool(if (thrown_class) |c| isSubclassOf(c, class_val.asClass()) else false));
+        return .ok;
+    }
+
+    /// `defined?(name)`: true for a class variable the hierarchy has, an instance variable
+    /// this instance was given, or a variable or built-in in scope; nil otherwise.
+    fn executeDefined(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_val = self.readValueOperand(exec_chunk, frame, is_wide);
+        const name_str = name_val.asString().chars;
+        var is_def = false;
+
+        if (std.mem.startsWith(u8, name_str, "@@")) {
+            // Grab `self` and walk the class hierarchy
+            if (classContext(self.getLocal(frame, 0))) |class| is_def = classVarOwner(class, name_val) != null;
+        } else if (std.mem.startsWith(u8, name_str, "@")) {
+            // An instance variable this instance has been given. The class layout
+            // alone said yes once any instance of the class had set it, and a
+            // block's frame slot 0 (the block) stood in for self.
+            const self_val = self.frameSelf(frame);
+            if (self_val.isInstance()) {
+                const inst = self_val.asInstance();
+                const clean_val = self.allocateString(name_str[1..]) catch |err| return self.allocationFailed(err);
+                if (inst.class.instance_layout.get(clean_val)) |idx| is_def = idx < inst.fields.items.len;
+            }
+        } else {
+            // Global / Native Check (Globals still use string keys)
+            is_def = self.lookupGlobal(frame, name_str) != null;
+        }
+
+        self.push(if (is_def) value.Value.initBool(true) else value.Value.initNil());
+        return .ok;
+    }
+
+    /// A keyword parameter's value from the call's keyword map, nil when it wasn't given.
+    fn executeExtractKwarg(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) void {
+        const map_slot = exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+        const name_idx = self.readOperand(exec_chunk, frame, is_wide);
+        var extracted = value.Value.initNil();
+        // The caller may have passed no map
+        if (frame.base_slot + map_slot < self.stack_top) {
+            const map_val = self.stack[frame.base_slot + map_slot];
+            if (map_val.isMap()) {
+                if (map_val.asMap().map.get(exec_chunk.constants.items[name_idx])) |v| extracted = v;
+            }
+        }
+        self.push(extracted);
     }
 
     // --- Allocators ---
@@ -1334,6 +1333,7 @@ pub const VM = struct {
         return try self.allocateStringTakeOwnership(heap_chars);
     }
 
+    /// Takes `chars` even when it fails (see GC.takeString).
     pub fn allocateStringTakeOwnership(self: *VM, chars: []u8) !value.Value {
         // gc.takeString adopts the slice (no second copy) and interns it; nothing allocates
         // after it here, so the value needs no rooting before it is returned.
@@ -1360,7 +1360,20 @@ pub const VM = struct {
     /// never collected, so the value needs no rooting while the global is added.
     pub fn defineNative(self: *VM, name: []const u8, function: value.NativeFn) !void {
         const native_obj = try self.gc.allocateNative(name, function);
-        try self.globals.put(self.allocator, name, value.Value.initObj(&native_obj.obj));
+        try self.setGlobal(name, value.Value.initObj(&native_obj.obj));
+    }
+
+    /// Sets the global `name` (not copied: it must outlive the VM) as the host's: a native,
+    /// a class or a library object, which modules see too. A script's own top-level
+    /// variables are defined by op_define_global (defineGlobal).
+    pub fn setGlobal(self: *VM, name: []const u8, val: value.Value) !void {
+        try self.globals.put(self.allocator, name, val);
+        self.globalsChanged();
+    }
+
+    /// A new generation of the global tables' layout: every site looks its name up again.
+    fn globalsChanged(self: *VM) void {
+        self.global_generation = next_global_generation.fetchAdd(1, .monotonic);
     }
 
     /// `name` (a literal, outliving the VM) as an interned string that is never collected;
@@ -1404,43 +1417,67 @@ pub const VM = struct {
     /// Global assignment from bytecode. Like the import cache, new keys are owned
     /// copies: the name comes from a constant ObjString that is swept once its chunk
     /// is freed, while the global lives on into the next run of a reused VM.
-    /// `name = val` at the top of the main script. Every assignment of a top-level
-    /// variable comes here, so the common case, a name the script defined before, is one
-    /// lookup in `globals` and one in `script_defined_globals`; the bookkeeping (the owned
-    /// key, the shadowed builtin) is done the first time a name is seen.
-    fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !void {
-        const gop = try self.globals.getOrPut(self.allocator, name);
-        if (!gop.found_existing) {
-            errdefer self.globals.removeByPtr(gop.key_ptr);
-            const owned = try self.allocator.dupe(u8, name);
-            errdefer self.allocator.free(owned);
-            try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
-            try self.script_defined_globals.put(self.allocator, owned, {});
-            self.owned_global_keys.appendAssumeCapacity(owned);
-            gop.key_ptr.* = owned;
-        } else if (!self.script_defined_globals.contains(name)) {
-            // The main script is shadowing a builtin: keep the original for modules.
-            try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
-            try self.shadowed_builtins.put(self.allocator, gop.key_ptr.*, gop.value_ptr.*);
-            self.script_defined_globals.putAssumeCapacity(gop.key_ptr.*, {});
+    /// `name = val` at the top of the main script, when its site's GlobalCache is stale:
+    /// the first time a name is seen it does the bookkeeping (the owned key, the shadowed
+    /// builtin). Returns the variable's slot, for the site to write to from then on.
+    fn defineGlobal(self: *VM, name: []const u8, val: value.Value) !*value.Value {
+        if (self.globals.getEntry(name)) |entry| {
+            if (!self.script_defined_globals.contains(name)) {
+                // The main script is shadowing a builtin: keep the original for modules.
+                try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
+                try self.shadowed_builtins.put(self.allocator, entry.key_ptr.*, entry.value_ptr.*);
+                self.script_defined_globals.putAssumeCapacity(entry.key_ptr.*, {});
+                self.globalsChanged();
+            }
+            entry.value_ptr.* = val;
+            return entry.value_ptr;
         }
+        const owned = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned);
+        try self.owned_global_keys.ensureUnusedCapacity(self.allocator, 1);
+        try self.script_defined_globals.ensureUnusedCapacity(self.allocator, 1);
+        const gop = try self.globals.getOrPut(self.allocator, owned);
         gop.value_ptr.* = val;
+        self.script_defined_globals.putAssumeCapacity(owned, {});
+        self.owned_global_keys.appendAssumeCapacity(owned);
+        self.globalsChanged();
+        return gop.value_ptr;
+    }
+
+    /// A module's top-level `name = val`, in its namespace; returns the variable's slot.
+    fn defineInNamespace(self: *VM, ns: *value.Namespace, name: []const u8, val: value.Value) !*value.Value {
+        if (ns.globals.getPtr(name)) |slot| {
+            slot.* = val;
+            return slot;
+        }
+        try ns.define(self.allocator, name, val);
+        self.globalsChanged();
+        return ns.globals.getPtr(name).?;
     }
 
     /// Resolves a top-level name for code running in `frame`. Main-script code sees
     /// `globals`. Module code sees its own namespace, then builtins, but never the main
     /// script's variables or another module's.
     fn lookupGlobal(self: *VM, frame: *const CallFrame, name: []const u8) ?value.Value {
-        const ns = frame.closure.function.namespace orelse return self.globals.get(name);
-        if (ns.globals.get(name)) |val| return val;
-        return self.builtinGlobal(name);
+        return (self.globalSlot(frame, name) orelse return null).*;
+    }
+
+    /// Where `name` lives for code running in `frame` (see lookupGlobal); the slot stays
+    /// put until the global tables' layout changes (`global_generation`).
+    fn globalSlot(self: *VM, frame: *const CallFrame, name: []const u8) ?*value.Value {
+        const ns = frame.closure.function.namespace orelse return self.globals.getPtr(name);
+        return ns.globals.getPtr(name) orelse self.builtinSlot(name);
     }
 
     /// A top-level name as module code sees it: the builtin, also when the main script
     /// has shadowed it (`cube = 5`), and never the main script's own variables.
     pub fn builtinGlobal(self: *const VM, name: []const u8) ?value.Value {
-        if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.get(name);
-        return self.globals.get(name);
+        return (self.builtinSlot(name) orelse return null).*;
+    }
+
+    fn builtinSlot(self: *const VM, name: []const u8) ?*value.Value {
+        if (self.script_defined_globals.contains(name)) return self.shadowed_builtins.getPtr(name);
+        return self.globals.getPtr(name);
     }
 
     fn newModuleNamespace(self: *VM) !*value.Namespace {
@@ -1456,7 +1493,7 @@ pub const VM = struct {
     }
 
     /// Caps the script heap the GC tracks at `bytes` (null: no cap); an allocation past it
-    /// ends the run with a Sandbox Error. The cap existed in the GC but nothing set it.
+    /// raises an OutOfMemoryError naming the limit. The cap existed in the GC but nothing set it.
     pub fn setMemoryLimit(self: *VM, bytes: ?usize) void {
         self.gc.max_memory_limit = bytes;
     }
@@ -1476,11 +1513,15 @@ pub const VM = struct {
         self.materials.clearRetainingCapacity();
     }
 
-    /// Destroys every cached result (GC eviction drops only those no geometry still uses).
+    /// Destroys every cached result, solids and sketches (GC eviction drops only those
+    /// nothing still uses).
     pub fn clearDagCache(self: *VM) void {
         var it = self.dag_cache.valueIterator();
         while (it.next()) |handle| kernel.destruct(handle.*);
         self.dag_cache.clearRetainingCapacity();
+        var cs_it = self.cs_cache.valueIterator();
+        while (cs_it.next()) |handle| kernel.destructCrossSection(handle.*);
+        self.cs_cache.clearRetainingCapacity();
     }
 
     /// Raises the GeometryError for one operation given geometry of two engines.
@@ -1539,13 +1580,10 @@ pub const VM = struct {
         return try dag_evaluator.evaluateDAG(self, geom_obj.dag_idx);
     }
 
+    /// The sketch's shape, borrowed from `cs_cache` as a solid's is from `dag_cache`.
     pub fn ensureConcreteCrossSection(self: *VM, val: value.Value) !geom.CrossSectionHandle {
         if (!val.isCrossSection()) return error.RuntimeError;
-        var cs = val.asCrossSection();
-        if (cs.cached_handle) |handle| return handle;
-        const handle = try dag_evaluator.evaluateCrossSectionDAG(self, cs.dag_idx);
-        cs.cached_handle = handle;
-        return handle;
+        return dag_evaluator.evaluateCrossSectionDAG(self, val.asCrossSection().dag_idx);
     }
 
     fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {
@@ -1728,7 +1766,7 @@ pub const VM = struct {
             self.runtimeError("Call stack overflow: deeper than {d} calls (a recursion that never ends?).", .{self.max_call_frames});
             return .runtime_error;
         }
-        self.frames.ensureUnusedCapacity(self.allocator, 1) catch return .runtime_error;
+        self.frames.ensureUnusedCapacity(self.allocator, 1) catch |err| return self.allocationFailed(err);
 
         var provided_args = arg_count;
         var block_val: ?value.Value = null;
@@ -1752,7 +1790,7 @@ pub const VM = struct {
         if (func.is_method) if (self.arityError(closure, provided_args)) |res| return res;
 
         // Execute unified padding logic
-        self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch return .runtime_error;
+        self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch |err| return self.allocationFailed(err);
 
         if (self.profiler) |p| {
             p.enterFrame(self.closureName(closure)) catch |err| {
@@ -1945,13 +1983,13 @@ pub const VM = struct {
                 var stack_buf: [MAX_STACK_STRING_LEN]u8 = undefined;
                 @memcpy(stack_buf[0..a_str.len], a_str);
                 @memcpy(stack_buf[a_str.len..total_len], b_str);
-                str_val = self.allocateString(stack_buf[0..total_len]) catch return .runtime_error;
+                str_val = self.allocateString(stack_buf[0..total_len]) catch |err| return self.allocationFailed(err);
             } else {
-                const heap_buf = self.allocator.alloc(u8, total_len) catch return .runtime_error;
+                const heap_buf = self.allocator.alloc(u8, total_len) catch |err| return self.allocationFailed(err);
                 defer self.allocator.free(heap_buf);
                 @memcpy(heap_buf[0..a_str.len], a_str);
                 @memcpy(heap_buf[a_str.len..total_len], b_str);
-                str_val = self.allocateString(heap_buf) catch return .runtime_error;
+                str_val = self.allocateString(heap_buf) catch |err| return self.allocationFailed(err);
             }
 
             self.push(str_val);
@@ -1962,10 +2000,10 @@ pub const VM = struct {
 
             const a_arr = a_val.asArray();
             const b_arr = b_val.asArray();
-            const new_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const new_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
             const new_val = value.Value.initObj(&new_arr.obj);
 
-            new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch return .runtime_error;
+            new_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), a_arr.items.items.len + b_arr.items.items.len) catch |err| return self.allocationFailed(err);
             new_arr.items.appendSliceAssumeCapacity(a_arr.items.items);
             new_arr.items.appendSliceAssumeCapacity(b_arr.items.items);
 
@@ -2062,7 +2100,7 @@ pub const VM = struct {
 
         // 3. Compile it into its own top-level scope: its variables, defs and
         // classes live there, and only exported names reach the importer.
-        const namespace = self.newModuleNamespace() catch return .runtime_error;
+        const namespace = self.newModuleNamespace() catch |err| return self.allocationFailed(err);
         const compile_module = self.host.compile_module orelse {
             if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
             return null;
@@ -2090,7 +2128,7 @@ pub const VM = struct {
         }
 
         // 5. Setup Closure
-        const func = self.gc.allocateFunction(self) catch return .runtime_error;
+        const func = self.gc.allocateFunction(self) catch |err| return self.allocationFailed(err);
         func.chunk = heap_chunk;
         func.owns_chunk = true;
         func.local_count = heap_chunk.local_count;
@@ -2099,13 +2137,13 @@ pub const VM = struct {
 
         // Root func while allocateClosure may collect
         self.push(value.Value.initObj(&func.obj));
-        const closure = self.gc.allocateClosure(self, func) catch return .runtime_error;
+        const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
         _ = self.pop();
 
         // --- CIRCULAR DEPENDENCY: the import in progress. (A nil in the cache
         // used to mark it, so a module whose value is nil, one ending in a def or
         // a puts, was "circular" the second time it was imported.)
-        self.loading_modules.put(self.allocator, path_str, {}) catch return .runtime_error;
+        self.loading_modules.put(self.allocator, path_str, {}) catch |err| return self.allocationFailed(err);
         defer _ = self.loading_modules.remove(path_str);
 
         // 6. Execute synchronously
@@ -2125,10 +2163,11 @@ pub const VM = struct {
         if (namespace.globals.get("__exports__")) |exp_mod| {
             final_res = exp_mod;
             namespace.remove(self.allocator, "__exports__");
+            self.globalsChanged();
         }
 
         // 7. Cache the actual finalized module and yield result
-        self.cacheModule(path_str, final_res) catch return .runtime_error;
+        self.cacheModule(path_str, final_res) catch |err| return self.allocationFailed(err);
         self.push(final_res);
         return null;
     }
@@ -2227,7 +2266,7 @@ pub const VM = struct {
         // outside a def, so it exists).
         const home = homeMethod(frame) orelse return self.raiseError(.TypeError, "super can only be called inside a method", .{});
         const method_name_str = if (home.function.name) |n| n.chars else "";
-        const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch return .runtime_error;
+        const method_name_val = if (home.function.name) |n| value.Value.initObj(&n.obj) else self.allocateString("") catch |err| return self.allocationFailed(err);
 
         const receiver = self.stack[base_slot];
 
@@ -2437,13 +2476,13 @@ pub const VM = struct {
                 if (i < total) self.push(arr.items.items[i]) else self.push(value.Value.initNil());
             }
 
-            const splat_arr = self.gc.allocateArray(self) catch return .runtime_error;
+            const splat_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
             const splat_val = value.Value.initObj(&splat_arr.obj);
             self.push(splat_val);
 
             if (total > pre_count + post_count) {
                 const splat_size = total - pre_count - post_count;
-                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat unpack failed", .{});
+                splat_arr.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseOutOfMemory("gathering the rest into *", .{});
                 splat_arr.items.appendSliceAssumeCapacity(arr.items.items[pre_count .. pre_count + splat_size]);
             }
 
@@ -2471,18 +2510,18 @@ pub const VM = struct {
             if (pre_count > 0) {
                 self.push(val);
                 for (1..pre_count) |_| self.push(value.Value.initNil());
-                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                const empty_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&empty_arr.obj));
                 for (0..post_count) |_| self.push(value.Value.initNil());
             } else if (post_count > 0) {
-                const empty_arr = self.gc.allocateArray(self) catch return .runtime_error;
+                const empty_arr = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&empty_arr.obj));
                 for (0..post_count - 1) |_| self.push(value.Value.initNil());
                 self.push(val);
             } else {
-                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 self.push(value.Value.initObj(&arr_obj.obj));
-                arr_obj.items.append(self.gc.trackingAllocator(), val) catch return .runtime_error;
+                arr_obj.items.append(self.gc.trackingAllocator(), val) catch |err| return self.allocationFailed(err);
                 _ = self.pop();
                 self.push(value.Value.initObj(&arr_obj.obj));
             }
@@ -2505,11 +2544,11 @@ pub const VM = struct {
             splat_size = total_args_passed - fixed_arity - trailing_arity;
         }
 
-        const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+        const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
         const arr_val = value.Value.initObj(&arr_obj.obj);
 
         self.push(arr_val);
-        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseError(.OutOfMemoryError, "Splat pack failed", .{});
+        arr_obj.items.ensureTotalCapacity(self.gc.trackingAllocator(), splat_size) catch return self.raiseOutOfMemory("gathering arguments into *", .{});
         _ = self.pop();
 
         const start_idx = frame.base_slot + 1 + fixed_arity;
@@ -2544,7 +2583,7 @@ pub const VM = struct {
         const start_val = self.pop();
 
         if (start_val.isNumber() and end_val.isNumber() and step_val.isNumber()) {
-            const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch return .runtime_error;
+            const range_obj = self.gc.allocateRange(self, start_val.asNumber(), end_val.asNumber(), step_val.asNumber(), is_exclusive) catch |err| return self.allocationFailed(err);
             self.push(value.Value.initObj(&range_obj.obj));
         } else if (start_val.isString() and end_val.isString()) {
             // Re-root the strings to prevent GC sweep
@@ -2555,7 +2594,7 @@ pub const VM = struct {
             const e_str = end_val.asString().chars;
 
             if (s_str.len == 1 and e_str.len == 1) {
-                const arr_obj = self.gc.allocateArray(self) catch return .runtime_error;
+                const arr_obj = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
                 const arr_val = value.Value.initObj(&arr_obj.obj);
                 self.push(arr_val); // Protect from GC while building
 
@@ -2565,8 +2604,8 @@ pub const VM = struct {
 
                 while (curr < limit) : (curr += 1) {
                     const char_slice = &[_]u8{@intCast(curr)};
-                    const char_str = self.allocateString(char_slice) catch return .runtime_error;
-                    arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch return .runtime_error;
+                    const char_str = self.allocateString(char_slice) catch |err| return self.allocationFailed(err);
+                    arr_obj.items.append(self.gc.trackingAllocator(), char_str) catch |err| return self.allocationFailed(err);
                 }
 
                 // Cleanup the protected values
@@ -2641,18 +2680,18 @@ pub const VM = struct {
             const i = self.resolveArrayIndex(len, index) catch return self.indexError(kind, index, len);
             if (!is_string) break :blk target.asArray().items.items[i];
             const span = charSpan(chars, i, 1);
-            break :blk self.allocateString(chars[span.start..span.end]) catch return .runtime_error;
+            break :blk self.allocateString(chars[span.start..span.end]) catch |err| return self.allocationFailed(err);
         } else if (index.isRange()) blk: {
             const range = index.asRange();
             if (range.step != 1.0) return self.raiseError(.ArgumentError, "a stepped Range can't index {s} {s}", .{ if (is_string) "a" else "an", kind });
             const span = rangeSpan(range, len) orelse break :blk value.Value.initNil();
             if (is_string) {
                 const bytes = charSpan(chars, span.start, span.end - span.start);
-                break :blk self.allocateString(chars[bytes.start..bytes.end]) catch return .runtime_error;
+                break :blk self.allocateString(chars[bytes.start..bytes.end]) catch |err| return self.allocationFailed(err);
             }
             // `index` stays on the stack, keeping the Range rooted while the Array is built
-            const slice = self.gc.allocateArray(self) catch return .runtime_error;
-            slice.items.appendSlice(self.gc.trackingAllocator(), target.asArray().items.items[span.start..span.end]) catch return .runtime_error;
+            const slice = self.gc.allocateArray(self) catch |err| return self.allocationFailed(err);
+            slice.items.appendSlice(self.gc.trackingAllocator(), target.asArray().items.items[span.start..span.end]) catch |err| return self.allocationFailed(err);
             break :blk value.Value.initObj(&slice.obj);
         } else {
             return self.raiseError(.TypeError, "{s} index must be an integer or a Range, got {s}", .{ kind, self.typeName(index) });
@@ -2874,7 +2913,7 @@ pub const VM = struct {
         return switch (err) {
             error.InvalidBlock => self.raiseError(.TypeError, "a block argument (&blk) must be a lambda or a block", .{}),
             error.TooManyArguments => self.raiseError(.ArgumentError, "too many arguments after spreading: a call takes at most {d}", .{limits.MAX_ARGS}),
-            error.OutOfMemory => self.raiseError(.OutOfMemoryError, "out of memory spreading call arguments", .{}),
+            error.OutOfMemory => self.raiseOutOfMemory("spreading call arguments", .{}),
         };
     }
 
@@ -2918,10 +2957,10 @@ pub const VM = struct {
             const hint = if (class_obj == self.proc_class) "; KupCAD makes them with lambdas: ->(x) { ... }" else "";
             return self.raiseError(.NoMethodError, "undefined method 'new' for {s}{s}", .{ class_obj.name.chars, hint });
         }
-        const instance = self.gc.allocateInstance(self, class_obj) catch return .runtime_error;
+        const instance = self.gc.allocateInstance(self, class_obj) catch |err| return self.allocationFailed(err);
         self.stack.ptr[base_slot] = value.Value.initObj(&instance.obj); // Overwrite class with instance safely
 
-        const init_name_val = self.allocateString("initialize") catch return .runtime_error;
+        const init_name_val = self.allocateString("initialize") catch |err| return self.allocationFailed(err);
         const init_method = self.findMethod(class_obj, init_name_val) orelse {
             if (arg_count > 0) return self.raiseError(.ArgumentError, "Expected 0 args for default constructor.", .{});
             return .ok;
@@ -2956,7 +2995,7 @@ pub const VM = struct {
     /// below them); `has_block`: the last of them is the call's block.
     inline fn executeNative(self: *VM, native_obj: *value.ObjNative, arg_count: u8, args_ptr: [*]value.Value, has_block: bool) InterpretResult {
         // Natives push GC roots without growing the stack themselves (see NATIVE_STACK_RESERVE).
-        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{native_obj.name});
+        self.ensureStackCapacity(self.stack_top + NATIVE_STACK_RESERVE) catch return self.raiseOutOfMemory("{s}", .{native_obj.name});
         // Depth of the calling frame, captured before an unwind can pop it
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
@@ -3052,11 +3091,11 @@ pub const VM = struct {
                     return .ok;
                 },
                 error.ExecutionLimitExceeded => return .execution_limit_exceeded,
-                error.OutOfMemory, error.WriteFailed => return self.raiseError(.OutOfMemoryError, "out of memory building a String", .{}),
+                error.OutOfMemory, error.WriteFailed => return self.raiseOutOfMemory("building a String", .{}),
                 else => return self.alreadyThrown(throw_seq, depth) orelse .runtime_error,
             };
         }
-        const merged = self.allocateString(out.written()) catch return .runtime_error;
+        const merged = self.allocateString(out.written()) catch |err| return self.allocationFailed(err);
         self.popAndRelease(count);
         self.push(merged);
         return .ok;
@@ -3158,80 +3197,17 @@ pub const VM = struct {
         return pending.value;
     }
 
+    /// Throws the value on top of the stack: to the innermost rescue, or, with none, out of
+    /// the run as an uncaught error. A class is raised as a new instance of it, and a value
+    /// that is no error instance as a RuntimeError with the value for its message. The value
+    /// stays in its stack slot (peeked, not popped) while anything allocates.
     pub fn executeThrow(self: *VM) InterpretResult {
-        // PEEK instead of POP to protect the thrown error from the GC
-        var err_val = self.stack[self.stack_top - 1];
-
-        // `raise Klass` raises Klass.new, as in Ruby: a rescue gets an instance, with a
-        // message (the class name) and a backtrace. The class itself was thrown before,
-        // so `e.message` on it was a NoMethodError.
-        if (err_val.isClass()) {
-            const throw_seq = self.throw_seq;
-            const depth = self.frames.items.len;
-            const res = self.constructInstance(err_val.asClass(), 0, self.stack_top - 1, false, false);
-            if (res != .ok) return res;
-            if (self.frames.items.len > depth) {
-                const init_res = self.runUntil(depth);
-                if (init_res != .ok) return init_res;
-            }
-            // initialize raised, and a rescue took over: nothing is left to throw
-            if (self.throw_seq != throw_seq) return .ok;
-            err_val = self.stack[self.stack_top - 1];
+        if (self.stack[self.stack_top - 1].isClass()) {
+            if (self.instantiateRaisedClass()) |done| return done;
         }
-
-        // --- Auto-wrap primitives in RuntimeError ---
-        // Each allocation below can collect, and Zig locals are not GC roots: every
-        // new object goes onto the stack as soon as it exists.
-        if (!err_val.isInstance() and !err_val.isClass()) {
-            if (self.error_classes.get(.RuntimeError)) |rt_class| {
-                if (self.gc.allocateInstance(self, rt_class) catch null) |inst| {
-                    const inst_val = value.Value.initObj(&inst.obj);
-                    self.push(inst_val);
-
-                    var str_val: ?value.Value = null;
-
-                    // If it's already a string, use it directly!
-                    if (err_val.isString()) {
-                        str_val = err_val;
-                    } else {
-                        // Otherwise, stringify the value (a number, an Array, ...). On the heap:
-                        // a fixed stack buffer used to truncate a large one.
-                        var out: std.Io.Writer.Allocating = .init(self.allocator);
-                        defer out.deinit();
-                        err_val.stringify(false, &out.writer) catch |err| {
-                            self.reportError("Error stringifying a raised value: {}", .{err});
-                        };
-                        str_val = self.allocateString(out.written()) catch null;
-                    }
-
-                    if (str_val) |s_val| {
-                        self.push(s_val); // Protect until the instance holds it
-                        const msg_key = self.allocateString("message") catch return .runtime_error;
-                        self.setInstanceField(inst, msg_key, s_val, null) catch |err| {
-                            self.reportError("Error setting exception message: {}", .{err});
-                        };
-                        _ = self.pop();
-
-                        // --- EAGER BACKTRACE CAPTURE ---
-                        if (self.buildBacktrace() catch null) |bt_arr| {
-                            self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                            const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                            self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                                self.reportError("Error setting exception backtrace: {}", .{err});
-                            };
-                            _ = self.pop();
-                        }
-
-                        // The instance takes over the thrown slot, which keeps it rooted until it is popped
-                        _ = self.pop();
-                        self.stack[self.stack_top - 1] = inst_val;
-                        err_val = inst_val; // Overwrite the thrown value!
-                    } else {
-                        _ = self.pop(); // No message: drop the instance and throw the payload as-is
-                    }
-                }
-            }
-        }
+        const thrown = self.stack[self.stack_top - 1];
+        if (!thrown.isInstance() and !thrown.isClass()) self.wrapInRuntimeError();
+        const err_val = self.stack[self.stack_top - 1];
 
         self.throw_seq +%= 1;
         self.last_throw_target = if (self.rescue_frames.items.len > 0)
@@ -3239,63 +3215,85 @@ pub const VM = struct {
         else
             null;
 
-        if (self.rescue_frames.items.len == 0) {
-            // Pop only once reporting is done: the key lookups below allocate, and the
-            // thrown value must stay rooted in its stack slot until then.
-            defer _ = self.pop();
+        if (self.rescue_frames.items.len == 0) return self.reportUncaught(err_val);
+        return self.unwindToRescue(err_val);
+    }
 
-            // We removed the [Uncaught Exception] header
-            if (err_val.isString()) {
-                const str = err_val.asString().chars;
-                self.reportError("RuntimeError: {s}", .{str});
-                self.printStacktrace();
-            } else if (err_val.isInstance()) {
-                const inst = err_val.asInstance();
-                var printed = false;
-
-                const msg_key = self.allocateString("message") catch return .runtime_error;
-
-                // Format: ClassName: Message
-                if (inst.class.instance_layout.get(msg_key)) |idx| {
-                    if (idx < inst.fields.items.len) {
-                        const msg_val = inst.fields.items[idx];
-                        if (msg_val.isString()) {
-                            const str = msg_val.asString().chars;
-                            self.reportError("{s}: {s}", .{ inst.class.name.chars, str });
-                            printed = true;
-                        }
-                    }
-                }
-                if (!printed) self.reportError("{s}", .{inst.class.name.chars});
-
-                // Print First-Class Backtrace seamlessly
-                var printed_bt = false;
-                const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-
-                if (inst.class.instance_layout.get(bt_key)) |bt_idx| {
-                    if (bt_idx < inst.fields.items.len) {
-                        const bt_val = inst.fields.items[bt_idx];
-                        if (bt_val.isArray()) {
-                            const arr_obj = bt_val.asArray();
-                            for (arr_obj.items.items) |frame_val| {
-                                if (frame_val.isString()) {
-                                    const frame_str = frame_val.asString().chars;
-                                    self.reportError("{s}", .{frame_str});
-                                }
-                            }
-                            printed_bt = true;
-                        }
-                    }
-                }
-
-                if (!printed_bt) self.printStacktrace();
-            } else {
-                self.reportError("Unknown error.", .{});
-                self.printStacktrace();
-            }
-            return .runtime_error;
+    /// `raise Klass` raises Klass.new, as in Ruby: a rescue gets an instance, with a message
+    /// (the class name) and a backtrace (the class itself was thrown, so `e.message` on it
+    /// was a NoMethodError). The instance replaces the class on top of the stack. Null when
+    /// it is there to throw; otherwise what ends the throw: initialize's failure, or .ok when
+    /// initialize raised and a rescue has taken over.
+    fn instantiateRaisedClass(self: *VM) ?InterpretResult {
+        const throw_seq = self.throw_seq;
+        const depth = self.frames.items.len;
+        const res = self.constructInstance(self.stack[self.stack_top - 1].asClass(), 0, self.stack_top - 1, false, false);
+        if (res != .ok) return res;
+        if (self.frames.items.len > depth) {
+            const init_res = self.runUntil(depth);
+            if (init_res != .ok) return init_res;
         }
+        if (self.throw_seq != throw_seq) return .ok;
+        return null;
+    }
 
+    /// Replaces the value on top of the stack with a RuntimeError whose message it is (its
+    /// text, for a number or an Array), so `raise "text"` is rescued like any error. Before
+    /// the standard library defines RuntimeError, or without room for the error, the value
+    /// is thrown as it is.
+    fn wrapInRuntimeError(self: *VM) void {
+        const rt_class = self.error_classes.get(.RuntimeError) orelse return;
+        const payload = self.stack[self.stack_top - 1];
+        const inst = self.gc.allocateInstance(self, rt_class) catch return;
+        self.push(value.Value.initObj(&inst.obj));
+        defer _ = self.pop();
+        const message = if (payload.isString()) payload else self.messageText(payload) catch return;
+        self.setErrorFields(inst, message) catch return;
+        self.stack[self.stack_top - 2] = value.Value.initObj(&inst.obj);
+    }
+
+    /// `val` written out as an error's message, as a new string (on the heap: a fixed buffer
+    /// used to truncate a large one).
+    fn messageText(self: *VM, val: value.Value) !value.Value {
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        try val.stringify(false, &out.writer);
+        return self.allocateString(out.written());
+    }
+
+    /// No rescue is left: reports the error as "<Class>: <message>" and its backtrace, and
+    /// ends the run.
+    fn reportUncaught(self: *VM, err_val: value.Value) InterpretResult {
+        // Popped once reporting is done: the field names may be interned, which allocates,
+        // and the thrown value must stay rooted in its slot until then.
+        defer _ = self.pop();
+        if (err_val.isInstance()) {
+            const inst = err_val.asInstance();
+            const message = self.errorField(inst, "message") catch return self.raisingOutOfMemory();
+            if (message != null and message.?.isString()) {
+                self.reportError("{s}: {s}", .{ inst.class.name.chars, message.?.asString().chars });
+            } else {
+                self.reportError("{s}", .{inst.class.name.chars});
+            }
+            const backtrace = self.errorField(inst, "backtrace") catch return self.raisingOutOfMemory();
+            if (backtrace != null and backtrace.?.isArray()) {
+                for (backtrace.?.asArray().items.items) |line| {
+                    if (line.isString()) self.reportError("{s}", .{line.asString().chars});
+                }
+                return .runtime_error;
+            }
+        } else if (err_val.isString()) {
+            self.reportError("RuntimeError: {s}", .{err_val.asString().chars});
+        } else {
+            self.reportError("Unknown error.", .{});
+        }
+        self.printStacktrace();
+        return .runtime_error;
+    }
+
+    /// Hands the error on top of the stack to the innermost rescue: drops the frames and
+    /// stack above it, and resumes at its handler with the error pushed for it.
+    fn unwindToRescue(self: *VM, err_val: value.Value) InterpretResult {
         // Complete the conceptual op_throw; nothing allocates before the handler re-pushes err_val
         _ = self.pop();
 
@@ -3465,7 +3463,7 @@ pub const VM = struct {
     /// it): the error names the native and the failure. These used to be the generic
     /// "Native Execution Error" / "CAD Kernel / Method Error".
     fn nativeFailed(self: *VM, name: []const u8, err: anyerror) InterpretResult {
-        if (err == error.OutOfMemory) return self.raiseError(.OutOfMemoryError, "{s} ran out of memory", .{name});
+        if (err == error.OutOfMemory) return self.raiseOutOfMemory("{s}", .{name});
         return self.raiseError(.RuntimeError, "{s} failed ({s})", .{ name, @errorName(err) });
     }
 
@@ -3659,6 +3657,10 @@ pub const VM = struct {
             }
         }
         const msg = self.fmtScratch(fmt, args) catch "Out of memory while formatting an error message";
+        // The error that says the heap is full needs a little of it (gc.OUT_OF_MEMORY_RESERVE).
+        const was_raising = self.gc.raising_out_of_memory;
+        if (kind == .OutOfMemoryError) self.gc.raising_out_of_memory = true;
+        defer self.gc.raising_out_of_memory = was_raising;
 
         if (self.error_classes.get(kind)) |class| {
             if (self.gc.allocateInstance(self, class) catch null) |inst| {
@@ -3666,23 +3668,7 @@ pub const VM = struct {
                 self.push(value.Value.initObj(&inst.obj));
 
                 if (self.allocateString(msg) catch null) |str_val| {
-                    self.push(str_val); // Protect until the instance holds it
-                    const msg_key = self.allocateString("message") catch return .runtime_error;
-                    self.setInstanceField(inst, msg_key, str_val, null) catch |err| {
-                        self.reportError("Error setting exception message: {}", .{err});
-                    };
-                    _ = self.pop();
-
-                    // --- EAGER BACKTRACE CAPTURE ---
-                    if (self.buildBacktrace() catch null) |bt_arr| {
-                        self.push(value.Value.initObj(&bt_arr.obj)); // Protect during assignment
-                        const bt_key = self.allocateString("backtrace") catch return .runtime_error;
-                        self.setInstanceField(inst, bt_key, value.Value.initObj(&bt_arr.obj), null) catch |err| {
-                            self.reportError("Error setting exception backtrace: {}", .{err});
-                        };
-                        _ = self.pop();
-                    }
-
+                    self.setErrorFields(inst, str_val) catch return self.raisingOutOfMemory();
                     // inst is already safely on the top of the stack, call executeThrow to bubble it
                     return self.executeThrow();
                 }
@@ -3699,6 +3685,32 @@ pub const VM = struct {
             self.runtimeError("Fatal: out of memory while raising an error.", .{});
             return .runtime_error;
         }
+    }
+
+    /// An allocation the run needed failed: raises an OutOfMemoryError the script may rescue,
+    /// naming the memory limit when one is set (it refused the allocation, or the system ran
+    /// out first). Such a run used to stop with no message at all. `err` can only be
+    /// OutOfMemory, so a call that fails in other ways doesn't compile against it.
+    fn allocationFailed(self: *VM, err: error{OutOfMemory}) InterpretResult {
+        switch (err) {
+            error.OutOfMemory => {},
+        }
+        if (self.gc.max_memory_limit) |limit| return self.raiseError(.OutOfMemoryError, "the script exceeded its memory limit of {d} bytes", .{limit});
+        return self.raiseError(.OutOfMemoryError, "out of memory", .{});
+    }
+
+    /// The same, saying what ran out (`what`, a format with `args`): "the script exceeded its
+    /// memory limit of N bytes (building an Array)". Each site used to word it its own way,
+    /// and only this one named the limit.
+    fn raiseOutOfMemory(self: *VM, comptime what: []const u8, args: anytype) InterpretResult {
+        if (self.gc.max_memory_limit) |limit| return self.raiseError(.OutOfMemoryError, "the script exceeded its memory limit of {d} bytes (" ++ what ++ ")", .{limit} ++ args);
+        return self.raiseError(.OutOfMemoryError, "out of memory (" ++ what ++ ")", args);
+    }
+
+    /// The same while an error is being raised or reported, where raising one would recurse.
+    fn raisingOutOfMemory(self: *VM) InterpretResult {
+        self.runtimeError("Fatal: out of memory while raising an error.", .{});
+        return .runtime_error;
     }
 
     pub fn runtimeError(self: *VM, comptime fmt: []const u8, args: anytype) void {
@@ -3781,6 +3793,26 @@ pub const VM = struct {
         while (lines.next()) |line| self.reportError("{s}", .{line});
     }
 
+    /// Gives a new error instance its `message` and, when one can be built, its
+    /// `backtrace`. Setting a field can collect, so both values are rooted here while they
+    /// are set; `inst` is the caller's to root.
+    pub fn setErrorFields(self: *VM, inst: *value.ObjInstance, message: value.Value) !void {
+        self.push(message);
+        defer _ = self.pop();
+        try self.setInstanceField(inst, try self.staticString("message"), message, null);
+        // An error without a backtrace is still the error.
+        const backtrace = value.Value.initObj(&(self.buildBacktrace() catch return).obj);
+        self.push(backtrace);
+        defer _ = self.pop();
+        try self.setInstanceField(inst, try self.staticString("backtrace"), backtrace, null);
+    }
+
+    /// An error instance's field (`message`, `backtrace`), if it was set.
+    pub fn errorField(self: *VM, inst: *const value.ObjInstance, comptime name: []const u8) !?value.Value {
+        const idx = inst.class.instance_layout.get(try self.staticString(name)) orelse return null;
+        return if (idx < inst.fields.items.len) inst.fields.items[idx] else null;
+    }
+
     // --- First-Class Error Backtraces ---
     pub fn buildBacktrace(self: *VM) !*value.ObjArray {
         const arr_obj = try self.gc.allocateArray(self);
@@ -3809,6 +3841,12 @@ pub const VM = struct {
     }
 
     // --- Inline Caching Helpers ---
+
+    inline fn readGlobalCache(exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.GlobalCache {
+        const idx = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
+        frame.ip += 2;
+        return &exec_chunk.global_caches.items[idx];
+    }
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;
