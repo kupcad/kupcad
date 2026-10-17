@@ -912,6 +912,15 @@ test "Formatter: string and symbol literals are printed as written" {
     try expectStableFormat("w = %w[a b]\n", "w = [\"a\", \"b\"]\n");
 }
 
+test "Formatter: a heredoc after an operator stays on the operator's line" {
+    // Its body starts a line down, which read as a line broken after the operator: `q & <<~EOS`
+    // came out as `q &` over its operand, which parsed as `q(&...)` (found by the fuzzer).
+    try expectStableFormat("q&<<~EOS\n  two\nEOS\nput\n", "q & \"  two\\n\"\nput\n");
+    try expectStableFormat("x = 1 + <<~EOS\n  two\nEOS\n", "x = 1 + \"  two\\n\"\n");
+    // A break the author made is kept.
+    try expectStableFormat("x = 1 +\n  <<~EOS\n  two\nEOS\n", "x = 1 +\n  \"  two\\n\"\n");
+}
+
 test "Formatter: lambda parameters, bracketed returns, super(), aliases and multi-assignment keep their form" {
     // Each of these made the formatter refuse the whole file (it would have changed the
     // program): a lambda lost its defaults and splat, `return []` its brackets, `super()`

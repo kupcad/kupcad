@@ -4231,6 +4231,10 @@ test "Parser: a variable before -1 or [0] is arithmetic or indexing; a method na
         .{ .src = "puts - 1", .shape = .binary },
         .{ .src = "puts-1", .shape = .binary },
         .{ .src = "puts -  1", .shape = .binary },
+        // An operator ending its line is binary, as in Ruby: the next line is its operand.
+        .{ .src = "puts -\n  1", .shape = .binary },
+        .{ .src = "f *\n  args", .shape = .binary },
+        .{ .src = "q &\n  blk", .shape = .binary },
         // Locals: assigned, multiple-assigned, parameters, block parameters, rescue variables.
         .{ .src = "x = 1\nx -1", .shape = .binary },
         .{ .src = "x = 1\nx *y", .shape = .binary },

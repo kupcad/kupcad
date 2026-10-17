@@ -1341,12 +1341,14 @@ pub const Parser = struct {
 
     /// `-1`, `*args`, `**opts` or `&blk` with a space before and none after: an argument,
     /// as in Ruby (`yield -1` passes -1, `yield - 1` subtracts), unless it follows a variable.
+    /// A line break after it is a space too: `f -` ending its line subtracts the next line
+    /// (it was `f(-x)`, so a binary operation broken after its operator changed meaning).
     fn isPrefixedArgStart(self: *const Parser) bool {
         switch (self.tag(0)) {
             .minus, .plus, .star, .star_star, .ampersand => {},
             else => return false,
         }
-        return self.spaceBefore(self.tok_idx) and !self.spaceBefore(self.tok_idx + 1);
+        return self.spaceBefore(self.tok_idx) and !self.spaceBefore(self.tok_idx + 1) and self.tag(1) != .newline;
     }
 
     fn parseDocString(self: *Parser) ParseError!ast.NodeIndex {

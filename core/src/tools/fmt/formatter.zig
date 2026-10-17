@@ -85,9 +85,20 @@ pub const Formatter = struct {
         return self.line_index.getLine(self.token_starts[end_token]);
     }
 
+    /// The line a token starts on as written: a heredoc's is its `<<~NAME` line, the one
+    /// before its body (the body's made `x + <<~EOS` look broken after the `+`).
     fn lineOf(self: *const Formatter, tok: u32) u32 {
         if (tok >= self.token_starts.len) return std.math.maxInt(u32);
-        return self.line_index.getLine(self.token_starts[tok]);
+        const line = self.line_index.getLine(self.token_starts[tok]);
+        return if (self.isHeredocBody(tok)) line - 1 else line;
+    }
+
+    /// Whether a token is a heredoc's body: the lexer starts it at the line after its
+    /// opener and ends it where its terminator line starts. A quoted string starts after
+    /// its quote.
+    fn isHeredocBody(self: *const Formatter, tok: u32) bool {
+        const start = self.token_starts[tok];
+        return self.token_tags[tok] == .string and start > 0 and self.source[start - 1] == '\n';
     }
 
     /// The column the next character lands in, counting characters, not bytes.
@@ -126,7 +137,7 @@ pub const Formatter = struct {
 
     inline fn getNodeLine(self: *Formatter, node: *const ast.Node) u32 {
         if (node.main_token >= self.token_starts.len) return 0;
-        return self.line_index.getLine(self.token_starts[node.main_token]);
+        return self.lineOf(node.main_token);
     }
 
     /// The line of a statement's last token, so comments trailing any of its lines stay
@@ -143,20 +154,19 @@ pub const Formatter = struct {
     fn tokenEndLine(self: *const Formatter, tok: u32) u32 {
         const start = self.token_starts[tok];
         const len = self.token_lengths[tok];
+        if (self.isHeredocBody(tok)) return self.line_index.getLine(start + len);
         if (len == 0) return self.line_index.getLine(start);
-        const end = start + len - 1;
-        const is_heredoc = start > 0 and self.source[start - 1] == '\n' and self.source[end] == '\n' and end + 1 < self.source.len;
-        return self.line_index.getLine(if (is_heredoc) end + 1 else end);
+        return self.line_index.getLine(start + len - 1);
     }
 
     /// The line a block body starts on: its first statement's, or its closing keyword's
     /// when it is empty.
     fn blockFirstLine(self: *const Formatter, tree: *const ast.Tree, body: ast.NodeIndex) u32 {
         const node = tree.getNode(body) orelse return std.math.maxInt(u32);
-        if (node.tag != .block) return self.line_index.getLine(self.token_starts[token_span.first(tree, body)]);
+        if (node.tag != .block) return self.lineOf(token_span.first(tree, body));
         const b = tree.block(node);
         const stmts = tree.getNodes(b.stmts);
-        if (stmts.len > 0) return self.line_index.getLine(self.token_starts[token_span.first(tree, stmts[0])]);
+        if (stmts.len > 0) return self.lineOf(token_span.first(tree, stmts[0]));
         return self.blockEndLine(b.end_token);
     }
 
@@ -175,7 +185,7 @@ pub const Formatter = struct {
         var ci = self.comment_idx;
         var prev_last: ?u32 = null;
         for (stmts, commented) |stmt, *flag| {
-            const first = self.line_index.getLine(self.token_starts[token_span.first(tree, stmt)]);
+            const first = self.lineOf(token_span.first(tree, stmt));
             const last = self.lastLine(tree, stmt);
             flag.* = false;
             while (ci < self.comments.len and self.getCommentLine(self.comments[ci]) <= last) : (ci += 1) {
