@@ -193,7 +193,7 @@ pub const Parser = struct {
     /// Whether the lexer made `t` for text it couldn't read.
     fn isLexError(t: Tag) bool {
         return switch (t) {
-            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => true,
+            .invalid, .unterminated_string, .unterminated_heredoc, .runs_into_heredoc, .interpolation_too_deep => true,
             else => false,
         };
     }
@@ -204,16 +204,37 @@ pub const Parser = struct {
         var problem: string_escape.Problem = undefined;
         return self.b.stringNodeUnescaped(raw, tok, &problem) catch |err| switch (err) {
             error.InvalidEscape => {
-                self.reportEscape(tok, problem);
+                self.reportEscape(self.getLoc(tok), problem);
                 return self.b.invalidNode(tok) catch ParseError.OutOfMemory;
             },
             error.OutOfMemory => ParseError.OutOfMemory,
         };
     }
 
-    /// Reports the invalid escape `problem` found in the string token `tok`, at the escape.
-    fn reportEscape(self: *Parser, tok: u24, problem: string_escape.Problem) void {
-        var loc = self.getLoc(tok);
+    /// The string of the heredoc opened at token `tok`: its body, which `<<~` strips of
+    /// its least indented line's indentation.
+    fn heredocNode(self: *Parser, tok: u24) ParseError!ast.NodeIndex {
+        const heredoc = self.tokens.heredoc(tok);
+        const body = self.source[heredoc.body_start..heredoc.bodyEnd()];
+        const strip_indent = self.tokens.lexeme(self.source, tok)[2] == '~'; // `<<~NAME`
+        var text: std.ArrayListUnmanaged(u8) = .empty;
+        defer text.deinit(self.allocator);
+        var problem: string_escape.Problem = undefined;
+        string_escape.unescapeHeredocInto(&text, self.allocator, body, strip_indent, &problem) catch |err| switch (err) {
+            error.InvalidEscape => {
+                var body_loc = self.getLoc(tok);
+                body_loc.offset = heredoc.body_start;
+                self.reportEscape(body_loc, problem);
+                return self.b.invalidNode(tok) catch ParseError.OutOfMemory;
+            },
+            error.OutOfMemory => return ParseError.OutOfMemory,
+        };
+        return self.b.stringNode(text.items, tok) catch ParseError.OutOfMemory;
+    }
+
+    /// Reports the invalid escape `problem` found in the string text at `text_loc`, at the escape.
+    fn reportEscape(self: *Parser, text_loc: ast.Location, problem: string_escape.Problem) void {
+        var loc = text_loc;
         loc.offset += @intCast(problem.offset);
         loc.length = @intCast(problem.len);
         switch (problem.kind) {
@@ -236,6 +257,7 @@ pub const Parser = struct {
             .invalid => self.reportError(loc, "Unexpected character '{s}'", .{text}),
             .unterminated_string => self.reportError(loc, "This string is never closed before the end of the file", .{}),
             .unterminated_heredoc => self.reportError(loc, "This heredoc is never closed: no line '{s}' before the end of the file", .{text}),
+            .runs_into_heredoc => self.reportError(loc, "This runs onto the next line, where the heredoc opened on this line has its body; end it on this line", .{}),
             .interpolation_too_deep => self.reportError(loc, "Interpolation depth exceeded", .{}),
             else => unreachable,
         }
@@ -1569,6 +1591,12 @@ pub const Parser = struct {
 
                 left = try self.stringNode(raw_lexeme, str_tok);
             },
+            .heredoc => {
+                const str_tok = self.tok_idx;
+                self.advance();
+                self.skipComments();
+                left = try self.heredocNode(str_tok);
+            },
             .raw_string => {
                 const str_tok = self.tok_idx;
                 const raw_lexeme = self.tokens.lexeme(self.source, str_tok);
@@ -1614,7 +1642,7 @@ pub const Parser = struct {
             .keyword_begin => left = try self.parseBeginStatement(),
             .keyword_case => left = try self.parseCaseStatement(),
             .percent_w, .percent_i => left = try self.parsePercentArray(start_tag),
-            .invalid, .unterminated_string, .unterminated_heredoc, .interpolation_too_deep => {
+            .invalid, .unterminated_string, .unterminated_heredoc, .runs_into_heredoc, .interpolation_too_deep => {
                 self.reportLexError(start_tok);
                 left = try self.b.invalidNode(start_tok);
             },

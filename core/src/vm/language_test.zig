@@ -453,3 +453,14 @@ test "Language: on_face and Workplane are withheld until the sketching API exist
         .{ .src = "r = defined?(Workplane).nil?", .expected = .{ .boolean = true } },
     });
 }
+
+test "Language: a heredoc's opener line goes on as code, and <<~ strips the indentation" {
+    // The rest of the opener's line was dropped (`<<~EOS.upcase` lost its call without a
+    // word), and `<<~` kept the indentation, as `<<-` does.
+    try expectScripts(&.{
+        .{ .src = "r = <<~EOS.upcase\n    ab\n      c\n  EOS", .expected = .{ .str = "AB\n  C\n" } },
+        .{ .src = "def f(a, b) = a + b\nr = f(<<~A, <<-B)\n  one\nA\n  two\n  B", .expected = .{ .str = "one\n  two\n" } },
+        .{ .src = "r = <<EOS.length + 1\n\tx\\ty\nEOS", .expected = .{ .num = 6 } },
+        .{ .src = "r = <<~EOS\n  a\n\n  b\nEOS", .expected = .{ .str = "a\n\nb\n" } },
+    });
+}

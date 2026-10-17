@@ -907,7 +907,8 @@ test "Formatter: string and symbol literals are printed as written" {
     try expectStableFormat("s = \"x\\ty\\n\"\nt = 'raw\\n'\nu = \"say \\\"hi\\\"\"\nv = :\"with space\"\nw = \"a#{1}b\\tc\"\nx = :plain", "s = \"x\\ty\\n\"\nt = 'raw\\n'\nu = \"say \\\"hi\\\"\"\nv = :\"with space\"\nw = \"a#{1}b\\tc\"\nx = :plain\n");
     // A heredoc has no text to reuse in place: it becomes one double-quoted literal, and
     // the statement after it gets no blank line (its last line used to be the body's first).
-    try expectStableFormat("x = <<~EOS\n  hello \"there\"\n  world\nEOS\ny = 1\n", "x = \"  hello \\\"there\\\"\\n  world\\n\"\ny = 1\n");
+    try expectStableFormat("x = <<~EOS\n  hello \"there\"\n  world\nEOS\ny = 1\n", "x = \"hello \\\"there\\\"\\nworld\\n\"\ny = 1\n");
+    try expectStableFormat("x = <<-EOS\n  kept\n  EOS\ny = 1\n", "x = \"  kept\\n\"\ny = 1\n");
     try expectStableFormat("y = \"line1\nline2\"\nz = 2\n", "y = \"line1\nline2\"\nz = 2\n");
     try expectStableFormat("w = %w[a b]\n", "w = [\"a\", \"b\"]\n");
 }
@@ -915,10 +916,18 @@ test "Formatter: string and symbol literals are printed as written" {
 test "Formatter: a heredoc after an operator stays on the operator's line" {
     // Its body starts a line down, which read as a line broken after the operator: `q & <<~EOS`
     // came out as `q &` over its operand, which parsed as `q(&...)` (found by the fuzzer).
-    try expectStableFormat("q&<<~EOS\n  two\nEOS\nput\n", "q & \"  two\\n\"\nput\n");
-    try expectStableFormat("x = 1 + <<~EOS\n  two\nEOS\n", "x = 1 + \"  two\\n\"\n");
+    try expectStableFormat("q&<<~EOS\n  two\nEOS\nput\n", "q & \"two\\n\"\nput\n");
+    try expectStableFormat("x = 1 + <<~EOS\n  two\nEOS\n", "x = 1 + \"two\\n\"\n");
     // A break the author made is kept.
-    try expectStableFormat("x = 1 +\n  <<~EOS\n  two\nEOS\n", "x = 1 +\n  \"  two\\n\"\n");
+    try expectStableFormat("x = 1 +\n  <<~EOS\n  two\nEOS\n", "x = 1 +\n  \"two\\n\"\n");
+}
+
+test "Formatter: code after a heredoc's opener stays with it, and the next statement follows the body" {
+    // The statement ends on the terminator line: the line after it is the next statement's,
+    // not a blank line between them.
+    try expectStableFormat("f(<<~A).upcase # note\n  x\nA\ny = 1\n", "f(\"x\\n\").upcase # note\ny = 1\n");
+    try expectStableFormat("parts = [<<~A, <<~B]\n  a\nA\n  b\nB\n\ny = 1\n", "parts = [\"a\\n\", \"b\\n\"]\n\ny = 1\n");
+    try expectStableFormat("x = <<~A + 1\n  a\nA\n", "x = \"a\\n\" + 1\n");
 }
 
 test "Formatter: lambda parameters, bracketed returns, super(), aliases and multi-assignment keep their form" {

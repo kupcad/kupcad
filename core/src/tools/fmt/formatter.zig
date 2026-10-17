@@ -26,6 +26,8 @@ pub const Formatter = struct {
     token_starts: []const u32,
     token_lengths: []const u32,
     token_tags: []const TokenTag,
+    /// The heredocs' bodies, in the order of their openers.
+    heredocs: []const token.Heredoc,
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
@@ -41,16 +43,17 @@ pub const Formatter = struct {
 
     /// A formatter for a parsed document: its source, tokens, line index and comments.
     pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, config: Config) Formatter {
-        return init(allocator, doc.source, doc.tokens.starts, doc.tokens.lengths, doc.tokens.tags, &doc.line_index, doc.comments, config);
+        return init(allocator, doc.source, doc.tokens, &doc.line_index, doc.comments, config);
     }
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, token_starts: []const u32, token_lengths: []const u32, token_tags: []const TokenTag, line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, tokens: token.TokenList(TokenTag), line_index: *const LineIndex, comments: []const token.Comment, config: Config) Formatter {
         return .{
             .allocator = allocator,
             .source = source,
-            .token_starts = token_starts,
-            .token_lengths = token_lengths,
-            .token_tags = token_tags,
+            .token_starts = tokens.starts,
+            .token_lengths = tokens.lengths,
+            .token_tags = tokens.tags,
+            .heredocs = tokens.heredocs,
             .line_index = line_index,
             .comments = comments,
             .config = config,
@@ -85,20 +88,9 @@ pub const Formatter = struct {
         return self.line_index.getLine(self.token_starts[end_token]);
     }
 
-    /// The line a token starts on as written: a heredoc's is its `<<~NAME` line, the one
-    /// before its body (the body's made `x + <<~EOS` look broken after the `+`).
     fn lineOf(self: *const Formatter, tok: u32) u32 {
         if (tok >= self.token_starts.len) return std.math.maxInt(u32);
-        const line = self.line_index.getLine(self.token_starts[tok]);
-        return if (self.isHeredocBody(tok)) line - 1 else line;
-    }
-
-    /// Whether a token is a heredoc's body: the lexer starts it at the line after its
-    /// opener and ends it where its terminator line starts. A quoted string starts after
-    /// its quote.
-    fn isHeredocBody(self: *const Formatter, tok: u32) bool {
-        const start = self.token_starts[tok];
-        return self.token_tags[tok] == .string and start > 0 and self.source[start - 1] == '\n';
+        return self.line_index.getLine(self.token_starts[tok]);
     }
 
     /// The column the next character lands in, counting characters, not bytes.
@@ -150,14 +142,32 @@ pub const Formatter = struct {
 
     /// The line a token ends on: a string may run over several (its start line was taken,
     /// so the statement after a multi-line string got a blank line it never had), and a
-    /// heredoc body is followed by its terminator line.
+    /// line with heredoc openers goes on to their terminator lines.
     fn tokenEndLine(self: *const Formatter, tok: u32) u32 {
         const start = self.token_starts[tok];
         const len = self.token_lengths[tok];
-        if (self.isHeredocBody(tok)) return self.line_index.getLine(start + len);
-        if (len == 0) return self.line_index.getLine(start);
-        return self.line_index.getLine(start + len - 1);
+        return self.pastHeredocs(self.line_index.getLine(if (len == 0) start else start + len - 1));
     }
+
+    /// `line`, or the terminator line of the last heredoc opened on it: the bodies come
+    /// after the line, so what follows starts after them.
+    fn pastHeredocs(self: *const Formatter, line: u32) u32 {
+        // The heredocs opened on or before `line`, by binary search: they are in source order.
+        const upto = std.sort.partitionPoint(token.Heredoc, self.heredocs, Opened{ .formatter = self, .line = line }, Opened.onOrBefore);
+        if (upto == 0) return line;
+        const last = self.heredocs[upto - 1];
+        if (self.lineOf(last.token) != line) return line;
+        return self.line_index.getLine(last.bodyEnd());
+    }
+
+    const Opened = struct {
+        formatter: *const Formatter,
+        line: u32,
+
+        fn onOrBefore(self: Opened, heredoc: token.Heredoc) bool {
+            return self.formatter.lineOf(heredoc.token) <= self.line;
+        }
+    };
 
     /// The line a block body starts on: its first statement's, or its closing keyword's
     /// when it is empty.
@@ -507,6 +517,7 @@ pub const Formatter = struct {
     /// when there is none to reuse (a `%w[a b]` word shares the whole literal's token).
     fn rawStringText(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!?[]const u8 {
         if (node.main_token >= self.token_starts.len) return null;
+        if (self.token_tags[node.main_token] == .heredoc) return null; // its token is the opener, `<<~NAME`
         const raw = self.tokenText(node.main_token);
         var decoded: std.ArrayListUnmanaged(u8) = .empty;
         defer decoded.deinit(self.allocator);

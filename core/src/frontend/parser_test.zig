@@ -4481,6 +4481,8 @@ test "KupCAD Parser: an unclosed literal or a stray character is reported for wh
     // An unclosed heredoc or single-quoted string ran as if closed at the end of the file,
     // and any character the lexer couldn't read was "Interpolation depth exceeded".
     try expectSingleDiagnostic("x = <<~EOS\n  line\n", "This heredoc is never closed: no line 'EOS' before the end of the file");
+    // A heredoc's body starts on the line after its opener, so nothing may run onto it.
+    try expectSingleDiagnostic("f(<<~A, \"x\ny\")\n  body\nA\n", "This runs onto the next line, where the heredoc opened on this line has its body; end it on this line");
     for ([_][]const u8{ "x = \"abc\n", "x = 'abc\n", "x = :\"abc\n", "x = %w[a b\n", "x = \"a #{1} b\n" }) |source| {
         errdefer std.debug.print("source: {s}\n", .{source});
         try expectSingleDiagnostic(source, "This string is never closed before the end of the file");

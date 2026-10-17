@@ -21,6 +21,7 @@ const CORPUS = [_][]const u8{
     "x = 1 + 2 * (3 - 4) / 5 % 6 ** 2\ny = -x\nz = !true && false || nil",
     "s = \"a #{1 + 2} b\\n\\t\"\nt = 'raw #{x}'\nu = :sym\nv = :\"with space\"",
     "h = <<~EOS\n  line #{1}\n  two\nEOS\nputs(h)",
+    "puts(<<~A.upcase, <<-B) # two bodies\n    a\\t\n      b\n  A\n  c\n  B\nx = <<C + \"!\"\nC\n",
     "a = [1, *[2, 3], 4]\nm = { k: 1, \"s\" => 2, **{ j: 3 } }\nr = (1..5).to_a + (1...5).to_a",
     "def f(a, b = 2, *rest, k: 3, **opts, &blk)\n  yield(a) if block_given?\n  return a + b\nend\nf(1) { |x| x * 2 }",
     "class P < Object\n  attr_accessor :x\n  @@count = 0\n  def initialize(x)\n    @x = x\n  end\n  def self.make = P.new(1)\nend\nmodule M\n  X = 1\nend\nM::X",

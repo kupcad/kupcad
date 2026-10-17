@@ -15,6 +15,8 @@ pub const Tag = enum {
     unterminated_string,
     /// A heredoc whose terminator line never comes; the token is the terminator's name.
     unterminated_heredoc,
+    /// A token on a heredoc opener's line that runs onto the next line, where the body is.
+    runs_into_heredoc,
     /// `#{` nested deeper than the lexer tracks.
     interpolation_too_deep,
     newline,
@@ -25,6 +27,8 @@ pub const Tag = enum {
     string,
     /// A single-quoted string or `%q(...)`: only `\\` and its delimiter are escapes, as in Ruby.
     raw_string,
+    /// A heredoc's opener, `<<~NAME`, `<<-NAME` or `<<NAME`; its body is in `TokenList.heredocs`.
+    heredoc,
     string_start,
     string_mid,
     string_end,
@@ -201,6 +205,12 @@ pub const Lexer = struct {
     /// The last token was `.`, `&.` or `def`: a word now names a method, so `x.class`,
     /// `r.end` and `def end` lex an identifier, not a keyword (as in Ruby).
     expect_method_name: bool = false,
+    /// Where the body of the `.heredoc` token `next` returned last starts, and its length.
+    heredoc_body_start: usize = 0,
+    heredoc_body_len: usize = 0,
+    /// Set on a line with heredoc openers: where the line after their bodies starts, which
+    /// is where the next opener's body starts and where lexing goes on after the line.
+    heredoc_resume: ?usize = null,
 
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
         return .{
@@ -213,7 +223,13 @@ pub const Lexer = struct {
     }
 
     pub fn next(self: *Lexer) Token {
-        const tok = self.scan();
+        var tok = self.scan();
+        // A token is one slice of the source, so it can't skip a body: one that runs past
+        // the opener's line (a string, a docstring) would read the body as its own text.
+        if (self.heredoc_resume != null and tok.tag != .newline and std.mem.indexOfScalar(u8, tok.lexeme, '\n') != null) {
+            tok.tag = .runs_into_heredoc;
+            self.skipHeredocBodies();
+        }
         self.expect_method_name = switch (tok.tag) {
             .dot, .ampersand_dot, .keyword_def => true,
             else => false,
@@ -266,9 +282,10 @@ pub const Lexer = struct {
         utils.LexerUtils.skipWhitespace(self.buffer, &self.index, false);
     }
 
-    inline fn advanceLine(self: *Lexer) void {
-        while (self.index < self.buffer.len and self.peek() != '\n') self.advance();
-        if (self.index < self.buffer.len) self.advance(); // Consume '\n'
+    /// Where the line after the one holding `pos` starts, or the end of the buffer.
+    fn lineAfter(self: *const Lexer, pos: usize) usize {
+        const nl = std.mem.indexOfScalarPos(u8, self.buffer, pos, '\n') orelse return self.buffer.len;
+        return nl + 1;
     }
 
     inline fn consumePercentInterpolated(self: *Lexer) Token {
@@ -525,40 +542,28 @@ pub const Lexer = struct {
             }
 
             const terminator = self.buffer[term_start..term_end];
-            var terminator_loc = start_loc;
-            terminator_loc.offset = @intCast(term_start);
-            self.index = term_end; // Skip past the terminator declaration
+            // The body is read now and skipped when the opener's line ends, so the rest of
+            // the line (`f(<<~EOS)`, `<<~EOS.strip`) is lexed as code first, as in Ruby.
+            const body_start = self.heredoc_resume orelse self.lineAfter(term_end);
+            var line_start = body_start;
+            while (line_start < self.buffer.len) : (line_start = self.lineAfter(line_start)) {
+                // The terminator alone on its line, indented or not
+                var name_start = line_start;
+                while (name_start < self.buffer.len and (self.buffer[name_start] == ' ' or self.buffer[name_start] == '\t')) name_start += 1;
+                const name_end = name_start + terminator.len;
+                if (name_end > self.buffer.len or !std.mem.eql(u8, self.buffer[name_start..name_end], terminator)) continue;
+                if (name_end < self.buffer.len and self.buffer[name_end] != '\n' and self.buffer[name_end] != '\r') continue;
 
-            // Advance to the end of the current line and consume newline
-            self.advanceLine();
-
-            const content_start = self.index;
-
-            // Scan for the terminator on a new line
-            while (self.index < self.buffer.len) {
-                var line_start = self.index;
-
-                // Allow leading whitespace to find the terminator
-                while (line_start < self.buffer.len and (self.buffer[line_start] == ' ' or self.buffer[line_start] == '\t')) {
-                    line_start += 1;
-                }
-
-                const possible_term_end = line_start + terminator.len;
-                if (possible_term_end <= self.buffer.len and std.mem.eql(u8, self.buffer[line_start..possible_term_end], terminator)) {
-                    // Make sure the terminator sits alone on the line
-                    if (possible_term_end == self.buffer.len or self.buffer[possible_term_end] == '\n' or self.buffer[possible_term_end] == '\r') {
-                        const content_end = self.index; // End before the terminator line starts
-                        self.index = possible_term_end;
-                        var content_loc = start_loc;
-                        content_loc.offset = @intCast(content_start);
-                        return .{ .tag = .string, .loc = content_loc, .lexeme = self.buffer[content_start..content_end] };
-                    }
-                }
-
-                // Move to next line
-                self.advanceLine();
+                self.heredoc_body_start = body_start;
+                self.heredoc_body_len = line_start - body_start;
+                self.heredoc_resume = self.lineAfter(name_end);
+                self.index = term_end;
+                return .{ .tag = .heredoc, .loc = start_loc, .lexeme = self.buffer[start..term_end] };
             }
 
+            var terminator_loc = start_loc;
+            terminator_loc.offset = @intCast(term_start);
+            self.index = self.buffer.len;
             return .{ .tag = .unterminated_heredoc, .loc = terminator_loc, .lexeme = terminator };
         }
 
@@ -712,8 +717,16 @@ pub const Lexer = struct {
     fn consumeNewline(self: *Lexer, start_loc: common_token.Location) Token {
         const start = self.index;
         self.advance();
+        const lexeme = self.buffer[start..self.index];
+        self.skipHeredocBodies(); // the end of a line with heredoc openers: their bodies come next
+        return .{ .tag = .newline, .loc = start_loc, .lexeme = lexeme };
+    }
 
-        return .{ .tag = .newline, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
+    /// Past the bodies of the heredocs opened on the line just left, already read.
+    fn skipHeredocBodies(self: *Lexer) void {
+        const resume_at = self.heredoc_resume orelse return;
+        self.index = @max(self.index, resume_at);
+        self.heredoc_resume = null;
     }
 
     fn consumeChar(self: *Lexer, tag: Tag, start_loc: common_token.Location) Token {
@@ -729,6 +742,8 @@ pub const Lexer = struct {
         errdefer starts.deinit(allocator);
         var lengths = std.ArrayListUnmanaged(u32).empty;
         errdefer lengths.deinit(allocator);
+        var heredocs = std.ArrayListUnmanaged(common_token.Heredoc).empty;
+        errdefer heredocs.deinit(allocator);
 
         // Pre-allocation heuristic: ~1 token per 4 bytes of source code
         const estimated_tokens = self.buffer.len / 4;
@@ -738,6 +753,11 @@ pub const Lexer = struct {
 
         while (true) {
             const tok = self.next();
+            if (tok.tag == .heredoc) try heredocs.append(allocator, .{
+                .token = @intCast(tags.items.len),
+                .body_start = @intCast(self.heredoc_body_start),
+                .body_len = @intCast(self.heredoc_body_len),
+            });
             try tags.append(allocator, tok.tag);
             try starts.append(allocator, tok.loc.offset);
             try lengths.append(allocator, @intCast(tok.lexeme.len));
@@ -749,10 +769,13 @@ pub const Lexer = struct {
         errdefer allocator.free(tag_slice);
         const start_slice = try starts.toOwnedSlice(allocator);
         errdefer allocator.free(start_slice);
+        const length_slice = try lengths.toOwnedSlice(allocator);
+        errdefer allocator.free(length_slice);
         return .{
             .tags = tag_slice,
             .starts = start_slice,
-            .lengths = try lengths.toOwnedSlice(allocator),
+            .lengths = length_slice,
+            .heredocs = try heredocs.toOwnedSlice(allocator),
         };
     }
 

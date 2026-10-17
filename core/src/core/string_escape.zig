@@ -114,6 +114,45 @@ fn decodeUnicode(text: []const u8, at: usize, bytes: *[4]u8, problem: *Problem) 
     return .{ .bytes = written, .len = len };
 }
 
+/// A heredoc's `body` decoded as a double-quoted string's text (unescapeInto), appended to
+/// `out`. With `strip_indent` (`<<~`), every line loses the leading spaces and tabs of the
+/// least indented line, each counting as one column; a line of only spaces and tabs
+/// doesn't count, and an escape such as `\t` is text, not indentation, as in Ruby.
+/// `problem.offset` is from the start of `body`.
+pub fn unescapeHeredocInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, body: []const u8, strip_indent: bool, problem: *Problem) Error!void {
+    const indent = if (strip_indent) commonIndent(body) else 0;
+    var line_start: usize = 0;
+    while (line_start < body.len) {
+        // Each line with its '\n', so a backslash ending it reads as it does in a string
+        const line_end = if (std.mem.indexOfScalarPos(u8, body, line_start, '\n')) |nl| nl + 1 else body.len;
+        const skip = @min(indent, indentOf(body[line_start..line_end]));
+        unescapeInto(out, allocator, body[line_start + skip .. line_end], problem) catch |err| {
+            if (err == error.InvalidEscape) problem.offset += line_start + skip;
+            return err;
+        };
+        line_start = line_end;
+    }
+}
+
+/// The leading spaces and tabs of `line`.
+fn indentOf(line: []const u8) usize {
+    var n: usize = 0;
+    while (n < line.len and (line[n] == ' ' or line[n] == '\t')) n += 1;
+    return n;
+}
+
+/// The indentation of `body`'s least indented line that has more than spaces and tabs.
+fn commonIndent(body: []const u8) usize {
+    var least: ?usize = null;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        const n = indentOf(line);
+        if (std.mem.trimEnd(u8, line[n..], "\r").len == 0) continue;
+        least = @min(least orelse n, n);
+    }
+    return least orelse 0;
+}
+
 /// The delimiter that closes a literal `open` opens: a bracket's pair, else `open` itself.
 pub fn closingDelimiter(open: u8) u8 {
     return switch (open) {
@@ -232,6 +271,40 @@ fn expectRaw(expected: []const u8, text: []const u8, open: u8) !void {
     defer decoded.deinit(std.testing.allocator);
     try unescapeRawInto(&decoded, std.testing.allocator, text, open);
     try std.testing.expectEqualStrings(expected, decoded.items);
+}
+
+fn expectHeredoc(expected: []const u8, body: []const u8, strip_indent: bool) !void {
+    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    defer decoded.deinit(std.testing.allocator);
+    var problem: Problem = undefined;
+    try unescapeHeredocInto(&decoded, std.testing.allocator, body, strip_indent, &problem);
+    try std.testing.expectEqualStrings(expected, decoded.items);
+}
+
+test "string_escape: a <<~ heredoc loses its least indented line's indentation" {
+    try expectHeredoc("a\n  b\nc\n", "    a\n      b\n    c\n", true);
+    // A line of only spaces and tabs doesn't count, and loses what it can.
+    try expectHeredoc("a\n\n \n b\n", "  a\n\n   \n   b\n", true);
+    // A tab is one column; an escaped one is text, not indentation.
+    try expectHeredoc("a\n b\n", "\ta\n\t b\n", true);
+    try expectHeredoc("\t a\nb\n", "\\t a\nb\n", true);
+    // Escapes are decoded after the indentation goes; CRLF line ends stay.
+    try expectHeredoc("x\ty\r\nz\r\n", "  x\\ty\r\n  z\r\n", true);
+    try expectHeredoc("", "", true);
+}
+
+test "string_escape: <<- and << heredocs keep their text as written" {
+    try expectHeredoc("    a\n      b\n", "    a\n      b\n", false);
+    try expectHeredoc("  \t\n", "  \\t\n", false);
+}
+
+test "string_escape: a heredoc's invalid escape is placed from the start of the body" {
+    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    defer decoded.deinit(std.testing.allocator);
+    var problem: Problem = undefined;
+    try std.testing.expectError(error.InvalidEscape, unescapeHeredocInto(&decoded, std.testing.allocator, "  ok\n  a\\qb\n", true, &problem));
+    try std.testing.expectEqual(@as(usize, 8), problem.offset);
+    try std.testing.expectEqual(@as(u32, 'q'), problem.value);
 }
 
 test "string_escape: a single-quoted literal has only \\\\ and its delimiter as escapes" {
