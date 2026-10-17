@@ -3,6 +3,12 @@
 
 #include <memory>
 
+// The locks below do nothing, which is only safe while Manifold runs on one thread: the
+// wasm builds, the threads one included, pass -DMANIFOLD_PAR=-1 (build.zig).
+#if !defined(MANIFOLD_PAR) || MANIFOLD_PAR != -1
+#error "wasm_stubs.h makes std::mutex a no-op: build Manifold serially (-DMANIFOLD_PAR=-1)"
+#endif
+
 namespace std {
 
 struct mutex {

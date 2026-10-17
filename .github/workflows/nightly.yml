@@ -69,3 +69,10 @@ jobs:
       - name: Run the wasm tests (32-bit pointers)
         working-directory: core
         run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dgc-stress --summary line
+
+      # The threads build (shared memory, atomics) runs only here: its no-op std::mutex
+      # (src/wasm_stubs.h) relies on Manifold staying serial in it.
+      - name: Run the wasm tests (threads build)
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary line

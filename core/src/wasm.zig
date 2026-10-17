@@ -60,6 +60,9 @@ pub export fn get_last_error() [*:0]const u8 {
 }
 
 pub export fn wasm_alloc(len: usize) ?[*]u8 {
+    // A block near the whole 32-bit address space never fits, and wasi-libc's malloc (Zig's
+    // own) adds its header to `len` unchecked: the overflow panicked, killing the instance.
+    if (len > std.math.maxInt(usize) - std.wasm.page_size) return null;
     const slice = allocator.alloc(u8, len) catch return null;
     return slice.ptr;
 }

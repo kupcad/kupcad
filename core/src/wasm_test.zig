@@ -411,6 +411,31 @@ test "WASM Interop: repeated builds, checks and formats don't grow the module's 
     try testing.expectEqual(pages, @wasmMemorySize(0));
 }
 
+test "WASM Interop: wasm_alloc of nothing, of more than memory holds, and past the initial memory" {
+    // JS asks for 0 bytes for an empty file: a pointer it can hand back to wasm_free.
+    const empty = wasm.wasm_alloc(0) orelse return error.TestUnexpectedResult;
+    wasm.wasm_free(empty, 0);
+
+    // More than the 4 GiB memory can hold: null, for JS to report, not a trap (malloc's
+    // header overflowed the size and panicked).
+    try testing.expect(wasm.wasm_alloc(std.math.maxInt(usize)) == null);
+    try testing.expect(wasm.wasm_alloc(std.math.maxInt(usize) - 8) == null);
+
+    // Past the initial 128 MiB the memory grows, and all of the block is usable.
+    const initial_bytes = 128 * 1024 * 1024;
+    const len = 2 * initial_bytes;
+    const block = wasm.wasm_alloc(len) orelse return error.TestUnexpectedResult;
+    defer wasm.wasm_free(block, len);
+    try testing.expect(@wasmMemorySize(0) * std.wasm.page_size > initial_bytes);
+    block[0] = 1;
+    block[len - 1] = 2;
+    try testing.expectEqual(@as(u8, 1), block[0]);
+    try testing.expectEqual(@as(u8, 2), block[len - 1]);
+
+    // And a build still works in the grown memory.
+    try testing.expect(try expectBuildLength("cube(2)") > 84);
+}
+
 test "WASM Interop: a build imports the files put in the VFS, and not after clear_vfs_wasm" {
     const lib_path = "parts/plate.kup";
     const lib = "def plate(w)\n  cube(w, w, 1)\nend\nexport { plate }";
