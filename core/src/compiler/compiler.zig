@@ -443,7 +443,6 @@ pub const Compiler = struct {
             .module_stmt => try self.compileModuleStmt(node),
             .super_call => try self.compileSuperCall(node),
             .property_assignment => try self.compilePropertyAssignment(node),
-            .defined_expr => try self.compileDefinedExpr(node),
             .block => try self.compileBlock(node),
             .nil => try self.emitOp(.op_nil),
             // A `##` doc comment is a statement whose value is nil.
@@ -2153,21 +2152,6 @@ pub const Compiler = struct {
         // op_set_property consumes both target and new_val, then pushes new_val back
         try self.emitOpWithOperand(.op_set_property, .op_set_property_wide, name_idx);
         try self.emitInlineCacheIndex();
-    }
-
-    fn compileDefinedExpr(self: *Compiler, node: *const ast.Node) CompileError!void {
-        if (self.tree.stringId(node) != .none) {
-            const name_id = self.tree.stringId(node);
-            if (self.resolveLocal(name_id) != null or (try self.resolveUpvalue(name_id)) != null) {
-                try self.emitOp(.op_true); // Locals are statically known
-            } else {
-                const name_str = self.tree.getString(name_id);
-                const name_idx = try self.makeStringConstant(name_str);
-                try self.emitOpWithOperand(.op_defined, .op_defined_wide, name_idx);
-            }
-        } else {
-            try self.emitOp(.op_true);
-        }
     }
 
     fn compileBlock(self: *Compiler, node: *const ast.Node) CompileError!void {

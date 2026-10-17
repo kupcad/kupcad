@@ -101,7 +101,6 @@ pub const Tag = enum(u8) {
     index_access,
     splat_expr,
     double_splat_expr,
-    defined_expr,
     rescue_modifier,
     interpolated_string,
 };
@@ -959,17 +958,6 @@ pub const Builder = struct {
         }
 
         // Return the node pointing to the shared index
-        return self.createNode(.number, main_token, gop.value_ptr.*);
-    }
-
-    // Direct value constructor (Used by Constant Folding)
-    pub fn numberRaw(self: *Builder, val: f64, main_token: u24) !NodeIndex {
-        const bits: u64 = @bitCast(val);
-        const gop = try self.number_map.getOrPut(self.allocator, bits);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = @as(u32, @intCast(self.tree.numbers.items.len));
-            try self.tree.numbers.append(self.allocator, val);
-        }
         return self.createNode(.number, main_token, gop.value_ptr.*);
     }
 

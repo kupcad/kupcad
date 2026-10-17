@@ -16,7 +16,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
 
     switch (node.tag) {
         // Leaf nodes (0 children)
-        .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .self_expr, .namespace_access, .defined_expr, .docstring => {},
+        .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .self_expr, .namespace_access, .docstring => {},
 
         // Multi-child nodes
         .interpolated_string, .array_literal => {

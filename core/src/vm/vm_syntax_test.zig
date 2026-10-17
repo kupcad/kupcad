@@ -142,28 +142,24 @@ test "VM: executes logical short-circuiting and comparisons correctly" {
     try testing.expectEqual(false, result2.asBool());
 }
 
-test "VM: defined? operator evaluates safely without panicking" {
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena.deinit();
-    var b = ast.Builder.init(arena.allocator());
-    defer b.deinit();
-
-    // defined?(missing_var)
-    const missing_id = try b.intern("missing_var");
-    const ident_node = try b.createNode(.identifier, 0, @backingInt(missing_id));
-    const def_expr = try b.createNode(.defined_expr, 0, @backingInt(ident_node));
-
-    var out_chunk = chunk.Chunk.init();
-    defer out_chunk.free(testing.allocator);
+test "VM: defined? is nil for a missing name and true for a local" {
+    // It built a `defined_expr` node by hand, a shape the parser never made; `defined?` is
+    // the call the compiler turns into a check (manifest's `defined_chk`).
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var comp = Compiler.init(testing.allocator, &b.tree, &.{}, &[_]u32{}, &out_chunk, &vm);
+    var doc = try Document.parse(testing.allocator, "here = 1\n[defined?(missing_var), defined?(here)]");
+    defer doc.deinit();
+    var out_chunk = chunk.Chunk.init();
+    defer out_chunk.free(testing.allocator);
+    var comp = Compiler.forDocument(testing.allocator, &doc, &out_chunk, &vm);
     defer comp.deinit();
-    try comp.compile(def_expr);
+    try comp.compile(doc.tree.root);
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
-    try testing.expect(result.isNil()); // Returns nil if undefined
+    const items = result.asArray().items.items;
+    try testing.expect(items[0].isNil());
+    try testing.expectEqual(true, items[1].asBool());
 }
 
 test "VM: executes while loops with break and next" {

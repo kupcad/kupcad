@@ -69,7 +69,7 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
     h.add(node.tag);
     switch (node.tag) {
         .number => h.add(@as(u64, @bitCast(tree.number(node)))),
-        .string, .identifier, .symbol, .defined_expr => h.string(tree, @fromBackingInt(node.data)),
+        .string, .identifier, .symbol => h.string(tree, @fromBackingInt(node.data)),
         .boolean => h.add(tree.boolean(node)),
         .binary_op => h.add(tree.binaryExpr(node).op),
         .unary_op => h.add(tree.unaryExpr(node).op),

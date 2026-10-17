@@ -32,7 +32,6 @@ pub const Tag = enum {
     string_start,
     string_mid,
     string_end,
-    percent_string,
     symbol,
     docstring,
     comment,
@@ -279,7 +278,7 @@ pub const Lexer = struct {
     }
 
     fn skipWhitespace(self: *Lexer) void {
-        utils.LexerUtils.skipWhitespace(self.buffer, &self.index, false);
+        utils.LexerUtils.skipWhitespace(self.buffer, &self.index);
     }
 
     /// Where the line after the one holding `pos` starts, or the end of the buffer.

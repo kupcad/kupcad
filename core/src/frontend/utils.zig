@@ -4,16 +4,12 @@
 const std = @import("std");
 
 pub const LexerUtils = struct {
-    pub fn skipWhitespace(buffer: []const u8, index: *usize, comptime skip_newlines: bool) void {
+    /// Past spaces, tabs and carriage returns; a newline is a token, so it stays.
+    pub fn skipWhitespace(buffer: []const u8, index: *usize) void {
         while (index.* < buffer.len) {
             const c = buffer[index.*];
-            if (c == ' ' or c == '\t' or c == '\r') {
-                index.* += 1;
-            } else if (skip_newlines and c == '\n') {
-                index.* += 1;
-            } else {
-                break;
-            }
+            if (c != ' ' and c != '\t' and c != '\r') break;
+            index.* += 1;
         }
     }
 
