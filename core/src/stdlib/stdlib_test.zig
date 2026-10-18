@@ -319,6 +319,15 @@ test "Stdlib: integer kwargs reject NaN, inf and out-of-i32 values" {
     });
 }
 
+test "Stdlib: sides: nil is a keyword not given, so a regular polygon is the default hexagon" {
+    // regular_polygon assumed a count and crashed on `sides: nil` (found by the
+    // generated-program fuzz test); a circle given it stays round.
+    try expectScripts(&.{
+        .{ .src = "r = regular_polygon(sides: nil).bbox.x_size == regular_polygon.bbox.x_size", .expected = .{ .boolean = true } },
+        .{ .src = "r = circle(r: 1, sides: nil).bbox.x_size == circle(r: 1).bbox.x_size", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: tessellation counts are capped at MAX_SEGMENTS" {
     try expectAllRaise(&.{.ValueError}, &.{
         print("cylinder(r: 1, h: 1, segments: {d})", .{MAX_SEGS + 1}),

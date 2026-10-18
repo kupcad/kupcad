@@ -45,7 +45,17 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
+        # A crash `--fuzz` finds is reported but leaves the exit code 0 (Zig 0.17 counts only
+        # the steps before fuzzing), so the input it saves is what fails the job. One the cache
+        # brought back is an earlier run's, so it goes first.
+        run: |
+          crash="${ZIG_LOCAL_CACHE_DIR:?}/f/crash"
+          rm -f "$crash"
+          zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
+          if [ -e "$crash" ]; then
+            echo "::error::The fuzzer found a crash; its input is in the fuzz-crash-${{ matrix.target }} artifact"
+            exit 1
+          fi
 
       - name: Keep the failing input
         if: failure()

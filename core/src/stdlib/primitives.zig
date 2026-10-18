@@ -53,6 +53,8 @@ pub const CIRCLE = Signature{
     .keywords = &.{ "r", "d", "radius", "segments", "sides" },
     .sizes = &.{ "r", "d", "radius" },
 };
+/// The sides of a regular_polygon given none: a hexagon.
+const REGULAR_POLYGON_SIDES = 6;
 pub const REGULAR_POLYGON = Signature{
     .positional = &.{ "sides", "r" },
     .keywords = &.{ "sides", "r", "d", "radius" },
@@ -154,9 +156,9 @@ fn requireMinCount(vm: *VM, count: usize, min: usize, method: []const u8, what: 
 }
 
 /// `sides` as a side count, or an error if it isn't one (or comes with `segments`, which
-/// would ask for a smooth curve and a faceted one at once).
-fn requireSides(vm: *VM, opts: GeomOptions, method: []const u8) !i32 {
-    const sides = opts.sides.?;
+/// would ask for a smooth curve and a faceted one at once). It took the count from
+/// `opts.sides` and assumed one, so `regular_polygon(sides: nil)` crashed.
+fn requireSides(vm: *VM, sides: i32, opts: GeomOptions, method: []const u8) !i32 {
     if (sides < MIN_CONTOUR_POINTS or sides > limits.MAX_SEGMENTS) {
         return vm.fail(.ValueError, "'sides' must be between {d} and {d}, got {d}", .{ MIN_CONTOUR_POINTS, limits.MAX_SEGMENTS, sides });
     }
@@ -302,8 +304,8 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     try util.requirePositive(vm, r2, "cylinder", "radius 2");
     try util.requirePositive(vm, opts.h, "cylinder", "height");
 
-    if (opts.sides != null) {
-        const sides = try requireSides(vm, opts, "cylinder");
+    if (opts.sides) |given_sides| {
+        const sides = try requireSides(vm, given_sides, opts, "cylinder");
         if (opts.round_r != null or opts.chamfer != null) {
             return vm.fail(.ArgumentError, "cylinder takes sides: or round_r:/chamfer:, not both yet", .{});
         }
@@ -378,7 +380,7 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
     if (pos.len > 0) base.r = try util.requireNumber(vm, pos[0], "circle", "r");
     var opts = (try parseGeomOptions(CIRCLE.keywords, base, vm, args, "circle")).opts;
     try util.requirePositive(vm, opts.r, "circle", "radius");
-    if (opts.sides != null) return try vm.allocateCrossSection(try addRegularPolygon(vm, try requireSides(vm, opts, "circle"), opts.r));
+    if (opts.sides) |sides| return try vm.allocateCrossSection(try addRegularPolygon(vm, try requireSides(vm, sides, opts, "circle"), opts.r));
 
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, opts.r);
 
@@ -453,11 +455,12 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
 
 pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     const pos = util.positionalArgs(args);
-    var base = GeomOptions{ .sides = 6 }; // Default to a hexagon
+    var base = GeomOptions{ .sides = REGULAR_POLYGON_SIDES };
     if (pos.len > 0) base.sides = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[0], "regular_polygon", "sides"), "sides");
     if (pos.len > 1) base.r = try util.requireNumber(vm, pos[1], "regular_polygon", "r");
     const opts = (try parseGeomOptions(REGULAR_POLYGON.keywords, base, vm, args, "regular_polygon")).opts;
-    const sides = try requireSides(vm, opts, "regular_polygon");
+    // `sides: nil` is a keyword not given, as for circle: the default, not a missing count
+    const sides = try requireSides(vm, opts.sides orelse REGULAR_POLYGON_SIDES, opts, "regular_polygon");
     try util.requirePositive(vm, opts.r, "regular_polygon", "radius");
     return try vm.allocateCrossSection(try addRegularPolygon(vm, sides, opts.r));
 }
