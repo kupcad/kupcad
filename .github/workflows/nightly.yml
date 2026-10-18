@@ -20,12 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: frontend
-            runs: 2M
-          # A runtime run sets up a VM, so it costs several front-end ones.
-          - target: runtime
-            runs: 500K
+        target: [frontend, runtime]
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,7 +35,8 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
+        # About an hour of runs for either test (2 ms a run on a hosted runner).
+        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=2M
 
       - name: Keep the failing input
         if: failure()

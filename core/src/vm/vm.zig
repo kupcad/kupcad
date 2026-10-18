@@ -254,6 +254,11 @@ pub const VM = struct {
 
     const STACK_GROW_FACTOR: usize = 2;
     pub const MAX_IMPORT_DEPTH: u8 = 64;
+    /// How deep runs may nest. A block a built-in calls (`map`) and a raised class's
+    /// `initialize` run inside that call, on the native stack, so a recursion through them
+    /// crashed the process (or trapped the wasm instance) long before the frame limit. A
+    /// test (vm_runtime_test) keeps this many levels within NESTED_RUN_STACK_BUDGET.
+    pub const MAX_NESTED_RUNS: u32 = 200;
     /// How deep `==` follows nested Arrays and Maps before calling them unequal.
     pub const MAX_EQUALITY_DEPTH: usize = 64;
     pub const MAX_STACK_STRING_LEN: usize = 1024;
@@ -1826,14 +1831,24 @@ pub const VM = struct {
         return self.callClosureWith(method, receiver, args, false);
     }
 
+    /// Whether one more run may not nest (MAX_NESTED_RUNS); reports the overflow if so.
+    fn nestedRunsExhausted(self: *VM) bool {
+        if (self.run_depth < MAX_NESTED_RUNS) return false;
+        self.runtimeError("Call stack overflow: deeper than {d} calls nested in built-ins (a recursion that never ends?).", .{MAX_NESTED_RUNS});
+        return true;
+    }
+
     /// callClosureSync with the frame's slot 0 (`self_val`: the closure itself for a block
     /// or lambda, the receiver for a method) and `has_kwargs`, which says the last of
     /// `args` is the call's keyword Map (a `yield x, key: v`) for the keyword slot.
     fn callClosureWith(self: *VM, closure: *value.ObjClosure, self_val: value.Value, args: []const value.Value, has_kwargs: bool) !value.Value {
+        // Both overflows end the run, as in dispatchClosure: error.RuntimeError would have
+        // been a rescuable error, after the message reportError logs for a fatal one.
         if (self.frames.items.len >= self.max_call_frames) {
             self.runtimeError("Call stack overflow: deeper than {d} calls (a recursion that never ends?).", .{self.max_call_frames});
-            return error.RuntimeError;
+            return error.FatalError;
         }
+        if (self.nestedRunsExhausted()) return error.FatalError;
         try self.frames.ensureUnusedCapacity(self.allocator, 1);
 
         const target_depth = self.frames.items.len;
@@ -3235,6 +3250,7 @@ pub const VM = struct {
     /// it is there to throw; otherwise what ends the throw: initialize's failure, or .ok when
     /// initialize raised and a rescue has taken over.
     fn instantiateRaisedClass(self: *VM) ?InterpretResult {
+        if (self.nestedRunsExhausted()) return .runtime_error; // `initialize` runs nested
         const throw_seq = self.throw_seq;
         const depth = self.frames.items.len;
         const res = self.constructInstance(self.stack[self.stack_top - 1].asClass(), 0, self.stack_top - 1, false, false);

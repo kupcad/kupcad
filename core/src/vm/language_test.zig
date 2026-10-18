@@ -464,3 +464,25 @@ test "Language: a heredoc's opener line goes on as code, and <<~ strips the inde
         .{ .src = "r = <<~EOS\n  a\n\n  b\nEOS", .expected = .{ .str = "a\n\nb\n" } },
     });
 }
+
+test "Language: a recursion through built-ins stops at the nested-run limit, not the native stack" {
+    // A block `map` calls and a raised class's `initialize` run nested on the native
+    // stack: recursing through them crashed the process before the frame limit. They stop
+    // with the call stack overflow error now; nesting below the limit runs as before.
+    const overflowing = [_][]const u8{
+        "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
+        "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
+        // It ends the run, as the frame limit does: a rescue doesn't catch it.
+        "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nbegin\n  f(5000)\nrescue => e\n  0\nend",
+    };
+    for (overflowing) |src| {
+        errdefer std.debug.print("script:\n{s}\n", .{src});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        try testing.expectEqual(@import("vm.zig").InterpretResult.runtime_error, try support.runOn(&vm, src));
+        try testing.expect(std.mem.indexOf(u8, vm.last_error.?, "Call stack overflow") != null);
+    }
+    try expectScripts(&.{
+        .{ .src = "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nr = f(150)", .expected = .{ .num = 150 } },
+    });
+}

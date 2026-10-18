@@ -1198,3 +1198,40 @@ test "VM: running out of memory for the stack is an error, not a panic" {
 
     try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
 }
+
+/// The native stack MAX_NESTED_RUNS levels may take: half of the 16 MiB a script runs on
+/// (Zig links executables with that main stack and spawns threads with it), leaving the
+/// rest to what runs inside the deepest level. A debug build takes about 32 KiB a level,
+/// a release one about 4 KiB.
+const NESTED_RUN_STACK_BUDGET = 8 * 1024 * 1024;
+
+/// The address of the native's frame, as a Number: how deep the native stack is.
+fn stackHere(_: *anyopaque, _: value.NativeArgs) anyerror!value.Value {
+    return value.Value.initNumber(@floatFromInt(@frameAddress()));
+}
+
+test "VM: the nested runs the VM allows fit the native stack" {
+    // Each run nested in a built-in's call (a block `map` calls, a raised class's
+    // `initialize`) is native stack; MAX_NESTED_RUNS of the deepest kind must fit
+    // NESTED_RUN_STACK_BUDGET, or a recursion through them crashes before the limit stops it.
+    const levels = 50;
+    const scripts = [_][]const u8{
+        "def dive(n) = n == 0 ? stack_here() : [1].map { |x| dive(n - 1) }[0]\ntop = stack_here()\ndeep = dive(50)",
+        "class Dive < RuntimeError\n  def initialize\n    $n -= 1\n    $deep = stack_here() if $n == 0\n    raise Dive if $n > 0\n  end\nend\n$n = 51\ntop = stack_here()\nbegin\n  raise Dive\nrescue Dive\nend\ndeep = $deep",
+    };
+    for (scripts) |src| {
+        errdefer std.debug.print("script:\n{s}\n", .{src});
+        var vm = try VM.init(testing.allocator, testing.io);
+        defer vm.deinit();
+        vm.mute_errors = true;
+        try registry.registerStandardLibrary(&vm);
+        try vm.defineNative("stack_here", stackHere);
+        try testing.expectEqual(InterpretResult.ok, try @import("../test_support.zig").runOn(&vm, src));
+        const top = vm.globals.get("top").?.asNumber();
+        const deep = vm.globals.get("deep").?.asNumber();
+        const per_level = (top - deep) / levels; // the stack grows down
+        errdefer std.debug.print("{d:.0} bytes a nested run: {d} of them take {d:.0} KiB\n", .{ per_level, VM.MAX_NESTED_RUNS, per_level * VM.MAX_NESTED_RUNS / 1024 });
+        try testing.expect(per_level > 0);
+        try testing.expect(per_level * VM.MAX_NESTED_RUNS <= NESTED_RUN_STACK_BUDGET);
+    }
+}

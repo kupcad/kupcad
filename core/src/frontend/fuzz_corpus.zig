@@ -31,6 +31,9 @@ pub const CORPUS = [_][]const u8{
     "r = begin\n  raise ArgumentError, \"no\"\nrescue ArgumentError => e\n  e.message\nensure\n  puts(1)\nend\nunless false\n  a ||= 1\n  b &&= 2\nend",
     "import { thing as other } from \"./lib.kup\"\nexport { part }\n# @param width The width\nwidth = param(:width, 10, min: 1)\npart = cube(width).translate(x: 1)&.rotate(z: 45)",
     "CAD.with_config(engine: :brep) do\n  cube(1)\nend\nx = cond ? 1 : 2\nobj&.call\n[1, 2].each_with_index { |v, i| v }",
+    // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
+    "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
+    "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
     @embedFile("../tools/lint/snapshots/brep_unsupported.kup"),
     @embedFile("../tools/lint/snapshots/clean_model.kup"),
     @embedFile("../tools/lint/snapshots/compile_error.kup"),

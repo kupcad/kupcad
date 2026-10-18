@@ -436,6 +436,21 @@ test "WASM Interop: wasm_alloc of nothing, of more than memory holds, and past t
     try testing.expect(try expectBuildLength("cube(2)") > 84);
 }
 
+test "WASM Interop: a recursion through built-ins is an error, not a trapped instance" {
+    // Each run nested in a built-in's call is wasm stack, whose limit the engine sets (512
+    // KiB in wasmtime): `map` recursion trapped the module before 1000 levels, ending every
+    // build in that tab. The nested-run limit stops it with an error.
+    const sources = [_][]const u8{
+        "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)\ncube(1)",
+        "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
+    };
+    for (sources) |src| {
+        const msg = try expectBuildFailure(src);
+        try testing.expect(std.mem.indexOf(u8, msg, "Call stack overflow") != null);
+    }
+    try testing.expect(try expectBuildLength("cube(1)") > 84); // and the next build works
+}
+
 test "WASM Interop: a build imports the files put in the VFS, and not after clear_vfs_wasm" {
     const lib_path = "parts/plate.kup";
     const lib = "def plate(w)\n  cube(w, w, 1)\nend\nexport { plate }";
