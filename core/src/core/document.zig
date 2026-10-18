@@ -53,7 +53,7 @@ pub const Document = struct {
             else => .none,
         };
         if (invalid_byte) |offset| {
-            parser.diagnostics.add(.{ .offset = @intCast(offset), .length = 1, .file_id = 0 }, "the source isn't valid UTF-8 (byte 0x{X:0>2})", .{source[offset]});
+            parser.diagnostics.add(.{ .offset = @intCast(offset), .length = 1, .file_id = 0 }, .@"invalid-utf8", "the source isn't valid UTF-8 (byte 0x{X:0>2})", .{source[offset]});
         }
 
         var tree = parser.b.tree;

@@ -96,7 +96,7 @@ test "Diagnostics: a diagnostic that can't be stored is flagged, not lost silent
         var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
         var diags = Diagnostics.init(failing.allocator());
         defer diags.deinit();
-        diags.add(.{ .offset = 0, .length = 1, .file_id = 0 }, "boom {d}", .{1});
+        diags.add(.{ .offset = 0, .length = 1, .file_id = 0 }, .@"unexpected-token", "boom {d}", .{1});
         try testing.expect(diags.dropped);
         try testing.expectEqual(@as(usize, 0), diags.list.items.len);
     }

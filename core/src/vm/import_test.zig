@@ -1326,7 +1326,7 @@ test "VM: importing a module that fails to compile names where and why" {
 
     // It used to say only "Compilation failed for './bad.kup'".
     const r = vm.globals.get("r") orelse return error.MissingResult;
-    try testing.expectEqualStrings("could not compile 'bad.kup': 2:1: 'cube' is a built-in and can't be assigned", r.asString().chars);
+    try testing.expectEqualStrings("could not compile 'bad.kup': 2:1: 'cube' is a built-in and can't be assigned [builtin-redefined]", r.asString().chars);
 }
 
 test "VM: a relative import is read next to the file that imports it" {

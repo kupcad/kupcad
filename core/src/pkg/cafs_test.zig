@@ -110,7 +110,8 @@ test "Cafs: linkBlob copies when the VFS cannot hard-link" {
 
 // A symlink entry followed by a file "through" it used to write outside the package.
 test "Cafs: extractTarball does not let a symlink entry plant files outside the package" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();

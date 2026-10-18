@@ -85,7 +85,7 @@ pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Docum
     if (doc.diagnostics.len == 0) {
         if (try compileError(allocator, io, doc)) |compile_error| {
             errdefer allocator.free(compile_error.message);
-            try linter.diagnostics.append(allocator, .{ .loc = compile_error.loc, .severity = .@"error", .message = compile_error.message });
+            try linter.diagnostics.append(allocator, .{ .loc = compile_error.loc, .severity = .@"error", .origin = .{ .error_code = compile_error.code }, .message = compile_error.message });
         }
     }
     // In source order, whichever rule or stage found them.
@@ -112,7 +112,7 @@ fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) 
     comp.compile(doc.tree.root) catch |err| {
         if (err == error.OutOfMemory) return err;
         const found = comp.errorDiagnostic() orelse return null;
-        return .{ .loc = found.loc, .message = try allocator.dupe(u8, found.message) };
+        return .{ .loc = found.loc, .code = found.code, .message = try allocator.dupe(u8, found.message) };
     };
     return null;
 }
@@ -237,7 +237,7 @@ fn hashShapes(hasher: *std.hash.Wyhash, vm: *const VM, val: value.Value, depth: 
 fn errorCount(diags: []const LinterDiagnostic) usize {
     var n: usize = 0;
     for (diags) |d| {
-        if (d.rule == null) n += 1;
+        if (d.origin == .error_code) n += 1;
     }
     return n;
 }

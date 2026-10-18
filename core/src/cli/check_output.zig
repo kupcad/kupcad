@@ -5,13 +5,10 @@ const std = @import("std");
 const api = @import("../api.zig");
 const RuleSet = @import("../tools/lint/linter.zig").RuleSet;
 const suppressions = @import("../tools/lint/suppressions.zig");
+const ErrorCode = @import("../core/errors.zig").Code;
 
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI = "https://github.com/kupcad/kupcad";
-/// The SARIF rule a syntax or compile error is reported under (a finding without a rule
-/// isn't accepted by code scanning).
-const ERROR_RULE_ID = "syntax-or-compile-error";
-const ERROR_RULE_DESCRIPTION = "The script doesn't parse or compile; it can't run until this is fixed.";
 const SUPPRESSION_RULE_DESCRIPTION = "A kupcad:disable comment that suppresses nothing or names an unknown rule.";
 
 pub const Format = enum {
@@ -41,6 +38,7 @@ const Finding = struct {
     end: Position,
     severity: []const u8,
     rule: ?[]const u8,
+    code: []const u8,
     message: []const u8,
     fix_title: ?[]const u8 = null,
     fix_safe: bool = false,
@@ -71,7 +69,8 @@ pub const Collector = struct {
                 .start = .at(&line_index, d.loc.offset),
                 .end = .at(&line_index, d.loc.offset + d.loc.length),
                 .severity = @tagName(d.severity),
-                .rule = d.rule,
+                .rule = d.ruleId(),
+                .code = d.code(),
                 .message = try a.dupe(u8, d.message),
             };
             if (d.fix) |fix| {
@@ -104,6 +103,7 @@ pub const Collector = struct {
             endColumn: u32,
             severity: []const u8,
             rule: ?[]const u8,
+            code: []const u8,
             message: []const u8,
             fix: ?JsonFix,
         };
@@ -115,7 +115,7 @@ pub const Collector = struct {
                 for (f.fix_edits, edits) |e, *je| je.* = .{ .line = e.start.line, .column = e.start.column, .endLine = e.end.line, .endColumn = e.end.column, .text = e.text };
                 fix = .{ .title = title, .safe = f.fix_safe, .edits = edits };
             }
-            j.* = .{ .path = f.path, .line = f.start.line, .column = f.start.column, .endLine = f.end.line, .endColumn = f.end.column, .severity = f.severity, .rule = f.rule, .message = f.message, .fix = fix };
+            j.* = .{ .path = f.path, .line = f.start.line, .column = f.start.column, .endLine = f.end.line, .endColumn = f.end.column, .severity = f.severity, .rule = f.rule, .code = f.code, .message = f.message, .fix = fix };
         }
         try std.json.Stringify.value(.{
             .files = counts.files,
@@ -140,10 +140,13 @@ pub const Collector = struct {
         const Result = struct { ruleId: []const u8, level: []const u8, message: Text, locations: []const Location };
         const Rule = struct { id: []const u8, shortDescription: Text };
 
-        const rules = try a.alloc(Rule, RuleSet.ids.len + 2);
+        // Code scanning accepts a finding only under a listed rule: the lint rules, then the
+        // error codes
+        const codes = std.enums.values(ErrorCode);
+        const rules = try a.alloc(Rule, RuleSet.ids.len + 1 + codes.len);
         inline for (RuleSet.ids, 0..) |id, i| rules[i] = .{ .id = id, .shortDescription = .{ .text = @FieldType(RuleSet, id).description } };
         rules[RuleSet.ids.len] = .{ .id = suppressions.RULE, .shortDescription = .{ .text = SUPPRESSION_RULE_DESCRIPTION } };
-        rules[RuleSet.ids.len + 1] = .{ .id = ERROR_RULE_ID, .shortDescription = .{ .text = ERROR_RULE_DESCRIPTION } };
+        for (codes, rules[RuleSet.ids.len + 1 ..]) |code, *rule| rule.* = .{ .id = code.name(), .shortDescription = .{ .text = code.description() } };
 
         const results = try a.alloc(Result, self.findings.items.len);
         for (self.findings.items, results) |f, *r| {
@@ -153,7 +156,7 @@ pub const Collector = struct {
                 .region = .{ .startLine = f.start.line, .startColumn = f.start.utf16_column, .endLine = f.end.line, .endColumn = f.end.utf16_column },
             } };
             const level = if (std.mem.eql(u8, f.severity, "info")) "note" else f.severity;
-            r.* = .{ .ruleId = f.rule orelse ERROR_RULE_ID, .level = level, .message = .{ .text = f.message }, .locations = locations };
+            r.* = .{ .ruleId = f.code, .level = level, .message = .{ .text = f.message }, .locations = locations };
         }
         try std.json.Stringify.value(.{
             .version = "2.1.0",

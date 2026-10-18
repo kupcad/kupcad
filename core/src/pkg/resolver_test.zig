@@ -59,8 +59,13 @@ const Fixture = struct {
         try f.writeStreamingAll(testing.io, data);
     }
 
-    /// Records `pkg_id@commit` in the store, lockfile and manifest (as `alias`).
-    fn addPackage(self: *Fixture, alias: []const u8, url: []const u8, pkg_id: []const u8, commit: []const u8, files: *std.StringHashMap([]const u8)) !void {
+    /// Records the package at `url`, at `commit`, in the store, lockfile and manifest (as
+    /// `alias`), and returns its package id (caller frees). The id is the resolver's own,
+    /// derived from the URL: one written out here went stale when ids gained a hash of the
+    /// ref, and the manifest's dependency stopped matching its lockfile entry unnoticed.
+    fn addPackage(self: *Fixture, alias: []const u8, url: []const u8, commit: []const u8, files: *std.StringHashMap([]const u8)) ![]const u8 {
+        const pkg_id = try (try ParsedPackage.parse(url)).pkgId(testing.allocator);
+        errdefer testing.allocator.free(pkg_id);
         try self.store.registerPackage(pkg_id, commit, "github", "sha256-mock", files);
         try self.lockfile.packages.put(try testing.allocator.dupe(u8, pkg_id), .{
             .resolved = try testing.allocator.dupe(u8, commit),
@@ -69,6 +74,7 @@ const Fixture = struct {
             .dependencies = StringMap.init(testing.allocator),
         });
         try self.manifest.dependencies.put(try testing.allocator.dupe(u8, alias), try testing.allocator.dupe(u8, url));
+        return pkg_id;
     }
 
     fn link(self: *Fixture) !void {
@@ -81,6 +87,12 @@ const Fixture = struct {
         const content = try self.mem_vfs.vfs().readFile(testing.allocator, path);
         defer testing.allocator.free(content);
         try testing.expectEqualStrings(expected, content);
+    }
+
+    fn expectSymlink(self: *Fixture, path: []const u8, target: []const u8) !void {
+        const node = self.mem_vfs.nodes.get(path) orelse return error.TestExpectedSymlink;
+        try testing.expectEqual(.symlink, node.kind);
+        try testing.expectEqualStrings(target, node.content.?);
     }
 
     /// Writes a tar.gz into the tmp dir, adds it as dependency `alias` and returns
@@ -140,14 +152,20 @@ test "Resolver: linkWorkspace links locked packages (flat and nested files) into
     // Several files in one deep directory share the cached directory creation.
     try files.put("src/deep/nested/a.kup", "hash1");
     try files.put("src/deep/nested/b.kup", "hash1");
-    try fx.addPackage("testpkg", "github.com/user/testpkg", "github.com-user-testpkg", "commit1", &files);
+    const pkg_id = try fx.addPackage("testpkg", "github.com/user/testpkg", "commit1", &files);
+    defer testing.allocator.free(pkg_id);
 
     try fx.link();
 
-    const store_dir = ".kupcad/pkg/.store/github.com-user-testpkg-commit1/pkg";
-    try fx.expectFile(store_dir ++ "/main.kup", "def init() 10 end");
-    try fx.expectFile(store_dir ++ "/src/deep/nested/a.kup", "mock content");
-    try fx.expectFile(store_dir ++ "/src/deep/nested/b.kup", "mock content");
+    const package_dir = try std.fmt.allocPrint(testing.allocator, ".store/{s}-commit1/pkg", .{pkg_id});
+    defer testing.allocator.free(package_dir);
+    inline for (.{ .{ "main.kup", "def init() 10 end" }, .{ "src/deep/nested/a.kup", "mock content" }, .{ "src/deep/nested/b.kup", "mock content" } }) |file| {
+        const path = try std.fmt.allocPrint(testing.allocator, ".kupcad/pkg/{s}/{s}", .{ package_dir, file[0] });
+        defer testing.allocator.free(path);
+        try fx.expectFile(path, file[1]);
+    }
+    // The script's `import "testpkg"` reaches the package through its alias
+    try fx.expectSymlink(".kupcad/pkg/testpkg", package_dir);
 }
 
 test "Resolver: linkWorkspace refuses a locked package the store doesn't have" {
@@ -175,7 +193,7 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
         defer fx.deinit();
         var files = std.StringHashMap([]const u8).init(testing.allocator);
         defer files.deinit();
-        try fx.addPackage("dep", "github.com/user/dep", "github.com-user-dep", "../../../../escape", &files);
+        testing.allocator.free(try fx.addPackage("dep", "github.com/user/dep", "../../../../escape", &files));
         try testing.expectError(error.InvalidPathSegment, fx.link());
     }
     {
@@ -186,7 +204,7 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
         var files = std.StringHashMap([]const u8).init(testing.allocator);
         defer files.deinit();
         try files.put("../../../../../escape.kup", "h");
-        try fx.addPackage("dep", "github.com/user/dep", "github.com-user-dep", "commit1", &files);
+        testing.allocator.free(try fx.addPackage("dep", "github.com/user/dep", "commit1", &files));
         try testing.expectError(error.UnsafeArchivePath, fx.link());
     }
     {
@@ -195,7 +213,7 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
         defer fx.deinit();
         var files = std.StringHashMap([]const u8).init(testing.allocator);
         defer files.deinit();
-        try fx.addPackage("../evil", "github.com/user/dep", "github.com-user-dep", "commit1", &files);
+        testing.allocator.free(try fx.addPackage("../evil", "github.com/user/dep", "commit1", &files));
         try testing.expectError(error.InvalidAlias, fx.link());
     }
 }
@@ -206,7 +224,8 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
 
 // Audit fix: install errors were swallowed and the install reported success.
 test "Resolver: resolve propagates install errors instead of reporting success" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -216,7 +235,8 @@ test "Resolver: resolve propagates install errors instead of reporting success" 
 }
 
 test "Resolver: resolve verifies cached content against the locked integrity" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -236,7 +256,8 @@ test "Resolver: resolve verifies cached content against the locked integrity" {
 }
 
 test "Resolver: downloads honor the locked commit and integrity" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -261,7 +282,8 @@ test "Resolver: downloads honor the locked commit and integrity" {
 }
 
 test "Resolver: lock entries without integrity are refused" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -305,7 +327,8 @@ test "Resolver: a pin for a different ref is re-resolved, stale entries dropped"
 }
 
 test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as current" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();
@@ -349,7 +372,8 @@ test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as c
 }
 
 test "Resolver: forbidden or malformed transitive deps fail the install" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     const cases = [_]struct { manifest: []const u8, err: anyerror }{
         .{ .manifest =
         \\{"dependencies":{"x":"file:/etc/passwd"}}

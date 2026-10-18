@@ -121,6 +121,7 @@ fn inner_check(source: []const u8) ![]const u8 {
             .offset = d.loc.offset,
             .length = d.loc.length,
             .severity = d.severity.toString(),
+            .code = d.code(),
             .message = d.message,
         };
         try out.writer.print("{f}", .{std.json.fmt(flat_diag, .{})});

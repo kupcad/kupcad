@@ -4,7 +4,7 @@ const linter = @import("linter.zig");
 const fixer = @import("fixer.zig");
 
 fn finding(edits: []linter.Edit, safe: bool) linter.LinterDiagnostic {
-    return .{ .loc = .{ .offset = 0, .length = 0, .file_id = 0 }, .severity = .warning, .message = "", .rule = "test", .fix = .{ .title = "", .edits = edits, .safe = safe } };
+    return .{ .loc = .{ .offset = 0, .length = 0, .file_id = 0 }, .severity = .warning, .message = "", .origin = .{ .rule = "test" }, .fix = .{ .title = "", .edits = edits, .safe = safe } };
 }
 
 test "Fixer: applies safe fixes in source order, whatever order they come in" {

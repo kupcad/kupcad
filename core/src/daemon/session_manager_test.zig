@@ -108,7 +108,8 @@ test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its hea
 }
 
 test "SessionManager: evictLRU never frees a session that is still leased" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);

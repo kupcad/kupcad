@@ -12,8 +12,9 @@ jobs:
   fuzz:
     # The front end (lexer, parser, linter, compiler, formatter) and the runtime (the VM and
     # the built-ins, on scripts that compile), each on random bytes from the corpus in
-    # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig). A plain
-    # test run replays the corpus on every platform; searching runs here, one job per test.
+    # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig), and the
+    # parsers of what KupCAD reads but didn't write (importers_fuzz_test.zig). A plain test run
+    # replays the corpus on every platform; searching runs here, one job per target.
     name: Fuzz the ${{ matrix.target }} (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -32,6 +33,10 @@ jobs:
             runs: 400K
           - target: runtime_programs
             runs: 500K
+          # Eight parsers of files and responses, each run to the limit: 200K took 7 minutes
+          # on a laptop, so this is about 35 there; not yet measured on a hosted runner.
+          - target: importers
+            runs: 1M
     steps:
       - name: Checkout
         uses: actions/checkout@v6

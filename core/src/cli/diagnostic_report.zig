@@ -49,8 +49,9 @@ pub const Report = struct {
     length: u32,
     severity: Severity,
     message: []const u8,
-    /// The lint rule that reported it, shown after the message (`[unused-variable]`).
-    rule: ?[]const u8 = null,
+    /// The lint rule that reported it, or the error's code, shown after the message
+    /// (`[unused-variable]`, `[unexpected-token]`).
+    code: []const u8,
 };
 
 pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!void {
@@ -60,8 +61,7 @@ pub fn write(w: *std.Io.Writer, r: Report, style: Style) std.Io.Writer.Error!voi
     const sev_color = style.severity(r.severity);
 
     try w.print("{s}{s}:{d}:{d}:{s} {s}{s}:{s} {s}", .{ style.cyan, r.file_path, line, col, style.reset, sev_color, r.severity.toChar(), style.reset, r.message });
-    if (r.rule) |rule| try w.print(" [{s}]", .{rule});
-    try w.writeAll("\n");
+    try w.print(" [{s}]\n", .{r.code});
     try w.print("{s}\n", .{r.line_index.lineText(r.source, line - 1)});
     try w.splatByteAll(' ', col - 1);
     try w.writeAll(sev_color);
@@ -83,6 +83,7 @@ pub fn writeErrors(w: *std.Io.Writer, allocator: std.mem.Allocator, file_path: [
             .length = d.loc.length,
             .severity = .@"error",
             .message = d.message,
+            .code = d.code.name(),
         }, style);
     }
     return diagnostics.len;

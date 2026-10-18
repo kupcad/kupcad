@@ -14,6 +14,7 @@ const string_escape = @import("../core/string_escape.zig");
 
 const Tag = lexer_mod.Tag;
 const Diagnostics = common_errors.Diagnostics;
+const Code = common_errors.Code;
 
 const RescueEnsurePayload = struct {
     rescues: ast.Span,
@@ -239,12 +240,12 @@ pub const Parser = struct {
         loc.length = @intCast(problem.len);
         switch (problem.kind) {
             .unknown => if (problem.value > 0 and problem.value < 0x80 and std.ascii.isPrint(@intCast(problem.value)))
-                self.reportError(loc, "Unknown escape '\\{c}' in a string; write '\\\\' for a backslash", .{@as(u8, @intCast(problem.value))})
+                self.reportError(loc, .@"invalid-escape", "Unknown escape '\\{c}' in a string; write '\\\\' for a backslash", .{@as(u8, @intCast(problem.value))})
             else
-                self.reportError(loc, "A backslash in a string must start an escape (\\n, \\t, \\u{{...}} and the like); write '\\\\' for a backslash", .{}),
-            .malformed_unicode => self.reportError(loc, "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{{1F600}})", .{}),
-            .surrogate => self.reportError(loc, "U+{X:0>4} is a UTF-16 surrogate, not a character", .{problem.value}),
-            .beyond_unicode => self.reportError(loc, "U+{X} is past the last Unicode character, U+10FFFF", .{problem.value}),
+                self.reportError(loc, .@"invalid-escape", "A backslash in a string must start an escape (\\n, \\t, \\u{{...}} and the like); write '\\\\' for a backslash", .{}),
+            .malformed_unicode => self.reportError(loc, .@"invalid-escape", "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{{1F600}})", .{}),
+            .surrogate => self.reportError(loc, .@"invalid-escape", "U+{X:0>4} is a UTF-16 surrogate, not a character", .{problem.value}),
+            .beyond_unicode => self.reportError(loc, .@"invalid-escape", "U+{X} is past the last Unicode character, U+10FFFF", .{problem.value}),
         }
     }
 
@@ -254,22 +255,22 @@ pub const Parser = struct {
         const loc = self.getLoc(idx);
         const text = self.tokens.lexeme(self.source, idx);
         switch (self.tokens.tags[idx]) {
-            .invalid => self.reportError(loc, "Unexpected character '{s}'", .{text}),
-            .unterminated_string => self.reportError(loc, "This string is never closed before the end of the file", .{}),
-            .unterminated_heredoc => self.reportError(loc, "This heredoc is never closed: no line '{s}' before the end of the file", .{text}),
-            .runs_into_heredoc => self.reportError(loc, "This runs onto the next line, where the heredoc opened on this line has its body; end it on this line", .{}),
-            .interpolation_too_deep => self.reportError(loc, "Interpolation depth exceeded", .{}),
+            .invalid => self.reportError(loc, .@"unexpected-character", "Unexpected character '{s}'", .{text}),
+            .unterminated_string => self.reportError(loc, .@"unterminated-string", "This string is never closed before the end of the file", .{}),
+            .unterminated_heredoc => self.reportError(loc, .@"unterminated-heredoc", "This heredoc is never closed: no line '{s}' before the end of the file", .{text}),
+            .runs_into_heredoc => self.reportError(loc, .@"runs-into-heredoc", "This runs onto the next line, where the heredoc opened on this line has its body; end it on this line", .{}),
+            .interpolation_too_deep => self.reportError(loc, .@"nesting-too-deep", "Interpolation depth exceeded", .{}),
             else => unreachable,
         }
     }
 
-    pub fn reportError(self: *Parser, loc: ast.Location, comptime fmt: []const u8, args: anytype) void {
+    pub fn reportError(self: *Parser, loc: ast.Location, code: Code, comptime fmt: []const u8, args: anytype) void {
         // Prevent duplicate errors at the exact same token offset
         if (self.diagnostics.list.items.len > 0) {
             const last = self.diagnostics.list.items[self.diagnostics.list.items.len - 1];
             if (last.loc.offset == loc.offset) return;
         }
-        self.diagnostics.add(loc, fmt, args);
+        self.diagnostics.add(loc, code, fmt, args);
     }
 
     /// Every construct that nests the AST (expressions, statements, blocks, elsif
@@ -279,7 +280,7 @@ pub const Parser = struct {
     /// Caller pairs a successful call with `defer self.ast_depth -= 1`.
     fn enterNesting(self: *Parser) ParseError!void {
         if (self.ast_depth >= limits.MAX_AST_DEPTH) {
-            self.reportError(self.getLoc(self.tok_idx), "Maximum AST depth exceeded", .{});
+            self.reportError(self.getLoc(self.tok_idx), .@"nesting-too-deep", "Maximum AST depth exceeded", .{});
             return ParseError.AstTooDeep;
         }
         self.ast_depth += 1;
@@ -346,7 +347,7 @@ pub const Parser = struct {
         defer self.in_loop_header = outer;
         const expr = try self.parseExpression(.none);
         if (self.tag(0) == .keyword_do) {
-            self.reportError(self.getLoc(self.tok_idx), "A loop header ends at the line break; remove this 'do'", .{});
+            self.reportError(self.getLoc(self.tok_idx), .@"misplaced-do", "A loop header ends at the line break; remove this 'do'", .{});
             return ParseError.UnexpectedToken;
         }
         return expr;
@@ -370,7 +371,7 @@ pub const Parser = struct {
             self.advance();
             return captured_idx;
         }
-        self.reportError(self.getLoc(self.tok_idx), "Expected '{s}', but found '{s}'", .{ @tagName(expected), self.lexeme(0) });
+        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected '{s}', but found '{s}'", .{ @tagName(expected), self.lexeme(0) });
         return ParseError.UnexpectedToken;
     }
 
@@ -507,7 +508,7 @@ pub const Parser = struct {
                 try self.scratch_nodes.append(self.allocator, parsed_stmt);
                 // `puts 1 2` used to run as `puts 1` and then `2`; Ruby rejects it too.
                 if (!self.atStatementEnd(end_tags)) {
-                    self.reportError(self.getLoc(self.tok_idx), "Expected a line break or ';' before '{s}'", .{self.lexeme(0)});
+                    self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a line break or ';' before '{s}'", .{self.lexeme(0)});
                     self.synchronize();
                 }
             } else |err| {
@@ -690,7 +691,7 @@ pub const Parser = struct {
             },
             else => {},
         }
-        self.reportError(self.getLoc(op_tok), "Invalid expression starting with '{s}'", .{self.tokens.lexeme(self.source, op_tok)});
+        self.reportError(self.getLoc(op_tok), .@"invalid-expression", "Invalid expression starting with '{s}'", .{self.tokens.lexeme(self.source, op_tok)});
         return ParseError.InvalidExpression;
     }
 
@@ -807,7 +808,7 @@ pub const Parser = struct {
 
     fn parseImportOrExportStatement(self: *Parser, is_export: bool) ParseError!ast.NodeIndex {
         if (self.scope_depth > 0) {
-            self.reportError(self.getLoc(self.tok_idx), "Import and Export statements are only allowed at the top level", .{});
+            self.reportError(self.getLoc(self.tok_idx), .@"misplaced-import", "Import and Export statements are only allowed at the top level", .{});
             return ParseError.InvalidExpression;
         }
 
@@ -863,7 +864,7 @@ pub const Parser = struct {
                 attributes = try self.parseHashLiteral();
             }
         } else if (!is_export) {
-            self.reportError(self.getLoc(start_tok), "Import statement missing 'from' path", .{});
+            self.reportError(self.getLoc(start_tok), .@"import-without-from", "Import statement missing 'from' path", .{});
             return ParseError.UnexpectedToken;
         }
 
@@ -974,7 +975,7 @@ pub const Parser = struct {
             var mod: ?ast.ArgModifier = null;
             if (self.tag(0) == .star) {
                 if (has_splat) {
-                    self.reportError(self.getLoc(self.tok_idx), "A for loop takes at most one *splat variable", .{});
+                    self.reportError(self.getLoc(self.tok_idx), .@"invalid-parameter", "A for loop takes at most one *splat variable", .{});
                     return ParseError.UnexpectedToken;
                 }
                 has_splat = true;
@@ -988,7 +989,7 @@ pub const Parser = struct {
             self.advance();
         }
         if (self.tag(0) != .ident or !std.mem.eql(u8, self.lexeme(0), "in")) {
-            self.reportError(self.getLoc(self.tok_idx), "Expected 'in' after the loop variables, found '{s}'", .{self.lexeme(0)});
+            self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected 'in' after the loop variables, found '{s}'", .{self.lexeme(0)});
             return ParseError.UnexpectedToken;
         }
         self.advance();
@@ -1100,7 +1101,7 @@ pub const Parser = struct {
     fn parseClassPath(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
         if (self.tag(0) != .constant and self.tag(0) != .ident) {
-            self.reportError(self.getLoc(start_tok), "Expected 'constant', but found '{s}'", .{self.lexeme(0)});
+            self.reportError(self.getLoc(start_tok), .@"unexpected-token", "Expected 'constant', but found '{s}'", .{self.lexeme(0)});
             return ParseError.UnexpectedToken;
         }
         const s_len = self.scratch_strings.items.len;
@@ -1228,7 +1229,7 @@ pub const Parser = struct {
         // A call has one block: a `&blk` argument or a literal one, not both or two of either.
         const block_args = self.blockArgCount(args);
         if (block_args > 1 or (block_args == 1 and block_node != .none)) {
-            self.reportError(self.getLoc(start_tok), "a call takes one block: a &block argument or a do/{{ }} block, not both", .{});
+            self.reportError(self.getLoc(start_tok), .@"unexpected-block", "a call takes one block: a &block argument or a do/{{ }} block, not both", .{});
         }
         return .{ .args = args, .block = block_node, .end_token = end_tok };
     }
@@ -1249,7 +1250,7 @@ pub const Parser = struct {
 
         // 1. Validate we are starting with an identifier or constant
         if (tok_tag != .ident and tok_tag != .constant) {
-            self.reportError(self.getLoc(tok_idx), "Expected identifier or constant", .{});
+            self.reportError(self.getLoc(tok_idx), .@"unexpected-token", "Expected identifier or constant", .{});
             return ParseError.UnexpectedToken;
         }
         self.advance();
@@ -1348,7 +1349,7 @@ pub const Parser = struct {
             suffix = try self.parseCallSuffix();
         }
         if (suffix.block != .none or self.blockArgCount(suffix.args) > 0) {
-            self.reportError(self.getLoc(start_tok), "yield calls the method's own block; it can't be given one", .{});
+            self.reportError(self.getLoc(start_tok), .@"unexpected-block", "yield calls the method's own block; it can't be given one", .{});
         }
         return self.b.methodCall(.none, try self.b.intern("yield"), suffix.args, suffix.block, false, suffix.end_token, start_tok) catch ParseError.OutOfMemory;
     }
@@ -1444,7 +1445,7 @@ pub const Parser = struct {
             "a global variable"
         else
             null;
-        if (kind) |k| self.reportError(self.getLoc(name_tok), "A parameter cannot be {s}: '{s}'", .{ k, name });
+        if (kind) |k| self.reportError(self.getLoc(name_tok), .@"invalid-parameter", "A parameter cannot be {s}: '{s}'", .{ k, name });
         return name_tok;
     }
 
@@ -1485,7 +1486,7 @@ pub const Parser = struct {
     /// signatures here with a diagnostic instead of overflowing in the compiler.
     fn checkParamCount(self: *Parser, count: usize) ParseError!void {
         if (count > limits.MAX_ARGS) {
-            self.reportError(self.getLoc(self.tok_idx), "Too many parameters ({d}); the maximum is {d}", .{ count, limits.MAX_ARGS });
+            self.reportError(self.getLoc(self.tok_idx), .@"too-many-parameters", "Too many parameters ({d}); the maximum is {d}", .{ count, limits.MAX_ARGS });
             return ParseError.InvalidExpression;
         }
     }
@@ -1574,7 +1575,7 @@ pub const Parser = struct {
             .number => {
                 const literal = self.tokens.lexeme(self.source, start_tok);
                 if (ast.parseNumberLiteral(literal) == null) {
-                    self.reportError(self.getLoc(start_tok), "Invalid number '{s}': malformed, or beyond the largest number (1.8e308)", .{literal});
+                    self.reportError(self.getLoc(start_tok), .@"invalid-number", "Invalid number '{s}': malformed, or beyond the largest number (1.8e308)", .{literal});
                 }
                 self.advance();
                 left = try self.b.number(literal, start_tok);
@@ -1643,7 +1644,7 @@ pub const Parser = struct {
                 left = try self.b.invalidNode(start_tok);
             },
             else => {
-                self.reportError(self.getLoc(start_tok), "Invalid expression starting with '{s}'", .{self.lexeme(0)});
+                self.reportError(self.getLoc(start_tok), .@"invalid-expression", "Invalid expression starting with '{s}'", .{self.lexeme(0)});
                 left = try self.b.invalidNode(start_tok);
             },
         }
@@ -1792,9 +1793,9 @@ pub const Parser = struct {
                     // the first statement of the rescue body. Report it and skip just that token,
                     // so the rest of the clause still parses (one error, no cascade).
                     if (self.tag(0) == .constant) {
-                        self.reportError(self.getLoc(self.tok_idx), "'{s}' is a constant; bind the error to a variable, e.g. `rescue => e`", .{self.lexeme(0)});
+                        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "'{s}' is a constant; bind the error to a variable, e.g. `rescue => e`", .{self.lexeme(0)});
                     } else {
-                        self.reportError(self.getLoc(self.tok_idx), "Expected a variable name after '=>' in rescue, found '{s}'", .{self.lexeme(0)});
+                        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a variable name after '=>' in rescue, found '{s}'", .{self.lexeme(0)});
                     }
                     if (self.tag(0) != .newline and self.tag(0) != .eof) self.advance();
                 }
@@ -1910,7 +1911,7 @@ pub const Parser = struct {
         self.skipIgnored(); // Allow newlines immediately before ')'
         if (self.tag(0) == .comma) {
             // Usually `name (a, b)`: the space makes the parentheses a group, not the argument list.
-            self.reportError(self.getLoc(self.tok_idx), "Parentheses with a space before them hold one value; to pass several arguments, write '(' right after the method name: name(a, b)", .{});
+            self.reportError(self.getLoc(self.tok_idx), .@"spaced-parentheses", "Parentheses with a space before them hold one value; to pass several arguments, write '(' right after the method name: name(a, b)", .{});
             return ParseError.UnexpectedToken;
         }
         _ = try self.expect(.r_paren);
@@ -2051,10 +2052,10 @@ pub const Parser = struct {
             return self.b.arrayLiteral(span, end_tok, start_tok) catch ParseError.OutOfMemory;
         } else if (self.tag(0) == .ampersand) {
             // Blocks don't receive blocks; this used to be mis-parsed without a diagnostic.
-            self.reportError(self.getLoc(self.tok_idx), "A block parameter cannot take a block ('&'); pass it as a normal argument instead", .{});
+            self.reportError(self.getLoc(self.tok_idx), .@"invalid-parameter", "A block parameter cannot take a block ('&'); pass it as a normal argument instead", .{});
             return ParseError.UnexpectedToken;
         }
-        self.reportError(self.getLoc(self.tok_idx), "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
+        self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
         return ParseError.UnexpectedToken;
     }
 

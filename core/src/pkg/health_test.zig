@@ -7,7 +7,8 @@ const Doctor = @import("health.zig").Doctor;
 const writeAbs = @import("test_helpers.zig").writeAbs;
 
 test "Doctor: healMissingBlobs evicts blob and package records when physical files vanish" {
-    std.testing.log_level = .err;
+    const warnings = @import("../test_support.zig").expectWarnings();
+    defer warnings.restore();
 
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -56,7 +57,8 @@ test "Doctor: healMissingBlobs evicts blob and package records when physical fil
 }
 
 test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
-    std.testing.log_level = .err;
+    const warnings = @import("../test_support.zig").expectWarnings();
+    defer warnings.restore();
 
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -101,6 +103,8 @@ test "Doctor: healOrphanedBlobs indexes physical files missing from DB" {
 // Audit fix: a CAFS file name crafted as SQL was formatted into the lookup, which
 // then matched any row, so the orphan was never indexed. (Prune half: gc_test.zig.)
 test "Doctor: healOrphanedBlobs binds blob names as SQL parameters" {
+    const warnings = @import("../test_support.zig").expectWarnings(); // the re-indexed blob
+    defer warnings.restore();
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 

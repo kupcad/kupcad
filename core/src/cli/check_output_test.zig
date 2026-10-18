@@ -6,13 +6,14 @@ const suppressions = @import("../tools/lint/suppressions.zig");
 
 test "SARIF: every result names a declared rule and every path is a URI" {
     // Code scanning rejected the file: raw paths with spaces, suppression results naming
-    // a rule the run didn't declare, and syntax errors with no ruleId at all.
+    // a rule the run didn't declare, and syntax errors with no ruleId at all (each is now
+    // under its own code).
     var collector = check_output.Collector.init(testing.allocator);
     defer collector.deinit();
     const diags = [_]api.LinterDiagnostic{
-        .{ .loc = .{ .offset = 0, .length = 3, .file_id = 0 }, .severity = .@"error", .message = "unexpected token" },
-        .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .warning, .message = "nothing to suppress", .rule = suppressions.RULE },
-        .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .info, .message = "unused", .rule = "unused-variable" },
+        .{ .loc = .{ .offset = 0, .length = 3, .file_id = 0 }, .severity = .@"error", .message = "unexpected token", .origin = .{ .error_code = .@"unexpected-token" } },
+        .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .warning, .message = "nothing to suppress", .origin = .{ .rule = suppressions.RULE } },
+        .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .info, .message = "unused", .origin = .{ .rule = "unused-variable" } },
     };
     try collector.add("my parts/ünit#1.kup", "x = 1\ny = 2\n", &diags);
 
@@ -36,6 +37,6 @@ test "SARIF: every result names a declared rule and every path is a URI" {
         try testing.expect(location.get("region").?.object.get("startLine").?.integer >= 1);
         try testing.expect(location.get("region").?.object.get("startColumn").?.integer >= 1);
     }
-    try testing.expectEqualStrings("syntax-or-compile-error", results[0].object.get("ruleId").?.string);
+    try testing.expectEqualStrings("unexpected-token", results[0].object.get("ruleId").?.string);
     try testing.expectEqualStrings("note", results[2].object.get("level").?.string);
 }

@@ -94,3 +94,17 @@ test "STL: every exported solid reads back closed and consistently oriented" {
         try mesh_check.expectClosed(testing.allocator, mesh.faces);
     }
 }
+
+test "STL: a vertex that is NaN or infinite is an error, in either format" {
+    // The parser took any float, and the mesh it made crashed the build where the DAG
+    // checks its points (found by the importer fuzz test).
+    const ascii = "solid x\nfacet normal 0 0 1\nouter loop\nvertex nan 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n";
+    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, ascii));
+    const ascii_inf = "solid x\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex inf 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n";
+    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, ascii_inf));
+
+    var binary: [84 + 50]u8 = @splat(0);
+    std.mem.writeInt(u32, binary[80..84], 1, .little);
+    std.mem.writeInt(u32, binary[84 + 12 ..][0..4], @bitCast(std.math.inf(f32)), .little);
+    try testing.expectError(error.NonFiniteVertex, stl.parseStlBuffer(testing.allocator, &binary));
+}

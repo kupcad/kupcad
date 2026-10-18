@@ -270,7 +270,7 @@ test "build_cmd: syntax errors are reported with file, line, column and a caret"
     defer testing.allocator.free(first);
     const second = try std.fmt.allocPrint(testing.allocator, "{s}:4:5:", .{fx.input});
     defer testing.allocator.free(second);
-    for ([_][]const u8{ first, "Expected 'r_paren', but found 'sphere'\nsphere(2)\n", second, "Invalid expression starting with ')'\nx = )\n    ", "^" }) |needle| {
+    for ([_][]const u8{ first, "Expected 'r_paren', but found 'sphere' [unexpected-token]\nsphere(2)\n", second, "Invalid expression starting with ')' [invalid-expression]\nx = )\n    ", "^" }) |needle| {
         errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
         try testing.expect(std.mem.indexOf(u8, text, needle) != null);
     }
@@ -292,7 +292,7 @@ test "build_cmd: resolver errors are reported like syntax errors" {
     defer testing.allocator.free(location);
     const summary = try std.fmt.allocPrint(testing.allocator, "Build failed: 1 error in {s}\n", .{fx.input});
     defer testing.allocator.free(summary);
-    for ([_][]const u8{ location, "Cannot use 'break' outside of a loop\nf = ->(x) { break x }\n", summary }) |needle| {
+    for ([_][]const u8{ location, "Cannot use 'break' outside of a loop [outside-loop]\nf = ->(x) { break x }\n", summary }) |needle| {
         errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
         try testing.expect(std.mem.indexOf(u8, text, needle) != null);
     }
@@ -309,7 +309,7 @@ test "build_cmd: compile errors are reported like syntax errors" {
     const text = res.text();
     const location = try std.fmt.allocPrint(testing.allocator, "{s}:2:1:", .{fx.input});
     defer testing.allocator.free(location);
-    for ([_][]const u8{ location, "'cube' is a built-in and can't be assigned\ncube = 5\n", "Build failed: 1 error in" }) |needle| {
+    for ([_][]const u8{ location, "'cube' is a built-in and can't be assigned [builtin-redefined]\ncube = 5\n", "Build failed: 1 error in" }) |needle| {
         errdefer std.debug.print("missing {s} in:\n{s}\n", .{ needle, text });
         try testing.expect(std.mem.indexOf(u8, text, needle) != null);
     }

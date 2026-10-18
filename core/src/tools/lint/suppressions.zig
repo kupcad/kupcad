@@ -94,7 +94,7 @@ pub fn apply(
 }
 
 fn hide(entries: []Entry, d: linter.LinterDiagnostic, line_index: *const LineIndex) bool {
-    const rule = d.rule orelse return false; // syntax and compile errors are never hidden
+    const rule = d.ruleId() orelse return false; // syntax and compile errors are never hidden
     const line = line_index.getLine(d.loc.offset);
     var hidden = false;
     for (entries) |*e| {
@@ -155,5 +155,5 @@ fn levelOf(config: Config, rule: []const u8) Level {
 fn addProblem(allocator: std.mem.Allocator, problems: *std.ArrayListUnmanaged(linter.LinterDiagnostic), loc: token.Location, comptime fmt: []const u8, args: anytype) !void {
     const message = try std.fmt.allocPrint(allocator, fmt, args);
     errdefer allocator.free(message);
-    try problems.append(allocator, .{ .loc = loc, .severity = .warning, .message = message, .rule = RULE });
+    try problems.append(allocator, .{ .loc = loc, .severity = .warning, .message = message, .origin = .{ .rule = RULE } });
 }

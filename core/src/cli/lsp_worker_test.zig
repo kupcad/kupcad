@@ -70,7 +70,8 @@ test "lsp worker: serve answers updates, an evaluation, a hover and a removal in
 
 test "lsp worker: a worker that dies is a crash for the preview, and the next use starts another" {
     if (builtin.os.tag != .linux and !builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    @import("../test_support.zig").expectWarnings(); // the worker's end is logged as one
+    const warnings = @import("../test_support.zig").expectWarnings(); // the worker's end is logged as one
+    defer warnings.restore();
     // A stand-in that ends at once, as one that crashed on its first request would.
     const argv = [_][]const u8{ "/bin/sh", "-c", "exit 3" };
     var worker = lsp_worker.WorkerPreview.init(testing.allocator, testing.io, &argv);

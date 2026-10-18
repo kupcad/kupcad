@@ -275,7 +275,7 @@ const ResolverContext = struct {
                 if (!is_valid) {
                     const offset = self.resolver.token_starts[node.main_token];
                     const length = self.resolver.token_lengths[node.main_token];
-                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use 'break' outside of a loop", .{});
+                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, .@"outside-loop", "Cannot use 'break' outside of a loop", .{});
                 }
             },
             .next_stmt => {
@@ -297,7 +297,7 @@ const ResolverContext = struct {
                 if (!is_valid) {
                     const offset = self.resolver.token_starts[node.main_token];
                     const length = self.resolver.token_lengths[node.main_token];
-                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, "Cannot use 'next' outside of a loop", .{});
+                    self.resolver.diagnostics.add(.{ .offset = offset, .length = length, .file_id = 0 }, .@"outside-loop", "Cannot use 'next' outside of a loop", .{});
                 }
             },
             .method_call => {

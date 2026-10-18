@@ -73,7 +73,8 @@ fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
 }
 
 test "Lockfile: integrity scheme follows the major version; unknown majors are rejected" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 

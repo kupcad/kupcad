@@ -548,6 +548,8 @@ pub fn build(b: *std.Build) void {
         for (EXAMPLES) |name| {
             mod.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
         }
+        // So is the README, whose table of error codes a test keeps complete.
+        mod.addAnonymousImport("docs/README.md", .{ .root_source_file = b.path("docs/README.md") });
 
         const mod_tests = b.addTest(.{
             .root_module = mod,
@@ -599,14 +601,16 @@ pub fn build(b: *std.Build) void {
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The one fuzz test `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers");
         // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
             .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
             .frontend_programs => "frontend.fuzz_test.test.fuzz: the front end takes any generated program",
             .runtime => "vm.fuzz_test.test.fuzz: a script runs without crashing the VM",
             .runtime_programs => "vm.fuzz_test.test.fuzz: a generated program runs without crashing the VM",
+            // Every parser of src/importers_fuzz_test.zig: each is quick
+            .importers => "importers_fuzz_test.test.fuzz:",
         } else "fuzz:";
         const fuzz_tests = b.addTest(.{
             .root_module = mod,

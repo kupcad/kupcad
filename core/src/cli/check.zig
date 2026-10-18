@@ -184,7 +184,7 @@ fn processFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8, 
                 .length = d.loc.length,
                 .severity = d.severity,
                 .message = d.message,
-                .rule = d.rule,
+                .code = d.code(),
             }, c);
         }
         totals.reporter.err("{s}", .{rendered.written()});

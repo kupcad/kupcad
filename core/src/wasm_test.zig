@@ -463,13 +463,12 @@ test "WASM Interop: a build imports the files put in the VFS, and not after clea
     try testing.expect(std.mem.indexOf(u8, msg, "plate.kup") != null);
 }
 
-test "WASM Interop: check_code_wasm's JSON names each finding's place, severity and message" {
+test "WASM Interop: check_code_wasm's JSON names each finding's place, severity, code and message" {
     const src = "x = 1\ncube(-2)";
     var len: usize = 0;
     const res = wasm.check_code_wasm(src.ptr, src.len, &len) orelse return error.CheckFailed;
     defer wasm.wasm_free(@constCast(res), len);
-    const Finding = struct { line: u32, col: u32, offset: u32, length: u32, severity: []const u8, message: []const u8 };
-    const parsed = try std.json.parseFromSlice([]Finding, testing.allocator, res[0..len], .{});
+    const parsed = try std.json.parseFromSlice([]CheckFinding, testing.allocator, res[0..len], .{});
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 2), parsed.value.len);
     for (parsed.value) |f| {
@@ -483,6 +482,21 @@ test "WASM Interop: check_code_wasm's JSON names each finding's place, severity 
     } else return error.MissingFinding;
     try testing.expectEqual(@as(u32, 6), negative.col);
     try testing.expectEqualStrings("-2", src[negative.offset..][0..negative.length]);
+    try testing.expectEqualStrings("nonpositive-size", negative.code);
+}
+
+const CheckFinding = struct { line: u32, col: u32, offset: u32, length: u32, severity: []const u8, code: []const u8, message: []const u8 };
+
+test "WASM Interop: check_code_wasm's JSON gives a syntax error its code, as a finding its rule" {
+    const src = "cube(1";
+    var len: usize = 0;
+    const res = wasm.check_code_wasm(src.ptr, src.len, &len) orelse return error.CheckFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    const parsed = try std.json.parseFromSlice([]CheckFinding, testing.allocator, res[0..len], .{});
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 1), parsed.value.len);
+    try testing.expectEqualStrings("error", parsed.value[0].severity);
+    try testing.expectEqualStrings("unexpected-token", parsed.value[0].code);
 }
 
 test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" {

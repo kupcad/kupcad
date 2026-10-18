@@ -21,8 +21,9 @@ test "diagnostic_report: renders location, source line and an underline of the s
         .length = 2,
         .severity = .@"error",
         .message = "Unclosed '('",
+        .code = "unexpected-token",
     }, ansi);
-    const expected = ansi.cyan ++ "part.kup:2:5:" ++ ansi.reset ++ " " ++ ansi.red ++ "E:" ++ ansi.reset ++ " Unclosed '('\n" ++
+    const expected = ansi.cyan ++ "part.kup:2:5:" ++ ansi.reset ++ " " ++ ansi.red ++ "E:" ++ ansi.reset ++ " Unclosed '(' [unexpected-token]\n" ++
         "b = (2\n" ++
         "    " ++ ansi.red ++ "^^" ++ ansi.reset ++ "\n\n";
     try testing.expectEqualStrings(expected, out.written());
@@ -34,7 +35,7 @@ test "diagnostic_report: a zero-length span still gets one caret" {
     defer line_index.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    try report.write(&out.writer, .{ .file_path = "f.kup", .source = source, .line_index = &line_index, .offset = 4, .length = 0, .severity = .warning, .message = "m" }, ansi);
+    try report.write(&out.writer, .{ .file_path = "f.kup", .source = source, .line_index = &line_index, .offset = 4, .length = 0, .severity = .warning, .message = "m", .code = "c" }, ansi);
     try testing.expect(std.mem.endsWith(u8, out.written(), "x = )\n    " ++ ansi.yellow ++ "^" ++ ansi.reset ++ "\n\n"));
 }
 
@@ -54,8 +55,8 @@ test "diagnostic_report: the plain style writes no escape codes" {
     defer line_index.deinit(testing.allocator);
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    try report.write(&out.writer, .{ .file_path = "f.kup", .source = source, .line_index = &line_index, .offset = 4, .length = 1, .severity = .@"error", .message = "m" }, .plain);
-    try testing.expectEqualStrings("f.kup:1:5: E: m\nx = )\n    ^\n\n", out.written());
+    try report.write(&out.writer, .{ .file_path = "f.kup", .source = source, .line_index = &line_index, .offset = 4, .length = 1, .severity = .@"error", .message = "m", .code = "c" }, .plain);
+    try testing.expectEqualStrings("f.kup:1:5: E: m [c]\nx = )\n    ^\n\n", out.written());
 }
 
 test "diagnostic_report: Style.detect colours only a terminal, and honours NO_COLOR and CLICOLOR_FORCE" {

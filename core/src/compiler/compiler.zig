@@ -46,6 +46,8 @@ pub const CompileError = error{
     TooManyGlobalCaches,
     /// `yield`, `block_given?` or `super` where there is no method to refer to.
     OutsideMethod,
+    /// `*` or `**` outside an array, a hash or a call's arguments.
+    MisplacedSplat,
 };
 
 /// The first error of a failed compile: where it happened and what went wrong, for callers
@@ -54,6 +56,7 @@ pub const CompileError = error{
 pub const CompileFailure = struct {
     /// Byte offset of the node being compiled.
     offset: u32,
+    code: common_errors.Code,
     buf: [MAX_FAILURE_MESSAGE_LEN]u8 = undefined,
     len: usize = 0,
 
@@ -77,7 +80,28 @@ fn describeError(err: CompileError) []const u8 {
         error.ProtectedSymbol => "a built-in name can't be redefined",
         error.VariableAlreadyDeclared => "this name is already defined",
         error.OutsideMethod => "yield, block_given? and super are only valid inside a def",
+        error.MisplacedSplat => "'*' and '**' only spread values inside an array, a hash or a call's arguments",
         error.UnknownNode, error.CorruptedBytecode => "internal compiler error",
+    };
+}
+
+/// A compile error's stable code (see common_errors.Code).
+fn codeOf(err: CompileError) common_errors.Code {
+    return switch (err) {
+        error.UnexpectedBlock => .@"unexpected-block",
+        error.OutOfMemory => .@"out-of-memory",
+        error.UnknownNode, error.CorruptedBytecode => .@"internal-error",
+        error.TooManyConstants => .@"too-many-constants",
+        error.TooManyLocals => .@"too-many-variables",
+        error.TooManyArguments => .@"too-many-arguments",
+        error.TooManyParameters => .@"too-many-parameters",
+        error.ProtectedSymbol => .@"builtin-redefined",
+        error.VariableAlreadyDeclared => .@"import-collision",
+        error.AstTooDeep => .@"nesting-too-deep",
+        error.TooManyInlineCaches => .@"too-many-calls",
+        error.TooManyGlobalCaches => .@"too-many-global-uses",
+        error.OutsideMethod => .@"outside-method",
+        error.MisplacedSplat => .@"misplaced-splat",
     };
 }
 
@@ -318,7 +342,7 @@ pub const Compiler = struct {
     /// The first compile error as a diagnostic (its message lives as long as the compiler).
     pub fn errorDiagnostic(self: *const Compiler) ?common_errors.Diagnostic {
         const failure = if (self.failure) |*f| f else return null;
-        return .{ .loc = .{ .offset = failure.offset, .length = 1, .file_id = 0 }, .message = failure.message() };
+        return .{ .loc = .{ .offset = failure.offset, .length = 1, .file_id = 0 }, .code = failure.code, .message = failure.message() };
     }
 
     /// Records the first compile error (on the root compiler, which the caller holds) and
@@ -327,7 +351,7 @@ pub const Compiler = struct {
         var root = self;
         while (root.enclosing) |outer| root = outer;
         if (root.failure == null) {
-            var failure: CompileFailure = .{ .offset = self.current_source_offset };
+            var failure: CompileFailure = .{ .offset = self.current_source_offset, .code = codeOf(err) };
             // A message too long for the buffer (a huge name) falls back to the generic one.
             const msg = std.fmt.bufPrint(&failure.buf, fmt, args) catch
                 std.fmt.bufPrint(&failure.buf, "{s}", .{describeError(err)}) catch unreachable;
@@ -450,7 +474,7 @@ pub const Compiler = struct {
             // Every tag is listed: an unhandled node used to compile to nil, which is how a
             // half-built `for` parsed and then did nothing. A new tag is a Zig compile error.
             // Arrays, calls and hashes compile their splats themselves.
-            .splat_expr, .double_splat_expr => return self.fail(error.UnknownNode, "'*' and '**' only spread values inside an array, a hash or a call's arguments", .{}),
+            .splat_expr, .double_splat_expr => return error.MisplacedSplat,
             // Documents with parse errors are never compiled.
             .invalid => return error.UnknownNode,
         }

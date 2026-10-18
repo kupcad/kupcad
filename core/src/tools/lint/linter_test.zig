@@ -36,7 +36,7 @@ test "Linter: a rule reports at the level the config gives it, under its id" {
         defer engine.deinit();
         try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
         try testing.expectEqual(case.severity, engine.diagnostics.items[0].severity);
-        try testing.expectEqualStrings("unused-variable", engine.diagnostics.items[0].rule.?);
+        try testing.expectEqualStrings("unused-variable", engine.diagnostics.items[0].ruleId().?);
     }
 }
 

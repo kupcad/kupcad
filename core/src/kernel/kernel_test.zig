@@ -72,7 +72,8 @@ test "Kernel Dispatcher: rejects mixed-engine operands at runtime" {
 test "Kernel: B-Rep scripts using material/simplify do not double free" {
     // B-Rep drivers used to return their input handle, so both owners freed it.
     // (`simplify` evaluates its receiver, which the B-Rep engine can do.)
-    test_support.expectWarnings(); // B-Rep drops the material, and says so
+    const warnings = test_support.expectWarnings(); // B-Rep drops the material, and says so
+    defer warnings.restore();
     try testing.expectEqual(InterpretResult.ok, try runScript(
         \\CAD.config(engine: :brep)
         \\part = cube(10).material(color: "#FF0000")

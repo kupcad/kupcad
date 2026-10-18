@@ -24,6 +24,7 @@ test {
     _ = @import("api_test.zig");
     _ = @import("alloc_failure_test.zig");
     _ = @import("determinism_test.zig");
+    _ = @import("importers_fuzz_test.zig");
     _ = @import("gen_grammar_test.zig");
     _ = @import("log_test.zig");
 
@@ -35,6 +36,7 @@ test {
     _ = @import("core/ast_test.zig");
     _ = @import("core/bezier_test.zig");
     _ = @import("core/document_test.zig");
+    _ = @import("core/error_codes_test.zig");
     _ = @import("core/visitor_test.zig");
     _ = @import("registration_test.zig");
     _ = @import("tools/bench_test.zig");

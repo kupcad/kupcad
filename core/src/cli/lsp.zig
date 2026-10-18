@@ -776,7 +776,7 @@ pub const Handler = struct {
                 },
                 .message = d.message,
                 .source = "kupcad",
-                .code = d.rule,
+                .code = d.code(),
             });
         }
         try self.publishDiagnostics(arena, buf.uri, lsp_diags.items);

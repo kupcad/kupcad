@@ -126,7 +126,7 @@ pub const ScriptSession = struct {
             self.allocator.free(copies);
         }
         for (diagnostics, copies) |d, *copy| {
-            copy.* = .{ .loc = d.loc, .message = try self.allocator.dupe(u8, d.message) };
+            copy.* = .{ .loc = d.loc, .code = d.code, .message = try self.allocator.dupe(u8, d.message) };
             copied += 1;
         }
         self.failure = .{ .module = module, .diagnostics = copies };

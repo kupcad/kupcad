@@ -44,6 +44,19 @@ pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
     return parseAsciiStl(allocator, data);
 }
 
+/// The index of the vertex at `coords`, added unless an earlier triangle has it (merged by
+/// bits, as the file wrote it). NaN or an infinity is error.NonFiniteVertex: the kernel
+/// can't place it, and the mesh with it crashed the build (found by the importer fuzz test).
+fn addVertex(allocator: std.mem.Allocator, points: *std.ArrayListUnmanaged([3]f64), point_map: *std.AutoHashMap(PointKey, u32), coords: [3]f32) !u32 {
+    for (coords) |c| if (!std.math.isFinite(c)) return error.NonFiniteVertex;
+    const gop = try point_map.getOrPut(.{ .x = @bitCast(coords[0]), .y = @bitCast(coords[1]), .z = @bitCast(coords[2]) });
+    if (!gop.found_existing) {
+        gop.value_ptr.* = @intCast(points.items.len);
+        try points.append(allocator, .{ coords[0], coords[1], coords[2] });
+    }
+    return gop.value_ptr.*;
+}
+
 fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32) !StlMesh {
     var points = std.ArrayListUnmanaged([3]f64).empty;
     defer points.deinit(allocator);
@@ -66,18 +79,7 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
             const iz = std.mem.readInt(u32, data[offset..][0..4], .little);
             offset += 4;
 
-            const vx: f32 = @bitCast(ix);
-            const vy: f32 = @bitCast(iy);
-            const vz: f32 = @bitCast(iz);
-
-            const key = PointKey{ .x = ix, .y = iy, .z = iz };
-            const gop = try point_map.getOrPut(key);
-            if (!gop.found_existing) {
-                const new_idx: u32 = @intCast(points.items.len);
-                try points.append(allocator, .{ @floatCast(vx), @floatCast(vy), @floatCast(vz) });
-                gop.value_ptr.* = new_idx;
-            }
-            tri_indices[v] = gop.value_ptr.*;
+            tri_indices[v] = try addVertex(allocator, &points, &point_map, .{ @bitCast(ix), @bitCast(iy), @bitCast(iz) });
         }
         offset += 2;
 
@@ -115,15 +117,7 @@ fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
             const y = std.fmt.parseFloat(f32, y_str) catch continue;
             const z = std.fmt.parseFloat(f32, z_str) catch continue;
 
-            const key = PointKey{ .x = @bitCast(x), .y = @bitCast(y), .z = @bitCast(z) };
-            const gop = try point_map.getOrPut(key);
-            if (!gop.found_existing) {
-                const new_idx: u32 = @intCast(points.items.len);
-                try points.append(allocator, .{ @floatCast(x), @floatCast(y), @floatCast(z) });
-                gop.value_ptr.* = new_idx;
-            }
-
-            current_tri_indices[current_tri_verts] = gop.value_ptr.*;
+            current_tri_indices[current_tri_verts] = try addVertex(allocator, &points, &point_map, .{ x, y, z });
             current_tri_verts += 1;
 
             if (current_tri_verts == 3) {

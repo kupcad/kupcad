@@ -3,13 +3,28 @@
 const std = @import("std");
 
 /// Call first in a test that drives a failure path whose warning is the expected outcome
-/// (a rejected lockfile, a refused connection). The test runner prints every warning a
-/// test logs, so these expected ones buried real problems and made `zig build test` print
-/// a "failed command" line though every test passed. The runner restores the level before
-/// each test; errors are still counted and still fail the test.
-pub fn expectWarnings() void {
-    std.testing.log_level = .err;
+/// (a rejected lockfile, a refused connection), and restore the level when it ends:
+///
+///     const warnings = test_support.expectWarnings();
+///     defer warnings.restore();
+///
+/// The test runner prints every warning a test logs, so these expected ones buried real
+/// problems and made `zig build test` print a "failed command" line though every test
+/// passed. Errors are still counted and still fail the test. The restore is the test's
+/// own: `zig build test` runs tests through the runner's server mode, which doesn't reset
+/// the level between them, so one quieted test hid the warnings of every test after it.
+pub fn expectWarnings() ExpectedWarnings {
+    defer std.testing.log_level = .err;
+    return .{ .previous = std.testing.log_level };
 }
+
+pub const ExpectedWarnings = struct {
+    previous: std.log.Level,
+
+    pub fn restore(self: ExpectedWarnings) void {
+        std.testing.log_level = self.previous;
+    }
+};
 
 const VM = @import("vm/vm.zig").VM;
 const InterpretResult = @import("vm/vm.zig").InterpretResult;

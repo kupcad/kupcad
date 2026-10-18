@@ -651,10 +651,10 @@ test "Lexer: Heredoc with dash and tilde modifiers (<<-TEXT, <<~TEXT)" {
         \\RUBY
     ;
     try expectTokens(source, &.{
-        t(.ident, "a"),          t(.equal, "="),
-        t(.heredoc, "<<-HTML"),  t(.newline, "\n"),
-        t(.ident, "b"),          t(.equal, "="),
-        t(.heredoc, "<<~RUBY"),  t(.newline, "\n"),
+        t(.ident, "a"),         t(.equal, "="),
+        t(.heredoc, "<<-HTML"), t(.newline, "\n"),
+        t(.ident, "b"),         t(.equal, "="),
+        t(.heredoc, "<<~RUBY"), t(.newline, "\n"),
         t(.eof, ""),
     });
     // The body is the source text; the parser strips a `<<~` body's indentation.
@@ -665,11 +665,11 @@ test "Lexer: the rest of a heredoc opener's line is lexed before the body" {
     // The rest of the line was skipped: `f(<<~A)` lost its `)` and `<<~A.upcase` its call.
     const source = "f(<<~A).upcase # note\n  x\nA\ny";
     try expectTokens(source, &.{
-        t(.ident, "f"),      t(.l_paren, "("),
-        t(.heredoc, "<<~A"), t(.r_paren, ")"),
-        t(.dot, "."),        t(.ident, "upcase"),
+        t(.ident, "f"),        t(.l_paren, "("),
+        t(.heredoc, "<<~A"),   t(.r_paren, ")"),
+        t(.dot, "."),          t(.ident, "upcase"),
         t(.comment, "# note"), t(.newline, "\n"),
-        t(.ident, "y"),      t(.eof, ""),
+        t(.ident, "y"),        t(.eof, ""),
     });
     try expectHeredocBodies(source, &.{"  x\n"});
 }
@@ -700,9 +700,9 @@ test "Lexer: a token running past a heredoc opener's line is an error, and the b
     // body as its own text.
     const source = "f(<<~A, \"x\ny\")\n  body\nA\nz";
     try expectTokens(source, &.{
-        t(.ident, "f"),                         t(.l_paren, "("),
-        t(.heredoc, "<<~A"),                    t(.comma, ","),
-        t(.runs_into_heredoc, "x\ny"),          t(.ident, "z"),
+        t(.ident, "f"),                t(.l_paren, "("),
+        t(.heredoc, "<<~A"),           t(.comma, ","),
+        t(.runs_into_heredoc, "x\ny"), t(.ident, "z"),
         t(.eof, ""),
     });
 }
@@ -931,8 +931,8 @@ test "KupCAD Lexer: UTF-8 characters inside string literals" {
 test "KupCAD Lexer: Heredoc terminator with mixed leading whitespace" {
     const source = "str = <<~END\n  content\n \t END\n";
     try expectTokens(source, &.{
-        t(.ident, "str"),       t(.equal, "="),
-        t(.heredoc, "<<~END"),  t(.newline, "\n"),
+        t(.ident, "str"),      t(.equal, "="),
+        t(.heredoc, "<<~END"), t(.newline, "\n"),
         t(.eof, ""),
     });
     try expectHeredocBodies(source, &.{"  content\n"});

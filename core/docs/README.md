@@ -226,7 +226,39 @@ end
 
 ### Errors
 
-Mistakes found before a script runs (a syntax error, `break` outside a loop, assigning to a built-in such as `cube = 5`) are reported by `kupcad check`, `kupcad build` and the editor with the file, line and column. Everything else is raised at run time.
+Mistakes found before a script runs (a syntax error, `break` outside a loop, assigning to a built-in such as `cube = 5`) are reported by `kupcad check`, `kupcad build` and the editor with the file, line and column, and a code after the message, as a lint finding names its rule: `part.kup:2:1: E: 'cube' is a built-in and can't be assigned [builtin-redefined]`. A message may be reworded in any release; a code stays, so it is the one to search for or match in a script (the editor gets it as the diagnostic's code, `kupcad check --format json` as `code`, SARIF as the `ruleId`). Everything else is raised at run time, with its class (below) instead.
+
+| Code | Means |
+|---|---|
+| `invalid-utf8` | The source isn't valid UTF-8. |
+| `unexpected-character` | A character that starts no token, outside a string or comment (`x = $`). |
+| `unterminated-string` | A string, symbol or `%`-literal never closed before the end of the file. |
+| `unterminated-heredoc` | A heredoc whose closing line never comes. |
+| `runs-into-heredoc` | A line that runs on into the body of a heredoc it opened (`<<~EOS + "a` and the string's end on the next line). |
+| `invalid-escape` | A backslash in a string that starts no escape (`"\q"`), or a `\u` escape that names no character. |
+| `invalid-number` | A malformed number, or one beyond the largest (`1e999`). |
+| `unexpected-token` | Something other than what the syntax needs here, such as an unclosed parenthesis (`cube(1`). |
+| `invalid-expression` | A token that can't start an expression (`x = )`). |
+| `nesting-too-deep` | Code, or interpolation in a string, nested deeper than the limit. |
+| `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
+| `import-without-from` | An `import` without its `from` path. |
+| `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
+| `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
+| `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
+| `unexpected-block` | A call given two blocks (a `&block` argument and a `do` or `{ }` block), or `yield` given one. |
+| `misplaced-splat` | A `*` or `**` outside an array, a hash or a call's arguments. |
+| `outside-loop` | A `break` or `next` outside a loop or block. |
+| `outside-method` | A `yield`, `block_given?` or `super` outside a method. |
+| `builtin-redefined` | A built-in, such as `cube`, assigned or redefined. |
+| `import-collision` | An import named like a variable of the file. |
+| `too-many-parameters` | A method or block with more than 255 parameters. |
+| `too-many-arguments` | A call with more than 255 arguments. |
+| `too-many-variables` | A function with more than 65,535 variables, or more than 255 captured from outside. |
+| `too-many-constants` | A function with more than 65,535 literals and names, or a map literal with more than 32,767 entries. |
+| `too-many-calls` | A script with more than 65,536 method calls. |
+| `too-many-global-uses` | A script with more than 65,536 uses of top-level variables. |
+| `out-of-memory` | Memory ran out while compiling. |
+| `internal-error` | A bug in KupCAD's compiler; please report it with the script. |
 
 `raise` and `begin … rescue … ensure … end` work as in Ruby: `raise "msg"` raises a `RuntimeError`, `raise Klass, "msg"` raises `Klass.new("msg")` and `raise Klass` an instance whose message is the class name; `ensure` runs however the `begin` is left (normally, after a matching `rescue`, by `return`, `break` or `next`, or by an error nobody rescued, which goes on after it), and an error raised inside `ensure` replaces the one in flight. The one exception is a block's `break` that leaves a method through `yield`: the method is abandoned at once, and `ensure` bodies pending in it don't run. Errors raised by the language and the standard library are instances of specific classes, all subclasses of `StandardError`, so they can be rescued by kind (`rescue ValueError => e`, also by a scoped name such as `rescue Parts::MyError`, or by the bare name inside the module that defines the class); `e.message` holds just the message:
 
@@ -528,7 +560,7 @@ A setting `.kupcad.json` doesn't have is an error that gives its line and column
 
 In the editor, each finding with a fix offers it as a quick fix (Ctrl+. / Cmd+.), the safe ones marked preferred, and every lint finding also offers "Disable <rule> for this line", which adds the `kupcad:disable-next-line` comment above it, indented like the line.
 
-For CI, `--max-warnings <n>` fails the run when there are more than `n` warnings (`0` fails on any), and `--format json` or `--format sarif` writes one document to stdout instead of the report: JSON lists each finding with its path, line, column, end, severity, rule, message and fix; SARIF 2.1.0 is what code-scanning services read (GitHub shows the findings on a pull request with `github/codeql-action/upload-sarif`).
+For CI, `--max-warnings <n>` fails the run when there are more than `n` warnings (`0` fails on any), and `--format json` or `--format sarif` writes one document to stdout instead of the report: JSON lists each finding with its path, line, column, end, severity, rule (null for a syntax or compile error), code (the rule, or the error's code), message and fix; SARIF 2.1.0 is what code-scanning services read (GitHub shows the findings on a pull request with `github/codeql-action/upload-sarif`).
 
 A comment can hide findings where they are deliberate. It names the rules it hides, and may say why after ` -- `:
 

@@ -27,7 +27,7 @@ pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, doc: *const api.Document
     const line_index = &doc.line_index;
     var actions: std.ArrayListUnmanaged(Action) = .empty;
     for (diags) |d| {
-        const rule = d.rule orelse continue; // a syntax or compile error has no fix or suppression
+        const rule = d.ruleId() orelse continue; // a syntax or compile error has no fix or suppression
         const line = line_index.getLine(d.loc.offset);
         if (line < first_line or line > last_line) continue;
 

@@ -52,7 +52,7 @@ fn check(source: []const u8, allocator: std.mem.Allocator) anyerror![]const u8 {
     defer api.freeDiagnostics(allocator, diagnostics);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
-    for (diagnostics) |d| try out.writer.print("{d}:{d} {s} {s} fix={}\n", .{ d.loc.offset, d.loc.length, d.rule orelse "-", d.message, d.fix != null });
+    for (diagnostics) |d| try out.writer.print("{d}:{d} {s} {s} fix={}\n", .{ d.loc.offset, d.loc.length, d.code(), d.message, d.fix != null });
     return out.toOwnedSlice();
 }
 

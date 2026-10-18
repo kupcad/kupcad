@@ -10,6 +10,7 @@ const Document = @import("../core/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
 const support = @import("../test_support.zig");
+const Diagnostic = @import("../core/errors.zig").Diagnostic;
 const expectOps = support.expectOps;
 const instructionAt = support.instructionAt;
 
@@ -2170,7 +2171,9 @@ test "Compiler: a failed compile reports where and why" {
 }
 
 /// Compiles the single expression `build` makes and returns the compile error's message.
-fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex) ![]const u8 {
+/// The diagnostic of compiling the tree `build` makes, which must fail with `expected`
+/// (its message is the caller's to free).
+fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex, expected: anyerror) !Diagnostic {
     var b = ast.Builder.init(testing.allocator);
     defer b.deinit();
     const root = try build(&b);
@@ -2184,8 +2187,10 @@ fn compileFailure(build: *const fn (*ast.Builder) anyerror!ast.NodeIndex) ![]con
     defer out_chunk.free(testing.allocator);
     var comp = Compiler.init(testing.allocator, &b.tree, symbols, &.{0}, &out_chunk, &vm);
     defer comp.deinit();
-    try testing.expectError(error.UnknownNode, comp.compile(root));
-    return testing.allocator.dupe(u8, comp.errorDiagnostic().?.message);
+    try testing.expectError(expected, comp.compile(root));
+    var diagnostic = comp.errorDiagnostic().?;
+    diagnostic.message = try testing.allocator.dupe(u8, diagnostic.message);
+    return diagnostic;
 }
 
 fn straySplat(b: *ast.Builder) anyerror!ast.NodeIndex {
@@ -2194,9 +2199,11 @@ fn straySplat(b: *ast.Builder) anyerror!ast.NodeIndex {
 
 test "Compiler: a node it can't compile is an error, not nil" {
     // Unhandled nodes used to compile to nil: a half-built `for` parsed and did nothing.
-    const splat_msg = try compileFailure(straySplat);
-    defer testing.allocator.free(splat_msg);
-    try testing.expectEqualStrings("'*' and '**' only spread values inside an array, a hash or a call's arguments", splat_msg);
+    // A stray splat was reported as one, but as an internal error, a bug in KupCAD.
+    const splat = try compileFailure(straySplat, error.MisplacedSplat);
+    defer testing.allocator.free(splat.message);
+    try testing.expectEqual(.@"misplaced-splat", splat.code);
+    try testing.expectEqualStrings("'*' and '**' only spread values inside an array, a hash or a call's arguments", splat.message);
 
     // nil and doc comments still compile, now on purpose.
     var vm = try VM.init(testing.allocator, testing.io);

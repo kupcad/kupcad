@@ -24,7 +24,7 @@ test "Linter API: checkCode surfaces all expected diagnostics on bad fixture" {
     try testing.expectEqual(@as(usize, 4), diags.len);
     var found: std.StringHashMapUnmanaged(usize) = .empty;
     defer found.deinit(allocator);
-    for (diags) |d| (try found.getOrPutValue(allocator, d.rule.?, 0)).value_ptr.* += 1;
+    for (diags) |d| (try found.getOrPutValue(allocator, d.ruleId().?, 0)).value_ptr.* += 1;
     try testing.expectEqual(@as(?usize, 2), found.get("unused-variable"));
     try testing.expectEqual(@as(?usize, 1), found.get("self-subtraction"));
     try testing.expectEqual(@as(?usize, 1), found.get("unreachable-code"));
@@ -53,7 +53,7 @@ test "API: buildModel with a diagnostic reports the first syntax error as line:c
         error.SyntaxError,
         api.buildModel(testing.allocator, testing.io, syntax_broken_source, .{ .format = .stl, .diagnostic = &diag }),
     );
-    try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", diag.message.?);
+    try testing.expectEqualStrings("2:5: Invalid expression starting with ')' [invalid-expression]", diag.message.?);
 }
 
 test "API: buildModel with a diagnostic reports a compile error as line:col: message" {
@@ -64,7 +64,7 @@ test "API: buildModel with a diagnostic reports a compile error as line:col: mes
         error.ProtectedSymbol,
         api.buildModel(testing.allocator, testing.io, "w = 1\ncube = 5", .{ .format = .stl, .diagnostic = &diag }),
     );
-    try testing.expectEqualStrings("2:1: 'cube' is a built-in and can't be assigned", diag.message.?);
+    try testing.expectEqualStrings("2:1: 'cube' is a built-in and can't be assigned [builtin-redefined]", diag.message.?);
 }
 
 test "API: checkCode reports compile errors as well as syntax errors and lints" {

@@ -76,8 +76,8 @@ fn checkCase(comptime case: []const u8, source: []const u8, expected: []const u8
     try testing.expectEqualStrings(expected, actual);
 }
 
-/// One line per finding, in source order: `line:column severity [rule] message` (no rule
-/// for a syntax or compile error).
+/// One line per finding, in source order: `line:column severity [code] message`, the code
+/// being the rule's id or the syntax or compile error's code.
 fn render(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     const diags = try api.checkCode(allocator, testing.io, source, .{});
     defer api.freeDiagnostics(allocator, diags);
@@ -88,9 +88,7 @@ fn render(allocator: std.mem.Allocator, source: []const u8) ![]u8 {
     defer out.deinit();
     for (diags) |d| {
         try out.writer.print("{d}:{d} {s} ", .{ line_index.getLine(d.loc.offset) + 1, line_index.getUtf8Column(d.loc.offset) + 1, d.severity.toChar() });
-        // Syntax and compile errors come from no rule.
-        if (d.rule) |rule| try out.writer.print("[{s}] ", .{rule});
-        try out.writer.print("{s}\n", .{d.message});
+        try out.writer.print("[{s}] {s}\n", .{ d.code(), d.message });
     }
     if (diags.len == 0) try out.writer.writeAll("(no findings)\n");
 

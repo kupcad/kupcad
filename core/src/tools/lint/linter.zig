@@ -68,9 +68,31 @@ pub const LinterDiagnostic = struct {
     loc: token.Location,
     severity: LinterSeverity,
     message: []const u8,
-    /// The id of the rule that reported it; null for syntax and compile errors.
-    rule: ?[]const u8 = null,
+    origin: Origin,
     fix: ?Fix = null,
+
+    /// What reported it: a lint rule, by its id, or the parser or the compiler, by the
+    /// error's code.
+    pub const Origin = union(enum) {
+        rule: []const u8,
+        error_code: common_errors.Code,
+    };
+
+    /// The id of the rule that reported it; null for a syntax or compile error.
+    pub fn ruleId(self: LinterDiagnostic) ?[]const u8 {
+        return switch (self.origin) {
+            .rule => |id| id,
+            .error_code => null,
+        };
+    }
+
+    /// What it is shown and matched by: its rule's id, or its error's code.
+    pub fn code(self: LinterDiagnostic) []const u8 {
+        return switch (self.origin) {
+            .rule => |id| id,
+            .error_code => |error_code| error_code.name(),
+        };
+    }
 
     /// Frees what the finding owns: its message and fix.
     pub fn deinit(self: LinterDiagnostic, allocator: std.mem.Allocator) void {
@@ -267,7 +289,7 @@ pub const Linter = struct {
             .loc = loc,
             .severity = severity,
             .message = msg,
-            .rule = rule_id,
+            .origin = .{ .rule = rule_id },
             .fix = fix,
         });
     }
@@ -404,6 +426,7 @@ pub const Linter = struct {
             try self.diagnostics.append(self.allocator, .{
                 .loc = diag.loc,
                 .severity = .@"error",
+                .origin = .{ .error_code = diag.code },
                 .message = try self.allocator.dupe(u8, diag.message),
             });
         }

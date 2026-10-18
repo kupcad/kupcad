@@ -1547,7 +1547,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
 }
 
 test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped silently" {
-    test_support.expectWarnings();
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
     var vm = try initVm();
     defer vm.deinit();
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "cube(10).material(color: \"#FF0000\").simplify"));
