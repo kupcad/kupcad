@@ -20,17 +20,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Each about 75 to 85 minutes on a hosted runner, from the run counts' measured times
+        # (a test runs past its limit by a batch: twice it for front-end bytes, a tenth more
+        # for generated programs, which cost about ten times as much a run).
         include:
-          # Random bytes: about 2 ms a run on a hosted runner, so an hour.
           - target: frontend
-            runs: 2M
+            runs: 4M
           - target: runtime
-            runs: 2M
-          # Generated programs run whole through the front end or the VM: about 25 ms a run.
+            runs: 3M
           - target: frontend_programs
-            runs: 200K
+            runs: 400K
           - target: runtime_programs
-            runs: 200K
+            runs: 500K
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -42,6 +43,17 @@ jobs:
         uses: xyzzylabs/setup-zig@v1
         with:
           zig-version-file: .tool-versions
+
+      # The fuzzer's corpus (Zig's cache f/ directory): each night goes on from the inputs the
+      # last one found. setup-zig's cache, which holds it too, is cleared whenever the build
+      # outgrows its limit, and every night started over from the seeds. A failed job saves
+      # nothing, so a crashing input isn't carried on.
+      - name: Restore the fuzz corpus
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ZIG_LOCAL_CACHE_DIR }}/f
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
         working-directory: core
