@@ -330,7 +330,7 @@ test "WASM Interop: build_model_wasm rejects syntax errors with their line:col" 
         \\y = )
         \\cube(x)
     ;
-    try testing.expectEqualStrings("2:5: Invalid expression starting with ')'", try expectBuildFailure(src));
+    try testing.expectEqualStrings("2:5: Invalid expression starting with ')' [invalid-expression]", try expectBuildFailure(src));
 }
 
 test "WASM Interop: build_model_wasm reports the runtime error message" {
