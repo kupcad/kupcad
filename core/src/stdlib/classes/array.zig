@@ -281,8 +281,10 @@ fn arrayExtreme(vm: *VM, arr: *value.ObjArray, comptime name: []const u8, compti
     const items = arr.items.items;
     if (items.len == 0) return value.Value.initNil();
     var best = items[0];
-    if (!best.isNumber() and !best.isString()) return vm.fail(.TypeError, name ++ " needs Numbers or Strings, got {s} at index 0", .{vm.typeName(best)});
     for (items, 0..) |item, i| {
+        // Each element, not only the first: after a String, a nil passed the check below
+        // and was read as a String (found by the runtime fuzz test)
+        if (!item.isNumber() and !item.isString()) return vm.fail(.TypeError, name ++ " needs Numbers or Strings, got {s} at index {d}", .{ vm.typeName(item), i });
         if (item.isNumber() != best.isNumber()) return vm.fail(.TypeError, name ++ " can't compare {s} with {s}", .{ vm.typeName(best), vm.typeName(item) });
         if (item.isNumber() and std.math.isNan(item.asNumber())) {
             return vm.fail(.MathError, name ++ ": the Array holds NaN at index {d}", .{i});

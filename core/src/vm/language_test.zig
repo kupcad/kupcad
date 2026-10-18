@@ -323,6 +323,10 @@ test "Language: Array#max, #min and #sum reject what they can't add or compare" 
         .{ .src = "r = [].max", .expected = .nil },
         .{ .src = rescued("[1, \"a\"].max"), .expected = .{ .str = "TypeError: max can't compare Number with String" } },
         .{ .src = rescued("[nil].min"), .expected = .{ .str = "TypeError: min needs Numbers or Strings, got nil at index 0" } },
+        // A String first let anything but a Number through, and the VM read it as a String
+        .{ .src = rescued("[\"a\", nil].min"), .expected = .{ .str = "TypeError: min needs Numbers or Strings, got nil at index 1" } },
+        .{ .src = rescued("[\"a\", :b, \"c\"].max"), .expected = .{ .str = "TypeError: max needs Numbers or Strings, got Symbol at index 1" } },
+        .{ .src = rescued("[1, nil].max"), .expected = .{ .str = "TypeError: max needs Numbers or Strings, got nil at index 1" } },
         .{ .src = rescued("[1, nil].sum"), .expected = .{ .str = "TypeError: sum needs Numbers, got nil at index 1" } },
         .{ .src = rescued("[1, Number::NAN].max"), .expected = .{ .str = "MathError: max: the Array holds NaN at index 1" } },
         .{ .src = rescued("[1e308, 1e308].sum"), .expected = .{ .str = "RangeError: sum overflowed the Number range" } },
