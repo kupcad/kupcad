@@ -1,0 +1,47 @@
+# Every kind of literal the lexer reads: numbers, strings and their escapes, symbols,
+# %-literals, heredocs, ranges, arrays and maps.
+
+whole = 1_000
+fraction = 2.5
+tiny = 1e-6
+big = 6.02e23
+leading_dot = 0.5
+negative = -3.abs
+inspect(whole, fraction, tiny, big, leading_dot, negative)
+
+plain = "double #{whole + 1} quoted\t\"escaped\"\n"
+raw = 'single #{not} \\ interpolated'
+unicode = "é and \u{1F600}"
+nested = "outer #{"inner #{fraction * 2}"} done"
+puts(plain, raw, unicode, nested)
+
+name = :plain
+quoted = :"with space"
+words = %w[a b c]
+symbols = %i[x y z]
+raw_percent = %q(raw (nested) #{x})
+interpolated_percent = %Q(sum #{whole + 2})
+inspect(name, quoted, words, symbols, raw_percent, interpolated_percent)
+
+stripped = <<~EOS.upcase
+  first line
+    indented line
+
+  after a blank line
+EOS
+kept = <<-EOS
+  kept as written \t with an escape
+  EOS
+pair = [<<~A, <<B]
+  one
+A
+two
+B
+puts(stripped, kept, pair)
+
+inclusive = (1..5).to_a
+exclusive = (1...5).to_a
+spread = [0, *inclusive, *exclusive, 9]
+map = { label: 1, "string key" => 2, Symbol: 3, **{ merged: 4 } }
+empty = [[], {}, nil, true, false]
+inspect(spread, map, empty)

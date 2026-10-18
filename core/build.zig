@@ -592,6 +592,18 @@ pub fn build(b: *std.Build) void {
             test_step.dependOn(&run_tatfi_tests.step);
         }
 
+        // `zig build fuzz --fuzz=<runs>` searches from the front end's corpus
+        // (src/frontend/fuzz_test.zig). Only that test is built, with LLVM: Zig's own x86_64
+        // backend, the debug default on Linux, emits no coverage instrumentation, so the
+        // nightly job fuzzed blind and its report failed on "pcs_len was zero".
+        const fuzz_tests = b.addTest(.{
+            .root_module = mod,
+            .filters = &.{"fuzz:"},
+            .use_llvm = true,
+        });
+        const fuzz_step = b.step("fuzz", "Fuzz the front end (with --fuzz; without it, replay the corpus)");
+        fuzz_step.dependOn(&b.addRunArtifact(fuzz_tests).step);
+
         const gen_grammar_exe = b.addExecutable(.{
             .name = "gen_grammar",
             .root_module = b.createModule(.{

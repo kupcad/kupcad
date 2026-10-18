@@ -11,8 +11,8 @@ permissions:
 jobs:
   fuzz:
     # The front end (lexer, parser, linter, compiler, formatter) on generated input, from
-    # the corpus in core/src/frontend/fuzz_test.zig. A plain test run replays the corpus
-    # on every platform; searching from it runs here.
+    # the corpus in core/src/frontend/fuzz_test.zig and fuzz_corpus/. A plain test run
+    # replays the corpus on every platform; searching from it runs here.
     name: Fuzz the front end (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -30,7 +30,7 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        run: zig build test --fuzz=2M -Dtest-filter="fuzz:"
+        run: zig build fuzz --fuzz=2M
 
       - name: Keep the failing input
         if: failure()

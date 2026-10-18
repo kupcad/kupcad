@@ -1,0 +1,53 @@
+# Methods with every kind of parameter, blocks, yield, lambdas and calls without
+# parentheses.
+
+def area(width, height = width, *extra, scale: 1, **options, &block)
+  value = width * height * scale
+  if block
+    value = block.call(value)
+  end
+  [value, extra, options]
+end
+
+def double(x)
+  x * 2
+end
+
+def each_pair(items)
+  unless block_given?
+    return []
+  end
+  (0...items.length).each { |index| yield(items[index], index) }
+end
+
+def twice
+  yield
+  yield
+end
+
+sq = ->(x) { x * x }
+offset = ->(x, by = 1) do
+  x + by
+end
+compose = ->(f, g) { ->(x) { g.call(f.call(x)) } }
+
+called = 0
+twice { called += 1 }
+
+pairs = []
+each_pair(["a", "b"]) do |item, index|
+  pairs.push("#{index}:#{item}")
+end
+
+numbers = [3, 1, 2]
+sorted = numbers.sort.map { |v| double(v) }.filter { |v| v.even? }
+summed = numbers.reduce(0) { |acc, v| acc + v }
+grouped = numbers.slice(0, 2)
+chained = numbers
+  .map { |v| v + 1 }
+  .filter { |v| v > 2 }
+  .sum
+
+result = area(2, 3, 4, 5, scale: 2, unit: :mm) { |v| v + 1 }
+inspect(result, double(4), sq.call(3), offset.call(1), compose.call(sq, offset).call(2))
+inspect(called, pairs, sorted, summed, grouped, chained)

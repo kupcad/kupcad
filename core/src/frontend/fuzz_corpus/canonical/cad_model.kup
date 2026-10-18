@@ -1,0 +1,32 @@
+# A small parametric model: parameters with their docs, sketches, solids, booleans,
+# patterns, alignment, materials, measures and an assembly.
+
+# @param width The plate's width, in mm
+width = param(:width, default: 40.0, validate: { min: 10.0, max: 100.0 })
+# @param holes How many holes go round the boss
+holes = param(:holes, default: 6, validate: { min: 3, max: 12 })
+material = param(:material, default: "PLA", validate: { in: ["PLA", "PETG"] })
+
+CAD.config(resolution: { segments: 48 })
+
+outline = square(width, width * 0.6, center: true).offset(2)
+plate = outline.extrude(4).material(color: "#2C3E50")
+
+boss = cylinder(d: 18, h: 10).align(plate, "Z", "min", "max").center("XY")
+hole = cylinder(d: 3.2, h: 30, center: true).translate(x: 6)
+ring = hole.repeat_polar(holes, angle: 360.0)
+ribs = cube(2, 10, 3, center: true)
+  .repeat_linear(3, 8, 0, 0)
+  .center("X")
+  .align(plate, "Z", "min", "max")
+
+body = (plate + boss + ribs - ring).material(color: material == "PLA" ? "#E74C3C" : "#34495E")
+logo = text("K", size: 6).extrude(1).translate(-10, -3, 4)
+part = body - logo
+
+CAD.with_config(engine: :manifold) do
+  cylinder(d: 30, h: 12).center("XY").ghost
+end
+
+inspect(part.bbox.x_size.round(2), part.volume.round(1), part.genus)
+assembly = assemble(name: "Mount", parts: [part])

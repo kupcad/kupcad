@@ -1,0 +1,17 @@
+# A library another file imports: what it exports, and a helper that stays private.
+
+GAP = 0.2
+
+def clearance(size)
+  size + GAP
+end
+
+def spacer(d, h)
+  tube(clearance(d), h)
+end
+
+def tube(d, h)
+  cylinder(d: d + 4, h: h) - cylinder(d: d, h: h + 2, center: true)
+end
+
+export { spacer, GAP as CLEARANCE }

@@ -1,8 +1,12 @@
 //! Fuzzing the front end: any bytes go through the lexer, the parser, the linter and the
 //! compiler (with its bytecode verifier) without crashing, the compiler never reports an
 //! internal error, and a script that parses formats to the same program, stably (formatting
-//! the output again changes nothing). A plain test run replays the corpus below; on Linux,
-//! `zig build test --fuzz` searches from it (the nightly CI job).
+//! the output again changes nothing). A plain test run replays the corpus below;
+//! `zig build fuzz --fuzz=<runs>` searches from it (nightly in CI).
+//!
+//! The corpus is grammar snippets, the programs in fuzz_corpus/ (`canonical/` already in the
+//! formatter's style, `raw/` in layouts it rewrites; `pnpm check:examples` keeps both
+//! lint-clean and the first formatted), the lint snapshot cases and the examples.
 
 const std = @import("std");
 const testing = std.testing;
@@ -15,7 +19,14 @@ const MAX_INPUT_BYTES = 16 * 1024;
 /// What describeError calls an error that is the compiler's fault, not the script's.
 const INTERNAL_COMPILER_ERROR = "internal compiler error";
 
-/// Snippets that reach each part of the grammar, then the lint snapshot cases and the examples.
+const CORPUS_DIR = "src/frontend/fuzz_corpus";
+/// fuzz_corpus/canonical/<name>.kup: programs already in the formatter's style.
+const CANONICAL = [_][]const u8{ "cad_model", "classes_modules", "control_flow", "methods_blocks", "operators", "parts_lib", "uses_lib" };
+/// fuzz_corpus/raw/<name>.kup: programs in layouts and literals the formatter rewrites.
+const RAW = [_][]const u8{ "layout", "literals" };
+
+/// Snippets that reach each part of the grammar, then the corpus files, the lint snapshot
+/// cases and the examples.
 const CORPUS = [_][]const u8{
     "",
     "x = 1 + 2 * (3 - 4) / 5 % 6 ** 2\ny = -x\nz = !true && false || nil",
@@ -46,11 +57,17 @@ const CORPUS = [_][]const u8{
     @embedFile("../tools/lint/snapshots/unused_param_dynamic.kup"),
     @embedFile("../tools/lint/snapshots/unused_param.kup"),
     @embedFile("../tools/lint/snapshots/unused_variable.kup"),
-} ++ blk: {
+} ++ corpusFiles("canonical", &CANONICAL) ++ corpusFiles("raw", &RAW) ++ blk: {
     var sources: [examples.names.len][]const u8 = undefined;
     for (examples.names, &sources) |name, *source| source.* = @embedFile("example/" ++ name);
     break :blk sources;
 };
+
+fn corpusFiles(comptime sub_dir: []const u8, comptime names: []const []const u8) [names.len][]const u8 {
+    var sources: [names.len][]const u8 = undefined;
+    for (names, &sources) |name, *source| source.* = @embedFile("fuzz_corpus/" ++ sub_dir ++ "/" ++ name ++ ".kup");
+    return sources;
+}
 
 comptime {
     for (CORPUS) |entry| {
@@ -85,4 +102,22 @@ fn frontEnd(buf: *[MAX_INPUT_BYTES]u8, smith: *testing.Smith) anyerror!void {
     const twice = try api.formatDocument(testing.allocator, &again, .{});
     defer testing.allocator.free(twice);
     try testing.expectEqualStrings(formatted, twice);
+}
+
+test "Fuzz corpus: every program in fuzz_corpus/ is listed" {
+    inline for (.{ .{ "canonical", &CANONICAL }, .{ "raw", &RAW } }) |sub| {
+        var dir = try std.Io.Dir.cwd().openDir(testing.io, CORPUS_DIR ++ "/" ++ sub[0], .{ .iterate = true });
+        defer dir.close(testing.io);
+        var it = dir.iterate();
+        while (try it.next(testing.io)) |entry| {
+            if (!std.mem.endsWith(u8, entry.name, ".kup")) continue;
+            const name = entry.name[0 .. entry.name.len - ".kup".len];
+            for (sub[1]) |listed| {
+                if (std.mem.eql(u8, listed, name)) break;
+            } else {
+                std.debug.print("{s}/{s}/{s} isn't listed in fuzz_test.zig, so the fuzzer never starts from it\n", .{ CORPUS_DIR, sub[0], entry.name });
+                return error.UnlistedCorpusFile;
+            }
+        }
+    }
 }

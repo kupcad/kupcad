@@ -67,7 +67,7 @@ jobs:
       - name: Run lib tests
         run: pnpm ${{ matrix.core_task }}
 
-      - name: Check the examples are formatted and lint-clean
+      - name: Check the fuzz corpus is formatted and lint-clean
         if: matrix.core_task == 'test:core'
         run: pnpm check:examples
 

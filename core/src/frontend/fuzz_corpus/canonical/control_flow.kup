@@ -1,0 +1,92 @@
+# Conditionals, loops, case, and errors raised and rescued.
+
+def classify(n)
+  if n < 0
+    :negative
+  elsif n == 0
+    :zero
+  else
+    :positive
+  end
+end
+
+def describe(value)
+  case value
+  when 0
+    "zero"
+  when 1, 2, 3
+    "small"
+  when 4..9
+    "medium"
+  when String
+    "text"
+  else
+    "large"
+  end
+end
+
+def safe_divide(a, b)
+  if b == 0
+    raise(ArgumentError, "divide by zero")
+  end
+  a / b
+rescue ArgumentError => e
+  puts(e.message)
+  0
+ensure
+  puts("divided")
+end
+
+evens = []
+i = 0
+while i < 10
+  i += 1
+  if i.odd?
+    next
+  end
+  if i > 8
+    break
+  end
+  evens.push(i)
+end
+
+countdown = []
+n = 3
+until n == 0
+  countdown.push(n)
+  n -= 1
+end
+
+squares = []
+for v in [1, 2, 3]
+  squares.push(v * v)
+end
+
+unless evens.empty?
+  puts("found evens")
+end
+
+found = [5, 8, 12].each { |v|
+  if v > 6
+    break v
+  end
+}
+parsed = Integer("x") rescue -1
+status = begin
+  raise("boom")
+rescue => e
+  "rescued #{e.message}"
+end
+
+inspect(
+  classify(-2),
+  describe(5),
+  describe("s"),
+  safe_divide(6, 0),
+  evens,
+  countdown,
+  squares,
+  found,
+  parsed,
+  status,
+)

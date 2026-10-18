@@ -11,8 +11,8 @@ pub const UnusedVarsRule = struct {
     pub const id = "unused-variable";
     pub const description = "A variable assigned and never read";
 
-    /// The `def`s of class, module and singleton bodies: the methods others call through
-    /// the class's objects (`Gear.new.teeth`), so they are never unused here.
+    /// The `def`s and constants of class, module and singleton bodies: what others reach
+    /// through the class (`Gear.new.teeth`, `Gear::TEETH`), so they are never unused here.
     members: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
@@ -46,13 +46,21 @@ pub const UnusedVarsRule = struct {
                 const a = tree.assignment(node);
                 const var_name = tree.getString(a.name);
                 // `n += 1` reads n as well as writing it.
-                if (a.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token), true);
+                if (a.op != null) {
+                    try engine.markUsed(var_name);
+                } else if (isLocal(var_name) and !self.members.contains(node_idx)) {
+                    try engine.declareAssigned(var_name, engine.getLoc(node.main_token), true);
+                }
             },
             .multiple_assignment => {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
                     const var_name = tree.getString(lhs.name);
-                    if (ma.op != null) try engine.markUsed(var_name) else try engine.declareAssigned(var_name, engine.getLoc(node.main_token), false);
+                    if (ma.op != null) {
+                        try engine.markUsed(var_name);
+                    } else if (isLocal(var_name)) {
+                        try engine.declareAssigned(var_name, engine.getLoc(node.main_token), false);
+                    }
                 }
             },
             .for_stmt => {
@@ -75,6 +83,7 @@ pub const UnusedVarsRule = struct {
             },
             .lambda_expr => try markResultUsed(engine, tree, tree.lambdaExpr(node).body),
             .block => {
+                try self.declareMethods(engine, tree, node_idx);
                 // The script's last statement is the model, and a call block's is its value.
                 if (node_idx == engine.root or engine.closure_blocks.contains(node_idx)) try markResultUsed(engine, tree, node_idx);
             },
@@ -89,11 +98,37 @@ pub const UnusedVarsRule = struct {
         }
     }
 
+    /// Declares the methods a body defines before any of its statements is checked: a call
+    /// from a method defined above (`def a = b()` before `def b`) runs once both exist, and
+    /// was lost, reporting `b` unused.
+    fn declareMethods(self: *UnusedVarsRule, engine: *linter.Linter, tree: *const ast.Tree, body_idx: ast.NodeIndex) !void {
+        const body = tree.getNode(body_idx) orelse return;
+        for (tree.getNodes(tree.block(body).stmts)) |stmt| {
+            const node = tree.getNode(stmt).?;
+            if (node.tag != .def_stmt or self.members.contains(stmt)) continue;
+            try engine.declareVar(tree.getString(tree.defStmt(node).name), engine.getLoc(node.main_token), false);
+        }
+    }
+
+    /// Whether `name` is a local of the scope that assigns it. `@field`, `@@class_var` and
+    /// `$global` outlive the method: one set in `initialize` and read in another method was
+    /// reported unused unless it was the last statement.
+    fn isLocal(name: []const u8) bool {
+        return name.len > 0 and name[0] != '@' and name[0] != '$';
+    }
+
     fn addMembers(self: *UnusedVarsRule, engine: *linter.Linter, tree: *const ast.Tree, body_idx: ast.NodeIndex) !void {
         const body = tree.getNode(body_idx) orelse return;
         if (body.tag != .block) return;
         for (tree.getNodes(tree.block(body).stmts)) |stmt| {
-            if (tree.getNode(stmt).?.tag == .def_stmt) try self.members.put(engine.allocator, stmt, {});
+            const node = tree.getNode(stmt).?;
+            const is_member = switch (node.tag) {
+                .def_stmt => true,
+                // A name the lexer makes a constant: it starts with a capital
+                .assignment => std.ascii.isUpper(tree.getString(tree.assignment(node).name)[0]),
+                else => false,
+            };
+            if (is_member) try self.members.put(engine.allocator, stmt, {});
         }
     }
 

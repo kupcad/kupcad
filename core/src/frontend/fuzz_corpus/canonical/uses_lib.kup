@@ -1,0 +1,6 @@
+# A script that imports names from a file next to it, one of them renamed.
+
+import { spacer, CLEARANCE as gap } from "./parts_lib.kup"
+
+puts("clearance: #{gap}")
+spacer(5, 8).translate(x: 10)

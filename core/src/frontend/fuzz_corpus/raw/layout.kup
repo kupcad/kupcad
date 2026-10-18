@@ -1,0 +1,25 @@
+# Layout the formatter rewrites: spacing, calls without parentheses, operators and chains
+# broken over lines, a spaced minus before a call on a number, and paths from the top.
+
+module Sizes
+  W = 4
+end
+
+x=1+2*3
+y = -  x
+spaced = - 3.abs
+grouped = - (2 ** 2)
+puts -1
+puts (x + 1) * 2
+total = x +
+  y *
+  2
+chain = [3, 1, 2]
+  .sort
+  .map { |v| v * 2 }
+  .map { |v| -v }
+top = ::Sizes::W
+values = [ 1 ,2,
+  3 ]
+opts = {a:1,'b'=>2}
+inspect( spaced , grouped, total, chain, top, values, opts )

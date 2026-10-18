@@ -436,7 +436,9 @@ pub const Formatter = struct {
             },
             .export_stmt => {
                 const es_stmt = tree.exportStmt(node);
-                try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), tree.getString(es_stmt.path), es_stmt.attributes);
+                // `export { a }` has no path: it used to print `from ""`, written by no one.
+                const path: ?[]const u8 = if (es_stmt.path == .none) null else tree.getString(es_stmt.path);
+                try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), path, es_stmt.attributes);
             },
             .docstring => try self.formatDocString(tree, tree.docString(node)),
         }
@@ -895,6 +897,12 @@ pub const Formatter = struct {
     fn formatBeginStmt(self: *Formatter, tree: *const ast.Tree, bs: ast.BeginStmt, start_line: u32) Error!void {
         try self.out.appendSlice(self.allocator, "begin");
         try self.flushInlineComments(start_line);
+        try self.formatRescueBody(tree, bs);
+    }
+
+    /// The body of a `begin`, or of a method with its own `rescue` or `ensure`, then those
+    /// clauses and `end`.
+    fn formatRescueBody(self: *Formatter, tree: *const ast.Tree, bs: ast.BeginStmt) Error!void {
         try self.ensureNewline();
 
         self.indent_level += 1;
@@ -952,6 +960,10 @@ pub const Formatter = struct {
 
         try self.formatParams(tree, tree.getParams(def.params));
         try self.flushInlineComments(start_line);
+        // A method's own `rescue`/`ensure` make a begin_stmt its body (an explicit `begin`
+        // is inside the body's block): printed in a `begin` of its own, it read back as that.
+        const body = tree.getNode(def.body).?;
+        if (body.tag == .begin_stmt) return self.formatRescueBody(tree, tree.beginStmt(body));
         try self.formatBodyWithEnd(tree, def.body);
     }
 
@@ -1032,6 +1044,10 @@ pub const Formatter = struct {
     }
 
     fn formatNamespace(self: *Formatter, tree: *const ast.Tree, path: []const ast.StringId) Error!void {
+        // One segment is `::A`, the top-level A (parseTopLevelScopeResolution): printed as
+        // `A` it read back as a constant looked up in the enclosing modules. With more, the
+        // path is resolved from the top anyway, so `::A::B` is `A::B`.
+        if (path.len == 1) try self.out.appendSlice(self.allocator, "::");
         for (path, 0..) |p_id, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, "::");
             try self.out.appendSlice(self.allocator, tree.getString(p_id));
@@ -1423,7 +1439,9 @@ pub const Formatter = struct {
     }
 
     /// `import { a, b as c } from "path"`; an alias used to be dropped.
-    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, path: []const u8, attrs: ast.NodeIndex) Error!void {
+    /// `import`/`export`, its names in braces, and `from "path"` unless `path` is null (a
+    /// file's own export).
+    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, path: ?[]const u8, attrs: ast.NodeIndex) Error!void {
         try self.out.appendSlice(self.allocator, kw);
         try self.out.append(self.allocator, ' ');
         if (symbols.len > 0) {
@@ -1436,11 +1454,14 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, tree.getString(pair.alias));
                 }
             }
-            try self.out.appendSlice(self.allocator, " } from ");
+            try self.out.appendSlice(self.allocator, " }");
         }
-        try self.out.append(self.allocator, '"');
-        try self.out.appendSlice(self.allocator, path);
-        try self.out.append(self.allocator, '"');
+        if (path) |p| {
+            if (symbols.len > 0) try self.out.appendSlice(self.allocator, " from ");
+            try self.out.append(self.allocator, '"');
+            try self.out.appendSlice(self.allocator, p);
+            try self.out.append(self.allocator, '"');
+        }
 
         if (attrs != .none) {
             try self.out.appendSlice(self.allocator, " with ");

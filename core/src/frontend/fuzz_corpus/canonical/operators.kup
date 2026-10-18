@@ -1,0 +1,39 @@
+# Operators and their precedence, assignments of every form, and the edge cases between
+# a prefix and a binary operator.
+
+a = 7
+b = 3
+arithmetic = [a + b * 2, (a + b) * 2, a - b - 1, a / b, a % b, -7 % 3, 2 ** 3 ** 2, -2 ** 2]
+bitwise = [a & b, a | b, a ^ b, ~a, a << 2, a >> 1]
+comparison = [a == b, a != b, a < b, a <= b, a > b, a >= b, a <=> b]
+logic = [a > 1 && b > 1, a > 9 || b > 1, !(a > 1)]
+negated_call = -(3.abs)
+negative_literal = (-3).abs
+inspect(arithmetic, bitwise, comparison, logic, negated_call, negative_literal)
+
+picked = a > b ? "a" : "b"
+maybe = nil
+safe = maybe&.length
+fallback = maybe || "default"
+inspect(picked, safe, fallback)
+
+counter = 0
+counter += 2
+counter -= 1
+counter *= 10
+counter **= 2
+cache = nil
+cache ||= [1, 2, 3]
+cache[0] = 10
+cache[1] += 5
+flag = true
+flag &&= counter > 50
+first, *rest = cache
+x, y = 1, 2
+x, y = y, x
+inspect(counter, cache, flag, first, rest, x, y)
+
+total = a +
+  b *
+    2
+inspect(total)

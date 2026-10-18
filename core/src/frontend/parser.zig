@@ -1843,6 +1843,8 @@ pub const Parser = struct {
         return self.b.intern(self.source[p_start..p_end]);
     }
 
+    /// `::A`, the top-level A: a namespace path of one name, the only way to make one
+    /// (`A::B` has two or more), which the formatter relies on to print the `::`.
     fn parseTopLevelScopeResolution(self: *Parser) ParseError!ast.NodeIndex {
         const tok_idx = try self.expect(.colon_colon);
         const right_idx = if (self.tag(0) == .constant or self.tag(0) == .ident) self.tok_idx else return ParseError.UnexpectedToken;

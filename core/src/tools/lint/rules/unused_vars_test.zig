@@ -125,3 +125,60 @@ test "Linter Rule: UnusedVarsRule leaves a class's and a module's methods alone"
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'helper'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }
+
+test "Linter Rule: UnusedVarsRule leaves a class's or module's constants alone" {
+    // They are read through the namespace (`Sizes::W`), here or in a file that imports it,
+    // and were reported as unused variables even when read. A local in the body still is.
+    const source =
+        \\module Sizes
+        \\  W = 4
+        \\  H = 2
+        \\  scratch = 1
+        \\end
+        \\class Plate
+        \\  THICKNESS = 3
+        \\end
+        \\cube(Sizes::W)
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'scratch'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}
+
+test "Linter Rule: UnusedVarsRule leaves fields, class variables and globals alone" {
+    // A field set in `initialize` and read in another method was reported unused unless it
+    // was the method's last statement: `@`, `@@` and `$` names outlive the method.
+    const source =
+        \\class Part
+        \\  @@count = 0
+        \\  def initialize(size)
+        \\    @size = size
+        \\    @@count += 1
+        \\    $last = self
+        \\  end
+        \\  def volume = @size ** 3
+        \\end
+        \\cube(Part.new(2).volume)
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    try testing.expectEqual(@as(usize, 0), engine.diagnostics.items.len);
+}
+
+test "Linter Rule: UnusedVarsRule counts a call from a method defined above" {
+    // `b` was reported unused when the method calling it came first.
+    const source =
+        \\def a = b() + 1
+        \\def b = 1
+        \\def unused_helper = 2
+        \\cube(a())
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'unused_helper'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}

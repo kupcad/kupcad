@@ -306,11 +306,14 @@ test "Formatter: Imports and Exports" {
         \\import   "lib.kup"
         \\import  {  A,B  }  from  "lib.kup"   with {  version:2  }
         \\export {C} from "other.kup"
+        \\export {D,E as F}
     ;
+    // A file's own export has no path (it was printed with `from ""`).
     const expected =
         \\import "lib.kup"
         \\import { A, B } from "lib.kup" with { version: 2 }
         \\export { C } from "other.kup"
+        \\export { D, E as F }
         \\
     ;
     try expectFormat(source, expected);
@@ -911,6 +914,26 @@ test "Formatter: string and symbol literals are printed as written" {
     try expectStableFormat("x = <<-EOS\n  kept\n  EOS\ny = 1\n", "x = \"  kept\\n\"\ny = 1\n");
     try expectStableFormat("y = \"line1\nline2\"\nz = 2\n", "y = \"line1\nline2\"\nz = 2\n");
     try expectStableFormat("w = %w[a b]\n", "w = [\"a\", \"b\"]\n");
+}
+
+test "Formatter: a method's own rescue and ensure stay at the method's level" {
+    // They were printed inside a `begin` of their own, another program, so the formatter
+    // refused any method with them.
+    try expectStableFormat(
+        "def f(x)\n  x / 2 # half\nrescue ArgumentError, TypeError => e # why\n  0\nensure\n  puts(1)\nend\n",
+        "def f(x)\n  x / 2 # half\nrescue ArgumentError, TypeError => e # why\n  0\nensure\n  puts(1)\nend\n",
+    );
+    // An explicit `begin` in a method stays one.
+    try expectStableFormat("def g\n  begin\n    1\n  rescue\n    0\n  end\nend\n", "def g\n  begin\n    1\n  rescue\n    0\n  end\nend\n");
+}
+
+test "Formatter: a top-level constant keeps its leading ::" {
+    // `::A` is the top-level A; printed as `A` it read back as a constant looked up in the
+    // enclosing modules (found by the fuzzer, as `param(::arm_length)`).
+    try expectStableFormat("x = ::A\ny = [::b, 1 + ::C]\nparam(::w)\n", "x = ::A\ny = [::b, 1 + ::C]\nparam(::w)\n");
+    try expectStableFormat("module M\n  A = 1\n  x = ::A\nend\n", "module M\n  A = 1\n  x = ::A\nend\n");
+    // A longer path is resolved from the top either way.
+    try expectStableFormat("x = ::A::B\n", "x = A::B\n");
 }
 
 test "Formatter: a heredoc after an operator stays on the operator's line" {
