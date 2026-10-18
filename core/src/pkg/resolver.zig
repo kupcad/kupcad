@@ -212,18 +212,13 @@ pub const Resolver = struct {
             commit_sha = try self.fetcher.fetchCommitSha(parsed);
         }
 
-        // A pin taken before lockfile 3.0.0 hashed a git host archive with its top folder,
-        // which only the archive itself still has: it is checked against a fresh download.
-        const format = try self.lockfile.format();
-        const pinned_wrapped = pinned_commit != null and format.wrapped_git_archives and parsed.provider.archiveLayout() == .wrapped;
-
         // 2. Content: offline cache first, network/disk otherwise
         var cached: ?std.StringHashMap([]const u8) = null;
-        if (commit_sha) |c| if (!pinned_wrapped) {
+        if (commit_sha) |c| {
             try self.mutex.lock(self.io);
             defer self.mutex.unlock(self.io);
             cached = try self.store.getPackageFiles(self.allocator, pkg_id, c);
-        };
+        }
         var archive: cafs_mod.Archive = if (cached) |files| .{ .files = files, .root = &.{} } else try self.downloadPackage(parsed, commit_sha);
         defer archive.deinit(self.allocator);
         const files = &archive.files;
@@ -239,11 +234,7 @@ pub const Resolver = struct {
                 log.warn("kupcad.lock entry for {s} has no integrity; refusing to install unverified content", .{pkg_id});
                 return error.LockfileMissingIntegrity;
             }
-            const scheme: integrity.Scheme = .{
-                .algo = if (format.legacy_hash) .legacy else .current,
-                .root = if (pinned_wrapped) archive.root else "",
-            };
-            integrity.verify(self.allocator, files, expected, scheme) catch |err| {
+            integrity.verify(self.allocator, files, expected) catch |err| {
                 log.warn("Integrity mismatch for {s}@{s}: kupcad.lock expects {s}, got {s}", .{ pkg_id, pinned_commit.?, expected, integrity_hash });
                 return err;
             };

@@ -1,6 +1,5 @@
 //! `Lockfile`: reads and writes a project's `kupcad.lock`, the resolved source, ref,
-//! integrity and dependencies of every installed package (`LockedPackage`), and tells which
-//! integrity scheme an older lockfile version used.
+//! integrity and dependencies of every installed package (`LockedPackage`).
 
 const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
@@ -11,15 +10,10 @@ const log = std.log.scoped(.pkg);
 const string_map = @import("string_map.zig");
 pub const StringMap = string_map.StringMap;
 
-/// 3.0.0: a git host package's files are recorded without its archive's top folder.
-/// 2.0.0: integrity uses length-prefixed hashing (see integrity.zig).
-pub const LOCKFILE_VERSION = "3.0.0";
-/// 1.x: integrity uses the ambiguous v1 hashing (integrity.Algo.legacy).
-const LEGACY_HASH_MAJOR = 1;
-/// The last major that recorded git host archives under their top folder.
-const WRAPPED_ARCHIVES_MAJOR = 2;
-/// Must match LOCKFILE_VERSION's major.
-const CURRENT_LOCKFILE_MAJOR = 3;
+/// The format this build writes. It reads any version of the same major; another major
+/// is refused at load (its integrities would only fail later, as an IntegrityMismatch).
+pub const LOCKFILE_VERSION = "1.0.0";
+const LOCKFILE_MAJOR = (semver.Version.parse(LOCKFILE_VERSION) catch unreachable).major;
 
 /// JSON-escaped, quoted string formatter.
 fn jsonStr(s: []const u8) std.json.Formatter([]const u8) {
@@ -43,19 +37,16 @@ pub const LockedPackage = struct {
 
 pub const Lockfile = struct {
     allocator: std.mem.Allocator,
-    version: []const u8,
     packages: PackagesMap,
 
-    pub fn init(allocator: std.mem.Allocator) !Lockfile {
+    pub fn init(allocator: std.mem.Allocator) Lockfile {
         return .{
             .allocator = allocator,
-            .version = try allocator.dupe(u8, LOCKFILE_VERSION),
             .packages = PackagesMap.init(allocator),
         };
     }
 
     pub fn deinit(self: *Lockfile) void {
-        self.allocator.free(self.version);
         var it = self.packages.iterator();
         while (it.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -66,7 +57,7 @@ pub const Lockfile = struct {
 
     pub fn load(allocator: std.mem.Allocator, fs: Vfs) !Lockfile {
         const content = fs.readFile(allocator, "kupcad.lock") catch |err| switch (err) {
-            error.FileNotFound => return try Lockfile.init(allocator),
+            error.FileNotFound => return Lockfile.init(allocator),
             else => return err,
         };
         defer allocator.free(content);
@@ -79,21 +70,14 @@ pub const Lockfile = struct {
         const root = parsed.value;
         if (root != .object) return error.UnexpectedToken;
 
-        var lockfile = try Lockfile.init(allocator);
-        errdefer lockfile.deinit();
-
-        if (root.object.get("version")) |v| {
-            if (v == .string) {
-                allocator.free(lockfile.version);
-                lockfile.version = try allocator.dupe(u8, v.string);
-            }
+        const version = if (root.object.get("version")) |v| (if (v == .string) v.string else "") else "";
+        if (!isSupported(version)) {
+            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ version, LOCKFILE_MAJOR });
+            return error.UnsupportedLockfileVersion;
         }
-        // Reject unknown formats up front: verifying a newer lockfile with our hash
-        // scheme would only surface later as a misleading IntegrityMismatch.
-        _ = lockfile.format() catch |err| {
-            log.warn("kupcad.lock version \"{s}\" is not supported (this kupcad reads {d}.x to {d}.x lockfiles); upgrade kupcad or delete kupcad.lock to re-resolve", .{ lockfile.version, LEGACY_HASH_MAJOR, CURRENT_LOCKFILE_MAJOR });
-            return err;
-        };
+
+        var lockfile = Lockfile.init(allocator);
+        errdefer lockfile.deinit();
 
         if (root.object.get("packages")) |pkgs| {
             if (pkgs == .object) {
@@ -149,30 +133,12 @@ pub const Lockfile = struct {
         return lockfile;
     }
 
-    /// How a lockfile's version took its integrities, so older ones can still be checked.
-    pub const Format = struct {
-        /// 1.x: the ambiguous v1 path hashing (integrity.Algo.legacy).
-        legacy_hash: bool,
-        /// Before 3.0.0: a git host package's files kept its archive's top folder.
-        wrapped_git_archives: bool,
-    };
-
-    /// Any other (or unparseable) version is a format this build cannot verify.
-    pub fn format(self: *const Lockfile) error{UnsupportedLockfileVersion}!Format {
-        const v = semver.Version.parse(self.version) catch return error.UnsupportedLockfileVersion;
-        return switch (v.major) {
-            LEGACY_HASH_MAJOR => .{ .legacy_hash = true, .wrapped_git_archives = true },
-            WRAPPED_ARCHIVES_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = true },
-            CURRENT_LOCKFILE_MAJOR => .{ .legacy_hash = false, .wrapped_git_archives = false },
-            else => error.UnsupportedLockfileVersion,
-        };
+    fn isSupported(version: []const u8) bool {
+        const v = semver.Version.parse(version) catch return false;
+        return v.major == LOCKFILE_MAJOR;
     }
 
-    pub fn save(self: *Lockfile, fs: Vfs) !void {
-        // Allocated before writing so the in-memory version can't lag the file on OOM.
-        const saved_version = try self.allocator.dupe(u8, LOCKFILE_VERSION);
-        errdefer self.allocator.free(saved_version);
-
+    pub fn save(self: *const Lockfile, fs: Vfs) !void {
         var aw: std.Io.Writer.Allocating = .init(self.allocator);
         defer aw.deinit();
         const w = &aw.writer;
@@ -231,10 +197,5 @@ pub const Lockfile = struct {
         }
 
         try fs.writeFile("kupcad.lock", aw.written());
-
-        // The file is now current-format; a reused in-memory lockfile must verify with
-        // the current hash too, not the legacy one it was loaded with.
-        self.allocator.free(self.version);
-        self.version = saved_version;
     }
 };

@@ -6,11 +6,10 @@ const LockedPackage = @import("lockfile.zig").LockedPackage;
 const StringMap = @import("lockfile.zig").StringMap;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 
-test "Lockfile: initializes with default version" {
-    var lockfile = try Lockfile.init(testing.allocator);
+test "Lockfile: initializes empty" {
+    var lockfile = Lockfile.init(testing.allocator);
     defer lockfile.deinit();
 
-    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
     try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
 }
 
@@ -19,7 +18,7 @@ test "Lockfile: saves deterministic JSON to VFS" {
     defer mem_vfs.deinit();
     const fs = mem_vfs.vfs();
 
-    var lockfile = try Lockfile.init(testing.allocator);
+    var lockfile = Lockfile.init(testing.allocator);
     defer lockfile.deinit();
 
     var deps = StringMap.init(testing.allocator);
@@ -38,6 +37,7 @@ test "Lockfile: saves deterministic JSON to VFS" {
     const content = try fs.readFile(testing.allocator, "kupcad.lock");
     defer testing.allocator.free(content);
 
+    try testing.expect(std.mem.indexOf(u8, content, "\"version\": \"" ++ @import("lockfile.zig").LOCKFILE_VERSION ++ "\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"resolved\": \"abc123def456\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"integrity\": \"sha256-mockhash123\"") != null);
     try testing.expect(std.mem.indexOf(u8, content, "\"github.com-kupcad-std\"") != null);
@@ -51,7 +51,6 @@ test "Lockfile: gracefully handles missing lockfiles by returning empty defaults
     var lockfile = try Lockfile.load(testing.allocator, mem_vfs.vfs());
     defer lockfile.deinit();
 
-    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
     try testing.expectEqual(@as(usize, 0), lockfile.packages.count());
 }
 
@@ -72,48 +71,23 @@ fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
     return Lockfile.load(testing.allocator, mem_vfs.vfs());
 }
 
-test "Lockfile: integrity scheme follows the major version; unknown majors are rejected" {
+test "Lockfile: it reads its own major and refuses any other" {
     const warnings = test_support.expectWarnings();
     defer warnings.restore();
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    const known = [_]struct { version: []const u8, legacy: bool, wrapped: bool }{
-        .{ .version = "1.0.0", .legacy = true, .wrapped = true },
-        .{ .version = "1.4.2", .legacy = true, .wrapped = true },
-        .{ .version = "2.0.0", .legacy = false, .wrapped = true },
-        // A minor bump must not flip to the legacy hash (it used to: anything != 2.0.0).
-        .{ .version = "2.1.0", .legacy = false, .wrapped = true },
-        // 3.0.0 records git host packages without their archive's top folder.
-        .{ .version = "3.0.0", .legacy = false, .wrapped = false },
-    };
-    for (known) |case| {
-        var lockfile = try loadVersion(&mem_vfs, case.version);
-        defer lockfile.deinit();
-        const format = try lockfile.format();
-        try testing.expectEqual(case.legacy, format.legacy_hash);
-        try testing.expectEqual(case.wrapped, format.wrapped_git_archives);
+    for ([_][]const u8{ "1.0.0", "1.4.2" }) |version| {
+        var lockfile = try loadVersion(&mem_vfs, version);
+        lockfile.deinit();
     }
-
-    // A newer (or garbled) format fails at load with a clear error, instead of
-    // being verified as 1.x and reported later as an IntegrityMismatch.
-    for ([_][]const u8{ "4.0.0", "0.9.0", "not-a-version" }) |version| {
+    // Another (or garbled) format fails at load with a clear error, instead of being
+    // verified with hashes it didn't take and reported later as an IntegrityMismatch.
+    for ([_][]const u8{ "2.0.0", "0.9.0", "not-a-version", "" }) |version| {
         try testing.expectError(error.UnsupportedLockfileVersion, loadVersion(&mem_vfs, version));
     }
-}
-
-test "Lockfile: save upgrades the in-memory version along with the file" {
-    var mem_vfs = MemoryVfs.init(testing.allocator);
-    defer mem_vfs.deinit();
-
-    var lockfile = try loadVersion(&mem_vfs, "1.0.0");
-    defer lockfile.deinit();
-    try testing.expect((try lockfile.format()).legacy_hash);
-
-    try lockfile.save(mem_vfs.vfs());
-    // A reused lockfile used to keep "1.0.0" and verify the freshly written hashes as legacy.
-    try testing.expectEqualStrings(@import("lockfile.zig").LOCKFILE_VERSION, lockfile.version);
-    try testing.expect(!(try lockfile.format()).legacy_hash);
+    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"packages\":{}}");
+    try testing.expectError(error.UnsupportedLockfileVersion, Lockfile.load(testing.allocator, mem_vfs.vfs()));
 }
 
 // Audit fix: strings were written unescaped, so a hostile alias or ref could
@@ -125,7 +99,7 @@ test "Lockfile: strings are JSON-escaped on save" {
 
     const evil_alias = "x\": \"injected\", \"y";
     {
-        var lockfile = try Lockfile.init(testing.allocator);
+        var lockfile = Lockfile.init(testing.allocator);
         defer lockfile.deinit();
         var deps = StringMap.init(testing.allocator);
         try deps.put(try testing.allocator.dupe(u8, evil_alias), try testing.allocator.dupe(u8, "github.com/a/b"));

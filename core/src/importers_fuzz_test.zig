@@ -148,8 +148,8 @@ fn checkHandshake(request: []const u8) !void {
 
 test "fuzz: a project's kupcad.lock" {
     try fuzzParser(checkLockfile, &.{
-        "{\"version\":\"2.0\",\"packages\":{\"github.com-a-b\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"sha256-abc\",\"dependencies\":{\"hw\":\"github.com/a/hw\"}}}}",
-        "{\"version\":\"1.0\",\"packages\":{}}",
+        "{\"version\":\"1.0.0\",\"packages\":{\"github.com-a-b\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"sha256-abc\",\"dependencies\":{\"hw\":\"github.com/a/hw\"}}}}",
+        "{\"version\":\"2.0.0\",\"packages\":{}}",
         "{ broken: true ",
     });
 }

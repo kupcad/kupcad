@@ -262,13 +262,8 @@ test "Integrity: compute input is unambiguous" {
     const h2 = try integrity.compute(testing.allocator, &m2);
     defer testing.allocator.free(h2);
     try testing.expect(!std.mem.eql(u8, h1, h2));
-    try integrity.verify(testing.allocator, &m1, h1, .{});
-    try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &m2, h1, .{}));
-
-    // The legacy (lockfile 1.x) algorithm is kept, ambiguity included, to verify old lockfiles.
-    const legacy = try integrity.computeWith(testing.allocator, &m1, .{ .algo = .legacy });
-    defer testing.allocator.free(legacy);
-    try integrity.verify(testing.allocator, &m2, legacy, .{ .algo = .legacy });
+    try integrity.verify(testing.allocator, &m1, h1);
+    try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &m2, h1));
 }
 
 test "Store: a write waits for another connection's lock instead of failing" {
@@ -301,26 +296,6 @@ test "Store: a write waits for another connection's lock instead of failing" {
     try files.put("kupcad.json", "hash_json");
     try writer.registerPackage("github.com-u-r", "commit-a", "github", "sha256-x", &files);
     try testing.expect(try writer.hasPackage("github.com-u-r", "commit-a"));
-}
-
-test "Store: an integrity under a root folder is that of the paths with it" {
-    // Lockfiles before 3.0.0 hashed a git host archive's files with its top folder; they
-    // are checked by hashing the stripped files under that folder.
-    var stripped = std.StringHashMap([]const u8).init(testing.allocator);
-    defer stripped.deinit();
-    try stripped.put("main.kup", "h1");
-    try stripped.put("lib/bolt.kup", "h2");
-    var prefixed = std.StringHashMap([]const u8).init(testing.allocator);
-    defer prefixed.deinit();
-    try prefixed.put("r-c1/main.kup", "h1");
-    try prefixed.put("r-c1/lib/bolt.kup", "h2");
-
-    inline for (.{ integrity.Algo.current, integrity.Algo.legacy }) |algo| {
-        const old = try integrity.computeWith(testing.allocator, &prefixed, .{ .algo = algo });
-        defer testing.allocator.free(old);
-        try integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo, .root = "r-c1" });
-        try testing.expectError(error.IntegrityMismatch, integrity.verify(testing.allocator, &stripped, old, .{ .algo = algo }));
-    }
 }
 
 test "Store: a database that can't be opened is an open error, and its handle is closed" {

@@ -17,8 +17,8 @@ const TAR_METADATA_SLACK_BYTES: u64 = 64 * 1024 * 1024;
 /// How an archive's entries map onto the package's files.
 pub const ArchiveLayout = enum {
     /// Every entry sits in one top folder the host adds (`repo-<sha>/` from GitHub and
-    /// GitLab, `repo/` from Gitea), which is not part of the package. It was kept, so no
-    /// import of an installed package could find its files.
+    /// GitLab, `repo/` from Gitea), which is not part of the package: it is stripped, so an
+    /// import finds a package's files at the repository's paths.
     wrapped,
     /// The archive's root is the package's root (a `file:` or http archive).
     flat,
@@ -28,7 +28,7 @@ pub const ArchiveLayout = enum {
 pub const Archive = struct {
     /// Package-relative path -> blob hash, both owned.
     files: std.StringHashMap([]const u8),
-    /// The top folder of a `wrapped` archive (owned); empty for `flat`.
+    /// The top folder every entry of a `wrapped` archive must share (owned); empty for `flat`.
     root: []const u8,
 
     pub fn deinit(self: *Archive, allocator: std.mem.Allocator) void {

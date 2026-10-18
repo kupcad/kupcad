@@ -38,7 +38,7 @@ const Fixture = struct {
         errdefer self.cafs.deinit();
         self.store = try Store.init(testing.io, ":memory:");
         self.manifest = try Manifest.init(testing.allocator, "test-app");
-        self.lockfile = try Lockfile.init(testing.allocator);
+        self.lockfile = Lockfile.init(testing.allocator);
     }
 
     fn deinit(self: *Fixture) void {
@@ -324,51 +324,6 @@ test "Resolver: a pin for a different ref is re-resolved, stale entries dropped"
     try testing.expectEqualStrings("", fresh.ref);
     try testing.expectEqualStrings(good_integrity, fresh.integrity);
     try testing.expect(fx.lockfile.packages.get("github.com-gone-pkg") == null);
-}
-
-test "Resolver: 1.x lockfiles verify with the legacy hash and are rewritten as current" {
-    const warnings = test_support.expectWarnings();
-    defer warnings.restore();
-    var fx: Fixture = undefined;
-    try fx.init();
-    defer fx.deinit();
-    const pkg_id = try fx.addLocalDep("dep", &SAMPLE_PKG);
-    defer testing.allocator.free(pkg_id);
-    try fx.resolve();
-
-    const current = try testing.allocator.dupe(u8, (try fx.entry(pkg_id)).integrity);
-    defer testing.allocator.free(current);
-    const legacy = blk: {
-        var files = (try fx.store.getPackageFiles(testing.allocator, pkg_id, (try fx.entry(pkg_id)).resolved)).?;
-        defer helpers.freeMap(&files);
-        break :blk try integrity.computeWith(testing.allocator, &files, .{ .algo = .legacy });
-    };
-    defer testing.allocator.free(legacy);
-    try testing.expect(!std.mem.eql(u8, current, legacy));
-
-    try setOwned(&fx.lockfile.version, "1.0.0");
-    try testing.expect((try fx.lockfile.format()).legacy_hash);
-
-    // A 1.x lockfile is checked with the 1.x algorithm, not the current one.
-    try testing.expectError(error.IntegrityMismatch, fx.resolve());
-
-    try setOwned(&(try fx.entry(pkg_id)).integrity, legacy);
-    try fx.resolve();
-    try testing.expectEqualStrings(current, (try fx.entry(pkg_id)).integrity);
-
-    // Saving upgrades the format so the next install uses the current algorithm.
-    const fs = fx.mem_vfs.vfs();
-    try fx.lockfile.save(fs);
-    var reloaded = try Lockfile.load(testing.allocator, fs);
-    defer reloaded.deinit();
-    try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, reloaded.version);
-    try testing.expect(!(try reloaded.format()).legacy_hash);
-    try testing.expectEqualStrings(current, reloaded.packages.get(pkg_id).?.integrity);
-
-    // The in-memory lockfile now holds current hashes, so reusing it (without reloading)
-    // must verify with the current algorithm too; it used to stay 1.0.0 and mismatch.
-    try testing.expectEqualStrings(lockfile_mod.LOCKFILE_VERSION, fx.lockfile.version);
-    try fx.resolve();
 }
 
 test "Resolver: forbidden or malformed transitive deps fail the install" {
