@@ -182,3 +182,26 @@ test "Linter Rule: UnusedVarsRule counts a call from a method defined above" {
     try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
     try testing.expectEqualStrings("Unused variable 'unused_helper'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
 }
+
+test "Linter Rule: UnusedVarsRule counts the parameters a bare super passes on" {
+    // `super` without arguments passes the method's own: its parameter was reported unused
+    // (found writing the fuzz corpus). One `super(...)` doesn't pass still is.
+    const source =
+        \\class A
+        \\  def go(x, y) = x + y
+        \\end
+        \\class B < A
+        \\  def go(x, y)
+        \\    [1].each { |i| i }
+        \\    super
+        \\  end
+        \\  def other(z) = super(1)
+        \\end
+        \\cube(B.new.go(1, 2))
+    ;
+    var engine = try runRule(testing.allocator, source);
+    defer engine.deinit();
+
+    try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
+    try testing.expectEqualStrings("Unused variable 'z'. Prefix with '_' if intentional.", engine.diagnostics.items[0].message);
+}

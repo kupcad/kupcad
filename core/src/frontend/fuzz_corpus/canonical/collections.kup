@@ -1,0 +1,57 @@
+# Arrays, maps and ranges: what changes them and what reads them.
+
+list = [3, nil, 1, [2, 4]]
+list.push(5)
+list.unshift(0)
+last = list.pop
+first = list.shift
+tidy = list.compact
+flat = tidy.flatten
+reads = [
+  flat.join("-"),
+  flat.contains?(4),
+  flat.reject { |v| v > 2 },
+  flat.filter { |v| v.odd? },
+  flat.reduce(0) { |sum, v| sum + v },
+  flat.max,
+  flat.min,
+  flat.sum,
+  flat.sort { |a, b| b <=> a },
+  flat.first,
+  flat.last,
+  [[:a, 1], [:b, 2]].to_h,
+]
+inspect(last, first, tidy, flat, reads)
+
+sizes = { width: 10, "depth" => 4 }
+sizes[:height] = 3
+merged = sizes.merge({ width: 12 })
+removed = merged.delete(:height)
+lookups = [
+  merged.keys,
+  merged.values,
+  merged.key?(:width),
+  merged.get(:missing, 0),
+  merged.empty?,
+  merged.symbolize_keys,
+  merged.stringify_keys,
+  merged.to_a,
+  merged.map { |_k, v| v },
+]
+merged.each { |k, _v| puts(k) }
+inspect(removed, lookups)
+
+span = 1..10
+open_span = 1...10
+ranges = [
+  span.include?(10),
+  open_span.include?(10),
+  span.cover?(5),
+  open_span.exclusive?,
+  span.step(3).to_a,
+  span.count,
+  span.first,
+  span.last,
+  span.to_s,
+]
+inspect(ranges)

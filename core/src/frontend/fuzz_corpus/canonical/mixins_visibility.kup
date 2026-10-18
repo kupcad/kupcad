@@ -1,0 +1,39 @@
+# Mixins, visibility, writers and a bare `super`, which passes the method's own arguments.
+
+module Measured
+  def describe
+    "#{self.class}: #{self.size}"
+  end
+end
+
+class Part
+  include(Measured)
+  attr_reader(:size)
+  attr_writer(:size)
+
+  def initialize(size)
+    @size = size
+  end
+
+  def scaled(factor)
+    @size * factor
+  end
+
+  def doubled
+    self.halve(4)
+  end
+
+  private def halve(value)
+    value / 2
+  end
+end
+
+class Bolt < Part
+  def scaled(factor)
+    super + 1
+  end
+end
+
+bolt = Bolt.new(3)
+bolt.size = 4
+inspect(bolt.describe, bolt.scaled(2), bolt.doubled, bolt.respond_to?(:halve))

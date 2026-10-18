@@ -5,6 +5,12 @@ module Sizes
   W = 4
 end
 
+class Visible
+  public def shown = 1
+
+  private def hidden = 2
+end
+
 x=1+2*3
 y = -  x
 spaced = - 3.abs
@@ -22,4 +28,4 @@ top = ::Sizes::W
 values = [ 1 ,2,
   3 ]
 opts = {a:1,'b'=>2}
-inspect( spaced , grouped, total, chain, top, values, opts )
+inspect( spaced , grouped, total, chain, top, values, opts, Visible.new.shown )

@@ -486,3 +486,14 @@ test "Language: a recursion through built-ins stops at the nested-run limit, not
         .{ .src = "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nr = f(150)", .expected = .{ .num = 150 } },
     });
 }
+
+test "Language: next and break in an ensure body leave the loop as in Ruby" {
+    // They were refused as an internal compiler error: an ensure body runs with the begin's
+    // value, or its exception, on the stack, and the jump didn't drop it (found by the
+    // generated-program fuzz test). `break` there also drops the exception being raised.
+    try expectScripts(&.{
+        .{ .src = "r = []\nfor v in [1, 2, 3]\n  begin\n    r.push(v)\n  ensure\n    next if v == 1\n    r.push(-v)\n  end\nend", .expected = .{ .nums = &.{ 1, 2, -2, 3, -3 } } },
+        .{ .src = "n = 0\nwhile true\n  n += 1\n  begin\n    raise(\"boom\") if n == 2\n  ensure\n    break if n == 2\n  end\nend\nr = n", .expected = .{ .num = 2 } },
+        .{ .src = "r = 0\nwhile r < 3\n  r += 1\n  begin\n    x = r * 2\n  ensure\n    next\n  end\nend", .expected = .{ .num = 3 } },
+    });
+}

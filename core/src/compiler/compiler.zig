@@ -37,7 +37,6 @@ pub const CompileError = error{
     TooManyConstants,
     TooManyLocals,
     TooManyArguments,
-    UnsupportedScope,
     ProtectedSymbol,
     CorruptedBytecode,
     VariableAlreadyDeclared,
@@ -78,7 +77,7 @@ fn describeError(err: CompileError) []const u8 {
         error.ProtectedSymbol => "a built-in name can't be redefined",
         error.VariableAlreadyDeclared => "this name is already defined",
         error.OutsideMethod => "yield, block_given? and super are only valid inside a def",
-        error.UnknownNode, error.UnsupportedScope, error.CorruptedBytecode => "internal compiler error",
+        error.UnknownNode, error.CorruptedBytecode => "internal compiler error",
     };
 }
 
@@ -573,6 +572,16 @@ pub const Compiler = struct {
         }
     }
 
+    /// Pops what is on the stack above `depth`, for a `next` or `break` that leaves a loop
+    /// from there: one in an `ensure` body runs with the `begin`'s value, or its exception,
+    /// still on it, and was refused as an internal compiler error. As in Ruby, the jump
+    /// drops them. Returns how many it popped.
+    fn emitPopsTo(self: *Compiler, depth: usize) CompileError!usize {
+        const pending = self.current_stack_depth -| depth;
+        for (0..pending) |_| try self.emitOp(.op_pop);
+        return pending;
+    }
+
     fn compileNextStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const next_idx = self.tree.nodeIndex(node);
         if (next_idx != .none) {
@@ -583,12 +592,10 @@ pub const Compiler = struct {
         if (self.loops.items.len > 0) {
             try self.emitOp(.op_pop);
             const cur_loop = self.loops.items[self.loops.items.len - 1];
-
-            if (self.current_stack_depth > cur_loop.depth) return error.UnsupportedScope;
-
+            const pending = try self.emitPopsTo(cur_loop.depth);
             try self.emitUnwind(cur_loop.unwind_depth);
             try self.emitLoop(cur_loop.start);
-            self.simulatePush(1);
+            self.simulatePush(pending + 1); // the code after the jump never runs
         } else if (self.enclosing != null or self.function != null) {
             try self.emitUnwind(0);
             try self.emitOp(.op_return);
@@ -600,6 +607,8 @@ pub const Compiler = struct {
 
     fn compileBreakStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const break_idx = self.tree.nodeIndex(node);
+        // Out of a loop, the stack goes back to the loop's before the value it breaks with
+        const pending = if (self.loops.items.len > 0) try self.emitPopsTo(self.loops.items[self.loops.items.len - 1].depth) else 0;
         if (break_idx != .none) {
             try self.compileNode(break_idx);
         } else {
@@ -607,12 +616,11 @@ pub const Compiler = struct {
         }
         if (self.loops.items.len > 0) {
             const loop_idx = self.loops.items.len - 1;
-            if (self.current_stack_depth > self.loops.items[loop_idx].depth + 1) return error.UnsupportedScope;
-
             try self.emitUnwind(self.loops.items[loop_idx].unwind_depth);
             const jump = try self.emitJump(.op_jump);
             // Re-index: compiling an inline ensure body may grow `self.loops`
             try self.loops.items[loop_idx].exit_jumps.append(self.allocator, jump);
+            self.simulatePush(pending); // the code after the jump never runs
         } else if (self.enclosing != null or self.function != null) {
             try self.emitUnwind(0);
             try self.emitOp(.op_break_block);

@@ -564,11 +564,22 @@ pub const Formatter = struct {
         if (quote) |q| try self.out.append(self.allocator, q);
     }
 
+    /// Whether a String part of an interpolated string is one of its pieces between `"`, `}`
+    /// and `#{`, not a String written inside `#{...}`: both are String nodes, and
+    /// `"#{"a"}"` was printed as `"a"`, which isn't interpolated.
+    fn isStringSegment(self: *const Formatter, part: *const ast.Node) bool {
+        if (part.main_token >= self.token_tags.len) return false;
+        return switch (self.token_tags[part.main_token]) {
+            .string_start, .string_mid, .string_end => true,
+            else => false,
+        };
+    }
+
     fn formatInterpolatedString(self: *Formatter, tree: *const ast.Tree, parts: []const ast.NodeIndex) Error!void {
         try self.out.append(self.allocator, '"');
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
-            if (part.tag == .string) {
+            if (part.tag == .string and self.isStringSegment(part)) {
                 // The piece between the delimiters, `}` and `#{`, as written (it was decoded)
                 if (try self.rawStringText(tree, part)) |raw| {
                     try self.out.appendSlice(self.allocator, raw);

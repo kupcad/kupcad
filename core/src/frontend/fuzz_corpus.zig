@@ -11,7 +11,10 @@ pub const MAX_INPUT_BYTES = 16 * 1024;
 
 pub const CORPUS_DIR = "src/frontend/fuzz_corpus";
 /// fuzz_corpus/canonical/<name>.kup: programs already in the formatter's style.
-pub const CANONICAL = [_][]const u8{ "cad_model", "classes_modules", "control_flow", "methods_blocks", "operators", "parts_lib", "uses_lib" };
+pub const CANONICAL = [_][]const u8{
+    "cad_model",    "classes_modules", "collections", "control_flow", "methods_blocks",  "mixins_visibility",
+    "numbers_math", "operators",       "parts_lib",   "shapes",       "strings_objects", "uses_lib",
+};
 /// fuzz_corpus/raw/<name>.kup: programs in layouts and literals the formatter rewrites.
 pub const RAW = [_][]const u8{ "layout", "literals" };
 

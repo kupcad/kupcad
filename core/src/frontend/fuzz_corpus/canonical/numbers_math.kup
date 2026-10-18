@@ -1,0 +1,88 @@
+# Numbers' methods and the Math module, each called the way it is meant to be.
+
+n = 7.6
+counts = []
+3.times { |i| counts.push(i) }
+1.upto(3) { |i| counts.push(i) }
+3.downto(1) { |i| counts.push(-i) }
+checks = [
+  n.floor,
+  n.ceil,
+  n.round,
+  n.round(1),
+  n.abs,
+  -n.abs,
+  n.to_i,
+  "2.5".to_f,
+  n.clamp(0, 5),
+  n.between?(5, 10),
+  0.zero?,
+  n.positive?,
+  n.negative?,
+  4.integer?,
+  4.odd?,
+  4.even?,
+  n.finite?,
+  (0.0 / 1).nan?,
+  n.infinite?,
+  n.to_s,
+  n.to_f,
+]
+inspect(counts, checks)
+
+angles = [
+  Math.sin(0.5),
+  Math.cos(0.5),
+  Math.tan(0.5),
+  Math.asin(0.5),
+  Math.acos(0.5),
+  Math.atan(0.5),
+  Math.atan2(1, 2),
+]
+degrees = [
+  Math.sind(30),
+  Math.cosd(60),
+  Math.tand(45),
+  Math.asind(0.5),
+  Math.acosd(0.5),
+  Math.atand(1),
+  Math.atan2d(1, 1),
+]
+powers = [
+  Math.sqrt(16),
+  Math.cbrt(27),
+  Math.exp(1),
+  Math.log(10),
+  Math.log(8, 2),
+  Math.log2(8),
+  Math.log10(1000),
+]
+rounding = [Math.abs(-2), Math.round(2.5), Math.ceil(2.1), Math.floor(2.9), Math.sign(-3)]
+conversions = [
+  Math.deg2rad(180),
+  Math.rad2deg(Math::PI),
+  Math.min(3, 1, 2),
+  Math.max(3, 1, 2),
+  Math.hypot(3, 4, 12),
+]
+modelling = [
+  Math.clamp(12, 0, 10),
+  Math.lerp(0, 10, 0.25),
+  Math.snap(7.3, 0.5),
+  Math.remap(5, 0, 10, 0, 100),
+  Math.smoothstep(0, 1, 0.5),
+  Math.close?(0.1 + 0.2, 0.3),
+  Math.gcd(12, 18),
+  Math.lcm(4, 6),
+]
+inspect(
+  angles,
+  degrees,
+  powers,
+  rounding,
+  conversions,
+  modelling,
+  Math::TAU,
+  Math::E,
+  Number::EPSILON,
+)

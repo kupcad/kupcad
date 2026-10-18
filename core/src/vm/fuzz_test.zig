@@ -10,6 +10,7 @@ const std = @import("std");
 const testing = std.testing;
 const support = @import("../test_support.zig");
 const corpus = @import("../frontend/fuzz_corpus.zig");
+const program = @import("../frontend/fuzz_program.zig");
 const Document = @import("../core/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
@@ -21,6 +22,7 @@ const RUN_INSTRUCTION_LIMIT = 50_000;
 /// Script memory a run may hold (strings, arrays, maps): a doubling string ends here.
 const RUN_MEMORY_LIMIT = 16 * 1024 * 1024;
 
+// The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: a script runs without crashing the VM" {
     const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
     defer testing.allocator.destroy(buf);
@@ -28,7 +30,37 @@ test "fuzz: a script runs without crashing the VM" {
 }
 
 fn run(buf: *[corpus.MAX_INPUT_BYTES]u8, smith: *testing.Smith) anyerror!void {
-    const source = buf[0..smith.slice(buf)];
+    try runScript(buf[0..smith.slice(buf)]);
+}
+
+// The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
+test "fuzz: a generated program runs without crashing the VM" {
+    try testing.fuzz({}, runGenerated, .{});
+}
+
+fn runGenerated(_: void, smith: *testing.Smith) anyerror!void {
+    try runProgram(.{ .smith = smith });
+}
+
+fn runProgram(choices: program.Choices) !void {
+    const source = try program.generate(testing.allocator, choices);
+    defer testing.allocator.free(source);
+    try runScript(source);
+}
+
+test "Fuzz programs: generated programs run on the VM" {
+    // The programs the fuzzer would start from, on every test run.
+    for (0..PLAIN_RUN_PROGRAMS) |seed| {
+        var prng = std.Random.DefaultPrng.init(seed);
+        try runProgram(.{ .random = prng.random() });
+    }
+}
+
+/// Generated programs each plain test run runs.
+const PLAIN_RUN_PROGRAMS = 100;
+
+/// Runs `source`, if it compiles, on a VM closed off for it.
+fn runScript(source: []const u8) !void {
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
     if (doc.diagnostics.len > 0) return;

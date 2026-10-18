@@ -927,6 +927,12 @@ test "Formatter: a method's own rescue and ensure stay at the method's level" {
     try expectStableFormat("def g\n  begin\n    1\n  rescue\n    0\n  end\nend\n", "def g\n  begin\n    1\n  rescue\n    0\n  end\nend\n");
 }
 
+test "Formatter: a string written inside #{} stays inside it" {
+    // It was printed as one of the string's own pieces: `"#{"a"}"` became `"a"`, a string
+    // that isn't interpolated (found by the generated-program fuzz test).
+    try expectStableFormat("x = \"p#{\"a\"}q\"\ny = \"#{'raw'} and #{\"b#{1}\"}\"\n", "x = \"p#{\"a\"}q\"\ny = \"#{'raw'} and #{\"b#{1}\"}\"\n");
+}
+
 test "Formatter: a top-level constant keeps its leading ::" {
     // `::A` is the top-level A; printed as `A` it read back as a constant looked up in the
     // enclosing modules (found by the fuzzer, as `param(::arm_length)`).

@@ -485,32 +485,38 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     try testing.expect(found_wide);
 }
 
-test "Compiler Edge Case: Prevent stack leaks from break/next inside expressions" {
-    // `10 + (break 5)` / `10 + next`: jumping out with the left operand still on
-    // the stack must be rejected instead of leaking a slot.
+test "Compiler Edge Case: break and next inside an expression drop its operands" {
+    // `10 + (break 5)` / `10 + next` in a loop: the jump leaves with the left operand on the
+    // stack, and drops it (it was refused as an internal compiler error; an `ensure` body,
+    // which runs with the begin's value on the stack, is where a script meets this).
+    // Built by hand: the parser makes no jump inside an operand.
     inline for (.{ ast.Tag.break_stmt, ast.Tag.next_stmt }) |tag| {
         var arena = std.heap.ArenaAllocator.init(testing.allocator);
         defer arena.deinit();
         var b = ast.Builder.init(arena.allocator());
         defer b.deinit();
 
-        // Built manually to bypass the parser
         const ten = try b.number("10", 0);
         const payload = if (tag == .break_stmt) try b.number("5", 0) else ast.NodeIndex.none;
         const jump_node = try b.createNode(tag, 0, @backingInt(payload));
         const add_node = try b.binary(.add, ten, jump_node, 0);
+        const body = try b.block(&.{}, &.{add_node}, 0, 0);
+        const loop = try b.whileStmt(try b.booleanNode(true, 0), body, false, 0);
 
         var vm = try VM.init(testing.allocator, testing.io);
         defer vm.deinit();
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
-
         var comp = Compiler.init(testing.allocator, &b.tree, &[_]resolver.ResolvedSymbol{}, &[_]u32{}, &out_chunk, &vm);
         defer comp.deinit();
+        try comp.compile(loop);
 
-        // A fake loop so the jump itself is permitted
-        try comp.loops.append(comp.allocator, .{ .start = 0, .depth = 0 });
-        try testing.expectError(error.UnsupportedScope, comp.compile(add_node));
+        // `break 5` ends the endless loop with 5, the stack back to just that value. (The
+        // `next` loop never ends: that it compiles is the change.)
+        if (tag == .break_stmt) {
+            const result = try @import("../vm/vm_test_helpers.zig").executeAndAssertStack(&vm, &out_chunk, 1);
+            try testing.expectEqual(@as(f64, 5), result.asNumber());
+        }
     }
 }
 

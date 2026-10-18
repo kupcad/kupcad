@@ -594,15 +594,19 @@ pub fn build(b: *std.Build) void {
 
         // `zig build fuzz --fuzz=<runs>` searches from the fuzz corpus with the front end's
         // and the runtime's fuzz tests (src/frontend/fuzz_test.zig, src/vm/fuzz_test.zig),
-        // each up to <runs>; -Dfuzz-target picks one, so CI fuzzes them in parallel jobs.
+        // each up to <runs>; -Dfuzz-target picks one, so CI fuzzes each in a job of its own,
+        // with as many runs as fit (a generated program costs far more than random bytes).
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, runtime };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz test `zig build fuzz` runs: frontend or runtime (both when unset)");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The one fuzz test `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs");
+        // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
-            .frontend => "frontend.fuzz_test.test.fuzz:",
-            .runtime => "vm.fuzz_test.test.fuzz:",
+            .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
+            .frontend_programs => "frontend.fuzz_test.test.fuzz: the front end takes any generated program",
+            .runtime => "vm.fuzz_test.test.fuzz: a script runs without crashing the VM",
+            .runtime_programs => "vm.fuzz_test.test.fuzz: a generated program runs without crashing the VM",
         } else "fuzz:";
         const fuzz_tests = b.addTest(.{
             .root_module = mod,

@@ -1,0 +1,50 @@
+# The shape built-ins the other programs don't reach: profiles, sweeps, booleans by name,
+# placement, inspection, assertions, and files (in a method nothing calls, so running
+# this writes nothing).
+
+triangle = polygon([[0, 0], [20, 0], [0, 15]])
+tetra = polyhedron([[0, 0, 0], [10, 0, 0], [0, 10, 0], [0, 0, 10]], [
+  [0, 1, 2],
+  [0, 3, 1],
+  [0, 2, 3],
+  [1, 3, 2],
+])
+star = regular_polygon(5, r: 8)
+ring = circle(r: 6).offset(-1)
+
+turned = square(4, 10).translate(x: 10).revolve(270)
+coil = circle(r: 1).translate(x: 8).helix(h: 8, twist: 720)
+lofted = square(10, 10, center: true).loft(circle(r: 3), 12)
+plate = triangle.extrude(3)
+
+block = cube(20, 20, 10, center: true)
+drilled = block.difference(cylinder(d: 4, h: 30, center: true))
+common = block.intersection(sphere(r: 12))
+placed = [
+  drilled.mirror(x: 1),
+  drilled.resize([10, 10, 5]),
+  common.transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 0, 0]), # column-major: x, y, z axes, then the offset
+  common.trim_by_plane(0, 0, 1, 2),
+]
+outline = drilled.project
+pieces = (cube(2) + cube(2).translate(x: 5)).decompose
+lighter = block.simplify(0.1)
+assert(pieces.length == 2, "two separate cubes")
+if lighter.volume < 0
+  warn("a note for the log")
+end
+print("built ", pieces.length, " pieces\n")
+inspect(block.contains?([0, 0, 0]), ring.contains?([0, 0]), outline.bbox, tetra.volume, star.bbox)
+
+def _write_files(part, sketch)
+  part.export_stl("out/part.stl")
+  part.export_step("out/part.step")
+  part.export_gltf("out/part.glb", true)
+  assemble(name: "Kit", parts: [part]).export_stl("out/kit.stl")
+  imported = import_stl("parts/bracket.stl")
+  exact = import_step("parts/bracket.step")
+  debugger
+  [imported, exact, sketch]
+end
+
+assemble(name: "Shapes", parts: [plate, turned, coil, lofted, *placed])

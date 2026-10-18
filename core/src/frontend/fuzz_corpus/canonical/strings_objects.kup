@@ -1,0 +1,47 @@
+# Strings, symbols, booleans and what every object answers.
+
+label = "  Bracket Plate  "
+name = label.trim
+parts = "a,b,,c".split(",")
+words = [
+  name.upcase,
+  name.downcase,
+  name.length,
+  name.size,
+  name.replace("Plate", "Arm"),
+  name.starts_with?("Bra"),
+  name.ends_with?("ate"),
+  "42".to_i,
+  "2.5".to_f,
+  name.to_sym,
+  :sym.to_sym,
+  name.to_s,
+  name[0],
+  name[-1],
+  name[1..3],
+]
+flags = [true.invert, false.to_i, true.to_f, !false]
+
+class Box
+  attr_accessor(:size)
+
+  def initialize(size)
+    @size = size
+  end
+end
+
+box = Box.new(2)
+copy = box.dup
+clone = box.clone
+copy.size = 3
+tapped = [1, 2].tap { |list| puts(list.length) }
+checks = [
+  box.nil?,
+  nil.nil?,
+  box.respond_to?(:size),
+  box.respond_to?(:missing),
+  box.size,
+  copy.size,
+  clone.size,
+]
+inspect(parts, words, flags, tapped, checks, box.class, 3.class, "s".class)

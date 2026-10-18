@@ -14,6 +14,9 @@ pub const UnusedVarsRule = struct {
     /// The `def`s and constants of class, module and singleton bodies: what others reach
     /// through the class (`Gear.new.teeth`, `Gear::TEETH`), so they are never unused here.
     members: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
+    /// For each open scope, the `def` it is the body of (null for a block, a lambda, a
+    /// class): a bare `super` passes that method's parameters on.
+    scope_defs: std.ArrayListUnmanaged(?ast.NodeIndex) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -31,6 +34,7 @@ pub const UnusedVarsRule = struct {
     fn deinit(ptr: *anyopaque, allocator: std.mem.Allocator) void {
         const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
         self.members.deinit(allocator);
+        self.scope_defs.deinit(allocator);
         self.* = .{};
     }
 
@@ -94,6 +98,7 @@ pub const UnusedVarsRule = struct {
                 const mc = tree.methodCall(node);
                 try engine.markUsed(tree.getString(mc.method_name));
             },
+            .super_call => if (tree.superCall(node).implicit_args) try self.markMethodParamsUsed(engine, tree),
             else => {},
         }
     }
@@ -179,9 +184,21 @@ pub const UnusedVarsRule = struct {
         }
     }
 
+    /// A bare `super` passes the method's parameters on, so they are used: a parameter
+    /// only `super` hands on was reported unused.
+    fn markMethodParamsUsed(self: *UnusedVarsRule, engine: *linter.Linter, tree: *const ast.Tree) !void {
+        var i = self.scope_defs.items.len;
+        const def_idx = while (i > 0) {
+            i -= 1;
+            if (self.scope_defs.items[i]) |idx| break idx;
+        } else return;
+        for (tree.getParams(tree.defStmt(tree.getNode(def_idx).?).params)) |p| try engine.markUsed(tree.getString(p.name));
+    }
+
     fn enterScope(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
-        _ = ptr;
+        const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
         const node = tree.getNode(node_idx) orelse return;
+        try self.scope_defs.append(engine.allocator, if (node.tag == .def_stmt) node_idx else null);
 
         // Variables declared here belong specifically to the newly pushed inner scope
         switch (node.tag) {
@@ -208,7 +225,8 @@ pub const UnusedVarsRule = struct {
     }
 
     fn exitScope(ptr: *anyopaque, scope: *const linter.Scope, engine: *linter.Linter) !void {
-        _ = ptr;
+        const self: *UnusedVarsRule = @ptrCast(@alignCast(ptr));
+        _ = self.scope_defs.pop();
         var iter = scope.declared_vars.iterator();
 
         while (iter.next()) |entry| {

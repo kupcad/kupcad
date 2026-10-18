@@ -10,17 +10,27 @@ permissions:
 
 jobs:
   fuzz:
-    # On generated input, from the corpus in core/src/frontend/fuzz_corpus.zig: the front
-    # end (lexer, parser, linter, compiler, formatter), and the runtime (the VM and the
-    # built-ins, on scripts that compile). A plain test run replays the corpus on every
-    # platform; searching from it runs here, one job per fuzz test so each has the time.
+    # The front end (lexer, parser, linter, compiler, formatter) and the runtime (the VM and
+    # the built-ins, on scripts that compile), each on random bytes from the corpus in
+    # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig). A plain
+    # test run replays the corpus on every platform; searching runs here, one job per test.
     name: Fuzz the ${{ matrix.target }} (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        target: [frontend, runtime]
+        include:
+          # Random bytes: about 2 ms a run on a hosted runner, so an hour.
+          - target: frontend
+            runs: 2M
+          - target: runtime
+            runs: 2M
+          # Generated programs run whole through the front end or the VM: about 25 ms a run.
+          - target: frontend_programs
+            runs: 200K
+          - target: runtime_programs
+            runs: 200K
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -35,8 +45,7 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        # About an hour of runs for either test (2 ms a run on a hosted runner).
-        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=2M
+        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
 
       - name: Keep the failing input
         if: failure()
