@@ -577,9 +577,14 @@ pub const Formatter = struct {
 
     fn formatInterpolatedString(self: *Formatter, tree: *const ast.Tree, parts: []const ast.NodeIndex) Error!void {
         try self.out.append(self.allocator, '"');
+        var after_segment = false;
         for (parts) |part_idx| {
             const part = tree.getNode(part_idx).?;
             if (part.tag == .string and self.isStringSegment(part)) {
+                // Two pieces in a row had an empty `#{}` between them, which is no part of
+                // its own; without it the string would print as a plain one
+                if (after_segment) try self.out.appendSlice(self.allocator, "#{}");
+                after_segment = true;
                 // The piece between the delimiters, `}` and `#{`, as written (it was decoded)
                 if (try self.rawStringText(tree, part)) |raw| {
                     try self.out.appendSlice(self.allocator, raw);
@@ -587,6 +592,7 @@ pub const Formatter = struct {
                     try string_escape.appendEscaped(&self.out, self.allocator, tree.getString(@fromBackingInt(part.data)));
                 }
             } else {
+                after_segment = false;
                 try self.out.appendSlice(self.allocator, "#{");
                 try self.formatNode(tree, part_idx);
                 try self.out.append(self.allocator, '}');

@@ -933,6 +933,12 @@ test "Formatter: a string written inside #{} stays inside it" {
     try expectStableFormat("x = \"p#{\"a\"}q\"\ny = \"#{'raw'} and #{\"b#{1}\"}\"\n", "x = \"p#{\"a\"}q\"\ny = \"#{'raw'} and #{\"b#{1}\"}\"\n");
 }
 
+test "Formatter: an empty #{} stays in its string" {
+    // It is no part of the string's own, so it was dropped: `"#{}"` became `""`, a string
+    // that isn't interpolated, and the formatter refused it (found by the front-end fuzz test).
+    try expectStableFormat("x = \"#{}\"\ny = \"a #{} b #{1}#{}\"\n", "x = \"#{}\"\ny = \"a #{} b #{1}#{}\"\n");
+}
+
 test "Formatter: a top-level constant keeps its leading ::" {
     // `::A` is the top-level A; printed as `A` it read back as a constant looked up in the
     // enclosing modules (found by the fuzzer, as `param(::arm_length)`).
