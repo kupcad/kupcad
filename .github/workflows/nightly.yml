@@ -10,12 +10,22 @@ permissions:
 
 jobs:
   fuzz:
-    # The front end (lexer, parser, linter, compiler, formatter) on generated input, from
-    # the corpus in core/src/frontend/fuzz_test.zig and fuzz_corpus/. A plain test run
-    # replays the corpus on every platform; searching from it runs here.
-    name: Fuzz the front end (linux)
+    # On generated input, from the corpus in core/src/frontend/fuzz_corpus.zig: the front
+    # end (lexer, parser, linter, compiler, formatter), and the runtime (the VM and the
+    # built-ins, on scripts that compile). A plain test run replays the corpus on every
+    # platform; searching from it runs here, one job per fuzz test so each has the time.
+    name: Fuzz the ${{ matrix.target }} (linux)
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: frontend
+            runs: 2M
+          # A runtime run sets up a VM, so it costs several front-end ones.
+          - target: runtime
+            runs: 500K
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,13 +40,13 @@ jobs:
 
       - name: Fuzz
         working-directory: core
-        run: zig build fuzz --fuzz=2M
+        run: zig build fuzz -Dfuzz-target=${{ matrix.target }} --fuzz=${{ matrix.runs }}
 
       - name: Keep the failing input
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crash
+          name: fuzz-crash-${{ matrix.target }}
           # setup-zig points Zig's cache at the checkout's root, not core/.
           path: ${{ env.ZIG_LOCAL_CACHE_DIR }}/f/
           if-no-files-found: ignore

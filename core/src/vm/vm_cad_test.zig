@@ -2248,3 +2248,22 @@ test "VM Edge Case: Import depth limit prevents host stack overflow" {
     const result = vm.interpret(&out_chunk);
     try testing.expectEqual(.runtime_error, result);
 }
+
+test "VM: a host that doesn't evaluate geometry builds shapes and refuses to measure them" {
+    // The runtime fuzzer's VM: the kernel's C++ is left out, and a native that needs a
+    // solid's or a sketch's mesh raises an error the script can rescue.
+    const support = @import("../test_support.zig");
+    const refused = "GeometryError: this host builds shapes but doesn't evaluate them";
+    const cases = [_][]const u8{
+        support.rescued("part = (cube(2) + sphere(r: 1)).translate(x: 1)\n  part.volume"),
+        support.rescued("square(2, 2).offset(1).bbox"),
+    };
+    for (cases) |src| {
+        errdefer std.debug.print("script:\n{s}\n", .{src});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        vm.evaluates_geometry = false;
+        try testing.expectEqual(InterpretResult.ok, try support.runOn(&vm, src));
+        try support.expectValue(.{ .str = refused }, vm.globals.get("r").?);
+    }
+}

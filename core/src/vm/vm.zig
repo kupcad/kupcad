@@ -241,6 +241,10 @@ pub const VM = struct {
     import_depth: u8 = 0,
     // max call stack
     max_call_frames: usize = 100_000,
+    /// Off in a host that runs only the language (the runtime fuzzer): a shape that has to
+    /// be evaluated (measured, exported) is a GeometryError the script can rescue, and no
+    /// time goes to the kernel, which is C++ the fuzzer can't see into.
+    evaluates_geometry: bool = true,
 
     cancel_token: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -1574,6 +1578,7 @@ pub const VM = struct {
         std.debug.assert(geometry.isGeometry()); // a CrossSection goes to ensureConcreteCrossSection
         const geom_obj = geometry.asGeometry();
         if (geom_obj.isConcrete()) return geom_obj.cached_handle.?;
+        if (!self.evaluates_geometry) return self.refuseEvaluation();
 
         // Do NOT mutate the ObjGeometry (geom_obj.cached_handle = handle)
         // The evaluated handle is now globally owned and managed by `vm.dag_cache`
@@ -1583,7 +1588,12 @@ pub const VM = struct {
     /// The sketch's shape, borrowed from `cs_cache` as a solid's is from `dag_cache`.
     pub fn ensureConcreteCrossSection(self: *VM, val: value.Value) !geom.CrossSectionHandle {
         if (!val.isCrossSection()) return error.RuntimeError;
+        if (!self.evaluates_geometry) return self.refuseEvaluation();
         return dag_evaluator.evaluateCrossSectionDAG(self, val.asCrossSection().dag_idx);
+    }
+
+    fn refuseEvaluation(self: *VM) error{RuntimeError} {
+        return self.fail(.GeometryError, "this host builds shapes but doesn't evaluate them", .{});
     }
 
     fn captureUpvalue(self: *VM, local_ptr: *value.Value) !*value.ObjUpvalue {
