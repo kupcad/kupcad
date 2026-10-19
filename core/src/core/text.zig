@@ -232,50 +232,39 @@ pub fn extractText(
         }
     }
 
-    // --- Text Alignment Post-Shift ---
-    if (halign != .left or valign != .baseline) {
-        var min_x: f64 = std.math.inf(f64);
-        var max_x: f64 = -std.math.inf(f64);
-        var min_y: f64 = std.math.inf(f64);
-        var max_y: f64 = -std.math.inf(f64);
-
-        // 1. Calculate physical bounding box
-        for (polygons.contours.items) |c| {
-            for (c.items) |pt| {
-                if (pt[0] < min_x) min_x = pt[0];
-                if (pt[0] > max_x) max_x = pt[0];
-                if (pt[1] < min_y) min_y = pt[1];
-                if (pt[1] > max_y) max_y = pt[1];
-            }
-        }
-
-        // 2. Apply offsets if text isn't empty
-        if (min_x <= max_x) {
-            var dx: f64 = 0.0;
-            var dy: f64 = 0.0;
-
-            switch (halign) {
-                .left => dx = 0.0, // Standard typography baseline start
-                .center => dx = -(min_x + max_x) / 2.0,
-                .right => dx = -max_x,
-            }
-            switch (valign) {
-                .baseline => dy = 0.0, // Standard typography Y=0
-                .bottom => dy = -min_y,
-                .center => dy = -(min_y + max_y) / 2.0,
-                .top => dy = -max_y,
-            }
-
-            if (dx != 0.0 or dy != 0.0) {
-                for (polygons.contours.items) |*c| {
-                    for (c.items) |*pt| {
-                        pt.*[0] += dx;
-                        pt.*[1] += dy;
-                    }
-                }
-            }
-        }
-    }
-
+    alignContours(&polygons, halign, valign);
     return polygons;
+}
+
+/// Moves `polygons` so their bounding box sits as `halign` and `valign` say against the
+/// origin; left and baseline leave them where the layout put them.
+fn alignContours(polygons: *TextPolygons, halign: HAlign, valign: VAlign) void {
+    if (halign == .left and valign == .baseline) return;
+    var min_x: f64 = std.math.inf(f64);
+    var max_x: f64 = -std.math.inf(f64);
+    var min_y: f64 = std.math.inf(f64);
+    var max_y: f64 = -std.math.inf(f64);
+    for (polygons.contours.items) |c| for (c.items) |pt| {
+        min_x = @min(min_x, pt[0]);
+        max_x = @max(max_x, pt[0]);
+        min_y = @min(min_y, pt[1]);
+        max_y = @max(max_y, pt[1]);
+    };
+    // Empty text has nothing to move
+    if (min_x > max_x) return;
+    const dx: f64 = switch (halign) {
+        .left => 0,
+        .center => -(min_x + max_x) / 2.0,
+        .right => -max_x,
+    };
+    const dy: f64 = switch (valign) {
+        .baseline => 0,
+        .bottom => -min_y,
+        .center => -(min_y + max_y) / 2.0,
+        .top => -max_y,
+    };
+    for (polygons.contours.items) |*c| for (c.items) |*pt| {
+        pt[0] += dx;
+        pt[1] += dy;
+    };
 }
