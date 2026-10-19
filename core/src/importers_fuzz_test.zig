@@ -1,9 +1,9 @@
-//! Fuzzing what KupCAD reads but didn't write: an STL file a script imports, a package
+//! Fuzzing what KupCAD reads but didn't write: an STL or font file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
 //! and keep what it promises of what it accepts: an STL mesh's faces point at its vertices
-//! and every vertex is finite, an archive's paths stay inside the package, a commit id is a
+//! and every vertex is finite, a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
 //! hex digest. A plain test run replays the seeds; `zig build fuzz -Dfuzz-target=importers
 //! --fuzz=<runs>` searches from them.
 
@@ -22,6 +22,7 @@ const ProjectConfig = @import("cli/config.zig").ProjectConfig;
 const semver = @import("core/semver.zig");
 const viewport_ws = @import("daemon/viewport_ws.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
+const text_mod = @import("core/text.zig");
 
 /// The longest input the fuzzer makes for a parser.
 const MAX_INPUT_BYTES = 16 * 1024;
@@ -29,6 +30,10 @@ const Buffer = [MAX_INPUT_BYTES]u8;
 
 /// What an extracted fuzz archive may hold: small, so a run stays fast and its blobs few.
 const FUZZ_EXTRACT_LIMITS: cafs_mod.ExtractLimits = .{ .max_total_bytes = 256 * 1024, .max_file_count = 32 };
+
+/// Characters a font is asked for besides printable ASCII, which it draws: each cmap format a
+/// font may map them with is read.
+const FONT_PROBES = [_]u21{ 0xE9, 0x416, 0x2300, 0x4E2D, 0x1F600, 0x10FFFF };
 
 const ASCII_STL =
     \\solid part
@@ -74,6 +79,41 @@ fn checkStl(data: []const u8) !void {
     // The mesh goes to the kernel, which indexes the points by the faces and computes on them
     for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
     for (mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+}
+
+// --- Fonts ---
+
+test "fuzz: a font file a script imports" {
+    // A TrueType font with a kern table, a CFF one with GPOS kerning (scripts/make-test-fonts.py),
+    // and the start of each: their table directories alone
+    const kern_table = @embedFile("core/test_fonts/kern-table.ttf");
+    const gpos = @embedFile("core/test_fonts/gpos-kerning.otf");
+    try fuzzParser(checkFont, &.{ kern_table, gpos, kern_table[0..200], gpos[0..200] });
+}
+
+fn checkFont(data: []const u8) !void {
+    const face = text_mod.importedFace(data) catch return;
+    for (FONT_PROBES) |probe| _ = face.glyph_index(probe);
+    // The name a Font takes, decoded from the font's UTF-16: UTF-8 a String can hold
+    if (try text_mod.fontName(testing.allocator, &face)) |name| {
+        defer testing.allocator.free(name);
+        try testing.expect(std.unicode.utf8ValidateSlice(name));
+        try testing.expect(name.len <= text_mod.MAX_FONT_NAME_BYTES);
+    }
+    // What text() does with it: the printable ASCII it has, kerned, outlined and centred
+    var sample: [0x7F - 0x20]u8 = undefined;
+    var len: usize = 0;
+    for (0x20..0x7F) |c| {
+        if (face.glyph_index(@intCast(c)) == null) continue;
+        sample[len] = @intCast(c);
+        len += 1;
+    }
+    var polygons = try text_mod.extractText(testing.allocator, &face, sample[0..len], 10, 0.1, .center, .center);
+    defer polygons.deinit(testing.allocator);
+    // The outlines go to the kernel as polygons, which computes on them
+    for (polygons.contours.items) |contour| for (contour.items) |point| for (point) |coordinate| {
+        try testing.expect(std.math.isFinite(coordinate));
+    };
 }
 
 // --- Package archives ---

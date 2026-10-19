@@ -612,8 +612,8 @@ pub fn build(b: *std.Build) void {
         // Only those tests are built, with LLVM: Zig's own x86_64 backend, the debug
         // default on Linux, emits no coverage instrumentation, so the nightly job fuzzed
         // blind and its report failed on "pcs_len was zero".
-        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json };
-        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read");
+        const FuzzTarget = enum { frontend, frontend_programs, runtime, runtime_programs, importers, json, fonts };
+        const fuzz_target = b.option(FuzzTarget, "fuzz-target", "The fuzz tests `zig build fuzz` runs (all when unset): frontend or runtime on bytes, frontend_programs or runtime_programs on generated programs, importers for the file and network parsers, json for the JSON files scripts read, fonts for the font files they import");
         // The tests' full names: a filter that matched none would fuzz nothing.
         const fuzz_filter: []const u8 = if (fuzz_target) |t| switch (t) {
             .frontend => "frontend.fuzz_test.test.fuzz: the front end takes any input",
@@ -623,6 +623,8 @@ pub fn build(b: *std.Build) void {
             // Every parser of src/importers_fuzz_test.zig: each is quick
             .importers => "importers_fuzz_test.test.fuzz:",
             .json => "stdlib.json_fuzz_test.test.fuzz: a JSON file a script reads",
+            // Also among the importers, but tatfi is the largest parser of what scripts give
+            .fonts => "importers_fuzz_test.test.fuzz: a font file a script imports",
         } else "fuzz:";
         const fuzz_tests = b.addTest(.{
             .root_module = mod,

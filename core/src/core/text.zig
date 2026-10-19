@@ -21,6 +21,9 @@ const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
     .{ .name = "monospace", .key = .mono },
 };
 
+/// The longest font name a Font takes from its font file: longer, it is named after the file.
+pub const MAX_FONT_NAME_BYTES = 256;
+
 /// Characters fonts often lack, and the one people write instead: no embedded font has the
 /// diameter sign, and drawings use the letter Ø for it.
 const STAND_INS = [_]struct { missing: u21, instead: u21 }{
@@ -195,6 +198,57 @@ pub fn firstMissingGlyph(face: *const tatfi.Face, text_str: []const u8) ?u21 {
     var iter = (std.unicode.Utf8View.init(text_str) catch return null).iterator();
     while (iter.nextCodepoint()) |cp| {
         if (face.glyph_index(cp) == null) return cp;
+    }
+    return null;
+}
+
+/// Why a font file a script imports can't be drawn with.
+pub const ImportedFontError = error{
+    /// tatfi can't read it as a font
+    InvalidFont,
+    /// It has no outlines text draws: TrueType's (glyf) or CFF's. A variable CFF2 font's
+    /// aren't read, nor a bitmap font's images.
+    NoOutlines,
+    /// It maps no characters to glyphs (no cmap table)
+    NoCharacterMap,
+};
+
+/// The face of the font file `bytes`, which a script imported: anything, so checked for what
+/// text needs before it draws with it. The bytes must outlive the face.
+pub fn importedFace(bytes: []const u8) ImportedFontError!tatfi.Face {
+    const face = tatfi.Face.parse(bytes, 0) catch return error.InvalidFont;
+    if (face.tables.glyf == null and face.tables.cff == null) return error.NoOutlines;
+    if (face.tables.cmap == null) return error.NoCharacterMap;
+    return face;
+}
+
+/// The font's name for a person, as its name table gives it: its full name (`Inter Bold`),
+/// else its family and style, from the first record of each in Unicode. Null for a font that
+/// gives neither, or a name past MAX_FONT_NAME_BYTES. The caller owns it.
+pub fn fontName(allocator: std.mem.Allocator, face: *const tatfi.Face) !?[]const u8 {
+    const names = (face.tables.name orelse return null).names;
+    if (try nameRecord(allocator, names, .full_name)) |full| return full;
+    const family = try nameRecord(allocator, names, .family) orelse return null;
+    defer allocator.free(family);
+    const style = try nameRecord(allocator, names, .subfamily) orelse return try allocator.dupe(u8, family);
+    defer allocator.free(style);
+    if (family.len + 1 + style.len > MAX_FONT_NAME_BYTES) return null;
+    return try std.fmt.allocPrint(allocator, "{s} {s}", .{ family, style });
+}
+
+/// The first Unicode record of `id` in `names`, as UTF-8, if one is short enough.
+fn nameRecord(allocator: std.mem.Allocator, names: tatfi.tables.name.Names, id: tatfi.tables.name.NameId) !?[]const u8 {
+    var it = names.iterator();
+    while (it.next()) |record| {
+        if (record.name_id != id or !record.is_unicode()) continue;
+        // Two bytes a UTF-16 unit, up to three in UTF-8: a name too long is refused unread
+        if (record.name.len / 2 * 3 > MAX_FONT_NAME_BYTES) return null;
+        const text = record.to_string(allocator) orelse continue;
+        if (text.len == 0) {
+            allocator.free(text);
+            continue;
+        }
+        return text;
     }
     return null;
 }

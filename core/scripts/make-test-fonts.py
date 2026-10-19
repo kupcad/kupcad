@@ -6,6 +6,7 @@ to fuzz. Run `python3 scripts/make-test-fonts.py` from core/ with fontTools inst
 - kern-table.ttf: TrueType outlines, kerning in a `kern` table (format 0), no GPOS.
 - gpos-kerning.otf: CFF outlines, kerning in GPOS: one glyph pair (format 1) and class pairs
   (format 2).
+- unnamed.ttf: kern-table.ttf without a name table, a font that names itself nowhere.
 """
 
 import pathlib
@@ -19,6 +20,8 @@ from fontTools.ttLib.tables._k_e_r_n import KernTable_format_0
 
 OUT = pathlib.Path(__file__).resolve().parent.parent / "src" / "core" / "test_fonts"
 UNITS_PER_EM = 1000
+# head's created and modified, in seconds since 1904: 2026-10-20
+FIXED_TIMESTAMP = 3875299200
 ASCENT, DESCENT = 800, -200
 
 # Each glyph: its advance and its contours, clockwise outside, counter-clockwise for a hole
@@ -64,18 +67,23 @@ def builder(family):
     return fb
 
 
-def finish(fb, family, path):
+def finish(fb, family, path, named=True):
     metrics = {name: (advance, min((x for c in contours for x, _ in c), default=0)) for name, (advance, contours) in GLYPHS.items()}
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=ASCENT, descent=DESCENT)
     fb.setupNameTable({"familyName": family, "styleName": "Regular"})
     fb.setupOS2(sTypoAscender=ASCENT, sTypoDescender=DESCENT, usWinAscent=ASCENT, usWinDescent=-DESCENT)
     fb.setupPost()
+    if not named:
+        del fb.font["name"]
+    # The same bytes on every run: no creation or modification time of today
+    fb.font.recalcTimestamp = False
+    fb.font["head"].created = fb.font["head"].modified = FIXED_TIMESTAMP
     fb.save(path)
     print(f"{path.name}: {path.stat().st_size} bytes")
 
 
-def kern_table_font():
+def kern_table_font(path="kern-table.ttf", named=True):
     family = "KupCAD Test TT"
     fb = builder(family)
     glyphs = {}
@@ -91,7 +99,7 @@ def kern_table_font():
     subtable.kernTable = dict(KERN_PAIRS)
     kern.kernTables = [subtable]
     fb.font["kern"] = kern
-    finish(fb, family, OUT / "kern-table.ttf")
+    finish(fb, family, OUT / path, named)
 
 
 def gpos_font():
@@ -110,4 +118,5 @@ def gpos_font():
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     kern_table_font()
+    kern_table_font("unnamed.ttf", named=False)
     gpos_font()
