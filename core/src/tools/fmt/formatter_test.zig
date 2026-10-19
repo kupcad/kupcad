@@ -1098,3 +1098,18 @@ test "Formatter: a quoted symbol named with colons keeps its name" {
     try expectStableFormat("x = :\":\"\n", "x = :\":\"\n");
     try expectStableFormat("y = :\"::x\"\n", "y = :\"::x\"\n");
 }
+
+test "Formatter: a comment before a list's closing bracket stays at its items' indent, formatted again too" {
+    // It was written after the indent dropped, so a second pass moved it out to the
+    // bracket's: the nightly fuzzer found `f(` + `x, # a` + `# b` + `)` formatting two ways.
+    const stable = [_][]const u8{
+        "f(\n  x, # trailing\n  # own line\n)\n",
+        "xs = [\n  1,\n  2,\n  # more to come\n]\n",
+        "h = {\n  a: 1,\n  # b: 2\n}\n",
+    };
+    for (stable) |source| {
+        errdefer std.debug.print("source:\n{s}\n", .{source});
+        try expectFormat(source, source);
+    }
+    try expectFormat("f(\n  x,\n# own line\n)\n", "f(\n  x,\n  # own line\n)\n");
+}

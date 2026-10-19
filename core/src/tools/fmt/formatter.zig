@@ -699,9 +699,12 @@ pub const Formatter = struct {
                     try f.flushTrailingComments(first_line, prev_line.?);
                     i = end;
                 }
-                f.indent_level -= 1;
                 try f.ensureNewline();
+                // At the items' indent, as a block's before its `end`: written after the
+                // indent dropped, they moved out to the bracket's when formatted again
+                // (an own-line comment after the last item is still the list's)
                 if (l.close_token) |close| try f.flushCommentsBefore(f.lineOf(close), prev_line, false);
+                f.indent_level -= 1;
                 try f.writeIndent();
                 try f.out.appendSlice(f.allocator, l.shape.close);
             }

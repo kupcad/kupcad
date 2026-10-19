@@ -37,6 +37,10 @@ pub const CORPUS = [_][]const u8{
     // Quoted symbols named with colons (the nightly fuzzer: `:":"` lost its name and formatted
     // to a lone `:`)
     ":\":\"\na = :\"::x\"\nb = { k: :\":\" }",
+    // Comments inside a call's arguments, which formatted one way and then another (the
+    // nightly fuzzer: the second pass moved those before `)` out to the bracket's indent)
+    "iable --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = param(:width)",
+    "f(\n  x, # trailing\n  # own line\n)",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
     "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
     "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
