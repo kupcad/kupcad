@@ -9,6 +9,10 @@ const workspace = @import("../core/workspace.zig");
 const api = @import("../api.zig");
 const ParamValues = api.ParamValues;
 const common_errors = @import("../core/errors.zig");
+const import_path = @import("../core/import_path.zig");
+const import_kind = @import("../core/import_kind.zig");
+const limits = @import("../core/limits.zig");
+const exports_fingerprint = @import("exports_fingerprint.zig");
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
@@ -168,6 +172,49 @@ pub const ScriptSession = struct {
                 try gop.value_ptr.append(self.allocator, mod.id);
             }
         }
+    }
+
+    /// Adds to the workspace every module the loaded modules import or re-export from, read
+    /// through the VM's file system (in the language server, the open documents first, then
+    /// the disk), until none is missing, then links the dependencies. Only the root used to
+    /// be in it, and its imports came from the VM's cache, so an edit to a module never
+    /// showed. A file that can't be read (a package not installed, a missing one) or is too
+    /// large to parse is left to the import to report.
+    pub fn loadImports(self: *ScriptSession) !void {
+        const ws = &self.workspace;
+        var i: usize = 0;
+        while (i < ws.modules.items.len) : (i += 1) {
+            var wanted: std.ArrayList([]u8) = .empty;
+            defer {
+                for (wanted.items) |path| self.allocator.free(path);
+                wanted.deinit(self.allocator);
+            }
+            {
+                // The module slice may move when a module is added, so its imports are
+                // gathered first.
+                const mod = &ws.modules.items[i];
+                for (mod.doc.tree.nodes.items) |*node| {
+                    const reference = import_kind.referenceOf(&mod.doc.tree, node) orelse continue;
+                    // A file it reads as data is watched once a run has read it
+                    if (reference.kind != .module) continue;
+                    const path = try import_path.resolve(self.allocator, mod.path, reference.path);
+                    if (ws.path_to_id.contains(path)) {
+                        self.allocator.free(path);
+                        continue;
+                    }
+                    try wanted.append(self.allocator, path);
+                }
+            }
+            for (wanted.items) |path| {
+                if (ws.path_to_id.contains(path)) continue;
+                const source = self.vm.vfs.readFile(self.allocator, path) catch continue;
+                defer self.allocator.free(source);
+                if (source.len > limits.MAX_SOURCE_BYTES) continue;
+                _ = try ws.addModule(path, source);
+            }
+        }
+        try ws.linkDependencies();
+        try self.buildReverseGraph();
     }
 
     /// Step 2: Selective Invalidation Pass (Reverse BFS)
@@ -335,7 +382,7 @@ pub const ScriptSession = struct {
             null;
         errdefer if (new_handle) |h| kernel.destruct(h);
 
-        const new_hash = try self.fingerprintOutput(new_handle, mod.source);
+        const new_hash = try self.fingerprintOutput(new_handle, mod);
 
         if (new_hash == node.output_hash and node.output_hash != 0) {
             // Output unchanged: keep the existing copy, drop the fresh one.
@@ -357,20 +404,28 @@ pub const ScriptSession = struct {
         node.is_stale = false;
     }
 
-    /// What the viewport would show for this output: the mesh of the result and of
-    /// every ghost (positions and material slots), and the materials. The fingerprint
-    /// was the bounding box and volume alone, so a colour change, a hole moved inside
-    /// the part or a symmetric rotation never reached the viewport. An engine that
-    /// can't mesh yet is fingerprinted by the source instead, which hides nothing.
-    fn fingerprintOutput(self: *ScriptSession, handle: ?geom.GeometryHandle, source: []const u8) !u64 {
+    /// What the viewport would show for this output and what importers see of it: the
+    /// mesh of the result and of every ghost (positions and material slots), the
+    /// materials, and the module's exports (exports_fingerprint.zig). The fingerprint was
+    /// the bounding box and volume alone, so a colour change, a hole moved inside the part
+    /// or a symmetric rotation never reached the viewport. A shape an engine can't mesh yet
+    /// is fingerprinted by the source instead, which hides nothing. A module without a
+    /// shape was fingerprinted by its source alone, so one that re-exports, or exports what
+    /// it computed from an import, never passed a change of its import on.
+    fn fingerprintOutput(self: *ScriptSession, handle: ?geom.GeometryHandle, mod: *const workspace.Module) !u64 {
         var hasher = std.hash.Wyhash.init(0);
-        var meshed = false;
-        if (handle) |h| meshed = try kernel.hashMesh(&hasher, self.allocator, h);
+        var unmeshed = false;
+        if (handle) |h| unmeshed = !try kernel.hashMesh(&hasher, self.allocator, h);
         for (self.vm.display_list.items) |ghost| {
-            if (try kernel.hashMesh(&hasher, self.allocator, ghost)) meshed = true;
+            if (!try kernel.hashMesh(&hasher, self.allocator, ghost)) unmeshed = true;
         }
-        if (!meshed) hasher.update(source);
+        if (unmeshed) hasher.update(mod.source);
         for (self.vm.materials.items) |mat| mat.hashInto(&hasher);
+        // An export not hashed by content changed: this evaluation is its revision. (The
+        // VM's globals outlive a run, so a module without exports would see another's.)
+        if (mod.exports.count() > 0 and !exports_fingerprint.hashExports(&hasher, &self.vm)) {
+            hasher.update(std.mem.asBytes(&self.global_revision));
+        }
         return hasher.final();
     }
 

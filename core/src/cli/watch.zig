@@ -57,7 +57,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer allocator.free(source);
 
     _ = try session.workspace.addModule(file_path, source);
-    try Watcher.loadImports(session, init.io);
+    try session.loadImports();
 
     var printer = EventPrinter{ .allocator = allocator, .session = session, .root_path = file_path, .reporter = reporter };
     var watcher = try Watcher.init(session, init.io, printer.listener());

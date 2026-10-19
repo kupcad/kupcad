@@ -122,18 +122,18 @@ pub const Workspace = struct {
             mod.exports.clearRetainingCapacity();
 
             for (mod.doc.tree.nodes.items) |*node| {
-                if (node.tag == .import_stmt) {
-                    const import_stmt = mod.doc.tree.importStmt(node);
-                    // A file it reads (a mesh, data) is no module to evaluate first
-                    if (import_kind.ofImport(&mod.doc.tree, import_stmt) != .module) continue;
+                // A module it imports or re-exports from; a file it reads (a mesh, data) is no
+                // module to evaluate first.
+                if (import_kind.referenceOf(&mod.doc.tree, node)) |reference| if (reference.kind == .module) {
                     // The path the compiler will read, so `./hw.kup` in parts/main.kup is parts/hw.kup.
-                    const dep_path = try import_path.resolve(self.allocator, mod.path, mod.doc.tree.getString(import_stmt.path));
+                    const dep_path = try import_path.resolve(self.allocator, mod.path, reference.path);
                     defer self.allocator.free(dep_path);
 
                     if (self.path_to_id.get(dep_path)) |dep_id| {
                         try mod.deps.append(self.allocator, dep_id);
                     }
-                } else if (node.tag == .export_stmt) {
+                };
+                if (node.tag == .export_stmt) {
                     const export_stmt = mod.doc.tree.exportStmt(node);
                     const symbols = mod.doc.tree.getAliasPairs(export_stmt.symbols);
 

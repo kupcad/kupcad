@@ -786,34 +786,42 @@ pub const Compiler = struct {
         }
     }
 
-    fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const is_stmt = self.tree.importStmt(node);
-
-        // Sanitize path and extract AliasPairs at the very top
-        const raw_path_str = self.tree.getString(is_stmt.path);
-        const path_str = std.mem.trimEnd(u8, raw_path_str, "/");
-        const symbols = self.tree.getAliasPairs(is_stmt.symbols);
-
+    /// Pushes what `reference` reads (core/import_kind.zig), its path resolved against the
+    /// importing file's (core/import_path.zig): a file's value, from the built-in for its
+    /// kind, or the module (op_import).
+    fn emitReference(self: *Compiler, reference: import_kind.Reference) CompileError!void {
+        const path = std.mem.trimEnd(u8, reference.path, "/");
         const importer = self.rootCompiler().module_path;
-
-        // --- 1. A file (a mesh, data), read by the built-in for its kind ---
-        if (import_kind.ofImport(self.tree, is_stmt).importer()) |func_name| {
-            const func_idx = try self.makeStringConstant(func_name);
-            try self.emitGetGlobal(func_idx);
-
-            const asset_path = try import_path.resolveFile(self.allocator, importer, path_str);
-            defer self.allocator.free(asset_path);
-            const path_val = try self.vm.allocateString(asset_path);
-            self.vm.push(path_val);
-            const path_idx = try self.makeConstant(path_val);
-            _ = self.vm.pop();
-
-            try self.emitOpWithOperand(.op_constant, .op_constant_wide, path_idx);
+        if (reference.kind.importer()) |func_name| {
+            try self.emitGetGlobal(try self.makeStringConstant(func_name));
+            const file = try import_path.resolveFile(self.allocator, importer, path);
+            defer self.allocator.free(file);
+            try self.emitOpWithOperand(.op_constant, .op_constant_wide, try self.pathConstant(file));
             try self.emitCall(.op_call, .{ .count = 1 });
-
             self.simulatePop(2);
             self.simulatePush(1);
+            return;
+        }
+        const module = try import_path.resolve(self.allocator, importer, path);
+        defer self.allocator.free(module);
+        try self.emitOpWithOperand(.op_import, .op_import_wide, try self.pathConstant(module));
+    }
 
+    fn pathConstant(self: *Compiler, path: []const u8) CompileError!usize {
+        const path_val = try self.vm.allocateString(path);
+        // Rooted: making the constant may collect
+        self.vm.push(path_val);
+        defer _ = self.vm.pop();
+        return self.makeConstant(path_val);
+    }
+
+    fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
+        const symbols = self.tree.getAliasPairs(self.tree.importStmt(node).symbols);
+        const reference = import_kind.referenceOf(self.tree, node).?;
+        try self.emitReference(reference);
+
+        // --- A file (a mesh, data): its value, under the one name the parser allows ---
+        if (reference.kind != .module) {
             if (symbols.len > 0) {
                 const sym_id = symbols[0].alias; // Target the alias ID
                 if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.writesScriptGlobal(sym_id)) {
@@ -829,18 +837,7 @@ pub const Compiler = struct {
             return;
         }
 
-        // --- 2. The module's path, from the importer's (core/import_path.zig) ---
-        const final_path_str = try import_path.resolve(self.allocator, importer, path_str);
-        defer self.allocator.free(final_path_str);
-
-        // --- 3. Standard Module Import & Destructuring ---
-        const path_val = try self.vm.allocateString(final_path_str);
-        self.vm.push(path_val);
-        const path_idx = try self.makeConstant(path_val);
-        _ = self.vm.pop();
-
-        try self.emitOpWithOperand(.op_import, .op_import_wide, path_idx);
-
+        // --- A module: the names it exports, each bound here ---
         if (symbols.len == 0) {
             try self.emitOp(.op_pop);
             try self.emitOp(.op_nil);
@@ -900,8 +897,20 @@ pub const Compiler = struct {
             try self.emitGetGlobal(mod_name);
         }
 
+        // A re-export (`export { a } from "./a.kup"`) takes each name from what it names and
+        // binds nothing here; the path was ignored, so it exported this file's own `a`.
+        const reexported = import_kind.referenceOf(self.tree, node);
         for (symbols) |pair| {
-            try self.emitVariableLoad(pair.original, null);
+            if (reexported) |reference| {
+                try self.emitReference(reference);
+                // A file's value is the name's (the parser allows one)
+                if (reference.kind == .module) {
+                    try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, try self.makeStringConstant(self.tree.getString(pair.original)));
+                    try self.emitInlineCacheIndex();
+                }
+            } else {
+                try self.emitVariableLoad(pair.original, null);
+            }
 
             const alias_str = self.tree.getString(pair.alias);
             const alias_idx = try self.makeStringConstant(alias_str);

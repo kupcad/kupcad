@@ -5,8 +5,6 @@
 const std = @import("std");
 const session_mod = @import("session.zig");
 const ScriptSession = session_mod.ScriptSession;
-const import_path = @import("../core/import_path.zig");
-const import_kind = @import("../core/import_kind.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 
 /// Poll interval for mtime checks.
@@ -63,49 +61,6 @@ pub const Watcher = struct {
         var paths = self.data_mtimes.keyIterator();
         while (paths.next()) |path| allocator.free(path.*);
         self.data_mtimes.deinit(allocator);
-    }
-
-    /// Adds to the workspace every module the loaded modules import, read from disk,
-    /// until none is missing, then links the dependencies. Only the root used to be
-    /// watched, and its imports came from the VM's cache, so an edit to a module never
-    /// showed. A file that can't be read (a package, a missing one) is left to the VM's
-    /// import to report.
-    pub fn loadImports(session: *ScriptSession, io: std.Io) !void {
-        const ws = &session.workspace;
-        const allocator = session.allocator;
-        var i: usize = 0;
-        while (i < ws.modules.items.len) : (i += 1) {
-            var wanted: std.ArrayList([]u8) = .empty;
-            defer {
-                for (wanted.items) |path| allocator.free(path);
-                wanted.deinit(allocator);
-            }
-            {
-                // The module slice may move when a module is added, so its imports are
-                // gathered first.
-                const mod = &ws.modules.items[i];
-                for (mod.doc.tree.nodes.items) |*node| {
-                    if (node.tag != .import_stmt) continue;
-                    const stmt = mod.doc.tree.importStmt(node);
-                    // A file it reads as data is watched once a run has read it
-                    if (import_kind.ofImport(&mod.doc.tree, stmt) != .module) continue;
-                    const path = try import_path.resolve(allocator, mod.path, mod.doc.tree.getString(stmt.path));
-                    if (ws.path_to_id.contains(path)) {
-                        allocator.free(path);
-                        continue;
-                    }
-                    try wanted.append(allocator, path);
-                }
-            }
-            for (wanted.items) |path| {
-                if (ws.path_to_id.contains(path)) continue;
-                const source = std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(MAX_WATCHED_FILE_SIZE)) catch continue;
-                defer allocator.free(source);
-                _ = try ws.addModule(path, source);
-            }
-        }
-        try ws.linkDependencies();
-        try session.buildReverseGraph();
     }
 
     /// Builds (or rebuilds) the workspace and reports how it went; false when it failed.
@@ -190,7 +145,7 @@ pub const Watcher = struct {
         const source = try std.Io.Dir.cwd().readFileAlloc(self.io, path, allocator, .limited(MAX_WATCHED_FILE_SIZE));
         defer allocator.free(source);
         _ = try self.session.workspace.upsertModule(path, source);
-        try loadImports(self.session, self.io);
+        try self.session.loadImports();
         try self.rememberMtimes();
         try self.session.markFileEdited(path);
     }

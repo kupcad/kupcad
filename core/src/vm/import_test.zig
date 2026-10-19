@@ -1398,3 +1398,33 @@ test "VM: a module that read a builtin keeps it after the main script takes the 
     try testing.expectEqual(.ok, try compileAndRun(&vm, &out_chunk, "import { read } from \"./lib.kup\"\na = read()\nhelper_val = 5\nr = a * 100 + read()"));
     try testing.expectEqual(@as(f64, 4242), (vm.globals.get("r") orelse return error.MissingGlobal).asNumber());
 }
+
+test "VM: a re-export gives the importer another file's names, not its own" {
+    // The path was ignored: `export { side } from "./lib.kup"` exported mid.kup's own `side`.
+    const support = @import("../test_support.zig");
+    const files = [_]support.ScriptFile{
+        .{ .path = "lib.kup", .data = "side = 10\nexport side\n" },
+        .{ .path = "mid.kup", .data = "side = 99\nexport { side } from \"./lib.kup\"\nexport { side as width } from \"./lib.kup\"\nexport { machine } from \"./machine.json\"\n" },
+        .{ .path = "machine.json", .data = "{\"teeth\": 12}" },
+        .{ .path = "plain.kup", .data = "export { side } from \"./lib.kup\"\n" },
+    };
+    try support.expectScripts(&.{
+        .{ .src = "import { side, width } from \"./mid.kup\"\nr = side + width", .expected = .{ .num = 20 }, .files = &files },
+        .{ .src = "import { machine } from \"./mid.kup\"\nr = machine[:teeth]", .expected = .{ .num = 12 }, .files = &files },
+        // A re-export binds nothing in the file that makes it
+        .{ .src = "import { side } from \"./plain.kup\"\nr = side", .expected = .{ .num = 10 }, .files = &files },
+    });
+}
+
+test "VM: a re-export of a name its module doesn't export fails the run, as an import of it does" {
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("lib.kup", "side = 10\nexport side\n");
+    try files.vfs().writeFile("bad.kup", "export { nope } from \"./lib.kup\"\n");
+    vm.vfs = files.vfs();
+    try testing.expectEqual(.runtime_error, try support.runOn(&vm, "import { nope } from \"./bad.kup\""));
+    try testing.expectEqualStrings("NameError: Undefined module member 'nope'.", vm.last_error orelse "");
+}

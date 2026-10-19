@@ -494,3 +494,79 @@ test "ScriptSession: a long editing session keeps the geometry graph to what it 
     }
     try testing.expect(session.vm.dag_builder.nodes.items.len < 64);
 }
+
+/// A session over in-memory `files`, each added as a module, linked and evaluated once.
+const Chain = struct {
+    files: MemoryVfs,
+    session: ScriptSession,
+
+    fn init(self: *Chain, modules: []const [2][]const u8) !void {
+        self.files = MemoryVfs.init(testing.allocator);
+        errdefer self.files.deinit();
+        self.session = try ScriptSession.init(testing.allocator, testing.io);
+        errdefer self.session.deinit();
+        self.session.vm.vfs = self.files.vfs();
+        for (modules) |m| {
+            try self.files.vfs().writeFile(m[0], m[1]);
+            _ = try self.session.workspace.addModule(m[0], m[1]);
+        }
+        try self.session.workspace.linkDependencies();
+        try self.session.buildReverseGraph();
+        try self.session.evaluateWorkspace();
+    }
+
+    fn deinit(self: *Chain) void {
+        self.session.deinit();
+        self.files.deinit();
+    }
+
+    fn edit(self: *Chain, path: []const u8, source: []const u8) !void {
+        try self.files.vfs().writeFile(path, source);
+        try self.session.workspace.updateModuleSource(self.session.workspace.path_to_id.get(path).?, source);
+        try self.session.markFileEdited(path);
+        try self.session.evaluateWorkspace();
+    }
+
+    fn node(self: *Chain, path: []const u8) *@import("session.zig").SessionNode {
+        return &self.session.nodes.items[@backingInt(self.session.workspace.path_to_id.get(path).?)];
+    }
+};
+
+test "ScriptSession: a module that exports what it computed from an import passes a change of the import on" {
+    // A module without a shape was fingerprinted by its source alone: b.kup's never
+    // changes, so c.kup kept the cube a.kup's old side made.
+    const cases = [_][]const u8{
+        "import { side } from \"./a.kup\"\ndouble = side * 2\nexport double\n",
+        "export { side as double } from \"./a.kup\"\n",
+        // A function: not hashed by content, so it counts as changed whenever b runs again
+        "import { side } from \"./a.kup\"\ndef double = side\nexport double\n",
+    };
+    const uses = [_][]const u8{ "cube(double)\n", "cube(double)\n", "cube(double())\n" };
+    const sizes = [_][2]f64{ .{ 4, 6 }, .{ 2, 3 }, .{ 2, 3 } };
+    for (cases, uses, sizes) |b, use, size| {
+        errdefer std.debug.print("b.kup:\n{s}\n", .{b});
+        const c = try std.mem.concat(testing.allocator, u8, &.{ "import { double } from \"./b.kup\"\n", use });
+        defer testing.allocator.free(c);
+        var chain: Chain = undefined;
+        try chain.init(&.{ .{ "a.kup", "side = 2\nexport side\n" }, .{ "b.kup", b }, .{ "c.kup", c } });
+        defer chain.deinit();
+        try testing.expectApproxEqAbs(size[0] * size[0] * size[0], kernel.volume(chain.node("c.kup").cached_handle.?), 1e-9);
+        try chain.edit("a.kup", "side = 3\nexport side\n");
+        try testing.expectApproxEqAbs(size[1] * size[1] * size[1], kernel.volume(chain.node("c.kup").cached_handle.?), 1e-9);
+    }
+}
+
+test "ScriptSession: a module that runs again and exports the same values stops the re-evaluation" {
+    var chain: Chain = undefined;
+    try chain.init(&.{
+        .{ "a.kup", "side = 2\nexport side\n" },
+        .{ "b.kup", "import { side } from \"./a.kup\"\ndouble = side * 2\nexport double\n" },
+        .{ "c.kup", "import { double } from \"./b.kup\"\ncube(double)\n" },
+    });
+    defer chain.deinit();
+    try chain.edit("a.kup", "side = 1 + 1 # the same value\nexport side\n");
+    // a.kup ran again; its export didn't change, so b.kup and c.kup didn't run
+    try testing.expectEqual(@as(u64, 1), chain.node("a.kup").changed_at);
+    try testing.expectEqual(@as(u64, 1), chain.node("b.kup").changed_at);
+    try testing.expectEqual(@as(u64, 1), chain.node("c.kup").changed_at);
+}

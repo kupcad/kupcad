@@ -79,7 +79,7 @@ const Fixture = struct {
         const source = try self.tmp.dir.readFileAlloc(testing.io, root, testing.allocator, .limited(1 << 16));
         defer testing.allocator.free(source);
         _ = try self.session.workspace.addModule(full, source);
-        try Watcher.loadImports(&self.session, testing.io);
+        try self.session.loadImports();
         return full;
     }
 
@@ -130,6 +130,29 @@ test "Daemon Watcher: an edit to an imported module rebuilds the script" {
         std.debug.print("events: {any}\n", .{recorder.events.items});
         if (fx.session.failure) |f| for (f.diagnostics) |d| std.debug.print("diag: {s}\n", .{d.message});
     }
+    try testing.expect(watcher.evaluate());
+    try testing.expectApproxEqAbs(@as(f64, 1000), fx.rootVolume(root), 1e-6);
+
+    try fx.rewrite(&watcher, "lib.kup", "side = 20\nexport side\n", MTIME_BUMP_NS);
+    try testing.expect(try watcher.poll());
+    try testing.expectApproxEqAbs(@as(f64, 8000), fx.rootVolume(root), 1e-6);
+}
+
+test "Daemon Watcher: an edit to a module reached through a re-export rebuilds the script" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("lib.kup", "side = 10\nexport side\n");
+    try fx.write("mid.kup", "export { side } from \"./lib.kup\"\n");
+    try fx.write("main.kup", "import { side } from \"./mid.kup\"\nx = cube(side)\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    // lib.kup is in the workspace too, so it is watched
+    try testing.expectEqual(@as(usize, 3), fx.session.workspace.modules.items.len);
+
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    defer watcher.deinit();
     try testing.expect(watcher.evaluate());
     try testing.expectApproxEqAbs(@as(f64, 1000), fx.rootVolume(root), 1e-6);
 

@@ -118,10 +118,33 @@ pub fn readAttributes(tree: *const ast.Tree, attributes: ast.NodeIndex) Attribut
 /// What `stmt` reads: its `type`, else what its path's extension makes it. Attributes the
 /// parser refused count as none (a tree with errors is never compiled).
 pub fn ofImport(tree: *const ast.Tree, stmt: ast.ImportStmt) Kind {
-    return switch (readAttributes(tree, stmt.attributes)) {
+    return of(tree, stmt.path, stmt.attributes);
+}
+
+fn of(tree: *const ast.Tree, path: ast.StringId, attributes: ast.NodeIndex) Kind {
+    return switch (readAttributes(tree, attributes)) {
         .kind => |kind| kind,
-        .none, .invalid => ofPath(tree.getString(stmt.path)),
+        .none, .invalid => ofPath(tree.getString(path)),
     };
+}
+
+/// A file a statement reads: an import's, or a re-export's (`export { a } from "./a.kup"`).
+pub const Reference = struct {
+    /// As written, before import_path resolves it against the importer.
+    path: []const u8,
+    kind: Kind,
+};
+
+/// What `node` reads, or null for a statement that reads nothing (an export of the file's own
+/// names, anything but an import or an export).
+pub fn referenceOf(tree: *const ast.Tree, node: *const ast.Node) ?Reference {
+    const path: ast.StringId, const attributes: ast.NodeIndex = switch (node.tag) {
+        .import_stmt => .{ tree.importStmt(node).path, tree.importStmt(node).attributes },
+        .export_stmt => .{ tree.exportStmt(node).path, tree.exportStmt(node).attributes },
+        else => return null,
+    };
+    if (path == .none) return null;
+    return .{ .path = tree.getString(path), .kind = of(tree, path, attributes) };
 }
 
 /// The text of a string or symbol literal (`"json"`, `:json`, the `type:` of `type: x`),

@@ -88,6 +88,8 @@ test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts 
         .{ .src = "def f(a)\n  t = a\n  1\nend\nputs f(1)", .name = "t" },
         .{ .src = "[1].each { |v| q = v\n  puts 1 }", .name = "q" },
         .{ .src = "if ok\n  y = 1\nend\nputs 2", .name = "y" },
+        // A re-export names the other file's `side`, not this one's
+        .{ .src = "side = 1\nexport { side } from \"./lib.kup\"\nputs 2", .name = "side" },
     };
     for (unused) |case| {
         errdefer std.debug.print("source:\n{s}\n", .{case.src});

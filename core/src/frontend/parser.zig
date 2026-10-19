@@ -866,8 +866,8 @@ pub const Parser = struct {
             }
             const kind = self.importKind(attributes, path_node);
             const names = self.scratch_alias_pairs.items.len - s_len;
-            if (!is_export and kind != .module and names > 1) {
-                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file import (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
+            if (kind != .module and names > 1) {
+                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
             }
         } else if (!is_export) {
             self.reportError(self.getLoc(start_tok), .@"import-without-from", "Import statement missing 'from' path", .{});

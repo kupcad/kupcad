@@ -75,9 +75,11 @@ pub const UnusedVarsRule = struct {
                 }
             },
             .export_stmt => {
-                for (tree.getAliasPairs(tree.exportStmt(node).symbols)) |pair| {
+                // A re-export (`export { a } from "./a.kup"`) names another file's `a`, not this one's
+                const stmt = tree.exportStmt(node);
+                if (stmt.path == .none) for (tree.getAliasPairs(stmt.symbols)) |pair| {
                     try engine.markUsed(tree.getString(pair.original));
-                }
+                };
             },
             .def_stmt => {
                 const ds = tree.defStmt(node);

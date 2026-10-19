@@ -243,7 +243,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |
 | `import-attribute` | An import's `with { }` with a key other than `type`, or a type that names nothing an import reads (`with { type: "yaml" }`). |
-| `file-import-names` | An import of a file (STL, STEP or JSON) that names more than one variable (`import { a, b } from "./m.json"`): it gives one value. |
+| `file-import-names` | An import or re-export of a file (STL, STEP or JSON) that names more than one variable (`import { a, b } from "./m.json"`): it gives one value. |
 | `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
 | `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
 | `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
@@ -493,6 +493,8 @@ import { bolt } from "./bolt.txt" with { type: "kup" }
 ```
 
 `with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file import gives one value, so it names one variable (`import { a, b } from "./m.json"` is `file-import-names`).
+
+`export { bolt } from "./hardware.kup"` passes another file's export on, so a library's entry file can gather its parts (`as` renames one: `export { bolt as m3_bolt } from ...`). It binds nothing in the file that writes it: that file's own `bolt`, if it has one, is neither exported nor used. A file's value is re-exported the same way, under one name (`export { machine } from "./machine.json"`).
 
 Every imported file runs in its own top-level scope. Its variables, `def`s and classes are private to it; only the names it lists in `export` reach the importer, and only under the names the importer lists in `import { ... }`. Exported functions and classes keep using their own file's variables wherever they are called from. Module code can use builtins, but not the importer's variables, and two libraries can use the same top-level name without clashing:
 
