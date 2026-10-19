@@ -11,6 +11,11 @@ license, README and changelog), without upstream's editor and release tooling.
   arguments in Zig 0.17's order (the element, then the minimum). In the old order it asked for
   `offset` copies of 1 and never matched, so a cyclic paint graph went 64 levels deep instead of
   stopping where the cycle closes. `src/tests/colr.zig` checks it stops there.
+- `src/tables/gpos.zig`: `PairSet.get` reads the second glyph's value record with the second
+  value format; it used the first's twice, so a pair whose second glyph has no value (as in
+  kerning) read past its record and was never found. A value record's Device offsets are taken
+  from the start of the PairSet table, as the spec has them, not from past its count.
+  `src/tests/gpos.zig` checks both.
 
 ## Updating
 

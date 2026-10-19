@@ -436,6 +436,8 @@ pub const PairSets = struct {
 
 /// A `ValueRecord` pairs set used by `PairAdjustment`.
 pub const PairSet = struct {
+    // The whole PairSet table: a ValueRecord's Device offsets are from its beginning.
+    table_data: []const u8,
     data: []const u8,
     flags: struct { ValueFormatFlags, ValueFormatFlags },
     record_len: u8,
@@ -449,6 +451,7 @@ pub const PairSet = struct {
         // Max len is 34, so u8 is just enough.
         const record_len: u8 = @truncate(parser.size_of(lib.GlyphId) + flags[0].size() + flags[1].size());
         return .{
+            .table_data = data,
             .data = try s.read_bytes(count * @as(usize, record_len)),
             .flags = flags,
             .record_len = record_len,
@@ -512,8 +515,8 @@ pub const PairSet = struct {
         var s = parser.Stream.new(record_data);
         s.skip(lib.GlyphId);
         return .{
-            try .parse(self.data, &s, self.flags[0]),
-            try .parse(self.data, &s, self.flags[0]),
+            try .parse(self.table_data, &s, self.flags[0]),
+            try .parse(self.table_data, &s, self.flags[1]),
         };
     }
 };

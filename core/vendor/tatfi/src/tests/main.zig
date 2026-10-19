@@ -12,6 +12,7 @@ test {
     _ = @import("colr.zig");
     _ = @import("feat.zig");
     _ = @import("glyf.zig");
+    _ = @import("gpos.zig");
     _ = @import("hmtx.zig");
     _ = @import("maxp.zig");
     _ = @import("sbix.zig");
