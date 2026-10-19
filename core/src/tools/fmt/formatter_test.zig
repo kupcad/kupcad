@@ -301,6 +301,25 @@ test "Formatter: Property and Index Assignment" {
     try expectFormat(source, expected);
 }
 
+test "Formatter: an import's names stay bare or in braces, as they mean different things for a file" {
+    // Braces were always printed: `import gears from` became `import { gears } from`, which
+    // takes a key of a JSON file and is a syntax error for a mesh.
+    const source =
+        \\import  gears  from  "./gears.json"
+        \\import { teeth , hub } from "./gear.json"
+        \\import part from "./part.stl"
+        \\export machine from "./machine.json"
+    ;
+    const expected =
+        \\import gears from "./gears.json"
+        \\import { teeth, hub } from "./gear.json"
+        \\import part from "./part.stl"
+        \\export machine from "./machine.json"
+        \\
+    ;
+    try expectFormat(source, expected);
+}
+
 test "Formatter: Imports and Exports" {
     const source =
         \\import   "lib.kup"

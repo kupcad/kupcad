@@ -15,11 +15,13 @@ const limits = @import("../core/limits.zig");
 /// and the key of the entry being read.
 const SLOTS_PER_LEVEL = 3;
 
-/// import_json(path) -> the file's value. A file that can't be read, is larger than
-/// limits.MAX_JSON_BYTES, isn't JSON, nests deeper than limits.MAX_JSON_DEPTH or holds a
-/// number past the largest is an ImportError naming the file (and the line and column, or
-/// the place in the data).
-pub fn nativeImportJson(vm: *VM, path: []const u8) !value.Value {
+/// import_json(path, keys = nil) -> the file's value. A file that can't be read, is larger
+/// than limits.MAX_JSON_BYTES, isn't JSON, nests deeper than limits.MAX_JSON_DEPTH or holds
+/// a number past the largest is an ImportError naming the file (and the line and column,
+/// or the place in the data). With `keys` (Strings or Symbols), the values its object holds
+/// under them, in order, as an Array: what `import { gears, frame } from "./machine.json"`
+/// reads. A file that isn't an object is an ImportError, a key it doesn't have a KeyError.
+pub fn nativeImportJson(vm: *VM, path: []const u8, keys: ?*value.ObjArray) !value.Value {
     const text = vm.readScriptFile(path) catch |err| {
         if (err == error.OutOfMemory) return err;
         return vm.fail(.ImportError, "could not read JSON file '{s}': {s}", .{ path, @errorName(err) });
@@ -43,7 +45,27 @@ pub fn nativeImportJson(vm: *VM, path: []const u8) !value.Value {
     vm.push(value.Value.initObj(&source.obj));
     var reader: Reader = .{ .vm = vm, .source = source };
     defer reader.path.deinit(vm.allocator);
-    return reader.convert(parsed.value, limits.MAX_JSON_DEPTH);
+    const read = try reader.convert(parsed.value, limits.MAX_JSON_DEPTH);
+    const names = keys orelse return read;
+    vm.push(read);
+    return valuesOf(vm, path, read, names.items.items);
+}
+
+/// The values `read`, the data of the file at `path`, holds under `keys`, as an Array.
+fn valuesOf(vm: *VM, path: []const u8, read: value.Value, keys: []const value.Value) !value.Value {
+    if (!read.isJsonObject()) {
+        const kind = vm.typeName(read);
+        return vm.fail(.ImportError, "{s} is {s} {s} value, not an object: it has no keys to take", .{ path, json_object.article(kind), kind });
+    }
+    const object = read.asJsonObject();
+    const values = try vm.gc.allocateArray(vm);
+    vm.push(value.Value.initObj(&values.obj));
+    try values.items.ensureTotalCapacity(vm.gc.trackingAllocator(), keys.len);
+    for (keys) |key| {
+        const held = try json_object.lookup(vm, object, key) orelse return json_object.missingKey(vm, object, key, .of(object));
+        values.items.appendAssumeCapacity(held);
+    }
+    return value.Value.initObj(&values.obj);
 }
 
 /// Turns parsed JSON into the script's values, keeping each container it builds rooted on

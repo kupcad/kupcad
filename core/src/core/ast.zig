@@ -229,12 +229,17 @@ pub const ImportStmt = struct {
     symbols: Span, // Span of AliasPair
     path: StringId,
     attributes: NodeIndex = .none,
+    /// The names are in braces (`import { a } from`), not bare (`import a from`): for a
+    /// file, braces take keys of its value, a bare name the value itself.
+    braced: bool = false,
 };
 
 pub const ExportStmt = struct {
     symbols: Span, // Span of AliasPair
     path: StringId,
     attributes: NodeIndex = .none,
+    /// As ImportStmt's.
+    braced: bool = false,
 };
 
 pub const IfStmt = struct {
@@ -577,6 +582,7 @@ pub const Tree = struct {
             .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .path = @fromBackingInt(self.extra_data.items[base + 2]),
             .attributes = @fromBackingInt(self.extra_data.items[base + 3]),
+            .braced = self.extra_data.items[base + 4] != 0,
         };
     }
 
@@ -586,6 +592,7 @@ pub const Tree = struct {
             .symbols = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
             .path = @fromBackingInt(self.extra_data.items[base + 2]),
             .attributes = @fromBackingInt(self.extra_data.items[base + 3]),
+            .braced = self.extra_data.items[base + 4] != 0,
         };
     }
 
@@ -1066,13 +1073,13 @@ pub const Builder = struct {
         return self.createNode(.lambda_expr, main_token, data_idx);
     }
 
-    pub fn importStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ symbols, path, attrs });
+    pub fn importStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, braced: bool, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ symbols, path, attrs, braced });
         return self.createNode(.import_stmt, main_token, data_idx);
     }
 
-    pub fn exportStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ symbols, path, attrs });
+    pub fn exportStmt(self: *Builder, symbols: Span, path: StringId, attrs: NodeIndex, braced: bool, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ symbols, path, attrs, braced });
         return self.createNode(.export_stmt, main_token, data_idx);
     }
 

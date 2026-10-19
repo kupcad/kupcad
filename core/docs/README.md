@@ -243,7 +243,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |
 | `import-attribute` | An import's `with { }` with a key other than `type`, or a type that names nothing an import reads (`with { type: "yaml" }`). |
-| `file-import-names` | An import or re-export of a file (STL, STEP or JSON) that names its value in braces (`import { teeth } from "./gears.json"`) or names more than one variable: it gives one value, named bare (`import gears from "./gears.json"`). |
+| `file-import-names` | An import or re-export of a mesh (STL, STEP) in braces (`import { teeth } from "./gear.stl"`): it has no names in it, so its one value is named bare (`import gear from "./gear.stl"`); or of any file naming more than one variable without braces. |
 | `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
 | `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
 | `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
@@ -492,9 +492,9 @@ import machine from "./machine.data" with { type: :json }
 import { bolt } from "./bolt.txt" with { type: "kup" }
 ```
 
-`with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file import gives one value, so it names one variable, without braces: `import gears from "./gears.json"`. In braces a name would read as a key it picks, which it isn't, so `import { teeth } from "./gears.json"` is the syntax error `file-import-names`.
+`with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file gives one value, named by one variable without braces: `import gears from "./gears.json"`. Braces name what is in a JSON file's object, its keys (see below); a mesh has no names in it, so `import { teeth } from "./gear.stl"` is the syntax error `file-import-names`.
 
-`export { bolt } from "./hardware.kup"` passes another file's export on, so a library's entry file can gather its parts (`as` renames one: `export { bolt as m3_bolt } from ...`). It binds nothing in the file that writes it: that file's own `bolt`, if it has one, is neither exported nor used. A file's value is re-exported under one bare name, as it is imported (`export machine from "./machine.json"`).
+`export { bolt } from "./hardware.kup"` passes another file's export on, so a library's entry file can gather its parts (`as` renames one: `export { bolt as m3_bolt } from ...`). It binds nothing in the file that writes it: that file's own `bolt`, if it has one, is neither exported nor used. A file is re-exported as it is imported: its value under one bare name (`export machine from "./machine.json"`), or a JSON file's keys in braces (`export { gears } from "./machine.json"`).
 
 Every imported file runs in its own top-level scope. Its variables, `def`s and classes are private to it; only the names it lists in `export` reach the importer, and only under the names the importer lists in `import { ... }`. Exported functions and classes keep using their own file's variables wherever they are called from. Module code can use builtins, but not the importer's variables, and two libraries can use the same top-level name without clashing:
 
@@ -520,10 +520,12 @@ A model described by data reads it from a JSON file: `import machine from "./mac
 import machine from "./machine.json"
 
 gears = machine[:gears].map { |g| cylinder(r: g[:module] * g[:teeth] / 2, h: 5) }
+import { name, gears as gear_list } from "./machine.json"   # keys of its object
 first = machine.dig(:gears, 0, :teeth)       # 12
 plate = machine.fetch(:plate, nil)          # nil: the file has no plate
 ```
 
+* **Keys in braces:** `import { name, gears } from "./machine.json"` binds those keys of the file's object (`as` renames one), as `import_json("machine.json", [:name, :gears])` gives their values in an Array. A key the object lacks is a `KeyError` that lists the ones it has, and a file that isn't an object (a list of parts, `[...]`) is an `ImportError`: import it bare, as an Array.
 * **Keys:** a JsonObject's keys are the file's Strings, and each is found by that String or by the Symbol of the same name, so `machine["gears"]` and `machine[:gears]` are the same entry, in every object of the file. A Map stays as it is: `m["a"]` and `m[:a]` are two keys there.
 * **Missing keys:** `[]` gives `nil` for a key the object doesn't have, as a Map's does. `fetch(key)` and `dig(key, ...)` raise instead, naming the place in the file and what is there: `KeyError: machine.json: gears[1] has no key "pitch" (its keys: module, teeth)`. `dig` steps into objects by key and into Arrays by integer (negative from the end); past an Array's end is an `IndexError`, a step into a number or a string a `TypeError`. (Ruby's `dig` gives `nil`, which a model only notices later, as an error about `nil` far from the file.) `fetch(key, default)` gives the default instead of raising, `nil` included.
 * **Read-only:** `machine[:name] = "x"` is a `TypeError`. `to_h` gives a Map that can change, its objects Maps and its Arrays copies all the way down, with the file's String keys (a Map's `.symbolize_keys` turns its own keys into Symbols, not those of the Maps in it). The Arrays a JsonObject holds are ordinary Arrays.

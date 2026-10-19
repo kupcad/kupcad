@@ -44,6 +44,15 @@ pub const Kind = enum {
         };
     }
 
+    /// Braces name what it has (`import { a, b } from`): a module's exports, the keys of a
+    /// JSON file's object. A mesh has nothing to name.
+    pub fn hasKeys(self: Kind) bool {
+        return switch (self) {
+            .module, .json => true,
+            .stl, .step => false,
+        };
+    }
+
     pub fn fromTypeName(name: []const u8) ?Kind {
         for (std.enums.values(Kind)) |kind| {
             if (std.mem.eql(u8, kind.typeName(), name)) return kind;

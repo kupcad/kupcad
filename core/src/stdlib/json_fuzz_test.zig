@@ -82,13 +82,13 @@ fn checkJson(data: []const u8) !bool {
     try files.vfs().writeFile(FUZZ_PATH, data);
     vm.vfs = files.vfs();
 
-    const first = import_json.nativeImportJson(&vm, FUZZ_PATH) catch |err| {
+    const first = import_json.nativeImportJson(&vm, FUZZ_PATH, null) catch |err| {
         if (err == error.RuntimeError) return false;
         return err;
     };
     vm.push(first); // rooted while the rest allocates
     try expectScriptData(first, limits.MAX_JSON_DEPTH);
-    const second = try import_json.nativeImportJson(&vm, FUZZ_PATH);
+    const second = try import_json.nativeImportJson(&vm, FUZZ_PATH, null);
     vm.push(second);
     try testing.expect(vm.valuesEqual(first, second));
 

@@ -432,13 +432,13 @@ pub const Formatter = struct {
             .next_stmt => try self.formatFlowControl(tree, "next", tree.nodeIndex(node)),
             .import_stmt => {
                 const is_stmt = tree.importStmt(node);
-                try self.formatImportExport(tree, "import", tree.getAliasPairs(is_stmt.symbols), tree.getString(is_stmt.path), is_stmt.attributes);
+                try self.formatImportExport(tree, "import", tree.getAliasPairs(is_stmt.symbols), is_stmt.braced, tree.getString(is_stmt.path), is_stmt.attributes);
             },
             .export_stmt => {
                 const es_stmt = tree.exportStmt(node);
                 // `export { a }` has no path: it used to print `from ""`, written by no one.
                 const path: ?[]const u8 = if (es_stmt.path == .none) null else tree.getString(es_stmt.path);
-                try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), path, es_stmt.attributes);
+                try self.formatImportExport(tree, "export", tree.getAliasPairs(es_stmt.symbols), es_stmt.braced, path, es_stmt.attributes);
             },
             .docstring => try self.formatDocString(tree, tree.docString(node)),
         }
@@ -1458,11 +1458,13 @@ pub const Formatter = struct {
     /// `import { a, b as c } from "path"`; an alias used to be dropped.
     /// `import`/`export`, its names in braces, and `from "path"` unless `path` is null (a
     /// file's own export).
-    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, path: ?[]const u8, attrs: ast.NodeIndex) Error!void {
+    /// `braced`: the names are in braces, which mean something else than bare ones for a
+    /// file (keys of its value, against the value), so they stay as written.
+    fn formatImportExport(self: *Formatter, tree: *const ast.Tree, kw: []const u8, symbols: []const ast.AliasPair, braced: bool, path: ?[]const u8, attrs: ast.NodeIndex) Error!void {
         try self.out.appendSlice(self.allocator, kw);
         try self.out.append(self.allocator, ' ');
         if (symbols.len > 0) {
-            try self.out.appendSlice(self.allocator, "{ ");
+            if (braced) try self.out.appendSlice(self.allocator, "{ ");
             for (symbols, 0..) |pair, idx| {
                 if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
                 try self.out.appendSlice(self.allocator, tree.getString(pair.original));
@@ -1471,7 +1473,7 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, tree.getString(pair.alias));
                 }
             }
-            try self.out.appendSlice(self.allocator, " }");
+            if (braced) try self.out.appendSlice(self.allocator, " }");
         }
         if (path) |p| {
             if (symbols.len > 0) try self.out.appendSlice(self.allocator, " from ");

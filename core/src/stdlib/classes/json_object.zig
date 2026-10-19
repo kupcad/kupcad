@@ -61,9 +61,15 @@ pub const Where = struct {
     }
 };
 
+/// "a" or "an", as `noun` (a class name, "nil") starts.
+pub fn article(noun: []const u8) []const u8 {
+    if (noun.len > 0 and std.mem.findScalar(u8, "AEIOUaeiou", noun[0]) != null) return "an";
+    return "a";
+}
+
 /// What `object` holds under `key` (see VM.jsonObjectGet), or null; a key that is neither a
 /// String nor a Symbol is a TypeError.
-fn lookup(vm: *VM, object: *value.ObjJsonObject, key: value.Value) !?value.Value {
+pub fn lookup(vm: *VM, object: *value.ObjJsonObject, key: value.Value) !?value.Value {
     return vm.jsonObjectGet(object, key) catch vm.fail(.TypeError, JSON_KEY_FMT, .{vm.typeName(key)});
 }
 
@@ -73,7 +79,7 @@ fn keyName(key: value.Value) []const u8 {
 }
 
 /// The KeyError for `key`, which `object` at `where` doesn't have: it names the keys it has.
-fn missingKey(vm: *VM, object: *const value.ObjJsonObject, key: value.Value, where: Where) error{ RuntimeError, OutOfMemory } {
+pub fn missingKey(vm: *VM, object: *const value.ObjJsonObject, key: value.Value, where: Where) error{ RuntimeError, OutOfMemory } {
     var keys: std.ArrayList(u8) = .empty;
     defer keys.deinit(vm.allocator);
     const names = object.map.keys();
@@ -131,7 +137,8 @@ fn digStep(vm: *VM, current: value.Value, step: value.Value, source: []const u8,
         _ = try path.enterIndex(vm.allocator, index);
         return items[index];
     }
-    return vm.fail(.TypeError, "dig: {f} is a {s} value, not a JsonObject or an Array", .{ here, vm.typeName(current) });
+    const kind = vm.typeName(current);
+    return vm.fail(.TypeError, "dig: {f} is {s} {s} value, not a JsonObject or an Array", .{ here, article(kind), kind });
 }
 
 /// JsonObject#key?(key)

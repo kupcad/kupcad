@@ -38,7 +38,7 @@ test "Error codes: a script for each code gets that code" {
         .{ .@"misplaced-import", "def f\n  import { a } from \"./a.kup\"\nend" },
         .{ .@"import-without-from", "import { a }" },
         .{ .@"import-attribute", "import m from \"./m.dat\" with { type: \"yaml\" }" },
-        .{ .@"file-import-names", "import a, b from \"./m.json\"" },
+        .{ .@"file-import-names", "import { a } from \"./m.stl\"" },
         .{ .@"misplaced-do", "while true do\nend" },
         .{ .@"spaced-parentheses", "f (1, 2)" },
         .{ .@"invalid-parameter", "[1].each { |&b| b }" },

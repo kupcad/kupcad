@@ -788,8 +788,9 @@ pub const Compiler = struct {
 
     /// Pushes what `reference` reads (core/import_kind.zig), its path resolved against the
     /// importing file's (core/import_path.zig): a file's value, from the built-in for its
-    /// kind, or the module (op_import).
-    fn emitReference(self: *Compiler, reference: import_kind.Reference) CompileError!void {
+    /// kind, or the module (op_import). With `keys` (a JSON file's, in braces), the values
+    /// its object holds under their names, as an Array: `import_json(path, ["a", "b"])`.
+    fn emitReference(self: *Compiler, reference: import_kind.Reference, keys: []const ast.AliasPair) CompileError!void {
         const path = std.mem.trimEnd(u8, reference.path, "/");
         const importer = self.rootCompiler().module_path;
         if (reference.kind.importer()) |func_name| {
@@ -797,8 +798,15 @@ pub const Compiler = struct {
             const file = try import_path.resolveFile(self.allocator, importer, path);
             defer self.allocator.free(file);
             try self.emitOpWithOperand(.op_constant, .op_constant_wide, try self.pathConstant(file));
-            try self.emitCall(.op_call, .{ .count = 1 });
-            self.simulatePop(2);
+            if (keys.len > 0) {
+                for (keys) |key| try self.emitOpWithOperand(.op_constant, .op_constant_wide, try self.makeStringConstant(self.tree.getString(key.original)));
+                try self.emitOpWithOperand(.op_build_array, .op_build_array_wide, keys.len);
+                self.simulatePop(keys.len);
+                self.simulatePush(1);
+            }
+            const arg_count: u8 = if (keys.len > 0) 2 else 1;
+            try self.emitCall(.op_call, .{ .count = arg_count });
+            self.simulatePop(arg_count + 1);
             self.simulatePush(1);
             return;
         }
@@ -815,13 +823,23 @@ pub const Compiler = struct {
         return self.makeConstant(path_val);
     }
 
+    /// Replaces the Array on the stack (the values of a JSON file's keys, `emitReference`)
+    /// with its `index`th.
+    fn emitTakeKey(self: *Compiler, index: usize) CompileError!void {
+        try self.emitOpWithOperand(.op_constant, .op_constant_wide, try self.makeConstant(value.Value.initNumber(@floatFromInt(index))));
+        try self.emitOp(.op_get_index);
+    }
+
     fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
-        const symbols = self.tree.getAliasPairs(self.tree.importStmt(node).symbols);
+        const stmt = self.tree.importStmt(node);
+        const symbols = self.tree.getAliasPairs(stmt.symbols);
         const reference = import_kind.referenceOf(self.tree, node).?;
-        try self.emitReference(reference);
+        // `import { a, b } from "./m.json"`: those keys of its object, an Array of their values
+        const keyed = stmt.braced and reference.kind == .json;
+        try self.emitReference(reference, if (keyed) symbols else &.{});
 
         // --- A file (a mesh, data): its value, under the one name the parser allows ---
-        if (reference.kind != .module) {
+        if (reference.kind != .module and !keyed) {
             if (symbols.len > 0) {
                 const sym_id = symbols[0].alias; // Target the alias ID
                 if (self.enclosing != null and self.resolveLocal(sym_id) == null and (try self.resolveUpvalue(sym_id)) == null and !self.writesScriptGlobal(sym_id)) {
@@ -837,20 +855,23 @@ pub const Compiler = struct {
             return;
         }
 
-        // --- A module: the names it exports, each bound here ---
+        // --- A module's exports, or a JSON file's keys: each bound here ---
         if (symbols.len == 0) {
             try self.emitOp(.op_pop);
             try self.emitOp(.op_nil);
             return;
         }
 
-        for (symbols) |pair| {
+        for (symbols, 0..) |pair, i| {
             try self.emitOp(.op_dup);
 
-            const orig_str = self.tree.getString(pair.original);
-            const orig_idx = try self.makeStringConstant(orig_str);
-            try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, orig_idx);
-            try self.emitInlineCacheIndex();
+            if (keyed) {
+                try self.emitTakeKey(i);
+            } else {
+                const orig_idx = try self.makeStringConstant(self.tree.getString(pair.original));
+                try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, orig_idx);
+                try self.emitInlineCacheIndex();
+            }
 
             const alias_str = self.tree.getString(pair.alias);
             const alias_idx = try self.makeStringConstant(alias_str);
@@ -877,7 +898,7 @@ pub const Compiler = struct {
             try self.emitOp(.op_pop);
         }
 
-        try self.emitOp(.op_pop); // Pop module
+        try self.emitOp(.op_pop); // Pop the module, or the keys' values
         try self.emitOp(.op_nil);
     }
 
@@ -902,9 +923,12 @@ pub const Compiler = struct {
         const reexported = import_kind.referenceOf(self.tree, node);
         for (symbols) |pair| {
             if (reexported) |reference| {
-                try self.emitReference(reference);
-                // A file's value is the name's (the parser allows one)
-                if (reference.kind == .module) {
+                // A JSON file's key, in braces; a file's value, bare (the parser allows one)
+                const keyed = ex_stmt.braced and reference.kind == .json;
+                try self.emitReference(reference, if (keyed) &.{pair} else &.{});
+                if (keyed) {
+                    try self.emitTakeKey(0);
+                } else if (reference.kind == .module) {
                     try self.emitOpWithOperand(.op_get_property, .op_get_property_wide, try self.makeStringConstant(self.tree.getString(pair.original)));
                     try self.emitInlineCacheIndex();
                 }

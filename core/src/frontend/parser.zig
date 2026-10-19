@@ -865,13 +865,13 @@ pub const Parser = struct {
                 self.advance();
                 attributes = try self.parseHashLiteral();
             }
-            // A file gives one value, named bare: in braces, a name reads as a key or an export
-            // it would pick (`import { teeth } from "./gears.json"` was the whole file)
+            // A file gives one value, named bare. In braces, names are keys a JSON file's object
+            // has; a mesh has none (`import { teeth } from "./gears.json"` was the whole file).
             const kind = self.importKind(attributes, path_node);
             const names = self.scratch_alias_pairs.items.len - s_len;
-            if (kind != .module and braced) {
-                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value: name it without braces, as in `import gears from \"./gears.json\"`", .{kind.typeName()});
-            } else if (kind != .module and names > 1) {
+            if (braced and !kind.hasKeys()) {
+                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file of type \"{s}\" gives one value, with no names in it: name it without braces, as in `import part from \"./part.{s}\"`", .{ kind.typeName(), kind.typeName() });
+            } else if (!braced and kind != .module and names > 1) {
                 self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
             }
         } else if (!is_export) {
@@ -881,9 +881,9 @@ pub const Parser = struct {
 
         const span = try self.b.addAliasPairs(self.scratch_alias_pairs.items[s_len..]);
         if (is_export) {
-            return self.b.exportStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
+            return self.b.exportStmt(span, path_node, attributes, braced, start_tok) catch ParseError.OutOfMemory;
         } else {
-            return self.b.importStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
+            return self.b.importStmt(span, path_node, attributes, braced, start_tok) catch ParseError.OutOfMemory;
         }
     }
 

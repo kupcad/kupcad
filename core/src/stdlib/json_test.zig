@@ -63,6 +63,24 @@ test "import_json: an object's keys are found by String and by Symbol, all the w
     });
 }
 
+test "import_json: in braces, an import takes keys of the file's object" {
+    try support.expectScripts(&.{
+        case("import { count, frame } from \"./machine.json\"\nr = count + frame[:w]", .{ .num = 52 }),
+        case("import { gears as g } from \"./machine.json\"\nr = g[1][:teeth]", .{ .num = 20 }),
+        case("r = import_json(\"machine.json\", [:count, \"name\"]).inspect", .{ .str = "[12, \"braider\"]" }),
+        // A key holding null gives nil, as `fetch` does
+        case("import { note } from \"./machine.json\"\nr = note", .nil),
+    });
+}
+
+test "import_json: braces on a file that isn't an object, or a key it lacks, fail naming it" {
+    try support.expectScripts(&.{
+        failure("import_json(\"machine.json\", [:pitch])", "KeyError: machine.json has no key \"pitch\" (its keys: name, count, hollow, note, gears, frame, empty)"),
+        failure("import_json(\"list.json\", [:a])", "ImportError: list.json is an Array value, not an object: it has no keys to take"),
+        failure("import_json(\"machine.json\", [1])", "TypeError: a JsonObject's keys are Strings or Symbols, got Number"),
+    });
+}
+
 test "JsonObject: prints, compares and iterates like a Map of its entries" {
     try support.expectScripts(&.{
         case(LOAD ++ "r = d[:frame].inspect", .{ .str = "{\"w\" => 40, \"h\" => 30}" }),

@@ -235,7 +235,7 @@ test "Compiler: compiles import statement" {
     const empty_symbols = try b.addAliasPairs(&.{});
 
     // import "math.kup"
-    const import_node = try b.importStmt(empty_symbols, path_str, .none, 0);
+    const import_node = try b.importStmt(empty_symbols, path_str, .none, false, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
@@ -958,7 +958,7 @@ test "Compiler: compiles export statement natively yielding module" {
     const x_sym = try b.intern("x");
     // Wrap the symbol in the AliasPair struct
     const symbols = try b.addAliasPairs(&.{.{ .original = x_sym, .alias = x_sym }});
-    const export_node = try b.exportStmt(symbols, .none, .none, 0);
+    const export_node = try b.exportStmt(symbols, .none, .none, true, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
@@ -985,7 +985,7 @@ test "Compiler: compiles STL asset import interception" {
     const shape_sym = try b.intern("shape");
     // Wrap the symbol in the AliasPair struct
     const symbols = try b.addAliasPairs(&.{.{ .original = shape_sym, .alias = shape_sym }});
-    const import_node = try b.importStmt(symbols, path_str, .none, 0);
+    const import_node = try b.importStmt(symbols, path_str, .none, false, 0);
 
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

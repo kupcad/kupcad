@@ -132,8 +132,8 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
             for (tree.getStringLists(rc.errors)) |e| h.string(tree, e);
             h.string(tree, rc.variable);
         },
-        .import_stmt => h.importish(tree, tree.importStmt(node).path, tree.importStmt(node).symbols),
-        .export_stmt => h.importish(tree, tree.exportStmt(node).path, tree.exportStmt(node).symbols),
+        .import_stmt => h.importish(tree, tree.importStmt(node).path, tree.importStmt(node).symbols, tree.importStmt(node).braced),
+        .export_stmt => h.importish(tree, tree.exportStmt(node).path, tree.exportStmt(node).symbols, tree.exportStmt(node).braced),
         .docstring => {
             const ds = tree.docString(node);
             h.string(tree, ds.tag_name);
@@ -173,8 +173,9 @@ const Hasher = struct {
         }
     }
 
-    fn importish(self: *Hasher, tree: *const ast.Tree, path: ast.StringId, symbols: ast.Span) void {
+    fn importish(self: *Hasher, tree: *const ast.Tree, path: ast.StringId, symbols: ast.Span, braced: bool) void {
         self.string(tree, path);
+        self.add(braced);
         for (tree.getAliasPairs(symbols)) |pair| {
             self.string(tree, pair.original);
             self.string(tree, pair.alias);

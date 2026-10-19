@@ -1404,13 +1404,15 @@ test "VM: a re-export gives the importer another file's names, not its own" {
     const support = @import("../test_support.zig");
     const files = [_]support.ScriptFile{
         .{ .path = "lib.kup", .data = "side = 10\nexport side\n" },
-        .{ .path = "mid.kup", .data = "side = 99\nexport { side } from \"./lib.kup\"\nexport { side as width } from \"./lib.kup\"\nexport machine from \"./machine.json\"\n" },
+        .{ .path = "mid.kup", .data = "side = 99\nexport { side } from \"./lib.kup\"\nexport { side as width } from \"./lib.kup\"\nexport machine from \"./machine.json\"\nexport { teeth } from \"./machine.json\"\n" },
         .{ .path = "machine.json", .data = "{\"teeth\": 12}" },
         .{ .path = "plain.kup", .data = "export { side } from \"./lib.kup\"\n" },
     };
     try support.expectScripts(&.{
         .{ .src = "import { side, width } from \"./mid.kup\"\nr = side + width", .expected = .{ .num = 20 }, .files = &files },
         .{ .src = "import { machine } from \"./mid.kup\"\nr = machine[:teeth]", .expected = .{ .num = 12 }, .files = &files },
+        // In braces, a JSON file's key
+        .{ .src = "import { teeth } from \"./mid.kup\"\nr = teeth", .expected = .{ .num = 12 }, .files = &files },
         // A re-export binds nothing in the file that makes it
         .{ .src = "import { side } from \"./plain.kup\"\nr = side", .expected = .{ .num = 10 }, .files = &files },
     });
