@@ -15,7 +15,7 @@ release archive at the path given (in the repository: under `core/vendor/` and `
 | [tatfi](https://git.sr.ht/~asibahi/tatfi) | reading the fonts | MPL-2.0 | tatfi's authors | `licenses/tatfi/LICENSE` |
 | [lsp-kit](https://github.com/zigtools/lsp-kit) | the language server's protocol types | MIT | zig-lsp-codegen contributors | `licenses/lsp-kit-MIT.txt` |
 | [Zig standard library](https://ziglang.org) | compiled into the binary | MIT | Zig contributors | `licenses/zig-MIT.txt` |
-| Roboto, Roboto Mono | the `sans` and `mono` text fonts | Apache-2.0 | Google Inc. | `licenses/draco/LICENSE` (the same Apache License 2.0) |
+| Roboto (Regular and Bold), Roboto Mono | the `sans`, `sans-bold` and `mono` text fonts | Apache-2.0 | Google Inc. | `licenses/draco/LICENSE` (the same Apache License 2.0) |
 | Roboto Serif | the `serif` text font | OFL-1.1 | The Roboto Serif Project Authors | `licenses/RobotoSerif-OFL.txt` |
 | Allerta Stencil | the `stencil` text font | OFL-1.1, Reserved Font Name Allerta | Matt McInerney | `licenses/AllertaStencil-OFL.txt` |
 

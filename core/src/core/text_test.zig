@@ -24,7 +24,8 @@ test "Text Engine: a font is named by its own name or an alias, and an unknown n
     try testing.expectEqual(text.FontKey.mono, text.FontKey.fromString("monospace").?);
     // It used to be sans, so a typo drew in the wrong font without a word
     try testing.expectEqual(@as(?text.FontKey, null), text.FontKey.fromString("unknown_font_family"));
-    try testing.expectEqualStrings("\"sans\", \"mono\", \"serif\" and \"stencil\"", text.FONT_LIST);
+    try testing.expectEqual(text.FontKey.sans_bold, text.FontKey.fromString("sans_bold").?);
+    try testing.expectEqualStrings("\"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\"", text.FONT_LIST);
 }
 
 test "Text Engine: Extracts flat 2D polygons from text string and kerning" {
@@ -176,4 +177,25 @@ test "Text Engine: a glyph follows the one before it by its advance and their ke
     const advance: f64 = @floatFromInt(face.glyph_hor_advance({}, face.glyph_index('A').?).?);
     const kerned = (advance + @as(f64, @floatFromInt(try kerningOf(&face, 'A', 'V')))) * scale;
     try testing.expectApproxEqAbs(try rightEdge(&face, "V") + kerned, try rightEdge(&face, "AV"), 1e-9);
+}
+
+/// How wide `str`'s outlines are in `face`, 10 mm high.
+fn widthOf(face: *const tatfi.Face, str: []const u8) !f64 {
+    var polygons = try text.extractText(testing.allocator, face, str, 10.0, 0.1, .left, .baseline);
+    defer polygons.deinit(testing.allocator);
+    var min_x = std.math.inf(f64);
+    var max_x = -std.math.inf(f64);
+    for (polygons.contours.items) |contour| for (contour.items) |point| {
+        min_x = @min(min_x, point[0]);
+        max_x = @max(max_x, point[0]);
+    };
+    return max_x - min_x;
+}
+
+test "Text Engine: sans-bold's strokes are half again as thick as sans's" {
+    // An `l` is one stroke: 0.91 mm in sans at 10 mm, too thin for a 0.4 mm nozzle at 4 mm
+    const regular = try widthOf(&(try text.getFace(.sans)), "l");
+    const bold = try widthOf(&(try text.getFace(.sans_bold)), "l");
+    try testing.expectApproxEqAbs(@as(f64, 0.91), regular, 0.01);
+    try testing.expectApproxEqAbs(@as(f64, 1.42), bold, 0.01);
 }

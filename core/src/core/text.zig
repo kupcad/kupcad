@@ -11,10 +11,13 @@ const Kerning = @import("kerning.zig").Kerning;
 /// The names `text(font:)` takes for the embedded fonts: each font's own, then its aliases.
 const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
     .{ .name = "sans", .key = .sans },
+    .{ .name = "sans-bold", .key = .sans_bold },
     .{ .name = "mono", .key = .mono },
     .{ .name = "serif", .key = .serif },
     .{ .name = "stencil", .key = .stencil },
     .{ .name = "default", .key = .sans },
+    // A Symbol can't hold the dash: `font: :sans_bold`
+    .{ .name = "sans_bold", .key = .sans_bold },
     .{ .name = "monospace", .key = .mono },
 };
 
@@ -31,6 +34,8 @@ pub const FONT_LIST = blk: {
 
 pub const FontKey = enum {
     sans,
+    /// Roboto Bold: strokes 0.14 of the size against sans's 0.09, for text printed small
+    sans_bold,
     mono,
     serif,
     stencil,
@@ -68,6 +73,7 @@ pub const TextPolygons = struct {
 // Embed all TTF files into the binary (Zero allocation runtime overhead)
 pub const fonts = struct {
     pub const sans = @embedFile("fonts/Roboto-Regular.ttf");
+    pub const sans_bold = @embedFile("fonts/Roboto-Bold.ttf");
     pub const mono = @embedFile("fonts/RobotoMono-Regular.ttf");
     pub const serif = @embedFile("fonts/RobotoSerif-Regular.ttf");
     pub const stencil = @embedFile("fonts/AllertaStencil-Regular.ttf");
@@ -76,6 +82,7 @@ pub const fonts = struct {
 pub fn getFontBytes(key: FontKey) []const u8 {
     return switch (key) {
         .sans => fonts.sans,
+        .sans_bold => fonts.sans_bold,
         .mono => fonts.mono,
         .serif => fonts.serif,
         .stencil => fonts.stencil,
