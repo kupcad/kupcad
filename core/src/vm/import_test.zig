@@ -1428,5 +1428,18 @@ test "VM: a re-export of a name its module doesn't export fails the run, as an i
     try files.vfs().writeFile("bad.kup", "export { nope } from \"./lib.kup\"\n");
     vm.vfs = files.vfs();
     try testing.expectEqual(.runtime_error, try support.runOn(&vm, "import { nope } from \"./bad.kup\""));
-    try testing.expectEqualStrings("NameError: Undefined module member 'nope'.", vm.last_error orelse "");
+    try testing.expectEqualStrings("NameError: lib.kup exports no 'nope' (it exports: side)", vm.last_error orelse "");
+}
+
+test "VM: importing a name a module doesn't export names the file and what it exports" {
+    const support = @import("../test_support.zig");
+    const files = [_]support.ScriptFile{
+        .{ .path = "lib.kup", .data = "side = 10\nwidth = 2\nexport side, width\n" },
+        .{ .path = "quiet.kup", .data = "x = 1\n" },
+    };
+    try support.expectScripts(&.{
+        .{ .src = support.rescued("import { depth } from \"./lib.kup\""), .expected = .{ .str = "NameError: lib.kup exports no 'depth' (it exports: side, width)" }, .files = &files },
+        // A module that exports nothing has no names to give
+        .{ .src = support.rescued("import { x } from \"./quiet.kup\""), .expected = .{ .str = "NameError: quiet.kup exports no 'x' (it exports nothing)" }, .files = &files },
+    });
 }

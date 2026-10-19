@@ -14,9 +14,6 @@ const MAX_JSON_DEPTH = @import("../../core/limits.zig").MAX_JSON_DEPTH;
 const common = @import("common.zig");
 const callBlock = @import("iteration.zig").callBlock;
 
-/// Keys a KeyError lists of the object it looked in, before "...".
-const MAX_KEYS_LISTED = 8;
-
 /// Where a value is in its file, built a step at a time: `gears[0].teeth`.
 pub const Path = struct {
     text: std.ArrayList(u8) = .empty,
@@ -79,20 +76,9 @@ fn keyName(key: value.Value) []const u8 {
 }
 
 /// The KeyError for `key`, which `object` at `where` doesn't have: it names the keys it has.
-pub fn missingKey(vm: *VM, object: *const value.ObjJsonObject, key: value.Value, where: Where) error{ RuntimeError, OutOfMemory } {
-    var keys: std.ArrayList(u8) = .empty;
-    defer keys.deinit(vm.allocator);
-    const names = object.map.keys();
-    if (names.len == 0) {
-        try keys.appendSlice(vm.allocator, "it has none");
-    } else {
-        try keys.appendSlice(vm.allocator, "its keys: ");
-        for (names[0..@min(names.len, MAX_KEYS_LISTED)], 0..) |name, i| {
-            try keys.print(vm.allocator, "{s}{s}", .{ if (i > 0) ", " else "", name.asString().chars });
-        }
-        if (names.len > MAX_KEYS_LISTED) try keys.appendSlice(vm.allocator, ", ...");
-    }
-    return vm.fail(.KeyError, "{f} has no key \"{s}\" ({s})", .{ where, keyName(key), keys.items });
+pub fn missingKey(vm: *VM, object: *const value.ObjJsonObject, key: value.Value, where: Where) error{RuntimeError} {
+    const names = vm.listNames(object.map.keys());
+    return vm.fail(.KeyError, "{f} has no key \"{s}\" ({s}{s})", .{ where, keyName(key), if (names.len > 0) "its keys: " else "it has none", names });
 }
 
 /// JsonObject#fetch(key, default) -> the value under `key`; without one, `default` when it

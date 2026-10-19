@@ -334,6 +334,7 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjModule, &self.modules, .module);
         ptr.name = name;
         ptr.methods = .empty;
+        ptr.exports_of = null;
         return ptr;
     }
 
@@ -625,6 +626,7 @@ pub const GC = struct {
             .module => {
                 const module_obj = obj.as(value.ObjModule);
                 self.markObject(&module_obj.name.obj);
+                if (module_obj.exports_of) |file| self.markObject(&file.obj);
                 for (module_obj.methods.keys()) |k| self.markValue(k);
                 for (module_obj.methods.values()) |v| self.markValue(v);
             },

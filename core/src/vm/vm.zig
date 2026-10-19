@@ -35,6 +35,8 @@ pub const Host = host_mod.Host;
 /// Stack slots every native call may push (GC roots) without reserving them (see VM.push).
 const NATIVE_STACK_RESERVE = 16;
 
+/// Names an error lists (a module's exports, a JsonObject's keys) before "...".
+const MAX_NAMES_LISTED = 8;
 /// Backtraces list at most this many frames (see VM.BacktraceLines).
 const MAX_BACKTRACE_FRAMES = 32;
 /// Room for one backtrace line such as "    from script:12:3:in 'name'".
@@ -2221,7 +2223,8 @@ pub const VM = struct {
 
         // 6. Execute synchronously
         const import_depth = self.frames.items.len;
-        const res = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
+        // The module's own value is no part of what it gives: its exports are
+        _ = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
             if (err == error.Unwind) {
                 // Stack unwound by an exception raised inside the module; resume at the handler
@@ -2231,13 +2234,19 @@ pub const VM = struct {
             return .runtime_error;
         };
 
-        // Extract the __exports__ module if built by export statements
-        var final_res = res;
+        // What the module exports, built by its export statements. One that exports nothing
+        // gives none: its last value was given instead, so a name taken from it failed as
+        // a method of that value ("Method 'x' not found on receiver").
+        var final_res: value.Value = undefined;
         if (namespace.globals.get("__exports__")) |exp_mod| {
             final_res = exp_mod;
             namespace.remove(self.allocator, "__exports__");
             self.globalsChanged();
+        } else {
+            const none = self.gc.allocateModule(self, (self.staticString("exports") catch |err| return self.allocationFailed(err)).asString()) catch |err| return self.allocationFailed(err);
+            final_res = value.Value.initObj(&none.obj);
         }
+        if (final_res.isModule()) final_res.asModule().exports_of = path_val.asString();
 
         // 7. Cache the actual finalized module and yield result
         self.cacheModule(path_str, final_res) catch |err| return self.allocationFailed(err);
@@ -2298,7 +2307,12 @@ pub const VM = struct {
                 self.stack[self.stack_top - 1] = val;
                 return null;
             }
-            if (self.raiseError(.NameError, "Undefined module member '{s}'.", .{name_str}) != .ok) return .runtime_error;
+            const names = self.listNames(mod.methods.keys());
+            const raised = if (mod.exports_of) |file|
+                self.raiseError(.NameError, "{s} exports no '{s}' ({s}{s})", .{ file.chars, name_str, if (names.len > 0) "it exports: " else "it exports nothing", names })
+            else
+                self.raiseError(.NameError, "module {s} has no member '{s}' ({s}{s})", .{ mod.name.chars, name_str, if (names.len > 0) "its members: " else "it has none", names });
+            if (raised != .ok) return .runtime_error;
             return null;
         } else if (receiver.isClass()) {
             const cls = receiver.asClass();
@@ -3960,6 +3974,20 @@ pub const VM = struct {
     }
 
     // --- String Formatting Utility ---
+    /// `names` (Strings or Symbols) as an error lists them: "a, b, c", then "..." past
+    /// MAX_NAMES_LISTED; empty for none, or when there is no room to word them. In the
+    /// scratch arena, like an error's message.
+    pub fn listNames(self: *VM, names: []const value.Value) []const u8 {
+        var list: std.ArrayList(u8) = .empty;
+        const arena = self.scratch_arena.allocator();
+        for (names[0..@min(names.len, MAX_NAMES_LISTED)], 0..) |name, i| {
+            const chars = if (name.isString()) name.asString().chars else if (name.isSymbol()) name.asSymbol().chars else "?";
+            list.print(arena, "{s}{s}", .{ if (i > 0) ", " else "", chars }) catch return "";
+        }
+        if (names.len > MAX_NAMES_LISTED) list.appendSlice(arena, ", ...") catch return "";
+        return list.items;
+    }
+
     pub fn fmtScratch(self: *VM, comptime fmt: []const u8, args: anytype) ![]const u8 {
         return self.scratch_arena.allocator().print(fmt, args);
     }

@@ -221,6 +221,9 @@ pub const ObjModule = struct {
     obj: Obj,
     name: *ObjString,
     methods: std.array_hash_map.Custom(Value, Value, ValueContext, false),
+    /// The file whose exports these are, as op_import read it (null for a script's own
+    /// `module M`), for the error about a name it doesn't export.
+    exports_of: ?*ObjString = null,
 };
 
 pub const ObjInstance = struct {
