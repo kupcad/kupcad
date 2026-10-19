@@ -318,7 +318,10 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     const copied_slots = caller_locals.len + 1;
     if (func.local_count > copied_slots) {
         const padding = func.local_count - copied_slots;
-        vm.ensureStackCapacity(vm.stack_top + padding) catch return;
+        vm.ensureStackCapacity(vm.stack_top + padding) catch {
+            func.chunk = null;
+            return;
+        };
         for (0..padding) |_| vm.push(value.Value.initNil());
     }
 
@@ -326,11 +329,17 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         .closure = closure,
         .ip = 0,
         .base_slot = repl_base_slot,
-    }) catch return;
+    }) catch {
+        func.chunk = null;
+        return;
+    };
 
     const saved_step = vm.hooks.step;
     vm.hooks.setStep(false);
     const res = vm.runUntil(target_depth);
+    // A lambda typed here holds this closure as its `self` and may outlive eval_chunk (see
+    // VM.interpret); detached before anything allocates
+    func.chunk = null;
     vm.hooks.setStep(saved_step);
 
     if (res == .ok) {

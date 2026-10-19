@@ -17,6 +17,7 @@ fn countObjects(gc: *GC) usize {
     count += gc.symbols.items.len;
     count += gc.arrays.items.len;
     count += gc.maps.items.len;
+    count += gc.json_objects.items.len;
     count += gc.functions.items.len;
     count += gc.classes.items.len;
     count += gc.modules.items.len;
@@ -542,4 +543,19 @@ test "GC: a script runs as before on a VM collected after registering the librar
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
     try testing.expectEqual(@as(usize, 3), vm.globals.get("r").?.asArray().items.items.len);
     try testing.expectApproxEqAbs(@as(f64, 3.14), vm.globals.get("m").?.asNumber(), 1e-9);
+}
+
+test "GC: a top-level def outlives the chunk it ran from, and a collection then reads no freed chunk" {
+    // Every top-level function holds the script closure as its `self`; that closure pointed
+    // at the chunk the caller freed (a session frees each module's), so the next collection
+    // read freed memory: the nightly GC-stress run crashed on a session's second evaluation.
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm, "def f = 1\ng = -> { 2 }"));
+    const g = vm.globals.get("g").?.asClosure();
+    try testing.expect(g.home_self.asClosure().function.chunk == null);
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expectEqual(.ok, try support.runOn(&vm, "r = f() + g.call"));
+    try support.expectValue(.{ .num = 3 }, vm.globals.get("r").?);
 }

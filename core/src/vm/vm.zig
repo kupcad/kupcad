@@ -477,7 +477,20 @@ pub const VM = struct {
         func.owns_chunk = false;
         func.upvalue_count = 0;
         func.local_count = execution_chunk.local_count;
+        const res = self.runScript(func, execution_chunk);
+        // The chunk is the caller's, and may go as soon as this returns, while the script
+        // closure lives on: every top-level `def` and lambda holds it as its `self`
+        // (home_self), so one kept in a global (a module's export, in a session) led the
+        // next collection into a freed chunk. Detached before anything here allocates: a
+        // collection may sweep the function once nothing roots it.
+        func.chunk = null;
+        self.clearUnwindState();
+        self.tidyGeometryGraph();
+        return res;
+    }
 
+    /// Runs `func`, the function of the script `execution_chunk`, from its first instruction.
+    fn runScript(self: *VM, func: *value.ObjFunction, execution_chunk: *chunk.Chunk) InterpretResult {
         // Protect func from GC during allocateClosure
         self.push(value.Value.initObj(&func.obj));
         const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
@@ -507,10 +520,7 @@ pub const VM = struct {
             log.err("Profiler error: {}", .{err});
         };
 
-        const res = self.run();
-        self.clearUnwindState();
-        self.tidyGeometryGraph();
-        return res;
+        return self.run();
     }
 
     /// After an outermost run, when no native holds node indices of its own: releases the
