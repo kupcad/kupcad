@@ -52,7 +52,7 @@ pub fn LazyArray(I: type, T: type) type {
                 inline else => |F, tag| {
                     const i = std.mem.readInt(F, bytes, .big);
                     return switch (tag) {
-                        .@"enum" => @fromBackingInt(i),
+                        .@"enum" => @fromBackingInt(@intCast(i)),
                         .wrapper => .{i},
                         .fancy_wrapper => .{ .inner = i },
                         .flags => @bitCast(i),
@@ -366,7 +366,7 @@ pub const Stream = struct {
             inline else => |F, tag| {
                 const i = std.mem.readInt(F, bytes[0..size], .big);
                 return switch (tag) {
-                    .@"enum" => @fromBackingInt(i),
+                    .@"enum" => @fromBackingInt(@intCast(i)),
                     .wrapper => .{i},
                     .fancy_wrapper => .{ .inner = i },
                     .flags => @bitCast(i),
@@ -549,7 +549,7 @@ pub fn parse_struct_from_data(
     comptime {
         // Check whether T.FromData.SIZE is correct
         var sum = 0;
-        for (@typeInfo(T).@"struct".field_types) |FieldType| sum += size_of(FieldType);
+        for (@typeInfo(T).@"struct".field_types) |F| sum += size_of(F);
         std.debug.assert(T.FromData.SIZE == sum);
     }
 
@@ -557,14 +557,12 @@ pub fn parse_struct_from_data(
     var ret: T = undefined;
 
     // hope it is order of declaration
-    inline for (@typeInfo(T).@"struct".field_names, 0..) |f_name, i| {
-        const FType = @typeInfo(T).@"struct".field_types[i];
-        switch (@typeInfo(FType)) {
-            .void => {},
-            .optional => |o| @field(ret, f_name) = try s.read_optional(o.child),
-            else => @field(ret, f_name) = try s.read(FType),
-        }
-    }
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types) |name, F| switch (@typeInfo(F)) {
+        .void => {},
+        .optional => |o| @field(ret, name) = try s.read_optional(o.child),
+        else => @field(ret, name) = try s.read(F),
+    };
 
     return ret;
 }
@@ -604,7 +602,7 @@ inline fn has_trait(
                 return .{ .flags = F };
             }
 
-            if (s.field_names.len == 1) {
+            if (s.field_types.len == 1) {
                 const F = s.field_types[0];
                 assert_divisible_by_8(F, T);
 

@@ -7,7 +7,8 @@ pub fn build(b: *std.Build) void {
 
     set_up_options(b, mod);
 
-    set_up_testing_exe(b, mod);
+    if (b.pkg_hash.len == 0)
+        set_up_testing_exe(b, mod);
 }
 
 fn set_up_options(
@@ -67,6 +68,9 @@ fn set_up_testing_exe(
 ) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
+    mod.resolved_target = target;
+    mod.optimize = optimize;
 
     const exe = b.addExecutable(.{
         .name = "tests",

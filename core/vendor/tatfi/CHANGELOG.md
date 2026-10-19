@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.4 - 2026-10-02
+
+### Misc
+
+- Upgraded to Zig 0.17.0, using https://github.com/flying-swallow/tatfi/commit/9b0a84353a669595c3bc37d7b998dc185bb7ea44 as guide. Thanks again to Michael Pollind.
+
 ### Fixed
 
 - Fixed `VariationAxis.hidden` flag location. See `ttf-parser` PR: https://github.com/harfbuzz/ttf-parser/pull/216

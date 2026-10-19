@@ -12,58 +12,6 @@ const glyfTable = @import("glyf.zig");
 
 const log = std.log.scoped(.gvar);
 
-const StackFallback = struct {
-    fba: std.heap.FixedBufferAllocator,
-    gpa: std.mem.Allocator,
-
-    pub fn init(buffer: []u8, gpa: std.mem.Allocator) StackFallback {
-        return .{ .fba = std.heap.FixedBufferAllocator.init(buffer), .gpa = gpa };
-    }
-
-    pub fn allocator(self: *StackFallback) std.mem.Allocator {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .alloc = alloc,
-                .resize = resize,
-                .remap = remap,
-                .free = free,
-            },
-        };
-    }
-
-    fn alloc(ctx: *anyopaque, len: usize, ptr_align: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
-        const self: *StackFallback = @ptrCast(@alignCast(ctx));
-        if (self.fba.allocator().rawAlloc(len, ptr_align, ret_addr)) |p| return p;
-        return self.gpa.rawAlloc(len, ptr_align, ret_addr);
-    }
-
-    fn resize(ctx: *anyopaque, buf: []u8, ptr_align: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-        const self: *StackFallback = @ptrCast(@alignCast(ctx));
-        if (self.fba.allocator().rawResize(buf, ptr_align, new_len, ret_addr)) return true;
-        return self.gpa.rawResize(buf, ptr_align, new_len, ret_addr);
-    }
-
-    fn remap(ctx: *anyopaque, buf: []u8, ptr_align: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        const self: *StackFallback = @ptrCast(@alignCast(ctx));
-        if (self.fba.allocator().rawRemap(buf, ptr_align, new_len, ret_addr)) |p| return p;
-        return self.gpa.rawRemap(buf, ptr_align, new_len, ret_addr);
-    }
-
-    fn free(ctx: *anyopaque, buf: []u8, ptr_align: std.mem.Alignment, ret_addr: usize) void {
-        const self: *StackFallback = @ptrCast(@alignCast(ctx));
-        const buf_start = @intFromPtr(self.fba.buffer.ptr);
-        const buf_end = buf_start + self.fba.buffer.len;
-        const ptr_val = @intFromPtr(buf.ptr);
-
-        if (ptr_val >= buf_start and ptr_val < buf_end) {
-            self.fba.allocator().rawFree(buf, ptr_align, ret_addr);
-        } else {
-            self.gpa.rawFree(buf, ptr_align, ret_addr);
-        }
-    }
-};
-
 /// 'The TrueType rasterizer dynamically generates 'phantom' points for each glyph
 /// that represent horizontal and vertical advance widths and side bearings,
 /// and the variation data within the `gvar` table includes data for these phantom points.'
@@ -133,8 +81,8 @@ pub fn phantom_points(
 ) ?lib.PhantomPoints {
     const outline_points = glyf_table.outline_points(glyph_id);
 
-    var stack_buf: [VariationTuples.STACK_ALLOCATION_SIZE]u8 = undefined;
-    var fba_state = StackFallback.init(&stack_buf, gpa);
+    var stack_buf: [cfg.gvar_max_stack_tuples_len]VariationTuple = undefined;
+    var fba_state = std.heap.BufferFirstAllocator.init(@ptrCast(&stack_buf), gpa);
     const fba = fba_state.allocator();
 
     var tuples = VariationTuples.init(fba) catch return null;
@@ -235,8 +183,6 @@ const VariationTuples = struct {
     allocator: std.mem.Allocator,
     /// the ArrayList where the items are
     list: std.ArrayList(VariationTuple),
-
-    const STACK_ALLOCATION_SIZE = cfg.gvar_max_stack_tuples_len * @sizeOf(VariationTuple);
 
     /// input allocator be a stack fallback allocator with size at least
     /// `cfg.gvar_max_stack_tuples_len * @sizeOf(VariationTuple)`
@@ -1491,8 +1437,8 @@ fn outline_var_impl(
     // Instead, we have to manually calculate outline's bbox.
     s.advance(8);
 
-    var stack_buf: [VariationTuples.STACK_ALLOCATION_SIZE]u8 = undefined;
-    var fba_state = StackFallback.init(&stack_buf, gpa);
+    var stack_buf: [cfg.gvar_max_stack_tuples_len]VariationTuple = undefined;
+    var fba_state = std.heap.BufferFirstAllocator.init(@ptrCast(&stack_buf), gpa);
     const fba = fba_state.allocator();
 
     var tuples = VariationTuples.init(fba) catch return error.ParseFail;
