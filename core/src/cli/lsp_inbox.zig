@@ -20,7 +20,7 @@ const Id = lsp.JsonRPCMessage.ID;
 pub const QUIET_PERIOD_MS: i64 = 200;
 
 /// The notifications whose arrival makes running work stale (any request also cancels it).
-const EDIT_METHODS = [_][]const u8{ "textDocument/didChange", "textDocument/didClose" };
+const EDIT_METHODS = [_][]const u8{ "textDocument/didChange", "textDocument/didClose", "workspace/didChangeWatchedFiles" };
 const CANCEL_METHOD = "$/cancelRequest";
 
 /// The server's slow work, run on its thread between messages.

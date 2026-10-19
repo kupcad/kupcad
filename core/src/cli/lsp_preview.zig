@@ -39,6 +39,12 @@ pub const Outcome = union(enum) {
     crashed,
 };
 
+/// Frees what Preview.filesRead gave.
+pub fn freeFiles(allocator: std.mem.Allocator, files: []const []u8) void {
+    for (files) |path| allocator.free(path);
+    allocator.free(files);
+}
+
 pub const Preview = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -47,6 +53,8 @@ pub const Preview = struct {
         setRoot: *const fn (ptr: *anyopaque, root: []const u8) anyerror!void,
         update: *const fn (ptr: *anyopaque, module_path: []const u8, source: []const u8) anyerror!void,
         remove: *const fn (ptr: *anyopaque, module_path: []const u8) anyerror!void,
+        dataFileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!void,
+        filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
         evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
         cancelToken: *const fn (ptr: *anyopaque) *std.atomic.Value(bool),
@@ -65,6 +73,19 @@ pub const Preview = struct {
 
     pub fn remove(self: Preview, module_path: []const u8) !void {
         return self.vtable.remove(self.ptr, module_path);
+    }
+
+    /// The file at `path` (its path in the project), which a run read as data
+    /// (`import_json`, `import_stl`), changed on disk: the modules that read it run again.
+    pub fn dataFileChanged(self: Preview, path: []const u8) !void {
+        return self.vtable.dataFileChanged(self.ptr, path);
+    }
+
+    /// The files the modules' last runs read as data, by their paths in the project, sorted
+    /// and each once (owned by `allocator`; freeFiles frees them): what the editor is asked
+    /// to watch.
+    pub fn filesRead(self: Preview, allocator: std.mem.Allocator) ![][]u8 {
+        return self.vtable.filesRead(self.ptr, allocator);
     }
 
     /// Runs what changed and gives the model of `module_path` (`nothing` in its place unless
@@ -147,6 +168,8 @@ pub const SessionPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
+            .dataFileChanged = dataFileChangedImpl,
+            .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -176,6 +199,32 @@ pub const SessionPreview = struct {
         self.dropHover();
         try self.session.removeModule(module_path);
         _ = self.documents.deleteFile(module_path);
+    }
+
+    pub fn dataFileChanged(self: *SessionPreview, path: []const u8) !void {
+        self.dropHover();
+        _ = try self.session.markDataFileEdited(path);
+    }
+
+    pub fn filesRead(self: *SessionPreview, allocator: std.mem.Allocator) ![][]u8 {
+        var unique: std.StringArrayHashMapUnmanaged(void) = .empty;
+        defer unique.deinit(allocator);
+        for (self.session.nodes.items) |node| {
+            for (node.files_read.items) |path| try unique.put(allocator, path, {});
+        }
+        const files = try allocator.alloc([]u8, unique.count());
+        var copied: usize = 0;
+        errdefer freeFiles(allocator, files[0..copied]);
+        for (unique.keys(), files) |path, *file| {
+            file.* = try allocator.dupe(u8, path);
+            copied += 1;
+        }
+        std.mem.sortUnstable([]u8, files, {}, lessThan);
+        return files;
+    }
+
+    fn lessThan(_: void, a: []u8, b: []u8) bool {
+        return std.mem.order(u8, a, b) == .lt;
     }
 
     /// Evaluates what changed (modules it finished stay evaluated, even when a message
@@ -258,6 +307,12 @@ pub const SessionPreview = struct {
     }
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
+    }
+    fn dataFileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!void {
+        return cast(ptr).dataFileChanged(path);
+    }
+    fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
+        return cast(ptr).filesRead(allocator);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
         return cast(ptr).evaluate(allocator, module_path, want_mesh);

@@ -93,7 +93,31 @@ const Server = struct {
     fn close(self: *Server, uri: []const u8) !void {
         try self.handler.@"textDocument/didClose"(self.arena.allocator(), .{ .textDocument = .{ .uri = uri } });
     }
+
+    /// The editor saw the watched file at `uri` change on disk.
+    fn changeWatched(self: *Server, uri: []const u8) !void {
+        const changes = [_]lsp.types.workspace.FileSystemWatcher.Event{.{ .uri = uri, .type = .Changed }};
+        try self.handler.@"workspace/didChangeWatchedFiles"(self.arena.allocator(), .{ .changes = &changes });
+    }
+
+    /// How many of the messages the server sent hold `text`.
+    fn sent(self: *const Server, text: []const u8) usize {
+        var count: usize = 0;
+        for (self.outbox.messages.items) |m| count += @intFromBool(std.mem.find(u8, m, text) != null);
+        return count;
+    }
+
+    fn volumeOf(self: *Server, module_path: []const u8) !f64 {
+        const id = self.preview.session.workspace.path_to_id.get(module_path) orelse return error.TestExpectedModule;
+        return kernel.volume(self.preview.session.nodes.items[@backingInt(id)].cached_handle orelse return error.TestExpectedModel);
+    }
 };
+
+/// An editor that watches files for the server by paths relative to a folder.
+const WATCHING_EDITOR: lsp.types.ClientCapabilities = .{ .workspace = .{
+    .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = true },
+} };
+const READS_SIZE = "import size from \"./size.json\"\ncube(size[:side])\n";
 
 test "LSP: editing a document logs nothing above debug" {
     // The runner fails a test that logs an error and prints its warnings: the handler used
@@ -425,4 +449,57 @@ test "LSP: a code action fixes the finding on the requested lines" {
         }
     }
     try testing.expectEqual(@as(usize, 1), renames);
+}
+
+test "LSP: saving a data file the document read updates the preview" {
+    // The preview read it once, and showed the old data until the document was edited.
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = WATCHING_EDITOR, .rootUri = "file:///work" });
+    // As the file on disk would be
+    try server.preview.documents.vfs().writeFile("size.json", "{\"side\": 10}");
+    try server.open("file:///work/part.kup", READS_SIZE);
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 1000), try server.volumeOf("part.kup"), 1e-9);
+    // The editor is asked to watch the file, by its path in the workspace folder
+    try testing.expectEqual(@as(usize, 1), server.sent("\"method\":\"client/registerCapability\""));
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"globPattern\":{\"baseUri\":\"file:///work\",\"pattern\":\"size.json\"}") != null);
+    // A run that reads the same files asks nothing more
+    try server.change("file:///work/part.kup", READS_SIZE ++ "# the same files\n");
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), server.sent("\"method\":\"client/registerCapability\""));
+
+    // A change to a file no run read (the extension reports every .kup file) runs nothing
+    try server.changeWatched("file:///work/other.kup");
+    try testing.expect(!server.handler.preview_pending);
+    try server.preview.documents.vfs().writeFile("size.json", "{\"side\": 20}");
+    try server.changeWatched("file:///work/size.json");
+    try testing.expect(server.handler.preview_pending);
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 8000), try server.volumeOf("part.kup"), 1e-9);
+
+    // Once nothing reads it, the editor stops watching it
+    try server.change("file:///work/part.kup", "cube(1)\n");
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), server.sent("\"method\":\"client/unregisterCapability\""));
+    try testing.expectEqual(@as(usize, 1), server.sent("\"method\":\"client/registerCapability\""));
+    try testing.expectEqual(@as(usize, 0), server.handler.watched_files.len);
+}
+
+test "LSP: an editor that can't watch files by relative path isn't asked to" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.preview.documents.vfs().writeFile("size.json", "{\"side\": 10}");
+    try server.open("file:///work/part.kup", READS_SIZE);
+    server.settle();
+    try testing.expectEqual(@as(usize, 0), server.sent("registerCapability"));
+}
+
+test "LSP: a watched file's glob pattern matches only its path" {
+    const pattern = try @import("lsp.zig").globEscaped(testing.allocator, "data/[a]*{b}?.json");
+    defer testing.allocator.free(pattern);
+    try testing.expectEqualStrings("data/[[]a][*][{]b[}][?].json", pattern);
 }

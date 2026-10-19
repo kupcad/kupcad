@@ -11,6 +11,7 @@ const std = @import("std");
 const ast = @import("../core/ast.zig");
 const lsp_preview = @import("lsp_preview.zig");
 const Preview = lsp_preview.Preview;
+const freeFiles = lsp_preview.freeFiles;
 const SessionPreview = lsp_preview.SessionPreview;
 const Outcome = lsp_preview.Outcome;
 const OutcomeTag = std.meta.Tag(Outcome);
@@ -26,6 +27,8 @@ const MAX_FRAME_BYTES: u32 = 1 << 30;
 const IO_BUFFER_BYTES = 64 * 1024;
 /// How often a waiting evaluation looks for a cancel to pass on.
 const CANCEL_POLL_MS = 5;
+/// Between the paths of a `files_read` reply: no path holds it.
+const PATH_SEPARATOR = 0;
 
 pub const Kind = enum(u8) {
     /// root: the workspace folder, which imports read files from.
@@ -40,10 +43,15 @@ pub const Kind = enum(u8) {
     hover,
     /// (empty) Stops the running evaluation; no reply.
     cancel,
-    /// To set_root, update and remove: u8 0 (done) or 1 (failed). To evaluate: u8 the
-    /// outcome's tag, then the GLB for a mesh. To hover: u8 0 (doesn't compile) or 1, then
-    /// the facts.
+    /// To set_root, update, remove and data_changed: u8 0 (done) or 1 (failed). To
+    /// evaluate: u8 the outcome's tag, then the GLB for a mesh. To hover: u8 0 (doesn't
+    /// compile) or 1, then the facts. To files_read: the paths, PATH_SEPARATOR between them.
     reply,
+    // Added after the first kinds, whose values stay as they were.
+    /// path: a file a run read as data changed.
+    data_changed,
+    /// (empty) The files the runs read as data.
+    files_read,
     _,
 };
 
@@ -83,6 +91,31 @@ fn splitPrefixed(payload: []const u8) ![2][]const u8 {
     const len = std.mem.readInt(u32, payload[0..4], .little);
     if (len > payload.len - 4) return error.BadFrame;
     return .{ payload[4..][0..len], payload[4 + len ..] };
+}
+
+/// `files` as a files_read reply: PATH_SEPARATOR between them. Caller owns the result.
+pub fn joinPaths(allocator: std.mem.Allocator, files: []const []const u8) ![]u8 {
+    var joined: std.ArrayList(u8) = .empty;
+    errdefer joined.deinit(allocator);
+    for (files, 0..) |path, i| {
+        if (i > 0) try joined.append(allocator, PATH_SEPARATOR);
+        try joined.appendSlice(allocator, path);
+    }
+    return joined.toOwnedSlice(allocator);
+}
+
+/// The paths of a files_read reply (owned by `allocator`; freeFiles frees them).
+pub fn splitPaths(allocator: std.mem.Allocator, payload: []const u8) ![][]u8 {
+    if (payload.len == 0) return allocator.alloc([]u8, 0);
+    const files = try allocator.alloc([]u8, std.mem.countScalar(u8, payload, PATH_SEPARATOR) + 1);
+    var copied: usize = 0;
+    errdefer freeFiles(allocator, files[0..copied]);
+    var paths = std.mem.splitScalar(u8, payload, PATH_SEPARATOR);
+    while (paths.next()) |path| {
+        files[copied] = try allocator.dupe(u8, path);
+        copied += 1;
+    }
+    return files;
 }
 
 fn u32Bytes(n: u32) [4]u8 {
@@ -127,6 +160,14 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
             try replyStatus(output, preview.update(parts[0], parts[1]));
         },
         .remove => try replyStatus(output, preview.remove(frame.payload)),
+        .data_changed => try replyStatus(output, preview.dataFileChanged(frame.payload)),
+        .files_read => {
+            const files = try preview.filesRead(allocator);
+            defer freeFiles(allocator, files);
+            const joined = try joinPaths(allocator, files);
+            defer allocator.free(joined);
+            try writeFrame(output, .reply, &.{joined});
+        },
         .evaluate => {
             if (frame.payload.len < 1) return error.BadFrame;
             const outcome = preview.evaluate(allocator, frame.payload[1..], frame.payload[0] != 0);
@@ -277,6 +318,8 @@ pub const WorkerPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
+            .dataFileChanged = dataFileChangedImpl,
+            .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -325,6 +368,22 @@ pub const WorkerPreview = struct {
             self.allocator.free(kv.value);
         }
         if (self.worker) |w| self.tell(w, module_path, .remove, &.{module_path}) catch {};
+    }
+
+    /// A worker that isn't running has run nothing that read it: the next one reads it anew.
+    pub fn dataFileChanged(self: *WorkerPreview, path: []const u8) !void {
+        if (self.worker) |w| self.tell(w, path, .data_changed, &.{path}) catch {};
+    }
+
+    /// None while no worker runs: a new one has read nothing yet.
+    pub fn filesRead(self: *WorkerPreview, allocator: std.mem.Allocator) ![][]u8 {
+        const w = self.worker orelse return allocator.alloc([]u8, 0);
+        const reply = self.request(w, .files_read, &.{}) catch |err| {
+            _ = self.ended(w, err, "the files a run read");
+            return allocator.alloc([]u8, 0);
+        };
+        defer self.allocator.free(reply.payload);
+        return splitPaths(allocator, reply.payload);
     }
 
     pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
@@ -445,6 +504,12 @@ pub const WorkerPreview = struct {
     }
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
+    }
+    fn dataFileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!void {
+        return cast(ptr).dataFileChanged(path);
+    }
+    fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
+        return cast(ptr).filesRead(allocator);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
         return cast(ptr).evaluate(allocator, module_path, want_mesh);

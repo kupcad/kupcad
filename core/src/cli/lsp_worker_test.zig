@@ -85,3 +85,48 @@ test "lsp worker: a worker that dies is a crash for the preview, and the next us
     try testing.expect(try preview.hoverFacts(testing.allocator, "part.kup", @fromBackingInt(0)) == null);
     try preview.remove("part.kup");
 }
+
+test "lsp worker: the files a run read reach the server, and a change to one runs its readers again" {
+    const path = "part.kup";
+    const source = "s = import_json(\"b.json\")\ncube(import_json(\"a.json\")[:side])\n";
+    var requests: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer requests.deinit();
+    try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{0}, path });
+    try lsp_worker.writeFrame(&requests.writer, .files_read, &.{});
+    try lsp_worker.writeFrame(&requests.writer, .data_changed, &.{"a.json"});
+
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    // As the files on disk would be
+    try preview.documents.vfs().writeFile("a.json", "{\"side\": 2}");
+    try preview.documents.vfs().writeFile("b.json", "{}");
+    var in: std.Io.Reader = .fixed(requests.written());
+    var replies: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer replies.deinit();
+    try lsp_worker.serve(testing.io, testing.allocator, &preview, &in, &replies.writer);
+
+    var out: std.Io.Reader = .fixed(replies.written());
+    const expected = [_][]const u8{ &.{0}, &.{@backingInt(std.meta.Tag(@import("lsp_preview.zig").Outcome).nothing)}, "a.json\x00b.json", &.{0} };
+    for (expected) |payload| {
+        const reply = try lsp_worker.readFrame(&out, testing.allocator);
+        defer testing.allocator.free(reply.payload);
+        try testing.expectEqual(lsp_worker.Kind.reply, reply.kind);
+        try testing.expectEqualSlices(u8, payload, reply.payload);
+    }
+    const node = preview.session.nodes.items[0];
+    try testing.expect(node.is_stale and node.data_changed);
+}
+
+test "lsp worker: the paths of a files_read reply read back as they were sent" {
+    const cases = [_][]const []const u8{ &.{}, &.{"a.json"}, &.{ "a.json", "data/b c.json", "scan.STL" } };
+    for (cases) |files| {
+        const joined = try lsp_worker.joinPaths(testing.allocator, files);
+        defer testing.allocator.free(joined);
+        const read = try lsp_worker.splitPaths(testing.allocator, joined);
+        defer @import("lsp_preview.zig").freeFiles(testing.allocator, read);
+        try testing.expectEqual(files.len, read.len);
+        for (files, read) |want, got| try testing.expectEqualStrings(want, got);
+    }
+}

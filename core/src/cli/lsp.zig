@@ -20,6 +20,7 @@ const Outcome = @import("outcome.zig").Outcome;
 const lsp_preview = @import("lsp_preview.zig");
 const Preview = lsp_preview.Preview;
 const SessionPreview = lsp_preview.SessionPreview;
+const freeFiles = lsp_preview.freeFiles;
 const lsp_worker = @import("lsp_worker.zig");
 const Args = @import("args.zig").Args;
 const viewport_ws = @import("../daemon/viewport_ws.zig");
@@ -34,6 +35,12 @@ const logger = std.log.scoped(.lsp);
 pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
 /// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
 pub const VIEWPORT_PORT_ENV = "KUPCAD_VIEWPORT_PORT";
+/// What the server's requests to the editor are called (`kupcad/1`, ...), so their answers
+/// are known for its own.
+const REQUEST_ID_PREFIX = "kupcad/";
+/// The registration the data-file watchers are made under (Handler.watchFilesRead).
+const WATCH_REGISTRATION_ID = REQUEST_ID_PREFIX ++ "data-files";
+const WATCHED_FILES_METHOD = "workspace/didChangeWatchedFiles";
 
 pub const USAGE =
     \\Usage: kupcad lsp
@@ -103,6 +110,36 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
     return ctx;
 }
 
+/// `client/registerCapability` of the data-file watchers, as it is sent.
+const WatchRegistrations = struct {
+    registrations: []const Registration,
+
+    const Registration = struct {
+        id: []const u8,
+        method: []const u8,
+        registerOptions: struct { watchers: []const Watcher },
+    };
+    /// A file by its path relative to the workspace folder, `baseUri`.
+    const Watcher = struct { globPattern: struct { baseUri: []const u8, pattern: []const u8 } };
+};
+
+/// `client/unregisterCapability`, as it is sent (`unregisterations` is the protocol's spelling).
+const WatchUnregistrations = struct {
+    unregisterations: []const struct { id: []const u8, method: []const u8 },
+};
+
+/// `path` as a glob pattern matching only it: a glob's own characters are put in brackets
+/// (`[*]`). A `]` on its own is no glob character. Caller owns the result.
+pub fn globEscaped(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    for (path) |c| switch (c) {
+        '*', '?', '[', '{', '}' => try out.print(allocator, "[{c}]", .{c}),
+        else => try out.append(allocator, c),
+    };
+    return out.toOwnedSlice(allocator);
+}
+
 /// A diagnostic as `textDocument/publishDiagnostics` sends it.
 const PublishedDiagnostic = struct {
     const Position = lsp.types.Position;
@@ -130,6 +167,16 @@ pub const Handler = struct {
     /// The workspace folder the editor opened (absolute, owned): documents are known by
     /// their path relative to it, so their relative imports find each other.
     root: ?[]u8 = null,
+    /// The workspace folder as the editor named it (owned): the base the data-file watchers
+    /// are relative to.
+    root_uri: ?[]u8 = null,
+    /// The editor can be asked to watch files, by paths relative to a folder
+    /// (`workspace.didChangeWatchedFiles` with dynamic registration and relative patterns).
+    can_watch_files: bool = false,
+    /// The data files the editor watches for the preview (owned, sorted; watchFilesRead).
+    watched_files: [][]u8 = &.{},
+    /// The number of the last request the server sent the editor.
+    last_request: u32 = 0,
     /// The module path of the document last edited, whose mesh the viewport shows (owned).
     preview_module: ?[]u8 = null,
     /// An edit hasn't been evaluated yet.
@@ -191,6 +238,7 @@ pub const Handler = struct {
         const path = try documentPath(scratch.allocator(), root_uri) orelse return;
         const trimmed = std.mem.trimEnd(u8, path, "/");
         self.root = try self.allocator.dupe(u8, trimmed);
+        self.root_uri = try self.allocator.dupe(u8, root_uri);
         try self.preview.setRoot(trimmed);
     }
 
@@ -208,11 +256,69 @@ pub const Handler = struct {
             },
             .nothing, .failed => {},
             // Stopped by a message: run again once the editor is quiet. The modules it
-            // finished stay evaluated, so the next run picks up where it stopped.
-            .cancelled => self.preview_pending = true,
+            // finished stay evaluated, so the next run picks up where it stopped (and
+            // tells which files they all read).
+            .cancelled => {
+                self.preview_pending = true;
+                return;
+            },
             // The worker running it ended (tellOfCrash says so); the next edit starts another.
-            .crashed => {},
+            .crashed => return,
         }
+        self.watchFilesRead();
+    }
+
+    /// Asks the editor to watch the files the preview's runs read as data (`import_json`,
+    /// `import_stl`), when they differ from those it watches: saving one then runs the
+    /// modules that read it again (`workspace/didChangeWatchedFiles`). The preview read them
+    /// once, and showed the old data until the document was edited.
+    fn watchFilesRead(self: *Handler) void {
+        if (!self.can_watch_files) return;
+        const root_uri = self.root_uri orelse return;
+        const files = self.preview.filesRead(self.allocator) catch |err| {
+            logger.warn("Could not learn which files the preview read: {}", .{err});
+            return;
+        };
+        if (sameFiles(files, self.watched_files)) return freeFiles(self.allocator, files);
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        self.sendWatchers(arena.allocator(), root_uri, files) catch |err| {
+            logger.warn("Could not ask the editor to watch the files the preview read: {}", .{err});
+            return freeFiles(self.allocator, files);
+        };
+        freeFiles(self.allocator, self.watched_files);
+        self.watched_files = files;
+    }
+
+    /// Replaces the watchers registered for the data files with ones for `files`.
+    fn sendWatchers(self: *Handler, arena: std.mem.Allocator, root_uri: []const u8, files: []const []u8) !void {
+        if (self.watched_files.len > 0) {
+            try self.sendRequest(arena, "client/unregisterCapability", WatchUnregistrations, .{
+                .unregisterations = &.{.{ .id = WATCH_REGISTRATION_ID, .method = WATCHED_FILES_METHOD }},
+            });
+        }
+        if (files.len == 0) return;
+        const watchers = try arena.alloc(WatchRegistrations.Watcher, files.len);
+        for (files, watchers) |path, *watcher| {
+            watcher.* = .{ .globPattern = .{ .baseUri = root_uri, .pattern = try globEscaped(arena, path) } };
+        }
+        try self.sendRequest(arena, "client/registerCapability", WatchRegistrations, .{ .registrations = &.{.{
+            .id = WATCH_REGISTRATION_ID,
+            .method = WATCHED_FILES_METHOD,
+            .registerOptions = .{ .watchers = watchers },
+        }} });
+    }
+
+    fn sendRequest(self: *Handler, arena: std.mem.Allocator, method: []const u8, comptime Params: type, params: Params) !void {
+        self.last_request += 1;
+        const id = try arena.print(REQUEST_ID_PREFIX ++ "{d}", .{self.last_request});
+        try self.transport.writeRequest(self.io, arena, .{ .string = id }, method, Params, params, .{});
+    }
+
+    fn sameFiles(a: []const []const u8, b: []const []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |x, y| if (!std.mem.eql(u8, x, y)) return false;
+        return true;
     }
 
     /// Tells the user the process running scripts ended, whichever call noticed: they would
@@ -244,6 +350,8 @@ pub const Handler = struct {
     pub fn deinit(self: *Handler) void {
         if (self.preview_module) |m| self.allocator.free(m);
         if (self.root) |r| self.allocator.free(r);
+        if (self.root_uri) |r| self.allocator.free(r);
+        freeFiles(self.allocator, self.watched_files);
         var it = self.files.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.deinit(self.allocator);
@@ -272,6 +380,10 @@ pub const Handler = struct {
                 break;
             }
         }
+
+        if (request.capabilities.workspace) |workspace| if (workspace.didChangeWatchedFiles) |watched| {
+            self.can_watch_files = (watched.dynamicRegistration orelse false) and (watched.relativePatternSupport orelse false);
+        };
 
         const server_capabilities = serverCapabilities(self.offset_encoding);
         if (builtin.mode == .debug) {
@@ -407,6 +519,33 @@ pub const Handler = struct {
         defer closed.deinit(self.allocator);
         defer self.tellOfCrash();
         try self.preview.remove(closed.module_path);
+    }
+
+    /// A file the editor watches for the preview (watchFilesRead) was saved, created or
+    /// deleted: the modules that read it run again once the editor is quiet. The extension
+    /// also reports every `.kup` file it sees change, which no run read as data.
+    pub fn @"workspace/didChangeWatchedFiles"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.workspace.did_change_watched_files.Params,
+    ) !void {
+        defer self.tellOfCrash();
+        var changed = false;
+        for (params.changes) |change| {
+            const path = try self.modulePath(arena, change.uri);
+            if (!self.watches(path)) continue;
+            logger.debug("Watched file changed: {s}", .{path});
+            try self.preview.dataFileChanged(path);
+            changed = true;
+        }
+        if (changed and self.preview_module != null) self.preview_pending = true;
+    }
+
+    fn watches(self: *const Handler, path: []const u8) bool {
+        for (self.watched_files) |watched| {
+            if (std.mem.eql(u8, watched, path)) return true;
+        }
+        return false;
     }
 
     pub fn @"textDocument/formatting"(
@@ -791,11 +930,20 @@ pub const Handler = struct {
         }, .{});
     }
 
+    /// The editor's answer to a request: the server's own (sendRequest) need saying only
+    /// when refused.
     pub fn onResponse(
         _: *Handler,
         _: std.mem.Allocator,
         response: lsp.JsonRPCMessage.Response,
     ) void {
+        if (response.id) |id| if (id == .string and std.mem.startsWith(u8, id.string, REQUEST_ID_PREFIX)) {
+            switch (response.result_or_error) {
+                .result => {},
+                .@"error" => |refusal| logger.warn("The editor refused request {s}: {s}", .{ id.string, refusal.message }),
+            }
+            return;
+        };
         logger.warn("Received unexpected response: {?}", .{response.id});
     }
 };
