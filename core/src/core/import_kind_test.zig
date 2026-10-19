@@ -68,9 +68,12 @@ test "import kind: a `with { }` it can't take, or a file import naming several v
         .{ .source = "import m from \"./m.dat\" with { type: kind }", .message = "An import's `type` is a string or a symbol, as in `type: \"json\"`" },
         .{ .source = "import m from \"./m.yml\" with { type: \"yaml\" }", .message = "An import's `type` is \"kup\", \"stl\", \"step\" or \"json\", not \"yaml\"" },
         .{ .source = "export { a } from \"./a.kup\" with { version: 2 }", .message = "An import's `with { }` takes only `type`, not `version`" },
-        .{ .source = "import { gears, frame } from \"./machine.json\"", .message = "A file (type \"json\") gives one value; name one variable for it" },
+        // In braces a name would read as a key it picks: it was bound to the whole file
+        .{ .source = "import { teeth } from \"./gears.json\"", .message = "A file (type \"json\") gives one value: name it without braces, as in `import gears from \"./gears.json\"`" },
+        .{ .source = "import { gears, frame } from \"./machine.json\"", .message = "A file (type \"json\") gives one value: name it without braces, as in `import gears from \"./gears.json\"`" },
+        .{ .source = "export { machine } from \"./machine.json\"", .message = "A file (type \"json\") gives one value: name it without braces, as in `import gears from \"./gears.json\"`" },
         .{ .source = "import a, b from \"./m.dat\" with { type: \"stl\" }", .message = "A file (type \"stl\") gives one value; name one variable for it" },
-        .{ .source = "export { a, b } from \"./m.json\"", .message = "A file (type \"json\") gives one value; name one variable for it" },
+        .{ .source = "export a, b from \"./m.json\"", .message = "A file (type \"json\") gives one value; name one variable for it" },
     };
     for (cases) |case| {
         errdefer std.debug.print("source: {s}\n", .{case.source});

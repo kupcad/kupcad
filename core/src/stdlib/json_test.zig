@@ -54,6 +54,8 @@ test "import_json: an object's keys are found by String and by Symbol, all the w
         // A missing key is nil, as a Map's is; a Symbol no String was ever made of too
         case(LOAD ++ "r = d[:a_name_no_string_has] == nil && d[\"missing\"] == nil", .{ .boolean = true }),
         case("r = import_json(\"list.json\")[0][:a] + import_json(\"list.json\")[1] + import_json(\"n.json\")", .{ .num = 45 }),
+        // A file that is a list: an Array, the objects in it JsonObjects
+        case("l = import_json(\"list.json\")\nr = \"#{l.class} #{l[0].class} #{l[1].class}\"", .{ .str = "Array JsonObject Number" }),
         case("r = import_json(\"u.json\")[\"größe\"]", .{ .num = 2 }),
         case("r = import_json(\"u.json\")[:big]", .{ .num = 1.2345678901234568e29 }),
         // `import name from "file.json"` reads it the same way

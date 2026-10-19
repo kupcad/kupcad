@@ -980,7 +980,7 @@ test "Compiler: compiles STL asset import interception" {
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    // AST: import { shape } from "model.stl"
+    // AST: import shape from "model.stl"
     const path_str = try b.intern("model.stl");
     const shape_sym = try b.intern("shape");
     // Wrap the symbol in the AliasPair struct

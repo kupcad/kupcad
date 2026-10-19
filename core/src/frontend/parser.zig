@@ -820,8 +820,9 @@ pub const Parser = struct {
         var path_node: ast.StringId = .none;
         var attributes: ast.NodeIndex = .none;
         var has_from = false;
+        const braced = self.tag(0) == .l_brace;
 
-        if (self.tag(0) == .l_brace) {
+        if (braced) {
             self.advance();
             while (self.tag(0) != .r_brace and self.tag(0) != .eof) {
                 self.skipIgnored();
@@ -864,9 +865,13 @@ pub const Parser = struct {
                 self.advance();
                 attributes = try self.parseHashLiteral();
             }
+            // A file gives one value, named bare: in braces, a name reads as a key or an export
+            // it would pick (`import { teeth } from "./gears.json"` was the whole file)
             const kind = self.importKind(attributes, path_node);
             const names = self.scratch_alias_pairs.items.len - s_len;
-            if (kind != .module and names > 1) {
+            if (kind != .module and braced) {
+                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value: name it without braces, as in `import gears from \"./gears.json\"`", .{kind.typeName()});
+            } else if (kind != .module and names > 1) {
                 self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
             }
         } else if (!is_export) {

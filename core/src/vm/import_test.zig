@@ -1404,7 +1404,7 @@ test "VM: a re-export gives the importer another file's names, not its own" {
     const support = @import("../test_support.zig");
     const files = [_]support.ScriptFile{
         .{ .path = "lib.kup", .data = "side = 10\nexport side\n" },
-        .{ .path = "mid.kup", .data = "side = 99\nexport { side } from \"./lib.kup\"\nexport { side as width } from \"./lib.kup\"\nexport { machine } from \"./machine.json\"\n" },
+        .{ .path = "mid.kup", .data = "side = 99\nexport { side } from \"./lib.kup\"\nexport { side as width } from \"./lib.kup\"\nexport machine from \"./machine.json\"\n" },
         .{ .path = "machine.json", .data = "{\"teeth\": 12}" },
         .{ .path = "plain.kup", .data = "export { side } from \"./lib.kup\"\n" },
     };
