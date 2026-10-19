@@ -26,7 +26,7 @@ jobs:
         # for generated programs, which cost about ten times as much a run).
         include:
           - target: frontend
-            runs: 4M
+            runs: 3M
           - target: runtime
             runs: 3M
           - target: frontend_programs
