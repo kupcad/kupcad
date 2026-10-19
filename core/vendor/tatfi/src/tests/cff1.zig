@@ -1092,6 +1092,38 @@ test "invalid_char_string_offset" {
 // [RazrFalcon] TODO: HORIZONTAL_STEM_HINT_MASK
 // [RazrFalcon] TODO: HINT_MASK
 // [RazrFalcon] TODO: COUNTER_MASK
+
+// [KupCAD] A width before hintmask or cntrmask was read from the stack after it was cleared:
+// an index out of bounds (found by KupCAD's font fuzz target)
+test "hint_mask_with_width" {
+    try test_cs(
+        &.{
+            .{ .cff_int = 5 }, // the width: an odd value before the mask
+            .{ .unt8 = operator.HINT_MASK }, // no stems, so no mask bytes
+            .{ .cff_int = 10 },
+            .{ .cff_int = 20 },
+            .{ .unt8 = operator.MOVE_TO },
+            .{ .unt8 = operator.ENDCHAR },
+        },
+        "M 10 20 Z ",
+        rect(10, 20, 10, 20),
+    );
+}
+
+test "counter_mask_with_width" {
+    try test_cs(
+        &.{
+            .{ .cff_int = 5 },
+            .{ .unt8 = operator.COUNTER_MASK },
+            .{ .cff_int = 10 },
+            .{ .cff_int = 20 },
+            .{ .unt8 = operator.MOVE_TO },
+            .{ .unt8 = operator.ENDCHAR },
+        },
+        "M 10 20 Z ",
+        rect(10, 20, 10, 20),
+    );
+}
 // [RazrFalcon] TODO: VERTICAL_STEM_HINT_MASK
 // [RazrFalcon] TODO: CURVE_LINE
 // [RazrFalcon] TODO: LINE_CURVE

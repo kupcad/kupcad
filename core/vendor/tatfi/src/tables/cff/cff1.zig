@@ -773,14 +773,15 @@ fn parse_char_string_recursive(
             .hint_mask, .counter_mask => {
                 var len = p.stack.items.len;
 
-                // We are ignoring the hint operators.
-                p.stack.clearRetainingCapacity();
-
-                // If the stack length is uneven, than the first value is a `width`.
+                // If the stack length is uneven, than the first value is a `width`. Read before
+                // the stack is cleared: ttf-parser's clear keeps the values, Zig's doesn't.
                 if (len & 1 != 0) {
                     len -= 1;
                     if (ctx.width == null) ctx.width = p.stack.items[0];
                 }
+
+                // We are ignoring the hint operators.
+                p.stack.clearRetainingCapacity();
                 ctx.stems_len += @as(u32, @truncate(len)) >> 1;
                 s.advance((ctx.stems_len + 7) >> 3);
             },

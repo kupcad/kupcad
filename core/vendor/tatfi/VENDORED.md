@@ -22,6 +22,10 @@ tests couldn't run in KupCAD's target and mode.
   kerning) read past its record and was never found. A value record's Device offsets are taken
   from the start of the PairSet table, as the spec has them, not from past its count.
   `src/tests/gpos.zig` checks both.
+- `src/tables/cff/cff1.zig`: a `hintmask` or `cntrmask` after an odd number of operands reads
+  the glyph's width before it clears the operand stack. It read it after, an index out of
+  bounds: ttf-parser's `clear` keeps the values, Zig's `clearRetainingCapacity` doesn't.
+  `src/tests/cff1.zig` has a test of each (KupCAD's font fuzz target found it).
 
 ## Updating
 
