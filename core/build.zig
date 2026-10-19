@@ -5,6 +5,9 @@ const TestGroup = @import("src/test_group.zig").TestGroup;
 /// (which also checks that every example there is listed here).
 const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "standoff", "text" };
 
+/// Variation tuples tatfi's gvar keeps on the stack before it takes the heap (its default).
+const TATFI_GVAR_STACK_TUPLES = 32;
+
 const clipper_sources = &[_][]const u8{
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp",
     "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.offset.cpp",
@@ -193,6 +196,32 @@ const kupcad_bindings = &[_][]const u8{
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
+/// The tables tatfi reads besides the required ones, its build options (vendor/tatfi/build.zig).
+const TatfiFeatures = struct {
+    /// avar, CFF2, fvar, gvar, HVAR, MVAR and VVAR
+    variable_fonts: bool = true,
+    /// GDEF, GPOS, GSUB and MATH
+    opentype_layout: bool = true,
+    /// ankr, feat, kerx, morx, trak and kern's format 1
+    apple_layout: bool = true,
+};
+
+/// tatfi as a module of this build, reading the tables of `features`. It is made here, not
+/// by its own build.zig, whose module has no target as a dependency: its tests run in this
+/// build's target and mode, as the rest do.
+fn tatfiModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.lang.Optimize, features: TatfiFeatures) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("vendor/tatfi/src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const config = b.addOptions();
+    inline for (@typeInfo(TatfiFeatures).@"struct".field_names) |name| config.addOption(bool, name, @field(features, name));
+    config.addOption(usize, "gvar_max_stack_tuples_len", TATFI_GVAR_STACK_TUPLES);
+    module.addOptions("config", config);
+    return module;
+}
+
 /// What every module rooted at src/root.zig links and imports besides `module_imports`:
 /// the kupcad module and each test group's.
 const Core = struct {
@@ -276,26 +305,9 @@ pub fn build(b: *std.Build) void {
         "Enable multi-threaded parallel backend via Intel TBB",
     ) orelse !is_wasm;
 
-    // --- Add tatfi dependency ---
-    const use_vendored_tatfi = true;
-
-    const tatfi_mod = if (use_vendored_tatfi) blk: {
-        const t_mod = b.createModule(.{
-            .root_source_file = b.path("vendor/tatfi/src/lib.zig"),
-            .target = active_target,
-            .optimize = optimize,
-        });
-
-        // tatfi requires a "config" options module
-        const tatfi_opts = b.addOptions();
-        tatfi_opts.addOption(bool, "variable_fonts", true);
-        tatfi_opts.addOption(bool, "opentype_layout", true);
-        tatfi_opts.addOption(bool, "apple_layout", true);
-        tatfi_opts.addOption(usize, "gvar_max_stack_tuples_len", 32);
-
-        t_mod.addOptions("config", tatfi_opts);
-        break :blk t_mod;
-    } else b.dependency("tatfi", .{}).module("tatfi");
+    // The font parser (vendor/tatfi), for text: the embedded fonts' outlines, advances and
+    // kerning, which is in their GPOS tables. None of them is variable or has Apple tables.
+    const tatfi_mod = tatfiModule(b, active_target, optimize, .{ .variable_fonts = false, .apple_layout = false });
 
     // --- list all deps ---
     const module_imports: []const std.Build.Module.Import = &.{
@@ -626,14 +638,12 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_exe_tests.step);
         test_step.dependOn(&run_cli_tests.step);
 
-        if (use_vendored_tatfi) {
-            const tatfi_tests = b.addTest(.{
-                .root_module = tatfi_mod,
-                .filters = test_filters,
-            });
-            const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
-            test_step.dependOn(&run_tatfi_tests.step);
-        }
+        // tatfi's own tests, with every table it reads
+        const tatfi_tests = b.addTest(.{
+            .root_module = tatfiModule(b, target, optimize, .{}),
+            .filters = test_filters,
+        });
+        test_step.dependOn(&b.addRunArtifact(tatfi_tests).step);
 
         // `zig build fuzz --fuzz=<runs>` searches from the fuzz corpus with the front end's
         // and the runtime's fuzz tests (src/frontend/fuzz_test.zig, src/vm/fuzz_test.zig),

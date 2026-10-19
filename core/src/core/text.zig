@@ -204,9 +204,6 @@ pub fn extractText(
         },
     };
 
-    const GpaType = @typeInfo(@TypeOf(tatfi.Face.glyph_hor_advance)).@"fn".param_types[1].?;
-    const gpa_val: GpaType = if (GpaType == void) {} else allocator;
-
     // Checked, not assumed: the iterator asserts on a malformed sequence.
     const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
     var iter = view.iterator();
@@ -215,12 +212,12 @@ pub fn extractText(
         // empty sketch. firstMissingGlyph names it.
         const glyph_id = face.glyph_index(cp) orelse return error.MissingGlyph;
         // Extract outlines and route to flattener
-        _ = face.outline_glyph(gpa_val, glyph_id, builder);
+        _ = face.outline_glyph({}, glyph_id, builder);
         if (ctx.failed) return error.OutOfMemory;
         try ctx.flushContour();
 
         // Advance cursor for next letter
-        if (face.glyph_hor_advance(gpa_val, glyph_id)) |adv| {
+        if (face.glyph_hor_advance({}, glyph_id)) |adv| {
             ctx.cursor_x += @as(f64, @floatFromInt(adv)) * scale;
         }
     }
