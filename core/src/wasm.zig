@@ -147,11 +147,21 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
     return try out.toOwnedSlice();
 }
 
-fn inner_build_model(source: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
+fn inner_build_model(source: []const u8, params_json: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
     // File access still goes through the in-memory VFS override; the Io is only used for
     // clocks/stdio by stdlib diagnostics and the debugger.
     const export_format = api.ExportFormat.parse(format) orelse return error.UnsupportedFormat;
-    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .vfs = getMemVfs().vfs(), .diagnostic = diagnostic });
+    var params: api.ParamValues = .{};
+    defer params.deinit(allocator);
+    if (params_json.len > 0) params.putJson(allocator, params_json, &diagnostic.message) catch |err| {
+        // Told apart from the script's own errors: "parameters: line 1, column 3: invalid JSON"
+        if (diagnostic.message) |why| {
+            defer allocator.free(why);
+            diagnostic.message = allocator.print("parameters: {s}", .{why}) catch null;
+        }
+        return err;
+    };
+    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = getMemVfs().vfs(), .diagnostic = diagnostic });
 }
 
 // --- WASM Export Boundaries ---
@@ -194,21 +204,27 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize, out_le
     }
 }
 
+/// Builds `source` with the parameter values in `params` (a JSON object of names and
+/// numbers, strings or booleans, as `kupcad build -P` reads; empty for none) and exports it
+/// as `format`.
 pub export fn build_model_wasm(
     source_ptr: [*]const u8,
     source_len: usize,
+    params_ptr: [*]const u8,
+    params_len: usize,
     format_ptr: [*]const u8,
     format_len: usize,
     use_draco: bool,
     out_len: *usize,
 ) ?[*]const u8 {
     const source = source_ptr[0..source_len];
+    const params = params_ptr[0..params_len];
     const format = format_ptr[0..format_len];
 
     var diagnostic: api.BuildDiagnostic = .{};
     defer diagnostic.deinit(allocator);
 
-    if (inner_build_model(source, format, use_draco, &diagnostic)) |res| {
+    if (inner_build_model(source, params, format, use_draco, &diagnostic)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {

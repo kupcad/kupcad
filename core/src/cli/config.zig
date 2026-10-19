@@ -6,6 +6,7 @@ const std = @import("std");
 const fs = @import("fs.zig");
 const FmtConfig = @import("../tools/fmt/config.zig").Config;
 const LintConfig = @import("../tools/lint/config.zig").Config;
+const json_input = @import("../core/json_input.zig");
 
 // Shares the frontend's cap so the CLI never accepts a file the parser would reject.
 pub const MAX_FILE_SIZE = @import("../core/limits.zig").MAX_SOURCE_BYTES;
@@ -22,19 +23,12 @@ pub const ProjectConfig = struct {
     /// bad value: a mistyped rule (`"unused-variabel": "off"`) used to be ignored silently.
     /// `where`, if given, receives the 1-based line and column the parse stopped at.
     pub fn parse(allocator: std.mem.Allocator, source: []const u8, where: ?*Position) !ProjectConfig {
-        var scanner = std.json.Scanner.initCompleteInput(allocator, source);
-        defer scanner.deinit();
-        var diagnostics: std.json.Diagnostics = .{};
-        scanner.enableDiagnostics(&diagnostics);
-        const parsed = std.json.parseFromTokenSource(ProjectConfig, allocator, &scanner, .{}) catch |err| {
-            if (where) |w| w.* = .{ .line = diagnostics.getLine(), .column = diagnostics.getColumn() };
-            return err;
-        };
+        const parsed = try json_input.parse(ProjectConfig, allocator, source, where);
         defer parsed.deinit();
         return parsed.value;
     }
 
-    pub const Position = struct { line: u64, column: u64 };
+    pub const Position = json_input.Position;
 
     /// The settings that hold for the script at `script_path`: the nearest .kupcad.json in
     /// its folder or above (as `find` looks), the defaults when there is none. A file that
@@ -73,8 +67,7 @@ pub const ProjectConfig = struct {
         return switch (err) {
             error.UnknownField => "unknown setting (see the lint rules with `kupcad check --help`)",
             error.InvalidEnumTag => "unknown value (a lint rule's level is off, info, warning or error)",
-            error.SyntaxError, error.UnexpectedEndOfInput => "invalid JSON",
-            else => @errorName(err),
+            else => json_input.describeSyntaxError(err) orelse @errorName(err),
         };
     }
 };

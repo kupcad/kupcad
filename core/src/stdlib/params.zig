@@ -15,7 +15,9 @@ const string_param = @import("../core/params/string.zig");
 const choice_param = @import("../core/params/choice.zig");
 
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
-/// declares it, taking the host's injected value (`--param name=v`) over the default.
+/// declares it, taking the host's value (`-p name=text`, `-P file.json`) over the default
+/// and reading it as the default's type: text from `-p` becomes a number, a boolean, a
+/// String or a Symbol as the parameter is one.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     const parsed = try util.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
     if (parsed.positional.len != 1) {
@@ -74,9 +76,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     // --- MODULAR NORMALIZATION & VALIDATION ---
     switch (p_type) {
         .number => {
-            const num = number_param.normalize(injected_val) catch {
-                return vm.fail(.TypeError, "parameter :{s} expects a number", .{sym_chars});
-            };
+            const num = number_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a number", injected_val);
             injected_val = value.Value.initNumber(num);
 
             number_param.validate(num, min_val, max_val) catch |err| {
@@ -88,16 +88,19 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
             };
         },
         .boolean => {
-            const b = boolean_param.normalize(injected_val) catch {
-                return vm.fail(.TypeError, "parameter :{s} expects true or false", .{sym_chars});
-            };
+            const b = boolean_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "true or false", injected_val);
             injected_val = value.Value.initBool(b);
         },
-        .string, .symbol => {
-            const str = string_param.normalize(injected_val) catch {
-                return vm.fail(.TypeError, "parameter :{s} expects a String", .{sym_chars});
-            };
+        // A symbol parameter's value is a Symbol: a String compared unequal to the symbols in
+        // its `in:` choices, so `param(:size, default: :m3, validate: { in: [:m3, :m4] })`
+        // refused even its own default.
+        .string => {
+            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a String", injected_val);
             injected_val = try vm.allocateString(str);
+        },
+        .symbol => {
+            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a Symbol", injected_val);
+            injected_val = try vm.allocateSymbol(str);
         },
     }
 
@@ -128,4 +131,11 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     }
 
     return injected_val;
+}
+
+/// The TypeError for a value parameter `name` can't take: "parameter :w expects a number,
+/// got "abc"", the text quoted as `-p` gave it.
+fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{RuntimeError} {
+    if (got.isString()) return vm.fail(.TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
+    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, util.typeName(vm, got) });
 }

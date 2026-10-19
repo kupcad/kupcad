@@ -1,4 +1,4 @@
-//! `kupcad build`: runs a script with its `--param` values and the project's memory limit,
+//! `kupcad build`: runs a script with its parameter values (`-p`, `-P`) and the project's memory limit,
 //! then exports its final geometry as STL, GLB, glTF or STEP (B-Rep kernel for STEP), the
 //! format picked from `--format` or the `-o` extension. Entry points `execute` and `run`.
 
@@ -25,7 +25,11 @@ pub const USAGE =
     \\  -o, --output <file>       Output path; its extension picks the format
     \\                            (.stl, .glb, .gltf, .step, .stp)
     \\  -f, --format <name>       stl, glb, gltf or step (glb when there is no -o)
-    \\  -p, --param <name=value>  Value for param(:name); repeatable
+    \\  -p, --param <name=value>  Value for param(:name), read as the type its default
+    \\                            has; repeatable
+    \\  -P, --params <file.json>  Values for parameters, a JSON object of names and
+    \\                            numbers, strings or booleans; repeatable. Of two
+    \\                            values for one parameter the later (-p or -P) wins
     \\  -d, --draco               Compress glb and gltf meshes with Draco
     \\  -h, --help                Show this help
     \\
@@ -89,14 +93,33 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
     return null;
 }
 
-/// `name=value` from `--param`: the name is everything before the first `=`, so
-/// `w=1=2` is a bad number rather than `w=1`, and the value is finite, as script numbers are.
-fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName, NotANumber }!struct { name: []const u8, value: f64 } {
+/// `name=value` from `--param`: the name is everything before the first `=`, so `w=1=2` is
+/// the text "1=2" for `w`. The text is read as the parameter's type when the script runs
+/// (`param()`), which knows it.
+fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName }!struct { name: []const u8, text: []const u8 } {
     const eq = std.mem.findScalar(u8, pair, '=') orelse return error.MissingEquals;
     if (eq == 0) return error.EmptyName;
-    const val = std.fmt.parseFloat(f64, pair[eq + 1 ..]) catch return error.NotANumber;
-    if (!std.math.isFinite(val)) return error.NotANumber;
-    return .{ .name = pair[0..eq], .value = val };
+    return .{ .name = pair[0..eq], .text = pair[eq + 1 ..] };
+}
+
+/// Reads the parameter file at `path` (`-P`) into `params`; false, the refusal reported, when
+/// it can't be read or isn't one JSON object of names and values.
+fn readParamsFile(allocator: std.mem.Allocator, path: []const u8, params: *api.ParamValues, reporter: Reporter) !bool {
+    const text = fs.readFileLimit(reporter.io, allocator, path, MAX_FILE_SIZE) catch |err| {
+        reporter.err("Error: Could not read parameter file '{s}': {s}\n", .{ path, @errorName(err) });
+        return false;
+    };
+    defer allocator.free(text);
+    var why: ?[]u8 = null;
+    defer if (why) |w| allocator.free(w);
+    params.putJson(allocator, text, &why) catch |err| switch (err) {
+        error.InvalidParams => {
+            reporter.err("Error: {s}: {s}\n", .{ path, why orelse "not a parameter file" });
+            return false;
+        },
+        else => |e| return e,
+    };
+    return true;
 }
 
 pub const Outcome = @import("outcome.zig").Outcome;
@@ -126,9 +149,9 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var explicit_format: ?Format = null;
     var use_draco: bool = false;
 
-    // Store CLI parameters (e.g., --param width=50) temporarily to inject them later
-    var cli_params = std.StringHashMap(f64).init(allocator);
-    defer cli_params.deinit();
+    // The values `-p` and `-P` give, in order: the later of two for one parameter wins
+    var params: api.ParamValues = .{};
+    defer params.deinit(allocator);
 
     // --- 1. Parse Command Line Arguments ---
     while (args_iter.next()) |arg| {
@@ -141,11 +164,16 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 switch (err) {
                     error.MissingEquals => reporter.err("Error: Invalid param format. Use --param key=value.\n", .{}),
                     error.EmptyName => reporter.err("Error: Param '{s}' has no name. Use --param key=value.\n", .{pair}),
-                    error.NotANumber => reporter.err("Error: Param value must be a finite number. Got '{s}'\n", .{pair[std.mem.findScalar(u8, pair, '=').? + 1 ..]}),
                 }
                 return .failure;
             };
-            try cli_params.put(param.name, param.value);
+            try params.put(allocator, param.name, .{ .text = param.text });
+        } else if (std.mem.eql(u8, arg, "-P") or std.mem.eql(u8, arg, "--params")) {
+            const path = args_iter.next() orelse {
+                reporter.err("Error: Missing parameter file after {s}\n", .{arg});
+                return .failure;
+            };
+            if (!try readParamsFile(allocator, path, &params, reporter)) return .failure;
         } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
             output_path = args_iter.next() orelse {
                 reporter.err("Error: Missing output path after {s}\n", .{arg});
@@ -212,7 +240,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
         return .failure;
     };
 
-    try session.setParams(cli_params.unmanaged);
+    session.setParams(&params);
     session.vm.debugger_handler = debug.terminalDebugger(io);
     // The project's memory sandbox (`vm_memory_limit` in .kupcad.json), if it sets one.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };

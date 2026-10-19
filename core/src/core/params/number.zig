@@ -1,5 +1,5 @@
-//! Number parameters, for stdlib/params.zig: `normalize` reads a value as a number (a string
-//! from `--param` is parsed) and `validate` checks it against the parameter's min and max.
+//! Number parameters, for stdlib/params.zig: `normalize` reads a value as a number (text
+//! from `-p` is parsed) and `validate` checks it against the parameter's min and max.
 
 const std = @import("std");
 const value = @import("../value.zig");
@@ -7,12 +7,11 @@ const value = @import("../value.zig");
 pub fn normalize(val: value.Value) !f64 {
     if (val.isNumber()) return val.asNumber();
 
-    // Auto-coerce string injections from the CLI (e.g., --param width="10.5")
+    // Text from the host (`-p width=10.5`), read as a number; a finite one, as a script's
+    // numbers are (parseFloat reads "inf" and "nan" too)
     if (val.isString()) {
-        const str = val.asString().chars;
-        if (std.fmt.parseFloat(f64, str)) |num| {
-            return num;
-        } else |_| {}
+        const num = std.fmt.parseFloat(f64, val.asString().chars) catch return error.InvalidType;
+        if (std.math.isFinite(num)) return num;
     }
 
     return error.InvalidType;

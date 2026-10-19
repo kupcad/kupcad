@@ -13,6 +13,9 @@ const locus = kupcad.locus;
 const math = locus.math;
 const eigen = locus.eigen;
 
+/// What build_model_wasm takes for "no parameter values".
+const NO_PARAMS: []const u8 = "";
+
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
     const bad_src = "class 123 { invalid }";
@@ -183,7 +186,7 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
 
     // Test STL export via WASM (use_draco: false)
     var stl_len: usize = 0;
-    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, stl_fmt.ptr, stl_fmt.len, false, &stl_len);
+    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, stl_fmt.ptr, stl_fmt.len, false, &stl_len);
 
     // The build should successfully yield a pointer to memory
     try testing.expect(stl_ptr != null);
@@ -201,7 +204,7 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
 
     // Test GLB export via WASM (use_draco: false)
     var glb_len: usize = 0;
-    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, glb_fmt.ptr, glb_fmt.len, false, &glb_len);
+    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, glb_fmt.ptr, glb_fmt.len, false, &glb_len);
 
     try testing.expect(glb_ptr != null);
     try testing.expect(glb_len > 20);
@@ -304,7 +307,7 @@ test "WASM Interop: build_model_wasm supports benchmark blocks (vm.io must be a 
     ;
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len);
+    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, fmt.ptr, fmt.len, false, &out_len);
     try testing.expect(res != null);
     try testing.expect(out_len > 84);
     wasm.wasm_free(@constCast(res.?), out_len);
@@ -312,9 +315,14 @@ test "WASM Interop: build_model_wasm supports benchmark blocks (vm.io must be a 
 
 /// Runs build_model_wasm on `src`, expecting it to fail, and returns get_last_error().
 fn expectBuildFailure(src: []const u8) ![]const u8 {
+    return expectBuildFailureWith(src, NO_PARAMS);
+}
+
+/// expectBuildFailure with the parameter values in `params` (JSON).
+fn expectBuildFailureWith(src: []const u8, params: []const u8) ![]const u8 {
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len);
+    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, fmt.ptr, fmt.len, false, &out_len);
     if (res) |ptr| {
         wasm.wasm_free(@constCast(ptr), out_len);
         return error.TestUnexpectedResult;
@@ -371,14 +379,29 @@ test "WASM Interop: get_last_error truncates long messages on a UTF-8 boundary" 
 
 /// Builds `src` as STL and returns its bytes' length (freeing them).
 fn expectBuildLength(src: []const u8) !usize {
+    return expectBuildLengthWith(src, NO_PARAMS);
+}
+
+/// expectBuildLength with the parameter values in `params` (JSON).
+fn expectBuildLengthWith(src: []const u8, params: []const u8) !usize {
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, fmt.ptr, fmt.len, false, &out_len) orelse {
         std.debug.print("build failed: {s}\n", .{std.mem.sliceTo(wasm.get_last_error(), 0)});
         return error.BuildFailed;
     };
     wasm.wasm_free(@constCast(res), out_len);
     return out_len;
+}
+
+test "WASM Interop: build_model_wasm takes parameter values as a JSON object" {
+    // The browser couldn't set a parameter at all. Each cube is 12 triangles of 50 bytes.
+    const src = "n = param(:n, default: 1)\nlabel = param(:label, default: \"x\")\nraise label unless label == \"ok\" || n == 1\nunion((0...n).map { |i| cube(1).translate(x: i * 3) })";
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength(src));
+    try testing.expectEqual(@as(usize, 84 + 3 * 12 * 50), try expectBuildLengthWith(src, "{\"n\": 3, \"label\": \"ok\"}"));
+    // A refusal says it is about the parameters, not the script.
+    try testing.expectEqualStrings("parameters: parameter 'n' is an array; a parameter takes a number, a string, true or false", try expectBuildFailureWith(src, "{\"n\": [1, 2]}"));
+    try testing.expectEqualStrings("parameters: line 1, column 2: invalid JSON", try expectBuildFailureWith(src, "{n: 3}"));
 }
 
 test "WASM Interop: a build the instruction cap stops leaves the next one working" {
@@ -396,7 +419,7 @@ test "WASM Interop: repeated builds, checks and formats don't grow the module's 
     const once = struct {
         fn run(source: []const u8, format: []const u8) !void {
             var len: usize = 0;
-            const built = wasm.build_model_wasm(source.ptr, source.len, format.ptr, format.len, true, &len) orelse return error.BuildFailed;
+            const built = wasm.build_model_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, format.ptr, format.len, true, &len) orelse return error.BuildFailed;
             wasm.wasm_free(@constCast(built), len);
             const checked = wasm.check_code_wasm(source.ptr, source.len, &len) orelse return error.CheckFailed;
             wasm.wasm_free(@constCast(checked), len);

@@ -55,6 +55,9 @@ test {
     _ = @import("core/workspace_test.zig");
     _ = @import("core/value_test.zig");
     _ = @import("core/params/params_test.zig");
+    _ = @import("core/param_values_test.zig");
+    _ = @import("stdlib/params_test.zig");
+    _ = @import("core/json_input.zig");
     _ = @import("core/text_test.zig");
     _ = @import("core/semver_test.zig");
     _ = @import("core/import_path_test.zig");

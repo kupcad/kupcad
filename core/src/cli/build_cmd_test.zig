@@ -87,13 +87,10 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{"-o"}, .message = "Error: Missing output path after -o\n" },
         .{ .args = &.{ "model.kup", "--param" }, .message = "Error: Missing key=value after --param\n" },
         .{ .args = &.{ "model.kup", "-p", "width" }, .message = "Error: Invalid param format. Use --param key=value.\n" },
-        .{ .args = &.{ "model.kup", "-p", "width=wide" }, .message = "Error: Param value must be a finite number. Got 'wide'\n" },
-        // `=5` used to be skipped silently, and `w=1=2` read as w=1.
+        // `=5` used to be skipped silently. (A value that isn't the parameter's type is
+        // refused by param(), which knows the type: see the -p test below.)
         .{ .args = &.{ "model.kup", "-p", "=5" }, .message = "Error: Param '=5' has no name. Use --param key=value.\n" },
-        .{ .args = &.{ "model.kup", "-p", "w=1=2" }, .message = "Error: Param value must be a finite number. Got '1=2'\n" },
-        .{ .args = &.{ "model.kup", "-p", "w=" }, .message = "Error: Param value must be a finite number. Got ''\n" },
-        .{ .args = &.{ "model.kup", "-p", "w=inf" }, .message = "Error: Param value must be a finite number. Got 'inf'\n" },
-        .{ .args = &.{ "model.kup", "-p", "w=nan" }, .message = "Error: Param value must be a finite number. Got 'nan'\n" },
+        .{ .args = &.{ "model.kup", "-P" }, .message = "Error: Missing parameter file after -P\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
         .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step\n" },
     };
@@ -149,6 +146,81 @@ test "build_cmd: --param sets the script's param" {
     var default = try fx.build();
     defer default.deinit();
     try testing.expectEqual(build_cmd.Outcome.failure, default.outcome);
+}
+
+test "build_cmd: -p text is read as the parameter's type, and refused when it isn't one" {
+    // -p took numbers only, so a String, boolean or Symbol parameter couldn't be set.
+    var fx = try Fixture.init(
+        \\w = param(:w, default: 1)
+        \\label = param(:label, default: "x")
+        \\hollow = param(:hollow, default: false)
+        \\size = param(:size, default: :m3, validate: { in: [:m3, :m4] })
+        \\raise "#{w} #{label} #{hollow} #{size}" unless w == 2.5 && label == "Gear A" && hollow && size == :m4
+        \\cube(w)
+        \\
+    );
+    defer fx.deinit();
+    var res = try runBuild(&.{ fx.input, "-p", "w=2.5", "-p", "label=Gear A", "-p", "hollow=true", "-p", "size=m4", "-o", fx.output });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+
+    // `w=1=2` is the text "1=2" for w, which no number is: the run stops at param()
+    // (its TypeError, naming the text, is params_test.zig's).
+    for ([_][]const u8{ "w=wide", "w=1=2", "w=", "w=inf" }) |pair| {
+        errdefer std.debug.print("-p {s}\n", .{pair});
+        var bad = try runBuild(&.{ fx.input, "-p", pair, "-o", fx.output });
+        defer bad.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, bad.outcome);
+        try testing.expect(std.mem.startsWith(u8, bad.text(), "Build failed: "));
+    }
+}
+
+test "build_cmd: -P reads a JSON object of values, and of two for one parameter the later wins" {
+    // The script fails unless `w` is `expected`, which each case sets on the command line.
+    var fx = try Fixture.init("w = param(:w, default: 1)\nexpected = param(:expected, default: 0)\nlabel = param(:label, default: \"x\")\nraise \"#{w} #{label}\" unless w == expected && label == \"from file\"\ncube(w)\n");
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "params.json", .data = "{\"w\": 3, \"label\": \"from file\"}" });
+    const file = try fx.path("params.json");
+    defer testing.allocator.free(file);
+    const cases = [_][]const []const u8{
+        &.{ "-p", "expected=3", "-P", file },
+        &.{ "-p", "expected=5", "-P", file, "-p", "w=5" },
+        &.{ "-p", "expected=3", "-p", "w=5", "--params", file },
+    };
+    for (cases) |case| {
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(testing.allocator);
+        try args.appendSlice(testing.allocator, &.{ fx.input, "-o", fx.output });
+        try args.appendSlice(testing.allocator, case);
+        var res = try runBuild(args.items);
+        defer res.deinit();
+        errdefer std.debug.print("{s}\n", .{res.text()});
+        try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    }
+}
+
+test "build_cmd: -P refuses a file it can't read, and one that isn't parameter values" {
+    var fx = try Fixture.init("cube(1)\n");
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "list.json", .data = "{\"gears\": [20, 30]}" });
+    const list = try fx.path("list.json");
+    defer testing.allocator.free(list);
+    const missing = try fx.path("missing.json");
+    defer testing.allocator.free(missing);
+    const cases = [_]struct { file: []const u8, message: []const u8 }{
+        .{ .file = list, .message = ": parameter 'gears' is an array; a parameter takes a number, a string, true or false\n" },
+        .{ .file = missing, .message = "': FileNotFound\n" },
+    };
+    for (cases) |case| {
+        var res = try runBuild(&.{ fx.input, "-P", case.file, "-o", fx.output });
+        defer res.deinit();
+        errdefer std.debug.print("{s}\n", .{res.text()});
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expect(std.mem.startsWith(u8, res.text(), "Error: "));
+        try testing.expect(std.mem.endsWith(u8, res.text(), case.message));
+        try testing.expect(std.mem.find(u8, res.text(), case.file) != null);
+        try testing.expect(!fx.outputExists());
+    }
 }
 
 /// What an exporter actually wrote, judged by content rather than by file name.

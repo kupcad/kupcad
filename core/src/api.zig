@@ -31,6 +31,8 @@ const suppressions = @import("tools/lint/suppressions.zig");
 const fixer = @import("tools/lint/fixer.zig");
 pub const LinterDiagnostic = @import("tools/lint/linter.zig").LinterDiagnostic;
 pub const Diagnostic = @import("core/errors.zig").Diagnostic;
+pub const ParamValues = @import("core/param_values.zig").ParamValues;
+pub const ParamValue = @import("core/param_values.zig").ParamValue;
 
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
@@ -255,26 +257,25 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
     return extractor.extractSchema(allocator, doc, source);
 }
 
-/// Safely injects a map of f64 CLI parameters into the active VM's global `params` map.
-pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMapUnmanaged(f64)) !void {
-    if (cli_params.count() == 0) return;
-
-    // Retrieve the global `params` map initialized by the standard library
-    const p_val = vm.globals.get("params") orelse return;
-    const map_obj = p_val.asMap();
-
-    var it = cli_params.iterator();
-    while (it.next()) |entry| {
-        // Allocate the dictionary key as an interned symbol
-        const sym_key = try vm.allocateSymbol(entry.key_ptr.*);
-
-        // Push to the VM stack temporarily to protect it from the Garbage Collector
-        // in case the map.put operation triggers an allocation that causes a GC sweep
-        vm.push(sym_key);
+/// Puts `values` in the VM's `params` Map (which registering the standard library makes),
+/// keyed by symbol, where `param(:name)` finds and reads them by its declared type: a text
+/// value goes in as a String.
+pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
+    if (values.map.count() == 0) return;
+    const params_map = (vm.globals.get("params") orelse return).asMap();
+    for (values.map.keys(), values.map.values()) |name, v| {
+        // Each allocation may collect: the key and the value are rooted until the Map holds them
+        const key = try vm.allocateSymbol(name);
+        vm.push(key);
         defer _ = vm.pop();
-
-        // Insert the key and the numeric value into the VM's map
-        try map_obj.map.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(entry.value_ptr.*));
+        const val: value.Value = switch (v) {
+            .number => |n| value.Value.initNumber(n),
+            .boolean => |b| value.Value.initBool(b),
+            .text => |t| try vm.allocateString(t),
+        };
+        vm.push(val);
+        defer _ = vm.pop();
+        try params_map.map.put(vm.gc.trackingAllocator(), key, val);
     }
 }
 
@@ -373,8 +374,8 @@ pub const BuildOptions = struct {
     format: ExportFormat,
     /// Compress glb and gltf meshes with Draco.
     draco: bool = false,
-    /// Values for `param(:name, ...)`, as `--param name=value` gives them.
-    params: ?std.StringHashMap(f64) = null,
+    /// Values for `param(:name, ...)`, as `-p` and `-P` give them.
+    params: ?*const ParamValues = null,
     /// The filesystem imports and exports go through (the native one when null).
     vfs: ?Vfs = null,
     /// When the build fails with a message, `diagnostic.message` is set to it. Pass a
@@ -412,10 +413,7 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         try vm.setConfig(settings);
     }
 
-    // Inject parameters securely
-    if (options.params) |cli_p| {
-        try injectParamsIntoVm(&vm, cli_p.unmanaged);
-    }
+    if (options.params) |params| try injectParams(&vm, params);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);

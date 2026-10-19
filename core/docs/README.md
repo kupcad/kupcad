@@ -337,6 +337,12 @@ end
 
 ```
 
+A parameter's default gives its type: a number, a String, `true`/`false`, or a Symbol (`param(:size, default: :m3, validate: { in: [:m3, :m4] })` gives a Symbol, as its choices are). Values come from outside the script in three ways, each read by that type:
+
+* `kupcad build part.kup -p width=40 -p material=PETG -p hollow=true -p size=m4`: the text after `=` is read as the parameter's type, so it is `40` for a number parameter and `:m4` for a Symbol one. Text no value of the type reads as (`-p width=wide`) is a TypeError naming the parameter and the text.
+* `kupcad build part.kup -P bracket.json`: a JSON object of names and numbers, strings or booleans, `{"width": 40, "material": "PETG"}`; a string in it is read like `-p`'s text. An Array, an object or `null` as a value is refused, naming the parameter: lists and tables come in as data, not as parameters. Of two values for one parameter, the later on the command line wins, so `-P bracket.json -p width=50` makes it 50.
+* From the API (`BuildOptions.params`) and from WebAssembly (`build_model_wasm` takes the same JSON object; a refusal's message starts `parameters:`).
+
 ### Engine settings (`CAD.config`)
 
 `CAD.config(...)` changes the settings for the rest of the script; `CAD.with_config(...) do ... end` applies them only inside the block; `CAD.current_config` returns them as a Map with the same keys. The shared settings mean the same on both kernels, so a model reads the same whichever engine builds it:

@@ -3,6 +3,7 @@ const testing = std.testing;
 const ScriptSession = @import("session.zig").ScriptSession;
 const kernel = @import("../kernel/kernel.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const api = @import("../api.zig");
 
 test "ScriptSession: init and deinit manage memory cleanly" {
     var session = try ScriptSession.init(testing.allocator, testing.io);
@@ -342,10 +343,10 @@ test "ScriptSession: params reach param() on every evaluation" {
 
     // Registering the standard library makes a new `params` map; values injected once,
     // before the first evaluation, used to be wiped by it.
-    var params: std.StringHashMapUnmanaged(f64) = .empty;
+    var params: api.ParamValues = .{};
     defer params.deinit(testing.allocator);
-    try params.put(testing.allocator, "w", 20);
-    try session.setParams(params);
+    try params.put(testing.allocator, "w", .{ .number = 20 });
+    session.setParams(&params);
 
     const mod_id = try session.workspace.addModule("model.kup", "w = param(:w, default: 1)\ncube(w)");
     try session.workspace.linkDependencies();
@@ -355,7 +356,8 @@ test "ScriptSession: params reach param() on every evaluation" {
     try testing.expectApproxEqAbs(@as(f64, 8000.0), kernel.volume(node.cached_handle.?), 1e-4);
 
     // An edit re-evaluates with the same parameters, and setParams replaces them.
-    try session.setParams(.empty);
+    var none: api.ParamValues = .{};
+    session.setParams(&none);
     try session.workspace.updateModuleSource(mod_id, "w = param(:w, default: 5)\ncube(w)");
     try session.markFileEdited("model.kup");
     try session.evaluateModule(mod_id);

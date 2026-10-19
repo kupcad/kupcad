@@ -6,6 +6,7 @@
 const std = @import("std");
 const workspace = @import("../core/workspace.zig");
 const api = @import("../api.zig");
+const ParamValues = api.ParamValues;
 const common_errors = @import("../core/errors.zig");
 const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
@@ -61,10 +62,10 @@ pub const ScriptSession = struct {
     /// callers can show it.
     failure: ?Failure = null,
 
-    /// Values for `param(:name)`, such as `kupcad build --param`. Owned, keys included.
-    /// Every evaluation injects them after registering the standard library, which makes
-    /// a fresh `params` map (injecting once, before evaluating, used to be wiped by it).
-    params: std.StringHashMapUnmanaged(f64) = .empty,
+    /// Values for `param(:name)`, such as `kupcad build -p` and `-P` give. Every evaluation
+    /// injects them after registering the standard library, which makes a fresh `params` map
+    /// (injecting once, before evaluating, used to be wiped by it).
+    params: ParamValues = .{},
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) !ScriptSession {
         var vm = try VM.init(allocator, io);
@@ -76,21 +77,12 @@ pub const ScriptSession = struct {
         };
     }
 
-    /// Replaces the parameters with copies of `params`.
-    pub fn setParams(self: *ScriptSession, params: std.StringHashMapUnmanaged(f64)) !void {
-        self.clearParams();
-        try self.params.ensureTotalCapacity(self.allocator, params.count());
-        var it = params.iterator();
-        while (it.next()) |entry| {
-            const name = try self.allocator.dupe(u8, entry.key_ptr.*);
-            self.params.putAssumeCapacity(name, entry.value_ptr.*);
-        }
-    }
-
-    fn clearParams(self: *ScriptSession) void {
-        var it = self.params.keyIterator();
-        while (it.next()) |name| self.allocator.free(name.*);
-        self.params.clearRetainingCapacity();
+    /// Replaces the parameters with `params`, which the session takes: the caller's copy is
+    /// emptied. They must have been made with the session's allocator.
+    pub fn setParams(self: *ScriptSession, params: *ParamValues) void {
+        self.params.deinit(self.allocator);
+        self.params = params.*;
+        params.* = .{};
     }
 
     pub fn deinit(self: *ScriptSession) void {
@@ -102,7 +94,6 @@ pub const ScriptSession = struct {
         self.reverse_deps.deinit(self.allocator);
         self.nodes.deinit(self.allocator);
         self.clearFailure();
-        self.clearParams();
         self.params.deinit(self.allocator);
         self.workspace.deinit();
         self.vm.deinit();
@@ -263,7 +254,7 @@ pub const ScriptSession = struct {
         // The Document goes away with this call; the pointer used to outlive it.
         defer self.vm.line_index = null;
         try registry.registerStandardLibrary(&self.vm);
-        try api.injectParamsIntoVm(&self.vm, self.params);
+        try api.injectParams(&self.vm, &self.params);
 
         var comp = Compiler.forDocument(self.allocator, &doc, &out_chunk, &self.vm);
         defer comp.deinit();
