@@ -1,6 +1,6 @@
 //! The fixed limits of the language and its runtime: bytecode operand widths, AST depth,
 //! instruction and memory budgets for interactive runs, and caps on user-supplied geometry
-//! counts, source size and B-Rep solver iterations.
+//! counts, source size, data files and B-Rep solver iterations.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -61,6 +61,11 @@ pub const MAX_MARCHING_STEPS: u32 = 100_000;
 // LSP and WASM entry points (which bypass the CLI) get the same protection; it
 // also keeps the token count far below MAX_TOKENS (at most one token per byte).
 pub const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
+// Largest JSON file `import_json` reads: its values take several times its size.
+pub const MAX_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+// Deepest nesting of objects and arrays `import_json` reads, and JsonObject#to_h copies:
+// both recurse, one native call level per level.
+pub const MAX_JSON_DEPTH: usize = 256;
 // The parser stores token indices as u24. Keep one index of headroom so the
 // one-token lookahead (`tok_idx + 1`) can never overflow.
 pub const MAX_TOKENS: usize = std.math.maxInt(u24) - 1;

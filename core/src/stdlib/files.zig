@@ -1,5 +1,5 @@
 //! The script's file methods: `export_stl`, `export_gltf` and `export_step` on a Solid or an
-//! Assembly, and `import_stl` / `import_step`. The formats themselves are in exporters/3d
+//! Assembly, and `import_stl` / `import_step` (`import_json` is in json.zig). The formats themselves are in exporters/3d
 //! (stl.zig, gltf.zig, step.zig), which knew nothing of scripts until these lived there.
 
 const std = @import("std");
@@ -41,7 +41,7 @@ pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
 }
 
 pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    const file_buf = vm.vfs.readFile(vm.allocator, path_str) catch |err| {
+    const file_buf = vm.readScriptFile(path_str) catch |err| {
         return vm.fail(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
     };
     defer vm.allocator.free(file_buf);

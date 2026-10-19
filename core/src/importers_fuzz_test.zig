@@ -1,9 +1,9 @@
-//! Fuzzing what KupCAD reads but didn't write: an STL file a script imports, a package
+//! Fuzzing what KupCAD reads but didn't write: an STL or JSON file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
 //! and keep what it promises of what it accepts: an STL mesh's faces point at its vertices
-//! and every vertex is finite, an archive's paths stay inside the package, a commit id is a
+//! and every vertex is finite, JSON data's numbers are finite and its keys Strings, an archive's paths stay inside the package, a commit id is a
 //! hex digest. A plain test run replays the seeds; `zig build fuzz -Dfuzz-target=importers
 //! --fuzz=<runs>` searches from them.
 
@@ -22,6 +22,10 @@ const ProjectConfig = @import("cli/config.zig").ProjectConfig;
 const semver = @import("core/semver.zig");
 const viewport_ws = @import("daemon/viewport_ws.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
+const VM = @import("vm/vm.zig").VM;
+const value = @import("core/value.zig");
+const import_json = @import("stdlib/json.zig");
+const limits = @import("core/limits.zig");
 
 /// The longest input the fuzzer makes for a parser.
 const MAX_INPUT_BYTES = 16 * 1024;
@@ -74,6 +78,49 @@ fn checkStl(data: []const u8) !void {
     // The mesh goes to the kernel, which indexes the points by the faces and computes on them
     for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
     for (mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+}
+
+// --- JSON data ---
+
+test "fuzz: a JSON file a script imports" {
+    try fuzzParser(checkJson, &.{
+        "{\"name\": \"braider\", \"gears\": [{\"module\": 1.5, \"teeth\": 12}, {\"teeth\": -2e3}], \"on\": true, \"x\": null}",
+        "[[[[1]]], \"\\u00e9\", 123456789012345678901234567890]",
+        "{\"w\": 1e400}",
+        "{\"a\": 1, \"a\": 2}",
+    });
+}
+
+fn checkJson(data: []const u8) !void {
+    // A bare VM: import_json needs the heap and the file system, not the standard library
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    vm.mute_errors = true;
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("fuzz.json", data);
+    vm.vfs = files.vfs();
+    // Refused with an error naming why: not JSON, too deep, a number too large
+    const read = import_json.nativeImportJson(&vm, "fuzz.json") catch |err| if (err == error.RuntimeError) return else return err;
+    try expectScriptData(read, limits.MAX_JSON_DEPTH);
+}
+
+/// What a script may rely on in import_json's data: finite numbers, String keys, nesting
+/// of at most `depth` levels more.
+fn expectScriptData(v: value.Value, depth: usize) !void {
+    if (v.isNumber()) try testing.expect(std.math.isFinite(v.asNumber()));
+    if (v.isArray()) {
+        try testing.expect(depth > 0);
+        for (v.asArray().items.items) |item| try expectScriptData(item, depth - 1);
+    }
+    if (v.isJsonObject()) {
+        try testing.expect(depth > 0);
+        const entries = &v.asJsonObject().map;
+        for (entries.keys(), entries.values()) |key, item| {
+            try testing.expect(key.isString());
+            try expectScriptData(item, depth - 1);
+        }
+    }
 }
 
 // --- Package archives ---

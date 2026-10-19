@@ -1,5 +1,5 @@
 //! `registerCoreClasses`: binds the native methods of the built-in classes (Array, Map,
-//! String, Number, Range, Symbol, Boolean, BoundingBox) and of the `GC`, `Math` and `CAD`
+//! JsonObject, String, Number, Range, Symbol, Boolean, BoundingBox) and of the `GC`, `Math` and `CAD`
 //! objects, from the method tables under `classes/`.
 
 const value = @import("../core/value.zig");
@@ -7,6 +7,7 @@ const VM = @import("../vm/vm.zig").VM;
 
 const array_class = @import("classes/array.zig");
 const map_class = @import("classes/map.zig");
+const json_object_class = @import("classes/json_object.zig");
 const string_class = @import("classes/string.zig");
 const number_class = @import("classes/number.zig");
 const range_class = @import("classes/range.zig");
@@ -32,6 +33,7 @@ fn bindMethods(vm: *VM, class: *value.ObjClass, comptime prefix: []const u8, com
 pub fn registerCoreClasses(vm: *VM) !void {
     if (vm.array_class) |cls| try bindMethods(vm, cls, "Array#", &array_class.methods);
     if (vm.map_class) |cls| try bindMethods(vm, cls, "Map#", &map_class.methods);
+    if (vm.json_object_class) |cls| try bindMethods(vm, cls, "JsonObject#", &json_object_class.methods);
     if (vm.string_class) |cls| try bindMethods(vm, cls, "String#", &string_class.methods);
     if (vm.number_class) |cls| try bindMethods(vm, cls, "Number#", &number_class.methods);
     if (vm.range_class) |cls| try bindMethods(vm, cls, "Range#", &range_class.methods);

@@ -963,8 +963,8 @@ test "Stdlib: for's value, break, next and return behave as in Ruby" {
 
 test "Stdlib: for rejects what it can't iterate" {
     try expectScripts(&.{
-        .{ .src = comptime rescued("for x in 5\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got Number" } },
-        .{ .src = comptime rescued("for x in \"abc\"\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range or a Map, got String" } },
+        .{ .src = comptime rescued("for x in 5\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range, a Map or a JsonObject, got Number" } },
+        .{ .src = comptime rescued("for x in \"abc\"\n  end"), .expected = .{ .str = "TypeError: for expects an Array, a Range, a Map or a JsonObject, got String" } },
         .{ .src = comptime rescued("for x in 1..Number::INFINITY\n  end"), .expected = .{ .str = "ValueError: for requires finite bounds and step, got 1..Infinity step 1" } },
     });
 }

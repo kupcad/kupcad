@@ -8,6 +8,9 @@ pub const KERNEL_FAILED_FMT = "{s} failed: the geometry kernel could not compute
 pub const INVALID_RESULT_FMT = "{s} produced invalid geometry: {s}";
 /// The engine's script name and what it can't do (kernel.Feature.describe).
 pub const UNSUPPORTED_FMT = "the {s} engine can't {s} yet; build this part with engine: :manifold";
+/// TypeError for a JsonObject looked up by a key that is neither a String nor a Symbol;
+/// `{s}` is the key's type.
+pub const JSON_KEY_FMT = "a JsonObject's keys are Strings or Symbols, got {s}";
 
 pub const ErrorKind = enum {
     RuntimeError,
@@ -15,6 +18,8 @@ pub const ErrorKind = enum {
     TypeError,
     ValueError,
     IndexError,
+    /// A key a JsonObject's `fetch` or `dig` doesn't find.
+    KeyError,
     RangeError,
     ZeroDivisionError,
     MathError,

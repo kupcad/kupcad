@@ -49,12 +49,13 @@ fn objectNilQ(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initBool(receiver.isNil());
 }
 
-/// Object#empty? -> nil, an empty String/Array/Map, or a Solid with no volume
+/// Object#empty? -> nil, an empty String/Array/Map/JsonObject, or a Solid with no volume
 fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isNil()) return value.Value.initBool(true);
     if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
     if (receiver.isArray()) return value.Value.initBool(receiver.asArray().items.items.len == 0);
     if (receiver.isMap()) return value.Value.initBool(receiver.asMap().map.count() == 0);
+    if (receiver.isJsonObject()) return value.Value.initBool(receiver.asJsonObject().map.count() == 0);
     if (receiver.isGeometry()) {
         const solid = try vm.ensureConcrete(receiver);
         try vm.requireFeature(solid.engine, .volume);

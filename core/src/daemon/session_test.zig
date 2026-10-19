@@ -364,6 +364,38 @@ test "ScriptSession: params reach param() on every evaluation" {
     try testing.expectApproxEqAbs(@as(f64, 125.0), kernel.volume(node.cached_handle.?), 1e-4);
 }
 
+test "ScriptSession: a data file a module read runs it, and its importers, again when it changes" {
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    session.vm.vfs = files.vfs();
+    try files.vfs().writeFile("size.json", "{\"side\": 2}");
+    // The VM imports a module from its file system, as the session evaluates it from its own
+    const lib_source = "side = import_json(\"size.json\")[:side]\nexport side\n";
+    try files.vfs().writeFile("lib.kup", lib_source);
+
+    const lib_id = try session.workspace.addModule("lib.kup", lib_source);
+    const main_id = try session.workspace.addModule("main.kup", "import { side } from \"./lib.kup\"\ncube(side)\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+    const main_node = &session.nodes.items[@backingInt(main_id)];
+    try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(main_node.cached_handle.?), 1e-9);
+    const lib_node = &session.nodes.items[@backingInt(lib_id)];
+    try testing.expectEqual(@as(usize, 1), lib_node.files_read.items.len);
+    try testing.expectEqualStrings("size.json", lib_node.files_read.items[0]);
+
+    // No module read this one; the sources are the same, so only the data reruns them
+    try testing.expect(!try session.markDataFileEdited("other.json"));
+    try files.vfs().writeFile("size.json", "{\"side\": 3}");
+    try testing.expect(try session.markDataFileEdited("size.json"));
+    try testing.expect(main_node.is_stale);
+    try session.evaluateWorkspace();
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(main_node.cached_handle.?), 1e-9);
+    try testing.expect(!lib_node.data_changed);
+}
+
 test "ScriptSession: removeModule drops its output and the modules after it keep theirs" {
     var session = try ScriptSession.init(testing.allocator, testing.io);
     defer session.deinit();

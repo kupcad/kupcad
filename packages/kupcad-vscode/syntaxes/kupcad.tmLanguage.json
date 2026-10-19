@@ -195,7 +195,7 @@
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|assert|warn|benchmark|import_stl|import_step)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|assert|warn|benchmark|import_stl|import_step|import_json)(?![\\\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {

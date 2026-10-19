@@ -1,11 +1,12 @@
 //! `kupcad watch`: polls the files of a session's workspace (the script and every module it
-//! imports) and rebuilds when one changes, telling its host what happened through a
-//! Listener.
+//! imports) and the data files their runs read (`import_json`, `import_stl`), and rebuilds
+//! when one changes, telling its host what happened through a Listener.
 
 const std = @import("std");
 const session_mod = @import("session.zig");
 const ScriptSession = session_mod.ScriptSession;
 const import_path = @import("../core/import_path.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 
 /// Poll interval for mtime checks.
 pub const POLL_INTERVAL_MS: i64 = 500;
@@ -42,6 +43,10 @@ pub const Watcher = struct {
     listener: Listener,
     /// The mtime last seen for each watched file, keyed by the workspace's path slices.
     mtimes: std.StringHashMapUnmanaged(i128) = .empty,
+    /// The same for the data files the runs read, keyed by owned copies of their paths (a
+    /// run's list of them is replaced by the next). A missing file is 0, so creating one
+    /// a run couldn't read is a change.
+    data_mtimes: std.StringHashMapUnmanaged(i128) = .empty,
     is_one_shot: bool = false,
 
     pub fn init(session: *ScriptSession, io: std.Io, listener: Listener) !Watcher {
@@ -52,7 +57,11 @@ pub const Watcher = struct {
     }
 
     pub fn deinit(self: *Watcher) void {
-        self.mtimes.deinit(self.session.allocator);
+        const allocator = self.session.allocator;
+        self.mtimes.deinit(allocator);
+        var paths = self.data_mtimes.keyIterator();
+        while (paths.next()) |path| allocator.free(path.*);
+        self.data_mtimes.deinit(allocator);
     }
 
     /// Adds to the workspace every `.kup` file the loaded modules import, read from disk,
@@ -97,13 +106,15 @@ pub const Watcher = struct {
     }
 
     /// Builds (or rebuilds) the workspace and reports how it went; false when it failed.
+    /// Either way, the data files the runs read are watched from here on.
     pub fn evaluate(self: *Watcher) bool {
-        self.session.evaluateWorkspace() catch |err| {
+        const ok = if (self.session.evaluateWorkspace()) true else |err| blk: {
             if (self.session.failure) |*failure| self.listener.notify(.{ .failed = failure }) else self.listener.notify(.{ .run_failed = err });
-            return false;
+            break :blk false;
         };
-        self.listener.notify(.built);
-        return true;
+        self.rememberDataMtimes() catch |err| self.listener.notify(.{ .run_failed = err });
+        if (ok) self.listener.notify(.built);
+        return ok;
     }
 
     /// One look at the watched files: the ones whose mtime differs from the last seen
@@ -125,8 +136,37 @@ pub const Watcher = struct {
             };
             changed = true;
         }
+        if (try self.pollDataFiles()) changed = true;
         if (changed) _ = self.evaluate();
         return changed;
+    }
+
+    /// The data files the last runs read whose mtime differs from the last seen: the
+    /// modules that read them are marked stale. Returns whether one had changed.
+    fn pollDataFiles(self: *Watcher) !bool {
+        var changed = false;
+        for (self.session.nodes.items) |node| {
+            for (node.files_read.items) |path| {
+                const seen = self.data_mtimes.getPtr(path) orelse continue;
+                const mtime = self.mtimeOf(path) orelse 0;
+                if (seen.* == mtime) continue;
+                seen.* = mtime;
+                self.listener.notify(.{ .changed = path });
+                _ = try self.session.markDataFileEdited(path);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    /// Records the mtime of every data file the runs read that isn't watched yet.
+    fn rememberDataMtimes(self: *Watcher) !void {
+        for (self.session.nodes.items) |node| {
+            for (node.files_read.items) |path| {
+                const entry = try owned_keys.getOrPutOwned(&self.data_mtimes, self.session.allocator, path);
+                if (!entry.found_existing) entry.value_ptr.* = self.mtimeOf(path) orelse 0;
+            }
+        }
     }
 
     pub fn start(self: *Watcher) !void {

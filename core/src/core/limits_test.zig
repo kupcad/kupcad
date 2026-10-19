@@ -36,6 +36,8 @@ const CASES = .{
     .MAX_NEWTON_TRIALS = newtonTrials,
     .MAX_MARCHING_STEPS = marchingSteps,
     .MAX_SOURCE_BYTES = sourceBytes,
+    .MAX_JSON_BYTES = jsonBytes,
+    .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
     .MAX_INLINE_CACHES = inlineCaches,
     .MAX_JUMP_TABLE_CASES = jumpTableCases,
@@ -146,6 +148,36 @@ fn sourceBytes() !void {
     defer testing.allocator.free(source);
     @memset(source, ' ');
     try testing.expectError(error.SourceTooLarge, Document.parse(testing.allocator, source));
+}
+
+fn jsonBytes() !void {
+    const data = try testing.allocator.alloc(u8, limits.MAX_JSON_BYTES + 1);
+    defer testing.allocator.free(data);
+    @memset(data, ' ');
+    const expected = std.fmt.comptimePrint("ImportError: JSON file 'big.json' is {d} bytes; a script reads at most {d}", .{ limits.MAX_JSON_BYTES + 1, limits.MAX_JSON_BYTES });
+    try support.expectScripts(&.{.{ .src = support.rescued("import_json(\"big.json\")"), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.json", .data = data }} }});
+}
+
+fn jsonDepth() !void {
+    // Arrays each the only element of the one around them: as deep as allowed reads, and
+    // one level more is refused, naming the place in the file
+    var deeper: std.ArrayList(u8) = .empty;
+    defer deeper.deinit(testing.allocator);
+    try deeper.appendNTimes(testing.allocator, '[', limits.MAX_JSON_DEPTH + 1);
+    try deeper.appendNTimes(testing.allocator, ']', limits.MAX_JSON_DEPTH + 1);
+    var where: std.ArrayList(u8) = .empty;
+    defer where.deinit(testing.allocator);
+    for (0..limits.MAX_JSON_DEPTH) |_| try where.appendSlice(testing.allocator, "[0]");
+    const expected = try testing.allocator.print("ImportError: deeper.json: {s} nests deeper than {d} levels", .{ where.items, limits.MAX_JSON_DEPTH });
+    defer testing.allocator.free(expected);
+    const files = [_]support.ScriptFile{
+        .{ .path = "deep.json", .data = deeper.items[1 .. deeper.items.len - 1] },
+        .{ .path = "deeper.json", .data = deeper.items },
+    };
+    try support.expectScripts(&.{
+        .{ .src = "r = import_json(\"deep.json\").size", .expected = .{ .num = 1 }, .files = &files },
+        .{ .src = support.rescued("import_json(\"deeper.json\")"), .expected = .{ .str = expected }, .files = &files },
+    });
 }
 
 fn tokens() !void {

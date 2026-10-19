@@ -59,11 +59,12 @@ const Fixture = struct {
         try self.tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = data });
     }
 
-    /// Rewrites `name` with its mtime moved by `bump` from the watcher's last sighting.
+    /// Rewrites `name` (a module or a data file) with its mtime moved by `bump` from the
+    /// watcher's last sighting.
     fn rewrite(self: *Fixture, watcher: *const Watcher, name: []const u8, data: []const u8, bump: i96) !void {
         const full = try self.path(name);
         defer testing.allocator.free(full);
-        const seen = watcher.mtimes.get(full) orelse return error.NotWatched;
+        const seen = watcher.mtimes.get(full) orelse watcher.data_mtimes.get(full) orelse return error.NotWatched;
         const file = try self.tmp.dir.createFile(testing.io, name, .{});
         defer file.close(testing.io);
         try file.writeStreamingAll(testing.io, data);
@@ -157,6 +158,46 @@ test "Daemon Watcher: a build that fails is reported, and watching goes on" {
     try testing.expect(try watcher.poll());
     try testing.expectApproxEqAbs(@as(f64, 27), fx.rootVolume(root), 1e-6);
     try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .failed, .changed, .built }, recorder.events.items);
+}
+
+test "Daemon Watcher: an edit to a JSON file the script reads rebuilds it" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("size.json", "{\"side\": 10}");
+    try fx.write("main.kup", "import size from \"./size.json\"\nx = cube(size[:side])\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    defer watcher.deinit();
+    try testing.expect(watcher.evaluate());
+    try testing.expectApproxEqAbs(@as(f64, 1000), fx.rootVolume(root), 1e-6);
+
+    // The module's source is the same: only the data says to run it again
+    try fx.rewrite(&watcher, "size.json", "{\"side\": 20}", MTIME_BUMP_NS);
+    try testing.expect(try watcher.poll());
+    try testing.expectApproxEqAbs(@as(f64, 8000), fx.rootVolume(root), 1e-6);
+    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .built, .changed, .built }, recorder.events.items);
+    try testing.expect(!try watcher.poll()); // nothing changed since
+}
+
+test "Daemon Watcher: a JSON file missing at the first build is watched, so creating it rebuilds" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("main.kup", "import size from \"./size.json\"\nx = cube(size[:side])\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    defer watcher.deinit();
+    try testing.expect(!watcher.evaluate());
+
+    try fx.write("size.json", "{\"side\": 3}");
+    try testing.expect(try watcher.poll());
+    try testing.expectApproxEqAbs(@as(f64, 27), fx.rootVolume(root), 1e-6);
+    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .run_failed, .changed, .built }, recorder.events.items);
 }
 
 test "Daemon Watcher: a file restored to an older version counts as a change" {

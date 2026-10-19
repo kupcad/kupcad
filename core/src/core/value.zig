@@ -45,6 +45,7 @@ pub const ObjType = enum(u8) {
     native,
     array,
     map,
+    json_object,
     function,
     upvalue,
     closure,
@@ -113,9 +114,23 @@ pub const ValueContext = struct {
     }
 };
 
+/// Values by Value, in insertion order: a Map's entries, a JsonObject's.
+pub const ValueMap = std.array_hash_map.Custom(Value, Value, ValueContext, false);
+
 pub const ObjMap = struct {
     obj: Obj,
-    map: std.array_hash_map.Custom(Value, Value, ValueContext, false),
+    map: ValueMap,
+};
+
+/// A JSON object `import_json` read (class JsonObject): read-only, its keys Strings as the
+/// file has them, each found by that String or by the Symbol of the same name
+/// (VM.jsonObjectGet). `source` (the file) and `path` (where in it, as `gears[0]`; empty
+/// for the file's own object) are for the errors `fetch` and `dig` raise.
+pub const ObjJsonObject = struct {
+    obj: Obj,
+    map: ValueMap,
+    source: *ObjString,
+    path: *ObjString,
 };
 
 pub const ObjFunction = struct {
@@ -409,6 +424,10 @@ pub const Value = packed struct {
         return self.isObject() and self.asObj().obj_type == .map;
     }
 
+    pub inline fn isJsonObject(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .json_object;
+    }
+
     pub inline fn isFunction(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .function;
     }
@@ -506,6 +525,10 @@ pub const Value = packed struct {
         std.debug.assert(self.isMap());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+    pub inline fn asJsonObject(self: Value) *ObjJsonObject {
+        std.debug.assert(self.isJsonObject());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
     pub inline fn asString(self: Value) *ObjString {
         std.debug.assert(self.isString());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
@@ -596,23 +619,13 @@ pub const Value = packed struct {
                     try writer.writeAll("]");
                 },
                 .map => {
-                    const map: *ObjMap = @alignCast(@fieldParentPtr("obj", obj));
-                    const here = Printing.enter(up, obj) orelse return writer.writeAll("{...}");
-                    try writer.writeAll("{");
-                    const keys = map.map.keys();
-                    const values = map.map.values();
-                    for (keys, 0..) |key, i| {
-                        if (i > 0) try writer.writeAll(", ");
-                        // As written in a script: `{x: 1}` for a Symbol key, `{"x" => 1}` otherwise.
-                        if (key.isSymbol()) {
-                            try writer.print("{s}: ", .{key.asSymbol().chars});
-                        } else {
-                            try key.stringifyNested(true, writer, &here);
-                            try writer.writeAll(" => ");
-                        }
-                        try values[i].stringifyNested(true, writer, &here);
-                    }
-                    try writer.writeAll("}");
+                    const map = &obj.as(ObjMap).map;
+                    try writeEntries(map.keys(), map.values(), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}"));
+                },
+                // As a Map of its entries: `{"teeth" => 12}`
+                .json_object => {
+                    const map = &obj.as(ObjJsonObject).map;
+                    try writeEntries(map.keys(), map.values(), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}"));
                 },
                 .class => {
                     const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
@@ -646,6 +659,23 @@ pub const Value = packed struct {
         }
     }
 };
+
+/// A Map's entries in braces, as written in a script: `{x: 1}` for a Symbol key,
+/// `{"x" => 1}` otherwise. `here` is the Map being printed.
+fn writeEntries(keys: []const Value, values: []const Value, writer: *std.Io.Writer, here: Printing) std.Io.Writer.Error!void {
+    try writer.writeAll("{");
+    for (keys, values, 0..) |key, v, i| {
+        if (i > 0) try writer.writeAll(", ");
+        if (key.isSymbol()) {
+            try writer.print("{s}: ", .{key.asSymbol().chars});
+        } else {
+            try key.stringifyNested(true, writer, &here);
+            try writer.writeAll(" => ");
+        }
+        try v.stringifyNested(true, writer, &here);
+    }
+    try writer.writeAll("}");
+}
 
 /// The containers being printed, outermost first, so one that holds itself (directly or
 /// through others) prints as `[...]` / `{...}`, as in Ruby: it recursed off the native

@@ -17,30 +17,12 @@ pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
 
 /// Map#keys -> its keys, in insertion order
 pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
-    var scope = HandleScope.init(vm);
-    defer scope.deinit();
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
-
-    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
-    for (map.map.keys()) |k| {
-        new_arr.items.appendAssumeCapacity(k);
-    }
-    return value.Value.initObj(&new_arr.obj);
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, map.map.keys())).obj);
 }
 
 /// Map#values
 pub fn mapValues(vm: *VM, map: *value.ObjMap) !value.Value {
-    var scope = HandleScope.init(vm);
-    defer scope.deinit();
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
-
-    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
-    for (map.map.values()) |v| {
-        new_arr.items.appendAssumeCapacity(v);
-    }
-    return value.Value.initObj(&new_arr.obj);
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, map.map.values())).obj);
 }
 
 /// Map#key?(key)

@@ -1,7 +1,8 @@
 //! `ScriptSession`: evaluates a workspace of modules incrementally. It keeps each module's
-//! output and the reverse import graph, marks an edited file and its importers stale, and
-//! evaluates only those again, stopping early where an output's hash is unchanged. Used by
-//! the LSP, `kupcad watch` and `kupcad build`.
+//! output, the files its last run read as data and the reverse import graph, marks an
+//! edited file (a module or a data file) and its importers stale, and evaluates only those
+//! again, stopping early where an output's hash is unchanged. Used by the LSP, `kupcad
+//! watch` and `kupcad build`.
 
 const std = @import("std");
 const workspace = @import("../core/workspace.zig");
@@ -30,10 +31,38 @@ pub const SessionNode = struct {
     /// display list are borrowed (vm.dag_cache or VM own them), so the session
     /// clones before storing and destroys only its own clones.
     cached_handle: ?geom.GeometryHandle = null,
+    /// The files the module's last run read as data (VM.files_read), owned: a change to one
+    /// runs it again though its source is the same.
+    files_read: std.ArrayList([]u8) = .empty,
+    /// One of `files_read` changed since the last run (ScriptSession.markDataFileEdited).
+    data_changed: bool = false,
 
-    pub fn deinit(self: *SessionNode) void {
+    pub fn deinit(self: *SessionNode, allocator: std.mem.Allocator) void {
         if (self.cached_handle) |h| kernel.destruct(h);
         self.cached_handle = null;
+        self.forgetFilesRead(allocator);
+        self.files_read.deinit(allocator);
+    }
+
+    fn forgetFilesRead(self: *SessionNode, allocator: std.mem.Allocator) void {
+        for (self.files_read.items) |path| allocator.free(path);
+        self.files_read.clearRetainingCapacity();
+    }
+
+    /// Takes the files `vm`'s run read as this module's, in place of the last run's.
+    fn rememberFilesRead(self: *SessionNode, allocator: std.mem.Allocator, vm: *const VM) !void {
+        self.forgetFilesRead(allocator);
+        self.data_changed = false;
+        try self.files_read.ensureTotalCapacity(allocator, vm.files_read.count());
+        var paths = vm.files_read.keyIterator();
+        while (paths.next()) |path| self.files_read.appendAssumeCapacity(try allocator.dupe(u8, path.*));
+    }
+
+    pub fn hasRead(self: *const SessionNode, path: []const u8) bool {
+        for (self.files_read.items) |read| {
+            if (std.mem.eql(u8, read, path)) return true;
+        }
+        return false;
     }
 };
 
@@ -87,7 +116,7 @@ pub const ScriptSession = struct {
 
     pub fn deinit(self: *ScriptSession) void {
         for (self.nodes.items) |*node| {
-            node.deinit();
+            node.deinit(self.allocator);
         }
         var it = self.reverse_deps.iterator();
         while (it.next()) |entry| entry.value_ptr.deinit(self.allocator);
@@ -164,6 +193,20 @@ pub const ScriptSession = struct {
         }
     }
 
+    /// Marks stale every module whose last run read the data file at `path` (`import_json`,
+    /// `import_stl`), and their importers, so the next evaluation runs them again though
+    /// their source is the same. False when no module read it.
+    pub fn markDataFileEdited(self: *ScriptSession, path: []const u8) !bool {
+        var found = false;
+        for (self.nodes.items, 0..) |*node, i| {
+            if (!node.hasRead(path)) continue;
+            node.data_changed = true;
+            try self.markFileEdited(self.workspace.modules.items[i].path);
+            found = true;
+        }
+        return found;
+    }
+
     /// Forgets the module at `path` (an editor closed it): its cached output and its place in
     /// the import graph. Modules that imported it are evaluated again next time.
     pub fn removeModule(self: *ScriptSession, path: []const u8) !void {
@@ -172,7 +215,7 @@ pub const ScriptSession = struct {
 
         const index = @backingInt(id);
         var node = self.nodes.orderedRemove(index);
-        node.deinit();
+        node.deinit(self.allocator);
         if (self.failure) |*failure| {
             const failed = @backingInt(failure.module);
             if (failed == index) self.clearFailure() else if (failed > index) failure.module = @fromBackingInt(failed - 1);
@@ -215,7 +258,7 @@ pub const ScriptSession = struct {
         const current_source_hash = s_hasher.final();
 
         var needs_recompile = false;
-        if (node.source_hash != current_source_hash) {
+        if (node.source_hash != current_source_hash or node.data_changed) {
             needs_recompile = true;
         } else if (node.output_hash == 0) {
             needs_recompile = true;
@@ -271,6 +314,8 @@ pub const ScriptSession = struct {
 
         self.vm.resetRunOutput();
         const result = self.vm.interpret(&out_chunk);
+        // A failed run is watched too: fixing the file it couldn't read runs it again
+        try node.rememberFilesRead(self.allocator, &self.vm);
         if (result != .ok) return error.RuntimeError;
 
         // Borrowed: owned by vm.dag_cache (ensureConcrete) or by vm.display_list.

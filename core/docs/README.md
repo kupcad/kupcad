@@ -268,10 +268,11 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `TypeError` | A value of the wrong type (`polygon([[0, 0], [1, "x"], [0, 1]])`, `5[0]`) |
 | `ValueError` | A value of the right type that is out of range or not finite (`cube(-1)`, `segments: 1e9`) |
 | `IndexError` | An Array or String index out of bounds (`[1, 2][5]`, `"abc"[9]`; Ruby gives `nil`) |
+| `KeyError` | A key a JsonObject's `fetch` or `dig` doesn't find (`machine.fetch(:teeth)`; `machine[:teeth]` gives `nil`) |
 | `RangeError` | A number outside a representable range: arithmetic that overflows (`2 ** 1024`; numbers are 64-bit floats, so beyond ±1.8e308 there is no number), bitwise operands, shift counts. A script that needs a non-finite value writes `Number::INFINITY` or `Number::NAN` |
 | `ZeroDivisionError`, `MathError` | Division by zero, an operation producing `NaN` |
 | `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
-| `ImportError` | A module that can't be read, parsed or compiled |
+| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`) that can't be read |
 | `NotImplementedError` | A feature the active engine doesn't support yet |
 | `GeometryError` | The geometry kernel failed an operation or produced an invalid solid (e.g. a `polyhedron` that isn't a closed manifold) |
 | `AssertionError` | A failed `assert` |
@@ -295,6 +296,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 * **Arrays**: Index with a number (negative from the end) or a Range (`arr[1..2]`, like `.slice`). Exposes functional mutators (`.push`, `.pop`, `.shift`, `.unshift`, `.slice`, `.join`), iterators (`.each`, `.map`, `.filter` and its complement `.reject`, `.reduce`), `.compact` (a copy without the `nil`s, for a list of optional parts: `base.union([boss, rib].compact)`), and native numeric reducers (`.max`, `.min`, `.sum`, `.sort`). `.sort` gives a sorted copy: Numbers or Strings on their own, anything else with a block returning the sign of the comparison (`sort { |a, b| b <=> a }`). `.max`, `.min` (Numbers or Strings, not mixed) and `.sum` (Numbers) raise a `TypeError` for anything else instead of skipping it, a `MathError` for `NaN`, and `.sum` a `RangeError` when the total overflows; on an empty Array `.max` and `.min` are `nil` and `.sum` is `0`. `==` (and so `!=`, `.contains?` and `case`/`when`) compares Arrays, Maps and Ranges by content, nested ones included; a Map's order doesn't matter.
 * **Ranges**: `a..b` (inclusive) and `a...b` (exclusive) iterate with `.each` and `.map`, materialize with `.to_a`, and support `.size`, `.include?` / `.cover?`, `.first`, `.last`, `.exclusive?` and `.step(n)` (`(0..1).step(0.25).to_a` → `[0, 0.25, 0.5, 0.75, 1]`; negative steps count down). Iterating with a block (`.each`, `.map`, `.times`, …) has no length limit — like a `while` loop it is bounded only by the instruction budget and cancellation — but building an array (`.to_a`, or the array `.map` returns) is capped at 10,000,000 values (~130 MB). Numbers add `.times`, `.upto(n)` and `.downto(n)`, which require integers.
 * **Maps**: Exposes key/value manipulation (`.keys`, `.values`, `.key?`, `.delete`, `.get`, `.merge`, `.empty?`). Keys can be swapped dynamically via `.symbolize_keys` and `.stringify_keys`.
+* **JsonObjects**: what `import_json` gives for a JSON object: read-only, found by a String or a Symbol key alike (see [Data files](#data-files-import_json)).
 
 ### Strings, Symbols & Math
 
@@ -495,6 +497,26 @@ import { bolt } from "./hardware.kup"
 thread_pitch = 99                  # a different variable; bolt() is unaffected
 ```
 
+### Data files (`import_json`)
+
+A model described by data reads it from a JSON file: `import machine from "./machine.json"` (relative to the importing file, like any import) or `machine = import_json("data/machine.json")` (from the project's directory, like `import_stl`). An object becomes a **JsonObject**, an array an Array, a number a Number, a string a String, `true`/`false` Booleans and `null` `nil`:
+
+```ruby
+# machine.json: {"name": "braider", "gears": [{"module": 1.5, "teeth": 12}, {"module": 2, "teeth": 20}]}
+import machine from "./machine.json"
+
+gears = machine[:gears].map { |g| cylinder(r: g[:module] * g[:teeth] / 2, h: 5) }
+first = machine.dig(:gears, 0, :teeth)       # 12
+plate = machine.fetch(:plate, nil)          # nil: the file has no plate
+```
+
+* **Keys:** a JsonObject's keys are the file's Strings, and each is found by that String or by the Symbol of the same name, so `machine["gears"]` and `machine[:gears]` are the same entry, in every object of the file. A Map stays as it is: `m["a"]` and `m[:a]` are two keys there.
+* **Missing keys:** `[]` gives `nil` for a key the object doesn't have, as a Map's does. `fetch(key)` and `dig(key, ...)` raise instead, naming the place in the file and what is there: `KeyError: machine.json: gears[1] has no key "pitch" (its keys: module, teeth)`. `dig` steps into objects by key and into Arrays by integer (negative from the end); past an Array's end is an `IndexError`, a step into a number or a string a `TypeError`. (Ruby's `dig` gives `nil`, which a model only notices later, as an error about `nil` far from the file.) `fetch(key, default)` gives the default instead of raising, `nil` included.
+* **Read-only:** `machine[:name] = "x"` is a `TypeError`. `to_h` gives a Map that can change, its objects Maps and its Arrays copies all the way down, with the file's String keys (a Map's `.symbolize_keys` turns its own keys into Symbols, not those of the Maps in it). The Arrays a JsonObject holds are ordinary Arrays.
+* **Methods:** `[]`, `fetch`, `dig`, `key?`, `keys`, `values`, `size`/`length`, `empty?`, `each { |key, value| }`, `to_h`, and `for key, value in machine`. `==` compares two JsonObjects by content; it prints as a Map does. There is no dot access (`machine.gears`): a key named `size` or `keys` would be hidden by the method.
+* **Limits:** a file of at most 64 MiB, nested at most 256 levels; a number past the largest (`1e400`) is refused, as is a key written twice. Each is an `ImportError` naming the file and the line and column or the place in the data.
+* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds.
+
 ---
 
 ## 9. Architecture & Execution Pipeline
@@ -532,7 +554,7 @@ KupCAD ships as a monolithic executable containing a complete developer toolchai
 * `kupcad doc`: prints the script's parameters as JSON, for a UI to build its controls from: each `param(:name, default:, validate:)` with its name, its type (from the default), its default and its `validate` rules as `param` takes them, `min`, `max` and the `in` choices (null when the list holds something only a run can compute). The script's `# @title`, `# @description` and `# @author` comments fill `meta`. The browser build gives the same JSON (`extract_params_wasm`).
 * `kupcad check`: syntax errors, compile errors and lint findings, before anything runs (see *Linting* below). Given a directory, `check` and `fmt` take every `.kup` file under it except in hidden directories (`.git`, `.kupcad` with the installed packages); a hidden path named outright is still taken.
 * `kupcad pkg`: Lockfile-driven dependency resolver (`add`, `install`, `doctor`) fetching GitHub packages into CAFS under `~/.kupcad` (override with `KUPCAD_HOME`), with lockfile integrity enforcement.
-* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`; glTF output is in metres and Y-up as glTF defines, with the mesh kept in millimetres under a 0.001 node scale; a `.gltf` file is glTF JSON with its buffer embedded as a base64 data URI, a `.glb` file is binary glTF, and so is `export_gltf("part.glb")` while `export_gltf("part.gltf")` writes JSON; with `--draco` each part's primitive carries its own compressed vertices; an empty model is an error for STL as for glTF, never a file with no triangles; every glTF file, Draco or not, passes the Khronos glTF Validator, which CI runs as `pnpm check:gltf`) with CLI parameter injection (`--param key=value`, or `-p`, repeatable: the value is what `param(:key, ...)` returns, so it goes through the same validation; it must be a finite number and the name can't be empty). Exits non-zero on any failure, so it is safe to use as a CI step.
+* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`; glTF output is in metres and Y-up as glTF defines, with the mesh kept in millimetres under a 0.001 node scale; a `.gltf` file is glTF JSON with its buffer embedded as a base64 data URI, a `.glb` file is binary glTF, and so is `export_gltf("part.glb")` while `export_gltf("part.gltf")` writes JSON; with `--draco` each part's primitive carries its own compressed vertices; an empty model is an error for STL as for glTF, never a file with no triangles; every glTF file, Draco or not, passes the Khronos glTF Validator, which CI runs as `pnpm check:gltf`) with CLI parameter injection (`--param key=value`, or `-p`, repeatable, and `-P file.json`: the value is read as the parameter's type and goes through `param`'s validation, see §4; the name can't be empty). Exits non-zero on any failure, so it is safe to use as a CI step.
 * `kupcad watch`: builds a script, then rebuilds it whenever it or a module it imports changes (every imported `.kup` file is watched, and a file restored to an older version counts as a change). A build that fails is reported like `kupcad build`, syntax errors with their file, line and column, and watching goes on until the fix.
 * `kupcad dev`: VM development toolkit offering `ast-dump`, `disasm`, `lex-dump` and `bench`. `kupcad dev bench part.kup` times the script's phases, parse, compile, VM run and the evaluation of the geometry it leaves, each a cold run, and prints the median of `--repeat N` runs (5 by default) so one slow run doesn't set the figure; one more run with the tracing profiler attached gives the per-function table (`--no-profile` skips it, `--no-eval` the geometry, `--json` prints the medians as JSON for scripts that track them). The script's own output (`puts`, `inspect`, `benchmark`) is not shown, so the report is all there is on stdout.
 

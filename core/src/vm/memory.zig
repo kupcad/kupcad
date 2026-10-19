@@ -38,6 +38,7 @@ pub const GC = struct {
     symbols: std.ArrayList(*value.ObjSymbol) = .empty,
     arrays: std.ArrayList(*value.ObjArray) = .empty,
     maps: std.ArrayList(*value.ObjMap) = .empty,
+    json_objects: std.ArrayList(*value.ObjJsonObject) = .empty,
     functions: std.ArrayList(*value.ObjFunction) = .empty,
     classes: std.ArrayList(*value.ObjClass) = .empty,
     modules: std.ArrayList(*value.ObjModule) = .empty,
@@ -95,6 +96,7 @@ pub const GC = struct {
         self.symbols.deinit(self.allocator);
         self.arrays.deinit(self.allocator);
         self.maps.deinit(self.allocator);
+        self.json_objects.deinit(self.allocator);
         self.functions.deinit(self.allocator);
         self.classes.deinit(self.allocator);
         self.modules.deinit(self.allocator);
@@ -197,7 +199,7 @@ pub const GC = struct {
         if (!force_full) {
             // Pre-allocate gray stack to absolute worst-case capacity to avoid mid-trace OOM
             const worst_case_size = self.strings.items.len + self.symbols.items.len +
-                self.arrays.items.len + self.maps.items.len + self.functions.items.len +
+                self.arrays.items.len + self.maps.items.len + self.json_objects.items.len + self.functions.items.len +
                 self.classes.items.len + self.modules.items.len + self.instances.items.len +
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
                 self.ranges.items.len +
@@ -275,9 +277,26 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// An Array of `items`. The caller roots what they hold.
+    pub fn allocateArrayOf(self: *GC, vm: *VM, items: []const value.Value) !*value.ObjArray {
+        const ptr = try self.allocateArray(vm);
+        // No collection runs from here on: only allocateObject collects
+        try ptr.items.appendSlice(self.trackingAllocator(), items);
+        return ptr;
+    }
+
     pub fn allocateMap(self: *GC, vm: *VM) !*value.ObjMap {
         const ptr = try self.allocateObject(vm, value.ObjMap, &self.maps, .map);
         ptr.map = .empty;
+        return ptr;
+    }
+
+    /// An empty JsonObject at `path` in `source` (see ObjJsonObject); the caller roots both.
+    pub fn allocateJsonObject(self: *GC, vm: *VM, source: *value.ObjString, path: *value.ObjString) !*value.ObjJsonObject {
+        const ptr = try self.allocateObject(vm, value.ObjJsonObject, &self.json_objects, .json_object);
+        ptr.map = .empty;
+        ptr.source = source;
+        ptr.path = path;
         return ptr;
     }
 
@@ -565,6 +584,13 @@ pub const GC = struct {
                 for (map.map.keys()) |k| self.markValue(k);
                 for (map.map.values()) |v| self.markValue(v);
             },
+            .json_object => {
+                const object = obj.as(value.ObjJsonObject);
+                for (object.map.keys()) |k| self.markValue(k);
+                for (object.map.values()) |v| self.markValue(v);
+                self.markObject(&object.source.obj);
+                self.markObject(&object.path.obj);
+            },
             .closure => {
                 const closure_obj = obj.as(value.ObjClosure);
                 self.markObject(&closure_obj.function.obj);
@@ -684,6 +710,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjFunction, &self.functions);
         self.sweepList(vm, value.ObjArray, &self.arrays);
         self.sweepList(vm, value.ObjMap, &self.maps);
+        self.sweepList(vm, value.ObjJsonObject, &self.json_objects);
         self.sweepList(vm, value.ObjUpvalue, &self.upvalues);
         self.sweepList(vm, value.ObjRange, &self.ranges);
         self.sweepList(vm, value.ObjBBox, &self.bboxes);
@@ -776,6 +803,11 @@ pub const GC = struct {
                 const map_obj = obj.as(value.ObjMap);
                 map_obj.map.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjMap, map_obj);
+            },
+            .json_object => {
+                const object = obj.as(value.ObjJsonObject);
+                object.map.deinit(self.trackingAllocator());
+                self.destroyObject(value.ObjJsonObject, object);
             },
             .instance => {
                 const instance_obj = obj.as(value.ObjInstance);

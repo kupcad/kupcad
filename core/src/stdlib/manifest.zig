@@ -12,6 +12,7 @@ const primitives = @import("primitives.zig");
 const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
 const files = @import("files.zig");
+const json = @import("json.zig");
 const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -99,7 +100,7 @@ pub const MeshMethod = struct {
 pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
-    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly",
+    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
     // "Workplane": hidden with on_face (see the method table)
 };
 
@@ -139,6 +140,7 @@ pub const global_functions = [_]GlobalFunction{
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
     .{ .name = "import_stl", .func = common.wrapGlobal(files.nativeImportStl), .category = .file_io, .result = .solid },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
+    .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
 };
 
 pub const mesh_methods = [_]MeshMethod{

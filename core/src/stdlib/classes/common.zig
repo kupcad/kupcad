@@ -26,6 +26,7 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == *value.ObjSymbol) return if (val.isSymbol()) val.asSymbol() else error.WrongType;
     if (T == *value.ObjArray) return if (val.isArray()) val.asArray() else error.WrongType;
     if (T == *value.ObjMap) return if (val.isMap()) val.asMap() else error.WrongType;
+    if (T == *value.ObjJsonObject) return if (val.isJsonObject()) val.asJsonObject() else error.WrongType;
     if (T == *value.ObjRange) return if (val.isRange()) val.asRange() else error.WrongType;
     if (T == *value.ObjClosure) return if (val.isClosure()) val.asClosure() else error.WrongType;
     if (T == *value.ObjInstance) return if (val.isInstance()) val.asInstance() else error.WrongType;
@@ -65,6 +66,7 @@ fn expectedName(comptime T: type) []const u8 {
         *value.ObjSymbol => "a Symbol",
         *value.ObjArray => "an Array",
         *value.ObjMap => "a Map",
+        *value.ObjJsonObject => "a JsonObject",
         *value.ObjRange => "a Range",
         *value.ObjClosure => "a block or lambda",
         *value.ObjInstance => "an object",

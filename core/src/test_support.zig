@@ -35,6 +35,7 @@ const registry = @import("stdlib/registry.zig");
 const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
 const value = @import("core/value.zig");
 const disassembler = @import("tools/dev/disassembler.zig");
+const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
 /// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
 pub const NUMBER_TOLERANCE = 1e-9;
@@ -95,11 +96,16 @@ pub const Expected = union(enum) {
     nil,
 };
 
+/// A file a test script reads (`import_json`, `import_stl`).
+pub const ScriptFile = struct { path: []const u8, data: []const u8 };
+
 pub const ScriptCase = struct {
     src: []const u8,
     expected: Expected,
     /// Collect before every instruction, so a value a native forgot to root is swept at once.
     gc_stress: bool = false,
+    /// When given, the script's file system holds these and nothing else (a MemoryVfs).
+    files: []const ScriptFile = &.{},
 };
 
 /// Runs each script on a fresh VM and checks its `r`; names the offending script on failure.
@@ -108,6 +114,10 @@ pub fn expectScripts(cases: []const ScriptCase) !void {
         errdefer std.debug.print("script:\n{s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
+        var files = MemoryVfs.init(std.testing.allocator);
+        defer files.deinit();
+        for (case.files) |file| try files.vfs().writeFile(file.path, file.data);
+        if (case.files.len > 0) vm.vfs = files.vfs();
         vm.hooks.setZealousGc(case.gc_stress);
         try std.testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
         const r = vm.globals.get("r") orelse return error.MissingGlobal;

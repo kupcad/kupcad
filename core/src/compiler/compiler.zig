@@ -22,6 +22,14 @@ const Document = @import("../core/document.zig").Document;
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
 
+/// The built-in an `import` of a file calls instead of loading a module, by the file's
+/// extension: a mesh or data, not source.
+const FILE_IMPORTERS = [_]struct { extension: []const u8, importer: []const u8 }{
+    .{ .extension = ".stl", .importer = "import_stl" },
+    .{ .extension = ".step", .importer = "import_step" },
+    .{ .extension = ".json", .importer = "import_json" },
+};
+
 /// True for a name that can become a function-local: not `@ivar`, `@@cvar`,
 /// `$global` or a Constant, which `classifyStorage` routes by their first char.
 fn isPlainLocalName(name: []const u8) bool {
@@ -785,6 +793,14 @@ pub const Compiler = struct {
         }
     }
 
+    /// The built-in that reads the file at `path` for an `import`, or null for a module.
+    fn fileImporter(path: []const u8) ?[]const u8 {
+        for (FILE_IMPORTERS) |file| {
+            if (std.mem.endsWith(u8, path, file.extension)) return file.importer;
+        }
+        return null;
+    }
+
     fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const is_stmt = self.tree.importStmt(node);
 
@@ -795,9 +811,8 @@ pub const Compiler = struct {
 
         const importer = self.rootCompiler().module_path;
 
-        // --- 1. Asset Interception ---
-        if (std.mem.endsWith(u8, path_str, ".stl") or std.mem.endsWith(u8, path_str, ".step")) {
-            const func_name = if (std.mem.endsWith(u8, path_str, ".stl")) "import_stl" else "import_step";
+        // --- 1. A file, read by its importer (FILE_IMPORTERS) ---
+        if (fileImporter(path_str)) |func_name| {
             const func_idx = try self.makeStringConstant(func_name);
             try self.emitGetGlobal(func_idx);
 
@@ -824,7 +839,7 @@ pub const Compiler = struct {
                 try self.emitVariableStore(sym_id, dummy_sym);
             }
 
-            try self.emitOp(.op_pop); // Discard geometry from stack
+            try self.emitOp(.op_pop); // Discard the file's value from the stack
             try self.emitOp(.op_nil); // Yield nil for statement
             return;
         }

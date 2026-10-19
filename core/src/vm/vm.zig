@@ -164,6 +164,10 @@ pub const VM = struct {
 
     materials: std.ArrayList(material_mod.MaterialDef) = .empty,
     display_list: std.ArrayList(geom.GeometryHandle) = .empty,
+    /// The files the run read as data (`import_json`, `import_stl`), by the paths they were
+    /// read by, each once and owned: a host that rebuilds when a file changes (`kupcad
+    /// watch`) watches these too. Cleared by resetRunOutput.
+    files_read: std.StringHashMapUnmanaged(void) = .empty,
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
@@ -183,6 +187,7 @@ pub const VM = struct {
     string_class: ?*value.ObjClass = null,
     array_class: ?*value.ObjClass = null,
     map_class: ?*value.ObjClass = null,
+    json_object_class: ?*value.ObjClass = null,
     number_class: ?*value.ObjClass = null,
     range_class: ?*value.ObjClass = null,
     /// The class for each runtime error kind, registered by stdlib/exceptions.zig.
@@ -388,6 +393,7 @@ pub const VM = struct {
         self.resetRunOutput();
         self.materials.deinit(self.allocator);
         self.display_list.deinit(self.allocator);
+        self.files_read.deinit(self.allocator);
         self.scratch_arena.deinit();
         self.gc.deinit();
     }
@@ -953,6 +959,8 @@ pub const VM = struct {
             arr.items.items[idx] = val;
         } else if (target.isMap()) {
             self.mapSet(target.asMap(), index, val) catch return self.raiseOutOfMemory("Map#[]=", .{});
+        } else if (target.isJsonObject()) {
+            return self.raiseError(.TypeError, "a JsonObject is read-only; its to_h is a Map that can be changed", .{});
         } else {
             return self.raiseError(.TypeError, "{s} doesn't support index assignment ([]=)", .{self.typeName(target)});
         }
@@ -1520,6 +1528,21 @@ pub const VM = struct {
         for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.clearRetainingCapacity();
         self.materials.clearRetainingCapacity();
+        self.forgetFilesRead();
+    }
+
+    fn forgetFilesRead(self: *VM) void {
+        var paths = self.files_read.keyIterator();
+        while (paths.next()) |path| self.allocator.free(path.*);
+        self.files_read.clearRetainingCapacity();
+    }
+
+    /// The bytes of the file at `path`, which a script reads as data, through the VFS
+    /// (owned by `allocator`). The path is noted in files_read even when the file can't be
+    /// read, so a watching host rebuilds once it is created or fixed.
+    pub fn readScriptFile(self: *VM, path: []const u8) ![]u8 {
+        _ = try owned_keys.getOrPutOwned(&self.files_read, self.allocator, path);
+        return self.vfs.readFile(self.allocator, path);
     }
 
     /// Destroys every cached result, solids and sketches (GC eviction drops only those
@@ -1928,22 +1951,37 @@ pub const VM = struct {
             }
             return true;
         }
-        if (a.isMap() and b.isMap()) {
-            const xm = a.asMap().map;
-            const ym = b.asMap().map;
-            if (xm.count() != ym.count()) return false;
-            for (xm.keys(), xm.values()) |key, x| {
-                const y = ym.get(key) orelse return false;
-                if (!self.valuesEqualWithin(x, y, depth - 1)) return false;
-            }
-            return true;
-        }
+        if (a.isMap() and b.isMap()) return self.entriesEqualWithin(&a.asMap().map, &b.asMap().map, depth);
+        if (a.isJsonObject() and b.isJsonObject()) return self.entriesEqualWithin(&a.asJsonObject().map, &b.asJsonObject().map, depth);
         if (a.isRange() and b.isRange()) {
             const x = a.asRange();
             const y = b.asRange();
             return x.start == y.start and x.end == y.end and x.step == y.step and x.is_exclusive == y.is_exclusive;
         }
         return false;
+    }
+
+    /// Whether two Maps (or two JsonObjects) hold the same keys with equal values.
+    fn entriesEqualWithin(self: *VM, xm: *const value.ValueMap, ym: *const value.ValueMap, depth: usize) bool {
+        if (xm.count() != ym.count()) return false;
+        for (xm.keys(), xm.values()) |key, x| {
+            const y = ym.get(key) orelse return false;
+            if (!self.valuesEqualWithin(x, y, depth - 1)) return false;
+        }
+        return true;
+    }
+
+    /// What `object` holds under `key`, a String or the Symbol of the same name (its keys
+    /// are Strings); null when it holds nothing there. error.WrongType for any other key.
+    /// The String of a Symbol is looked up, not made: a name never interned is no key.
+    pub fn jsonObjectGet(self: *VM, object: *value.ObjJsonObject, key: value.Value) error{WrongType}!?value.Value {
+        const name: value.Value = if (key.isString())
+            key
+        else if (key.isSymbol())
+            value.Value.initObj(&(self.strings.get(key.asSymbol().chars) orelse return null).obj)
+        else
+            return error.WrongType;
+        return object.map.get(name);
     }
 
     pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {
@@ -2647,13 +2685,9 @@ pub const VM = struct {
         return .ok;
     }
 
-    /// target[index], with both on the stack: an element of an Array or a character of a
-    /// String (negative indexes count from the end), a Range of them (like Array#slice:
-    /// nil when it starts past the end, clamped at the end), or a Map's value (nil when
-    /// absent). Strings are indexed by character, as `length` counts them.
     /// Pushes the element of a `for` loop's `iterable` after the `taken` ones and returns
     /// true, or returns false when there are no more. A Range yields the values Range#each
-    /// does and a Map its [key, value] pairs; an Array is read live, so it may grow while
+    /// does and a Map or a JsonObject its [key, value] pairs; an Array is read live, so it may grow while
     /// the loop runs.
     fn pushForElement(self: *VM, iterable: value.Value, taken: u64) error{ RuntimeError, OutOfMemory }!bool {
         if (iterable.isArray()) {
@@ -2669,27 +2703,37 @@ pub const VM = struct {
             self.push(value.Value.initNumber(span.at(taken)));
             return true;
         }
-        if (iterable.isMap()) {
-            const map = &iterable.asMap().map;
-            if (taken >= map.count()) return false;
-            const pair = try self.gc.allocateArray(self);
-            // Rooted before the items are added: appending may run a collection.
-            self.push(value.Value.initObj(&pair.obj));
-            const i: usize = @intCast(taken);
-            try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ map.keys()[i], map.values()[i] });
-            return true;
-        }
-        return self.fail(.TypeError, "for expects an Array, a Range or a Map, got {s}", .{self.typeName(iterable)});
+        if (iterable.isMap()) return self.pushForEntry(&iterable.asMap().map, taken);
+        if (iterable.isJsonObject()) return self.pushForEntry(&iterable.asJsonObject().map, taken);
+        return self.fail(.TypeError, "for expects an Array, a Range, a Map or a JsonObject, got {s}", .{self.typeName(iterable)});
     }
 
+    /// pushForElement for a Map's (or a JsonObject's) entries: its [key, value] pair.
+    fn pushForEntry(self: *VM, map: *const value.ValueMap, taken: u64) error{OutOfMemory}!bool {
+        if (taken >= map.count()) return false;
+        const pair = try self.gc.allocateArray(self);
+        // Rooted before the items are added: appending may run a collection.
+        self.push(value.Value.initObj(&pair.obj));
+        const i: usize = @intCast(taken);
+        try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ map.keys()[i], map.values()[i] });
+        return true;
+    }
+
+    /// target[index], with both on the stack: an element of an Array or a character of a
+    /// String (negative indexes count from the end), a Range of them (like Array#slice:
+    /// nil when it starts past the end, clamped at the end), or a Map's or a JsonObject's
+    /// value (nil when absent). Strings are indexed by character, as `length` counts them.
     fn executeGetIndex(self: *VM) InterpretResult {
         const index = self.stack[self.stack_top - 1];
         const target = self.stack[self.stack_top - 2];
 
-        if (target.isMap()) {
-            const found = target.asMap().map.get(index) orelse value.Value.initNil();
+        if (target.isMap() or target.isJsonObject()) {
+            const held = if (target.isMap())
+                target.asMap().map.get(index)
+            else
+                self.jsonObjectGet(target.asJsonObject(), index) catch return self.raiseError(.TypeError, error_kind.JSON_KEY_FMT, .{self.typeName(index)});
             self.stack_top -= 2;
-            self.push(found);
+            self.push(held orelse value.Value.initNil());
             return .ok;
         }
         if (!target.isArray() and !target.isString()) {
@@ -2763,7 +2807,9 @@ pub const VM = struct {
         unreachable;
     }
 
-    inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
+    /// The element of an Array of `arr_len` that the number `index_val` names (negative from
+    /// the end); error.RuntimeError when it is no integer or past either end.
+    pub inline fn resolveArrayIndex(self: *VM, arr_len: usize, index_val: value.Value) !usize {
         _ = self;
         const num_idx = index_val.asNumber();
 
@@ -2801,6 +2847,7 @@ pub const VM = struct {
                 .symbol => return self.symbol_class,
                 .array => return self.array_class,
                 .map => return self.map_class,
+                .json_object => return self.json_object_class,
                 .bbox => return self.bbox_class,
                 .range => return self.range_class,
                 .closure, .function => return self.proc_class,
@@ -3361,6 +3408,7 @@ pub const VM = struct {
                     .string => return c == self.string_class,
                     .array => return c == self.array_class,
                     .map => return c == self.map_class,
+                    .json_object => return c == self.json_object_class,
                     .symbol => return c == self.symbol_class,
                     .range => return c == self.range_class,
                     else => return false,
