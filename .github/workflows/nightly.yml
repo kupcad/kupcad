@@ -54,7 +54,7 @@ jobs:
       # outgrows its limit, and every night started over from the seeds. A failed job saves
       # nothing, so a crashing input isn't carried on.
       - name: Restore the fuzz corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.ZIG_LOCAL_CACHE_DIR }}/f
           key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}

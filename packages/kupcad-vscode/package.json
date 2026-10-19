@@ -71,11 +71,11 @@
     "test:ui": "vitest --ui"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2",
-    "vite": "^5.0.0",
-    "vitest": "^1.4.0"
+    "concurrently": "^10.0.6",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
   },
   "dependencies": {
-    "vscode-languageclient": "^10.1.0"
+    "vscode-languageclient": "^10.1.2"
   }
 }
