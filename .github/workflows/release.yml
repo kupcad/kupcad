@@ -1,0 +1,49 @@
+name: Release
+
+# A version tag (v0.2.0, or v0.2.0-rc.1 for a pre-release) builds the kupcad CLI for each
+# target in .goreleaser.yaml and uploads the archives to the tag's GitHub release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release the CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          # The changelog is made from the commits since the last tag
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@v1
+        with:
+          zig-version-file: .tool-versions
+
+      # `kupcad --version` reads build.zig.zon: a tag that says otherwise would release
+      # binaries reporting another version
+      - name: Check the tag is the version in build.zig.zon
+        run: |
+          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' core/build.zig.zon)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME, but core/build.zig.zon has version $version: tag v$version, or change the version first"
+            exit 1
+          fi
+
+      - name: Build and release
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

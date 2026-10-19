@@ -3,3 +3,6 @@
 
 # nodejs
 /node_modules
+
+# goreleaser (release archives, `goreleaser release --snapshot`)
+/dist/

@@ -14,6 +14,15 @@ for fast mesh CSG and previews, and the native B-Rep kernel (Locus, in progress)
 The language, VM and Manifold path are usable; the B-Rep kernel (`core/src/locus`) and the viewport
 webview are not finished. See the extension README for current limitations.
 
+## Install
+
+Each [release](https://github.com/kupcad/kupcad/releases) has the `kupcad` CLI for Linux
+(x86_64 and arm64, glibc 2.28 or later), macOS (Apple silicon and Intel) and Windows (x86_64 and
+arm64): unpack the archive and put `kupcad` on your `PATH`. `checksums.txt` has each archive's
+SHA-256, and `THIRD_PARTY_NOTICES.md` in each archive lists the libraries and fonts built in.
+The macOS binaries aren't signed: if macOS refuses to open one, run
+`xattr -d com.apple.quarantine kupcad`.
+
 ## Build
 
 Requires the Zig version in [`.tool-versions`](.tool-versions) (managed with `asdf`), Node 24 and
@@ -73,6 +82,13 @@ cd core && zig translate-c vendor/sqlite/sqlite3.h > vendor/sqlite/sqlite_bindin
 brew install binaryen wabt wasmtime
 wasm-opt --all-features -Oz core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
 ```
+
+To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints), commit, and
+push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow
+checks the tag matches, builds every target in `.goreleaser.yaml` with Zig, and uploads the
+archives and checksums to the tag's GitHub release; a tag like `v0.2.0-rc.1` makes a
+pre-release. `goreleaser release --snapshot --clean` builds the same archives into `dist/`
+without releasing anything.
 
 ## License
 
