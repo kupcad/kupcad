@@ -8,18 +8,47 @@ const tatfi = @import("tatfi");
 const bezier = @import("bezier.zig");
 const Kerning = @import("kerning.zig").Kerning;
 
+/// The names `text(font:)` takes for the embedded fonts: each font's own, then its aliases.
+const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
+    .{ .name = "sans", .key = .sans },
+    .{ .name = "mono", .key = .mono },
+    .{ .name = "serif", .key = .serif },
+    .{ .name = "stencil", .key = .stencil },
+    .{ .name = "default", .key = .sans },
+    .{ .name = "monospace", .key = .mono },
+};
+
+/// The embedded fonts' own names, for an error that lists them: `"sans", "mono", ...`.
+pub const FONT_LIST = blk: {
+    const keys = std.enums.values(FontKey);
+    var text: []const u8 = "";
+    for (keys, 0..) |key, i| {
+        const separator = if (i == 0) "" else if (i + 1 == keys.len) " and " else ", ";
+        text = text ++ separator ++ "\"" ++ key.name() ++ "\"";
+    }
+    break :blk text;
+};
+
 pub const FontKey = enum {
     sans,
     mono,
     serif,
     stencil,
 
-    pub fn fromString(name: []const u8) ?FontKey {
-        if (std.mem.eql(u8, name, "sans") or std.mem.eql(u8, name, "default")) return .sans;
-        if (std.mem.eql(u8, name, "mono") or std.mem.eql(u8, name, "monospace")) return .mono;
-        if (std.mem.eql(u8, name, "serif")) return .serif;
-        if (std.mem.eql(u8, name, "stencil")) return .stencil;
+    /// The font named `name` (its own name or an alias), or null for none of them.
+    pub fn fromString(name_or_alias: []const u8) ?FontKey {
+        for (FONT_NAMES) |entry| {
+            if (std.mem.eql(u8, entry.name, name_or_alias)) return entry.key;
+        }
         return null;
+    }
+
+    /// The font's own name, as `text(font:)` takes it.
+    pub fn name(self: FontKey) []const u8 {
+        for (FONT_NAMES) |entry| {
+            if (entry.key == self) return entry.name;
+        }
+        unreachable;
     }
 };
 
@@ -57,17 +86,6 @@ pub fn getFontBytes(key: FontKey) []const u8 {
 pub fn getFace(key: FontKey) !tatfi.Face {
     const bytes = getFontBytes(key);
     return tatfi.Face.parse(bytes, 0) catch return error.InvalidFont;
-}
-
-/// Parses and returns a tatfi.Face by string name (defaults to :sans if unknown)
-pub fn getFaceByName(name: []const u8) !tatfi.Face {
-    const key = FontKey.fromString(name) orelse .sans;
-    return getFace(key);
-}
-
-/// Helper for backwards compatibility
-pub fn getDefaultFace() !tatfi.Face {
-    return getFace(.sans);
 }
 
 const BuilderContext = struct {

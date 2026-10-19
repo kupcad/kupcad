@@ -1322,11 +1322,13 @@ test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found"
     });
 }
 
-test "Stdlib: text draws accented and Cyrillic letters, and refuses a character the font lacks" {
+test "Stdlib: text draws accented and Cyrillic letters, and refuses a character or a font it lacks" {
     try expectScripts(&.{
         .{ .src = "r = text(\"Привет é\", size: 10).extrude(1).volume > text(\"Привет\", size: 10).extrude(1).volume", .expected = .{ .boolean = true } },
         .{ .src = rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '中' (U+4E2D)" } },
         .{ .src = rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
+        .{ .src = rescued("text(\"a\", font: \"bold\")"), .expected = .{ .str = "ArgumentError: text: there is no font 'bold'; the fonts are \"sans\", \"mono\", \"serif\" and \"stencil\"" } },
+        .{ .src = "r = text(\"a\", font: :monospace).extrude(1).volume == text(\"a\", font: \"mono\").extrude(1).volume", .expected = .{ .boolean = true } },
     });
 }
 

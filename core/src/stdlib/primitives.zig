@@ -574,7 +574,11 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
 
     const alloc = vm.scratch_arena.allocator();
 
-    const face = text_mod.getFaceByName(font_name) catch {
+    // An unknown name used to draw in sans without a word, so a typo went unseen
+    const key = text_mod.FontKey.fromString(font_name) orelse {
+        return vm.fail(.ArgumentError, "text: there is no font '{s}'; the fonts are {s}", .{ font_name, text_mod.FONT_LIST });
+    };
+    const face = text_mod.getFace(key) catch {
         return vm.fail(.RuntimeError, "Failed to load font '{s}'", .{font_name});
     };
     var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
