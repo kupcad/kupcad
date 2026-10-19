@@ -1898,7 +1898,8 @@ pub const Parser = struct {
         const t = self.tag(0);
         switch (t) {
             // Clause keywords end an expression, so `when Integer then x` is not a call `Integer(then x)`.
-            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
+            // `=>` starts no argument either: `{ k => 1 }` is a key, not a call `k(=> 1)`.
+            .newline, .semicolon, .eof, .comment, .docstring, .r_paren, .r_brace, .r_bracket, .comma, .colon, .arrow, .string_mid, .string_end, .keyword_rescue, .keyword_else, .keyword_elsif, .keyword_when, .keyword_then, .keyword_ensure, .keyword_end, .keyword_if, .keyword_unless, .keyword_while, .keyword_until => return false,
             .keyword_do => return !self.in_loop_header,
             .l_brace => return true,
             else => {

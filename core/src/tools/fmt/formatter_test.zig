@@ -1117,3 +1117,12 @@ test "Formatter: a comment before a list's closing bracket stays at its items' i
     }
     try expectFormat("f(\n  x,\n# own line\n)\n", "f(\n  x,\n  # own line\n)\n");
 }
+
+test "Formatter: a map key that is a name or a call keeps its value after =>" {
+    // `{ a.k: 1 }` means `{ a.k => 1 }`, which the formatter writes, but a name before `=>`
+    // was read as a call without parentheses, `k(=> 1)`, so the output didn't parse (found
+    // by the nightly front-end fuzzer).
+    try expectStableFormat("m = { a.k: 1 }\n", "m = { a.k => 1 }\n");
+    try expectStableFormat("m = { (1...5).k: 1, \"s\" => 2 }\n", "m = { (1...5).k => 1, \"s\" => 2 }\n");
+    try expectStableFormat("k = 2\nm = { k => 1 }\n", "k = 2\nm = { k => 1 }\n");
+}

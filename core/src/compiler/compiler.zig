@@ -1171,15 +1171,11 @@ pub const Compiler = struct {
             if (entries.len > limits.MAX_HASH_ENTRIES) {
                 return self.fail(error.TooManyConstants, "a map literal holds at most {d} entries; add the rest with []=", .{limits.MAX_HASH_ENTRIES});
             }
+            // A key is an expression like any other: `{ k => 1 }` keys by k's value (`k: 1`,
+            // a label, is the Symbol :k). A name was compiled as its own String, "k", which
+            // no key reached until a name before `=>` parsed.
             for (entries) |entry| {
-                const key_node = self.tree.getNode(entry.key).?;
-                if (key_node.tag == .identifier) {
-                    const str_content = self.tree.getString(self.tree.stringId(key_node));
-                    const str_idx = try self.makeStringConstant(str_content);
-                    try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
-                } else {
-                    try self.compileNode(entry.key);
-                }
+                try self.compileNode(entry.key);
                 try self.compileNode(entry.value);
             }
 
@@ -1199,17 +1195,7 @@ pub const Compiler = struct {
                     try self.compileNode(self.tree.nodeIndex(key_node));
                     try self.emitOp(.op_map_spread);
                 } else {
-                    if (key_node.tag == .identifier) {
-                        const str_content = self.tree.getString(self.tree.stringId(key_node));
-                        const str_val = try self.vm.allocateString(str_content);
-                        self.vm.ensureStackCapacity(self.vm.stack_top + 1) catch return error.OutOfMemory;
-                        self.vm.push(str_val);
-                        const str_idx = try self.makeConstant(str_val);
-                        _ = self.vm.pop();
-                        try self.emitOpWithOperand(.op_constant, .op_constant_wide, str_idx);
-                    } else {
-                        try self.compileNode(entry.key);
-                    }
+                    try self.compileNode(entry.key);
                     try self.compileNode(entry.value);
                     try self.emitOp(.op_map_insert);
                 }

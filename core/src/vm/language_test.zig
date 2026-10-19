@@ -501,3 +501,17 @@ test "Language: next and break in an ensure body leave the loop as in Ruby" {
         .{ .src = "r = 0\nwhile r < 3\n  r += 1\n  begin\n    x = r * 2\n  ensure\n    next\n  end\nend", .expected = .{ .num = 3 } },
     });
 }
+
+test "Language: a map key that is a name or a method call is its value" {
+    // A name before `=>` was read as a call without parentheses, `k(=> 1)`, a syntax error
+    try expectScripts(&.{
+        .{ .src = "k = 2\nm = { k => 1 }\nr = m[2]", .expected = .{ .num = 1 } },
+        .{ .src = "class P\n  def k = 3\nend\np = P.new\nm = { p.k => 1 }\nr = m[3]", .expected = .{ .num = 1 } },
+        // `key: value` after an expression is the same key as `key => value`
+        .{ .src = "class P\n  def k = 3\nend\np = P.new\nr = { p.k: 1 } == { p.k => 1 }", .expected = .{ .boolean = true } },
+        // A name before `=>` is its value; before `:` it is a label, the Symbol
+        .{ .src = "k = 2\nr = [{ k => 1 }.keys[0], { k: 1 }.keys[0], { k : 1 }.keys[0]].inspect", .expected = .{ .str = "[2, :k, :k]" } },
+        // With a `**` splat the map is built entry by entry, the same way
+        .{ .src = "k = 2\nm = { k => 1, **{ j: 3 } }\nr = [m[2], m[:j]]", .expected = .{ .nums = &.{ 1, 3 } } },
+    });
+}
