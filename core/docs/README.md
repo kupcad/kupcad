@@ -86,6 +86,7 @@ profile = polygon(
 label = text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
 # One line, kerned as the font says ("AV" and "To" sit closer than their advances put them);
 # a character the font has no glyph for is a ValueError naming it ("中", an emoji, a line break).
+# No font has the diameter sign "⌀": write "Ø", as drawings do (the error says so).
 # The fonts: "sans" (Roboto, the default; also "default"), "sans-bold" (Roboto Bold, strokes half
 # again as thick, for text printed small; :sans_bold as a Symbol), "mono" (Roboto Mono; also
 # "monospace"), "serif" (Roboto Serif) and "stencil" (Allerta Stencil), as a String or a Symbol.

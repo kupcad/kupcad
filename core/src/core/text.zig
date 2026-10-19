@@ -21,6 +21,12 @@ const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
     .{ .name = "monospace", .key = .mono },
 };
 
+/// Characters fonts often lack, and the one people write instead: no embedded font has the
+/// diameter sign, and drawings use the letter Ø for it.
+const STAND_INS = [_]struct { missing: u21, instead: u21 }{
+    .{ .missing = 0x2300, .instead = 0x00D8 }, // ⌀ -> Ø
+};
+
 /// The embedded fonts' own names, for an error that lists them: `"sans", "mono", ...`.
 pub const FONT_LIST = blk: {
     const keys = std.enums.values(FontKey);
@@ -189,6 +195,14 @@ pub fn firstMissingGlyph(face: *const tatfi.Face, text_str: []const u8) ?u21 {
     var iter = (std.unicode.Utf8View.init(text_str) catch return null).iterator();
     while (iter.nextCodepoint()) |cp| {
         if (face.glyph_index(cp) == null) return cp;
+    }
+    return null;
+}
+
+/// What to write for `missing` when `face` lacks it, if `face` has that.
+pub fn standIn(face: *const tatfi.Face, missing: u21) ?u21 {
+    for (STAND_INS) |entry| {
+        if (entry.missing == missing and face.glyph_index(entry.instead) != null) return entry.instead;
     }
     return null;
 }
