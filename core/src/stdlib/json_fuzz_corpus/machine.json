@@ -1,0 +1,13 @@
+{
+  "name": "braider",
+  "carriers": 16,
+  "frame": { "w": 420, "h": 380, "plate": 6.5 },
+  "gears": [
+    { "module": 1.5, "teeth": 12, "bore": 5 },
+    { "module": 1.5, "teeth": 36, "bore": 8, "hub": { "d": 18, "h": 6 } },
+    { "module": 2, "teeth": 20, "bore": 8 }
+  ],
+  "tracks": [[0, 0], [120.5, -40], [240, 0]],
+  "hollow": true,
+  "notes": null
+}

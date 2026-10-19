@@ -12,8 +12,9 @@ jobs:
   fuzz:
     # The front end (lexer, parser, linter, compiler, formatter) and the runtime (the VM and
     # the built-ins, on scripts that compile), each on random bytes from the corpus in
-    # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig), and the
-    # parsers of what KupCAD reads but didn't write (importers_fuzz_test.zig). A plain test run
+    # core/src/frontend/fuzz_corpus.zig and on generated programs (fuzz_program.zig), the
+    # parsers of what KupCAD reads but didn't write (importers_fuzz_test.zig), and the JSON
+    # files scripts read (stdlib/json_fuzz_test.zig, from json_fuzz_corpus/). A plain test run
     # replays the corpus on every platform; searching runs here, one job per target.
     name: Fuzz the ${{ matrix.target }} (linux)
     runs-on: ubuntu-latest
@@ -37,6 +38,11 @@ jobs:
           # on a hosted runner, build included (2026-10-19), so this is about 75.
           - target: importers
             runs: 3M
+          # A VM per input, which reads it twice and copies it with to_h: 1.7 ms a run on
+          # an M-series Mac (200K in 6 minutes, 2026-10-19), so this is about 45 there and
+          # within the 75 or so the others take on a slower hosted runner.
+          - target: json
+            runs: 1500K
     steps:
       - name: Checkout
         uses: actions/checkout@v7
