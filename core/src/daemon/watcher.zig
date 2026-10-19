@@ -6,6 +6,7 @@ const std = @import("std");
 const session_mod = @import("session.zig");
 const ScriptSession = session_mod.ScriptSession;
 const import_path = @import("../core/import_path.zig");
+const import_kind = @import("../core/import_kind.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 
 /// Poll interval for mtime checks.
@@ -64,7 +65,7 @@ pub const Watcher = struct {
         self.data_mtimes.deinit(allocator);
     }
 
-    /// Adds to the workspace every `.kup` file the loaded modules import, read from disk,
+    /// Adds to the workspace every module the loaded modules import, read from disk,
     /// until none is missing, then links the dependencies. Only the root used to be
     /// watched, and its imports came from the VM's cache, so an edit to a module never
     /// showed. A file that can't be read (a package, a missing one) is left to the VM's
@@ -85,9 +86,11 @@ pub const Watcher = struct {
                 const mod = &ws.modules.items[i];
                 for (mod.doc.tree.nodes.items) |*node| {
                     if (node.tag != .import_stmt) continue;
-                    const spec = mod.doc.tree.getString(mod.doc.tree.importStmt(node).path);
-                    const path = try import_path.resolve(allocator, mod.path, spec);
-                    if (!std.mem.endsWith(u8, path, ".kup") or ws.path_to_id.contains(path)) {
+                    const stmt = mod.doc.tree.importStmt(node);
+                    // A file it reads as data is watched once a run has read it
+                    if (import_kind.ofImport(&mod.doc.tree, stmt) != .module) continue;
+                    const path = try import_path.resolve(allocator, mod.path, mod.doc.tree.getString(stmt.path));
+                    if (ws.path_to_id.contains(path)) {
                         allocator.free(path);
                         continue;
                     }

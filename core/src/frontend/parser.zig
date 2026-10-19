@@ -11,6 +11,7 @@ const common_token = @import("../core/token.zig");
 const common_errors = @import("../core/errors.zig");
 const docstring = @import("docstring.zig");
 const string_escape = @import("../core/string_escape.zig");
+const import_kind = @import("../core/import_kind.zig");
 
 const Tag = lexer_mod.Tag;
 const Diagnostics = common_errors.Diagnostics;
@@ -863,6 +864,11 @@ pub const Parser = struct {
                 self.advance();
                 attributes = try self.parseHashLiteral();
             }
+            const kind = self.importKind(attributes, path_node);
+            const names = self.scratch_alias_pairs.items.len - s_len;
+            if (!is_export and kind != .module and names > 1) {
+                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file import (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
+            }
         } else if (!is_export) {
             self.reportError(self.getLoc(start_tok), .@"import-without-from", "Import statement missing 'from' path", .{});
             return ParseError.UnexpectedToken;
@@ -874,6 +880,30 @@ pub const Parser = struct {
         } else {
             return self.b.importStmt(span, path_node, attributes, start_tok) catch ParseError.OutOfMemory;
         }
+    }
+
+    /// What an import of `path` reads (import_kind.ofImport), reporting what is wrong with its
+    /// `with { }`: a key but `type`, or a type that names nothing it reads.
+    fn importKind(self: *Parser, attributes: ast.NodeIndex, path: ast.StringId) import_kind.Kind {
+        const tree = &self.b.tree;
+        switch (import_kind.readAttributes(tree, attributes)) {
+            .kind => |kind| return kind,
+            .none => {},
+            .invalid => |bad| {
+                const loc = self.getLoc(tree.getNode(bad.node).?.main_token);
+                const code: Code = .@"import-attribute";
+                switch (bad.problem) {
+                    .unknown_key => if (bad.name.len > 0)
+                        self.reportError(loc, code, "An import's `with {{ }}` takes only `type`, not `{s}`", .{bad.name})
+                    else
+                        self.reportError(loc, code, "An import's `with {{ }}` takes only `type`", .{}),
+                    .type_twice => self.reportError(loc, code, "An import's `type` is given twice", .{}),
+                    .not_a_name => self.reportError(loc, code, "An import's `type` is a string or a symbol, as in `type: \"json\"`", .{}),
+                    .unknown_type => self.reportError(loc, code, "An import's `type` is " ++ import_kind.TYPE_NAMES ++ ", not \"{s}\"", .{bad.name}),
+                }
+            },
+        }
+        return import_kind.ofPath(tree.getString(path));
     }
 
     fn parseIfOrUnless(self: *Parser, is_unless: bool) ParseError!ast.NodeIndex {

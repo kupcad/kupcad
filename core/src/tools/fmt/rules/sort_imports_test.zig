@@ -132,8 +132,8 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     defer arena.deinit();
 
     const source =
-        \\import "z.kup" with { version: 2 }
-        \\import "a.kup" with { version: 1 }
+        \\import "z.kup" with { type: "kup" }
+        \\import "a.kup" with { type: :kup }
     ;
 
     var lexer = lexer_mod.Lexer.init(source, 0);
@@ -162,8 +162,9 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     // Hash literals now extract their data via tree.nodeSpan
     const a_attrs = parser.b.tree.getHashEntries(parser.b.tree.nodeSpan(a_attrs_node));
 
+    // a.kup's is the symbol `:kup`, z.kup's the string "kup"
     const val_node = parser.b.tree.getNode(a_attrs[0].value).?;
-    try testing.expectEqual(@as(f64, 1.0), parser.b.tree.number(val_node));
+    try testing.expectEqual(ast.Tag.symbol, val_node.tag);
 }
 
 /// No statement has a comment attached: the rule may reorder any of them.

@@ -242,6 +242,8 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `nesting-too-deep` | Code, or interpolation in a string, nested deeper than the limit. |
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |
+| `import-attribute` | An import's `with { }` with a key other than `type`, or a type that names nothing an import reads (`with { type: "yaml" }`). |
+| `file-import-names` | An import of a file (STL, STEP or JSON) that names more than one variable (`import { a, b } from "./m.json"`): it gives one value. |
 | `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
 | `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
 | `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
@@ -482,6 +484,16 @@ logo = import_stl("assets/logo.stl")
 
 A relative import (`"./hardware.kup"`, `"../lib/units.kup"`, `"./logo.stl"`) names a file next to the one that imports it, so `kupcad build parts/main.kup` and the files it imports agree on where `./` is. Imports stay inside the project (the directory `kupcad` runs in, or the folder the editor opened): one that climbs out of it is refused. Any other name is a package, by its alias.
 
+An import whose path ends in `.stl`, `.step` (or `.stp`) or `.json`, in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above. `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"` or `"json"`, as a string or a symbol, and it wins over the extension:
+
+```ruby
+import scan from "./scan.bin" with { type: "stl" }
+import machine from "./machine.data" with { type: :json }
+import { bolt } from "./bolt.txt" with { type: "kup" }
+```
+
+`with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file import gives one value, so it names one variable (`import { a, b } from "./m.json"` is `file-import-names`).
+
 Every imported file runs in its own top-level scope. Its variables, `def`s and classes are private to it; only the names it lists in `export` reach the importer, and only under the names the importer lists in `import { ... }`. Exported functions and classes keep using their own file's variables wherever they are called from. Module code can use builtins, but not the importer's variables, and two libraries can use the same top-level name without clashing:
 
 ```ruby
@@ -499,7 +511,7 @@ thread_pitch = 99                  # a different variable; bolt() is unaffected
 
 ### Data files (`import_json`)
 
-A model described by data reads it from a JSON file: `import machine from "./machine.json"` (relative to the importing file, like any import) or `machine = import_json("data/machine.json")` (from the project's directory, like `import_stl`). An object becomes a **JsonObject**, an array an Array, a number a Number, a string a String, `true`/`false` Booleans and `null` `nil`:
+A model described by data reads it from a JSON file: `import machine from "./machine.json"` (relative to the importing file, like any import; `with { type: "json" }` for a file named otherwise) or `machine = import_json("data/machine.json")` (from the project's directory, like `import_stl`). An object becomes a **JsonObject**, an array an Array, a number a Number, a string a String, `true`/`false` Booleans and `null` `nil`:
 
 ```ruby
 # machine.json: {"name": "braider", "gears": [{"module": 1.5, "teeth": 12}, {"module": 2, "teeth": 20}]}

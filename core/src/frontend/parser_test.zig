@@ -1061,7 +1061,7 @@ test "KupCAD Parser: Multi-line Method Chaining (Fluent API)" {
 
 test "KupCAD Parser: Import / Export with Attributes (with {})" {
     const source =
-        \\import { names } from "module-name" with { key: "data", key2: "data2" }
+        \\import { names } from "module-name" with { type: "kup" }
         \\export { names } from "module-name" with {}
     ;
     var pt = try KTest.init(source);
@@ -1079,8 +1079,8 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
 
     const attrs = pt.getNode(is_stmt.attributes);
     const hash_entries = tree.getHashEntries(tree.nodeSpan(attrs));
-    try testing.expectEqual(@as(usize, 2), hash_entries.len);
-    try testing.expectEqualStrings("key", tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(hash_entries[0].key).data))));
+    try testing.expectEqual(@as(usize, 1), hash_entries.len);
+    try testing.expectEqualStrings("type", tree.getString(@as(ast.StringId, @fromBackingInt(pt.getNode(hash_entries[0].key).data))));
 
     const exp_node_idx = try pt.parser.parseStatement();
     const exp_node = pt.getNode(exp_node_idx);
@@ -1091,6 +1091,7 @@ test "KupCAD Parser: Import / Export with Attributes (with {})" {
     const exp_attrs = pt.getNode(es_stmt.attributes);
     const exp_hash_entries = tree.getHashEntries(tree.nodeSpan(exp_attrs));
     try testing.expectEqual(@as(usize, 0), exp_hash_entries.len);
+    try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
 }
 
 test "KupCAD Parser: Optional Imports and Trailing Call Commas" {
@@ -1203,7 +1204,7 @@ test "KupCAD Parser: Index Access and Index Compound Assignment" {
 
 test "KupCAD Parser: Nested Module Definitions and Export Statements" {
     const source =
-        \\export { Enclosure, Mount } from "./housing.kup" with { version: 2 }
+        \\export { Enclosure, Mount } from "./housing.kup" with { type: "kup" }
         \\module Hardware
         \\  class Screw < Base
         \\  end

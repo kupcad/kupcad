@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const import_path = @import("../core/import_path.zig");
+const import_kind = @import("../core/import_kind.zig");
 const macros = @import("macros.zig");
 const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -21,14 +22,6 @@ const Document = @import("../core/document.zig").Document;
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
-
-/// The built-in an `import` of a file calls instead of loading a module, by the file's
-/// extension: a mesh or data, not source.
-const FILE_IMPORTERS = [_]struct { extension: []const u8, importer: []const u8 }{
-    .{ .extension = ".stl", .importer = "import_stl" },
-    .{ .extension = ".step", .importer = "import_step" },
-    .{ .extension = ".json", .importer = "import_json" },
-};
 
 /// True for a name that can become a function-local: not `@ivar`, `@@cvar`,
 /// `$global` or a Constant, which `classifyStorage` routes by their first char.
@@ -793,14 +786,6 @@ pub const Compiler = struct {
         }
     }
 
-    /// The built-in that reads the file at `path` for an `import`, or null for a module.
-    fn fileImporter(path: []const u8) ?[]const u8 {
-        for (FILE_IMPORTERS) |file| {
-            if (std.mem.endsWith(u8, path, file.extension)) return file.importer;
-        }
-        return null;
-    }
-
     fn compileImportStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const is_stmt = self.tree.importStmt(node);
 
@@ -811,8 +796,8 @@ pub const Compiler = struct {
 
         const importer = self.rootCompiler().module_path;
 
-        // --- 1. A file, read by its importer (FILE_IMPORTERS) ---
-        if (fileImporter(path_str)) |func_name| {
+        // --- 1. A file (a mesh, data), read by the built-in for its kind ---
+        if (import_kind.ofImport(self.tree, is_stmt).importer()) |func_name| {
             const func_idx = try self.makeStringConstant(func_name);
             try self.emitGetGlobal(func_idx);
 

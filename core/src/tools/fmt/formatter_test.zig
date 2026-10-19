@@ -304,14 +304,14 @@ test "Formatter: Property and Index Assignment" {
 test "Formatter: Imports and Exports" {
     const source =
         \\import   "lib.kup"
-        \\import  {  A,B  }  from  "lib.kup"   with {  version:2  }
+        \\import  {  A,B  }  from  "lib.kup"   with {  type:"kup"  }
         \\export {C} from "other.kup"
         \\export {D,E as F}
     ;
     // A file's own export has no path (it was printed with `from ""`).
     const expected =
         \\import "lib.kup"
-        \\import { A, B } from "lib.kup" with { version: 2 }
+        \\import { A, B } from "lib.kup" with { type: "kup" }
         \\export { C } from "other.kup"
         \\export { D, E as F }
         \\
