@@ -1,10 +1,12 @@
 //! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
-//! fonts (`FontKey`, `getFace`), flattens their curves into closed contours scaled to the
-//! given size in mm, and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
+//! fonts (`FontKey`, `getFace`), each pair kerned as the font says (kerning.zig), flattens
+//! their curves into closed contours scaled to the given size in mm, and aligns the result
+//! (`HAlign`, `VAlign`) into `TextPolygons`.
 
 const std = @import("std");
 const tatfi = @import("tatfi");
 const bezier = @import("bezier.zig");
+const Kerning = @import("kerning.zig").Kerning;
 
 pub const FontKey = enum {
     sans,
@@ -204,6 +206,10 @@ pub fn extractText(
         },
     };
 
+    var kerning = try Kerning.init(allocator, face);
+    defer kerning.deinit(allocator);
+    var previous: ?tatfi.GlyphId = null;
+
     // Checked, not assumed: the iterator asserts on a malformed sequence.
     const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
     var iter = view.iterator();
@@ -211,6 +217,10 @@ pub fn extractText(
         // A character the font lacks was left out without a word: `text("中")` made an
         // empty sketch. firstMissingGlyph names it.
         const glyph_id = face.glyph_index(cp) orelse return error.MissingGlyph;
+        // The font's kerning moves a glyph closer to the one before it ("AV", "To"), or
+        // further from it
+        if (previous) |left| ctx.cursor_x += @as(f64, @floatFromInt(kerning.between(left, glyph_id))) * scale;
+        previous = glyph_id;
         // Extract outlines and route to flattener
         _ = face.outline_glyph({}, glyph_id, builder);
         if (ctx.failed) return error.OutOfMemory;

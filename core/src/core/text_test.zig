@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
+const tatfi = @import("tatfi");
 const text = @import("text.zig");
+const Kerning = @import("kerning.zig").Kerning;
 
 test "Text Engine: Successfully parses all embedded font families allocation-free" {
     inline for (std.enums.values(text.FontKey)) |key| {
@@ -132,4 +134,49 @@ test "Text: a character the font has no glyph for is an error, named by firstMis
     try testing.expectError(error.MissingGlyph, text.extractText(testing.allocator, &face, "a\u{1F600}b", 10.0, 0.1, .left, .baseline));
     try testing.expectEqual(@as(?u21, 0x1F600), text.firstMissingGlyph(&face, "a\u{1F600}b"));
     try testing.expectEqual(@as(?u21, null), text.firstMissingGlyph(&face, "Привет é"));
+}
+
+/// The kerning `face` gives the pair `left` `right`, in font units.
+fn kerningOf(face: *const tatfi.Face, left: u21, right: u21) !i32 {
+    var kerning = try Kerning.init(testing.allocator, face);
+    defer kerning.deinit(testing.allocator);
+    return kerning.between(face.glyph_index(left).?, face.glyph_index(right).?);
+}
+
+test "Text Engine: a font's kerning, from class and glyph pairs and extension lookups" {
+    const sans = try text.getFace(.sans);
+    // Roboto's classes: "AV" and "LT" come together; "AB" has no kerning
+    try testing.expectEqual(@as(i32, -87), try kerningOf(&sans, 'A', 'V'));
+    try testing.expectEqual(@as(i32, -275), try kerningOf(&sans, 'L', 'T'));
+    try testing.expectEqual(@as(i32, 0), try kerningOf(&sans, 'A', 'B'));
+    // Its glyph pairs, which tatfi never found (a pair's second record was read with the
+    // first's format), closer or further apart
+    try testing.expectEqual(@as(i32, -224), try kerningOf(&sans, '/', '/'));
+    try testing.expectEqual(@as(i32, 20), try kerningOf(&sans, '(', 'V'));
+    // Roboto Serif keeps its pairs in an extension lookup
+    const serif = try text.getFace(.serif);
+    try testing.expectEqual(@as(i32, -52), try kerningOf(&serif, 'A', 'V'));
+    // Roboto Mono, whose glyphs are all one width, has no GPOS table
+    const mono = try text.getFace(.mono);
+    try testing.expectEqual(@as(i32, 0), try kerningOf(&mono, 'A', 'V'));
+}
+
+/// The largest x of `str`'s outlines in `face`, 10 mm high.
+fn rightEdge(face: *const tatfi.Face, str: []const u8) !f64 {
+    var polygons = try text.extractText(testing.allocator, face, str, 10.0, 0.1, .left, .baseline);
+    defer polygons.deinit(testing.allocator);
+    var max_x = -std.math.inf(f64);
+    for (polygons.contours.items) |contour| for (contour.items) |point| {
+        max_x = @max(max_x, point[0]);
+    };
+    return max_x;
+}
+
+test "Text Engine: a glyph follows the one before it by its advance and their kerning" {
+    // "V" went after "A" by A's advance alone, as far as in "AB"
+    const face = try text.getFace(.sans);
+    const scale = 10.0 / @as(f64, @floatFromInt(face.units_per_em()));
+    const advance: f64 = @floatFromInt(face.glyph_hor_advance({}, face.glyph_index('A').?).?);
+    const kerned = (advance + @as(f64, @floatFromInt(try kerningOf(&face, 'A', 'V')))) * scale;
+    try testing.expectApproxEqAbs(try rightEdge(&face, "V") + kerned, try rightEdge(&face, "AV"), 1e-9);
 }

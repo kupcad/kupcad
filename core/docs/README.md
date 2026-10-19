@@ -84,8 +84,8 @@ profile = polygon(
 
 # Text Generation with alignment and typography controls
 label = text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
-# One line; a character the font has no glyph for is a ValueError naming it ("中", an emoji,
-# a line break).
+# One line, kerned as the font says ("AV" and "To" sit closer than their advances put them);
+# a character the font has no glyph for is a ValueError naming it ("中", an emoji, a line break).
 
 # Sweeping 2D into 3D
 label_3d = label.extrude(5.0)
