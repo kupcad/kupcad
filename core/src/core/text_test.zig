@@ -199,3 +199,30 @@ test "Text Engine: sans-bold's strokes are half again as thick as sans's" {
     try testing.expectApproxEqAbs(@as(f64, 0.91), regular, 0.01);
     try testing.expectApproxEqAbs(@as(f64, 1.42), bold, 0.01);
 }
+
+/// Fonts made by scripts/make-test-fonts.py: a few polygon glyphs, kerned.
+const KERN_TABLE_FONT = @embedFile("test_fonts/kern-table.ttf");
+const GPOS_FONT = @embedFile("test_fonts/gpos-kerning.otf");
+
+test "Text Engine: a font without GPOS kerning is kerned by its kern table" {
+    // The kern table's pairs used to be ignored, so a font that keeps its kerning only there,
+    // as many TrueType fonts do, was set by its advances alone
+    const face = try tatfi.Face.parse(KERN_TABLE_FONT, 0);
+    try testing.expectEqual(@as(i32, -100), try kerningOf(&face, 'A', 'V'));
+    try testing.expectEqual(@as(i32, -90), try kerningOf(&face, 'V', 'A'));
+    try testing.expectEqual(@as(i32, -80), try kerningOf(&face, 'T', 'o'));
+    try testing.expectEqual(@as(i32, 0), try kerningOf(&face, 'A', 'o'));
+}
+
+test "Text Engine: a CFF font draws its outlines and is kerned by glyph and class pairs" {
+    const face = try tatfi.Face.parse(GPOS_FONT, 0);
+    // A, V and T are one contour each, o two: its counter is a hole
+    var polygons = try text.extractText(testing.allocator, &face, "AVTo", 10.0, 0.1, .left, .baseline);
+    defer polygons.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 5), polygons.contours.items.len);
+    // `pos A V -100` is a glyph pair; V A and T o come from `@LEFT @RIGHT -70`, a class pair
+    try testing.expectEqual(@as(i32, -100), try kerningOf(&face, 'A', 'V'));
+    try testing.expectEqual(@as(i32, -70), try kerningOf(&face, 'V', 'A'));
+    try testing.expectEqual(@as(i32, -70), try kerningOf(&face, 'T', 'o'));
+    try testing.expectEqual(@as(i32, 0), try kerningOf(&face, 'o', 'A'));
+}

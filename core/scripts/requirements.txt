@@ -1,3 +1,6 @@
 # The 3MF Consortium's library, which `pnpm check:3mf` (scripts/validate-3mf.py) reads
 # exported 3MF files with.
 lib3mf==2.5.0
+
+# fontTools, which scripts/make-test-fonts.py makes the test fonts in src/core/test_fonts with.
+fonttools==4.67.0
