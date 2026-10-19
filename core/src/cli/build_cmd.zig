@@ -17,6 +17,8 @@ const debug = @import("../stdlib/debug.zig");
 const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const VM = @import("../vm/vm.zig").VM;
+pub const Outcome = @import("outcome.zig").Outcome;
+pub const Reporter = @import("reporter.zig").Reporter;
 
 pub const USAGE =
     \\Usage: kupcad build <file.kup> [options]
@@ -174,10 +176,6 @@ pub const PartFileNames = struct {
     }
 };
 
-pub const Outcome = @import("outcome.zig").Outcome;
-
-pub const Reporter = @import("reporter.zig").Reporter;
-
 /// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
 /// and a caret), then a one-line summary.
 pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, reporter: Reporter) !void {
@@ -192,172 +190,205 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     return run(allocator, args_iter, .forProcess(init));
 }
 
+/// What `kupcad build` was asked to do.
+const Options = struct {
+    input_path: []const u8,
+    /// `-o`; without it the model goes next to the input, named after it.
+    output_path: ?[]const u8 = null,
+    format: Format = DEFAULT_FORMAT,
+    use_draco: bool = false,
+    /// `--bom`: where the parts list goes, besides the model.
+    bom_path: ?[]const u8 = null,
+    /// `--split`: the directory a file per part goes in, instead of one model file.
+    split_dir: ?[]const u8 = null,
+    /// The values `-p` and `-P` give, in order: the later of two for one parameter wins.
+    params: api.ParamValues = .{},
+
+    fn deinit(self: *Options, allocator: std.mem.Allocator) void {
+        self.params.deinit(allocator);
+    }
+};
+
 /// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).
 /// User-facing failures are reported and return `.failure`; unexpected errors propagate.
 pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter) !Outcome {
-    const io = reporter.io;
-    var input_path: ?[]const u8 = null;
-    var output_path: ?[]const u8 = null;
+    var options = try parseOptions(allocator, args_iter, reporter) orelse return .failure;
+    defer options.deinit(allocator);
+
+    // A one-shot command: one session is all it needs
+    var manager = SessionManager.init(allocator, reporter.io, 1);
+    defer manager.deinit();
+    const session = try openSession(allocator, &manager, &options, reporter) orelse return .failure;
+    if (!try evaluate(allocator, session, options.input_path, reporter)) return .failure;
+
+    const vm = &session.vm;
+    const written = if (options.split_dir) |dir|
+        try writeSplit(allocator, vm, dir, options.format, options.use_draco, reporter)
+    else
+        try writeModel(allocator, vm, &options, reporter);
+    if (!written) return .failure;
+    if (options.bom_path) |path| {
+        if (!try writeBom(allocator, vm, path, reporter)) return .failure;
+    }
+    return .success;
+}
+
+/// The options in `args`, or null, the refusal reported.
+fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !?Options {
+    var options: Options = .{ .input_path = "" };
+    errdefer options.deinit(allocator);
+    var given = false;
     var explicit_format: ?Format = null;
-    var use_draco: bool = false;
-    var bom_path: ?[]const u8 = null;
-    var split_dir: ?[]const u8 = null;
-
-    // The values `-p` and `-P` give, in order: the later of two for one parameter wins
-    var params: api.ParamValues = .{};
-    defer params.deinit(allocator);
-
-    // --- 1. Parse Command Line Arguments ---
-    while (args_iter.next()) |arg| {
-        switch (try param_flags.take(allocator, arg, args_iter, &params, reporter)) {
+    while (args.next()) |arg| {
+        switch (try param_flags.take(allocator, arg, args, &options.params, reporter)) {
             .taken => continue,
-            .refused => return .failure,
+            .refused => return refuse(allocator, &options),
             .other => {},
         }
         if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            output_path = args_iter.next() orelse {
-                reporter.err("Error: Missing output path after {s}\n", .{arg});
-                return .failure;
-            };
+            options.output_path = flagValue(args, arg, "output path", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
-            use_draco = true;
+            options.use_draco = true;
         } else if (std.mem.eql(u8, arg, "--split")) {
-            split_dir = args_iter.next() orelse {
-                reporter.err("Error: Missing directory after {s}\n", .{arg});
-                return .failure;
-            };
+            options.split_dir = flagValue(args, arg, "directory", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "--bom")) {
-            bom_path = args_iter.next() orelse {
-                reporter.err("Error: Missing parts list path after {s}\n", .{arg});
-                return .failure;
-            };
+            options.bom_path = flagValue(args, arg, "parts list path", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
-            const name = args_iter.next() orelse {
-                reporter.err("Error: Missing format after {s}\n", .{arg});
-                return .failure;
-            };
+            const name = flagValue(args, arg, "format", reporter) orelse return refuse(allocator, &options);
             explicit_format = Format.parse(name) orelse {
                 reporter.err("Error: Unsupported format '{s}'. Allowed: {s}\n", .{ name, FORMAT_LIST });
-                return .failure;
+                return refuse(allocator, &options);
             };
         } else if (std.mem.startsWith(u8, arg, "-")) {
             reporter.err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
-            return .failure;
-        } else if (input_path) |first| {
-            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ first, arg });
-            return .failure;
+            return refuse(allocator, &options);
+        } else if (given) {
+            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ options.input_path, arg });
+            return refuse(allocator, &options);
         } else {
-            input_path = arg;
+            options.input_path = arg;
+            given = true;
         }
     }
-
-    const target_input = input_path orelse {
+    if (!given) {
         reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
-        return .failure;
-    };
-
-    if (split_dir != null and output_path != null) {
-        reporter.err("Error: --split writes a file per part into its directory; leave out -o\n", .{});
-        return .failure;
+        return refuse(allocator, &options);
     }
-    const format = if (split_dir != null)
-        explicit_format orelse DEFAULT_SPLIT_FORMAT
-    else
-        resolveFormat(explicit_format, output_path, reporter) orelse return .failure;
-    const format_name = @tagName(format);
+    if (!settleFormat(&options, explicit_format, reporter)) return refuse(allocator, &options);
+    return options;
+}
 
+/// The value after flag `arg`, or null, reported as a missing `what`.
+fn flagValue(args: anytype, arg: []const u8, comptime what: []const u8, reporter: Reporter) ?[]const u8 {
+    return args.next() orelse {
+        reporter.err("Error: Missing " ++ what ++ " after {s}\n", .{arg});
+        return null;
+    };
+}
+
+fn refuse(allocator: std.mem.Allocator, options: *Options) ?Options {
+    options.deinit(allocator);
+    return null;
+}
+
+/// Sets the format `options` write in, from `--format` and the `-o` extension; false, the
+/// refusal reported, when they don't make one or the other options don't fit it.
+fn settleFormat(options: *Options, explicit: ?Format, reporter: Reporter) bool {
+    if (options.split_dir != null and options.output_path != null) {
+        reporter.err("Error: --split writes a file per part into its directory; leave out -o\n", .{});
+        return false;
+    }
+    options.format = if (options.split_dir != null)
+        explicit orelse DEFAULT_SPLIT_FORMAT
+    else
+        resolveFormat(explicit, options.output_path, reporter) orelse return false;
     // Draco is a glTF mesh-compression extension; the STL and STEP exporters would
     // silently drop the request, so refuse it rather than pretend it was applied.
-    if (use_draco and format != .glb and format != .gltf) {
-        reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{format_name});
-        return .failure;
+    if (options.use_draco and options.format != .glb and options.format != .gltf) {
+        reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{@tagName(options.format)});
+        return false;
     }
+    return true;
+}
 
-    // --- 2. Determine Final Output Path ---
-    // If the user didn't specify an output path, generate one matching the input file's name and location
-    const generated_output = if (output_path == null) blk: {
-        const stem = std.fs.path.stem(target_input);
-        if (std.fs.path.dirname(target_input)) |dir| {
-            break :blk try allocator.print("{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format_name });
-        } else {
-            break :blk try allocator.print("{s}.{s}", .{ stem, format_name });
-        }
-    } else null;
-    defer if (generated_output) |p| allocator.free(p);
-
-    const final_output = output_path orelse generated_output.?;
-
-    // --- 3. Setup Persistent Session Manager ---
-    // We use a capacity of 1 since this is a one-shot CLI command.
-    var manager = SessionManager.init(allocator, io, 1);
-    defer manager.deinit();
-
-    var session = manager.getOrInitializeSession(target_input) catch |err| {
+/// The session the script runs in, set up as `options` and the project ask: the parameter
+/// values, the terminal debugger, the project's memory limit (`vm_memory_limit` in
+/// .kupcad.json) and, for STEP, the exact B-Rep engine. Null, the failure reported, when it
+/// can't be.
+fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: *Options, reporter: Reporter) !?*ScriptSession {
+    const io = reporter.io;
+    const session = manager.getOrInitializeSession(options.input_path) catch |err| {
         reporter.err("Failed to initialize session: {}\n", .{err});
-        return .failure;
+        return null;
     };
-
-    session.setParams(&params);
+    session.setParams(&options.params);
     session.vm.debugger_handler = debug.terminalDebugger(io);
-    // The project's memory sandbox (`vm_memory_limit` in .kupcad.json), if it sets one.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-    const config = ProjectConfig.forScript(io, allocator, target_input, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, target_input, where.line, where.column, ProjectConfig.describeError(err) });
-        return .failure;
+    const config = ProjectConfig.forScript(io, allocator, options.input_path, &where) catch |err| {
+        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, options.input_path, where.line, where.column, ProjectConfig.describeError(err) });
+        return null;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
-
-    // Force exact analytical representations if STEP export is requested
-    if (format == .step) {
+    if (options.format == .step) {
         var settings = session.vm.config();
         settings.engine = .brep_native;
         try session.vm.setConfig(settings);
     }
+    return session;
+}
 
-    // --- 4. Evaluate the Workspace ---
-    const source = try fs.readFileLimit(io, allocator, target_input, MAX_FILE_SIZE);
+/// Runs the script at `input_path` and the modules it imports, dependencies first; false,
+/// the errors reported, when one doesn't parse, compile or run.
+fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, input_path: []const u8, reporter: Reporter) !bool {
+    const source = try fs.readFileLimit(reporter.io, allocator, input_path, MAX_FILE_SIZE);
     defer allocator.free(source);
-
-    // Feed the source into the Workspace so it can parse imports and build the dependency graph
-    _ = try session.workspace.addModule(target_input, source);
+    _ = try session.workspace.addModule(input_path, source);
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
-
-    // Perform Kahn's Topological Sort to execute dependencies from bottom to top
     session.evaluateWorkspace() catch |err| {
         if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
             try reportErrors(allocator, session, failure, reporter);
-            return .failure;
+            return false;
         };
         reporter.err("Build failed: {}\n", .{err});
-        return .failure;
+        return false;
     };
+    return true;
+}
 
-    // --- 5. Export Resulting Geometry ---
-    // Use the shared DRY helper to pull from the VM stack and create the binary file
-    // A failure the script can read about was raised (and reported) by the VM.
-    const cwd = std.Io.Dir.cwd();
-    if (split_dir) |dir| {
-        if (!try writeSplit(allocator, &session.vm, dir, format, use_draco, reporter)) return .failure;
-    } else {
-        const output_bytes = api.exportModelFromVm(allocator, &session.vm, format, use_draco) catch |err| {
-            reporter.err("Export failed: {}\n", .{err});
-            return .failure;
-        };
-        defer allocator.free(output_bytes);
-        try cwd.writeFile(io, .{ .sub_path = final_output, .data = output_bytes });
-        reporter.out("Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
-    }
+/// Writes the model to `-o`, or next to the input named after it; false, the failure
+/// reported, when it can't be exported. A failure the script can read about was raised
+/// (and reported) by the VM.
+fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, reporter: Reporter) !bool {
+    const format_name = @tagName(options.format);
+    const generated = if (options.output_path == null) blk: {
+        const stem = std.fs.path.stem(options.input_path);
+        const dir = std.fs.path.dirname(options.input_path) orelse break :blk try allocator.print("{s}.{s}", .{ stem, format_name });
+        break :blk try allocator.print("{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format_name });
+    } else null;
+    defer if (generated) |path| allocator.free(path);
+    const path = options.output_path orelse generated.?;
 
-    if (bom_path) |path| {
-        // A part the script can read about (a B-Rep one has no volume yet) was raised by the VM
-        const parts = api.billOfMaterials(allocator, &session.vm) catch |err| {
-            reporter.err("Parts list failed: {}\n", .{err});
-            return .failure;
-        };
-        defer allocator.free(parts);
-        try cwd.writeFile(io, .{ .sub_path = path, .data = parts });
-        reporter.out("Wrote the parts list to {s}\n", .{path});
-    }
-    return .success;
+    const bytes = api.exportModelFromVm(allocator, vm, options.format, options.use_draco) catch |err| {
+        reporter.err("Export failed: {}\n", .{err});
+        return false;
+    };
+    defer allocator.free(bytes);
+    try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes });
+    reporter.out("Successfully built {s} ({d} bytes)\n", .{ path, bytes.len });
+    return true;
+}
+
+/// Writes the model's parts list to `path` (`--bom`); false, the failure reported, when it
+/// can't be made. A part the script can read about (a B-Rep one has no volume yet) was
+/// raised by the VM.
+fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: Reporter) !bool {
+    const parts = api.billOfMaterials(allocator, vm) catch |err| {
+        reporter.err("Parts list failed: {}\n", .{err});
+        return false;
+    };
+    defer allocator.free(parts);
+    try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = parts });
+    reporter.out("Wrote the parts list to {s}\n", .{path});
+    return true;
 }
