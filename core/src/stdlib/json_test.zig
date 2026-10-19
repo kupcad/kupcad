@@ -21,6 +21,9 @@ const FILES = [_]support.ScriptFile{
     .{ .path = "many.json", .data = "{\"k1\": 1, \"k2\": 2, \"k3\": 3, \"k4\": 4, \"k5\": 5, \"k6\": 6, \"k7\": 7, \"k8\": 8, \"k9\": 9}" },
     .{ .path = "bad.json", .data = "{\"a\": 1,\n \"b\" 2}" },
     .{ .path = "dup.json", .data = "{\"a\": 1, \"a\": 2}" },
+    // A package's data, and its entry file reading it by a relative path
+    .{ .path = ".kupcad/pkg/hardware/screws.json", .data = "{\"m3\": 5.5}" },
+    .{ .path = ".kupcad/pkg/hardware/main.kup", .data = "import screws from \"./screws.json\"\nexport screws\n" },
     .{ .path = "huge.json", .data = "{\"w\": [1, 1e400]}" },
     // As deep as it reads: limits_test.zig has the one level more it refuses
     .{ .path = "deep.json", .data = nested(limits.MAX_JSON_DEPTH) },
@@ -60,6 +63,9 @@ test "import_json: an object's keys are found by String and by Symbol, all the w
         case("r = import_json(\"u.json\")[:big]", .{ .num = 1.2345678901234568e29 }),
         // `import name from "file.json"` reads it the same way
         case("import m from \"./machine.json\"\nr = m[:frame][:w]", .{ .num = 40 }),
+        // A package's file, by the package's alias, as its modules are
+        case("import screws from \"hardware/screws.json\"\nr = screws[:m3]", .{ .num = 5.5 }),
+        case("import { screws } from \"hardware\"\nr = screws[:m3]", .{ .num = 5.5 }),
     });
 }
 

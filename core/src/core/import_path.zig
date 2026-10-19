@@ -22,16 +22,24 @@ const PACKAGES_LINKED = builtin.target.os.tag != .freestanding and builtin.targe
 /// `hardware/screws.kup`, in PACKAGE_DIR. Caller owns the result.
 pub fn resolve(allocator: std.mem.Allocator, importer: []const u8, raw_spec: []const u8) ![]u8 {
     const spec = std.mem.trimEnd(u8, raw_spec, "/"); // `import "hardware/"` is the package
-    if (isRelative(spec)) return resolveFile(allocator, importer, spec);
+    if (isRelative(spec)) return joinRelative(allocator, importer, spec);
     if (std.fs.path.isAbsolutePosix(spec) or !PACKAGES_LINKED) return allocator.dupe(u8, spec);
     if (std.mem.endsWith(u8, spec, ".kup")) return allocator.print(PACKAGE_DIR ++ "/{s}", .{spec});
     return allocator.print(PACKAGE_DIR ++ "/{s}/" ++ PACKAGE_ENTRY, .{spec});
 }
 
-/// The file an asset import (`import "./logo.stl"`) reads: a relative spec is joined to the
-/// importer's folder, any other is from the root as written. Caller owns the result.
+/// The file an import of a file (`import logo from "./logo.stl"`) reads, as `resolve` finds
+/// a module's: a relative spec joined to the importer's folder, an absolute one as it is,
+/// any other a package's file (`hardware/data.json` is PACKAGE_DIR/hardware/data.json). It
+/// was read from the root, so a package's data couldn't be imported by its alias. A call
+/// (`import_json("data/m.json")`) reads from the root as written. Caller owns the result.
 pub fn resolveFile(allocator: std.mem.Allocator, importer: []const u8, spec: []const u8) ![]u8 {
-    if (!isRelative(spec)) return allocator.dupe(u8, spec);
+    if (isRelative(spec)) return joinRelative(allocator, importer, spec);
+    if (std.fs.path.isAbsolutePosix(spec) or !PACKAGES_LINKED) return allocator.dupe(u8, spec);
+    return allocator.print(PACKAGE_DIR ++ "/{s}", .{spec});
+}
+
+fn joinRelative(allocator: std.mem.Allocator, importer: []const u8, spec: []const u8) ![]u8 {
     const folder = std.fs.path.dirnamePosix(importer) orelse return std.fs.path.resolveAllocPosix(allocator, &.{spec});
     return std.fs.path.resolveAllocPosix(allocator, &.{ folder, spec });
 }

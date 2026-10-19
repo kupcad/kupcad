@@ -484,7 +484,7 @@ logo = import_stl("assets/logo.stl")
 
 A relative import (`"./hardware.kup"`, `"../lib/units.kup"`, `"./logo.stl"`) names a file next to the one that imports it, so `kupcad build parts/main.kup` and the files it imports agree on where `./` is. Imports stay inside the project (the directory `kupcad` runs in, or the folder the editor opened): one that climbs out of it is refused. Any other name is a package, by its alias.
 
-An import whose path ends in `.stl`, `.step` (or `.stp`) or `.json`, in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above. `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"` or `"json"`, as a string or a symbol, and it wins over the extension:
+An import whose path ends in `.stl`, `.step` (or `.stp`) or `.json`, in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"` or `"json"`, as a string or a symbol, and it wins over the extension:
 
 ```ruby
 import scan from "./scan.bin" with { type: "stl" }
