@@ -272,6 +272,10 @@ Every file a run reads as data goes through `VM.readScriptFile`, which notes its
 
 `named(name)` adds a `set_name` node (layout `target_value`: the operand and the name's id in the builder's `part_names`, interned and kept through compactions as the settings table is); it evaluates to a clone of its operand, a name being the parts list's alone. `stdlib/bom.zig` walks each Solid down through `translate` and `rotate` to its shape, taking the outermost `set_name` and `set_material` on the way, and on through a `mirror`, `scale` or `transform_matrix` (which is the shape: a mirrored copy is another part) for the name and material it was made with. Solids are grouped by the shape's node hash with the name and the material's content (`MaterialDef.hashInto`, which takes the `density` too), each part measured once, from its shape before its placement. `bom` gives the rows as Maps; `api.billOfMaterials` writes the final model's (`api.modelValues`, the same Solids an export takes) as JSON for `kupcad build --bom`.
 
+### 3MF and Split Parts
+
+A `.3mf` export (`exporters/3d/threemf.zig`) is the parts list's grouping (`bom.group`, which keeps each copy's `Placement`) written as a 3D Manufacturing Format package: one `<object>` per part, its mesh the part as made (`bom.madeOf`: the shape with its material and name, without the placement), and one build `<item>` per copy with its transform. A copy's placement is its translates and rotates composed, outermost first (`core/placement.zig`); a rotation is built as Manifold's `CsgNode::Rotate` builds it (about x, then y, then z, with its exact quarter turns), so an item lands where the kernel puts the Solid, which `placement_test.zig` checks against the kernel's own meshes. Colours are base materials, one per material slot (the default first), referenced by triangle. The package is a zip (`exporters/zip.zig`) of stored files with their CRC-32s, names UTF-8 and times fixed, so the same model makes the same bytes. `kupcad build --split dir/` writes each part as made in a file of its own (`api.exportPartsFromVm`), named by `PartFileNames`.
+
 ### Native Functions
 
 Built-ins are `ObjNative`s: a `NativeFn` and the name scripts know them by (`Array#map`, `Math.sin`, `extrude`), used in error messages and by the profiler. A `NativeFn` receives `NativeArgs` (`core/value.zig`): the arguments on the VM stack with the receiver just below them, their count, and `has_block` from the call site's `CallFlags`, so a lambda passed as an ordinary argument is never mistaken for the block.
@@ -427,6 +431,8 @@ Every model in `examples/` is built end to end by `src/examples_test.zig`: run, 
 ## 13. Exports Read Back
 
 The exporters' tests read every format back. An STL is parsed (the reader welds equal positions) and must be closed and consistently oriented, every edge shared by two triangles running along it in opposite directions (`kernel/mesh_check.zig`, for any test with a mesh to check). A glb's primitives must close every part over its shared vertices, and each Draco primitive is decoded (`bindings/draco.zig` `decodeMesh`) to the vertex and index counts its accessors declare, within their bounds, with as many triangles as the uncompressed export. Each material's colour, metallic and roughness factors, alpha mode, transmission extension and viewer role are checked in the JSON. In CI (Linux, Debug), `pnpm check:gltf` builds models that reach every branch of the glTF exporter, in both containers with and without Draco, and checks them with the Khronos glTF Validator (`core/scripts/validate-gltf.mjs`); any error or warning fails.
+
+A 3MF package is read back with `std.zip` (whose checksums the zip test checks itself), and every build item's object, placed by the item's transform, must have the vertices of the kernel's mesh of the Solid it stands for.
 
 ## 14. Allocation Failures
 

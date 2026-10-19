@@ -565,3 +565,15 @@ test "WASM GC: scripts under GC stress run right with 32-bit pointers" {
         .{ .src = "class P\n  def initialize(v)\n    @v = v\n  end\n  def v\n    @v\n  end\nend\nr = (1..30).map { |i| P.new(i) }.map { |p| p.v }.reduce(0) { |s, v| s + v }", .expected = .{ .num = 465 }, .gc_stress = true },
     });
 }
+
+test "WASM Interop: build_model_wasm writes 3MF, a zip of the model's parts" {
+    const src = "bolt = cylinder(r: 1, h: 5)\nassemble(name: \"pair\", parts: [bolt, bolt.translate(3, 0, 0)])";
+    const fmt = "3mf";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+        std.debug.print("build failed: {s}\n", .{std.mem.sliceTo(wasm.get_last_error(), 0)});
+        return error.BuildFailed;
+    };
+    defer wasm.wasm_free(@constCast(res), out_len);
+    try testing.expectEqualSlices(u8, "PK\x03\x04", res[0..4]);
+}

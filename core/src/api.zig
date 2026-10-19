@@ -21,6 +21,8 @@ const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
 const step_exporter = @import("exporters/3d/step.zig");
+const threemf_exporter = @import("exporters/3d/threemf.zig");
+const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
 
 pub const UiSchema = extractor.UiSchema;
@@ -280,9 +282,8 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
     }
 }
 
-/// The model a run left, as the exporters see it: the solid on the stack, or the solids
-/// of an assembly or an array there, each evaluated, after the ghosted items (the display
-/// list). Handles are borrowed from the VM.
+/// The meshes of the model the script left: its ghosts (the display list), then its
+/// Solids (modelValues), each evaluated. The handles are borrowed (see VM.ensureConcrete).
 pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
     try out.appendSlice(allocator, vm.display_list.items);
     var single: [1]value.Value = undefined;
@@ -305,17 +306,31 @@ pub fn modelValues(vm: *VM, single: *[1]value.Value) []const value.Value {
     return &.{};
 }
 
-/// The parts list (stdlib/bom.zig) of the model the script left (modelValues), as
-/// `kupcad build --bom` writes it; error.NoGeometry when it holds no Solid.
-pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
+/// The Solids of the model the script left (modelValues), rooted by its final value. Caller
+/// owns the list.
+fn modelSolids(allocator: std.mem.Allocator, vm: *VM) ![]value.Value {
     var single: [1]value.Value = undefined;
     var solids: std.ArrayList(value.Value) = .empty;
-    defer solids.deinit(allocator);
+    errdefer solids.deinit(allocator);
     for (modelValues(vm, &single)) |part| {
         if (part.isGeometry()) try solids.append(allocator, part);
     }
-    if (solids.items.len == 0) return error.NoGeometry;
-    const parts = try bom.collect(vm, allocator, solids.items);
+    return solids.toOwnedSlice(allocator);
+}
+
+/// The model's name: its Assembly's, if it is one.
+fn modelTitle(vm: *VM) ?[]const u8 {
+    if (vm.stack_top == 0 or !vm.stack[0].isAssembly()) return null;
+    return vm.stack[0].asAssembly().name.chars;
+}
+
+/// The parts list (stdlib/bom.zig) of the model the script left (modelValues), as
+/// `kupcad build --bom` writes it; error.NoGeometry when it holds no Solid.
+pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
+    const solids = try modelSolids(allocator, vm);
+    defer allocator.free(solids);
+    if (solids.len == 0) return error.NoGeometry;
+    const parts = try bom.collect(vm, allocator, solids);
     defer allocator.free(parts);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
@@ -330,6 +345,8 @@ pub const ExportFormat = enum {
     glb,
     gltf,
     step,
+    /// 3D Manufacturing Format: each part once, placed once per copy (exporters/3d/threemf.zig).
+    @"3mf",
 
     /// The format named `name`, or null for a name that is none.
     pub fn parse(name: []const u8) ?ExportFormat {
@@ -337,41 +354,107 @@ pub const ExportFormat = enum {
     }
 };
 
-/// Extracts evaluated Geometry from the VM stack/display list and routes it to the requested 3D exporter.
-/// A failure the script can read about (an engine that can't mesh, a failed union) is
-/// raised in the VM first, so `vm.last_error` says what went wrong.
+/// The model the script left (modelValues) in `format`, its ghosts (the display list) beside
+/// it where the format shows them. A failure the script can read about (an engine that
+/// can't mesh, a failed union) is raised in the VM first, so `vm.last_error` says what went
+/// wrong.
 pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
     vm: *VM,
     format: ExportFormat,
     use_draco: bool,
 ) ![]const u8 {
-    const is_gltf = format == .glb or format == .gltf;
-    const is_step = format == .step;
+    const solids = try modelSolids(allocator, vm);
+    defer allocator.free(solids);
+    return exportSolids(allocator, vm, format, use_draco, solids, vm.display_list.items, modelTitle(vm));
+}
 
-    // Ghosted items (the display list) are exported beside the model.
-    var export_handles: std.ArrayList(geom.GeometryHandle) = .empty;
-    defer export_handles.deinit(allocator);
-    try modelParts(allocator, vm, &export_handles);
-    if (export_handles.items.len == 0) return error.NoGeometry;
-    // The model without its ghosts, which modelParts puts first.
-    const parts = export_handles.items[vm.display_list.items.len..];
-
-    if (is_step) {
-        try step_exporter.requireExactParts(vm, export_handles.items);
-        return step_exporter.buildStepBuffer(allocator, export_handles.items);
+/// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
+/// a 3MF model. error.NoGeometry when there is nothing to write.
+fn exportSolids(
+    allocator: std.mem.Allocator,
+    vm: *VM,
+    format: ExportFormat,
+    use_draco: bool,
+    solids: []const value.Value,
+    ghosts: []const geom.GeometryHandle,
+    title: ?[]const u8,
+) ![]const u8 {
+    if (solids.len == 0 and ghosts.len == 0) return error.NoGeometry;
+    switch (format) {
+        // The parts once each, placed per copy: the Solids themselves, not their meshes. The
+        // ghosts are the viewer's, as in an STL.
+        .@"3mf" => {
+            if (solids.len == 0) return error.NoGeometry;
+            return threemf_exporter.build(allocator, vm, solids, title);
+        },
+        .step => {
+            var handles = try handlesOf(allocator, vm, solids, ghosts);
+            defer handles.deinit(allocator);
+            try step_exporter.requireExactParts(vm, handles.items);
+            return step_exporter.buildStepBuffer(allocator, handles.items);
+        },
+        .stl, .glb, .gltf => {
+            var handles = try handlesOf(allocator, vm, solids, ghosts);
+            defer handles.deinit(allocator);
+            // Refuse parts the engine can't tessellate before any work on them.
+            for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
+            // STL holds one mesh: the model's parts are united, the ghosts left out.
+            if (format == .stl) return stl_exporter.buildStlOfParts(allocator, vm, handles.items[ghosts.len..]);
+            const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
+            return gltf_exporter.buildGltfBuffer(allocator, vm, handles.items, use_draco, container);
+        },
     }
+}
 
-    // Mesh formats: refuse parts the engine can't tessellate before any work on them.
-    for (export_handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-    if (is_gltf) {
-        // GLTF handles multiple distinct meshes naturally
-        const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-        return gltf_exporter.buildGltfBuffer(allocator, vm, export_handles.items, use_draco, container);
+/// `ghosts`, then the meshes of `solids` (evaluated; borrowed, see VM.ensureConcrete).
+fn handlesOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !std.ArrayList(geom.GeometryHandle) {
+    var handles: std.ArrayList(geom.GeometryHandle) = .empty;
+    errdefer handles.deinit(allocator);
+    try handles.ensureTotalCapacity(allocator, ghosts.len + solids.len);
+    handles.appendSliceAssumeCapacity(ghosts);
+    for (solids) |solid| handles.appendAssumeCapacity(try vm.ensureConcrete(solid));
+    return handles;
+}
+
+/// One file `kupcad build --split` writes: a part of the model, as made (no placement).
+pub const PartFile = struct {
+    /// The part's name (the geometry graph's), or null when it has none.
+    name: ?[]const u8,
+    /// How many copies of it the model holds.
+    count: u32,
+    /// Owned by the allocator `exportPartsFromVm` was given.
+    bytes: []const u8,
+};
+
+/// Each part of the model's parts list (stdlib/bom.zig) in `format`, without its placement:
+/// a file to print each from. error.NoGeometry when the model holds no Solid.
+pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, use_draco: bool) ![]PartFile {
+    const solids = try modelSolids(allocator, vm);
+    defer allocator.free(solids);
+    if (solids.len == 0) return error.NoGeometry;
+    const grouping = try bom.group(vm, allocator, solids);
+    defer grouping.deinit(allocator);
+
+    var files: std.ArrayList(PartFile) = .empty;
+    errdefer freePartFiles(allocator, files.items);
+    defer files.deinit(allocator);
+    for (grouping.parts) |part| {
+        // Rooted while it is evaluated and written; a scope, as an error raised in it
+        // unwinds the stack
+        var scope = HandleScope.init(vm);
+        defer scope.deinit();
+        const made = try bom.madeOf(vm, part);
+        vm.push(made);
+        const bytes = try exportSolids(allocator, vm, format, use_draco, &.{made}, &.{}, part.name);
+        errdefer allocator.free(bytes);
+        try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
     }
+    return files.toOwnedSlice(allocator);
+}
 
-    // STL holds one mesh: the model's parts are united, the ghosts left out.
-    return stl_exporter.buildStlOfParts(allocator, vm, parts);
+pub fn freePartFiles(allocator: std.mem.Allocator, files: []const PartFile) void {
+    for (files) |file| allocator.free(file.bytes);
 }
 
 /// Why a build failed, in words a script author can act on. Filled by

@@ -10,7 +10,7 @@ const STL_TRIANGLE_LEN = 50;
 const GLB_MAGIC = "glTF";
 const STEP_MAGIC = "ISO-10303-21";
 
-const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp) or pass --format.\n";
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf) or pass --format.\n";
 
 const Result = struct {
     outcome: build_cmd.Outcome,
@@ -92,8 +92,10 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{ "model.kup", "-p", "=5" }, .message = "Error: Param '=5' has no name. Use --param key=value.\n" },
         .{ .args = &.{ "model.kup", "-P" }, .message = "Error: Missing parameter file after -P\n" },
         .{ .args = &.{ "model.kup", "--bom" }, .message = "Error: Missing parts list path after --bom\n" },
+        .{ .args = &.{ "model.kup", "--split" }, .message = "Error: Missing directory after --split\n" },
+        .{ .args = &.{ "model.kup", "--split", "parts", "-o", "x.stl" }, .message = "Error: --split writes a file per part into its directory; leave out -o\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
-        .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step\n" },
+        .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step, 3mf\n" },
     };
     for (cases) |case| {
         var res = try runBuild(case.args);
@@ -162,6 +164,67 @@ test "build_cmd: --bom writes the model's parts list beside the export" {
     try testing.expectApproxEqAbs(parts[0].volume * 8 / 1000, parts[0].mass.?, 1e-12);
     try testing.expect(parts[1].name == null and parts[1].mass == null);
     try testing.expectEqual([3]f64{ 2, 2, 2 }, parts[1].size);
+}
+
+test "build_cmd: -o model.3mf writes a 3MF package" {
+    var fx = try Fixture.init("bolt = cylinder(r: 1, h: 5)\nassemble(name: \"pair\", parts: [bolt, bolt.translate(3, 0, 0)])\n");
+    defer fx.deinit();
+    const path = try std.fs.path.join(testing.allocator, &.{ fx.dir, "model.3mf" });
+    defer testing.allocator.free(path);
+    var res = try runBuild(&.{ fx.input, "-o", path });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "model.3mf", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualSlices(u8, "PK\x03\x04", bytes[0..4]);
+}
+
+test "build_cmd: --split writes each part once, as made, named after it" {
+    var fx = try Fixture.init(
+        \\bolt = cylinder(r: 1, h: 5).named("M3/bolt")
+        \\spacer = cube(2)
+        \\assemble(name: "kit", parts: [bolt, bolt.translate(3, 0, 0), spacer, cube(3).named("m3/bolt")])
+        \\
+    );
+    defer fx.deinit();
+    const dir = try std.fs.path.join(testing.allocator, &.{ fx.dir, "parts" });
+    defer testing.allocator.free(dir);
+    var res = try runBuild(&.{ fx.input, "--split", dir });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(std.mem.find(u8, res.text(), "M3_bolt.stl (2 copies)") != null);
+    // STL unless -f says: a separator replaced, an unnamed part numbered, a name taken
+    // (case aside) given a number
+    for ([_][]const u8{ "parts/M3_bolt.stl", "parts/part 2.stl", "parts/m3_bolt 2.stl" }) |name| {
+        errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
+        const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
+        testing.allocator.free(bytes);
+    }
+
+    var glb = try runBuild(&.{ fx.input, "--split", dir, "-f", "glb" });
+    defer glb.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, glb.outcome);
+    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part 2.glb", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(bytes);
+    try testing.expectEqualStrings("glTF", bytes[0..4]);
+}
+
+test "build_cmd: --split names a part's file safely, and each once" {
+    var names: build_cmd.PartFileNames = .{};
+    defer names.deinit(testing.allocator);
+    const cases = [_]struct { name: ?[]const u8, number: usize, file: []const u8 }{
+        .{ .name = "bracket", .number = 1, .file = "bracket.stl" },
+        .{ .name = "Bracket", .number = 2, .file = "Bracket 2.stl" },
+        .{ .name = null, .number = 3, .file = "part 3.stl" },
+        .{ .name = " . ", .number = 4, .file = "part 4.stl" },
+        .{ .name = "a:b*c?\"d\x01", .number = 5, .file = "a_b_c__d_.stl" },
+        .{ .name = "größe", .number = 6, .file = "größe.stl" },
+    };
+    for (cases) |case| {
+        const file = try names.next(testing.allocator, case.name, case.number, "stl");
+        defer testing.allocator.free(file);
+        try testing.expectEqualStrings(case.file, file);
+    }
 }
 
 test "build_cmd: --param sets the script's param" {

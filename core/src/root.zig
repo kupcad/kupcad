@@ -62,6 +62,7 @@ test {
     _ = @import("stdlib/bom_test.zig");
     _ = @import("core/json_input.zig");
     _ = @import("core/import_kind_test.zig");
+    _ = @import("core/placement_test.zig");
     _ = @import("core/text_test.zig");
     _ = @import("core/semver_test.zig");
     _ = @import("core/import_path_test.zig");
@@ -75,6 +76,8 @@ test {
     // exports
     _ = @import("exporters/3d/gltf_test.zig");
     _ = @import("exporters/3d/stl_test.zig");
+    _ = @import("exporters/zip_test.zig");
+    _ = @import("exporters/3d/threemf_test.zig");
 
     // Frontends
     _ = @import("frontend/docstring_test.zig");

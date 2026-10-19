@@ -17,6 +17,7 @@ const kernel = @import("../kernel/kernel.zig");
 const MaterialDef = @import("../core/material.zig").MaterialDef;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const util = @import("methods/util.zig");
+const Placement = @import("../core/placement.zig").Placement;
 
 /// mm³ in a cm³: volumes are in mm³, densities in g/cm³, masses in g.
 const MM3_PER_CM3 = 1000.0;
@@ -30,6 +31,8 @@ pub const Part = struct {
     /// In the graph's name table, or null when it has none.
     name: ?[]const u8,
     material: ?MaterialDef,
+    /// The material's index in the VM's (a set_material node's), with `material`.
+    material_id: ?u32 = null,
     count: u32 = 1,
     /// mm³
     volume: f64 = 0,
@@ -49,47 +52,88 @@ pub const Part = struct {
     }
 };
 
-/// The parts `solids` (Solids, rooted by the caller) are copies of, in the order each first
-/// appears, measured. Owned by `allocator`; the names are the graph's.
-pub fn collect(vm: *VM, allocator: std.mem.Allocator, solids: []const value.Value) ![]Part {
+/// A Solid as a copy of a part: the part (an index into Grouping.parts) and where its
+/// placement puts the part's shape.
+pub const Copy = struct {
+    part: u32,
+    placement: Placement,
+};
+
+/// Solids grouped into parts, the parts not measured yet.
+pub const Grouping = struct {
+    /// In the order each first appears.
+    parts: []Part,
+    /// One per Solid, in their order.
+    copies: []Copy,
+
+    pub fn deinit(self: Grouping, allocator: std.mem.Allocator) void {
+        allocator.free(self.parts);
+        allocator.free(self.copies);
+    }
+};
+
+/// The parts `solids` (Solids, rooted by the caller) are copies of, and each one's copy.
+/// Owned by `allocator`; the names are the graph's.
+pub fn group(vm: *const VM, allocator: std.mem.Allocator, solids: []const value.Value) !Grouping {
     var parts: std.ArrayList(Part) = .empty;
     errdefer parts.deinit(allocator);
-    var by_identity: std.AutoHashMapUnmanaged(u64, usize) = .empty;
+    const copies = try allocator.alloc(Copy, solids.len);
+    errdefer allocator.free(copies);
+    var by_identity: std.AutoHashMapUnmanaged(u64, u32) = .empty;
     defer by_identity.deinit(allocator);
-    for (solids) |solid| {
-        const part = partOf(vm, solid);
-        const entry = try by_identity.getOrPut(allocator, identity(vm, part));
+    for (solids, copies) |solid, *copy| {
+        const found = copyOf(vm, solid);
+        const entry = try by_identity.getOrPut(allocator, identity(vm, found.part));
         if (entry.found_existing) {
             parts.items[entry.value_ptr.*].count += 1;
-            continue;
+        } else {
+            entry.value_ptr.* = @intCast(parts.items.len);
+            try parts.append(allocator, found.part);
         }
-        entry.value_ptr.* = parts.items.len;
-        try parts.append(allocator, part);
+        copy.* = .{ .part = entry.value_ptr.*, .placement = found.placement };
     }
-    for (parts.items) |*part| try measure(vm, part);
-    return parts.toOwnedSlice(allocator);
+    return .{ .parts = try parts.toOwnedSlice(allocator), .copies = copies };
 }
 
-/// The part `solid` is a copy of, before it is measured: down through its placement to
-/// the shape, and on through a mirror or a scale of a named or a made-of part for its name
-/// and material.
-fn partOf(vm: *const VM, solid: value.Value) Part {
+/// The parts `solids` are copies of, as `group` finds them, measured (their volume and
+/// size). Owned by `allocator`.
+pub fn collect(vm: *VM, allocator: std.mem.Allocator, solids: []const value.Value) ![]Part {
+    const grouping = try group(vm, allocator, solids);
+    allocator.free(grouping.copies);
+    errdefer allocator.free(grouping.parts);
+    for (grouping.parts) |*part| try measure(vm, part);
+    return grouping.parts;
+}
+
+/// The part `solid` is a copy of, before it is measured, and where the copy is: down
+/// through its placement (its translates and rotates, composed) to the shape, and on
+/// through a mirror or a scale of a named or a made-of part for its name and material.
+fn copyOf(vm: *const VM, solid: value.Value) struct { part: Part, placement: Placement } {
     const b = &vm.dag_builder;
     var part: Part = .{ .shape = solid.asGeometry().dag_idx, .name = null, .material = null, .first = solid };
+    var placement = Placement.identity;
     var placed = true; // still in the placement, above the shape
     var at = part.shape;
     // Every node walked through has its operand first in its payload
     while (at != dag.CONCRETE_NODE_SENTINEL) : (at = b.extra_data.items[b.nodes.items[at].data]) {
         const node = b.nodes.items[at];
         switch (node.tag) {
-            .translate, .rotate => {},
+            // Outermost first: each places what the ones inside it placed
+            .translate, .rotate => if (placed) {
+                const p = b.getTranslatePayload(node);
+                const step = if (node.tag == .translate) Placement.translation(p.x, p.y, p.z) else Placement.rotation(p.x, p.y, p.z);
+                placement = placement.then(step);
+            },
             .set_name => if (part.name == null) {
                 part.name = b.partName(b.getNamePayload(node).name_id);
             },
             // A material of an earlier run (a session's) is no longer known
             .set_material => if (part.material == null) {
                 const id = b.getMaterialPayload(node).material_id;
-                if (id < vm.materials.items.len) part.material = vm.materials.items[id];
+                if (id < vm.materials.items.len) {
+                    part.material = vm.materials.items[id];
+                    part.material_id = id;
+                }
             },
             .mirror, .scale, .transform_matrix => if (placed) {
                 part.shape = at;
@@ -101,7 +145,7 @@ fn partOf(vm: *const VM, solid: value.Value) Part {
             },
         }
     }
-    return part;
+    return .{ .part = part, .placement = placement };
 }
 
 /// What makes two Solids copies of one part: the shape's content, the name and the material.
@@ -127,7 +171,7 @@ fn identity(vm: *const VM, part: Part) u64 {
 fn measure(vm: *VM, part: *Part) !void {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const shape = if (part.shape == dag.CONCRETE_NODE_SENTINEL) part.first else try vm.allocateGeometry(.{ .symbolic = part.shape });
+    const shape = try shapeOf(vm, part.*);
     vm.push(shape);
     const solid = try vm.ensureConcrete(shape);
     try vm.requireFeature(solid.engine, .volume);
@@ -135,6 +179,26 @@ fn measure(vm: *VM, part: *Part) !void {
     part.volume = kernel.volume(solid);
     const box = kernel.boundingBox(solid) orelse return vm.fail(.GeometryError, "bom could not compute the bounding box of a part", .{});
     for (&part.size, box.min, box.max) |*extent, low, high| extent.* = high - low;
+}
+
+/// `part`'s shape, as made, before its placement: a new Solid the caller roots while it
+/// uses it (or what it evaluates to: the result cache keeps a mesh no live Solid refers to
+/// only until the next collection).
+pub fn shapeOf(vm: *VM, part: Part) !value.Value {
+    if (part.shape == dag.CONCRETE_NODE_SENTINEL) return part.first;
+    return vm.allocateGeometry(.{ .symbolic = part.shape });
+}
+
+/// `part` as made, without its placement but with its material and name: what a file of
+/// it alone holds (`kupcad build --split`, a 3MF object's mesh). A new Solid the caller
+/// roots, as shapeOf's.
+pub fn madeOf(vm: *VM, part: Part) !value.Value {
+    if (part.shape == dag.CONCRETE_NODE_SENTINEL) return part.first;
+    const b = &vm.dag_builder;
+    var node = part.shape;
+    if (part.material_id) |id| node = try b.addSetMaterial(node, id);
+    if (part.name) |name| node = try b.addSetName(node, try b.internPartName(name));
+    return vm.allocateGeometry(.{ .symbolic = node });
 }
 
 /// `receiver`'s Solids: itself, or an Assembly's parts.
