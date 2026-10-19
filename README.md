@@ -42,7 +42,7 @@ kupcad build part.kup --param width=50 -f step     # inject parameters, pick a f
 kupcad build part.kup -P bracket.json              # parameter values from a JSON object
 kupcad check part.kup                              # lint
 kupcad fmt part.kup                                # format
-kupcad watch part.kup                              # rebuild on change
+kupcad watch part.kup -P bracket.json              # rebuild on change, with parameter values
 kupcad doc part.kup                                # parameters + docstrings as JSON
 kupcad pkg add hardware=github.com/user/repo       # add a dependency to kupcad.json
 kupcad pkg install                                 # resolve, verify kupcad.lock, link .kupcad/pkg/

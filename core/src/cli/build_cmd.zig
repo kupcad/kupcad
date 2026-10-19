@@ -6,6 +6,7 @@ const std = @import("std");
 const api = @import("../api.zig");
 const kernel = @import("../kernel/kernel.zig");
 const fs = @import("fs.zig");
+const param_flags = @import("param_flags.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
 const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
@@ -25,11 +26,8 @@ pub const USAGE =
     \\  -o, --output <file>       Output path; its extension picks the format
     \\                            (.stl, .glb, .gltf, .step, .stp)
     \\  -f, --format <name>       stl, glb, gltf or step (glb when there is no -o)
-    \\  -p, --param <name=value>  Value for param(:name), read as the type its default
-    \\                            has; repeatable
-    \\  -P, --params <file.json>  Values for parameters, a JSON object of names and
-    \\                            numbers, strings or booleans; repeatable. Of two
-    \\                            values for one parameter the later (-p or -P) wins
+    \\
+++ param_flags.USAGE ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
     \\  -h, --help                Show this help
     \\
@@ -93,35 +91,6 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
     return null;
 }
 
-/// `name=value` from `--param`: the name is everything before the first `=`, so `w=1=2` is
-/// the text "1=2" for `w`. The text is read as the parameter's type when the script runs
-/// (`param()`), which knows it.
-fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName }!struct { name: []const u8, text: []const u8 } {
-    const eq = std.mem.findScalar(u8, pair, '=') orelse return error.MissingEquals;
-    if (eq == 0) return error.EmptyName;
-    return .{ .name = pair[0..eq], .text = pair[eq + 1 ..] };
-}
-
-/// Reads the parameter file at `path` (`-P`) into `params`; false, the refusal reported, when
-/// it can't be read or isn't one JSON object of names and values.
-fn readParamsFile(allocator: std.mem.Allocator, path: []const u8, params: *api.ParamValues, reporter: Reporter) !bool {
-    const text = fs.readFileLimit(reporter.io, allocator, path, MAX_FILE_SIZE) catch |err| {
-        reporter.err("Error: Could not read parameter file '{s}': {s}\n", .{ path, @errorName(err) });
-        return false;
-    };
-    defer allocator.free(text);
-    var why: ?[]u8 = null;
-    defer if (why) |w| allocator.free(w);
-    params.putJson(allocator, text, &why) catch |err| switch (err) {
-        error.InvalidParams => {
-            reporter.err("Error: {s}: {s}\n", .{ path, why orelse "not a parameter file" });
-            return false;
-        },
-        else => |e| return e,
-    };
-    return true;
-}
-
 pub const Outcome = @import("outcome.zig").Outcome;
 
 pub const Reporter = @import("reporter.zig").Reporter;
@@ -155,26 +124,12 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     // --- 1. Parse Command Line Arguments ---
     while (args_iter.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-p") or std.mem.eql(u8, arg, "--param")) {
-            const pair = args_iter.next() orelse {
-                reporter.err("Error: Missing key=value after {s}\n", .{arg});
-                return .failure;
-            };
-            const param = parseParam(pair) catch |err| {
-                switch (err) {
-                    error.MissingEquals => reporter.err("Error: Invalid param format. Use --param key=value.\n", .{}),
-                    error.EmptyName => reporter.err("Error: Param '{s}' has no name. Use --param key=value.\n", .{pair}),
-                }
-                return .failure;
-            };
-            try params.put(allocator, param.name, .{ .text = param.text });
-        } else if (std.mem.eql(u8, arg, "-P") or std.mem.eql(u8, arg, "--params")) {
-            const path = args_iter.next() orelse {
-                reporter.err("Error: Missing parameter file after {s}\n", .{arg});
-                return .failure;
-            };
-            if (!try readParamsFile(allocator, path, &params, reporter)) return .failure;
-        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
+        switch (try param_flags.take(allocator, arg, args_iter, &params, reporter)) {
+            .taken => continue,
+            .refused => return .failure,
+            .other => {},
+        }
+        if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
             output_path = args_iter.next() orelse {
                 reporter.err("Error: Missing output path after {s}\n", .{arg});
                 return .failure;
