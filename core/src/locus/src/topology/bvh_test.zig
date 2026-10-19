@@ -40,7 +40,7 @@ test "BVH: Accelerates face collision query efficiently" {
     const faces = [_]types.FaceIndex{@fromBackingInt(0)};
     try tree.build(alloc, &t, &g, &faces);
 
-    var queried = std.ArrayListUnmanaged(types.FaceIndex).empty;
+    var queried = std.ArrayList(types.FaceIndex).empty;
     defer queried.deinit(alloc);
 
     try tree.queryBox(alloc, .{ -1.0, -1.0, -1.0 }, .{ 1.0, 1.0, 1.0 }, &queried);

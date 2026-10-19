@@ -58,14 +58,14 @@ const Entry = struct {
 /// messages (allocated with `allocator`).
 pub fn apply(
     allocator: std.mem.Allocator,
-    diagnostics: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
+    diagnostics: *std.ArrayList(linter.LinterDiagnostic),
     comments: []const token.Comment,
     line_index: *const LineIndex,
     config: Config,
 ) !void {
-    var entries: std.ArrayListUnmanaged(Entry) = .empty;
+    var entries: std.ArrayList(Entry) = .empty;
     defer entries.deinit(allocator);
-    var problems: std.ArrayListUnmanaged(linter.LinterDiagnostic) = .empty;
+    var problems: std.ArrayList(linter.LinterDiagnostic) = .empty;
     defer {
         for (problems.items) |p| p.deinit(allocator);
         problems.deinit(allocator);
@@ -111,17 +111,17 @@ fn parseComment(
     allocator: std.mem.Allocator,
     comment: token.Comment,
     line_index: *const LineIndex,
-    entries: *std.ArrayListUnmanaged(Entry),
-    problems: *std.ArrayListUnmanaged(linter.LinterDiagnostic),
+    entries: *std.ArrayList(Entry),
+    problems: *std.ArrayList(linter.LinterDiagnostic),
 ) !void {
     var text = std.mem.trim(u8, comment.lexeme, " \t\r");
     if (std.mem.startsWith(u8, text, "#")) text = std.mem.trimStart(u8, text[1..], " \t");
     if (!std.mem.startsWith(u8, text, PREFIX)) return;
     text = text[PREFIX.len..];
     // Anything after " -- " says why, for the reader.
-    if (std.mem.indexOf(u8, text, " --")) |reason| text = text[0..reason];
+    if (std.mem.find(u8, text, " --")) |reason| text = text[0..reason];
 
-    const name_end = std.mem.indexOfAny(u8, text, " \t") orelse text.len;
+    const name_end = std.mem.findAny(u8, text, " \t") orelse text.len;
     const name = text[0..name_end];
     const scope = Scope.fromName(name) orelse {
         return addProblem(allocator, problems, comment.loc, "unknown directive 'kupcad:{s}' (use disable-next-line, disable-line or disable)", .{name});
@@ -146,14 +146,14 @@ fn parseComment(
 }
 
 fn levelOf(config: Config, rule: []const u8) Level {
-    inline for (comptime std.meta.fieldNames(Config)) |id| {
+    inline for (comptime @typeInfo(Config).@"struct".field_names) |id| {
         if (std.mem.eql(u8, id, rule)) return @field(config, id);
     }
     return .off;
 }
 
-fn addProblem(allocator: std.mem.Allocator, problems: *std.ArrayListUnmanaged(linter.LinterDiagnostic), loc: token.Location, comptime fmt: []const u8, args: anytype) !void {
-    const message = try std.fmt.allocPrint(allocator, fmt, args);
+fn addProblem(allocator: std.mem.Allocator, problems: *std.ArrayList(linter.LinterDiagnostic), loc: token.Location, comptime fmt: []const u8, args: anytype) !void {
+    const message = try allocator.print(fmt, args);
     errdefer allocator.free(message);
     try problems.append(allocator, .{ .loc = loc, .severity = .warning, .message = message, .origin = .{ .rule = RULE } });
 }

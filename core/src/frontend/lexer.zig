@@ -225,7 +225,7 @@ pub const Lexer = struct {
         var tok = self.scan();
         // A token is one slice of the source, so it can't skip a body: one that runs past
         // the opener's line (a string, a docstring) would read the body as its own text.
-        if (self.heredoc_resume != null and tok.tag != .newline and std.mem.indexOfScalar(u8, tok.lexeme, '\n') != null) {
+        if (self.heredoc_resume != null and tok.tag != .newline and std.mem.findScalar(u8, tok.lexeme, '\n') != null) {
             tok.tag = .runs_into_heredoc;
             self.skipHeredocBodies();
         }
@@ -283,7 +283,7 @@ pub const Lexer = struct {
 
     /// Where the line after the one holding `pos` starts, or the end of the buffer.
     fn lineAfter(self: *const Lexer, pos: usize) usize {
-        const nl = std.mem.indexOfScalarPos(u8, self.buffer, pos, '\n') orelse return self.buffer.len;
+        const nl = std.mem.findScalarPos(u8, self.buffer, pos, '\n') orelse return self.buffer.len;
         return nl + 1;
     }
 
@@ -735,13 +735,13 @@ pub const Lexer = struct {
     }
 
     pub fn lexAll(self: *Lexer, allocator: std.mem.Allocator) !common_token.TokenList(Tag) {
-        var tags = std.ArrayListUnmanaged(Tag).empty;
+        var tags = std.ArrayList(Tag).empty;
         errdefer tags.deinit(allocator);
-        var starts = std.ArrayListUnmanaged(u32).empty;
+        var starts = std.ArrayList(u32).empty;
         errdefer starts.deinit(allocator);
-        var lengths = std.ArrayListUnmanaged(u32).empty;
+        var lengths = std.ArrayList(u32).empty;
         errdefer lengths.deinit(allocator);
-        var heredocs = std.ArrayListUnmanaged(common_token.Heredoc).empty;
+        var heredocs = std.ArrayList(common_token.Heredoc).empty;
         errdefer heredocs.deinit(allocator);
 
         // Pre-allocation heuristic: ~1 token per 4 bytes of source code

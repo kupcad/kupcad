@@ -20,7 +20,7 @@ pub const BVHNode = struct {
 };
 
 pub const FlatBVH = struct {
-    nodes: std.ArrayListUnmanaged(BVHNode) = .empty,
+    nodes: std.ArrayList(BVHNode) = .empty,
     root_index: u32 = NULL_LEAF,
 
     pub fn deinit(self: *FlatBVH, allocator: std.mem.Allocator) void {
@@ -167,7 +167,7 @@ pub const FlatBVH = struct {
         allocator: std.mem.Allocator,
         box_min: [3]f64,
         box_max: [3]f64,
-        out_faces: *std.ArrayListUnmanaged(types.FaceIndex),
+        out_faces: *std.ArrayList(types.FaceIndex),
     ) !void {
         if (self.root_index == NULL_LEAF) return;
 

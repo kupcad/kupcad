@@ -114,14 +114,14 @@ pub const RuleSet = struct {
     @"segments-as-sides": SegmentsAsSidesRule = .{},
     @"brep-unsupported": BrepUnsupportedRule = .{},
 
-    pub const ids = std.meta.fieldNames(RuleSet);
+    pub const ids = @typeInfo(RuleSet).@"struct".field_names;
 
     comptime {
         for (ids) |rule_id| {
             if (!std.mem.eql(u8, @FieldType(RuleSet, rule_id).id, rule_id)) @compileError("rule '" ++ rule_id ++ "' is stored under another id");
             if (!@hasField(Config, rule_id)) @compileError("lint.Config has no level for rule '" ++ rule_id ++ "'");
         }
-        for (std.meta.fieldNames(Config)) |rule_id| {
+        for (@typeInfo(Config).@"struct".field_names) |rule_id| {
             if (!@hasField(RuleSet, rule_id)) @compileError("lint.Config sets '" ++ rule_id ++ "', which is no rule");
         }
     }
@@ -141,7 +141,7 @@ pub const Binding = struct {
     loc: token.Location,
     /// Each place it is bound by its name alone (`x = ...`, a block parameter): what a
     /// rename has to change.
-    sites: std.ArrayListUnmanaged(token.Location) = .empty,
+    sites: std.ArrayList(token.Location) = .empty,
     /// False once it is also bound where a rename would change more than the variable
     /// (a method's parameter or name, which callers use) or where no token holds its name
     /// alone (a `for` target, a multiple assignment).
@@ -202,9 +202,9 @@ const LintContext = struct {
 pub const Linter = struct {
     allocator: std.mem.Allocator,
     config: Config,
-    diagnostics: std.ArrayListUnmanaged(LinterDiagnostic) = .empty,
-    rules: std.ArrayListUnmanaged(LintRule) = .empty,
-    scopes: std.ArrayListUnmanaged(Scope) = .empty,
+    diagnostics: std.ArrayList(LinterDiagnostic) = .empty,
+    rules: std.ArrayList(LintRule) = .empty,
+    scopes: std.ArrayList(Scope) = .empty,
     /// The blocks given to calls being walked: those open a scope, other blocks don't.
     closure_blocks: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
     /// How many bodies (def, block, if, while, ...) enclose the node being checked; 0 for a
@@ -331,8 +331,8 @@ pub const Linter = struct {
         var end: usize = last_loc.offset + last_loc.length;
         // A statement's last token can be the line break that ends it.
         while (end > start and std.ascii.isWhitespace(src[end - 1])) end -= 1;
-        const line_start = if (std.mem.lastIndexOfScalar(u8, src[0..start], '\n')) |nl| nl + 1 else 0;
-        const line_end = std.mem.indexOfScalarPos(u8, src, end, '\n') orelse src.len;
+        const line_start = if (std.mem.findScalarLast(u8, src[0..start], '\n')) |nl| nl + 1 else 0;
+        const line_end = std.mem.findScalarPos(u8, src, end, '\n') orelse src.len;
         const alone_before = std.mem.trim(u8, src[line_start..start], " \t").len == 0;
         const alone_after = std.mem.trim(u8, src[end..line_end], " \t\r").len == 0;
         if (alone_before and alone_after) {

@@ -22,11 +22,11 @@ test "doc: prints the schema of a script, and fails on one with syntax errors" {
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
     try testing.expectEqual(.success, try runOn(&tmp, "good.kup", &out));
-    try testing.expect(std.mem.indexOf(u8, out.written(), "\"width\"") != null);
+    try testing.expect(std.mem.find(u8, out.written(), "\"width\"") != null);
 
     out.clearRetainingCapacity();
     try testing.expectEqual(.failure, try runOn(&tmp, "broken.kup", &out));
-    try testing.expect(std.mem.indexOf(u8, out.written(), "broken.kup:1:") != null);
-    try testing.expect(std.mem.indexOf(u8, out.written(), "No schema: 1 syntax error in") != null);
-    try testing.expect(std.mem.indexOf(u8, out.written(), "{") == null);
+    try testing.expect(std.mem.find(u8, out.written(), "broken.kup:1:") != null);
+    try testing.expect(std.mem.find(u8, out.written(), "No schema: 1 syntax error in") != null);
+    try testing.expect(std.mem.find(u8, out.written(), "{") == null);
 }

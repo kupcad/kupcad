@@ -3,7 +3,7 @@ const testing = std.testing;
 const bezier = @import("bezier.zig");
 
 test "Bezier: Flattens a perfectly straight quadratic line to a single segment" {
-    var points: std.ArrayListUnmanaged([2]f64) = .empty;
+    var points: std.ArrayList([2]f64) = .empty;
     defer points.deinit(testing.allocator);
 
     // p0, p1 (midpoint on the line), p2
@@ -17,7 +17,7 @@ test "Bezier: Flattens a perfectly straight quadratic line to a single segment" 
 }
 
 test "Bezier: Adaptively subdivides sharp cubic curve" {
-    var points: std.ArrayListUnmanaged([2]f64) = .empty;
+    var points: std.ArrayList([2]f64) = .empty;
     defer points.deinit(testing.allocator);
 
     // A sharp "U" shaped cubic curve

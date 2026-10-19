@@ -52,10 +52,10 @@ pub const ScriptSession = struct {
     global_revision: u64 = 1,
 
     // Parallel array to Workspace.modules tracking runtime cache state
-    nodes: std.ArrayListUnmanaged(SessionNode) = .empty,
+    nodes: std.ArrayList(SessionNode) = .empty,
 
     // Reverse Adjacency List: ModuleId -> Parent ModuleIds
-    reverse_deps: std.AutoHashMapUnmanaged(ModuleId, std.ArrayListUnmanaged(ModuleId)) = .empty,
+    reverse_deps: std.AutoHashMapUnmanaged(ModuleId, std.ArrayList(ModuleId)) = .empty,
 
     /// What stopped the last evaluation with error.ParseError or error.CompileError, so
     /// callers can show it.
@@ -156,7 +156,7 @@ pub const ScriptSession = struct {
 
         self.global_revision += 1;
 
-        var queue = std.ArrayListUnmanaged(ModuleId).empty;
+        var queue = std.ArrayList(ModuleId).empty;
         defer queue.deinit(self.allocator);
 
         try queue.append(self.allocator, root_id);

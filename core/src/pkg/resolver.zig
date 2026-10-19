@@ -112,7 +112,7 @@ pub const Resolver = struct {
     /// Drops lockfile entries that no longer belong to the dependency graph so they
     /// aren't linked into the workspace or kept pinned forever.
     fn pruneStaleLockEntries(self: *Resolver) void {
-        var stale: std.ArrayListUnmanaged([]const u8) = .empty;
+        var stale: std.ArrayList([]const u8) = .empty;
         defer stale.deinit(self.allocator);
         var it = self.lockfile.packages.keyIterator();
         while (it.next()) |k| {

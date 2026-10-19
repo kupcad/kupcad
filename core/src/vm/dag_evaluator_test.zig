@@ -702,7 +702,7 @@ test "DAG: shapes kept across runs still build after the graph is compacted" {
     try testing.expectEqual(.ok, try support.runOn(&vm, "keep = cube(3).translate(x: 1)\nleaf = cube(2).simplify\nsketch = square(2).offset(1)"));
     var buf: [128]u8 = undefined;
     for (0..30) |i| {
-        const src = try std.fmt.bufPrint(&buf, "tmp = cube({d}) + sphere(1).translate(x: {d})\nr = tmp.volume > 0", .{ i + 1, i });
+        const src = try std.mem.print(&buf, "tmp = cube({d}) + sphere(1).translate(x: {d})\nr = tmp.volume > 0", .{ i + 1, i });
         try testing.expectEqual(.ok, try support.runOn(&vm, src));
     }
     try testing.expect(vm.dag_builder.nodes.items.len < 20);

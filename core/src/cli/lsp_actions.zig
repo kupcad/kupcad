@@ -25,7 +25,7 @@ pub const Encoding = enum { utf8, utf16 };
 pub fn actionsFor(arena: std.mem.Allocator, io: std.Io, doc: *const api.Document, config: api.LinterConfig, first_line: u32, last_line: u32, encoding: Encoding) ![]Action {
     const diags = try api.checkDocument(arena, io, doc, config);
     const line_index = &doc.line_index;
-    var actions: std.ArrayListUnmanaged(Action) = .empty;
+    var actions: std.ArrayList(Action) = .empty;
     for (diags) |d| {
         const rule = d.ruleId() orelse continue; // a syntax or compile error has no fix or suppression
         const line = line_index.getLine(d.loc.offset);
@@ -55,8 +55,8 @@ fn disableAction(arena: std.mem.Allocator, source: []const u8, line_index: *cons
     while (indent_end < source.len and (source[indent_end] == ' ' or source[indent_end] == '\t')) indent_end += 1;
     const at: Position = .{ .line = line, .character = 0 };
     const edits = try arena.alloc(TextEdit, 1);
-    edits[0] = .{ .start = at, .end = at, .text = try std.fmt.allocPrint(arena, "{s}# kupcad:disable-next-line {s}\n", .{ source[start..indent_end], rule }) };
-    return .{ .title = try std.fmt.allocPrint(arena, "Disable {s} for this line", .{rule}), .preferred = false, .edits = edits };
+    edits[0] = .{ .start = at, .end = at, .text = try arena.print("{s}# kupcad:disable-next-line {s}\n", .{ source[start..indent_end], rule }) };
+    return .{ .title = try arena.print("Disable {s} for this line", .{rule}), .preferred = false, .edits = edits };
 }
 
 /// `offset` as the editor counts it: 0-based line, and columns in `encoding`.

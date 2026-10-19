@@ -117,7 +117,7 @@ fn resolveRedirect(base: std.Uri, location: ?[]const u8, scratch: *[MAX_URL_BYTE
     @memcpy(scratch[0..target.len], target);
     var aux: []u8 = scratch;
     const resolved = base.resolveInPlace(target.len, &aux) catch return error.HttpRedirectLocationInvalid;
-    const text = std.fmt.bufPrint(out, "{f}", .{resolved.fmt(.{ .scheme = true, .authentication = true, .authority = true, .path = true, .query = true })}) catch return error.UrlTooLong;
+    const text = std.mem.print(out, "{f}", .{resolved.fmt(.{ .scheme = true, .authentication = true, .authority = true, .path = true, .query = true })}) catch return error.UrlTooLong;
     return std.Uri.parse(text) catch error.HttpRedirectLocationInvalid;
 }
 

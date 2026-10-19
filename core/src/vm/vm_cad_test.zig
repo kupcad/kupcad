@@ -2221,13 +2221,13 @@ test "VM Edge Case: Import depth limit prevents host stack overflow" {
     const max_chain = VM.MAX_IMPORT_DEPTH + 2;
     for (0..max_chain) |i| {
         var name_buf: [32]u8 = undefined;
-        const name = try std.fmt.bufPrint(&name_buf, "mod_{d}.kcad", .{i});
+        const name = try std.mem.print(&name_buf, "mod_{d}.kcad", .{i});
 
         var content_buf: [64]u8 = undefined;
         const content = if (i == max_chain - 1)
             "exports = 42"
         else
-            try std.fmt.bufPrint(&content_buf, "import \"mod_{d}.kcad\"", .{i + 1});
+            try std.mem.print(&content_buf, "import \"mod_{d}.kcad\"", .{i + 1});
 
         // Write directly to the in-memory sandbox[cite: 6, 7]
         try vm.vfs.writeFile(name, content);

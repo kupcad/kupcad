@@ -342,8 +342,8 @@ test "WASM Interop: build_model_wasm reports the runtime error message" {
 
     // A native that reports and fails: its own message, not the generic one raised after it
     const native_msg = try expectBuildFailure("Math.sign(\"x\")");
-    try testing.expect(std.mem.indexOf(u8, native_msg, "Math.sign expects a number") != null);
-    try testing.expect(std.mem.indexOf(u8, native_msg, "Native Execution Error") == null);
+    try testing.expect(std.mem.find(u8, native_msg, "Math.sign expects a number") != null);
+    try testing.expect(std.mem.find(u8, native_msg, "Native Execution Error") == null);
 }
 
 test "WASM Interop: build_model_wasm names the error when there is no message" {
@@ -384,7 +384,7 @@ fn expectBuildLength(src: []const u8) !usize {
 test "WASM Interop: a build the instruction cap stops leaves the next one working" {
     // In the browser a runaway loop stops at the cap, and the worker goes on serving builds.
     const msg = try expectBuildFailure("while true\nend\ncube(1)");
-    try testing.expect(std.mem.indexOf(u8, msg, "Execution limit") != null);
+    try testing.expect(std.mem.find(u8, msg, "Execution limit") != null);
     try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength("cube(2)"));
 }
 
@@ -446,7 +446,7 @@ test "WASM Interop: a recursion through built-ins is an error, not a trapped ins
     };
     for (sources) |src| {
         const msg = try expectBuildFailure(src);
-        try testing.expect(std.mem.indexOf(u8, msg, "Call stack overflow") != null);
+        try testing.expect(std.mem.find(u8, msg, "Call stack overflow") != null);
     }
     try testing.expect(try expectBuildLength("cube(1)") > 84); // and the next build works
 }
@@ -460,7 +460,7 @@ test "WASM Interop: a build imports the files put in the VFS, and not after clea
 
     wasm.clear_vfs_wasm();
     const msg = try expectBuildFailure(main);
-    try testing.expect(std.mem.indexOf(u8, msg, "plate.kup") != null);
+    try testing.expect(std.mem.find(u8, msg, "plate.kup") != null);
 }
 
 test "WASM Interop: check_code_wasm's JSON names each finding's place, severity, code and message" {

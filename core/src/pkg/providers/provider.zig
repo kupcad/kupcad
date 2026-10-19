@@ -66,7 +66,7 @@ pub const ParsedPackage = struct {
     pub fn parse(requested_url: []const u8) !ParsedPackage {
         if (std.mem.startsWith(u8, requested_url, "file:")) {
             const path = requested_url[5..];
-            if (path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPackageUrl;
+            if (path.len == 0 or std.mem.findScalar(u8, path, 0) != null) return error.InvalidPackageUrl;
             return .{ .provider = .local, .domain = "", .user = "", .repo = path, .ref = "" };
         }
 
@@ -90,12 +90,12 @@ pub const ParsedPackage = struct {
         var ref: []const u8 = "main";
         var constraint: ?semver.Constraint = null;
 
-        if (std.mem.indexOfScalar(u8, spec, '@')) |idx| {
+        if (std.mem.findScalar(u8, spec, '@')) |idx| {
             base_url = spec[0..idx];
             ref = spec[idx + 1 ..];
 
             // Only an operator makes it a range: `v2` may be a branch, and was always a ref.
-            if (ref.len > 0 and std.mem.indexOfScalar(u8, RANGE_OPERATORS, ref[0]) != null) {
+            if (ref.len > 0 and std.mem.findScalar(u8, RANGE_OPERATORS, ref[0]) != null) {
                 try validate.validateRange(ref);
                 constraint = semver.Constraint.parse(ref) catch return error.InvalidRef;
             }

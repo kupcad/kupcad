@@ -22,5 +22,5 @@ test "pkg init: writes a manifest once, and refuses to overwrite an existing one
     try testing.expect(std.mem.startsWith(u8, out.written(), "Error: kupcad.json already exists here; nothing changed."));
     const kept = try mem.vfs().readFile(testing.allocator, "kupcad.json");
     defer testing.allocator.free(kept);
-    try testing.expect(std.mem.indexOf(u8, kept, "github.com/x/hw") != null);
+    try testing.expect(std.mem.find(u8, kept, "github.com/x/hw") != null);
 }

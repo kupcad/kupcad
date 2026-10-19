@@ -61,7 +61,7 @@ test "lsp worker: serve answers updates, an evaluation, a hover and a removal in
     const hovered = try lsp_worker.readFrame(&out, testing.allocator);
     defer testing.allocator.free(hovered.payload);
     try testing.expectEqual(@as(u8, 1), hovered.payload[0]);
-    try testing.expect(std.mem.indexOf(u8, hovered.payload, "**Volume:** `8.00`") != null);
+    try testing.expect(std.mem.find(u8, hovered.payload, "**Volume:** `8.00`") != null);
     const removed = try lsp_worker.readFrame(&out, testing.allocator);
     defer testing.allocator.free(removed.payload);
     try testing.expectEqualSlices(u8, &.{0}, removed.payload);
@@ -69,7 +69,7 @@ test "lsp worker: serve answers updates, an evaluation, a hover and a removal in
 }
 
 test "lsp worker: a worker that dies is a crash for the preview, and the next use starts another" {
-    if (builtin.os.tag != .linux and !builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
     const warnings = @import("../test_support.zig").expectWarnings(); // the worker's end is logged as one
     defer warnings.restore();
     // A stand-in that ends at once, as one that crashed on its first request would.

@@ -122,7 +122,7 @@ test "Value: fmtNumber spells non-finite numbers the same on every platform" {
         .{ .n = -2, .text = "-2" },
     };
     for (cases) |case| {
-        try testing.expectEqualStrings(case.text, try std.fmt.bufPrint(&buf, "{f}", .{value.fmtNumber(case.n)}));
+        try testing.expectEqualStrings(case.text, try std.mem.print(&buf, "{f}", .{value.fmtNumber(case.n)}));
         var w: std.Io.Writer = .fixed(&buf);
         try value.Value.initNumber(case.n).stringify(false, &w);
         try testing.expectEqualStrings(case.text, w.buffered());

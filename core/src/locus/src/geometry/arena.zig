@@ -12,18 +12,18 @@ pub const PCurveId = types.PCurveId;
 pub const SurfaceId = types.SurfaceId;
 
 pub const GeometryArena = struct {
-    points: std.ArrayListUnmanaged(math.Vec3) = .empty,
-    lines: std.ArrayListUnmanaged(curves.Line) = .empty,
-    lines_2d: std.ArrayListUnmanaged(curves.Line2D) = .empty,
-    circle_arcs: std.ArrayListUnmanaged(curves.CircleArc) = .empty,
-    nurbs_curves: std.ArrayListUnmanaged(curves.NurbsCurve) = .empty,
-    nurbs_pcurves: std.ArrayListUnmanaged(curves.NurbsCurve2D) = .empty,
-    nurbs_surfaces: std.ArrayListUnmanaged(surfaces.NurbsSurface) = .empty,
-    planes: std.ArrayListUnmanaged(surfaces.Plane) = .empty,
-    spheres: std.ArrayListUnmanaged(surfaces.Sphere) = .empty,
-    cylinders: std.ArrayListUnmanaged(surfaces.Cylinder) = .empty,
-    cones: std.ArrayListUnmanaged(surfaces.Cone) = .empty,
-    toruses: std.ArrayListUnmanaged(surfaces.Torus) = .empty,
+    points: std.ArrayList(math.Vec3) = .empty,
+    lines: std.ArrayList(curves.Line) = .empty,
+    lines_2d: std.ArrayList(curves.Line2D) = .empty,
+    circle_arcs: std.ArrayList(curves.CircleArc) = .empty,
+    nurbs_curves: std.ArrayList(curves.NurbsCurve) = .empty,
+    nurbs_pcurves: std.ArrayList(curves.NurbsCurve2D) = .empty,
+    nurbs_surfaces: std.ArrayList(surfaces.NurbsSurface) = .empty,
+    planes: std.ArrayList(surfaces.Plane) = .empty,
+    spheres: std.ArrayList(surfaces.Sphere) = .empty,
+    cylinders: std.ArrayList(surfaces.Cylinder) = .empty,
+    cones: std.ArrayList(surfaces.Cone) = .empty,
+    toruses: std.ArrayList(surfaces.Torus) = .empty,
 
     pub fn init() GeometryArena {
         return .{};

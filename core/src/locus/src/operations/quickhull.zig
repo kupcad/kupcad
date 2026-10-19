@@ -22,15 +22,15 @@ pub const HullFace = struct {
     visible: bool = false,
     disabled: bool = false,
 
-    points_outside: std.ArrayListUnmanaged(u32) = .empty,
+    points_outside: std.ArrayList(u32) = .empty,
 };
 
 pub const QuickhullBuilder = struct {
     allocator: std.mem.Allocator,
     vertices: []const Vec3,
 
-    half_edges: std.ArrayListUnmanaged(HullHalfEdge) = .empty,
-    faces: std.ArrayListUnmanaged(HullFace) = .empty,
+    half_edges: std.ArrayList(HullHalfEdge) = .empty,
+    faces: std.ArrayList(HullFace) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, points: []const Vec3) QuickhullBuilder {
         return .{
@@ -214,13 +214,13 @@ pub const QuickhullBuilder = struct {
     pub fn buildHull(self: *QuickhullBuilder) !void {
         try self.buildInitialTetrahedron();
 
-        var visible_faces: std.ArrayListUnmanaged(u32) = .empty;
+        var visible_faces: std.ArrayList(u32) = .empty;
         defer visible_faces.deinit(self.allocator);
 
-        var horizon_edges: std.ArrayListUnmanaged(u32) = .empty;
+        var horizon_edges: std.ArrayList(u32) = .empty;
         defer horizon_edges.deinit(self.allocator);
 
-        var unassigned_points: std.ArrayListUnmanaged(u32) = .empty;
+        var unassigned_points: std.ArrayList(u32) = .empty;
         defer unassigned_points.deinit(self.allocator);
 
         while (true) {
@@ -244,7 +244,7 @@ pub const QuickhullBuilder = struct {
 
             const eye_pt = self.vertices[@as(usize, @intCast(eye_pt_idx))];
 
-            var search_queue: std.ArrayListUnmanaged(u32) = .empty;
+            var search_queue: std.ArrayList(u32) = .empty;
             defer search_queue.deinit(self.allocator);
 
             try search_queue.append(self.allocator, target_face.?);

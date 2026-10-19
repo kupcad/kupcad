@@ -82,7 +82,7 @@ pub const BrepSolid = struct {
 fn cloneArena(comptime Arena: type, allocator: std.mem.Allocator, src: *const Arena) !Arena {
     var out: Arena = .{};
     errdefer out.deinit(allocator);
-    inline for (comptime std.meta.fieldNames(Arena)) |name| {
+    inline for (comptime @typeInfo(Arena).@"struct".field_names) |name| {
         const items = @field(src, name).items;
         try @field(out, name).ensureTotalCapacityPrecise(allocator, items.len);
         for (items) |item| @field(out, name).appendAssumeCapacity(try dupeOwned(allocator, item));
@@ -127,7 +127,7 @@ pub fn mathEnv(config: *const engine_config.EngineConfig) locus_env.MathEnv {
 }
 
 pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {
-    var step_solids = std.ArrayListUnmanaged(locus_step.StepSolid).empty;
+    var step_solids = std.ArrayList(locus_step.StepSolid).empty;
     defer step_solids.deinit(allocator);
 
     for (handles) |h| {
@@ -149,7 +149,7 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
 }
 
 fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const locus_math.Vec3 {
-    var pts = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    var pts = std.ArrayList(locus_math.Vec3).empty;
     var seen = std.AutoHashMap(u32, void).init(allocator);
     defer seen.deinit();
 
@@ -215,9 +215,9 @@ fn hullOf(handles: []const geom.GeometryHandle) !*BrepSolid {
     // The hull's triangles, their corners renumbered over the points they use.
     var corner_of = std.AutoHashMapUnmanaged(u32, u32).empty; // point index -> corner index
     defer corner_of.deinit(backend_allocator);
-    var corners = std.ArrayListUnmanaged(locus_math.Vec3).empty;
+    var corners = std.ArrayList(locus_math.Vec3).empty;
     defer corners.deinit(backend_allocator);
-    var tris = std.ArrayListUnmanaged([3]u32).empty;
+    var tris = std.ArrayList([3]u32).empty;
     defer tris.deinit(backend_allocator);
     for (builder.faces.items) |hull_face| {
         if (hull_face.disabled) continue;

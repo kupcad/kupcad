@@ -22,7 +22,7 @@ pub fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{Ru
             _ = vm.raiseError(.NotImplementedError, fmt, .{ "the model", h.engine.scriptName() });
         } else {
             var buf: [48]u8 = undefined;
-            const which = std.fmt.bufPrint(&buf, "part {d} of {d}", .{ n, handles.len }) catch "a part";
+            const which = std.mem.print(&buf, "part {d} of {d}", .{ n, handles.len }) catch "a part";
             _ = vm.raiseError(.NotImplementedError, fmt, .{ which, h.engine.scriptName() });
         }
         return error.RuntimeError;

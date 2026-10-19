@@ -17,8 +17,8 @@ const MAX_HISTORY = 100;
 
 // DOD History Buffer
 const History = struct {
-    chars: std.ArrayListUnmanaged(u8) = .empty,
-    line_starts: std.ArrayListUnmanaged(usize) = .empty,
+    chars: std.ArrayList(u8) = .empty,
+    line_starts: std.ArrayList(usize) = .empty,
 
     pub fn push(self: *History, alloc: std.mem.Allocator, line: []const u8) !void {
         if (line.len == 0) return;
@@ -73,7 +73,7 @@ fn refreshLine(vm: *VM, stderr: std.Io.File, prompt: []const u8, buf: []const u8
 
     if (buf.len > cursor) {
         var ansi_buf: [32]u8 = undefined;
-        if (std.fmt.bufPrint(&ansi_buf, "\x1b[{d}D", .{buf.len - cursor})) |msg| {
+        if (std.mem.print(&ansi_buf, "\x1b[{d}D", .{buf.len - cursor})) |msg| {
             stderr.writeStreamingAll(vm.io, msg) catch return;
         } else |_| {}
     }
@@ -83,7 +83,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     const stdin = std.Io.File.stdin();
     const stderr = std.Io.File.stderr();
 
-    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) {
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
         stderr.writeStreamingAll(vm.io, prompt) catch return null;
         var buf: [1024]u8 = undefined;
         const bytes_read = stdin.readStreaming(vm.io, &.{&buf}) catch return null;
@@ -130,7 +130,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
             return null;
         } else if (c == 127 or c == 8) { // Backspace
             if (cursor > 0) {
-                std.mem.copyForwards(u8, buf[cursor - 1 .. len - 1], buf[cursor..len]);
+                @memmove(buf[cursor - 1 .. len - 1], buf[cursor..len]);
                 len -= 1;
                 cursor -= 1;
                 try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
@@ -178,7 +178,7 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
             }
         } else if (c >= 32 and c < 127) { // Standard printable characters
             if (len < buf.len) {
-                std.mem.copyBackwards(u8, buf[cursor + 1 .. len + 1], buf[cursor..len]);
+                @memmove(buf[cursor + 1 .. len + 1], buf[cursor..len]);
                 buf[cursor] = c;
                 len += 1;
                 cursor += 1;
@@ -283,7 +283,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
         const where = if (comp.errorDiagnostic()) |d| d.formatLine(vm.allocator, &doc.line_index) catch null else null;
         defer if (where) |w| vm.allocator.free(w);
         var err_buf: [256]u8 = undefined;
-        const err_str = std.fmt.bufPrint(&err_buf, "Compile error: {s}\n", .{where orelse @errorName(err)}) catch "Compile error.\n";
+        const err_str = std.mem.print(&err_buf, "Compile error: {s}\n", .{where orelse @errorName(err)}) catch "Compile error.\n";
         stderr.writeStreamingAll(vm.io, err_str) catch return;
         return;
     };
@@ -370,7 +370,7 @@ pub fn debuggerLoop(vm: *VM) void {
                 const line = li.getLine(source_offset) + 1;
                 const col = li.getUtf8Column(source_offset) + 1;
                 var loc_buf: [64]u8 = undefined;
-                if (std.fmt.bufPrint(&loc_buf, "Break at line {d}, col {d}\n", .{ line, col })) |msg| {
+                if (std.mem.print(&loc_buf, "Break at line {d}, col {d}\n", .{ line, col })) |msg| {
                     stderr.writeStreamingAll(vm.io, msg) catch return;
                 } else |_| {}
             }

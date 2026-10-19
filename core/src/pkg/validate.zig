@@ -50,8 +50,8 @@ pub fn validateRef(ref: []const u8) ValidationError!void {
     if (ref.len == 0 or ref.len > limits.MAX_REF_LEN) return error.InvalidRef;
     if (ref[0] == '/' or ref[0] == '-' or ref[0] == '.') return error.InvalidRef;
     if (ref[ref.len - 1] == '/') return error.InvalidRef;
-    if (std.mem.indexOf(u8, ref, "..") != null) return error.InvalidRef;
-    if (std.mem.indexOf(u8, ref, "//") != null) return error.InvalidRef;
+    if (std.mem.find(u8, ref, "..") != null) return error.InvalidRef;
+    if (std.mem.find(u8, ref, "//") != null) return error.InvalidRef;
     for (ref) |c| {
         if (!(isNameChar(c) or c == '/' or c == '+')) return error.InvalidRef;
     }
@@ -63,7 +63,7 @@ pub fn validateRef(ref: []const u8) ValidationError!void {
 pub fn validateRange(range: []const u8) ValidationError!void {
     if (range.len == 0 or range.len > limits.MAX_REF_LEN) return error.InvalidRef;
     for (range) |c| {
-        if (!(std.ascii.isDigit(c) or std.mem.indexOfScalar(u8, ".v^~>=", c) != null)) return error.InvalidRef;
+        if (!(std.ascii.isDigit(c) or std.mem.findScalar(u8, ".v^~>=", c) != null)) return error.InvalidRef;
     }
 }
 
@@ -71,7 +71,7 @@ pub fn validateRange(range: []const u8) ValidationError!void {
 pub fn validateHost(host: []const u8) ValidationError!void {
     if (host.len == 0 or host.len > limits.MAX_HOST_LEN) return error.InvalidHost;
     if (host[0] == '.' or host[0] == '-' or host[host.len - 1] == '.') return error.InvalidHost;
-    if (std.mem.indexOf(u8, host, "..") != null) return error.InvalidHost;
+    if (std.mem.find(u8, host, "..") != null) return error.InvalidHost;
     for (host) |c| {
         if (!(std.ascii.isAlphanumeric(c) or c == '.' or c == '-')) return error.InvalidHost;
     }
@@ -85,7 +85,7 @@ pub fn validateHost(host: []const u8) ValidationError!void {
 /// (DNS names that *resolve* to private IPs are not caught here.)
 pub fn isPublicRegistryHost(host: []const u8) bool {
     validateHost(host) catch return false;
-    const last_dot = std.mem.lastIndexOfScalar(u8, host, '.') orelse return false;
+    const last_dot = std.mem.findScalarLast(u8, host, '.') orelse return false;
     const tld = host[last_dot + 1 ..];
     if (tld.len == 0 or !std.ascii.isAlphabetic(tld[0])) return false;
     if (std.ascii.eqlIgnoreCase(tld, "localhost")) return false;

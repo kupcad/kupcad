@@ -220,7 +220,7 @@ pub const Handler = struct {
     fn tellOfCrash(self: *Handler) void {
         const subject = self.preview.takeCrash() orelse return;
         var buf: [512]u8 = undefined;
-        const text = std.fmt.bufPrint(&buf, "KupCAD: the worker process running scripts for the preview and hovers crashed (with {s}). The editor keeps working; the next edit starts a new one (the output panel says more).", .{subject}) catch "KupCAD: the worker process running scripts for the preview crashed; the next edit starts a new one.";
+        const text = std.mem.print(&buf, "KupCAD: the worker process running scripts for the preview and hovers crashed (with {s}). The editor keeps working; the next edit starts a new one (the output panel says more).", .{subject}) catch "KupCAD: the worker process running scripts for the preview crashed; the next edit starts a new one.";
         self.transport.writeNotification(self.io, self.allocator, "window/showMessage", lsp.types.window.ShowMessageParams, .{ .type = .Warning, .message = text }, .{}) catch |err| {
             logger.warn("Could not tell the editor the preview crashed: {}", .{err});
         };
@@ -427,7 +427,7 @@ pub const Handler = struct {
         };
 
         const line_index = &doc.line_index;
-        var edits = std.ArrayListUnmanaged(lsp.types.TextEdit).empty;
+        var edits = std.ArrayList(lsp.types.TextEdit).empty;
         try edits.append(arena, .{
             .range = .{
                 .start = .{ .line = 0, .character = 0 },
@@ -538,7 +538,7 @@ pub const Handler = struct {
         const buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = buf.doc orelse return null;
 
-        var hints = std.ArrayListUnmanaged(lsp.types.InlayHint).empty;
+        var hints = std.ArrayList(lsp.types.InlayHint).empty;
         const line_index = &doc.line_index;
 
         for (try lsp_hints.hints(arena, &doc)) |hint| {
@@ -565,7 +565,7 @@ pub const Handler = struct {
     ) !lsp.ResultType("textDocument/completion") {
         logger.debug("Completion requested for {s}", .{params.textDocument.uri});
 
-        var items = std.ArrayListUnmanaged(lsp.types.completion.Item).empty;
+        var items = std.ArrayList(lsp.types.completion.Item).empty;
 
         // Safely fetch the current document source buffer
         const doc_buf = self.files.get(params.textDocument.uri) orelse return .{ .completion_items = items.items };
@@ -632,7 +632,7 @@ pub const Handler = struct {
         const doc_buf = self.files.get(params.textDocument.uri) orelse return null;
         const doc = doc_buf.doc orelse return null;
 
-        var symbols = std.ArrayListUnmanaged(lsp.types.DocumentSymbol).empty;
+        var symbols = std.ArrayList(lsp.types.DocumentSymbol).empty;
         const line_index = &doc.line_index;
 
         // Capture node by reference using `*node`
@@ -756,7 +756,7 @@ pub const Handler = struct {
         defer api.freeDiagnostics(self.allocator, diags);
 
         const line_index = &doc.line_index;
-        var lsp_diags: std.ArrayListUnmanaged(PublishedDiagnostic) = .empty;
+        var lsp_diags: std.ArrayList(PublishedDiagnostic) = .empty;
 
         for (diags) |d| {
             const start = self.lspPosition(line_index, d.loc.offset);
@@ -807,7 +807,7 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     if (!std.mem.eql(u8, parsed.scheme, "file")) return null;
     const path = try parsed.path.toRawMaybeAlloc(arena);
     // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
-    if (builtin.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
+    if (builtin.target.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
     return path;
 }
 

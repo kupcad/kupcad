@@ -72,7 +72,7 @@ test "Linter: Scope shadowing inside blocks (do ... end)" {
 test "Linter: Iterative traversal prevents stack overflow on deeply nested AST" {
     // Deep, but still within the parser's MAX_AST_DEPTH for nested `if`
     const depth: usize = limits.MAX_AST_DEPTH / 3;
-    var source_buf = std.ArrayListUnmanaged(u8).empty;
+    var source_buf = std.ArrayList(u8).empty;
     defer source_buf.deinit(testing.allocator);
 
     for (0..depth) |_| try source_buf.appendSlice(testing.allocator, "if true\n");

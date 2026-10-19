@@ -119,7 +119,7 @@ pub const VM = struct {
     io: std.Io,
     stack: []value.Value,
     stack_top: usize,
-    frames: std.ArrayListUnmanaged(CallFrame),
+    frames: std.ArrayList(CallFrame),
 
     native_vfs_ptr: *NativeVfs,
     vfs: Vfs,
@@ -140,7 +140,7 @@ pub const VM = struct {
     global_generation: usize = 0,
     // Owned copies of the global names defined by bytecode (see defineGlobal); keys
     // registered by the host are static literals and are not in here.
-    owned_global_keys: std.ArrayListUnmanaged([]const u8) = .empty,
+    owned_global_keys: std.ArrayList([]const u8) = .empty,
     // Names the main script itself defined in `globals` (keys borrowed from `globals`).
     // Everything else in `globals` was registered by the host (builtins, natives), and
     // only those are visible to imported modules.
@@ -152,18 +152,18 @@ pub const VM = struct {
     // the original builtin rather than the main script's variable.
     shadowed_builtins: std.StringHashMapUnmanaged(value.Value) = .empty,
     // One top-level namespace per imported module (see value.Namespace).
-    module_namespaces: std.ArrayListUnmanaged(*value.Namespace) = .empty,
+    module_namespaces: std.ArrayList(*value.Namespace) = .empty,
     modules: std.StringHashMapUnmanaged(value.Value),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
 
     open_upvalues: ?*value.ObjUpvalue = null,
-    rescue_frames: std.ArrayListUnmanaged(RescueFrame) = .empty,
+    rescue_frames: std.ArrayList(RescueFrame) = .empty,
     param_registry: parameters.ParamList = .{},
     param_lookup: std.AutoHashMapUnmanaged(value.Value, usize) = .empty,
 
-    materials: std.ArrayListUnmanaged(material_mod.MaterialDef) = .empty,
-    display_list: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty,
+    materials: std.ArrayList(material_mod.MaterialDef) = .empty,
+    display_list: std.ArrayList(geom.GeometryHandle) = .empty,
 
     host: Host = .{},
     dag_builder: dag.DAGBuilder,
@@ -216,7 +216,7 @@ pub const VM = struct {
     static_nil: ?*value.ObjString = null,
 
     // --- Track stack state to prevent native FFI corruption ---
-    unwind_stack: std.ArrayListUnmanaged(UnwindFrame) = .empty,
+    unwind_stack: std.ArrayList(UnwindFrame) = .empty,
     // Bumped by every executeThrow so a native boundary can tell that the native
     // already raised (e.g. raiseError + `return error.RuntimeError`) and must
     // not raise a second "Native Execution Error" on top of it.
@@ -232,7 +232,7 @@ pub const VM = struct {
     /// The settings in force, as ids into dag_builder's settings table: CAD.with_config
     /// pushes, CAD.config changes the top; never empty. Read with `config`, change only with
     /// setConfig / pushConfig / popConfig, which keep the DAG builder's settings in step.
-    config_stack: std.ArrayListUnmanaged(dag.SettingsId) = .empty,
+    config_stack: std.ArrayList(dag.SettingsId) = .empty,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -267,7 +267,7 @@ pub const VM = struct {
         // Each allocation is released if a later one fails, until the VM owns them all (a VM
         // that ran out of memory while starting leaked everything it had allocated so far).
         var vm = vm: {
-            var config_stack = std.ArrayListUnmanaged(dag.SettingsId).empty;
+            var config_stack = std.ArrayList(dag.SettingsId).empty;
             errdefer config_stack.deinit(allocator);
             try config_stack.append(allocator, 0); // the default settings
 
@@ -276,12 +276,12 @@ pub const VM = struct {
             errdefer allocator.free(initial_stack);
 
             // Pre-allocate 4,096 frames (~128KB of contiguous memory)
-            var frames = std.ArrayListUnmanaged(CallFrame).empty;
+            var frames = std.ArrayList(CallFrame).empty;
             errdefer frames.deinit(allocator);
             try frames.ensureTotalCapacity(allocator, 4096);
 
             // Pre-allocate rescue frames
-            var rescue_frames = std.ArrayListUnmanaged(RescueFrame).empty;
+            var rescue_frames = std.ArrayList(RescueFrame).empty;
             errdefer rescue_frames.deinit(allocator);
             try rescue_frames.ensureTotalCapacity(allocator, 256);
 
@@ -516,7 +516,7 @@ pub const VM = struct {
         if (self.dag_builder.held_leaves == 0 and !self.dag_builder.wantsCompaction()) return;
         // The shapes still live, and nothing else
         self.gc.collectGarbage(self, false);
-        var roots: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+        var roots: std.ArrayList(dag.DAGNodeIndex) = .empty;
         defer roots.deinit(self.allocator);
         // Without room to work it out, the next run tries again.
         roots.ensureTotalCapacity(self.allocator, self.gc.geometries.items.len + self.gc.cross_sections.items.len) catch return;
@@ -534,7 +534,7 @@ pub const VM = struct {
     }
 
     /// Compacts the graph to its `live` nodes and moves every shape to its node's new index.
-    fn compactGeometryGraph(self: *VM, live: *const std.DynamicBitSetUnmanaged) void {
+    fn compactGeometryGraph(self: *VM, live: *const std.bit_set.Dynamic) void {
         // Without room to compact, the next run tries again.
         const renumbered = self.dag_builder.compact(live) catch return;
         defer self.dag_builder.gpa.free(renumbered);
@@ -1734,9 +1734,9 @@ pub const VM = struct {
                 const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
                 const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
                 if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
-                    std.mem.copyBackwards(value.Value, dest, src);
+                    @memmove(dest, src);
                 } else {
-                    std.mem.copyForwards(value.Value, dest, src);
+                    @memmove(dest, src);
                 }
             }
 
@@ -2517,7 +2517,7 @@ pub const VM = struct {
             if (pre_count > 0) {
                 const src = self.stack[base_slot + 1 .. base_slot + 1 + pre_count];
                 const dest = self.stack[base_slot .. base_slot + pre_count];
-                std.mem.copyForwards(value.Value, dest, src);
+                @memmove(dest, src);
             }
             self.stack_top -= 1;
             self.push(splat_val);
@@ -2586,9 +2586,9 @@ pub const VM = struct {
             const dest = self.stack[start_idx + 1 .. start_idx + 1 + trailing_arity];
             const src = self.stack[start_idx + splat_size .. start_idx + splat_size + trailing_arity];
             if (@intFromPtr(dest.ptr) > @intFromPtr(src.ptr)) {
-                std.mem.copyBackwards(value.Value, dest, src);
+                @memmove(dest, src);
             } else {
-                std.mem.copyForwards(value.Value, dest, src);
+                @memmove(dest, src);
             }
         }
 
@@ -3071,7 +3071,7 @@ pub const VM = struct {
     /// defers may have clobbered, and consumes the entry once the boundary sits in
     /// the frame that owns the rescue handler.
     fn restoreAfterUnwind(self: *VM, caller_depth: usize) void {
-        const unwind = self.unwind_stack.getLastOrNull() orelse return;
+        const unwind = self.unwind_stack.last() orelse return;
         self.stack_top = unwind.stack_top;
         self.push(unwind.err_val);
         if (caller_depth <= unwind.frame_count) _ = self.unwind_stack.pop();
@@ -3512,7 +3512,7 @@ pub const VM = struct {
         // read and every NoMethodError).
         var name_buf: [256]u8 = undefined;
         if (name.isString()) {
-            if (std.fmt.bufPrint(&name_buf, "@private:{s}", .{name.asString().chars})) |priv_name| {
+            if (std.mem.print(&name_buf, "@private:{s}", .{name.asString().chars})) |priv_name| {
                 if (self.strings.get(priv_name)) |priv_str| {
                     const priv_val = value.Value.initObj(&priv_str.obj);
                     const priv_method = switch (target) {
@@ -3678,7 +3678,7 @@ pub const VM = struct {
     pub fn raiseError(self: *VM, comptime kind: ErrorKind, comptime fmt: []const u8, args: anytype) InterpretResult {
         comptime {
             checkMessageLayout(fmt);
-            for (std.meta.fieldNames(ErrorKind)) |name| {
+            for (@typeInfo(ErrorKind).@"enum".field_names) |name| {
                 if (std.mem.startsWith(u8, fmt, name ++ ":")) @compileError("drop the '" ++ name ++ ":' prefix and pass ." ++ name ++ ": \"" ++ fmt ++ "\"");
             }
         }
@@ -3798,7 +3798,7 @@ pub const VM = struct {
                 const omitted = total - MAX_BACKTRACE_FRAMES;
                 self.remaining -= omitted;
                 self.listed += 1;
-                return std.fmt.bufPrint(&self.buf, "    ... {d} frames omitted ...", .{omitted}) catch "    ...";
+                return std.mem.print(&self.buf, "    ... {d} frames omitted ...", .{omitted}) catch "    ...";
             }
             self.remaining -= 1;
             self.listed += 1;
@@ -3807,9 +3807,9 @@ pub const VM = struct {
             const source_offset = exec_chunk.getOffset(if (frame.ip > 0) frame.ip - 1 else 0);
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
             const line = if (self.vm.line_index) |li|
-                std.fmt.bufPrint(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ li.getLine(source_offset) + 1, li.getUtf8Column(source_offset) + 1, func_name })
+                std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ li.getLine(source_offset) + 1, li.getUtf8Column(source_offset) + 1, func_name })
             else
-                std.fmt.bufPrint(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+                std.mem.print(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
             return line catch "    from unknown";
         }
     };
@@ -3903,6 +3903,6 @@ pub const VM = struct {
 
     // --- String Formatting Utility ---
     pub fn fmtScratch(self: *VM, comptime fmt: []const u8, args: anytype) ![]const u8 {
-        return std.fmt.allocPrint(self.scratch_arena.allocator(), fmt, args);
+        return self.scratch_arena.allocator().print(fmt, args);
     }
 };

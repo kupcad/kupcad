@@ -77,7 +77,7 @@ fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: 
     // Jumps must land on the first byte of an instruction, not inside an operand.
     // Targets are collected during the linear decode and checked once all
     // instruction starts are known (forward jumps point at not-yet-decoded code).
-    var starts = std.DynamicBitSetUnmanaged.initEmpty(allocator, code.len) catch return error.OutOfMemory;
+    var starts = std.bit_set.Dynamic.initEmpty(allocator, code.len) catch return error.OutOfMemory;
     defer starts.deinit(allocator);
     var walk: Walk = .{ .allocator = allocator, .c = c, .code = code, .scope = scope, .depth = depth };
     defer walk.targets.deinit(allocator);
@@ -106,7 +106,7 @@ const Walk = struct {
     scope: Scope,
     depth: usize,
     ip: usize = 0,
-    targets: std.ArrayListUnmanaged(usize) = .empty,
+    targets: std.ArrayList(usize) = .empty,
 
     /// Steps over the next `n` operand bytes, which must lie inside the code, and gives
     /// where they start.

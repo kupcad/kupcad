@@ -185,7 +185,7 @@ test "Store: migrates v2 databases to the composite package key" {
     defer tmp.cleanup();
     const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(root);
-    const db_path = try std.fmt.allocPrintSentinel(testing.allocator, "{s}/index.db", .{root}, 0);
+    const db_path = try testing.allocator.printSentinel("{s}/index.db", .{root}, 0);
     defer testing.allocator.free(db_path);
 
     {

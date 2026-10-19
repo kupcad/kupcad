@@ -24,8 +24,8 @@ pub fn resolve(allocator: std.mem.Allocator, importer: []const u8, raw_spec: []c
     const spec = std.mem.trimEnd(u8, raw_spec, "/"); // `import "hardware/"` is the package
     if (isRelative(spec)) return resolveFile(allocator, importer, spec);
     if (std.fs.path.isAbsolutePosix(spec) or !PACKAGES_LINKED) return allocator.dupe(u8, spec);
-    if (std.mem.endsWith(u8, spec, ".kup")) return std.fmt.allocPrint(allocator, PACKAGE_DIR ++ "/{s}", .{spec});
-    return std.fmt.allocPrint(allocator, PACKAGE_DIR ++ "/{s}/" ++ PACKAGE_ENTRY, .{spec});
+    if (std.mem.endsWith(u8, spec, ".kup")) return allocator.print(PACKAGE_DIR ++ "/{s}", .{spec});
+    return allocator.print(PACKAGE_DIR ++ "/{s}/" ++ PACKAGE_ENTRY, .{spec});
 }
 
 /// The file an asset import (`import "./logo.stl"`) reads: a relative spec is joined to the

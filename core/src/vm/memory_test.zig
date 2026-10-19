@@ -132,7 +132,7 @@ test "GC Stress: High volume allocations and segmented sweeps" {
     for (0..total_allocs) |i| {
         // Allocate unique strings to bypass the intern cache
         var buf: [16]u8 = undefined;
-        const str_val = std.fmt.bufPrint(&buf, "str{d}", .{i}) catch unreachable;
+        const str_val = std.mem.print(&buf, "str{d}", .{i}) catch unreachable;
 
         // Take ownership of a duped string
         const s = try vm.gc.takeString(&vm, try vm.gc.trackingAllocator().dupe(u8, str_val));
@@ -386,7 +386,7 @@ test "GC: a script past its memory limit stops with an OutOfMemoryError" {
         // first, and "Array#push ran out of memory" where a built-in's allocation failed.
         if (case.limit) |limit| {
             var buf: [96]u8 = undefined;
-            const expected = try std.fmt.bufPrint(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes", .{limit});
+            const expected = try std.mem.print(&buf, "OutOfMemoryError: the script exceeded its memory limit of {d} bytes", .{limit});
             try std.testing.expect(std.mem.startsWith(u8, vm.last_error orelse "", expected));
         }
     }
@@ -406,10 +406,10 @@ test "GC: a heap filled by small allocations still raises an OutOfMemoryError it
         const limit = vm.gc.bytes_allocated + 256 * 1024;
         vm.setMemoryLimit(limit);
         var buf: [256]u8 = undefined;
-        const source = try std.fmt.bufPrint(&buf, "r = begin\n  {s}\nrescue OutOfMemoryError => e\n  e.message\nend\na = nil\nafter = \"ran on\"", .{body});
+        const source = try std.mem.print(&buf, "r = begin\n  {s}\nrescue OutOfMemoryError => e\n  e.message\nend\na = nil\nafter = \"ran on\"", .{body});
         try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
         var message: [96]u8 = undefined;
-        const expected = try std.fmt.bufPrint(&message, "the script exceeded its memory limit of {d} bytes", .{limit});
+        const expected = try std.mem.print(&message, "the script exceeded its memory limit of {d} bytes", .{limit});
         try std.testing.expect(std.mem.startsWith(u8, vm.globals.get("r").?.asString().chars, expected));
         try support.expectValue(.{ .str = "ran on" }, vm.globals.get("after").?);
     }
@@ -449,7 +449,7 @@ test "GC: garbage is collected before the memory limit stops a script" {
     vm.setMemoryLimit(vm.gc.bytes_allocated + headroom);
     // Garbage enough to fill the limit four times over.
     var buf: [64]u8 = undefined;
-    const source = try std.fmt.bufPrint(&buf, "i = 0\nwhile i < {d}\n  g = (0..i)\n  i += 1\nend", .{4 * headroom / @sizeOf(value.ObjRange)});
+    const source = try std.mem.print(&buf, "i = 0\nwhile i < {d}\n  g = (0..i)\n  i += 1\nend", .{4 * headroom / @sizeOf(value.ObjRange)});
     try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
 }
 
@@ -472,7 +472,7 @@ test "GC: an allocation the memory limit refuses raises an error the script can 
     ;
     try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
     var buf: [96]u8 = undefined;
-    try support.expectValue(.{ .str = try std.fmt.bufPrint(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
+    try support.expectValue(.{ .str = try std.mem.print(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
 }
 
 test "GC: a rescued allocation failure goes on in the handler, not out of the run" {

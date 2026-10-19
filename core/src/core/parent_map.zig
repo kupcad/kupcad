@@ -12,7 +12,7 @@ pub const ParentMap = struct {
     parents: []ast.NodeIndex,
 
     // Internal stack to track the current parent during traversal
-    stack: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
+    stack: std.ArrayList(ast.NodeIndex) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree) !ParentMap {
         const parents = try allocator.alloc(ast.NodeIndex, tree.nodes.items.len);

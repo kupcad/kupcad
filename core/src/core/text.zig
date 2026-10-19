@@ -26,7 +26,7 @@ pub const VAlign = enum { baseline, bottom, center, top };
 
 pub const TextPolygons = struct {
     // A list of closed contours. Each contour is an array of [2]f64 points.
-    contours: std.ArrayListUnmanaged(std.ArrayListUnmanaged([2]f64)),
+    contours: std.ArrayList(std.ArrayList([2]f64)),
 
     pub fn deinit(self: *TextPolygons, alloc: std.mem.Allocator) void {
         for (self.contours.items) |*c| c.deinit(alloc);
@@ -71,7 +71,7 @@ pub fn getDefaultFace() !tatfi.Face {
 const BuilderContext = struct {
     allocator: std.mem.Allocator,
     polygons: *TextPolygons,
-    current_contour: ?std.ArrayListUnmanaged([2]f64) = null,
+    current_contour: ?std.ArrayList([2]f64) = null,
     cursor_x: f64,
     cursor_y: f64,
     scale: f64,
@@ -114,7 +114,7 @@ fn moveTo(ptr: *anyopaque, x: f32, y: f32) void {
     ctx.record(ctx.flushContour());
     if (ctx.failed) return;
 
-    ctx.current_contour = std.ArrayListUnmanaged([2]f64).empty;
+    ctx.current_contour = std.ArrayList([2]f64).empty;
     const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
     ctx.record(ctx.current_contour.?.append(ctx.allocator, pt));
 }

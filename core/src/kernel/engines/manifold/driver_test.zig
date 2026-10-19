@@ -490,7 +490,7 @@ test "Manifold Driver: problem reports why a mesh is invalid, and nothing for a 
     const bad = driver.driver.polyhedronFn(&.{}, std.testing.allocator, &pts, &faces) orelse return error.KernelFailed;
     defer driver.driver.destructFn(bad);
     const reason = driver.driver.problemFn(bad) orelse return error.ExpectedProblem;
-    try std.testing.expect(std.mem.indexOf(u8, reason, "not a closed manifold") != null);
+    try std.testing.expect(std.mem.find(u8, reason, "not a closed manifold") != null);
 }
 
 test "Manifold Driver: a sketch's area counts its holes, and its bounds follow it off the origin" {

@@ -60,7 +60,7 @@ fn decodeLetter(letter: u8) ?u8 {
 
 /// `text` with its escape sequences decoded, appended to `out`. At the first backslash that
 /// starts none, fails with error.InvalidEscape and describes it in `problem`.
-pub fn unescapeInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, text: []const u8, problem: *Problem) Error!void {
+pub fn unescapeInto(out: *std.ArrayList(u8), allocator: std.mem.Allocator, text: []const u8, problem: *Problem) Error!void {
     var i: usize = 0;
     while (i < text.len) {
         if (text[i] != '\\') {
@@ -119,12 +119,12 @@ fn decodeUnicode(text: []const u8, at: usize, bytes: *[4]u8, problem: *Problem) 
 /// least indented line, each counting as one column; a line of only spaces and tabs
 /// doesn't count, and an escape such as `\t` is text, not indentation, as in Ruby.
 /// `problem.offset` is from the start of `body`.
-pub fn unescapeHeredocInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, body: []const u8, strip_indent: bool, problem: *Problem) Error!void {
+pub fn unescapeHeredocInto(out: *std.ArrayList(u8), allocator: std.mem.Allocator, body: []const u8, strip_indent: bool, problem: *Problem) Error!void {
     const indent = if (strip_indent) commonIndent(body) else 0;
     var line_start: usize = 0;
     while (line_start < body.len) {
         // Each line with its '\n', so a backslash ending it reads as it does in a string
-        const line_end = if (std.mem.indexOfScalarPos(u8, body, line_start, '\n')) |nl| nl + 1 else body.len;
+        const line_end = if (std.mem.findScalarPos(u8, body, line_start, '\n')) |nl| nl + 1 else body.len;
         const skip = @min(indent, indentOf(body[line_start..line_end]));
         unescapeInto(out, allocator, body[line_start + skip .. line_end], problem) catch |err| {
             if (err == error.InvalidEscape) problem.offset += line_start + skip;
@@ -167,7 +167,7 @@ pub fn closingDelimiter(open: u8) u8 {
 /// A single-quoted (or `%q`) literal's `text` decoded, appended to `out`, as Ruby does: `\\`
 /// is a backslash and a backslash before the literal's delimiter (`open`, or its pair) is the
 /// delimiter; every other backslash is itself, so `'C:\data'` is what it says.
-pub fn unescapeRawInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, text: []const u8, open: u8) !void {
+pub fn unescapeRawInto(out: *std.ArrayList(u8), allocator: std.mem.Allocator, text: []const u8, open: u8) !void {
     const close = closingDelimiter(open);
     var i: usize = 0;
     while (i < text.len) : (i += 1) {
@@ -180,7 +180,7 @@ pub fn unescapeRawInto(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allo
 /// `value` as the content of a double-quoted literal, appended to `out`: the characters
 /// `decodeLetter` has letters for, the quote, the backslash and a `#{` are escaped;
 /// everything else is written as it is.
-pub fn appendEscaped(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, value: []const u8) !void {
+pub fn appendEscaped(out: *std.ArrayList(u8), allocator: std.mem.Allocator, value: []const u8) !void {
     for (value, 0..) |c, i| {
         const escaped: ?[]const u8 = switch (c) {
             '\n' => "\\n",
@@ -202,7 +202,7 @@ pub fn appendEscaped(out: *std.ArrayListUnmanaged(u8), allocator: std.mem.Alloca
 }
 
 fn expectDecodes(expected: []const u8, text: []const u8) !void {
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var decoded: std.ArrayList(u8) = .empty;
     defer decoded.deinit(std.testing.allocator);
     var problem: Problem = undefined;
     try unescapeInto(&decoded, std.testing.allocator, text, &problem);
@@ -210,7 +210,7 @@ fn expectDecodes(expected: []const u8, text: []const u8) !void {
 }
 
 fn expectProblem(expected: Problem, text: []const u8) !void {
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var decoded: std.ArrayList(u8) = .empty;
     defer decoded.deinit(std.testing.allocator);
     var problem: Problem = undefined;
     errdefer std.debug.print("text: {s}\n", .{text});
@@ -221,11 +221,11 @@ fn expectProblem(expected: Problem, text: []const u8) !void {
 test "string_escape: escaping a value and decoding the result gives the value back" {
     const values = [_][]const u8{ "plain", "tab\there", "line\nbreak", "quote \" back \\ slash", "interp #{x} and # alone", "\x00\x07\x08\x0c\x0b\x1b\r", "é and 😀", "" };
     for (values) |value| {
-        var literal: std.ArrayListUnmanaged(u8) = .empty;
+        var literal: std.ArrayList(u8) = .empty;
         defer literal.deinit(std.testing.allocator);
         try appendEscaped(&literal, std.testing.allocator, value);
         try expectDecodes(value, literal.items);
-        try std.testing.expect(std.mem.indexOfScalar(u8, literal.items, '\n') == null);
+        try std.testing.expect(std.mem.findScalar(u8, literal.items, '\n') == null);
     }
 }
 
@@ -267,14 +267,14 @@ test "string_escape: a backslash before punctuation or a space stands for it" {
 }
 
 fn expectRaw(expected: []const u8, text: []const u8, open: u8) !void {
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var decoded: std.ArrayList(u8) = .empty;
     defer decoded.deinit(std.testing.allocator);
     try unescapeRawInto(&decoded, std.testing.allocator, text, open);
     try std.testing.expectEqualStrings(expected, decoded.items);
 }
 
 fn expectHeredoc(expected: []const u8, body: []const u8, strip_indent: bool) !void {
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var decoded: std.ArrayList(u8) = .empty;
     defer decoded.deinit(std.testing.allocator);
     var problem: Problem = undefined;
     try unescapeHeredocInto(&decoded, std.testing.allocator, body, strip_indent, &problem);
@@ -299,7 +299,7 @@ test "string_escape: <<- and << heredocs keep their text as written" {
 }
 
 test "string_escape: a heredoc's invalid escape is placed from the start of the body" {
-    var decoded: std.ArrayListUnmanaged(u8) = .empty;
+    var decoded: std.ArrayList(u8) = .empty;
     defer decoded.deinit(std.testing.allocator);
     var problem: Problem = undefined;
     try std.testing.expectError(error.InvalidEscape, unescapeHeredocInto(&decoded, std.testing.allocator, "  ok\n  a\\qb\n", true, &problem));

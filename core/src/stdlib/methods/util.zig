@@ -133,7 +133,7 @@ pub const NumberArray = struct {
 /// "point 2" / "the matrix".
 fn arrayName(buf: []u8, arg: NumberArray) []const u8 {
     const row = arg.row orelse return arg.name;
-    return std.fmt.bufPrint(buf, "{s} {d}", .{ arg.name, row }) catch arg.name;
+    return std.mem.print(buf, "{s} {d}", .{ arg.name, row }) catch arg.name;
 }
 
 /// Raises the TypeError/ValueError for a bad element `i` (cold path only).
@@ -142,9 +142,9 @@ fn elementError(vm: *VM, arg: NumberArray, i: usize, item: value.Value) error{Ru
     var name_buf: [MAX_DESCRIPTION_LEN]u8 = undefined;
     var buf: [MAX_DESCRIPTION_LEN]u8 = undefined;
     const what = if (arg.row != null)
-        std.fmt.bufPrint(&buf, "{s} ({s}, {s} {d})", .{ arg.elem, arrayName(&name_buf, arg), arg.index_label, i }) catch arg.elem
+        std.mem.print(&buf, "{s} ({s}, {s} {d})", .{ arg.elem, arrayName(&name_buf, arg), arg.index_label, i }) catch arg.elem
     else
-        std.fmt.bufPrint(&buf, "{s} ({s} {d})", .{ arg.elem, arg.index_label, i }) catch arg.elem;
+        std.mem.print(&buf, "{s} ({s} {d})", .{ arg.elem, arg.index_label, i }) catch arg.elem;
     if (!item.isNumber()) return typeError(vm, arg.method, "a number", what, item);
     return vm.fail(.ValueError, "{s} expects a finite number for {s}, got {f}", .{ arg.method, what, value.fmtNumber(item.asNumber()) });
 }
@@ -388,7 +388,10 @@ fn readKwarg(comptime F: type, vm: *VM, v: value.Value, method: []const u8, name
 
 /// The field (or tag) names of `T` as plain slices.
 fn nameList(comptime T: type) []const []const u8 {
-    const names = std.meta.fieldNames(T);
+    const names = switch (@typeInfo(T)) {
+        inline .@"struct", .@"enum" => |info| info.field_names,
+        else => @compileError("nameList: " ++ @typeName(T) ++ " has no fields"),
+    };
     var list: [names.len][]const u8 = undefined;
     for (names, &list) |name, *slot| slot.* = name;
     const final = list;

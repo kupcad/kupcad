@@ -17,7 +17,7 @@ pub const UnusedParamRule = struct {
     pub const description = "A param defined on its own line and never read";
 
     /// Definitions whose value is dropped, by name, with where each is.
-    dropped: std.StringArrayHashMapUnmanaged(token.Location) = .empty,
+    dropped: std.array_hash_map.String(token.Location) = .empty,
     read: std.StringHashMapUnmanaged(void) = .empty,
     /// A read whose name is computed (`param(name)`): any parameter may be the one read.
     read_dynamically: bool = false,

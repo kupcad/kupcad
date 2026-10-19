@@ -47,7 +47,7 @@ pub fn parseStlBuffer(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
 /// The index of the vertex at `coords`, added unless an earlier triangle has it (merged by
 /// bits, as the file wrote it). NaN or an infinity is error.NonFiniteVertex: the kernel
 /// can't place it, and the mesh with it crashed the build (found by the importer fuzz test).
-fn addVertex(allocator: std.mem.Allocator, points: *std.ArrayListUnmanaged([3]f64), point_map: *std.AutoHashMap(PointKey, u32), coords: [3]f32) !u32 {
+fn addVertex(allocator: std.mem.Allocator, points: *std.ArrayList([3]f64), point_map: *std.AutoHashMap(PointKey, u32), coords: [3]f32) !u32 {
     for (coords) |c| if (!std.math.isFinite(c)) return error.NonFiniteVertex;
     const gop = try point_map.getOrPut(.{ .x = @bitCast(coords[0]), .y = @bitCast(coords[1]), .z = @bitCast(coords[2]) });
     if (!gop.found_existing) {
@@ -58,7 +58,7 @@ fn addVertex(allocator: std.mem.Allocator, points: *std.ArrayListUnmanaged([3]f6
 }
 
 fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32) !StlMesh {
-    var points = std.ArrayListUnmanaged([3]f64).empty;
+    var points = std.ArrayList([3]f64).empty;
     defer points.deinit(allocator);
     var faces = try allocator.alloc([3]u32, num_tris);
     errdefer allocator.free(faces);
@@ -93,9 +93,9 @@ fn parseBinaryStl(allocator: std.mem.Allocator, data: []const u8, num_tris: u32)
 }
 
 fn parseAsciiStl(allocator: std.mem.Allocator, data: []const u8) !StlMesh {
-    var points = std.ArrayListUnmanaged([3]f64).empty;
+    var points = std.ArrayList([3]f64).empty;
     defer points.deinit(allocator);
-    var faces = std.ArrayListUnmanaged([3]u32).empty;
+    var faces = std.ArrayList([3]u32).empty;
     defer faces.deinit(allocator);
 
     var point_map = std.AutoHashMap(PointKey, u32).init(allocator);

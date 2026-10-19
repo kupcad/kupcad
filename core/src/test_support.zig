@@ -76,7 +76,7 @@ pub fn runWith(allocator: std.mem.Allocator, vm: *VM, source: []const u8) !Inter
 /// so an expected string checks the error's class as well as its message.
 const RESCUE_BY_KIND = blk: {
     var text: []const u8 = "";
-    for (std.meta.fieldNames(ErrorKind)) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
+    for (@typeInfo(ErrorKind).@"enum".field_names) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
     break :blk text;
 };
 

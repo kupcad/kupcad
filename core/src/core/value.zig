@@ -84,7 +84,7 @@ pub const ObjSymbol = struct {
 
 pub const ObjArray = struct {
     obj: Obj,
-    items: std.ArrayListUnmanaged(Value),
+    items: std.ArrayList(Value),
 };
 
 /// Defines the Hashing and Equality rules for O(1) Map lookups
@@ -115,7 +115,7 @@ pub const ValueContext = struct {
 
 pub const ObjMap = struct {
     obj: Obj,
-    map: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
+    map: std.array_hash_map.Custom(Value, Value, ValueContext, false),
 };
 
 pub const ObjFunction = struct {
@@ -190,11 +190,11 @@ pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
     superclass: ?*ObjClass = null,
-    methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
-    class_methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
-    class_fields: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
-    included_modules: std.ArrayListUnmanaged(*ObjModule),
-    instance_layout: std.ArrayHashMapUnmanaged(Value, usize, ValueContext, false),
+    methods: std.array_hash_map.Custom(Value, Value, ValueContext, false),
+    class_methods: std.array_hash_map.Custom(Value, Value, ValueContext, false),
+    class_fields: std.array_hash_map.Custom(Value, Value, ValueContext, false),
+    included_modules: std.ArrayList(*ObjModule),
+    instance_layout: std.array_hash_map.Custom(Value, usize, ValueContext, false),
     /// The class of a built-in kind of value (Array, Number, NilClass, Proc, ...), made by
     /// literals and methods, not by `.new`: a generic instance of it is no such value (it
     /// used to be: `Array.new` was an empty object, not an Array). Such a class may still
@@ -205,13 +205,13 @@ pub const ObjClass = struct {
 pub const ObjModule = struct {
     obj: Obj,
     name: *ObjString,
-    methods: std.ArrayHashMapUnmanaged(Value, Value, ValueContext, false),
+    methods: std.array_hash_map.Custom(Value, Value, ValueContext, false),
 };
 
 pub const ObjInstance = struct {
     obj: Obj,
     class: *ObjClass,
-    fields: std.ArrayListUnmanaged(Value),
+    fields: std.ArrayList(Value),
 };
 
 pub const ObjBoundMethod = struct {
@@ -693,4 +693,4 @@ pub fn writeQuoted(writer: *std.Io.Writer, s: []const u8) !void {
 }
 
 /// A dynamic array of Values (used for the VM Stack and constants arrays).
-pub const ValueArray = std.ArrayListUnmanaged(Value);
+pub const ValueArray = std.ArrayList(Value);

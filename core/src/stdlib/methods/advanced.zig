@@ -17,7 +17,7 @@ const booleans = @import("booleans.zig");
 const PLANE_ARGS = sig.SPLIT_BY_PLANE.positional;
 
 pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    var scratch = std.ArrayListUnmanaged(u32).empty;
+    var scratch = std.ArrayList(u32).empty;
     const alloc = vm.scratch_arena.allocator();
 
     try scratch.append(alloc, receiver.dag_idx);

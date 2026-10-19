@@ -9,7 +9,7 @@ const string_map = @import("string_map.zig");
 /// Each path and hash is length-prefixed (u64 LE) so distinct file maps can
 /// never produce the same hash input.
 pub fn compute(allocator: std.mem.Allocator, files_map: *const std.StringHashMap([]const u8)) ![]const u8 {
-    var paths = std.ArrayListUnmanaged([]const u8).empty;
+    var paths = std.ArrayList([]const u8).empty;
     defer paths.deinit(allocator);
 
     var it = files_map.keyIterator();

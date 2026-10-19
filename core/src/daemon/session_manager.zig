@@ -24,7 +24,7 @@ pub const SessionManager = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     sessions: std.AutoHashMapUnmanaged(u64, *ScriptSession) = .empty,
-    lru_queue: std.ArrayListUnmanaged(u64) = .empty,
+    lru_queue: std.ArrayList(u64) = .empty,
     /// Session id -> number of outstanding leases. Absent means unpinned.
     pins: std.AutoHashMapUnmanaged(u64, u32) = .empty,
     max_sessions: usize,
@@ -150,7 +150,7 @@ pub const SessionManager = struct {
     /// and appending it again could fail to allocate and drop it from the queue for good.
     pub fn markUsed(self: *SessionManager, session_id: u64) void {
         const items = self.lru_queue.items;
-        const i = std.mem.indexOfScalar(u64, items, session_id) orelse return;
+        const i = std.mem.findScalar(u64, items, session_id) orelse return;
         std.mem.rotate(u64, items[i..], 1);
     }
 

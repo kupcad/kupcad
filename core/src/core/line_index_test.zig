@@ -67,7 +67,7 @@ test "LineIndex: humanPosition is the 1-based line and UTF-8 column compilers pr
     try testing.expectEqual(@as(u32, 1), first.line);
     try testing.expectEqual(@as(u32, 1), first.column);
     // "μ" is two bytes: the `=` after it is byte column 4 of line 2.
-    const eq = index.humanPosition(@intCast(std.mem.lastIndexOfScalar(u8, source, '=').?));
+    const eq = index.humanPosition(@intCast(std.mem.findScalarLast(u8, source, '=').?));
     try testing.expectEqual(@as(u32, 2), eq.line);
     try testing.expectEqual(@as(u32, 4), eq.column);
 }

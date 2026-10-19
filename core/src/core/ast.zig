@@ -330,28 +330,28 @@ pub const Tree = struct {
     root: NodeIndex = .none,
 
     // Core node storage
-    nodes: std.ArrayListUnmanaged(Node) = .empty,
+    nodes: std.ArrayList(Node) = .empty,
 
     // Unified DoD Storage for all AST Payloads
-    extra_data: std.ArrayListUnmanaged(u32) = .empty,
+    extra_data: std.ArrayList(u32) = .empty,
 
     // Contiguous String Interner Pool
-    string_bytes: std.ArrayListUnmanaged(u8) = .empty,
-    string_spans: std.ArrayListUnmanaged(StringSpan) = .empty,
+    string_bytes: std.ArrayList(u8) = .empty,
+    string_spans: std.ArrayList(StringSpan) = .empty,
 
     // Specific typed pools for precision arrays
-    numbers: std.ArrayListUnmanaged(f64) = .empty,
+    numbers: std.ArrayList(f64) = .empty,
 
     // Auxiliary typed lists for spans
-    extra_node_indices: std.ArrayListUnmanaged(NodeIndex) = .empty,
-    extra_string_indices: std.ArrayListUnmanaged(StringId) = .empty,
-    named_args: std.ArrayListUnmanaged(NamedArg) = .empty,
-    params: std.ArrayListUnmanaged(Param) = .empty,
-    hash_entries: std.ArrayListUnmanaged(HashEntry) = .empty,
-    when_branches: std.ArrayListUnmanaged(WhenBranch) = .empty,
-    lhs_exprs: std.ArrayListUnmanaged(LhsExpr) = .empty,
-    rescue_clauses: std.ArrayListUnmanaged(RescueClause) = .empty,
-    alias_pairs: std.ArrayListUnmanaged(AliasPair) = .empty,
+    extra_node_indices: std.ArrayList(NodeIndex) = .empty,
+    extra_string_indices: std.ArrayList(StringId) = .empty,
+    named_args: std.ArrayList(NamedArg) = .empty,
+    params: std.ArrayList(Param) = .empty,
+    hash_entries: std.ArrayList(HashEntry) = .empty,
+    when_branches: std.ArrayList(WhenBranch) = .empty,
+    lhs_exprs: std.ArrayList(LhsExpr) = .empty,
+    rescue_clauses: std.ArrayList(RescueClause) = .empty,
+    alias_pairs: std.ArrayList(AliasPair) = .empty,
 
     /// The expressions written in parentheses, `(a + b)`. Nothing else is kept about
     /// grouping (the nodes say what it means); the formatter uses this to print the
@@ -845,11 +845,11 @@ pub const Builder = struct {
     /// fails with error.InvalidEscape, described in `problem` (string_escape.zig).
     pub fn internUnescaped(self: *Builder, input: []const u8, problem: *string_escape.Problem) string_escape.Error!StringId {
         // Fast path: if no backslashes exist, intern directly
-        if (std.mem.indexOfScalar(u8, input, '\\') == null) {
+        if (std.mem.findScalar(u8, input, '\\') == null) {
             return try self.intern(input);
         }
 
-        var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, input.len);
+        var buf = try std.ArrayList(u8).initCapacity(self.allocator, input.len);
         defer buf.deinit(self.allocator);
         try string_escape.unescapeInto(&buf, self.allocator, input, problem);
         return try self.intern(buf.items);
@@ -969,7 +969,7 @@ pub const Builder = struct {
     /// A single-quoted or `%q` literal's node (string_escape.unescapeRawInto), `open` its
     /// opening delimiter.
     pub fn stringNodeRaw(self: *Builder, lexeme_str: []const u8, main_token: u24, open: u8) !NodeIndex {
-        var buf = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, lexeme_str.len);
+        var buf = try std.ArrayList(u8).initCapacity(self.allocator, lexeme_str.len);
         defer buf.deinit(self.allocator);
         try string_escape.unescapeRawInto(&buf, self.allocator, lexeme_str, open);
         const str_id = try self.intern(buf.items);

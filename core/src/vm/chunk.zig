@@ -228,7 +228,7 @@ pub const DebugSpan = struct {
 /// heap constant and unregister in Chunk.free, so the registry never holds a
 /// dangling chunk pointer.
 pub const ChunkRegistry = struct {
-    chunks: std.ArrayListUnmanaged(*Chunk) = .empty,
+    chunks: std.ArrayList(*Chunk) = .empty,
 
     pub fn track(self: *ChunkRegistry, allocator: std.mem.Allocator, c: *Chunk) !void {
         if (c.registry != null) return;
@@ -258,14 +258,14 @@ pub const ChunkRegistry = struct {
 };
 
 pub const Chunk = struct {
-    code: std.ArrayListUnmanaged(u8),
-    inline_caches: std.ArrayListUnmanaged(InlineCache),
-    global_caches: std.ArrayListUnmanaged(GlobalCache) = .empty,
-    debug_spans: std.ArrayListUnmanaged(DebugSpan),
+    code: std.ArrayList(u8),
+    inline_caches: std.ArrayList(InlineCache),
+    global_caches: std.ArrayList(GlobalCache) = .empty,
+    debug_spans: std.ArrayList(DebugSpan),
     constants: value.ValueArray,
     max_stack_slots: usize,
     local_count: usize,
-    local_names: std.ArrayListUnmanaged([]const u8), // For REPL introspection
+    local_names: std.ArrayList([]const u8), // For REPL introspection
     // GC root registration (see ChunkRegistry). A registered chunk must not be
     // moved by value, since the registry stores its address.
     registry: ?*ChunkRegistry = null,

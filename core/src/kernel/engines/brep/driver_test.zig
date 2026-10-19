@@ -174,7 +174,7 @@ test "Driver: STEP Export of CSG Boolean Result" {
     const step_bytes = try step_exporter.buildStepBuffer(alloc, &handles);
     defer alloc.free(step_bytes);
 
-    try std.testing.expect(std.mem.indexOf(u8, step_bytes, "ISO-10303-21;") != null);
+    try std.testing.expect(std.mem.find(u8, step_bytes, "ISO-10303-21;") != null);
 }
 
 // --- Handle Ownership ---

@@ -52,7 +52,7 @@ fn statementPrints(allocator: std.mem.Allocator, tree: *const ast.Tree) ![]u64 {
 
 const Collector = struct {
     allocator: std.mem.Allocator,
-    prints: std.ArrayListUnmanaged(u64) = .empty,
+    prints: std.ArrayList(u64) = .empty,
 
     pub fn enterNode(self: *Collector, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx).?;

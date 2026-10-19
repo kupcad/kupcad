@@ -104,14 +104,14 @@ test "Error codes: docs/README.md lists every code, and only codes" {
     // compiler's own test builds the tree).
     const readme = @embedFile("docs/README.md");
     const header = "| Code | Means |\n|---|---|\n";
-    const start = (std.mem.indexOf(u8, readme, header) orelse return error.MissingTable) + header.len;
-    const table = readme[start .. std.mem.indexOfPos(u8, readme, start, "\n\n") orelse readme.len];
+    const start = (std.mem.find(u8, readme, header) orelse return error.MissingTable) + header.len;
+    const table = readme[start .. std.mem.findPos(u8, readme, start, "\n\n") orelse readme.len];
 
     var listed: std.EnumSet(Code) = .empty;
     var rows = std.mem.splitScalar(u8, table, '\n');
     while (rows.next()) |row| {
-        const name_start = (std.mem.indexOf(u8, row, "| `") orelse return error.MalformedRow) + 3;
-        const name = row[name_start .. std.mem.indexOfScalarPos(u8, row, name_start, '`') orelse return error.MalformedRow];
+        const name_start = (std.mem.find(u8, row, "| `") orelse return error.MalformedRow) + 3;
+        const name = row[name_start .. std.mem.findScalarPos(u8, row, name_start, '`') orelse return error.MalformedRow];
         errdefer std.debug.print("README lists '{s}', which is no code\n", .{name});
         const code = std.meta.stringToEnum(Code, name) orelse return error.UnknownCode;
         try testing.expect(!listed.contains(code));

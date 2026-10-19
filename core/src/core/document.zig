@@ -102,7 +102,7 @@ pub const Document = struct {
         while (i < source.len) {
             const len = std.unicode.utf8ByteSequenceLength(source[i]) catch return i;
             if (i + len > source.len) return i;
-            _ = std.unicode.utf8Decode(source[i..][0..len]) catch return i;
+            if (!std.unicode.utf8ValidateSlice(source[i..][0..len])) return i;
             i += len;
         }
         return null;

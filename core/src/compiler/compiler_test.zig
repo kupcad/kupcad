@@ -139,7 +139,7 @@ test "Compiler: compiles compound assignment (x += 5)" {
     const assign_node = try b.assignment(name_id, .add, val, 0);
 
     // Unmanaged ArrayList and the top-level resolver import
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
 
@@ -172,7 +172,7 @@ test "Compiler: compiles safe navigation method call (obj&.cut())" {
     const safe_call = try b.methodCall(receiver, method_name, empty_args, .none, true, 0, 0);
 
     // Unmanaged ArrayList and the top-level resolver import
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(safe_call) + 1);
 
@@ -295,7 +295,7 @@ test "Compiler: compiles rescue modifier (dangerous() rescue 0)" {
     const fallback_val = try b.number("0", 0);
     const rescue_node = try b.rescueModifier(dangerous_expr, fallback_val, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(rescue_node) + 1);
 
@@ -331,7 +331,7 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
     const begin_body = try b.block(&.{}, &.{try b.number("2", 0)}, 0, 0);
     const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
 
@@ -348,8 +348,8 @@ test "Compiler: Compiles complex Begin/Rescue with specific Type Checking" {
 
     // The handler is installed first, and the typed clause routes through op_is_instance
     try testing.expectEqual(chunk.OpCode.op_setup_rescue, @as(chunk.OpCode, @fromBackingInt(out_chunk.code.items[0])));
-    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_is_instance)) != null);
-    try testing.expect(std.mem.indexOfScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_pop_rescue)) != null);
+    try testing.expect(std.mem.findScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_is_instance)) != null);
+    try testing.expect(std.mem.findScalar(u8, out_chunk.code.items, @backingInt(chunk.OpCode.op_pop_rescue)) != null);
 }
 
 test "Compiler Edge Case: Compiles empty Hashes and Arrays safely" {
@@ -457,7 +457,7 @@ test "Compiler Edge Case: compiles array literal with > 255 elements (wide opera
     defer b.deinit();
 
     // One more element than a u8 count operand can hold
-    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    var elements: std.ArrayList(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
     for (0..limits.MAX_SHORT_CONSTANTS + 1) |_| {
@@ -544,7 +544,7 @@ test "Compiler: op_pop_rescue does not corrupt max_stack_slots calculation" {
     const rescues = try b.addRescueClauses(&.{rescue_clause});
     const begin_stmt = try b.beginStmt(begin_body, rescues, .none, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(begin_stmt) + 1);
 
@@ -577,7 +577,7 @@ test "Compiler: Protects core globals from variable reassignment" {
     const val = try b.number("10", 0);
     const assign_node = try b.assignment(name_id, null, val, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(assign_node) + 1);
 
@@ -606,7 +606,7 @@ test "Compiler: Protects core globals from function redefinition" {
     const body = try b.nilNode(0);
     const def_node = try b.defStmt(func_name, params_span, body, false, 0, false, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(def_node) + 1);
 
@@ -634,7 +634,7 @@ test "Compiler: Protects core classes from complete reassignment" {
     const empty_body = try b.block(&.{}, &.{}, 0, 0);
     const class_node = try b.classStmt(class_name_node, .none, empty_body, 0, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(class_node) + 1);
 
@@ -831,7 +831,7 @@ test "Compiler: Large array literals (> 65,535 items) fallback to dynamic build 
 
     // One more element than op_build_array_wide's u16 count can hold
     const elem_count: usize = limits.MAX_CONSTANTS + 1;
-    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    var elements: std.ArrayList(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
     const one = try b.number("1", 0);
@@ -875,7 +875,7 @@ test "Compiler: compiles compound property assignment (obj.x += 10)" {
     const prop_assign = try b.propertyAssignment(target, prop_id, .add, val, 0);
 
     // Provide a generic symbol map to avoid out of bounds
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(prop_assign) + 1);
 
@@ -906,7 +906,7 @@ test "Compiler: compiles compound index assignment (arr[1] *= 2)" {
     const val = try b.number("2", 0);
     const idx_assign = try b.indexAssignment(target, index, .multiply, val, 0);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(idx_assign) + 1);
 
@@ -1387,7 +1387,7 @@ test "Compiler Guardrail: Method call exceeding MAX_ARGS triggers error" {
     defer b.deinit();
 
     const call_name = try b.intern("heavy_method");
-    var args = std.ArrayListUnmanaged(ast.NamedArg).empty;
+    var args = std.ArrayList(ast.NamedArg).empty;
     defer args.deinit(testing.allocator);
 
     const val = try b.number("1", 0);
@@ -1455,7 +1455,7 @@ test "Compiler Guardrail: Nested closures share one depth budget" {
 
 test "Compiler Guardrail: Inline-cache indexes past 16 bits are a compile error" {
     // Regression: the u16 inline-cache operand used to overflow silently
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(testing.allocator);
     // A local's calls, so only the method caches grow (a global's reads have caches too).
     try buf.appendSlice(testing.allocator, "def f\n  x = 1\n");
@@ -1490,7 +1490,7 @@ const SlotShape = struct {
 /// passing 0..positionals-1; or `f do |p0..| 1 end` for block literals.
 fn slotShapeSource(shape: SlotShape, positionals: usize) ![]u8 {
     const a = testing.allocator;
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(a);
     try buf.appendSlice(a, if (shape.block_literal) "f do |" else "def f(");
     for (0..positionals) |i| try buf.print(a, "{s}p{d}", .{ if (i > 0) ", " else "", i });
@@ -1546,14 +1546,14 @@ test "Compiler Edge Case: Hash literals with > 255 entries emit op_build_map_wid
     var b = ast.Builder.init(arena.allocator());
     defer b.deinit();
 
-    var entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty;
+    var entries: std.ArrayList(ast.HashEntry) = .empty;
     defer entries.deinit(testing.allocator);
 
     // One more entry than a u8 count operand can hold
     const val = try b.number("1", 0);
     for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [10]u8 = undefined;
-        const key_str = try std.fmt.bufPrint(&buf, "k{d}", .{i});
+        const key_str = try std.mem.print(&buf, "k{d}", .{i});
         const key = try b.stringNode(key_str, 0);
         try entries.append(testing.allocator, .{ .key = key, .value = val });
     }
@@ -1619,12 +1619,12 @@ test "Compiler: Destructuring aborts gracefully without stack corruption" {
     defer b.deinit();
 
     // One more identifier than MAX_SHORT_CONSTANTS
-    var elements: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+    var elements: std.ArrayList(ast.NodeIndex) = .empty;
     defer elements.deinit(testing.allocator);
 
     for (0..limits.MAX_SHORT_CONSTANTS + 1) |i| {
         var buf: [16]u8 = undefined;
-        const str = try std.fmt.bufPrint(&buf, "v{d}", .{i});
+        const str = try std.mem.print(&buf, "v{d}", .{i});
         const name_id = try b.intern(str);
         // Build raw identifier nodes
         const id_node = try b.createNode(.identifier, 0, @backingInt(name_id));
@@ -1714,7 +1714,7 @@ test "Compiler: op_switch table entries are emitted in strictly sorted order" {
 
 test "Compiler: case with more than MAX_JUMP_TABLE_CASES literal conditions does not overflow" {
     // The u16 condition counter used to overflow; now falls back to linear compares
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(testing.allocator);
     try buf.appendSlice(testing.allocator, "case 1\nwhen 1");
     for (0..limits.MAX_JUMP_TABLE_CASES + 1) |_| try buf.appendSlice(testing.allocator, ",1");
@@ -1763,7 +1763,7 @@ test "Compiler: Constant Folding optimizer" {
 }
 
 /// The constants `source` compiles to (the main chunk's).
-fn compiledConstants(allocator: std.mem.Allocator, source: []const u8, out: *std.ArrayListUnmanaged(f64)) !void {
+fn compiledConstants(allocator: std.mem.Allocator, source: []const u8, out: *std.ArrayList(f64)) !void {
     var vm = try VM.init(allocator, std.testing.io);
     defer vm.deinit();
     var doc = try Document.parse(allocator, source);
@@ -1786,7 +1786,7 @@ test "Compiler: a negated literal, and arithmetic on one, is a single constant" 
         .{ .src = "x = --8", .folded = 8 },
     };
     for (cases) |case| {
-        var numbers: std.ArrayListUnmanaged(f64) = .empty;
+        var numbers: std.ArrayList(f64) = .empty;
         defer numbers.deinit(std.testing.allocator);
         try compiledConstants(std.testing.allocator, case.src, &numbers);
         try std.testing.expectEqualSlices(f64, &.{case.folded}, numbers.items);
@@ -1795,7 +1795,7 @@ test "Compiler: a negated literal, and arithmetic on one, is a single constant" 
 
 test "Compiler: equal literals share one constant slot" {
     // Numbers, strings (by text) and symbols each have one slot however often they appear.
-    var numbers: std.ArrayListUnmanaged(f64) = .empty;
+    var numbers: std.ArrayList(f64) = .empty;
     defer numbers.deinit(std.testing.allocator);
     try compiledConstants(std.testing.allocator, "x = [1, 1, 1, 2.5, 2.5, -1, -1]", &numbers);
     try std.testing.expectEqualSlices(f64, &.{ 1, 2.5, -1 }, numbers.items);

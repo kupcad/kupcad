@@ -197,7 +197,7 @@ const kupcad_bindings = &[_][]const u8{
 /// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
 /// Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every arithmetic
 /// check of UBSan and aborted the process on a finding. Debug builds keep both.
-fn cxxFlags(b: *std.Build, optimize: std.builtin.OptimizeMode, base: []const []const u8) []const []const u8 {
+fn cxxFlags(b: *std.Build, optimize: std.lang.Optimize, base: []const []const u8) []const []const u8 {
     if (optimize == .debug) return base;
     return std.mem.concat(b.allocator, []const u8, &.{ base, &.{ "-DNDEBUG", "-fno-sanitize=undefined" } }) catch @panic("out of memory");
 }
@@ -483,7 +483,7 @@ pub fn build(b: *std.Build) void {
 
         // Now add the separator and the emitted binary
         run_wasm_test.addArg("--");
-        run_wasm_test.addFileArg(wasm_test.getEmittedBin());
+        run_wasm_test.addFileArg2(wasm_test.getEmittedBin(), .{});
 
         const test_wasm_step = b.step("test-wasm", "Run WASM tests");
         test_wasm_step.dependOn(&run_wasm_test.step);
@@ -614,7 +614,7 @@ pub fn build(b: *std.Build) void {
         } else "fuzz:";
         const fuzz_tests = b.addTest(.{
             .root_module = mod,
-            .filters = b.dupeStrings(&.{fuzz_filter}),
+            .filters = b.graph.dupeStrings(&.{fuzz_filter}),
             .use_llvm = true,
         });
         const fuzz_step = b.step("fuzz", "Fuzz the front end and the runtime (with --fuzz; without it, replay the corpus)");

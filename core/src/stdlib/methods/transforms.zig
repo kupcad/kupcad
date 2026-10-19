@@ -118,12 +118,12 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
     const axes_str = if (axes_arg) |a| try util.requireName(vm, a, "center", "axes") else "xyz";
     // Any other letter used to be skipped, so `center("xq")` centered x alone.
     const valid = axes_str.len > 0 and for (axes_str) |c| {
-        if (std.mem.indexOfScalar(u8, "xyzXYZ", c) == null) break false;
+        if (std.mem.findScalar(u8, "xyzXYZ", c) == null) break false;
     } else true;
     if (!valid) {
         return vm.fail(.ValueError, "center axes are some of x, y and z, got \"{s}\"", .{axes_str});
     }
-    if (axes_arg != null and receiver.isCrossSection() and std.mem.indexOfAny(u8, axes_str, "zZ") != null) {
+    if (axes_arg != null and receiver.isCrossSection() and std.mem.findAny(u8, axes_str, "zZ") != null) {
         return vm.fail(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
     }
 
@@ -384,10 +384,10 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
 /// The copies a repeat pattern makes of its base shape, unioned in one batch.
 const Copies = struct {
     base: u32,
-    indices: std.ArrayListUnmanaged(u32),
+    indices: std.ArrayList(u32),
 
     fn init(vm: *VM, base: u32, count: usize) !Copies {
-        var indices = try std.ArrayListUnmanaged(u32).initCapacity(vm.allocator, count);
+        var indices = try std.ArrayList(u32).initCapacity(vm.allocator, count);
         indices.appendAssumeCapacity(base);
         return .{ .base = base, .indices = indices };
     }

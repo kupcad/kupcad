@@ -28,7 +28,7 @@ const ADD_USAGE = "Usage: kupcad pkg add <alias>=<url>\n";
 /// what each one does.
 pub const USAGE = blk: {
     var list: []const u8 = "";
-    for (std.meta.fieldNames(Subcommand), 0..) |name, i| list = list ++ (if (i == 0) "" else "|") ++ name;
+    for (@typeInfo(Subcommand).@"enum".field_names, 0..) |name, i| list = list ++ (if (i == 0) "" else "|") ++ name;
     break :blk "Usage: kupcad pkg <" ++ list ++ ">\n" ++
         \\
         \\  init               Create kupcad.json in this directory

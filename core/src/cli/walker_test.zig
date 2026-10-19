@@ -56,7 +56,7 @@ test "Walker: paths that can't be read are counted, and the rest are still walke
     try testing.expectEqual(@as(usize, 2), try walker.walkPaths(.{ .io = testing.io, .capture = &out.writer }, testing.allocator, &.{ missing, ok, "/nonexistent/kupcad/dir" }, &ctx, testProcessFn));
     try testing.expectEqual(@as(usize, 1), ctx.kup_files_found);
     // Each one is reported through the command's reporter (it used to go straight to stderr).
-    const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not read '{s}': FileNotFound\nError: Could not read '/nonexistent/kupcad/dir': FileNotFound\n", .{missing});
+    const expected = try testing.allocator.print("Error: Could not read '{s}': FileNotFound\nError: Could not read '/nonexistent/kupcad/dir': FileNotFound\n", .{missing});
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, out.written());
 }

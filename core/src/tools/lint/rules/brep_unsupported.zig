@@ -24,9 +24,9 @@ pub const BrepUnsupportedRule = struct {
     /// The engine the script selects with CAD.config, from that statement on.
     script_engine: EngineType = .manifold,
     /// CAD.with_config blocks that select an engine, by the tokens they span.
-    scoped: std.ArrayListUnmanaged(Scoped) = .empty,
+    scoped: std.ArrayList(Scoped) = .empty,
     /// The script's methods, by the tokens of their bodies and their names.
-    methods: std.ArrayListUnmanaged(Method) = .empty,
+    methods: std.ArrayList(Method) = .empty,
     shapes: Shapes = .{},
 
     const Scoped = struct { first: u32, last: u32, engine: EngineType };

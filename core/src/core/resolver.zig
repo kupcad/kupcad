@@ -31,7 +31,7 @@ const Scope = struct {
     locals: std.AutoHashMapUnmanaged(ast.StringId, u24) = .empty,
 
     // Tracks the exact captures this closure requires
-    upvalues: std.ArrayListUnmanaged(UpvalueCapture) = .empty,
+    upvalues: std.ArrayList(UpvalueCapture) = .empty,
 
     next_slot: u24 = 0,
     is_closure: bool = false,
@@ -56,7 +56,7 @@ pub const Resolver = struct {
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const UpvalueCapture) = .empty,
     active_method_blocks: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
 
-    scopes: std.ArrayListUnmanaged(Scope) = .empty,
+    scopes: std.ArrayList(Scope) = .empty,
     diagnostics: *errors.Diagnostics,
     loop_depth: usize = 0,
 

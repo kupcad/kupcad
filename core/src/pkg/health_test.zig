@@ -38,7 +38,7 @@ test "Doctor: healMissingBlobs evicts blob and package records when physical fil
     // 2. Heal
     try doc.run(); // Executes all healing routines
     // The report is printed, not logged (release builds hide info logging).
-    try testing.expect(std.mem.indexOf(u8, out.written(), "System health check complete.") != null);
+    try testing.expect(std.mem.find(u8, out.written(), "System health check complete.") != null);
 
     // 3. Verify DB eviction for missing physical files
     const stmt1 = try store.db.prepare("SELECT 1 FROM files WHERE hash = 'missing_hash'");

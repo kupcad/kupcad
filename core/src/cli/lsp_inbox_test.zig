@@ -27,7 +27,7 @@ const Client = struct {
     messages: []const []const u8,
     permits: std.Io.Semaphore = .{},
     read_count: usize = 0,
-    written: std.ArrayListUnmanaged([]u8) = .empty,
+    written: std.ArrayList([]u8) = .empty,
 
     fn allow(self: *Client, n: usize) void {
         for (0..n) |_| self.permits.post(testing.io);

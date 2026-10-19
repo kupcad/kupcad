@@ -13,7 +13,7 @@ pub const std_options = std.Options{
 /// Debug builds log everything. Release builds show warnings and errors (e.g. an
 /// unsupported lockfile, a skipped package entry) but not the per-run `info` chatter
 /// such as "Initialized new session", which would otherwise print on every build.
-pub fn levelFor(mode: std.builtin.OptimizeMode) std.log.Level {
+pub fn levelFor(mode: std.lang.Optimize) std.log.Level {
     return switch (mode) {
         .debug => .debug,
         .safe, .fast, .small => .warn,

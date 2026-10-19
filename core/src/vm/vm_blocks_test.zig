@@ -106,7 +106,7 @@ test "VM: executes Array.map with functional closure block" {
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(map_call) + 1);
 
@@ -284,7 +284,7 @@ test "VM: Splat parameters pack arbitrary arguments into an Array" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     // Default all nodes to local (so parameters inside the function resolve correctly)
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
@@ -355,7 +355,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
 
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     // Default all nodes to local (so parameters inside the function resolve correctly)
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
@@ -465,7 +465,7 @@ test "VM: Named Keyword Arguments with default values" {
     defer vm.deinit();
 
     // Mock the symbols array so the compiler doesn't panic out-of-bounds
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, 100);
     symbols.items[@backingInt(def_node)] = .{ .kind = .global, .index = 0 };
@@ -1531,7 +1531,7 @@ test "VM/Compiler: Resolves pre-existing VM globals as variables, preventing fal
     const mul_node = try b.binary(.multiply, x_node, five, 0);
 
     // --- NEW: Provide a mock symbols array ---
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .global, .index = 0 }, @backingInt(mul_node) + 1);
 
@@ -1570,7 +1570,7 @@ test "VM/Compiler: Assignments in a seeded context dynamically allocate new slot
     const assign_node = try b.assignment(z_id, null, val, 0);
 
     // Trick the compiler into treating `z` as a local, as if we were inside a block scope.
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(assign_node) + 1);
 

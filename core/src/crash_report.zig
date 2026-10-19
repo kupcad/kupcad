@@ -23,7 +23,7 @@ const MAX_COMMAND_BYTES = 32;
 const MAX_HEADER_BYTES = 2048;
 const STDERR: std.c.fd_t = 2;
 const FATAL_SIGNALS = [_]std.posix.SIG{ .SEGV, .BUS, .ILL, .FPE, .ABRT };
-pub const supported = switch (builtin.os.tag) {
+pub const supported = switch (builtin.target.os.tag) {
     .linux, .macos, .freebsd, .netbsd, .openbsd, .dragonfly, .illumos => true,
     else => false,
 };
@@ -93,7 +93,7 @@ fn handleSignal(sig: std.posix.SIG, info: *const std.posix.siginfo_t, _: ?*anyop
 }
 
 fn faultAddress(info: *const std.posix.siginfo_t) usize {
-    return switch (builtin.os.tag) {
+    return switch (builtin.target.os.tag) {
         .macos, .freebsd, .dragonfly => @intFromPtr(info.addr),
         .linux => @intFromPtr(info.fields.sigfault.addr),
         else => 0,
@@ -105,12 +105,12 @@ fn openReport() ?std.c.fd_t {
     var ts: std.c.timespec = undefined;
     if (std.c.clock_gettime(.REALTIME, &ts) != 0) ts.sec = 0;
     var path_buf: [MAX_PATH_BYTES:0]u8 = undefined;
-    const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/kupcad-crash-{d}-{d}.txt", .{ dir, ts.sec, std.c.getpid() }, 0) catch return null;
+    const path = std.mem.printSentinel(&path_buf, "{s}/kupcad-crash-{d}-{d}.txt", .{ dir, ts.sec, std.c.getpid() }, 0) catch return null;
     const fd = std.c.open(path.ptr, .{ .ACCMODE = .WRONLY, .CREAT = true, .TRUNC = true }, @as(c_uint, 0o600));
     if (fd < 0) return null;
     // Said first, so it shows even if writing the report fails partway.
     var note_buf: [MAX_PATH_BYTES + 64]u8 = undefined;
-    writeAll(STDERR, std.fmt.bufPrint(&note_buf, "kupcad: writing a crash report to {s}\n", .{path}) catch "kupcad: writing a crash report\n");
+    writeAll(STDERR, std.mem.print(&note_buf, "kupcad: writing a crash report to {s}\n", .{path}) catch "kupcad: writing a crash report\n");
     return fd;
 }
 
@@ -124,7 +124,7 @@ fn writeHeader(fd: std.c.fd_t, cause: Cause) void {
 /// The report's opening lines, for `command` (a subcommand) ended by `cause`.
 pub fn formatHeader(w: *std.Io.Writer, cause: Cause, command_name: []const u8) std.Io.Writer.Error!void {
     try w.print("KupCAD crash report\nversion: {s}\nplatform: {t}-{t}, {t} build\ncommand: {s}\n", .{
-        build_info.version, builtin.os.tag, builtin.cpu.arch, builtin.mode, if (command_name.len > 0) command_name else "(none)",
+        build_info.version, builtin.target.os.tag, builtin.target.cpu.arch, builtin.mode, if (command_name.len > 0) command_name else "(none)",
     });
     switch (cause) {
         .panic => |msg| try w.print("panic: {s}\n", .{msg}),

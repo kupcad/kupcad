@@ -451,7 +451,7 @@ test "ScriptSession: a long editing session keeps the geometry graph to what it 
     session.vm.dag_builder.compact_at = 0;
     var buf: [256]u8 = undefined;
     for (0..200) |i| {
-        const src = try std.fmt.bufPrint(&buf, "a = cube({d}) + sphere(2).translate(x: {d})\nb = a - cylinder(r: 1, h: 30)\nb", .{ 1 + i % 7, i });
+        const src = try std.mem.print(&buf, "a = cube({d}) + sphere(2).translate(x: {d})\nb = a - cylinder(r: 1, h: 30)\nb", .{ 1 + i % 7, i });
         _ = try session.workspace.upsertModule("part.kup", src);
         try session.workspace.linkDependencies();
         try session.buildReverseGraph();

@@ -609,7 +609,7 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         defer out_chunk.free(testing.allocator);
 
         // Operands come from variables so the compiler cannot constant-fold them
-        const source = try std.fmt.allocPrint(testing.allocator,
+        const source = try testing.allocator.print(
             \\huge = 1e300
             \\result = begin
             \\  {s}
@@ -625,7 +625,7 @@ test "VM: bitwise operands and array indexes reject non-integral numbers" {
         const result = vm.globals.get("result") orelse return error.MissingGlobal;
         if (case.message) |message| {
             try testing.expect(result.isString());
-            try testing.expect(std.mem.indexOf(u8, result.asString().chars, message) != null);
+            try testing.expect(std.mem.find(u8, result.asString().chars, message) != null);
         } else {
             try testing.expect(result.isNumber());
             try testing.expectEqual(case.number, result.asNumber());

@@ -81,7 +81,7 @@ pub fn emitAttrWriter(comp: *Compiler, prop_name: []const u8, is_singleton: bool
 
     // Fixed 256-byte stack buffer, explicitly casting NoSpaceLeft into OutOfMemory
     var name_buf: [256]u8 = undefined;
-    const setter_name = std.fmt.bufPrint(&name_buf, "{s}=", .{clean_name}) catch return error.OutOfMemory;
+    const setter_name = std.mem.print(&name_buf, "{s}=", .{clean_name}) catch return error.OutOfMemory;
 
     const str_val = try comp.vm.allocateString(setter_name);
     func.name = str_val.asString();

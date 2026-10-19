@@ -337,7 +337,7 @@ fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.Cr
     if (a.engine != .manifold or b.engine != .manifold) return null;
     if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
-    var pts = std.ArrayListUnmanaged(manifold.ManifoldVec3).empty;
+    var pts = std.ArrayList(manifold.ManifoldVec3).empty;
     defer pts.deinit(allocator);
     for ([2]geom.CrossSectionHandle{ a, b }, [2]f64{ 0.0, height }) |profile, z| {
         const contours = Contours.of(profile) orelse return null;

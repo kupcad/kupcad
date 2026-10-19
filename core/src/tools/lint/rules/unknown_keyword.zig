@@ -135,6 +135,6 @@ pub const UnknownKeywordRule = struct {
         errdefer allocator.free(edits);
         edits[0] = .{ .offset = loc.offset, .length = @intCast(name.len), .replacement = try allocator.dupe(u8, better) };
         errdefer allocator.free(edits[0].replacement);
-        return .{ .title = try std.fmt.allocPrint(allocator, "Use '{s}'", .{better}), .edits = edits, .safe = false };
+        return .{ .title = try allocator.print("Use '{s}'", .{better}), .edits = edits, .safe = false };
     }
 };

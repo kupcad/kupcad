@@ -300,7 +300,7 @@ fn expectAllRaise(kinds: []const ErrorKind, sources: []const []const u8) !void {
             break :blk vm.last_error orelse return error.NoErrorRecorded;
         };
         errdefer std.debug.print("script: {s}\nerror: {s}\n", .{ src, message });
-        const kind_name = message[0 .. std.mem.indexOfScalar(u8, message, ':') orelse message.len];
+        const kind_name = message[0 .. std.mem.findScalar(u8, message, ':') orelse message.len];
         var matched = false;
         for (kinds) |kind| matched = matched or std.mem.eql(u8, @tagName(kind), kind_name);
         try testing.expect(matched);
@@ -492,7 +492,7 @@ test "Stdlib: Array#slice follows Ruby arr[start, len] semantics" {
     };
     for (cases) |case| {
         var src_buf: [128]u8 = undefined;
-        const src = try std.fmt.bufPrint(&src_buf, "r = [1, 2, 3].slice({s})", .{case.args});
+        const src = try std.mem.print(&src_buf, "r = [1, 2, 3].slice({s})", .{case.args});
         errdefer std.debug.print("script: {s}\n", .{src});
         var vm = try initVm();
         defer vm.deinit();
@@ -1438,7 +1438,7 @@ test "Stdlib: Range#map keeps its result array and block results alive across GC
     var buf: [16]u8 = undefined;
     for (items, 0..) |item, i| {
         try testing.expect(item.isString());
-        try testing.expectEqualStrings(try std.fmt.bufPrint(&buf, "s{d}", .{i}), item.asString().chars);
+        try testing.expectEqualStrings(try std.mem.print(&buf, "s{d}", .{i}), item.asString().chars);
     }
 }
 

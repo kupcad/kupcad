@@ -21,15 +21,15 @@ pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 
 /// Core generation logic separated for testing
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
-    var keywords: std.ArrayListUnmanaged([]const u8) = .empty;
-    var builtins: std.ArrayListUnmanaged([]const u8) = .empty;
-    var prim_3d: std.ArrayListUnmanaged([]const u8) = .empty;
-    var prim_2d: std.ArrayListUnmanaged([]const u8) = .empty;
-    var transforms: std.ArrayListUnmanaged([]const u8) = .empty;
-    var csg_ops: std.ArrayListUnmanaged([]const u8) = .empty;
-    var workplanes: std.ArrayListUnmanaged([]const u8) = .empty;
-    var inspections: std.ArrayListUnmanaged([]const u8) = .empty;
-    var core_methods: std.ArrayListUnmanaged([]const u8) = .empty;
+    var keywords: std.ArrayList([]const u8) = .empty;
+    var builtins: std.ArrayList([]const u8) = .empty;
+    var prim_3d: std.ArrayList([]const u8) = .empty;
+    var prim_2d: std.ArrayList([]const u8) = .empty;
+    var transforms: std.ArrayList([]const u8) = .empty;
+    var csg_ops: std.ArrayList([]const u8) = .empty;
+    var workplanes: std.ArrayList([]const u8) = .empty;
+    var inspections: std.ArrayList([]const u8) = .empty;
+    var core_methods: std.ArrayList([]const u8) = .empty;
 
     defer {
         keywords.deinit(allocator);
@@ -107,14 +107,14 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
 
     // Helper to safely fallback, deduplicate, join, and wrap categories into TextMate Regex format
     const buildMethodRegex = struct {
-        fn apply(alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged([]const u8), dummy: []const u8) ![]const u8 {
+        fn apply(alloc: std.mem.Allocator, list: *std.ArrayList([]const u8), dummy: []const u8) ![]const u8 {
             if (list.items.len == 0) try list.append(alloc, dummy);
 
             // Deduplicate the list using a StringHashMap as a Set
             var seen: std.StringHashMapUnmanaged(void) = .empty;
             defer seen.deinit(alloc);
 
-            var unique_list = std.ArrayListUnmanaged([]const u8).empty;
+            var unique_list = std.ArrayList([]const u8).empty;
             defer unique_list.deinit(alloc);
 
             for (list.items) |item| {

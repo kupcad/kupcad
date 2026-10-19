@@ -124,14 +124,14 @@ pub fn buildGltfBuffer(
 const PartPrimitive = struct {
     material: u32,
     /// Into Parts.positions, as vertex numbers.
-    indices: std.ArrayListUnmanaged(u32),
+    indices: std.ArrayList(u32),
 };
 
 /// Every part's mesh, merged: the positions of all their vertices (x, y, z each) with
 /// their bounds, and one primitive per part and material, so every part keeps its own.
 const Parts = struct {
-    positions: std.ArrayListUnmanaged(f32) = .empty,
-    primitives: std.ArrayListUnmanaged(PartPrimitive) = .empty,
+    positions: std.ArrayList(f32) = .empty,
+    primitives: std.ArrayList(PartPrimitive) = .empty,
     min: [3]f64 = @splat(std.math.inf(f64)),
     max: [3]f64 = @splat(-std.math.inf(f64)),
 
@@ -155,7 +155,7 @@ const Parts = struct {
         if (mesh.vert_props.len / mesh.num_prop == 0) return;
         const base_vertex = self.vertexCount();
 
-        var by_material = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
+        var by_material = std.AutoHashMap(u32, std.ArrayList(u32)).init(allocator);
         defer by_material.deinit();
         // The index lists are this part's to free until they move into `primitives`,
         // which can't fail once its room is reserved.
@@ -196,13 +196,13 @@ const Parts = struct {
 
 /// The glTF document's tables as they are filled in, and its one binary buffer.
 const Gltf = struct {
-    primitives: std.ArrayListUnmanaged(Primitive) = .empty,
-    accessors: std.ArrayListUnmanaged(Accessor) = .empty,
-    buffer_views: std.ArrayListUnmanaged(BufferView) = .empty,
-    materials: std.ArrayListUnmanaged(GltfMaterial) = .empty,
-    extensions_used: std.ArrayListUnmanaged([]const u8) = .empty,
-    extensions_required: std.ArrayListUnmanaged([]const u8) = .empty,
-    bin: std.ArrayListUnmanaged(u8) = .empty,
+    primitives: std.ArrayList(Primitive) = .empty,
+    accessors: std.ArrayList(Accessor) = .empty,
+    buffer_views: std.ArrayList(BufferView) = .empty,
+    materials: std.ArrayList(GltfMaterial) = .empty,
+    extensions_used: std.ArrayList([]const u8) = .empty,
+    extensions_required: std.ArrayList([]const u8) = .empty,
+    bin: std.ArrayList(u8) = .empty,
 
     fn deinit(self: *Gltf, allocator: std.mem.Allocator) void {
         self.primitives.deinit(allocator);
@@ -399,8 +399,8 @@ fn dataUri(allocator: std.mem.Allocator, bytes: []const u8) ![]u8 {
 }
 
 /// The GLB container: a 12-byte header, then the JSON and binary chunks, each padded to 4 bytes.
-fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayListUnmanaged(u8)) ![]const u8 {
-    var json_out: std.ArrayListUnmanaged(u8) = .empty;
+fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayList(u8)) ![]const u8 {
+    var json_out: std.ArrayList(u8) = .empty;
     defer json_out.deinit(allocator);
     try json_out.appendSlice(allocator, json);
 
@@ -411,7 +411,7 @@ fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayLi
     const json_len: u32 = @intCast(json_out.items.len);
     const total_length: u32 = 12 + 8 + json_len + 8 + bin_len;
 
-    var glb_payload: std.ArrayListUnmanaged(u8) = .empty;
+    var glb_payload: std.ArrayList(u8) = .empty;
     errdefer glb_payload.deinit(allocator);
 
     const magic: u32 = 0x46546C67; // "glTF"
@@ -428,20 +428,20 @@ fn packGlb(allocator: std.mem.Allocator, json: []const u8, bin_buf: *std.ArrayLi
     return try glb_payload.toOwnedSlice(allocator);
 }
 
-fn appendU32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, word: u32) !void {
+fn appendU32Le(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, word: u32) !void {
     var bytes: [4]u8 = undefined;
     std.mem.writeInt(u32, &bytes, word, .little);
     try buf.appendSlice(allocator, &bytes);
 }
 
-fn appendF32Le(buf: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, f: f32) !void {
+fn appendF32Le(buf: *std.ArrayList(u8), allocator: std.mem.Allocator, f: f32) !void {
     try appendU32Le(buf, allocator, @bitCast(f));
 }
 
 /// The vertices one primitive uses, renumbered from 0 in order of first use, its indices
 /// rewritten to match, and the bounds of those vertices.
 const CompactMesh = struct {
-    positions: std.ArrayListUnmanaged(f32) = .empty,
+    positions: std.ArrayList(f32) = .empty,
     indices: []u32,
     min: [3]f64 = .{ std.math.inf(f64), std.math.inf(f64), std.math.inf(f64) },
     max: [3]f64 = .{ -std.math.inf(f64), -std.math.inf(f64), -std.math.inf(f64) },

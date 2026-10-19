@@ -74,7 +74,7 @@ pub fn rangeExclusive(vm: *VM, r: *value.ObjRange) !value.Value {
 /// Range#to_s: same text as `puts` prints.
 pub fn rangeToS(vm: *VM, r: *value.ObjRange) !value.Value {
     var buf: [128]u8 = undefined;
-    const str = try std.fmt.bufPrint(&buf, "{f}{s}{f}", .{ value.fmtNumber(r.start), if (r.is_exclusive) "..." else "..", value.fmtNumber(r.end) });
+    const str = try std.mem.print(&buf, "{f}{s}{f}", .{ value.fmtNumber(r.start), if (r.is_exclusive) "..." else "..", value.fmtNumber(r.end) });
     return try vm.allocateString(str);
 }
 

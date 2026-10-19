@@ -37,11 +37,11 @@ test "Lockfile: saves deterministic JSON to VFS" {
     const content = try fs.readFile(testing.allocator, "kupcad.lock");
     defer testing.allocator.free(content);
 
-    try testing.expect(std.mem.indexOf(u8, content, "\"version\": \"" ++ @import("lockfile.zig").LOCKFILE_VERSION ++ "\"") != null);
-    try testing.expect(std.mem.indexOf(u8, content, "\"resolved\": \"abc123def456\"") != null);
-    try testing.expect(std.mem.indexOf(u8, content, "\"integrity\": \"sha256-mockhash123\"") != null);
-    try testing.expect(std.mem.indexOf(u8, content, "\"github.com-kupcad-std\"") != null);
-    try testing.expect(std.mem.indexOf(u8, content, "\"geom\": \"github.com/user/geom\"") != null);
+    try testing.expect(std.mem.find(u8, content, "\"version\": \"" ++ @import("lockfile.zig").LOCKFILE_VERSION ++ "\"") != null);
+    try testing.expect(std.mem.find(u8, content, "\"resolved\": \"abc123def456\"") != null);
+    try testing.expect(std.mem.find(u8, content, "\"integrity\": \"sha256-mockhash123\"") != null);
+    try testing.expect(std.mem.find(u8, content, "\"github.com-kupcad-std\"") != null);
+    try testing.expect(std.mem.find(u8, content, "\"geom\": \"github.com/user/geom\"") != null);
 }
 
 test "Lockfile: gracefully handles missing lockfiles by returning empty defaults" {
@@ -65,7 +65,7 @@ test "Lockfile: rejects malformed JSON payloads safely" {
 }
 
 fn loadVersion(mem_vfs: *MemoryVfs, version: []const u8) !Lockfile {
-    const content = try std.fmt.allocPrint(testing.allocator, "{{\"version\":\"{s}\",\"packages\":{{}}}}", .{version});
+    const content = try testing.allocator.print("{{\"version\":\"{s}\",\"packages\":{{}}}}", .{version});
     defer testing.allocator.free(content);
     try mem_vfs.vfs().writeFile("kupcad.lock", content);
     return Lockfile.load(testing.allocator, mem_vfs.vfs());

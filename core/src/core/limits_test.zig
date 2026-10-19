@@ -100,7 +100,7 @@ fn instructionBudget() !void {
     defer vm.deinit();
     vm.hooks.setLimit(SMALL_INSTRUCTION_BUDGET);
     try testing.expectEqual(InterpretResult.execution_limit_exceeded, try support.runOn(&vm, "while true\nend"));
-    try testing.expect(std.mem.indexOf(u8, vm.last_error orelse "", "Execution limit") != null);
+    try testing.expect(std.mem.find(u8, vm.last_error orelse "", "Execution limit") != null);
 }
 
 fn memoryBudget() !void {
@@ -112,7 +112,7 @@ fn memoryBudget() !void {
     // The cap is met by whichever allocation crosses it: an object's (a Sandbox Error) or
     // the array's growth (an OutOfMemoryError naming what couldn't grow).
     const message = vm.last_error orelse return error.MissingError;
-    try testing.expect(std.mem.indexOf(u8, message, "memory") != null);
+    try testing.expect(std.mem.find(u8, message, "memory") != null);
 }
 
 fn defaultInstructionLimit() !void {
@@ -193,7 +193,7 @@ fn build(parts: []const Part) ![]u8 {
     for (parts) |part| switch (part) {
         .text => |s| try w.writeAll(s),
         .repeat => |r| {
-            const at = std.mem.indexOf(u8, r.item, "{d}");
+            const at = std.mem.find(u8, r.item, "{d}");
             for (0..r.count) |i| {
                 if (at) |a| try w.print("{s}{d}{s}", .{ r.item[0..a], i, r.item[a + 3 ..] }) else try w.writeAll(r.item);
             }

@@ -28,7 +28,7 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
 
     // 2. Check Version == 2
     var version: u32 = undefined;
-    std.mem.copyForwards(u8, std.mem.asBytes(&version), glb_bytes[4..8]);
+    @memmove(std.mem.asBytes(&version), glb_bytes[4..8]);
     try std.testing.expectEqual(@as(u32, 2), version);
 }
 
@@ -311,7 +311,7 @@ test "GLTF: the primitives of an export close every part" {
     defer glb.deinit();
     const accessors = glb.array("accessors");
     const positions = std.mem.bytesAsSlice(f32, viewBytes(&glb, int(accessors[0].object.get("bufferView").?)));
-    var indices: std.ArrayListUnmanaged(u32) = .empty;
+    var indices: std.ArrayList(u32) = .empty;
     defer indices.deinit(std.testing.allocator);
     for (glb.array("meshes")[0].object.get("primitives").?.array.items) |p| {
         const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);

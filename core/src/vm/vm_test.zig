@@ -302,7 +302,7 @@ test "VM/Compiler: Seeded REPL locals correctly resolve to offset stack slots" {
     const add_node = try b.binary(.add, y_node, five, 0);
 
     // --- NEW: Provide a mock symbols array ---
-    var symbols: std.ArrayListUnmanaged(resolver.ResolvedSymbol) = .empty;
+    var symbols: std.ArrayList(resolver.ResolvedSymbol) = .empty;
     defer symbols.deinit(testing.allocator);
     try symbols.appendNTimes(testing.allocator, .{ .kind = .local, .index = 0 }, @backingInt(add_node) + 1);
 

@@ -10,16 +10,16 @@ pub const Shell = he.Shell;
 pub const Solid = he.Solid;
 
 pub const TopologyArena = struct {
-    vertices: std.ArrayListUnmanaged(he.Vertex) = .empty,
-    half_edges: std.ArrayListUnmanaged(he.HalfEdge) = .empty,
-    loops: std.ArrayListUnmanaged(he.Loop) = .empty,
-    faces: std.ArrayListUnmanaged(he.Face) = .empty,
-    shells: std.ArrayListUnmanaged(he.Shell) = .empty,
-    solids: std.ArrayListUnmanaged(he.Solid) = .empty,
+    vertices: std.ArrayList(he.Vertex) = .empty,
+    half_edges: std.ArrayList(he.HalfEdge) = .empty,
+    loops: std.ArrayList(he.Loop) = .empty,
+    faces: std.ArrayList(he.Face) = .empty,
+    shells: std.ArrayList(he.Shell) = .empty,
+    solids: std.ArrayList(he.Solid) = .empty,
 
-    face_loops: std.ArrayListUnmanaged(types.LoopIndex) = .empty,
-    shell_faces: std.ArrayListUnmanaged(types.FaceIndex) = .empty,
-    solid_shells: std.ArrayListUnmanaged(types.ShellIndex) = .empty,
+    face_loops: std.ArrayList(types.LoopIndex) = .empty,
+    shell_faces: std.ArrayList(types.FaceIndex) = .empty,
+    solid_shells: std.ArrayList(types.ShellIndex) = .empty,
 
     pub fn init() TopologyArena {
         return .{};

@@ -19,12 +19,12 @@ pub const TarEntry = struct {
 
 fn writeOctal(field: []u8, value: u64) void {
     // N-1 octal digits followed by NUL
-    _ = std.fmt.bufPrint(field[0 .. field.len - 1], "{o:0>[1]}", .{ value, field.len - 1 }) catch unreachable;
+    _ = std.mem.print(field[0 .. field.len - 1], "{o:0>[1]}", .{ value, field.len - 1 }) catch unreachable;
     field[field.len - 1] = 0;
 }
 
 pub fn buildTar(allocator: std.mem.Allocator, entries: []const TarEntry) ![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     for (entries) |e| {
         var h: [512]u8 = @splat(0);
@@ -45,7 +45,7 @@ pub fn buildTar(allocator: std.mem.Allocator, entries: []const TarEntry) ![]u8 {
         @memset(h[148..156], ' ');
         var sum: u32 = 0;
         for (h) |b| sum += b;
-        _ = std.fmt.bufPrint(h[148..155], "{o:0>6}\x00", .{sum}) catch unreachable;
+        _ = std.mem.print(h[148..155], "{o:0>6}\x00", .{sum}) catch unreachable;
         try out.appendSlice(allocator, &h);
         try out.appendSlice(allocator, e.data);
         const pad = (512 - e.data.len % 512) % 512;
@@ -57,7 +57,7 @@ pub fn buildTar(allocator: std.mem.Allocator, entries: []const TarEntry) ![]u8 {
 
 /// gzip container with uncompressed ("stored") deflate blocks.
 pub fn gzipStored(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     try out.appendSlice(allocator, &.{ 0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0, 0x00, 0xff });
     var off: usize = 0;

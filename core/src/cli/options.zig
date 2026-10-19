@@ -16,7 +16,7 @@ pub fn CommandOptions(comptime Flags: type) type {
 
         config_path: ?[]const u8 = null,
         flags: Flags = .{},
-        paths: std.ArrayListUnmanaged([]const u8) = .empty,
+        paths: std.ArrayList([]const u8) = .empty,
 
         pub const Error = error{ MissingConfigValue, MissingOptionValue, MissingFilePath, UnknownOption, OutOfMemory };
 
@@ -39,7 +39,7 @@ pub fn CommandOptions(comptime Flags: type) type {
         }
 
         fn setOption(self: *Self, arg: []const u8, args_iter: anytype) Error!void {
-            inline for (comptime std.meta.fieldNames(Flags)) |name| {
+            inline for (comptime @typeInfo(Flags).@"struct".field_names) |name| {
                 if (std.mem.eql(u8, arg, "--" ++ name)) {
                     switch (@FieldType(Flags, name)) {
                         bool => @field(self.flags, name) = true,

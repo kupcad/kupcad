@@ -161,7 +161,7 @@ test "Snapshot Suite: PolygonsEvenOdd (2D)" {
     const outer = [_][2]f64{ .{ -10, -10 }, .{ 10, -10 }, .{ 10, 10 }, .{ -10, 10 } };
     const hole = [_][2]f64{ .{ -5, -5 }, .{ 5, -5 }, .{ 5, 5 }, .{ -5, 5 } };
 
-    var polys: std.ArrayListUnmanaged([]const [2]f64) = .empty;
+    var polys: std.ArrayList([]const [2]f64) = .empty;
     defer polys.deinit(alloc);
 
     try polys.append(alloc, &outer);

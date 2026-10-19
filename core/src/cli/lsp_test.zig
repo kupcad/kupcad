@@ -16,7 +16,7 @@ const URI = "file:///work/part.kup";
 /// Collects what the server writes; reading ends the stream (the handler is called directly).
 const Outbox = struct {
     transport: lsp.Transport = .{ .vtable = &.{ .readJsonMessage = read, .writeJsonMessage = write } },
-    messages: std.ArrayListUnmanaged([]u8) = .empty,
+    messages: std.ArrayList([]u8) = .empty,
 
     fn read(_: *lsp.Transport, _: std.Io, _: std.mem.Allocator) lsp.Transport.ReadError![]u8 {
         return error.EndOfStream;
@@ -107,16 +107,16 @@ test "LSP: editing a document logs nothing above debug" {
     try server.change(URI, "cube(\n"); // doesn't parse
     server.settle();
     // The failure reaches the editor as a diagnostic, not the log.
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "publishDiagnostics") != null);
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "publishDiagnostics") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"severity\":1") != null);
     try server.change(URI, "undefined_thing(1)\n"); // doesn't run
     server.preview.session.vm.mute_errors = true; // its runtime error would print to the test log
     server.settle();
     // A runtime error is the preview's to report, not a diagnostic: the document is clean.
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
     try server.change(URI, "cube(20)\n");
     server.settle();
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"diagnostics\":[]") != null);
     try server.close(URI);
 }
 
@@ -126,7 +126,7 @@ test "LSP: closing a document clears its diagnostics and forgets its module" {
     defer server.deinit();
 
     try server.open(URI, "cube(-1)\n"); // nonpositive-size
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "nonpositive-size") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "nonpositive-size") != null);
     try testing.expectEqual(@as(usize, 1), server.preview.session.workspace.modules.items.len);
 
     try server.close(URI);
@@ -160,7 +160,7 @@ test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd
     try tmp.dir.writeFile(testing.io, .{ .sub_path = FILE_NAME, .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
     const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(root);
-    const uri = try std.fmt.allocPrint(testing.allocator, "file://{s}/parts/part.kup", .{root});
+    const uri = try testing.allocator.print("file://{s}/parts/part.kup", .{root});
     defer testing.allocator.free(uri);
 
     var server: Server = undefined;
@@ -168,8 +168,8 @@ test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd
     defer server.deinit();
     try server.open(uri, "def f\n  spare = 1\n  2\nend\nf\n");
     // LSP severity 1 is an error: the project's level, where the default is a warning.
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "\"severity\":1,") != null);
-    try testing.expect(std.mem.indexOf(u8, server.outbox.last(), "unused-variable") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"severity\":1,") != null);
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "unused-variable") != null);
 }
 
 test "LSP: a script that never ends doesn't hang the server" {
@@ -216,8 +216,8 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
         .position = .{ .line = 1, .character = 0 },
     });
     // The variable is described from the syntax alone; no run happened.
-    try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "(variable) x") != null);
-    try testing.expect(std.mem.indexOf(u8, answer.?.contents.markup_content.value, "Volume") == null);
+    try testing.expect(std.mem.find(u8, answer.?.contents.markup_content.value, "(variable) x") != null);
+    try testing.expect(std.mem.find(u8, answer.?.contents.markup_content.value, "Volume") == null);
     try testing.expect(server.preview.hover.?.run == null);
 }
 
@@ -249,16 +249,16 @@ test "LSP: hovers are answered from one run of the document, until something cha
     defer server.deinit();
     try server.open(URI, "a = cube(2)\nb = a.translate(1, 0, 0)\n");
 
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `8.00`") != null);
     const run = server.preview.hover.?.run.?;
     // It used to run the whole document again for each hover.
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 1, 0).?, "**Volume:** `8.00`") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 1, 0).?, "**Volume:** `8.00`") != null);
     try testing.expectEqual(run, server.preview.hover.?.run.?);
 
     // An edit (here, or in a file it imports) makes the next hover run it again.
     try server.change(URI, "a = cube(3)\n");
     try testing.expect(server.preview.hover == null);
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
 }
 
 test "LSP: a hover counts a solid's vertices and faces without building its mesh" {
@@ -266,7 +266,7 @@ test "LSP: a hover counts a solid's vertices and faces without building its mesh
     try server.init();
     defer server.deinit();
     try server.open(URI, "a = cube(2)\n");
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "**Topology:** `8` Vertices, `12` Faces") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Topology:** `8` Vertices, `12` Faces") != null);
 }
 
 test "LSP: hovering the last token of a document, and past it, finds the right token" {
@@ -276,9 +276,9 @@ test "LSP: hovering the last token of a document, and past it, finds the right t
     try server.init();
     defer server.deinit();
     try server.open(URI, "first = 1\nsecond = 2\nlast = 3");
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 0, 0).?, "(variable) first") != null);
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 2, 0).?, "(variable) last") != null);
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 2, 7).?, "(number) 3") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "(variable) first") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 2, 0).?, "(variable) last") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 2, 7).?, "(number) 3") != null);
     try testing.expect(server.hover(URI, 2, 9) == null);
 }
 
@@ -288,7 +288,7 @@ test "LSP: a model that takes long to run still gets its hovers" {
     try server.init();
     defer server.deinit();
     try server.open(URI, "n = 0\nwhile n < 200000\n  n += 1\nend\na = cube(2)\n");
-    try testing.expect(std.mem.indexOf(u8, server.hover(URI, 4, 0).?, "**Volume:** `8.00`") != null);
+    try testing.expect(std.mem.find(u8, server.hover(URI, 4, 0).?, "**Volume:** `8.00`") != null);
 }
 
 test "LSP: a preview a message stopped runs again once the editor is quiet" {
@@ -318,9 +318,9 @@ test "LSP: hovering a parameter or local doesn't show a same-named global's fact
     try server.open(URI, "x = cube(10)\ndef f(x)\n  x\nend\n");
     server.settle();
     const global = server.hover(URI, 0, 0) orelse return error.NoHover;
-    try testing.expect(std.mem.indexOf(u8, global, "3D Solid") != null);
+    try testing.expect(std.mem.find(u8, global, "3D Solid") != null);
     const param = server.hover(URI, 2, 2) orelse return error.NoHover;
-    try testing.expect(std.mem.indexOf(u8, param, "3D Solid") == null);
+    try testing.expect(std.mem.find(u8, param, "3D Solid") == null);
 }
 
 test "LSP: positions are UTF-8 or UTF-16, never UTF-32, whatever the client offers first" {
@@ -399,7 +399,7 @@ test "LSP: document symbols list the defs, classes, modules and top-level variab
     try s.open(URI, "def plate(w)\n  inner = w\n  cube(inner)\nend\nclass Box\nend\nmodule Parts\nend\nwidth = 3\nplate(width)");
     const result = (try s.handler.@"textDocument/documentSymbol"(s.arena.allocator(), .{ .textDocument = .{ .uri = URI } })) orelse return error.NoSymbols;
     const symbols = result.document_symbols;
-    var names: std.ArrayListUnmanaged(u8) = .empty;
+    var names: std.ArrayList(u8) = .empty;
     defer names.deinit(testing.allocator);
     for (symbols) |sym| try names.print(testing.allocator, "{s}:{t} ", .{ sym.name, sym.kind });
     try testing.expectEqualStrings("plate:Function Box:Class Parts:Module width:Variable ", names.items);
@@ -419,7 +419,7 @@ test "LSP: a code action fixes the finding on the requested lines" {
     for (result) |r| {
         const action = r.code_action;
         const edits = action.edit.?.changes.?.map.get(URI).?;
-        if (std.mem.indexOf(u8, action.title, "_unused") != null) {
+        if (std.mem.find(u8, action.title, "_unused") != null) {
             renames += 1;
             try testing.expectEqualStrings("_unused", edits[0].newText);
         }

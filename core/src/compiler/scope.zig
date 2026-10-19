@@ -25,7 +25,7 @@ pub const LoopState = struct {
     // Length of the compiler's unwind stack when the loop was entered. `break` and
     // `next` only unwind the begin/rescue/ensure regions opened inside the loop.
     unwind_depth: usize = 0,
-    exit_jumps: std.ArrayListUnmanaged(usize) = .empty,
+    exit_jumps: std.ArrayList(usize) = .empty,
 };
 
 /// A lexically enclosing region that a non-local jump (return/break/next) must
@@ -76,7 +76,7 @@ pub fn classifyVariable(self: *Compiler, name_id: ast.StringId, sym_opt: ?resolv
 }
 
 pub fn buildFullyQualifiedPath(self: *Compiler, target: []const u8, depth: usize) CompileError![]const u8 {
-    var buf = std.ArrayListUnmanaged(u8).empty;
+    var buf = std.ArrayList(u8).empty;
     errdefer buf.deinit(self.allocator);
 
     for (self.namespace_stack.items[0..depth]) |ns_id| {
@@ -147,7 +147,7 @@ pub fn resolveSelfUpvalue(self: *Compiler) CompileError!?u8 {
         return try self.addUpvalue(0, true);
     }
     // The parent is a class or module body: its `self` is in a hidden local.
-    if (enclosing.namespace_selfs.getLastOrNull()) |slot| return try self.addUpvalue(slot, true);
+    if (enclosing.namespace_selfs.last()) |slot| return try self.addUpvalue(slot, true);
 
     // The parent is also a block. Recursively capture.
     if (try enclosing.resolveSelfUpvalue()) |upv_idx| {

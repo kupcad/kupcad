@@ -16,7 +16,7 @@ pub const UnusedVarsRule = struct {
     members: std.AutoHashMapUnmanaged(ast.NodeIndex, void) = .empty,
     /// For each open scope, the `def` it is the body of (null for a block, a lambda, a
     /// class): a bare `super` passes that method's parameters on.
-    scope_defs: std.ArrayListUnmanaged(?ast.NodeIndex) = .empty,
+    scope_defs: std.ArrayList(?ast.NodeIndex) = .empty,
 
     pub fn rule(self: *@This()) LintRule {
         return .{
@@ -246,7 +246,7 @@ pub const UnusedVarsRule = struct {
     fn renameFix(engine: *linter.Linter, name: []const u8, binding: *const linter.Binding) !?linter.Fix {
         if (!binding.renamable or binding.sites.items.len == 0) return null;
         const allocator = engine.allocator;
-        const new_name = try std.fmt.allocPrint(allocator, "_{s}", .{name});
+        const new_name = try allocator.print("_{s}", .{name});
         defer allocator.free(new_name);
         if (try engine.sourceHasWord(new_name)) return null;
 
@@ -260,6 +260,6 @@ pub const UnusedVarsRule = struct {
             edit.* = .{ .offset = site.offset, .length = site.length, .replacement = try allocator.dupe(u8, new_name) };
             made += 1;
         }
-        return .{ .title = try std.fmt.allocPrint(allocator, "Rename '{s}' to '{s}'", .{ name, new_name }), .edits = edits, .safe = true };
+        return .{ .title = try allocator.print("Rename '{s}' to '{s}'", .{ name, new_name }), .edits = edits, .safe = true };
     }
 };

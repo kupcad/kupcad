@@ -35,7 +35,7 @@ const Fixture = struct {
 
     /// Runs fmt on `names` in `mode`; returns the outcome and everything it reported.
     fn run(self: *Fixture, names: []const []const u8, mode: fmt_cmd.Mode, output: *std.Io.Writer.Allocating) !fmt_cmd.Outcome {
-        var paths: std.ArrayListUnmanaged([]const u8) = .empty;
+        var paths: std.ArrayList([]const u8) = .empty;
         defer {
             for (paths.items) |p| testing.allocator.free(p);
             paths.deinit(testing.allocator);
@@ -75,7 +75,7 @@ test "fmt --check: passes on formatted files, names the others and fails, writin
     try testing.expectEqual(fmt_cmd.Outcome.failure, try fx.run(&.{ "good.kup", "messy.kup" }, .check, &dirty));
     const messy = try fx.path("messy.kup");
     defer testing.allocator.free(messy);
-    const expected = try std.fmt.allocPrint(testing.allocator, "{s}\n1 file needs formatting; run kupcad fmt --write to fix it.\n", .{messy});
+    const expected = try testing.allocator.print("{s}\n1 file needs formatting; run kupcad fmt --write to fix it.\n", .{messy});
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, dirty.written());
     try fx.expectContents("messy.kup", UNFORMATTED);
@@ -93,7 +93,7 @@ test "fmt --write: rewrites only the files that change, keeping their permission
     try testing.expectEqual(fmt_cmd.Outcome.success, try fx.run(&.{ "good.kup", "messy.kup" }, .write, &out));
     const messy = try fx.path("messy.kup");
     defer testing.allocator.free(messy);
-    const listed = try std.fmt.allocPrint(testing.allocator, "{s}\n", .{messy});
+    const listed = try testing.allocator.print("{s}\n", .{messy});
     defer testing.allocator.free(listed);
     try testing.expectEqualStrings(listed, out.written());
     try fx.expectContents("messy.kup", FORMATTED);
@@ -114,7 +114,7 @@ test "fmt: a file with syntax errors fails and is never written" {
         var out: std.Io.Writer.Allocating = .init(testing.allocator);
         defer out.deinit();
         try testing.expectEqual(fmt_cmd.Outcome.failure, try fx.run(&.{"broken.kup"}, mode, &out));
-        try testing.expect(std.mem.indexOf(u8, out.written(), "has syntax errors") != null);
+        try testing.expect(std.mem.find(u8, out.written(), "has syntax errors") != null);
         try fx.expectContents("broken.kup", BROKEN);
     }
 }

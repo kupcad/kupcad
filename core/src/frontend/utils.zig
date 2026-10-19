@@ -111,7 +111,7 @@ pub const LexerUtils = struct {
                 if (index.* + seq_len <= buffer.len) {
                     const slice = buffer[index.* .. index.* + seq_len];
                     // Validate it forms a legal Unicode codepoint
-                    _ = std.unicode.utf8Decode(slice) catch break;
+                    if (!std.unicode.utf8ValidateSlice(slice)) break;
                     index.* += seq_len;
                 } else {
                     break;

@@ -15,7 +15,7 @@ pub const Module = struct {
     path: []const u8,
     source: []const u8,
     doc: Document,
-    deps: std.ArrayListUnmanaged(ModuleId) = .empty,
+    deps: std.ArrayList(ModuleId) = .empty,
     // Maps the string representation of an exported symbol to its original AST NodeIndex
     exports: std.StringHashMapUnmanaged(ast.StringId) = .empty,
 
@@ -30,7 +30,7 @@ pub const Module = struct {
 
 pub const Workspace = struct {
     allocator: std.mem.Allocator,
-    modules: std.ArrayListUnmanaged(Module) = .empty,
+    modules: std.ArrayList(Module) = .empty,
     path_to_id: std.StringHashMapUnmanaged(ModuleId) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Workspace {
@@ -150,7 +150,7 @@ pub const Workspace = struct {
         var unmet_deps = try self.allocator.alloc(u32, count);
         defer self.allocator.free(unmet_deps);
 
-        var dependents = try self.allocator.alloc(std.ArrayListUnmanaged(ModuleId), count);
+        var dependents = try self.allocator.alloc(std.ArrayList(ModuleId), count);
         defer {
             for (dependents) |*list| list.deinit(self.allocator);
             self.allocator.free(dependents);
@@ -164,14 +164,14 @@ pub const Workspace = struct {
             }
         }
 
-        var queue = std.ArrayListUnmanaged(ModuleId).empty;
+        var queue = std.ArrayList(ModuleId).empty;
         defer queue.deinit(self.allocator);
 
         for (unmet_deps, 0..) |unmet, i| {
             if (unmet == 0) try queue.append(self.allocator, @fromBackingInt(@as(u32, @intCast(i))));
         }
 
-        var sorted = std.ArrayListUnmanaged(ModuleId).empty;
+        var sorted = std.ArrayList(ModuleId).empty;
         errdefer sorted.deinit(self.allocator);
 
         while (queue.pop()) |u| {

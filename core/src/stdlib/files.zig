@@ -15,7 +15,7 @@ const gltf = @import("../exporters/3d/gltf.zig");
 /// Appends the evaluated parts of `receiver`, a Solid (itself) or an Assembly (its Solids),
 /// to `out`; `method` names the export in the error for anything else. Handles are
 /// borrowed from the VM.
-pub fn receiverParts(vm: *VM, receiver: value.Value, comptime method: []const u8, out: *std.ArrayListUnmanaged(geom.GeometryHandle)) !void {
+pub fn receiverParts(vm: *VM, receiver: value.Value, comptime method: []const u8, out: *std.ArrayList(geom.GeometryHandle)) !void {
     if (receiver.isGeometry()) return out.append(vm.allocator, try vm.ensureConcrete(receiver));
     if (!receiver.isAssembly()) return util.notDefinedFor(vm, method, receiver);
     for (receiver.asAssembly().parts.items.items) |part| try out.append(vm.allocator, try vm.ensureConcrete(part));
@@ -23,7 +23,7 @@ pub fn receiverParts(vm: *VM, receiver: value.Value, comptime method: []const u8
 
 /// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    var parts: std.ArrayList(geom.GeometryHandle) = .empty;
     defer parts.deinit(vm.allocator);
     try receiverParts(vm, receiver, "export_stl", &parts);
 
@@ -56,7 +56,7 @@ pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
 }
 
 pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
-    var handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
+    var handles = std.ArrayList(geom.GeometryHandle).empty;
     defer handles.deinit(vm.allocator);
 
     const use_draco = draco_opt orelse false;
@@ -73,7 +73,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
 }
 
 pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var export_handles = std.ArrayListUnmanaged(geom.GeometryHandle).empty;
+    var export_handles = std.ArrayList(geom.GeometryHandle).empty;
     defer export_handles.deinit(vm.allocator);
 
     try receiverParts(vm, receiver, "export_step", &export_handles);

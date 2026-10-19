@@ -6,9 +6,9 @@ const math = @import("../math.zig");
 const MathEnv = @import("../math_env.zig").MathEnv;
 
 pub const Mesh = struct {
-    vertices: std.ArrayListUnmanaged(math.Vec3) = .empty,
-    normals: std.ArrayListUnmanaged(math.Vec3) = .empty,
-    triangles: std.ArrayListUnmanaged([3]u32) = .empty,
+    vertices: std.ArrayList(math.Vec3) = .empty,
+    normals: std.ArrayList(math.Vec3) = .empty,
+    triangles: std.ArrayList([3]u32) = .empty,
 
     pub fn deinit(self: *Mesh, allocator: std.mem.Allocator) void {
         self.vertices.deinit(allocator);

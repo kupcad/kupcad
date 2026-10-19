@@ -281,7 +281,7 @@ pub fn injectParamsIntoVm(vm: *VM, cli_params: std.StringHashMapUnmanaged(f64)) 
 /// The model a run left, as the exporters see it: the solid on the stack, or the solids
 /// of an assembly or an array there, each evaluated, after the ghosted items (the display
 /// list). Handles are borrowed from the VM.
-pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayListUnmanaged(geom.GeometryHandle)) !void {
+pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
     try out.appendSlice(allocator, vm.display_list.items);
     if (vm.stack_top == 0) return;
     const final_val = vm.stack[0];
@@ -324,7 +324,7 @@ pub fn exportModelFromVm(
     const is_step = format == .step;
 
     // Ghosted items (the display list) are exported beside the model.
-    var export_handles: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    var export_handles: std.ArrayList(geom.GeometryHandle) = .empty;
     defer export_handles.deinit(allocator);
     try modelParts(allocator, vm, &export_handles);
     if (export_handles.items.len == 0) return error.NoGeometry;

@@ -26,7 +26,7 @@ test "NativeVfs: Sandbox rejects absolute paths" {
     var nvfs = NativeVfs.init(testing.io, tmp.dir);
     const fs = nvfs.vfs();
 
-    const abs_path = if (builtin.os.tag == .windows)
+    const abs_path = if (builtin.target.os.tag == .windows)
         "C:\\Windows\\System32\\hijack.dll"
     else
         "/etc/passwd";

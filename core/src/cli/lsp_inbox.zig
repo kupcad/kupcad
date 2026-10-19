@@ -61,9 +61,9 @@ pub const Inbox = struct {
     // --- Guarded by `mutex` ---
     mutex: std.Io.Mutex = .init,
     arrived: std.Io.Condition = .init,
-    queue: std.ArrayListUnmanaged(Queued) = .empty,
+    queue: std.ArrayList(Queued) = .empty,
     /// Requests cancelled while waiting, still to be answered (ids owned).
-    refused: std.ArrayListUnmanaged(Id) = .empty,
+    refused: std.ArrayList(Id) = .empty,
     /// Why the client's stream ended, once it has.
     end: ?lsp.Transport.ReadError = null,
     /// Whether `work.run` is running, so an edit knows to cancel it.

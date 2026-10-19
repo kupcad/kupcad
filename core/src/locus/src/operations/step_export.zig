@@ -14,7 +14,7 @@ pub const StepSolid = struct {
 
 const StepSerializer = struct {
     allocator: std.mem.Allocator,
-    out: std.ArrayListUnmanaged(u8),
+    out: std.ArrayList(u8),
     id_counter: u32,
 
     fn init(allocator: std.mem.Allocator) StepSerializer {
@@ -33,7 +33,7 @@ const StepSerializer = struct {
     fn emit(self: *StepSerializer, comptime fmt: []const u8, args: anytype) !u32 {
         const id = self.nextId();
         var id_buf: [32]u8 = undefined;
-        const id_str = try std.fmt.bufPrint(&id_buf, "#{d}=", .{id});
+        const id_str = try std.mem.print(&id_buf, "#{d}=", .{id});
         try self.out.appendSlice(self.allocator, id_str);
 
         const count = std.fmt.count(fmt, args);
@@ -41,7 +41,7 @@ const StepSerializer = struct {
 
         const start_idx = self.out.items.len;
         self.out.items.len += count;
-        _ = std.fmt.bufPrint(self.out.items[start_idx..self.out.items.len], fmt, args) catch @panic("bufPrint failed after exact capacity was allocated");
+        _ = std.mem.print(self.out.items[start_idx..self.out.items.len], fmt, args) catch @panic("bufPrint failed after exact capacity was allocated");
 
         self.out.appendAssumeCapacity(';');
         self.out.appendAssumeCapacity('\n');
@@ -152,7 +152,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
     var s = StepSerializer.init(allocator);
     errdefer s.out.deinit(allocator);
 
-    var solid_rep_ids = std.ArrayListUnmanaged(u32).empty;
+    var solid_rep_ids = std.ArrayList(u32).empty;
     defer solid_rep_ids.deinit(allocator);
 
     for (solids) |_| {
@@ -162,12 +162,12 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
     if (solid_rep_ids.items.len == 0) return error.NoGeometry;
 
-    var rep_list_str = std.ArrayListUnmanaged(u8).empty;
+    var rep_list_str = std.ArrayList(u8).empty;
     defer rep_list_str.deinit(allocator);
     for (solid_rep_ids.items, 0..) |id, i| {
         if (i > 0) try rep_list_str.appendSlice(allocator, ",");
         var tmp: [32]u8 = undefined;
-        try rep_list_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{id}));
+        try rep_list_str.appendSlice(allocator, try std.mem.print(&tmp, "#{d}", .{id}));
     }
 
     try s.out.appendSlice(allocator,
@@ -191,7 +191,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
     );
 
     var header_rep: [256]u8 = undefined;
-    try s.out.appendSlice(allocator, try std.fmt.bufPrint(&header_rep, "#10=ADVANCED_BREP_SHAPE_REPRESENTATION('',({s}),#12);\n", .{rep_list_str.items}));
+    try s.out.appendSlice(allocator, try std.mem.print(&header_rep, "#10=ADVANCED_BREP_SHAPE_REPRESENTATION('',({s}),#12);\n", .{rep_list_str.items}));
 
     try s.out.appendSlice(allocator,
         \\#12=(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#13)) GLOBAL_UNIT_ASSIGNED_CONTEXT((#14,#15,#16)) REPRESENTATION_CONTEXT('Context #1','3D Context with UNITS and UNCERTAINTY'));
@@ -369,7 +369,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         for (t.loops.items, 0..) |loop, i| {
             if (!active_loops.contains(@intCast(i))) continue;
 
-            var loop_oriented_edges = std.ArrayListUnmanaged(u32).empty;
+            var loop_oriented_edges = std.ArrayList(u32).empty;
             defer loop_oriented_edges.deinit(allocator);
 
             var curr_he_id = loop.first_half_edge;
@@ -415,20 +415,20 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             }
 
             var header_buf: [64]u8 = undefined;
-            const header_str = try std.fmt.bufPrint(&header_buf, "#{d}=EDGE_LOOP('',(", .{s.nextId()});
+            const header_str = try std.mem.print(&header_buf, "#{d}=EDGE_LOOP('',(", .{s.nextId()});
             try s.out.appendSlice(allocator, header_str);
 
             for (loop_oriented_edges.items, 0..) |oe, idx| {
                 if (idx > 0) try s.out.appendSlice(allocator, ",");
                 var oe_buf: [32]u8 = undefined;
-                const oe_str = try std.fmt.bufPrint(&oe_buf, "#{d}", .{oe});
+                const oe_str = try std.mem.print(&oe_buf, "#{d}", .{oe});
                 try s.out.appendSlice(allocator, oe_str);
             }
             try s.out.appendSlice(allocator, "));\n");
             try loop_map.put(@intCast(i), s.id_counter);
         }
 
-        var face_map = std.AutoHashMap(u32, std.ArrayListUnmanaged(u32)).init(allocator);
+        var face_map = std.AutoHashMap(u32, std.ArrayList(u32)).init(allocator);
         defer {
             var it = face_map.valueIterator();
             while (it.next()) |list| list.deinit(allocator);
@@ -438,14 +438,14 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
         for (t.faces.items, 0..) |face, i| {
             if (!active_faces.contains(@intCast(i))) continue;
 
-            var emitted_face_ids = std.ArrayListUnmanaged(u32).empty;
+            var emitted_face_ids = std.ArrayList(u32).empty;
             // The face's ids are this iteration's to free until face_map takes them.
             errdefer emitted_face_ids.deinit(allocator);
 
             const outer_loop_id = t.face_loops.items[face.loops_start];
             const outer_loop = t.loops.items[@backingInt(outer_loop_id)];
 
-            var loop_verts = std.ArrayListUnmanaged(topo_types.VertexIndex).empty;
+            var loop_verts = std.ArrayList(topo_types.VertexIndex).empty;
             defer loop_verts.deinit(allocator);
 
             var curr_he = outer_loop.first_half_edge;
@@ -635,7 +635,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     },
                 }
 
-                var bounds_str = std.ArrayListUnmanaged(u8).empty;
+                var bounds_str = std.ArrayList(u8).empty;
                 defer bounds_str.deinit(allocator);
 
                 for (0..face.loops_len) |l_off| {
@@ -646,7 +646,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
 
                     if (l_off > 0) try bounds_str.appendSlice(allocator, ",");
                     var tmp: [32]u8 = undefined;
-                    try bounds_str.appendSlice(allocator, try std.fmt.bufPrint(&tmp, "#{d}", .{bound_id}));
+                    try bounds_str.appendSlice(allocator, try std.mem.print(&tmp, "#{d}", .{bound_id}));
                 }
 
                 const single_face_id = try s.emit("ADVANCED_FACE('',({s}),#{d},.{s}.)", .{
@@ -667,7 +667,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             if (!active_shells.contains(@intCast(i))) continue;
 
             var header_buf: [64]u8 = undefined;
-            const header_str = try std.fmt.bufPrint(&header_buf, "#{d}=CLOSED_SHELL('',(", .{s.nextId()});
+            const header_str = try std.mem.print(&header_buf, "#{d}=CLOSED_SHELL('',(", .{s.nextId()});
             try s.out.appendSlice(allocator, header_str);
 
             var written_count: usize = 0;
@@ -677,7 +677,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
                     for (sub_face_list.items) |step_face_id| {
                         if (written_count > 0) try s.out.appendSlice(allocator, ",");
                         var f_buf: [32]u8 = undefined;
-                        const f_str = try std.fmt.bufPrint(&f_buf, "#{d}", .{step_face_id});
+                        const f_str = try std.mem.print(&f_buf, "#{d}", .{step_face_id});
                         try s.out.appendSlice(allocator, f_str);
                         written_count += 1;
                     }
@@ -691,7 +691,7 @@ pub fn buildStepBuffer(allocator: std.mem.Allocator, solids: []const StepSolid) 
             const primary_shell_idx = t.solid_shells.items[target_solid.shells_start];
             const step_shell_id = shell_map.get(@backingInt(primary_shell_idx)) orelse return error.CorruptTopology;
             var buf: [128]u8 = undefined;
-            const out_str = try std.fmt.bufPrint(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, step_shell_id });
+            const out_str = try std.mem.print(&buf, "#{d}=MANIFOLD_SOLID_BREP('',#{d});\n", .{ step_solid_id, step_shell_id });
             try s.out.appendSlice(allocator, out_str);
         }
     }

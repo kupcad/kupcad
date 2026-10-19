@@ -66,7 +66,7 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         return error.ExampleFailed;
     }
 
-    var parts: std.ArrayListUnmanaged(geom.GeometryHandle) = .empty;
+    var parts: std.ArrayList(geom.GeometryHandle) = .empty;
     defer parts.deinit(allocator);
     try api.modelParts(allocator, &vm, &parts);
     if (parts.items.len == 0) return error.ExampleHasNoModel;
@@ -123,8 +123,8 @@ fn linesMatch(expected: []const u8, actual: []const u8) bool {
 }
 
 fn tokensMatch(expected: []const u8, actual: []const u8) bool {
-    const eq_e = std.mem.indexOfScalar(u8, expected, '=') orelse return std.mem.eql(u8, expected, actual);
-    const eq_a = std.mem.indexOfScalar(u8, actual, '=') orelse return false;
+    const eq_e = std.mem.findScalar(u8, expected, '=') orelse return std.mem.eql(u8, expected, actual);
+    const eq_a = std.mem.findScalar(u8, actual, '=') orelse return false;
     const key = expected[0..eq_e];
     if (!std.mem.eql(u8, key, actual[0..eq_a])) return false;
     const tolerance: f64 = for (COUNT_KEYS) |k| {

@@ -222,7 +222,7 @@ pub export fn build_model_wasm(
         } else {
             // e.g. NoGeometry or a compile error: the name still says more than nothing
             var buf: [MAX_ERROR_MSG_LEN]u8 = undefined;
-            setLastError(std.fmt.bufPrint(&buf, "Build Error: {s}", .{@errorName(err)}) catch "Build Error");
+            setLastError(std.mem.print(&buf, "Build Error: {s}", .{@errorName(err)}) catch "Build Error");
         }
         out_len.* = 0;
         return null;

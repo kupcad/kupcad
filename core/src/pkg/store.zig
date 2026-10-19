@@ -153,7 +153,7 @@ pub const Store = struct {
                 try self.db.exec(ORPHAN_PACKAGE_FILES_SQL, .{});
             }
             var pragma_buf: [48]u8 = undefined;
-            try self.db.exec(try std.fmt.bufPrint(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{});
+            try self.db.exec(try std.mem.print(&pragma_buf, "PRAGMA user_version = {d}", .{SCHEMA_VERSION}), .{});
             try self.db.exec("COMMIT", .{});
         }
     }
@@ -171,7 +171,7 @@ pub const Store = struct {
 
     pub fn setLastPruneTime(self: *Store, seconds: i64) !void {
         var buf: [32]u8 = undefined;
-        const text = try std.fmt.bufPrint(&buf, "{d}", .{seconds});
+        const text = try std.mem.print(&buf, "{d}", .{seconds});
         try self.db.exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_prune_time', ?)", .{text});
     }
 
@@ -187,7 +187,7 @@ pub const Store = struct {
     pub fn blobHashes(self: *Store, allocator: std.mem.Allocator) ![][]u8 {
         const stmt = try self.db.prepare("SELECT hash FROM files");
         defer stmt.deinit();
-        var hashes: std.ArrayListUnmanaged([]u8) = .empty;
+        var hashes: std.ArrayList([]u8) = .empty;
         errdefer {
             for (hashes.items) |h| allocator.free(h);
             hashes.deinit(allocator);

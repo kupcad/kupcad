@@ -26,7 +26,7 @@ pub fn lint(allocator: std.mem.Allocator, source: []const u8, config: Config) !l
 /// A config with every rule off but `rule_id`.
 pub fn only(comptime rule_id: []const u8) Config {
     var config: Config = .{};
-    inline for (comptime std.meta.fieldNames(Config)) |id| @field(config, id) = .off;
+    inline for (comptime @typeInfo(Config).@"struct".field_names) |id| @field(config, id) = .off;
     @field(config, rule_id) = .warning;
     return config;
 }

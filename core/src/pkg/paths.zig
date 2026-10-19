@@ -13,7 +13,7 @@ pub const PathError = error{
 
 /// Resolves the user's home directory.
 pub fn getHomeDir(allocator: std.mem.Allocator, env_map: *const std.process.Environ.Map) PathError![]const u8 {
-    if (builtin.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const funcs = struct {
             extern "shell32" fn SHGetKnownFolderPath(
                 rfid: *const std.os.windows.GUID,

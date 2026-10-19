@@ -94,7 +94,7 @@ test "Linter Rule: UnusedVarsRule follows the language's scopes and what counts 
         var engine = try runRule(testing.allocator, case.src);
         defer engine.deinit();
         try testing.expectEqual(@as(usize, 1), engine.diagnostics.items.len);
-        const expected = try std.fmt.allocPrint(testing.allocator, "Unused variable '{s}'. Prefix with '_' if intentional.", .{case.name});
+        const expected = try testing.allocator.print("Unused variable '{s}'. Prefix with '_' if intentional.", .{case.name});
         defer testing.allocator.free(expected);
         try testing.expectEqualStrings(expected, engine.diagnostics.items[0].message);
     }

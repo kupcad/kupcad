@@ -20,7 +20,7 @@ pub const Formatter = struct {
     pub const Error = error{ OutOfMemory, NoSpaceLeft, SyntaxError };
 
     allocator: std.mem.Allocator,
-    out: std.ArrayListUnmanaged(u8) = .empty,
+    out: std.ArrayList(u8) = .empty,
     /// The text being formatted: literals are printed as written.
     source: []const u8,
     token_starts: []const u32,
@@ -31,7 +31,7 @@ pub const Formatter = struct {
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
-    rules: std.ArrayListUnmanaged(FormatRule) = .empty,
+    rules: std.ArrayList(FormatRule) = .empty,
 
     comment_idx: usize = 0,
     indent_level: usize = 0,
@@ -95,7 +95,7 @@ pub const Formatter = struct {
 
     /// The column the next character lands in, counting characters, not bytes.
     fn column(self: *const Formatter) usize {
-        const line = self.out.items[if (std.mem.lastIndexOfScalar(u8, self.out.items, '\n')) |nl| nl + 1 else 0..];
+        const line = self.out.items[if (std.mem.findScalarLast(u8, self.out.items, '\n')) |nl| nl + 1 else 0..];
         return std.unicode.utf8CountCodepoints(line) catch line.len;
     }
 
@@ -116,7 +116,7 @@ pub const Formatter = struct {
             return err;
         };
         self.flat = false;
-        if (std.mem.indexOfScalar(u8, self.out.items[mark..], '\n') == null and self.column() <= self.config.line_width) return;
+        if (std.mem.findScalar(u8, self.out.items[mark..], '\n') == null and self.column() <= self.config.line_width) return;
         self.out.shrinkRetainingCapacity(mark);
         self.comment_idx = comment_mark;
         return layout.broken(self);
@@ -184,7 +184,7 @@ pub const Formatter = struct {
     /// standing on a line of its own.
     fn isInlineComment(self: *const Formatter, c: token.Comment) bool {
         const before = self.source[0..c.loc.offset];
-        const line_start = if (std.mem.lastIndexOfScalar(u8, before, '\n')) |nl| nl + 1 else 0;
+        const line_start = if (std.mem.findScalarLast(u8, before, '\n')) |nl| nl + 1 else 0;
         return std.mem.trim(u8, before[line_start..], " \t\r").len > 0;
     }
 
@@ -512,7 +512,7 @@ pub const Formatter = struct {
         if (node.main_token >= self.token_starts.len) return null;
         if (self.token_tags[node.main_token] == .heredoc) return null; // its token is the opener, `<<~NAME`
         const raw = self.tokenText(node.main_token);
-        var decoded: std.ArrayListUnmanaged(u8) = .empty;
+        var decoded: std.ArrayList(u8) = .empty;
         defer decoded.deinit(self.allocator);
         if (self.token_tags[node.main_token] == .raw_string) {
             // Single-quoted or %q, decoded by its own delimiter, the byte before it
@@ -724,11 +724,11 @@ pub const Formatter = struct {
                     try f.out.appendSlice(f.allocator, ", ");
                 }
                 f.flat = false;
-                const prefix_fits = std.mem.indexOfScalar(u8, f.out.items[mark..], '\n') == null and f.column() < f.config.line_width;
+                const prefix_fits = std.mem.findScalar(u8, f.out.items[mark..], '\n') == null and f.column() < f.config.line_width;
                 if (prefix_fits) {
                     const last_start = f.out.items.len;
                     try f.formatListItem(l.tree, last);
-                    if (std.mem.indexOfScalar(u8, f.out.items[last_start..], '\n') != null) {
+                    if (std.mem.findScalar(u8, f.out.items[last_start..], '\n') != null) {
                         try f.out.appendSlice(f.allocator, l.shape.close);
                         return true;
                     }
@@ -1253,7 +1253,7 @@ pub const Formatter = struct {
     /// instead): every chain used to be broken, `cube(10).translate(1, 2, 3)` included.
     fn formatMethodCall(self: *Formatter, tree: *const ast.Tree, node_idx: ast.NodeIndex) Error!void {
         // The calls on receivers, outermost first; the chain stops at a parenthesized one.
-        var links: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+        var links: std.ArrayList(ast.NodeIndex) = .empty;
         defer links.deinit(self.allocator);
         var root = node_idx;
         while (true) {

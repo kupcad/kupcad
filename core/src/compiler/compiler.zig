@@ -192,19 +192,19 @@ pub const Compiler = struct {
     active_namespaces: usize = 0,
     has_export_module: bool = false,
     // Lexical Scope tracking
-    namespace_stack: std.ArrayListUnmanaged(ast.StringId) = .empty,
+    namespace_stack: std.ArrayList(ast.StringId) = .empty,
     /// The hidden local holding `self` for each class, module or singleton body being
     /// compiled, innermost last (enterNamespaceSelf).
-    namespace_selfs: std.ArrayListUnmanaged(u16) = .empty,
+    namespace_selfs: std.ArrayList(u16) = .empty,
 
-    upvalues: std.ArrayListUnmanaged(Upvalue) = .empty,
-    locals: std.ArrayListUnmanaged(Local) = .empty,
+    upvalues: std.ArrayList(Upvalue) = .empty,
+    locals: std.ArrayList(Local) = .empty,
     /// Each named local's slot, by name (ids are interned, so one per name): a lookup
     /// scanned every local before, and a def with tens of thousands of them took minutes.
     local_slots: std.AutoHashMapUnmanaged(ast.StringId, u16) = .empty,
-    loops: std.ArrayListUnmanaged(LoopState) = .empty,
+    loops: std.ArrayList(LoopState) = .empty,
     // Enclosing rescue/ensure regions of the current function, innermost last
-    unwind_stack: std.ArrayListUnmanaged(UnwindEntry) = .empty,
+    unwind_stack: std.ArrayList(UnwindEntry) = .empty,
 
     /// The slot of each constant of `current_chunk` (emitter.makeConstant): strings by
     /// their text, every other value by its bits.
@@ -212,8 +212,8 @@ pub const Compiler = struct {
     constant_slots: std.AutoHashMapUnmanaged(u64, u32) = .empty,
 
     // --- DOD Zero-Waste Compilation Buffers ---
-    scratch_ops: std.ArrayListUnmanaged(ast.BinaryOp) = .empty,
-    scratch_rights: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
+    scratch_ops: std.ArrayList(ast.BinaryOp) = .empty,
+    scratch_rights: std.ArrayList(ast.NodeIndex) = .empty,
 
     current_stack_depth: usize = 0,
     max_stack_depth: usize = 0,
@@ -353,8 +353,8 @@ pub const Compiler = struct {
         if (root.failure == null) {
             var failure: CompileFailure = .{ .offset = self.current_source_offset, .code = codeOf(err) };
             // A message too long for the buffer (a huge name) falls back to the generic one.
-            const msg = std.fmt.bufPrint(&failure.buf, fmt, args) catch
-                std.fmt.bufPrint(&failure.buf, "{s}", .{describeError(err)}) catch unreachable;
+            const msg = std.mem.print(&failure.buf, fmt, args) catch
+                std.mem.print(&failure.buf, "{s}", .{describeError(err)}) catch unreachable;
             failure.len = msg.len;
             root.failure = failure;
         }
@@ -1300,7 +1300,7 @@ pub const Compiler = struct {
         var body_targets = try self.allocator.alloc(usize, branches.len);
         defer self.allocator.free(body_targets);
 
-        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+        var end_jumps: std.ArrayList(usize) = .empty;
         defer end_jumps.deinit(self.allocator);
 
         for (branches, 0..) |branch, branch_idx| {
@@ -1362,7 +1362,7 @@ pub const Compiler = struct {
             try self.compileNode(cs.condition);
         }
 
-        var end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+        var end_jumps: std.ArrayList(usize) = .empty;
         defer end_jumps.deinit(self.allocator);
 
         for (branches) |branch| {
@@ -1460,7 +1460,7 @@ pub const Compiler = struct {
 
             self.simulatePush(1); // Simulator: op_throw pushed the error value on the stack
             const error_depth = self.current_stack_depth; // Save the stack depth!
-            var rescue_end_jumps: std.ArrayListUnmanaged(usize) = .empty;
+            var rescue_end_jumps: std.ArrayList(usize) = .empty;
             defer rescue_end_jumps.deinit(self.allocator);
 
             var next_rescue_jump: ?usize = null;
@@ -1473,7 +1473,7 @@ pub const Compiler = struct {
                 next_rescue_jump = null;
 
                 const errors = self.tree.getStringLists(rescue.errors);
-                var match_jumps: std.ArrayListUnmanaged(usize) = .empty;
+                var match_jumps: std.ArrayList(usize) = .empty;
                 defer match_jumps.deinit(self.allocator);
 
                 if (errors.len > 0) {
@@ -2234,7 +2234,7 @@ pub const Compiler = struct {
     fn emitPushSelf(self: *Compiler) CompileError!void {
         if (self.is_method) return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
         // A class or module body: the namespace being defined
-        if (self.namespace_selfs.getLastOrNull()) |slot| return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, slot);
+        if (self.namespace_selfs.last()) |slot| return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, slot);
         // The top-level script
         if (self.enclosing == null) return self.emitOpWithOperand(.op_get_local, .op_get_local_wide, 0);
         // A block: the enclosing method's or namespace's `self`
@@ -2254,7 +2254,7 @@ pub const Compiler = struct {
         switch (classification.kind) {
             .constant => {
                 if (self.namespace_stack.items.len > 0) {
-                    var end_jumps = std.ArrayListUnmanaged(usize).empty;
+                    var end_jumps = std.ArrayList(usize).empty;
                     defer end_jumps.deinit(self.allocator);
 
                     var i: usize = self.namespace_stack.items.len;

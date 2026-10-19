@@ -65,7 +65,7 @@ pub const Watcher = struct {
         const allocator = session.allocator;
         var i: usize = 0;
         while (i < ws.modules.items.len) : (i += 1) {
-            var wanted: std.ArrayListUnmanaged([]u8) = .empty;
+            var wanted: std.ArrayList([]u8) = .empty;
             defer {
                 for (wanted.items) |path| allocator.free(path);
                 wanted.deinit(allocator);

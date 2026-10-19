@@ -170,7 +170,7 @@ fn requireSides(vm: *VM, sides: i32, opts: GeomOptions, method: []const u8) !i32
 
 /// A regular polygon centred on the origin, its first corner on +x (as Manifold's circles).
 fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
-    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    var pts = std.ArrayList([2]f64).empty;
     const alloc = vm.scratch_arena.allocator();
     defer pts.deinit(alloc);
     const step = std.math.pi * 2.0 / @as(f64, @floatFromInt(sides));
@@ -184,7 +184,7 @@ fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
 // --- Filleting Math Helpers ---
 
 /// Generates points along a circular arc and pushes them to the polygon list
-fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayListUnmanaged([2]f64), cx: f64, cy: f64, r: f64, start_ang: f64, end_ang: f64, segments: usize) !void {
+fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayList([2]f64), cx: f64, cy: f64, r: f64, start_ang: f64, end_ang: f64, segments: usize) !void {
     const step = (end_ang - start_ang) / @as(f64, @floatFromInt(segments));
     for (0..segments + 1) |i| {
         const ang = start_ang + @as(f64, @floatFromInt(i)) * step;
@@ -194,7 +194,7 @@ fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayListUnmanaged([2]f64), c
 
 /// Helper to generate a 2D rounded or chamfered rectangle
 fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfer: ?f64, segs: i32) !u32 {
-    var pts = std.ArrayListUnmanaged([2]f64).empty;
+    var pts = std.ArrayList([2]f64).empty;
     // Temporary structures map to scratch_arena instead of standard allocator
     const alloc = vm.scratch_arena.allocator();
     defer pts.deinit(alloc);
@@ -321,7 +321,7 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
     var dag_idx: u32 = 0;
     if (opts.round_r != null or opts.chamfer != null) {
         // Draw the right-half cross section using CCW winding (Bottom to Top)
-        var pts = std.ArrayListUnmanaged([2]f64).empty;
+        var pts = std.ArrayList([2]f64).empty;
         const alloc = vm.scratch_arena.allocator();
         defer pts.deinit(alloc);
 
@@ -428,12 +428,12 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
         // Labels are formatted only on the error path (see util.NumberArray).
         var label_buf: [MAX_LABEL_LEN]u8 = undefined;
         if (!path_val.isArray()) {
-            const path_name = std.fmt.bufPrint(&label_buf, "path {d}", .{c_idx}) catch "a path";
+            const path_name = std.mem.print(&label_buf, "path {d}", .{c_idx}) catch "a path";
             _ = try util.requireArray(vm, path_val, "polygon", path_name);
         }
         const indices = path_val.asArray().items.items;
         if (indices.len < MIN_CONTOUR_POINTS) {
-            const count_what = std.fmt.bufPrint(&label_buf, "point indices in path {d}", .{c_idx}) catch "point indices per path";
+            const count_what = std.mem.print(&label_buf, "point indices in path {d}", .{c_idx}) catch "point indices per path";
             try requireMinCount(vm, indices.len, MIN_CONTOUR_POINTS, "polygon", count_what);
         }
 
@@ -443,7 +443,7 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
             const raw = if (idx_val.isNumber() and std.math.isFinite(idx_val.asNumber()))
                 idx_val.asNumber()
             else blk: {
-                const what = std.fmt.bufPrint(&label_buf, "a point index (path {d}, entry {d})", .{ c_idx, p_idx }) catch "a point index";
+                const what = std.mem.print(&label_buf, "a point index (path {d}, entry {d})", .{ c_idx, p_idx }) catch "a point index";
                 break :blk try util.requireNumber(vm, idx_val, "polygon", what);
             };
             pt.* = pts[try checkedIndex(vm, raw, pts.len, "polygon path")];

@@ -67,7 +67,7 @@ pub fn registerExceptions(vm: *VM) !void {
     try vm.setGlobal("StandardError", value.Value.initObj(&std_class.obj));
 
     // One class per runtime error kind; the VM keeps them for raiseError.
-    inline for (comptime std.meta.fieldNames(ErrorKind)) |err_name| {
+    inline for (comptime @typeInfo(ErrorKind).@"enum".field_names) |err_name| {
         const name_val = try vm.staticString(err_name);
         const err_class = try vm.gc.allocateClass(vm, name_val.asString(), std_class);
         try vm.setGlobal(err_name, value.Value.initObj(&err_class.obj));

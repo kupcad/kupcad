@@ -393,7 +393,7 @@ test "Language: puts and interpolation show an instance by its own to_s" {
     try testing.expectEqualStrings("P(3)\nP(4)", captured_output.items);
 }
 
-var captured_output: std.ArrayListUnmanaged(u8) = .empty;
+var captured_output: std.ArrayList(u8) = .empty;
 
 fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {
     _ = vm;
@@ -484,7 +484,7 @@ test "Language: a recursion through built-ins stops at the nested-run limit, not
         var vm = try support.initVm();
         defer vm.deinit();
         try testing.expectEqual(@import("vm.zig").InterpretResult.runtime_error, try support.runOn(&vm, src));
-        try testing.expect(std.mem.indexOf(u8, vm.last_error.?, "Call stack overflow") != null);
+        try testing.expect(std.mem.find(u8, vm.last_error.?, "Call stack overflow") != null);
     }
     try expectScripts(&.{
         .{ .src = "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nr = f(150)", .expected = .{ .num = 150 } },

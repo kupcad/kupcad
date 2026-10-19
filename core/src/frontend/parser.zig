@@ -79,7 +79,7 @@ pub const Parser = struct {
     allocator: std.mem.Allocator,
     b: ast.Builder,
     diagnostics: Diagnostics,
-    comments: std.ArrayListUnmanaged(common_token.Comment) = .empty,
+    comments: std.ArrayList(common_token.Comment) = .empty,
     in_block_params: bool = false,
     /// Set while parsing a `for` or `while` header, where `do` never opens a block (as in
     /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
@@ -101,18 +101,18 @@ pub const Parser = struct {
     /// Keys are slices of `source`.
     locals: std.StringHashMapUnmanaged(void) = .empty,
     /// The names of `locals` in the order they were bound, so a scope drops exactly its own.
-    local_order: std.ArrayListUnmanaged([]const u8) = .empty,
+    local_order: std.ArrayList([]const u8) = .empty,
 
     // --- Zero-Waste Scratch Buffers ---
-    scratch_nodes: std.ArrayListUnmanaged(ast.NodeIndex) = .empty,
-    scratch_named_args: std.ArrayListUnmanaged(ast.NamedArg) = .empty,
-    scratch_params: std.ArrayListUnmanaged(ast.Param) = .empty,
-    scratch_lhs_exprs: std.ArrayListUnmanaged(ast.LhsExpr) = .empty,
-    scratch_when_branches: std.ArrayListUnmanaged(ast.WhenBranch) = .empty,
-    scratch_rescue_clauses: std.ArrayListUnmanaged(ast.RescueClause) = .empty,
-    scratch_strings: std.ArrayListUnmanaged(ast.StringId) = .empty,
-    scratch_hash_entries: std.ArrayListUnmanaged(ast.HashEntry) = .empty,
-    scratch_alias_pairs: std.ArrayListUnmanaged(ast.AliasPair) = .empty,
+    scratch_nodes: std.ArrayList(ast.NodeIndex) = .empty,
+    scratch_named_args: std.ArrayList(ast.NamedArg) = .empty,
+    scratch_params: std.ArrayList(ast.Param) = .empty,
+    scratch_lhs_exprs: std.ArrayList(ast.LhsExpr) = .empty,
+    scratch_when_branches: std.ArrayList(ast.WhenBranch) = .empty,
+    scratch_rescue_clauses: std.ArrayList(ast.RescueClause) = .empty,
+    scratch_strings: std.ArrayList(ast.StringId) = .empty,
+    scratch_hash_entries: std.ArrayList(ast.HashEntry) = .empty,
+    scratch_alias_pairs: std.ArrayList(ast.AliasPair) = .empty,
 
     pub fn init(tokens: common_token.TokenList(Tag), source: []const u8, allocator: std.mem.Allocator) !Parser {
         // Token indices are stored as u24 throughout the parser and AST
@@ -218,7 +218,7 @@ pub const Parser = struct {
         const heredoc = self.tokens.heredoc(tok);
         const body = self.source[heredoc.body_start..heredoc.bodyEnd()];
         const strip_indent = self.tokens.lexeme(self.source, tok)[2] == '~'; // `<<~NAME`
-        var text: std.ArrayListUnmanaged(u8) = .empty;
+        var text: std.ArrayList(u8) = .empty;
         defer text.deinit(self.allocator);
         var problem: string_escape.Problem = undefined;
         string_escape.unescapeHeredocInto(&text, self.allocator, body, strip_indent, &problem) catch |err| switch (err) {
@@ -417,7 +417,7 @@ pub const Parser = struct {
             lookahead += 1;
         }
 
-        if (std.mem.indexOfScalar(Tag, tags, self.tag(lookahead)) != null) {
+        if (std.mem.findScalar(Tag, tags, self.tag(lookahead)) != null) {
             while (lookahead > 0) {
                 if (self.tag(0) == .comment) {
                     self.comments.append(self.allocator, .{
@@ -465,7 +465,7 @@ pub const Parser = struct {
     inline fn parseCommaSeparated(
         self: *Parser,
         comptime ItemType: type,
-        scratch_list: *std.ArrayListUnmanaged(ItemType),
+        scratch_list: *std.ArrayList(ItemType),
         comptime parseItemFn: fn (*Parser) ParseError!ItemType,
         end_tag: Tag,
     ) ParseError![]const ItemType {
@@ -529,7 +529,7 @@ pub const Parser = struct {
             .newline, .semicolon, .comment, .docstring, .eof => return true,
             else => {},
         }
-        return std.mem.indexOfScalar(Tag, end_tags, self.tag(0)) != null;
+        return std.mem.findScalar(Tag, end_tags, self.tag(0)) != null;
     }
 
     pub fn parseStatement(self: *Parser) ParseError!ast.NodeIndex {

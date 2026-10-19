@@ -100,11 +100,11 @@ const Fixture = struct {
     fn addLocalDep(self: *Fixture, alias: []const u8, entries: []const TarEntry) ![]const u8 {
         const gz = try helpers.buildTarGz(testing.allocator, entries);
         defer testing.allocator.free(gz);
-        const path = try std.fmt.allocPrint(testing.allocator, "{s}/{s}.tar.gz", .{ self.tmp_path, alias });
+        const path = try testing.allocator.print("{s}/{s}.tar.gz", .{ self.tmp_path, alias });
         defer testing.allocator.free(path);
         try helpers.writeAbs(path, gz);
 
-        const spec = try std.fmt.allocPrint(testing.allocator, "file:{s}", .{path});
+        const spec = try testing.allocator.print("file:{s}", .{path});
         errdefer testing.allocator.free(spec);
         const pkg_id = try (try ParsedPackage.parse(spec)).pkgId(testing.allocator);
         errdefer testing.allocator.free(pkg_id);
@@ -157,10 +157,10 @@ test "Resolver: linkWorkspace links locked packages (flat and nested files) into
 
     try fx.link();
 
-    const package_dir = try std.fmt.allocPrint(testing.allocator, ".store/{s}-commit1/pkg", .{pkg_id});
+    const package_dir = try testing.allocator.print(".store/{s}-commit1/pkg", .{pkg_id});
     defer testing.allocator.free(package_dir);
     inline for (.{ .{ "main.kup", "def init() 10 end" }, .{ "src/deep/nested/a.kup", "mock content" }, .{ "src/deep/nested/b.kup", "mock content" } }) |file| {
-        const path = try std.fmt.allocPrint(testing.allocator, ".kupcad/pkg/{s}/{s}", .{ package_dir, file[0] });
+        const path = try testing.allocator.print(".kupcad/pkg/{s}/{s}", .{ package_dir, file[0] });
         defer testing.allocator.free(path);
         try fx.expectFile(path, file[1]);
     }
@@ -378,7 +378,7 @@ test "Resolver: an invalid alias fails before any package is fetched" {
     defer for (ids[0..count]) |id| testing.allocator.free(id);
     while (count < ids.len) {
         var name_buf: [16]u8 = undefined;
-        ids[count] = try fx.addLocalDep(try std.fmt.bufPrint(&name_buf, "good{d}", .{count}), &SAMPLE_PKG);
+        ids[count] = try fx.addLocalDep(try std.mem.print(&name_buf, "good{d}", .{count}), &SAMPLE_PKG);
         count += 1;
         var it = fx.manifest.dependencies.keyIterator();
         if (!std.mem.eql(u8, it.next().?.*, "-bad")) break;

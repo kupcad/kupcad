@@ -140,8 +140,8 @@ test "API: buildModel with a diagnostic keeps a native's own message over the ge
         api.buildModel(testing.allocator, testing.io, "Math.sign(\"x\")", .{ .format = .stl, .diagnostic = &diag }),
     );
     const msg = diag.message.?;
-    try testing.expect(std.mem.indexOf(u8, msg, "Math.sign expects a number") != null);
-    try testing.expect(std.mem.indexOf(u8, msg, "Native Execution Error") == null);
+    try testing.expect(std.mem.find(u8, msg, "Math.sign expects a number") != null);
+    try testing.expect(std.mem.find(u8, msg, "Native Execution Error") == null);
 }
 
 test "API: buildModel with a diagnostic sets no message when nothing was reported" {

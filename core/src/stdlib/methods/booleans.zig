@@ -9,7 +9,7 @@ const dag = @import("../../vm/dag.zig");
 const util = @import("util.zig");
 
 inline fn gatherAndBalance(vm: *VM, receiver: value.Value, args: []const value.Value, comptime name: []const u8, op_3d: dag.DAGTag, op_2d: dag.DAGTag) !value.Value {
-    var scratch = std.ArrayListUnmanaged(u32).empty;
+    var scratch = std.ArrayList(u32).empty;
     const alloc = vm.scratch_arena.allocator();
 
     const is_3d = receiver.isGeometry();
@@ -39,7 +39,7 @@ inline fn gatherAndBalance(vm: *VM, receiver: value.Value, args: []const value.V
 /// Appends the DAG nodes of `args`, each a shape of the receiver's kind (`is_3d`) or an
 /// Array of them. Anything else is a TypeError saying where it is: they used to be skipped,
 /// so `a.union(nil)` or a Sketch in a Solid's union gave `a` back unchanged.
-pub fn appendOperands(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged(u32), args: []const value.Value, is_3d: bool, method: []const u8) !void {
+pub fn appendOperands(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayList(u32), args: []const value.Value, is_3d: bool, method: []const u8) !void {
     for (args, 1..) |arg, argument| {
         if (arg.isArray()) {
             for (arg.asArray().items.items, 0..) |item, index| try appendOperand(vm, alloc, list, item, is_3d, method, argument, index);
@@ -47,7 +47,7 @@ pub fn appendOperands(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayListUnm
     }
 }
 
-fn appendOperand(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayListUnmanaged(u32), val: value.Value, is_3d: bool, method: []const u8, argument: usize, index: ?usize) !void {
+fn appendOperand(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayList(u32), val: value.Value, is_3d: bool, method: []const u8, argument: usize, index: ?usize) !void {
     if (is_3d and val.isGeometry()) return list.append(alloc, val.asGeometry().dag_idx);
     if (!is_3d and val.isCrossSection()) return list.append(alloc, val.asCrossSection().dag_idx);
     const expected = if (is_3d) "a Solid" else "a Sketch";

@@ -10,7 +10,7 @@ pub const DocstringParser = struct {
     b: *ast.Builder,
 
     pub fn parse(self: *DocstringParser, raw: []const u8, main_token: u24) !ast.NodeIndex {
-        var clean_text: std.ArrayListUnmanaged(u8) = .empty;
+        var clean_text: std.ArrayList(u8) = .empty;
         defer clean_text.deinit(self.allocator);
 
         var lines = std.mem.splitScalar(u8, raw, '\n');

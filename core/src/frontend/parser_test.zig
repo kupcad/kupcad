@@ -2957,7 +2957,7 @@ test "KupCAD Parser: Trailing commas in multiple assignment" {
 
 test "KupCAD Parser: Deep recursion safety (Stack Overflow Prevention)" {
     const depth: usize = 200;
-    var source_buf = std.ArrayListUnmanaged(u8).empty;
+    var source_buf = std.ArrayList(u8).empty;
     defer source_buf.deinit(testing.allocator);
 
     for (0..depth) |_| try source_buf.append(testing.allocator, '(');
@@ -3024,13 +3024,13 @@ test "AST Builder: String Interner Hash Map resizing is safe" {
     // If our custom InternContext is broken, this will panic or corrupt data.
     var ids: [1000]ast.StringId = undefined;
     for (0..1000) |i| {
-        const str = try std.fmt.allocPrint(arena.allocator(), "var_{d}", .{i});
+        const str = try arena.allocator().print("var_{d}", .{i});
         ids[i] = try b.intern(str);
     }
 
     // Verify retrieval after resizes
     for (0..1000) |i| {
-        const expected = try std.fmt.allocPrint(arena.allocator(), "var_{d}", .{i});
+        const expected = try arena.allocator().print("var_{d}", .{i});
         try testing.expectEqualStrings(expected, b.tree.getString(ids[i]));
     }
 }
@@ -3577,7 +3577,7 @@ test "KupCAD Parser: Malformed Default Parameters Synchronization" {
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
     const diag = pt.parser.diagnostics.list.items[0];
 
-    try testing.expect(std.mem.indexOf(u8, diag.message, "Invalid expression") != null);
+    try testing.expect(std.mem.find(u8, diag.message, "Invalid expression") != null);
 }
 
 test "KupCAD: CSG Operator Precedence (+ vs &)" {
@@ -3677,7 +3677,7 @@ test "KupCAD: Unary Minus vs Method Call Precedence" {
 
 test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
     const depth: usize = limits.MAX_AST_DEPTH + 5;
-    var source_buf = std.ArrayListUnmanaged(u8).empty;
+    var source_buf = std.ArrayList(u8).empty;
     defer source_buf.deinit(testing.allocator);
 
     for (0..depth) |_| try source_buf.append(testing.allocator, '(');
@@ -3692,7 +3692,7 @@ test "KupCAD Parser Guardrail: AST Depth Limit Prevention" {
     // The parser MUST gracefully reject this, not crash with a stack overflow.
     try testing.expectError(error.AstTooDeep, result);
     try testing.expect(pt.parser.diagnostics.list.items.len > 0);
-    try testing.expect(std.mem.indexOf(u8, pt.parser.diagnostics.list.items[0].message, "Maximum AST depth") != null);
+    try testing.expect(std.mem.find(u8, pt.parser.diagnostics.list.items[0].message, "Maximum AST depth") != null);
 }
 
 // Depth regressions: only parseExpression used to count depth, so statements,
@@ -3710,7 +3710,7 @@ const NestCase = struct {
 };
 
 fn buildNest(c: NestCase) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(testing.allocator);
     for (0..c.count) |_| try buf.appendSlice(testing.allocator, c.prefix);
     try buf.appendSlice(testing.allocator, c.middle);
@@ -3721,7 +3721,7 @@ fn buildNest(c: NestCase) ![]u8 {
 
 fn hasDiagnostic(doc: *const Document, needle: []const u8) bool {
     for (doc.diagnostics) |d| {
-        if (std.mem.indexOf(u8, d.message, needle) != null) return true;
+        if (std.mem.find(u8, d.message, needle) != null) return true;
     }
     return false;
 }
@@ -3808,7 +3808,7 @@ test "KupCAD Parser Guardrail: Nesting below the depth limit still parses and co
 
 /// `open p0, p1, ... close` with each parameter rendered by `fmt` from its index.
 fn paramList(open: []const u8, comptime fmt: []const u8, count: usize, close: []const u8) ![]u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     errdefer buf.deinit(testing.allocator);
     try buf.appendSlice(testing.allocator, open);
     for (0..count) |i| {
@@ -4025,7 +4025,7 @@ test "KupCAD Parser: Invalid Assignment Target Diagnostics" {
     // The parser successfully identifies that a primitive literal cannot be the left side of an assignment
     try testing.expectError(error.InvalidExpression, result);
     try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
-    try testing.expect(std.mem.indexOf(u8, pt.parser.diagnostics.list.items[0].message, "Invalid expression") != null);
+    try testing.expect(std.mem.find(u8, pt.parser.diagnostics.list.items[0].message, "Invalid expression") != null);
 }
 
 test "KupCAD Parser: Empty Case Statement" {
@@ -4446,7 +4446,7 @@ test "Parser: statements on one line need a ';' between them" {
         _ = pt.parser.parseProgram() catch {};
         try testing.expectEqual(@as(usize, 1), pt.parser.diagnostics.list.items.len);
         const d = pt.parser.diagnostics.list.items[0];
-        const expected = try std.fmt.allocPrint(testing.allocator, "Expected a line break or ';' before '{s}'", .{case.at});
+        const expected = try testing.allocator.print("Expected a line break or ';' before '{s}'", .{case.at});
         defer testing.allocator.free(expected);
         try testing.expectEqualStrings(expected, d.message);
     }

@@ -58,7 +58,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
     const ParamVisitor = struct {
         allocator: std.mem.Allocator,
-        params: *std.ArrayListUnmanaged(ParamMetadata),
+        params: *std.ArrayList(ParamMetadata),
 
         pub fn enterNode(self: *@This(), tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
             const node = tree.getNode(node_idx) orelse return;
@@ -74,7 +74,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
         }
     };
 
-    var params: std.ArrayListUnmanaged(ParamMetadata) = .empty;
+    var params: std.ArrayList(ParamMetadata) = .empty;
     defer params.deinit(allocator);
 
     // Walk the entire AST deeply instead of just checking the root block

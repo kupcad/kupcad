@@ -51,7 +51,7 @@ pub fn readHttpHeaders(reader: *std.Io.Reader) ![]const u8 {
     const limit = @min(MAX_HANDSHAKE_BYTES, reader.buffer.len);
     while (true) {
         const buffered = reader.buffered();
-        if (std.mem.indexOf(u8, buffered[0..@min(buffered.len, limit)], "\r\n\r\n")) |end| {
+        if (std.mem.find(u8, buffered[0..@min(buffered.len, limit)], "\r\n\r\n")) |end| {
             const total = end + 4;
             reader.toss(total);
             return buffered[0..total];
@@ -69,7 +69,7 @@ fn headerValue(req: []const u8, name: []const u8) ?[]const u8 {
     _ = lines.next(); // request line
     while (lines.next()) |line| {
         if (line.len == 0) break;
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const colon = std.mem.findScalar(u8, line, ':') orelse continue;
         // Header names are case-insensitive (RFC 9110); browsers differ in casing.
         if (std.ascii.eqlIgnoreCase(std.mem.trim(u8, line[0..colon], " \t"), name)) {
             return std.mem.trim(u8, line[colon + 1 ..], " \t");
@@ -140,7 +140,7 @@ pub fn readFrameHeader(reader: *std.Io.Reader) !FrameHeader {
 
 /// Encodes a server->client (unmasked) binary frame.
 pub fn encodeBinaryFrame(allocator: std.mem.Allocator, payload: []const u8) ![]u8 {
-    var frame = std.ArrayListUnmanaged(u8).empty;
+    var frame = std.ArrayList(u8).empty;
     errdefer frame.deinit(allocator);
     try frame.ensureTotalCapacity(allocator, payload.len + 10);
 
@@ -272,7 +272,7 @@ pub const ViewportWsServer = struct {
     /// The port actually bound (resolved when an ephemeral port was requested).
     port: u16,
     server: std.Io.net.Server,
-    clients: std.ArrayListUnmanaged(*Client) = .empty,
+    clients: std.ArrayList(*Client) = .empty,
     mutex: std.Io.Mutex = .init,
     running: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     listen_thread: ?std.Thread = null,

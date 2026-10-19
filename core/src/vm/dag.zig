@@ -240,28 +240,28 @@ pub const DAGBuilder = struct {
     /// The tables below grow as the script builds geometry; they were in an arena, which
     /// keeps every outgrown buffer until the end, so a DAG held about twice its size.
     gpa: std.mem.Allocator,
-    nodes: std.ArrayListUnmanaged(DAGNode) = .empty,
-    extra_data: std.ArrayListUnmanaged(u32) = .empty,
-    numbers: std.ArrayListUnmanaged(f64) = .empty,
-    poly_points: std.ArrayListUnmanaged([3]f64) = .empty,
-    poly_faces: std.ArrayListUnmanaged([3]u32) = .empty,
+    nodes: std.ArrayList(DAGNode) = .empty,
+    extra_data: std.ArrayList(u32) = .empty,
+    numbers: std.ArrayList(f64) = .empty,
+    poly_points: std.ArrayList([3]f64) = .empty,
+    poly_faces: std.ArrayList([3]u32) = .empty,
     /// The meshes of `.concrete` nodes. They cannot be recomputed from the DAG, so they
     /// aren't in the evictable dag_cache: one lives until no live shape is made from its
     /// node (releaseUnreachableLeaves).
-    concrete_leaves: std.ArrayListUnmanaged(ConcreteLeaf) = .empty,
+    concrete_leaves: std.ArrayList(ConcreteLeaf) = .empty,
     /// The serial the next concrete leaf gets.
     next_leaf_serial: u64 = 0,
     /// How many concrete leaves still hold their mesh.
     held_leaves: usize = 0,
 
     // CSE Deduplication
-    node_hashes: std.ArrayListUnmanaged(u64) = .empty,
+    node_hashes: std.ArrayList(u64) = .empty,
     dedup_map: std.AutoHashMapUnmanaged(u64, DAGNodeIndex) = .empty,
 
     /// Every distinct non-default settings nodes were created under (SettingsId n is entry
     /// n - 1). Geometry is evaluated lazily, so a node made inside CAD.with_config must
     /// carry its settings: it used to be built with whatever was active when evaluated.
-    settings_table: std.ArrayListUnmanaged(EngineConfig) = .empty,
+    settings_table: std.ArrayList(EngineConfig) = .empty,
     /// The settings new nodes get; the VM sets it whenever its config changes.
     current_settings: SettingsId = 0,
 
@@ -660,8 +660,8 @@ pub const DAGBuilder = struct {
 
     /// The nodes the `roots` are made from, the roots included. A node's operands are
     /// always earlier nodes, so one pass from the last node back finds them all.
-    pub fn liveNodes(self: *const DAGBuilder, set_allocator: std.mem.Allocator, roots: []const DAGNodeIndex) !std.DynamicBitSetUnmanaged {
-        var live = try std.DynamicBitSetUnmanaged.initEmpty(set_allocator, self.nodes.items.len);
+    pub fn liveNodes(self: *const DAGBuilder, set_allocator: std.mem.Allocator, roots: []const DAGNodeIndex) !std.bit_set.Dynamic {
+        var live = try std.bit_set.Dynamic.initEmpty(set_allocator, self.nodes.items.len);
         for (roots) |root| {
             if (root < self.nodes.items.len) live.set(root);
         }
@@ -677,7 +677,7 @@ pub const DAGBuilder = struct {
     /// Destroys the meshes of the concrete leaves no `live` node is made from. Their nodes
     /// stay, emptied: nothing can reach them again, since building on a node takes a live
     /// shape made from it.
-    pub fn releaseUnreachableLeaves(self: *DAGBuilder, live: *const std.DynamicBitSetUnmanaged) void {
+    pub fn releaseUnreachableLeaves(self: *DAGBuilder, live: *const std.bit_set.Dynamic) void {
         for (self.nodes.items, 0..) |node, i| {
             if (node.tag != .concrete or live.isSet(i)) continue;
             const leaf = &self.concrete_leaves.items[node.data];
@@ -724,7 +724,7 @@ pub const DAGBuilder = struct {
     /// (the result caches' key, so what they hold stays theirs), and drops the rest with
     /// their leaves' meshes. Returns each old index's new one (maxInt for a dropped node),
     /// which the caller applies to every shape it holds; on failure nothing has changed.
-    pub fn compact(self: *DAGBuilder, live: *const std.DynamicBitSetUnmanaged) ![]DAGNodeIndex {
+    pub fn compact(self: *DAGBuilder, live: *const std.bit_set.Dynamic) ![]DAGNodeIndex {
         var fresh = DAGBuilder.init(self.gpa);
         // The leaves' meshes are still this builder's until the swap, and the settings ids
         // stay the same: the table is shared, and not freed with the copy's.

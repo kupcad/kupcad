@@ -38,7 +38,7 @@ pub const Archive = struct {
 
     /// `path` without the top folder, which the first file sets and every other must share.
     fn unwrap(self: *Archive, allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-        const slash = std.mem.indexOfScalar(u8, path, '/') orelse return error.UnexpectedArchiveLayout;
+        const slash = std.mem.findScalar(u8, path, '/') orelse return error.UnexpectedArchiveLayout;
         const folder = path[0..slash];
         if (self.root.len == 0) {
             self.root = try allocator.dupe(u8, folder);
@@ -252,7 +252,7 @@ pub const Cafs = struct {
                 remaining -= n;
             }
 
-            if (builtin.os.tag != .windows) {
+            if (builtin.target.os.tag != .windows) {
                 try file.setPermissions(self.io, std.Io.File.Permissions.fromMode(0o444));
             }
         }

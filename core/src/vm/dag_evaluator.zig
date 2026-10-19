@@ -41,7 +41,7 @@ pub const StackEntry = struct {
 
 /// Dynamic intermediate value stack replacing recursive C++ object returns
 pub const IntermediateStack = struct {
-    handles: std.ArrayListUnmanaged(StackEntry) = .empty,
+    handles: std.ArrayList(StackEntry) = .empty,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) IntermediateStack {
@@ -153,9 +153,9 @@ fn isPureTransform(tag: dag.DAGTag) bool {
 /// in one batch: one call sorts and merges N shapes, where the chain made N − 1 calls,
 /// each over a growing result (300 parts took 60× the batch). A union already in the
 /// cache is one operand, so after an edit only the new parts join the cached rest.
-fn collectUnionOperands(vm: *VM, chain: *std.ArrayListUnmanaged(dag.DAGNodeIndex), root: dag.DAGNode) !void {
+fn collectUnionOperands(vm: *VM, chain: *std.ArrayList(dag.DAGNodeIndex), root: dag.DAGNode) !void {
     chain.clearRetainingCapacity();
-    var work: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+    var work: std.ArrayList(dag.DAGNodeIndex) = .empty;
     defer work.deinit(vm.allocator);
     const p = vm.dag_builder.getBinaryPayload(root);
     try work.appendSlice(vm.allocator, &.{ p.right, p.left });
@@ -214,7 +214,7 @@ pub const EvaluationFrame = struct {
 };
 
 pub const EvaluationFrameStack = struct {
-    frames: std.ArrayListUnmanaged(EvaluationFrame) = .empty,
+    frames: std.ArrayList(EvaluationFrame) = .empty,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) EvaluationFrameStack {
@@ -299,7 +299,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     defer f_stack.deinit();
 
     // The operands of the union chain being visited (collectUnionOperands).
-    var chain: std.ArrayListUnmanaged(dag.DAGNodeIndex) = .empty;
+    var chain: std.ArrayList(dag.DAGNodeIndex) = .empty;
     defer chain.deinit(vm.allocator);
 
     try f_stack.push(root_node_idx);
@@ -356,7 +356,7 @@ fn pushCached(vm: *VM, v_stack: *IntermediateStack, node_hash: u64) !bool {
 }
 
 /// Pushes the frames of `node`'s operands, in reverse so they are evaluated left to right.
-fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayListUnmanaged(dag.DAGNodeIndex), frame: *EvaluationFrame, node: dag.DAGNode) !void {
+fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(dag.DAGNodeIndex), frame: *EvaluationFrame, node: dag.DAGNode) !void {
     const b = &vm.dag_builder;
     switch (node.tag) {
         .union_op => {

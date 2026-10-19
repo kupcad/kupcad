@@ -81,7 +81,7 @@ pub fn generate(gpa: std.mem.Allocator, choices: Choices) Error![]u8 {
 const Generator = struct {
     gpa: std.mem.Allocator,
     choices: Choices,
-    out: std.ArrayListUnmanaged(u8) = .empty,
+    out: std.ArrayList(u8) = .empty,
     statements: usize = 0,
     nesting: usize = 0,
     vars: [MAX_VARS]Var = undefined,

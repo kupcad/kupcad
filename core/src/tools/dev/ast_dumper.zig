@@ -75,7 +75,7 @@ fn dumpNode(
     defer allocator.free(next_prefix);
 
     // Gather children dynamically based on AST Tag
-    var children = std.ArrayListUnmanaged(ast.NodeIndex).empty;
+    var children = std.ArrayList(ast.NodeIndex).empty;
     defer children.deinit(allocator);
 
     switch (node.tag) {

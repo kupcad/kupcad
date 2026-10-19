@@ -110,7 +110,7 @@ fn stepBox(allocator: std.mem.Allocator, step: []const u8) !geom.BoundingBox {
     var lines = std.mem.splitScalar(u8, step, '\n');
     while (lines.next()) |line| {
         if (line.len < 2 or line[0] != '#') continue;
-        const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
+        const eq = std.mem.findScalar(u8, line, '=') orelse continue;
         try entities.put(allocator, try std.fmt.parseInt(u32, line[1..eq], 10), line[eq + 1 ..]);
     }
 
@@ -127,8 +127,8 @@ fn stepBox(allocator: std.mem.Allocator, step: []const u8) !geom.BoundingBox {
             const placement = entities.get(try refs(body.*, 0)) orelse return error.BadStep;
             const center = try point(&entities, try refs(placement, 0));
             const normal = try numbers(entities.get(try refs(placement, 1)) orelse return error.BadStep);
-            const close = std.mem.lastIndexOfScalar(u8, body.*, ')') orelse return error.BadStep;
-            const comma = std.mem.lastIndexOfScalar(u8, body.*[0..close], ',') orelse return error.BadStep;
+            const close = std.mem.findScalarLast(u8, body.*, ')') orelse return error.BadStep;
+            const comma = std.mem.findScalarLast(u8, body.*[0..close], ',') orelse return error.BadStep;
             const radius = try std.fmt.parseFloat(f64, body.*[comma + 1 .. close]);
             for (0..3) |k| {
                 const reach = radius * @sqrt(@max(0, 1 - normal[k] * normal[k]));
@@ -145,7 +145,7 @@ fn stepBox(allocator: std.mem.Allocator, step: []const u8) !geom.BoundingBox {
 fn refs(body: []const u8, n: usize) !u32 {
     var rest = body;
     var seen: usize = 0;
-    while (std.mem.indexOfScalar(u8, rest, '#')) |at| {
+    while (std.mem.findScalar(u8, rest, '#')) |at| {
         var end = at + 1;
         while (end < rest.len and std.ascii.isDigit(rest[end])) end += 1;
         if (seen == n) return std.fmt.parseInt(u32, rest[at + 1 .. end], 10);
@@ -161,8 +161,8 @@ fn point(entities: *const std.AutoHashMapUnmanaged(u32, []const u8), id: u32) ![
 
 /// The three numbers of a CARTESIAN_POINT or DIRECTION: `NAME('',(x,y,z));`.
 fn numbers(body: []const u8) ![3]f64 {
-    const open = std.mem.lastIndexOfScalar(u8, body, '(') orelse return error.BadStep;
-    const close = std.mem.indexOfScalarPos(u8, body, open, ')') orelse return error.BadStep;
+    const open = std.mem.findScalarLast(u8, body, '(') orelse return error.BadStep;
+    const close = std.mem.findScalarPos(u8, body, open, ')') orelse return error.BadStep;
     var out: [3]f64 = undefined;
     var parts = std.mem.splitScalar(u8, body[open + 1 .. close], ',');
     for (&out) |*v| v.* = try std.fmt.parseFloat(f64, parts.next() orelse return error.BadStep);

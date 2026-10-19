@@ -11,7 +11,7 @@ pub const LineIndex = struct {
 
     /// Scans the source text and records the byte offset of every new line.
     pub fn init(allocator: std.mem.Allocator, source: []const u8) !LineIndex {
-        var starts = std.ArrayListUnmanaged(u32).empty;
+        var starts = std.ArrayList(u32).empty;
         errdefer starts.deinit(allocator);
 
         // Line 1 (index 0) always starts at offset 0

@@ -39,29 +39,29 @@ test "Disassembler: decodes inline-cache operands, 32-bit jumps, switch tables a
     defer out.deinit();
     try disassembler.disassembleChunk(testing.allocator, &out_chunk, "main", &out.writer);
     const text = out.written();
-    try testing.expect(std.mem.indexOf(u8, text, "| ic 0") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "op_switch        3 cases") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "op_for_next      slot:") != null);
+    try testing.expect(std.mem.find(u8, text, "| ic 0") != null);
+    try testing.expect(std.mem.find(u8, text, "op_switch        3 cases") != null);
+    try testing.expect(std.mem.find(u8, text, "op_for_next      slot:") != null);
     // Staying in sync means the final instruction is decoded as op_return
     try testing.expect(std.mem.endsWith(u8, std.mem.trimEnd(u8, text, "\n"), "op_return"));
 
     // Every printed jump / switch target must land on an instruction boundary
-    var starts: std.ArrayListUnmanaged(usize) = .empty;
+    var starts: std.ArrayList(usize) = .empty;
     defer starts.deinit(testing.allocator);
-    var targets: std.ArrayListUnmanaged(usize) = .empty;
+    var targets: std.ArrayList(usize) = .empty;
     defer targets.deinit(testing.allocator);
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line| {
         if (line.len > 4 and std.ascii.isDigit(line[0])) {
             try starts.append(testing.allocator, try std.fmt.parseInt(usize, line[0..4], 10));
         }
-        if (std.mem.lastIndexOf(u8, line, "-> ")) |arrow| {
+        if (std.mem.findLast(u8, line, "-> ")) |arrow| {
             try targets.append(testing.allocator, try std.fmt.parseInt(usize, line[arrow + 3 ..], 10));
         }
     }
     // At least the two `if` jumps plus the switch's three entries and default
     try testing.expect(targets.items.len >= 6);
     for (targets.items) |t| {
-        try testing.expect(std.mem.indexOfScalar(usize, starts.items, t) != null);
+        try testing.expect(std.mem.findScalar(usize, starts.items, t) != null);
     }
 }

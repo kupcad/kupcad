@@ -79,7 +79,7 @@ fn batchOp(comptime tag: dag.DAGTag, comptime name: []const u8) fn (*VM, *value.
                 return vm.fail(.ArgumentError, name ++ " needs at least one Solid, got an empty Array", .{});
             }
 
-            var scratch_indices = std.ArrayListUnmanaged(u32).empty;
+            var scratch_indices = std.ArrayList(u32).empty;
             defer scratch_indices.deinit(vm.allocator);
             for (parts.items.items, 0..) |part, i| {
                 if (!part.isGeometry()) {

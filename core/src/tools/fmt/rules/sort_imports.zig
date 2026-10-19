@@ -41,7 +41,7 @@ pub const SortImportsRule = struct {
                     j += 1;
                 }
 
-                if (j - i > 1 and std.mem.indexOfScalar(bool, commented[i..j], true) == null) {
+                if (j - i > 1 and std.mem.findScalar(bool, commented[i..j], true) == null) {
                     const block = new_stmts[i..j];
                     // Sort the indices based on the path of their resolved nodes
                     std.mem.sort(ast.NodeIndex, block, tree, struct {

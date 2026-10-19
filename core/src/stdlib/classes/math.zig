@@ -104,7 +104,7 @@ fn mathHypot(vm: *VM, receiver: value.Value, nums: []const value.Value) !value.V
     var len: f64 = 0;
     for (nums, 1..) |n, i| {
         var label_buf: [24]u8 = undefined;
-        const label = std.fmt.bufPrint(&label_buf, "argument {d}", .{i}) catch "an argument";
+        const label = std.mem.print(&label_buf, "argument {d}", .{i}) catch "an argument";
         len = std.math.hypot(len, try util.requireNumber(vm, n, "Math.hypot", label));
     }
     return value.Value.initNumber(len);
@@ -238,7 +238,7 @@ fn mathExtremum(comptime pick: anytype, comptime name: []const u8) value.NativeF
             var best = try util.requireNumber(vm, nums[0], name, "argument 1");
             for (nums[1..], 2..) |n, i| {
                 var label_buf: [24]u8 = undefined;
-                const label = std.fmt.bufPrint(&label_buf, "argument {d}", .{i}) catch "an argument";
+                const label = std.mem.print(&label_buf, "argument {d}", .{i}) catch "an argument";
                 best = pick(best, try util.requireNumber(vm, n, name, label));
             }
             return value.Value.initNumber(best);

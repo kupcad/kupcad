@@ -260,7 +260,7 @@ test "ViewportWs: live upgrade completes for a browser-sized request and frames 
     // The socket stays open: the old handshake waited for EOF / 4096 bytes and never answered.
     const resp = try client.handshake(browser_upgrade_request);
     try testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 101"));
-    try testing.expect(std.mem.indexOf(u8, resp, "Sec-WebSocket-Accept: " ++ SEC_WEBSOCKET_ACCEPT ++ "\r\n") != null);
+    try testing.expect(std.mem.find(u8, resp, "Sec-WebSocket-Accept: " ++ SEC_WEBSOCKET_ACCEPT ++ "\r\n") != null);
 
     const payload = "mesh-bytes";
     var got: [payload.len]u8 = undefined;

@@ -23,7 +23,7 @@ fn distToSegmentSq(p: [2]f64, v: [2]f64, w: [2]f64) f64 {
 /// We do NOT append p0, because the previous curve/line/moveTo will have already appended it.
 pub fn flattenQuadratic(
     allocator: std.mem.Allocator,
-    points: *std.ArrayListUnmanaged([2]f64),
+    points: *std.ArrayList([2]f64),
     p0: [2]f64,
     p1: [2]f64,
     p2: [2]f64,
@@ -49,7 +49,7 @@ pub fn flattenQuadratic(
 /// Recursively flattens a Cubic Bézier curve.
 pub fn flattenCubic(
     allocator: std.mem.Allocator,
-    points: *std.ArrayListUnmanaged([2]f64),
+    points: *std.ArrayList([2]f64),
     p0: [2]f64,
     p1: [2]f64,
     p2: [2]f64,

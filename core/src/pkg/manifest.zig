@@ -97,11 +97,11 @@ pub const Manifest = struct {
 
     /// Saves the current state back to kupcad.json deterministically
     pub fn save(self: *Manifest, fs: Vfs) !void {
-        var out_str: std.ArrayListUnmanaged(u8) = .empty;
+        var out_str: std.ArrayList(u8) = .empty;
         defer out_str.deinit(self.allocator);
 
         // Extract and sort keys for deterministic serialization
-        var keys: std.ArrayListUnmanaged([]const u8) = .empty;
+        var keys: std.ArrayList([]const u8) = .empty;
         defer keys.deinit(self.allocator);
 
         var key_it = self.dependencies.keyIterator();

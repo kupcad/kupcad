@@ -636,7 +636,7 @@ pub fn generatePolygonsEvenOdd(
     var twin_map = std.AutoHashMap(EdgeKey, topo_types.HalfEdgeIndex).init(allocator);
     defer twin_map.deinit();
 
-    var loops_verts = std.ArrayListUnmanaged([]topo_types.VertexIndex).empty;
+    var loops_verts = std.ArrayList([]topo_types.VertexIndex).empty;
     defer {
         for (loops_verts.items) |arr| allocator.free(arr);
         loops_verts.deinit(allocator);

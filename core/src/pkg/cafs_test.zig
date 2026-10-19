@@ -117,7 +117,7 @@ test "Cafs: extractTarball does not let a symlink entry plant files outside the 
     defer fx.deinit();
 
     try fx.tmp.dir.createDirPath(testing.io, "victim");
-    const victim = try std.fmt.allocPrint(testing.allocator, "{s}/victim", .{fx.tmp_path});
+    const victim = try testing.allocator.print("{s}/victim", .{fx.tmp_path});
     defer testing.allocator.free(victim);
 
     var map = try fx.extract(&.{
@@ -126,7 +126,7 @@ test "Cafs: extractTarball does not let a symlink entry plant files outside the 
     });
     defer freeMap(&map);
 
-    const planted = try std.fmt.allocPrint(testing.allocator, "{s}/planted.txt", .{victim});
+    const planted = try testing.allocator.print("{s}/planted.txt", .{victim});
     defer testing.allocator.free(planted);
     try testing.expect(!existsAbs(planted));
     try testing.expect(map.get("pkg/link") == null);
@@ -216,7 +216,7 @@ test "Cafs: failed extraction leaves no partial blobs or temp files" {
     } else |_| {}
 
     for ([_][]const u8{ "tmp", "files" }) |sub| {
-        const path = try std.fmt.allocPrint(testing.allocator, "{s}/{s}", .{ fx.tmp_path, sub });
+        const path = try testing.allocator.print("{s}/{s}", .{ fx.tmp_path, sub });
         defer testing.allocator.free(path);
         var dir = try std.Io.Dir.cwd().openDir(testing.io, path, .{ .iterate = true });
         defer dir.close(testing.io);

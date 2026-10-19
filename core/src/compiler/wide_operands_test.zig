@@ -45,13 +45,13 @@ const UNCOVERED = [_]struct { op: chunk.OpCode, reason: []const u8 }{
 
 comptime {
     @setEvalBranchQuota(100_000);
-    for (std.meta.fieldNames(chunk.OpCode)) |name| {
+    for (@typeInfo(chunk.OpCode).@"enum".field_names) |name| {
         if (!std.mem.endsWith(u8, name, "_wide")) continue;
         const op = @field(chunk.OpCode, name);
         const covered = for (CASES) |case| {
-            if (std.mem.indexOfScalar(chunk.OpCode, case.ops, op) != null) break true;
+            if (std.mem.findScalar(chunk.OpCode, case.ops, op) != null) break true;
         } else for (GENERATED_OPS) |case| {
-            if (std.mem.indexOfScalar(chunk.OpCode, case.ops, op) != null) break true;
+            if (std.mem.findScalar(chunk.OpCode, case.ops, op) != null) break true;
         } else for (UNCOVERED) |u| {
             if (u.op == op) break true;
         } else false;

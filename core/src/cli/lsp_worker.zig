@@ -169,7 +169,7 @@ const WorkerInbox = struct {
     // Guarded by `mutex`.
     mutex: std.Io.Mutex = .init,
     arrived: std.Io.Condition = .init,
-    queue: std.ArrayListUnmanaged(Frame) = .empty,
+    queue: std.ArrayList(Frame) = .empty,
     ended: bool = false,
 
     fn deinit(self: *WorkerInbox) void {
@@ -236,11 +236,11 @@ pub const WorkerPreview = struct {
     argv: []const []const u8,
     root: ?[]u8 = null,
     /// The open documents by module path, to give a new worker (keys and values owned).
-    documents: std.StringArrayHashMapUnmanaged([]u8) = .empty,
+    documents: std.array_hash_map.String([]u8) = .empty,
     worker: ?*Worker = null,
     cancel: std.atomic.Value(bool) = .init(false),
     /// What the last worker was running when it ended, until `takeCrash` hands it out.
-    crash: std.ArrayListUnmanaged(u8) = .empty,
+    crash: std.ArrayList(u8) = .empty,
     crashed: bool = false,
 
     const Worker = struct {

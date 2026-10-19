@@ -29,7 +29,7 @@ test "bench: a script without geometry has no evaluate phase, and the profile is
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
     try report.writeText(&out.writer, "x.kup");
-    try testing.expect(std.mem.indexOf(u8, out.written(), "no geometry to evaluate") != null);
+    try testing.expect(std.mem.find(u8, out.written(), "no geometry to evaluate") != null);
 }
 
 test "bench: an empty script is timed without anything to run or evaluate" {

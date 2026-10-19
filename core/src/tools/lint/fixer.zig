@@ -7,7 +7,7 @@ const linter = @import("linter.zig");
 /// whose edits overlap one already taken waits for the next pass (`api.fixCode` repeats),
 /// so no two fixes ever edit the same bytes. Caller owns the result.
 pub fn applySafeFixes(allocator: std.mem.Allocator, source: []const u8, diagnostics: []const linter.LinterDiagnostic) !?Applied {
-    var taken: std.ArrayListUnmanaged(linter.Edit) = .empty;
+    var taken: std.ArrayList(linter.Edit) = .empty;
     defer taken.deinit(allocator);
     var fixes: usize = 0;
     for (diagnostics) |d| {
@@ -23,7 +23,7 @@ pub fn applySafeFixes(allocator: std.mem.Allocator, source: []const u8, diagnost
             return a.offset < b.offset;
         }
     }.before);
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var copied: usize = 0;
     for (taken.items) |e| {

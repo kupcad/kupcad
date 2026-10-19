@@ -33,7 +33,7 @@ fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.
     // The build hands us a path relative to the build root; the child runs elsewhere.
     const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
     defer testing.allocator.free(exe);
-    var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+    var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(testing.allocator);
     try argv.append(testing.allocator, exe);
     try argv.appendSlice(testing.allocator, args);
@@ -96,10 +96,10 @@ fn expectRuns(cases: []const Expect) !void {
         }
         try testing.expectEqual(case.code, run.code);
         if (case.contains) |needle| {
-            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) != null or std.mem.indexOf(u8, run.stderr, needle) != null);
+            try testing.expect(std.mem.find(u8, run.stdout, needle) != null or std.mem.find(u8, run.stderr, needle) != null);
         }
         if (case.absent) |needle| {
-            try testing.expect(std.mem.indexOf(u8, run.stdout, needle) == null and std.mem.indexOf(u8, run.stderr, needle) == null);
+            try testing.expect(std.mem.find(u8, run.stdout, needle) == null and std.mem.find(u8, run.stderr, needle) == null);
         }
     }
 }
@@ -193,8 +193,8 @@ test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for th
         errdefer std.debug.print("$ kupcad {s}\n", .{args[0]});
         const plain = try kupcad(sb.path, args);
         defer plain.deinit();
-        try testing.expect(std.mem.indexOfScalar(u8, plain.stdout, 0x1b) == null);
-        try testing.expect(std.mem.indexOfScalar(u8, plain.stderr, 0x1b) == null);
+        try testing.expect(std.mem.findScalar(u8, plain.stdout, 0x1b) == null);
+        try testing.expect(std.mem.findScalar(u8, plain.stderr, 0x1b) == null);
     }
 
     var env = std.process.Environ.Map.init(testing.allocator);
@@ -202,7 +202,7 @@ test "kupcad: piped output has no colour codes unless CLICOLOR_FORCE asks for th
     try env.put("CLICOLOR_FORCE", "1");
     const forced = try kupcadIn(sb.path, &.{ "check", "semantic_error.kup" }, &env);
     defer forced.deinit();
-    try testing.expect(std.mem.indexOf(u8, forced.stderr, "\x1b[31m1 error") != null);
+    try testing.expect(std.mem.find(u8, forced.stderr, "\x1b[31m1 error") != null);
 }
 
 test "kupcad: check names each finding's rule, at the level .kupcad.json gives it" {
@@ -226,9 +226,9 @@ test "kupcad: check --fix doesn't print what the script prints" {
     defer run.deinit();
     errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
     try testing.expectEqual(@as(u8, 0), run.code);
-    try testing.expect(std.mem.indexOf(u8, run.stderr, "Fixed 1 problem") != null);
-    try testing.expect(std.mem.indexOf(u8, run.stdout, "from the script") == null and std.mem.indexOf(u8, run.stderr, "from the script") == null);
-    try testing.expect(std.mem.indexOf(u8, run.stdout, "Geometry") == null);
+    try testing.expect(std.mem.find(u8, run.stderr, "Fixed 1 problem") != null);
+    try testing.expect(std.mem.find(u8, run.stdout, "from the script") == null and std.mem.find(u8, run.stderr, "from the script") == null);
+    try testing.expect(std.mem.find(u8, run.stdout, "Geometry") == null);
     const fixed = try sb.tmp.dir.readFileAlloc(testing.io, "chatty.kup", testing.allocator, .limited(1024));
     defer testing.allocator.free(fixed);
     try testing.expect(std.mem.startsWith(u8, fixed, "_spare = 1\n"));
@@ -246,7 +246,7 @@ test "kupcad: dev bench prints its report, not what the script prints" {
         errdefer std.debug.print("stdout:\n{s}\nstderr:\n{s}\n", .{ run.stdout, run.stderr });
         try testing.expectEqual(@as(u8, 0), run.code);
         for ([_][]const u8{ "from the script", "Geometry", "inner" }) |noise| {
-            try testing.expect(std.mem.indexOf(u8, run.stdout, noise) == null and std.mem.indexOf(u8, run.stderr, noise) == null);
+            try testing.expect(std.mem.find(u8, run.stdout, noise) == null and std.mem.find(u8, run.stderr, noise) == null);
         }
     }
     // The JSON report is the whole of stdout, so it parses.
@@ -272,7 +272,7 @@ test "kupcad: check run in a subfolder uses the project's .kupcad.json above it"
     try testing.expectEqual(@as(u8, 1), run.code);
     const report = try std.mem.concat(testing.allocator, u8, &.{ run.stdout, run.stderr });
     defer testing.allocator.free(report);
-    try testing.expect(std.mem.indexOf(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
+    try testing.expect(std.mem.find(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
 }
 
 test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
@@ -302,7 +302,7 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     const unknown = try kupcadIn(sb.path, &.{ "pkg", "add", "parts=git.example.com/team/parts" }, &env);
     defer unknown.deinit();
     try testing.expectEqual(@as(u8, 1), unknown.code);
-    try testing.expect(std.mem.indexOf(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
+    try testing.expect(std.mem.find(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
 test "kupcad: build of a script in a subfolder imports its neighbours" {
@@ -338,7 +338,7 @@ test "kupcad: check --format json and sarif write one document to stdout" {
         // stdout is the document alone: it parses, and names the finding's rule.
         const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, run.stdout, .{});
         defer parsed.deinit();
-        try testing.expect(std.mem.indexOf(u8, run.stdout, "\"unused-variable\"") != null);
+        try testing.expect(std.mem.find(u8, run.stdout, "\"unused-variable\"") != null);
     }
 }
 
@@ -395,14 +395,14 @@ test "kupcad: KUPCAD_CRASH_DIR captures a panic and an abort, and nothing is wri
         const run = try kupcadIn(sb.path, &.{ "dev", "crash", how }, &env);
         defer run.deinit();
         try testing.expect(run.code != 0);
-        try testing.expect(std.mem.indexOf(u8, run.stderr, "kupcad: writing a crash report to ") != null);
+        try testing.expect(std.mem.find(u8, run.stderr, "kupcad: writing a crash report to ") != null);
     }
     const reports = try crashReports(dir);
     defer testing.allocator.free(reports.text);
     try testing.expectEqual(@as(usize, 2), reports.count);
-    try testing.expect(std.mem.indexOf(u8, reports.text, "\ncommand: dev\n") != null);
-    try testing.expect(std.mem.indexOf(u8, reports.text, "panic: kupcad dev crash: a deliberate panic\nstack:\n") != null);
-    try testing.expect(std.mem.indexOf(u8, reports.text, "signal: SIGABRT\n") != null);
+    try testing.expect(std.mem.find(u8, reports.text, "\ncommand: dev\n") != null);
+    try testing.expect(std.mem.find(u8, reports.text, "panic: kupcad dev crash: a deliberate panic\nstack:\n") != null);
+    try testing.expect(std.mem.find(u8, reports.text, "signal: SIGABRT\n") != null);
 }
 
 /// A `kupcad` process the test talks to on its stdin and stdout, its stderr discarded.
@@ -417,7 +417,7 @@ const Conversation = struct {
     fn start(self: *Conversation, cwd: []const u8, args: []const []const u8) !void {
         const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
         defer testing.allocator.free(exe);
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(testing.allocator);
         try argv.append(testing.allocator, exe);
         try argv.appendSlice(testing.allocator, args);
@@ -479,12 +479,12 @@ const Conversation = struct {
     }
 
     /// The server's answer to request `id`; the notifications before it go to `seen`.
-    fn answer(self: *Conversation, id: u32, seen: *std.ArrayListUnmanaged(u8)) ![]u8 {
+    fn answer(self: *Conversation, id: u32, seen: *std.ArrayList(u8)) ![]u8 {
         var needle_buf: [32]u8 = undefined;
-        const needle = try std.fmt.bufPrint(&needle_buf, "\"id\":{d},", .{id});
+        const needle = try std.mem.print(&needle_buf, "\"id\":{d},", .{id});
         while (true) {
             const msg = try self.receiveJson();
-            if (std.mem.indexOf(u8, msg, needle) != null) return msg;
+            if (std.mem.find(u8, msg, needle) != null) return msg;
             defer testing.allocator.free(msg);
             try seen.appendSlice(testing.allocator, msg);
         }
@@ -536,44 +536,44 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
 
 test "kupcad: lsp runs scripts in a worker, and a worker that dies is replaced" {
     const builtin = @import("builtin");
-    if (builtin.os.tag != .linux and !builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
     var sb = try Sandbox.init();
     defer sb.deinit();
     var server: Conversation = undefined;
     try server.start(sb.path, &.{"lsp"});
     errdefer server.child.kill(testing.io);
-    var seen: std.ArrayListUnmanaged(u8) = .empty;
+    var seen: std.ArrayList(u8) = .empty;
     defer seen.deinit(testing.allocator);
 
     var root_buf: [1024]u8 = undefined;
-    const root = try std.fmt.bufPrint(&root_buf, "file://{s}", .{sb.path});
+    const root = try std.mem.print(&root_buf, "file://{s}", .{sb.path});
     var msg_buf: [2048]u8 = undefined;
-    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"{s}\"}}}}", .{root}));
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"{s}\"}}}}", .{root}));
     testing.allocator.free(try server.answer(1, &seen));
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
-    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"a = cube(2)\\n\"}}}}}}", .{root}));
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"a = cube(2)\\n\"}}}}}}", .{root}));
     const hover_fmt = "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"textDocument/hover\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\"}},\"position\":{{\"line\":0,\"character\":0}}}}}}";
-    try server.sendJson(try std.fmt.bufPrint(&msg_buf, hover_fmt, .{ 2, root }));
+    try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 2, root }));
     const first = try server.answer(2, &seen);
     defer testing.allocator.free(first);
-    try testing.expect(std.mem.indexOf(u8, first, "**Volume:** `8.00`") != null);
+    try testing.expect(std.mem.find(u8, first, "**Volume:** `8.00`") != null);
 
     // The worker is the server's one child: kill it, as a crash would end it.
     var pid_buf: [16]u8 = undefined;
-    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.fmt.bufPrint(&pid_buf, "{d}", .{server.child.id.?}) } });
+    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.mem.print(&pid_buf, "{d}", .{server.child.id.?}) } });
     testing.allocator.free(pkill.stdout);
     testing.allocator.free(pkill.stderr);
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
 
-    try server.sendJson(try std.fmt.bufPrint(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"a = cube(3)\\n\"}}]}}}}", .{root}));
-    try server.sendJson(try std.fmt.bufPrint(&msg_buf, hover_fmt, .{ 3, root }));
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"a = cube(3)\\n\"}}]}}}}", .{root}));
+    try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 3, root }));
     const second = try server.answer(3, &seen);
     defer testing.allocator.free(second);
-    try testing.expect(std.mem.indexOf(u8, second, "**Volume:** `27.00`") != null);
+    try testing.expect(std.mem.find(u8, second, "**Volume:** `27.00`") != null);
 
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}");
     testing.allocator.free(try server.answer(4, &seen));
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
-    try testing.expect(std.mem.indexOf(u8, seen.items, "the worker process running scripts for the preview and hovers crashed") != null);
+    try testing.expect(std.mem.find(u8, seen.items, "the worker process running scripts for the preview and hovers crashed") != null);
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
 }

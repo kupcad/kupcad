@@ -167,7 +167,7 @@ pub fn emitLoop(self: *Compiler, loop_start: usize) CompileError!void {
 pub fn makeMethodNameConstant(self: *Compiler, name: []const u8, is_private: bool) CompileError!usize {
     if (is_private) {
         var name_buf: [256]u8 = undefined;
-        const mangled_name = std.fmt.bufPrint(&name_buf, "@private:{s}", .{name}) catch return error.OutOfMemory;
+        const mangled_name = std.mem.print(&name_buf, "@private:{s}", .{name}) catch return error.OutOfMemory;
         return self.makeStringConstant(mangled_name);
     }
     return self.makeStringConstant(name);

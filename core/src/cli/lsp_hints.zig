@@ -38,7 +38,7 @@ const Walker = struct {
     arena: std.mem.Allocator,
     doc: *const Document,
     shapes: Shapes = .{},
-    found: std.ArrayListUnmanaged(Hint) = .empty,
+    found: std.ArrayList(Hint) = .empty,
 
     pub fn enterNode(self: *Walker, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const node = tree.getNode(node_idx) orelse return;
@@ -49,7 +49,7 @@ const Walker = struct {
         const call = tree.methodCall(node);
         const signature = self.signatureOf(tree, call) orelse return;
 
-        var positional: std.ArrayListUnmanaged(ast.NodeIndex) = .empty;
+        var positional: std.ArrayList(ast.NodeIndex) = .empty;
         for (tree.getNamedArgs(call.args)) |arg| {
             if (arg.name != .none) continue;
             // After a splat (`cube(*dims)`) the positions are unknown.

@@ -63,7 +63,7 @@ const Server = struct {
         const response: []const u8, const location: []const u8 = if (std.mem.eql(u8, path, "/start"))
             .{ "302 Found", "hop" }
         else if (std.mem.eql(u8, path, "/hop"))
-            .{ "301 Moved Permanently", try std.fmt.bufPrint(&location_buf, "http://127.0.0.1:{d}/done", .{self.port}) }
+            .{ "301 Moved Permanently", try std.mem.print(&location_buf, "http://127.0.0.1:{d}/done", .{self.port}) }
         else if (std.mem.eql(u8, path, "/loop"))
             .{ "302 Found", "/loop" }
         else
@@ -72,7 +72,7 @@ const Server = struct {
         while (true) {
             const line = try reader.interface.takeDelimiterInclusive('\n');
             if (std.mem.eql(u8, line, "\r\n")) break;
-            if (std.ascii.startsWithIgnoreCase(line, "accept-encoding:") and std.mem.indexOf(u8, line, "identity") == null) return error.CompressionRequested;
+            if (std.ascii.startsWithIgnoreCase(line, "accept-encoding:") and std.mem.find(u8, line, "identity") == null) return error.CompressionRequested;
         }
         var w_buf: [512]u8 = undefined;
         var writer = stream.writer(testing.io, &w_buf);
@@ -96,7 +96,7 @@ test "HTTP client: Get follows relative and absolute redirects itself" {
     defer testing.allocator.destroy(get);
 
     var url_buf: [64]u8 = undefined;
-    var response = try get.send(&client, try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/start", .{server.port}));
+    var response = try get.send(&client, try std.mem.print(&url_buf, "http://127.0.0.1:{d}/start", .{server.port}));
     defer get.deinit();
     try testing.expectEqual(std.http.Status.ok, response.head.status);
     const body = try response.reader(&.{}).allocRemaining(testing.allocator, .limited(64));
@@ -115,7 +115,7 @@ test "HTTP client: Get stops after MAX_REDIRECTS" {
     defer testing.allocator.destroy(get);
 
     var url_buf: [64]u8 = undefined;
-    try testing.expectError(error.TooManyHttpRedirects, get.send(&client, try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/loop", .{server.port})));
+    try testing.expectError(error.TooManyHttpRedirects, get.send(&client, try std.mem.print(&url_buf, "http://127.0.0.1:{d}/loop", .{server.port})));
     server.stop(); // joins the server, so `served` is final
     try testing.expectEqual(http_client.MAX_REDIRECTS + 1, server.served);
 }

@@ -143,7 +143,7 @@ pub const Lockfile = struct {
         defer aw.deinit();
         const w = &aw.writer;
 
-        var pkg_keys: std.ArrayListUnmanaged([]const u8) = .empty;
+        var pkg_keys: std.ArrayList([]const u8) = .empty;
         defer pkg_keys.deinit(self.allocator);
 
         var pkg_it = self.packages.keyIterator();
@@ -172,7 +172,7 @@ pub const Lockfile = struct {
                 if (locked_pkg.dependencies.count() > 0) {
                     try w.writeAll(",\n      \"dependencies\": {\n");
 
-                    var dep_keys: std.ArrayListUnmanaged([]const u8) = .empty;
+                    var dep_keys: std.ArrayList([]const u8) = .empty;
                     defer dep_keys.deinit(self.allocator);
                     var dep_it = locked_pkg.dependencies.keyIterator();
                     while (dep_it.next()) |k| try dep_keys.append(self.allocator, k.*);

@@ -23,7 +23,7 @@ pub const GC = struct {
     allocator: std.mem.Allocator,
 
     // Explicit Grey Stack to prevent C-Stack Overflow
-    gray_stack: std.ArrayListUnmanaged(*value.Obj) = .empty,
+    gray_stack: std.ArrayList(*value.Obj) = .empty,
 
     /// Objects that live as long as the VM: every native (they come from the standard
     /// library's tables) and the static names the library registers things under
@@ -34,24 +34,24 @@ pub const GC = struct {
     builtins: std.heap.ArenaAllocator,
 
     // --- Segregated Object Tracking Arrays (Data-Oriented Design) ---
-    strings: std.ArrayListUnmanaged(*value.ObjString) = .empty,
-    symbols: std.ArrayListUnmanaged(*value.ObjSymbol) = .empty,
-    arrays: std.ArrayListUnmanaged(*value.ObjArray) = .empty,
-    maps: std.ArrayListUnmanaged(*value.ObjMap) = .empty,
-    functions: std.ArrayListUnmanaged(*value.ObjFunction) = .empty,
-    classes: std.ArrayListUnmanaged(*value.ObjClass) = .empty,
-    modules: std.ArrayListUnmanaged(*value.ObjModule) = .empty,
-    instances: std.ArrayListUnmanaged(*value.ObjInstance) = .empty,
-    closures: std.ArrayListUnmanaged(*value.ObjClosure) = .empty,
-    upvalues: std.ArrayListUnmanaged(*value.ObjUpvalue) = .empty,
-    bound_methods: std.ArrayListUnmanaged(*value.ObjBoundMethod) = .empty,
-    ranges: std.ArrayListUnmanaged(*value.ObjRange) = .empty,
-    bboxes: std.ArrayListUnmanaged(*value.ObjBBox) = .empty,
+    strings: std.ArrayList(*value.ObjString) = .empty,
+    symbols: std.ArrayList(*value.ObjSymbol) = .empty,
+    arrays: std.ArrayList(*value.ObjArray) = .empty,
+    maps: std.ArrayList(*value.ObjMap) = .empty,
+    functions: std.ArrayList(*value.ObjFunction) = .empty,
+    classes: std.ArrayList(*value.ObjClass) = .empty,
+    modules: std.ArrayList(*value.ObjModule) = .empty,
+    instances: std.ArrayList(*value.ObjInstance) = .empty,
+    closures: std.ArrayList(*value.ObjClosure) = .empty,
+    upvalues: std.ArrayList(*value.ObjUpvalue) = .empty,
+    bound_methods: std.ArrayList(*value.ObjBoundMethod) = .empty,
+    ranges: std.ArrayList(*value.ObjRange) = .empty,
+    bboxes: std.ArrayList(*value.ObjBBox) = .empty,
 
-    geometries: std.ArrayListUnmanaged(*value.ObjGeometry) = .empty,
-    cross_sections: std.ArrayListUnmanaged(*value.ObjCrossSection) = .empty,
-    assemblies: std.ArrayListUnmanaged(*value.ObjAssembly) = .empty,
-    workplanes: std.ArrayListUnmanaged(*value.ObjWorkplane) = .empty,
+    geometries: std.ArrayList(*value.ObjGeometry) = .empty,
+    cross_sections: std.ArrayList(*value.ObjCrossSection) = .empty,
+    assemblies: std.ArrayList(*value.ObjAssembly) = .empty,
+    workplanes: std.ArrayList(*value.ObjWorkplane) = .empty,
 
     // GC triggering metrics
     bytes_allocated: usize,
@@ -237,7 +237,7 @@ pub const GC = struct {
     }
 
     /// Generic allocator that appends directly to the specific tracking list
-    inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T), obj_type: value.ObjType) !*T {
+    inline fn allocateObject(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayList(*T), obj_type: value.ObjType) !*T {
         if (self.stress or self.bytes_allocated + @sizeOf(T) > self.collectionThreshold()) {
             self.collectGarbage(vm, false);
         }
@@ -645,7 +645,7 @@ pub const GC = struct {
 
     // --- DOD Segmented Sweep ---
 
-    fn sweepList(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayListUnmanaged(*T)) void {
+    fn sweepList(self: *GC, vm: *VM, comptime T: type, list: *std.ArrayList(*T)) void {
         var i: usize = 0;
         while (i < list.items.len) {
             const ptr = list.items[i];
@@ -714,7 +714,7 @@ pub const GC = struct {
 
     /// Destroys the results in `cache` whose node isn't `live`, and drops them.
     fn evictUnreferenced(self: *GC, comptime Handle: type, cache: *std.AutoHashMapUnmanaged(u64, Handle), live: *const std.AutoHashMapUnmanaged(u64, void), comptime destroy: anytype) void {
-        var stale: std.ArrayListUnmanaged(u64) = .empty;
+        var stale: std.ArrayList(u64) = .empty;
         defer stale.deinit(self.allocator);
         stale.ensureTotalCapacity(self.allocator, cache.count()) catch return;
         var it = cache.iterator();

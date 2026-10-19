@@ -46,7 +46,7 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
                 if (vm.line_index) |li| {
                     const line = li.getLine(source_offset) + 1;
                     const col = li.getUtf8Column(source_offset) + 1;
-                    loc_prefix = std.fmt.bufPrint(&loc_buf, "[line {d}, col {d}] ", .{ line, col }) catch "";
+                    loc_prefix = std.mem.print(&loc_buf, "[line {d}, col {d}] ", .{ line, col }) catch "";
                 }
             }
         }

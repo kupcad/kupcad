@@ -508,15 +508,15 @@ test "VM: Exception objects capture first-class error backtraces" {
     // Verify EXACT Ruby-style formatting
     const frame1 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[0].asObj()))).chars;
     try testing.expect(std.mem.startsWith(u8, frame1, "    from script:"));
-    try testing.expect(std.mem.indexOf(u8, frame1, "in 'level_one'") != null);
+    try testing.expect(std.mem.find(u8, frame1, "in 'level_one'") != null);
 
     const frame2 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[1].asObj()))).chars;
     try testing.expect(std.mem.startsWith(u8, frame2, "    from script:"));
-    try testing.expect(std.mem.indexOf(u8, frame2, "in 'level_two'") != null);
+    try testing.expect(std.mem.find(u8, frame2, "in 'level_two'") != null);
 
     const frame3 = @as(*value.ObjString, @alignCast(@fieldParentPtr("obj", arr_obj.items.items[2].asObj()))).chars;
     try testing.expect(std.mem.startsWith(u8, frame3, "    from script:"));
-    try testing.expect(std.mem.indexOf(u8, frame3, "in 'script'") != null);
+    try testing.expect(std.mem.find(u8, frame3, "in 'script'") != null);
 }
 
 test "VM Syntax: break statement inside block unwinds iterator and yields value directly" {
@@ -875,8 +875,8 @@ test "VM Edge Case: raise auto-wraps Map primitives into RuntimeError with strin
 
     // Map stringification order can be unpredictable depending on the underlying hash,
     // so we verify that the formatted contents exist securely within the output.
-    try testing.expect(std.mem.indexOf(u8, str_obj.chars, "404") != null);
-    try testing.expect(std.mem.indexOf(u8, str_obj.chars, "error_code") != null);
+    try testing.expect(std.mem.find(u8, str_obj.chars, "404") != null);
+    try testing.expect(std.mem.find(u8, str_obj.chars, "error_code") != null);
 }
 
 test "VM Edge Case: Exception raised inside a rescue block is caught by outer rescue" {
@@ -1416,7 +1416,7 @@ test "VM: exception raised by a native is thrown once and execution continues" {
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
 
-        const source = try std.fmt.allocPrint(testing.allocator,
+        const source = try testing.allocator.print(
             \\inner = 0
             \\outer = 0
             \\msg = nil
@@ -1439,7 +1439,7 @@ test "VM: exception raised by a native is thrown once and execution continues" {
         try testing.expectEqual(@as(f64, 0), vm.globals.get("outer").?.asNumber());
         const msg = vm.globals.get("msg").?;
         try testing.expect(msg.isString());
-        try testing.expect(std.mem.indexOf(u8, msg.asString().chars, case.message) != null);
+        try testing.expect(std.mem.find(u8, msg.asString().chars, case.message) != null);
         try expectGlobalString(&vm, "after", "continued");
     }
 }
@@ -1470,7 +1470,7 @@ test "VM: raise of a non-exception payload wraps it in a RuntimeError that survi
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
 
-        const source = try std.fmt.allocPrint(testing.allocator,
+        const source = try testing.allocator.print(
             \\result = begin
             \\  raise({s})
             \\rescue RuntimeError => e
@@ -1486,7 +1486,7 @@ test "VM: raise of a non-exception payload wraps it in a RuntimeError that survi
         try expectGlobalString(&vm, "after", "continued");
         const trace = vm.globals.get("trace") orelse return error.MissingGlobal;
         try testing.expect(trace.isString());
-        try testing.expect(std.mem.indexOf(u8, trace.asString().chars, "from script") != null);
+        try testing.expect(std.mem.find(u8, trace.asString().chars, "from script") != null);
     }
 }
 
@@ -1553,7 +1553,7 @@ test "VM: every runtime error kind is a registered StandardError subclass" {
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     const standard_error = (vm.globals.get("StandardError") orelse return error.MissingGlobal).asClass();
-    inline for (comptime std.meta.fieldNames(ErrorKind)) |name| {
+    inline for (comptime @typeInfo(ErrorKind).@"enum".field_names) |name| {
         const class = vm.error_classes.get(@field(ErrorKind, name)) orelse return error.MissingClass;
         try testing.expectEqualStrings(name, class.name.chars);
         try testing.expectEqual(class, (vm.globals.get(name) orelse return error.MissingGlobal).asClass());
@@ -1584,7 +1584,7 @@ test "VM: runtime errors have their own class and a message without a class pref
         var out_chunk = chunk.Chunk.init();
         defer out_chunk.free(testing.allocator);
         // Rescued by its own class: StandardError comes second, so a wrong class shows up as "other".
-        const source = try std.fmt.allocPrint(testing.allocator,
+        const source = try testing.allocator.print(
             \\r = begin
             \\  {s}
             \\  "no error"

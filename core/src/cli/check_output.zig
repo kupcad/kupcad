@@ -48,7 +48,7 @@ const Finding = struct {
 /// The findings of a run, kept until it ends and written as one document.
 pub const Collector = struct {
     arena: std.heap.ArenaAllocator,
-    findings: std.ArrayListUnmanaged(Finding) = .empty,
+    findings: std.ArrayList(Finding) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Collector {
         return .{ .arena = .init(allocator) };
@@ -175,7 +175,7 @@ pub const Counts = struct { files: usize, errors: usize, warnings: usize, infos:
 /// A file path as a SARIF artifact URI: forward slashes, with every byte outside RFC
 /// 3986's unreserved set (and `/`) percent-encoded.
 fn pathUri(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    var out: std.ArrayListUnmanaged(u8) = .empty;
+    var out: std.ArrayList(u8) = .empty;
     for (path) |c| {
         const separator = c == '/' or c == '\\';
         const unreserved = std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
@@ -185,7 +185,7 @@ fn pathUri(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
             try out.append(allocator, c);
         } else {
             var hex: [3]u8 = undefined;
-            _ = std.fmt.bufPrint(&hex, "%{X:0>2}", .{c}) catch unreachable;
+            _ = std.mem.print(&hex, "%{X:0>2}", .{c}) catch unreachable;
             try out.appendSlice(allocator, &hex);
         }
     }

@@ -21,7 +21,7 @@ pub const Profiler = struct {
     allocator: std.mem.Allocator,
     io: std.Io, // Required for Clock reading
     stats: std.StringHashMapUnmanaged(ProfileStats),
-    timer_stack: std.ArrayListUnmanaged(FrameTimer),
+    timer_stack: std.ArrayList(FrameTimer),
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Profiler {
         return .{
@@ -88,7 +88,7 @@ pub const Profiler = struct {
 
     /// Dumps the aggregated profile sorted by Self Time (Descending)
     pub fn dumpProfile(self: *Profiler, writer: anytype) !void {
-        var entries: std.ArrayListUnmanaged(ProfileStats) = .empty;
+        var entries: std.ArrayList(ProfileStats) = .empty;
         defer entries.deinit(self.allocator);
 
         var it = self.stats.iterator();

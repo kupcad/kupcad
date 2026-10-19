@@ -11,7 +11,7 @@ const OWN_ROOTS = [_][]const u8{ "main_test.zig", "wasm_test.zig", "cli_process_
 const SKIPPED_TREES = [_][]const u8{"locus/"};
 
 test "Tests: every *_test.zig under src/ is registered in root.zig or main.zig" {
-    var registered: std.ArrayListUnmanaged(u8) = .empty;
+    var registered: std.ArrayList(u8) = .empty;
     defer registered.deinit(testing.allocator);
     for ([_][]const u8{ "src/root.zig", "src/main.zig" }) |registry| {
         const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, registry, testing.allocator, .limited(1 << 20));
@@ -30,9 +30,9 @@ test "Tests: every *_test.zig under src/ is registered in root.zig or main.zig" 
         for (OWN_ROOTS) |own| skip = skip or std.mem.eql(u8, entry.path, own);
         for (SKIPPED_TREES) |tree| skip = skip or std.mem.startsWith(u8, entry.path, tree);
         if (skip) continue;
-        const quoted = try std.fmt.allocPrint(testing.allocator, "\"{s}\"", .{entry.path});
+        const quoted = try testing.allocator.print("\"{s}\"", .{entry.path});
         defer testing.allocator.free(quoted);
-        if (std.mem.indexOf(u8, registered.items, quoted) == null) {
+        if (std.mem.find(u8, registered.items, quoted) == null) {
             std.debug.print("unregistered test file: src/{s}\n", .{entry.path});
             missing += 1;
         }

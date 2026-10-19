@@ -50,7 +50,7 @@ const OUTPUT_EXTENSIONS = [_]struct { ext: []const u8, format: Format }{
 /// "stl, glb, gltf, step", for error messages.
 const FORMAT_LIST = blk: {
     var list: []const u8 = "";
-    for (std.meta.fieldNames(Format), 0..) |name, i| list = list ++ (if (i == 0) "" else ", ") ++ name;
+    for (@typeInfo(Format).@"enum".field_names, 0..) |name, i| list = list ++ (if (i == 0) "" else ", ") ++ name;
     break :blk list;
 };
 
@@ -92,7 +92,7 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
 /// `name=value` from `--param`: the name is everything before the first `=`, so
 /// `w=1=2` is a bad number rather than `w=1`, and the value is finite, as script numbers are.
 fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName, NotANumber }!struct { name: []const u8, value: f64 } {
-    const eq = std.mem.indexOfScalar(u8, pair, '=') orelse return error.MissingEquals;
+    const eq = std.mem.findScalar(u8, pair, '=') orelse return error.MissingEquals;
     if (eq == 0) return error.EmptyName;
     const val = std.fmt.parseFloat(f64, pair[eq + 1 ..]) catch return error.NotANumber;
     if (!std.math.isFinite(val)) return error.NotANumber;
@@ -141,7 +141,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
                 switch (err) {
                     error.MissingEquals => reporter.err("Error: Invalid param format. Use --param key=value.\n", .{}),
                     error.EmptyName => reporter.err("Error: Param '{s}' has no name. Use --param key=value.\n", .{pair}),
-                    error.NotANumber => reporter.err("Error: Param value must be a finite number. Got '{s}'\n", .{pair[std.mem.indexOfScalar(u8, pair, '=').? + 1 ..]}),
+                    error.NotANumber => reporter.err("Error: Param value must be a finite number. Got '{s}'\n", .{pair[std.mem.findScalar(u8, pair, '=').? + 1 ..]}),
                 }
                 return .failure;
             };

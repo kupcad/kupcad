@@ -9,7 +9,7 @@ test "gen_grammar: generates valid JSON using std.json" {
     const output = try gen_grammar.generateTextMateJson(allocator);
     defer allocator.free(output);
 
-    if (std.mem.indexOf(u8, output, "\"KupCAD\"") == null) {
+    if (std.mem.find(u8, output, "\"KupCAD\"") == null) {
         std.debug.print("\n--- JSON OUTPUT WAS ---\n{s}\n-----------------------\n", .{output});
         return error.TestUnexpectedResult;
     }
@@ -28,7 +28,7 @@ test "gen_grammar: generates valid JSON using std.json" {
 
 fn containsWord(haystack: []const u8, word: []const u8) bool {
     var start: usize = 0;
-    while (std.mem.indexOfPos(u8, haystack, start, word)) |i| : (start = i + 1) {
+    while (std.mem.findPos(u8, haystack, start, word)) |i| : (start = i + 1) {
         const before_ok = i == 0 or !std.ascii.isAlphanumeric(haystack[i - 1]);
         const end = i + word.len;
         const after_ok = end == haystack.len or !std.ascii.isAlphanumeric(haystack[end]);
@@ -73,13 +73,13 @@ test "gen_grammar: a \\u escape is highlighted whole" {
     const json = try gen_grammar.generateTextMateJson(testing.allocator);
     defer testing.allocator.free(json);
     // In the JSON, each backslash of the pattern is written twice
-    try testing.expect(std.mem.indexOf(u8, json, "\\\\\\\\(?:u\\\\{[0-9A-Fa-f]{1,6}\\\\}|u[0-9A-Fa-f]{4}|.)") != null);
+    try testing.expect(std.mem.find(u8, json, "\\\\\\\\(?:u\\\\{[0-9A-Fa-f]{1,6}\\\\}|u[0-9A-Fa-f]{4}|.)") != null);
 }
 
 test "gen_grammar: single-quoted strings are strings, with only \\\\ and \\' as escapes" {
     const json = try gen_grammar.generateTextMateJson(testing.allocator);
     defer testing.allocator.free(json);
-    try testing.expect(std.mem.indexOf(u8, json, "string.quoted.single.kupcad") != null);
+    try testing.expect(std.mem.find(u8, json, "string.quoted.single.kupcad") != null);
     // In the JSON, each backslash of the pattern is written twice
-    try testing.expect(std.mem.indexOf(u8, json, "\"\\\\\\\\['\\\\\\\\]\"") != null);
+    try testing.expect(std.mem.find(u8, json, "\"\\\\\\\\['\\\\\\\\]\"") != null);
 }

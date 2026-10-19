@@ -984,7 +984,7 @@ test "Lexer: String interpolation limits" {
     // Builds dynamically nested strings: "#{ "#{ ... }" }"
     const buildNestedString = struct {
         fn build(alloc: std.mem.Allocator, depth: usize) ![]u8 {
-            var buf: std.ArrayListUnmanaged(u8) = .empty;
+            var buf: std.ArrayList(u8) = .empty;
             errdefer buf.deinit(alloc);
             for (0..depth) |_| try buf.appendSlice(alloc, "\"#{");
             try buf.appendSlice(alloc, "1");

@@ -11,7 +11,7 @@ const MTIME_BUMP_NS: i96 = std.time.ns_per_s;
 
 /// Records what the watcher reports.
 const Recorder = struct {
-    events: std.ArrayListUnmanaged(std.meta.Tag(watcher_mod.Event)) = .empty,
+    events: std.ArrayList(std.meta.Tag(watcher_mod.Event)) = .empty,
     failed_module_path: ?[]const u8 = null,
     session: *ScriptSession,
 

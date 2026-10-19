@@ -108,7 +108,7 @@ pub const Diagnostic = struct {
 
 pub const Diagnostics = struct {
     allocator: std.mem.Allocator,
-    list: std.ArrayListUnmanaged(Diagnostic) = .empty,
+    list: std.ArrayList(Diagnostic) = .empty,
     /// A diagnostic could not be stored (out of memory). `add` is called where errors
     /// can't propagate, so the owner checks this instead: a dropped syntax error must
     /// not let the source pass as valid.
