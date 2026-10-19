@@ -14,6 +14,7 @@ const range_class = @import("classes/range.zig");
 const symbol_class = @import("classes/symbol.zig");
 const boolean_class = @import("classes/boolean.zig");
 const bbox_class = @import("classes/bbox.zig");
+const font_class = @import("classes/font.zig");
 const gc_class = @import("classes/gc.zig");
 const math_class = @import("classes/math.zig");
 const cad_class = @import("classes/cad.zig");
@@ -40,6 +41,7 @@ pub fn registerCoreClasses(vm: *VM) !void {
     if (vm.symbol_class) |cls| try bindMethods(vm, cls, "Symbol#", &symbol_class.methods);
     if (vm.boolean_class) |cls| try bindMethods(vm, cls, "Boolean#", &boolean_class.methods);
     if (vm.bbox_class) |cls| try bindMethods(vm, cls, "BoundingBox#", &bbox_class.methods);
+    if (vm.font_class) |cls| try bindMethods(vm, cls, "Font#", &font_class.methods);
     if (vm.globals.get("GC")) |v| try bindMethods(vm, v.asInstance().class, "GC.", &gc_class.methods);
     if (vm.globals.get("Math")) |v| try bindMethods(vm, v.asInstance().class, "Math.", &math_class.methods);
     if (vm.globals.get("CAD")) |v| try bindMethods(vm, v.asInstance().class, "CAD.", &cad_class.methods);

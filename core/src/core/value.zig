@@ -59,6 +59,7 @@ pub const ObjType = enum(u8) {
     geometry,
     assembly,
     workplane,
+    font,
 };
 
 /// The Base Header for ALL heap-allocated objects.
@@ -323,6 +324,15 @@ pub const ObjAssembly = struct {
     parts: *ObjArray,
 };
 
+/// A font file a script imported (`import label from "./Inter.ttf"`, class Font), for
+/// `text(font:)`: its bytes as read, owned and counted against the VM's memory, which a
+/// face is parsed from at each use (a face borrows them), and its name, the font's own.
+pub const ObjFont = struct {
+    obj: Obj,
+    bytes: []u8,
+    name: *ObjString,
+};
+
 /// Signature for all Native CAD Built-ins. Takes an opaque VM pointer to avoid circular
 /// imports. Most natives are typed Zig functions turned into this by stdlib/classes/common.zig.
 pub const NativeFn = *const fn (vm: *anyopaque, args: NativeArgs) anyerror!Value;
@@ -475,6 +485,9 @@ pub const Value = packed struct {
     pub inline fn isAssembly(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .assembly;
     }
+    pub inline fn isFont(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .font;
+    }
     pub inline fn isBoundMethod(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .bound_method;
     }
@@ -556,6 +569,11 @@ pub const Value = packed struct {
 
     pub inline fn asAssembly(self: Value) *ObjAssembly {
         std.debug.assert(self.isAssembly());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asFont(self: Value) *ObjFont {
+        std.debug.assert(self.isFont());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
@@ -652,6 +670,11 @@ pub const Value = packed struct {
                     try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
+                // puts and interpolation give its name, inspect says what it is too
+                .font => {
+                    const name = obj.as(ObjFont).name.chars;
+                    if (is_inspect) try writer.print("#<Font {s}>", .{name}) else try writer.writeAll(name);
+                },
                 .bbox => {
                     const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
                     const f = fmtNumber;

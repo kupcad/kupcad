@@ -18,7 +18,7 @@ const MAX_DEPTH = 64;
 
 /// What each hashed value starts with, so a String and a Symbol of one name, or an empty
 /// Array and an empty Map, hash apart.
-const Kind = enum(u8) { nil, false, true, number, string, symbol, shape, sketch, array, map, json_object, bounding_box, range };
+const Kind = enum(u8) { nil, false, true, number, string, symbol, shape, sketch, array, map, json_object, bounding_box, range, font };
 
 /// Hashes the exports of the script `vm` last ran into `hasher`; false when one of them
 /// isn't hashed by content (what is hashed so far stays in).
@@ -70,6 +70,12 @@ fn hashValue(hasher: *std.hash.Wyhash, node_hashes: []const u64, v: value.Value,
             hasher.update(std.mem.asBytes(&[_]f64{ r.start, r.end, r.step }));
             hasher.update(&.{@intFromBool(r.is_exclusive)});
             return true;
+        },
+        // Its file's bytes, and its name, which may be the file's
+        .font => {
+            const font = v.asFont();
+            _ = chars(hasher, .font, font.bytes);
+            return chars(hasher, .string, font.name.chars);
         },
         else => return false,
     }

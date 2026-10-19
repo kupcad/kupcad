@@ -266,7 +266,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |
 | `import-attribute` | An import's `with { }` with a key other than `type`, or a type that names nothing an import reads (`with { type: "yaml" }`). |
-| `file-import-names` | An import or re-export of a mesh (STL, STEP) in braces (`import { teeth } from "./gear.stl"`): it has no names in it, so its one value is named bare (`import gear from "./gear.stl"`); or of any file naming more than one variable without braces. |
+| `file-import-names` | An import or re-export of a mesh (STL, STEP) or a font in braces (`import { teeth } from "./gear.stl"`): it has no names in it, so its one value is named bare (`import gear from "./gear.stl"`); or of any file naming more than one variable without braces. |
 | `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
 | `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
 | `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
@@ -297,7 +297,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `RangeError` | A number outside a representable range: arithmetic that overflows (`2 ** 1024`; numbers are 64-bit floats, so beyond ±1.8e308 there is no number), bitwise operands, shift counts. A script that needs a non-finite value writes `Number::INFINITY` or `Number::NAN` |
 | `ZeroDivisionError`, `MathError` | Division by zero, an operation producing `NaN` |
 | `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
-| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`) that can't be read |
+| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`) or a font (`import_font`) that can't be read |
 | `NotImplementedError` | A feature the active engine doesn't support yet |
 | `GeometryError` | The geometry kernel failed an operation or produced an invalid solid (e.g. a `polyhedron` that isn't a closed manifold) |
 | `AssertionError` | A failed `assert` |
@@ -508,7 +508,7 @@ logo = import_stl("assets/logo.stl")
 
 A relative import (`"./hardware.kup"`, `"../lib/units.kup"`, `"./logo.stl"`) names a file next to the one that imports it, so `kupcad build parts/main.kup` and the files it imports agree on where `./` is. Imports stay inside the project (the directory `kupcad` runs in, or the folder the editor opened): one that climbs out of it is refused. Any other name is a package, by its alias.
 
-An import whose path ends in `.stl`, `.step` (or `.stp`) or `.json`, in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"` or `"json"`, as a string or a symbol, and it wins over the extension:
+An import whose path ends in `.stl`, `.step` (or `.stp`), `.json`, or `.ttf` or `.otf` (a font), in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"`, `"json"` or `"font"`, as a string or a symbol, and it wins over the extension:
 
 ```ruby
 import scan from "./scan.bin" with { type: "stl" }
@@ -516,7 +516,7 @@ import machine from "./machine.data" with { type: :json }
 import { bolt } from "./bolt.txt" with { type: "kup" }
 ```
 
-`with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file gives one value, named by one variable without braces: `import gears from "./gears.json"`. Braces name what is in a JSON file's object, its keys (see below); a mesh has no names in it, so `import { teeth } from "./gear.stl"` is the syntax error `file-import-names`.
+`with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file gives one value, named by one variable without braces: `import gears from "./gears.json"`. Braces name what is in a JSON file's object, its keys (see below); a mesh or a font has no names in it, so `import { teeth } from "./gear.stl"` is the syntax error `file-import-names`.
 
 `export { bolt } from "./hardware.kup"` passes another file's export on, so a library's entry file can gather its parts (`as` renames one: `export { bolt as m3_bolt } from ...`). It binds nothing in the file that writes it: that file's own `bolt`, if it has one, is neither exported nor used. A file is re-exported as it is imported: its value under one bare name (`export machine from "./machine.json"`), or a JSON file's keys in braces (`export { gears } from "./machine.json"`).
 
@@ -555,7 +555,24 @@ plate = machine.fetch(:plate, nil)          # nil: the file has no plate
 * **Read-only:** `machine[:name] = "x"` is a `TypeError`. `to_h` gives a Map that can change, its objects Maps and its Arrays copies all the way down, with the file's String keys (a Map's `.symbolize_keys` turns its own keys into Symbols, not those of the Maps in it). The Arrays a JsonObject holds are ordinary Arrays.
 * **Methods:** `[]`, `fetch`, `dig`, `key?`, `keys`, `values`, `size`/`length`, `empty?`, `each { |key, value| }`, `to_h`, and `for key, value in machine`. `==` compares two JsonObjects by content; it prints as a Map does. There is no dot access (`machine.gears`): a key named `size` or `keys` would be hidden by the method.
 * **Limits:** a file of at most 64 MiB, nested at most 256 levels; a number past the largest (`1e400`) is refused, as is a key written twice. Each is an `ImportError` naming the file and the line and column or the place in the data.
-* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
+* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`, `import_font`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
+
+### Fonts (`import_font`)
+
+`text()` draws in the embedded fonts by name (`font: "sans"`), or in a font a script imports: a TrueType or OpenType file (`.ttf`, `.otf`; `with { type: "font" }` for one named otherwise), as `import label from "./fonts/Inter-Bold.ttf"` or `label = import_font("fonts/Inter-Bold.ttf")`. It gives a **Font**, passed as `font:`:
+
+```ruby
+import label from "./fonts/Inter-Bold.ttf"
+
+puts label                              # Inter Bold: the name the font gives itself
+plate = cube(x: 60, y: 20, z: 2)
+plate - text("KupCAD", size: 8, font: label, halign: "center", valign: "center").extrude(1).translate(x: 30, y: 10, z: 1)
+```
+
+* **Name:** `label.name`, `puts label` and `"#{label}"` give the font's full name from its own name table (`Inter Bold`), or the file's name for a font that gives none; `inspect` gives `#<Font Inter Bold>`. A Font can be a module's export, so a project can keep its label font in one place.
+* **Drawing:** its glyphs are kerned as the font says, by its GPOS table or, for a font without GPOS kerning, its `kern` table. A variable font draws its default style. A character the font has no glyph for is a `ValueError` naming it, as with the embedded fonts.
+* **Refused:** a file that isn't a font, one with no outlines text draws (TrueType's or CFF's; a CFF2 variable font's and a bitmap font's aren't read), one that maps no characters, and one past 32 MiB are each an `ImportError` naming the file. The font file is fuzzed nightly (`-Dfuzz-target=fonts`), as it comes from whoever wrote the script.
+* **Not yet:** right-to-left scripts and those whose letters change shape with their neighbours (Arabic, Hebrew, the Indic scripts) need text shaping, which `text()` doesn't do; CJK fonts draw, glyph by glyph.
 
 ---
 

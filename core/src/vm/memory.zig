@@ -53,6 +53,7 @@ pub const GC = struct {
     cross_sections: std.ArrayList(*value.ObjCrossSection) = .empty,
     assemblies: std.ArrayList(*value.ObjAssembly) = .empty,
     workplanes: std.ArrayList(*value.ObjWorkplane) = .empty,
+    fonts: std.ArrayList(*value.ObjFont) = .empty,
 
     // GC triggering metrics
     bytes_allocated: usize,
@@ -110,6 +111,7 @@ pub const GC = struct {
         self.cross_sections.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
+        self.fonts.deinit(self.allocator);
         self.builtins.deinit();
     }
 
@@ -204,7 +206,7 @@ pub const GC = struct {
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
                 self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
-                self.assemblies.items.len + self.workplanes.items.len;
+                self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
                 vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
@@ -473,6 +475,16 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// A Font of the font file `bytes`, which it takes (allocated by trackingAllocator, so
+    /// they count against the memory limit and are freed with it), named `name`; the caller
+    /// roots `name`.
+    pub fn allocateFont(self: *GC, vm: *VM, bytes: []u8, name: *value.ObjString) !*value.ObjFont {
+        const ptr = try self.allocateObject(vm, value.ObjFont, &self.fonts, .font);
+        ptr.bytes = bytes;
+        ptr.name = name;
+        return ptr;
+    }
+
     pub fn allocateWorkplane(self: *GC, vm: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
         const ptr = try self.allocateObject(vm, value.ObjWorkplane, &self.workplanes, .workplane);
         ptr.parent = parent;
@@ -667,6 +679,7 @@ pub const GC = struct {
                 const wp_obj = obj.as(value.ObjWorkplane);
                 self.markObject(&wp_obj.parent.obj);
             },
+            .font => self.markObject(&obj.as(value.ObjFont).name.obj),
             else => {},
         }
     }
@@ -723,6 +736,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
+        self.sweepList(vm, value.ObjFont, &self.fonts);
 
         // --- CACHE EVICTION ---
         // Results no live solid or sketch refers to. Without room to work it out, nothing
@@ -777,6 +791,11 @@ pub const GC = struct {
             .workplane => {
                 const wp_obj = obj.as(value.ObjWorkplane);
                 self.destroyObject(value.ObjWorkplane, wp_obj);
+            },
+            .font => {
+                const font = obj.as(value.ObjFont);
+                self.trackingAllocator().free(font.bytes);
+                self.destroyObject(value.ObjFont, font);
             },
             .cross_section => {
                 self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));

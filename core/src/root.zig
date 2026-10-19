@@ -60,6 +60,7 @@ test {
     _ = @import("stdlib/json_test.zig");
     _ = @import("stdlib/json_fuzz_test.zig");
     _ = @import("stdlib/bom_test.zig");
+    _ = @import("stdlib/font_test.zig");
     _ = @import("core/json_input_test.zig");
     _ = @import("core/import_kind_test.zig");
     _ = @import("core/placement_test.zig");

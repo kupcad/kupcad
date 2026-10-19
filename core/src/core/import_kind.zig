@@ -1,5 +1,5 @@
 //! What an `import` reads: a KupCAD module, or a file a built-in reads as a value (an STL or
-//! STEP mesh, JSON data). The `type` its `with { }` gives says which (`import machine from
+//! STEP mesh, JSON data, a font). The `type` its `with { }` gives says which (`import machine from
 //! "./machine.dat" with { type: "json" }`); without one, the path's extension does (in any
 //! case: `.STL` too), and any other path is a module. The compiler, the parser's checks, the
 //! workspace and the watcher all ask here, so they agree on what an import is.
@@ -13,6 +13,8 @@ const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
     .{ .extension = ".step", .kind = .step },
     .{ .extension = ".stp", .kind = .step },
     .{ .extension = ".json", .kind = .json },
+    .{ .extension = ".ttf", .kind = .font },
+    .{ .extension = ".otf", .kind = .font },
 };
 /// The one key `with { }` takes.
 const TYPE_KEY = "type";
@@ -33,6 +35,7 @@ pub const Kind = enum {
     stl,
     step,
     json,
+    font,
 
     /// The built-in that reads a file of this kind, or null for a module, which the VM
     /// imports itself.
@@ -42,7 +45,17 @@ pub const Kind = enum {
             .stl => "import_stl",
             .step => "import_step",
             .json => "import_json",
+            .font => "import_font",
         };
+    }
+
+    /// The extension of a file of this kind, without the dot, for an example in an error:
+    /// "ttf" for a font, whose type name isn't one. A module's is "kup".
+    pub fn extension(self: Kind) []const u8 {
+        for (EXTENSIONS) |entry| {
+            if (entry.kind == self) return entry.extension[1..];
+        }
+        return self.typeName();
     }
 
     /// What `with { type: ... }` calls it.
@@ -52,15 +65,16 @@ pub const Kind = enum {
             .stl => "stl",
             .step => "step",
             .json => "json",
+            .font => "font",
         };
     }
 
     /// Braces name what it has (`import { a, b } from`): a module's exports, the keys of a
-    /// JSON file's object. A mesh has nothing to name.
+    /// JSON file's object. A mesh or a font has nothing to name.
     pub fn hasKeys(self: Kind) bool {
         return switch (self) {
             .module, .json => true,
-            .stl, .step => false,
+            .stl, .step, .font => false,
         };
     }
 

@@ -49,6 +49,7 @@ pub const Result = enum {
     array,
     workplane,
     assembly,
+    font,
     /// nil
     nothing,
     /// Whatever its block or arguments give (`inspect`, `benchmark { }`, `param`).
@@ -66,6 +67,7 @@ pub const Result = enum {
             .array => "Array",
             .workplane => "Workplane",
             .assembly => "Assembly",
+            .font => "Font",
             .nothing => "NilClass",
             .receiver, .varies => null,
         };
@@ -102,6 +104,7 @@ pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
     "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
+    "Font",
     // "Workplane": hidden with on_face (see the method table)
 };
 
@@ -142,6 +145,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "import_stl", .func = common.wrapGlobal(files.nativeImportStl), .category = .file_io, .result = .solid },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
+    .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
 };
 
 pub const mesh_methods = [_]MeshMethod{

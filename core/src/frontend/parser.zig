@@ -870,7 +870,7 @@ pub const Parser = struct {
             const kind = self.importKind(attributes, path_node);
             const names = self.scratch_alias_pairs.items.len - s_len;
             if (braced and !kind.hasKeys()) {
-                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file of type \"{s}\" gives one value, with no names in it: name it without braces, as in `import part from \"./part.{s}\"`", .{ kind.typeName(), kind.typeName() });
+                self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file of type \"{s}\" gives one value, with no names in it: name it without braces, as in `import part from \"./part.{s}\"`", .{ kind.typeName(), kind.extension() });
             } else if (!braced and kind != .module and names > 1) {
                 self.reportError(self.getLoc(start_tok), .@"file-import-names", "A file (type \"{s}\") gives one value; name one variable for it", .{kind.typeName()});
             }

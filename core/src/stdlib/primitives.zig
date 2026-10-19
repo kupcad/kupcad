@@ -7,6 +7,7 @@ const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
 const Signature = @import("signature.zig").Signature;
 const VM = @import("../vm/vm.zig").VM;
+const tatfi = @import("tatfi");
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 
@@ -542,11 +543,38 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
+/// The font `text` draws in, and its name for errors.
+const TextFont = struct { face: tatfi.Face, name: []const u8 };
+
+/// The font `font:` names: an embedded one by name (a String or a Symbol; nil is sans), or a
+/// Font a script imported, whose face borrows its bytes (the argument keeps it alive).
+fn textFont(vm: *VM, font: value.Value) !TextFont {
+    if (font.isFont()) {
+        const imported = font.asFont();
+        // Checked when it was imported, from the same bytes
+        const face = text_mod.importedFace(imported.bytes) catch {
+            return vm.fail(.RuntimeError, "text: the font '{s}' could not be read again", .{imported.name.chars});
+        };
+        return .{ .face = face, .name = imported.name.chars };
+    }
+    const name = if (font.isNil()) text_mod.FontKey.sans.name() else if (font.isString()) font.asString().chars else if (font.isSymbol()) font.asSymbol().chars else {
+        return vm.fail(.TypeError, "text: font is the name of a font ({s}) or a Font imported from a font file, got {s}", .{ text_mod.FONT_LIST, vm.typeName(font) });
+    };
+    // An unknown name used to draw in sans without a word, so a typo went unseen
+    const key = text_mod.FontKey.fromString(name) orelse {
+        return vm.fail(.ArgumentError, "text: there is no font '{s}'; the fonts are {s}, or a Font imported from a font file", .{ name, text_mod.FONT_LIST });
+    };
+    const face = text_mod.getFace(key) catch {
+        return vm.fail(.RuntimeError, "text: the font '{s}' could not be read", .{name});
+    };
+    return .{ .face = face, .name = key.name() };
+}
+
 pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = try util.parseKwargsSubset(struct {
         size: ?f64 = null,
         tolerance: ?f64 = null,
-        font: []const u8 = "sans",
+        font: ?value.Value = null,
         halign: text_mod.HAlign = .left,
         valign: text_mod.VAlign = .baseline,
     }, TEXT.keywords, vm, args, "text");
@@ -558,7 +586,6 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
     var size: f64 = 10.0;
     if (parsed.positional.len > 1) size = try util.requireNumber(vm, args[1], "text", "size");
     if (opts.size) |n| size = n;
-    const font_name = opts.font;
 
     try util.requirePositive(vm, size, "text", "size");
     // By default the glyphs are drawn as finely as a circle the size of a letter's bowl
@@ -574,13 +601,9 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
 
     const alloc = vm.scratch_arena.allocator();
 
-    // An unknown name used to draw in sans without a word, so a typo went unseen
-    const key = text_mod.FontKey.fromString(font_name) orelse {
-        return vm.fail(.ArgumentError, "text: there is no font '{s}'; the fonts are {s}", .{ font_name, text_mod.FONT_LIST });
-    };
-    const face = text_mod.getFace(key) catch {
-        return vm.fail(.RuntimeError, "Failed to load font '{s}'", .{font_name});
-    };
+    const font = try textFont(vm, opts.font orelse value.Value.initNil());
+    const font_name = font.name;
+    const face = font.face;
     var polygons = text_mod.extractText(alloc, &face, text_str, size, tolerance, opts.halign, opts.valign) catch |err| switch (err) {
         error.InvalidUtf8 => {
             return vm.fail(.ValueError, "text: the String isn't valid UTF-8", .{});

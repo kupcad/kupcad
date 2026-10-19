@@ -39,6 +39,7 @@ const CASES = .{
     .MAX_MARCHING_STEPS = marchingSteps,
     .MAX_SOURCE_BYTES = sourceBytes,
     .MAX_JSON_BYTES = jsonBytes,
+    .MAX_FONT_BYTES = fontBytes,
     .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
     .MAX_INLINE_CACHES = inlineCaches,
@@ -156,6 +157,15 @@ fn jsonBytes() !void {
     @memset(data, ' ');
     const expected = std.fmt.comptimePrint("ImportError: JSON file 'big.json' is {d} bytes; a script reads at most {d}", .{ limits.MAX_JSON_BYTES + 1, limits.MAX_JSON_BYTES });
     try support.expectScripts(&.{.{ .src = support.rescued("import_json(\"big.json\")"), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.json", .data = data }} }});
+}
+
+fn fontBytes() !void {
+    // Refused by its size before it is parsed, so what it holds doesn't matter
+    const data = try testing.allocator.alloc(u8, limits.MAX_FONT_BYTES + 1);
+    defer testing.allocator.free(data);
+    @memset(data, 0);
+    const expected = std.fmt.comptimePrint("ImportError: font file 'big.ttf' is {d} bytes; a script reads at most {d}", .{ limits.MAX_FONT_BYTES + 1, limits.MAX_FONT_BYTES });
+    try support.expectScripts(&.{.{ .src = support.rescued("import f from \"./big.ttf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.ttf", .data = data }} }});
 }
 
 fn jsonDepth() !void {

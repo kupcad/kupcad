@@ -1332,7 +1332,7 @@ test "Stdlib: text draws accented and Cyrillic letters, and refuses a character 
         .{ .src = rescued("text(\"⌀ 5\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '⌀' (U+2300); 'Ø' (U+00D8), which it has, is the usual stand-in" } },
         .{ .src = rescued("text(\"⌀ 5\", font: :stencil)"), .expected = .{ .str = "ValueError: text: the font 'stencil' has no glyph for '⌀' (U+2300)" } },
         .{ .src = rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
-        .{ .src = rescued("text(\"a\", font: \"bold\")"), .expected = .{ .str = "ArgumentError: text: there is no font 'bold'; the fonts are \"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\"" } },
+        .{ .src = rescued("text(\"a\", font: \"bold\")"), .expected = .{ .str = "ArgumentError: text: there is no font 'bold'; the fonts are \"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\", or a Font imported from a font file" } },
         .{ .src = "r = text(\"a\", font: :monospace).extrude(1).volume == text(\"a\", font: \"mono\").extrude(1).volume", .expected = .{ .boolean = true } },
         .{ .src = "r = text(\"a\", font: :sans_bold).extrude(1).volume > text(\"a\", font: \"sans\").extrude(1).volume", .expected = .{ .boolean = true } },
     });

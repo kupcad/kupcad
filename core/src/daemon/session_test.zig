@@ -501,11 +501,17 @@ const Chain = struct {
     session: ScriptSession,
 
     fn init(self: *Chain, modules: []const [2][]const u8) !void {
+        return self.initWith(modules, &.{});
+    }
+
+    /// init, with `data` files (a font, JSON) the modules read, which aren't modules.
+    fn initWith(self: *Chain, modules: []const [2][]const u8, data: []const [2][]const u8) !void {
         self.files = MemoryVfs.init(testing.allocator);
         errdefer self.files.deinit();
         self.session = try ScriptSession.init(testing.allocator, testing.io);
         errdefer self.session.deinit();
         self.session.vm.vfs = self.files.vfs();
+        for (data) |d| try self.files.vfs().writeFile(d[0], d[1]);
         for (modules) |m| {
             try self.files.vfs().writeFile(m[0], m[1]);
             _ = try self.session.workspace.addModule(m[0], m[1]);
@@ -569,4 +575,18 @@ test "ScriptSession: a module that runs again and exports the same values stops 
     try testing.expectEqual(@as(u64, 1), chain.node("a.kup").changed_at);
     try testing.expectEqual(@as(u64, 1), chain.node("b.kup").changed_at);
     try testing.expectEqual(@as(u64, 1), chain.node("c.kup").changed_at);
+}
+
+test "ScriptSession: a module that exports the same Font again stops the re-evaluation" {
+    // A Font wasn't hashed by content, so a module exporting one counted as changed every
+    // time it ran, and every module importing it ran again
+    var chain: Chain = undefined;
+    try chain.initWith(&.{
+        .{ "a.kup", "import brand from \"./Test.otf\"\nexport brand\n" },
+        .{ "b.kup", "import { brand } from \"./a.kup\"\ntext(\"AV\", font: brand).extrude(1)\n" },
+    }, &.{.{ "Test.otf", @embedFile("../core/test_fonts/gpos-kerning.otf") }});
+    defer chain.deinit();
+    try chain.edit("a.kup", "import brand from \"./Test.otf\" # the same font\nexport brand\n");
+    try testing.expectEqual(@as(u64, 1), chain.node("a.kup").changed_at);
+    try testing.expectEqual(@as(u64, 1), chain.node("b.kup").changed_at);
 }

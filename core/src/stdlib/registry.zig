@@ -80,6 +80,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.string_class = try defineValueClass(vm, "String");
     vm.map_class = try defineValueClass(vm, "Map");
     vm.json_object_class = try defineValueClass(vm, "JsonObject");
+    vm.font_class = try defineValueClass(vm, "Font");
     vm.number_class = try defineValueClass(vm, "Number");
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
