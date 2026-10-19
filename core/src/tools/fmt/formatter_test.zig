@@ -1083,13 +1083,17 @@ test "Formatter: an assignment passed as an argument keeps its arguments" {
     try expectStableFormat("o(b = 5, 6)", "o(b = 5, 6)\n");
 }
 
-test "Formatter: a single-quoted string keeps its text, backslashes and all, and %q its value" {
+test "Formatter: a single-quoted or %q string keeps its text, backslashes and all" {
     // Its value is now decoded by its own rules (only \\ and the delimiter escape), so the
     // text still decodes to the value and is written back as it was.
     try expectStableFormat("x = 'C:\\data\\new'\n", "x = 'C:\\data\\new'\n");
     try expectStableFormat("y = 'it\\'s'\n", "y = 'it\\'s'\n");
-    // %q is written as a double-quoted string, as it always was; its value stays.
-    try expectStableFormat("z = %q(a \\) b \\d)\n", "z = \"a ) b \\\\d\"\n");
+    // %q was rewritten as a double-quoted string, which needed escapes it was written to avoid
+    try expectStableFormat("z = %q(a \\) b \\d \"q\")\n", "z = %q(a \\) b \\d \"q\")\n");
+    try expectStableFormat("w = %q[nested [x] y]\n", "w = %q[nested [x] y]\n");
+    // Quotes as its delimiter: written as "a\nb" it would hold a newline
+    try expectStableFormat("v = %q\"a\\nb\"\n", "v = %q\"a\\nb\"\n");
+    try expectStableFormat("u = %q'it\\'s'\n", "u = %q'it\\'s'\n");
 }
 
 test "Formatter: a quoted symbol named with colons keeps its name" {

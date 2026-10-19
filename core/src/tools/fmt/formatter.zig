@@ -16,6 +16,9 @@ const TokenTag = @import("../../frontend/lexer.zig").Tag;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
+/// What opens a `%q` string, before its delimiter.
+const PERCENT_Q = "%q";
+
 pub const Formatter = struct {
     pub const Error = error{ OutOfMemory, NoSpaceLeft, SyntaxError };
 
@@ -536,12 +539,29 @@ pub const Formatter = struct {
         return if (before == '"' or before == '\'') before else null;
     }
 
-    /// A string literal as the author wrote it, in its own quotes, escapes included. The
-    /// decoded value used to be printed, so `"x\ty"` came out with a real TAB in it and
-    /// `'a'` as `"a"`. One with no source text to reuse (a heredoc body, a `%w` word) is
-    /// written as a double-quoted literal with the value escaped.
+    /// The opener of a `%q` string as written (`%q(`, `%q[`), or null for any other token:
+    /// the delimiter is the byte before the token's text, `%q` before it.
+    fn percentOpener(self: *const Formatter, tok: u32) ?[]const u8 {
+        if (self.token_tags[tok] != .raw_string) return null;
+        const start = self.token_starts[tok];
+        if (start < PERCENT_Q.len + 1) return null;
+        const opener = self.source[start - PERCENT_Q.len - 1 .. start];
+        return if (std.mem.startsWith(u8, opener, PERCENT_Q)) opener else null;
+    }
+
+    /// A string literal as the author wrote it, in its own quotes or `%q()`, escapes
+    /// included. The decoded value used to be printed, so `"x\ty"` came out with a real TAB
+    /// in it and `'a'` as `"a"`. One with no source text to reuse (a heredoc body, a `%w`
+    /// word) is written as a double-quoted literal with the value escaped.
     fn formatString(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!void {
         if (try self.rawStringText(tree, node)) |raw| {
+            // Before the quotes: `%q"a\nb"` isn't `"a\nb"`, which holds a newline
+            if (self.percentOpener(node.main_token)) |opener| {
+                try self.out.appendSlice(self.allocator, opener);
+                try self.out.appendSlice(self.allocator, raw);
+                try self.out.append(self.allocator, string_escape.closingDelimiter(opener[opener.len - 1]));
+                return;
+            }
             if (self.openingQuote(node.main_token)) |quote| {
                 try self.out.append(self.allocator, quote);
                 try self.out.appendSlice(self.allocator, raw);
