@@ -77,6 +77,22 @@ jobs:
           pnpm install --frozen-lockfile --filter kupcad
           pnpm check:gltf
 
+      - name: Install Python
+        if: matrix.name == 'linux debug'
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: .tool-versions
+          cache: pip
+          cache-dependency-path: core/scripts/requirements.txt
+
+      # lib3mf is the 3MF Consortium's library: its strict reader refuses what the format
+      # doesn't allow, and its warnings fail the check too.
+      - name: Validate exported 3MF with lib3mf
+        if: matrix.name == 'linux debug'
+        run: |
+          pip install -r core/scripts/requirements.txt
+          pnpm check:3mf
+
       - name: Run wasm tests
         if: matrix.wasm_task != ''
         run: pnpm ${{ matrix.wasm_task }}

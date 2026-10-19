@@ -1,0 +1,3 @@
+# The 3MF Consortium's library, which `pnpm check:3mf` (scripts/validate-3mf.py) reads
+# exported 3MF files with.
+lib3mf==2.5.0
