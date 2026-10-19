@@ -21,6 +21,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         roughness: ?f64 = null,
         metallic: ?f64 = null,
         transmission: ?f64 = null,
+        density: ?f64 = null,
     }, sig.MATERIAL.keywords, vm, args, "material");
     if (parsed.positional.len == args.len) {
         return vm.fail(.ArgumentError, "material requires keyword arguments (e.g. color: \"#FF0000\")", .{});
@@ -36,6 +37,10 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         .roughness = try unitInterval(vm, "roughness", opts.roughness orelse defaults.roughness),
         .metallic = try unitInterval(vm, "metallic", opts.metallic orelse defaults.metallic),
         .transmission = try unitInterval(vm, "transmission", opts.transmission orelse defaults.transmission),
+        .density = if (opts.density) |d| blk: {
+            try util.requirePositive(vm, d, "material", "density (g/cm³)");
+            break :blk d;
+        } else null,
     };
 
     // Insert into VM registry to get an ID

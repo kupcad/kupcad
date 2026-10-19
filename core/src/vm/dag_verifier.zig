@@ -17,7 +17,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
     return switch (tag) {
         .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete => .solid,
         .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .batch_hull_op, .hull => .solid,
-        .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material => .solid,
+        .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
         .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => .sketch,
         .cs_union_op, .cs_difference_op, .cs_intersection_op, .offset, .cs_transform => .sketch,
@@ -52,6 +52,7 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
         .target_numbers => |n| targetAndNumbers(b, node.data, kind, n),
         .target_value => {
             if (!fits(node.data, 2, extra.len)) return "its operand and value are outside extra_data";
+            if (node.tag == .set_name and extra[node.data + 1] >= b.part_names.items.len) return "its part name is outside the name table";
             return operands(b, node.data, 1, kind);
         },
         .loft => {

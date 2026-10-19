@@ -2115,7 +2115,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
         .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
-        .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission" },
+        .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission, density" },
     };
     const iter_cases = comptime blk: {
         var list: [cases.len]ScriptCase = undefined;
@@ -2314,6 +2314,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "ray_cast", "c.ray_cast([-5, 1, 1], [5, 1, 1])" },    .{ "repeat_linear", "c.repeat_linear(2, 5, 0, 0)" },
         .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
         .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
+        .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };

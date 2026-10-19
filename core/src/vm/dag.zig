@@ -62,6 +62,8 @@ pub const DAGTag = enum(u8) {
     polygon,
     polygons_even_odd,
     set_material,
+    /// A part's name (`named`), for the parts list: the shape is its operand's.
+    set_name,
     /// Leaf wrapping an already-evaluated handle (decompose/simplify results).
     /// `data` indexes `concrete_leaves`, which owns the handle.
     concrete,
@@ -81,6 +83,7 @@ pub fn scriptName(tag: DAGTag) []const u8 {
         .transform_matrix, .cs_transform => "transform",
         .polygons_even_odd => "polygon",
         .set_material => "material",
+        .set_name => "named",
         .empty_solid, .empty_sketch => "empty",
         .concrete => "geometry",
     };
@@ -99,7 +102,7 @@ pub const Layout = union(enum) {
     operand_list,
     /// extra_data at `data`: the operand, then the index of this many numbers.
     target_numbers: u8,
-    /// extra_data at `data`: the operand, then a plain value (a material id).
+    /// extra_data at `data`: the operand, then a plain value (a material id, a part name's).
     target_value,
     /// extra_data at `data`: the base and top operands, then the index of one number.
     loft,
@@ -138,7 +141,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .extrude => .{ .target_numbers = 5 },
         .revolve => .{ .target_numbers = 2 },
         .cs_transform => .{ .target_numbers = 6 },
-        .set_material => .target_value,
+        .set_material, .set_name => .target_value,
         .loft => .loft,
         .polygon => .polygon,
         .polygons_even_odd => .polygons,
@@ -265,6 +268,11 @@ pub const DAGBuilder = struct {
     /// The settings new nodes get; the VM sets it whenever its config changes.
     current_settings: SettingsId = 0,
 
+    /// The names `named` gives parts, each once: a set_name node holds its index. Owned,
+    /// and kept through compactions, as the settings are.
+    part_names: std.ArrayList([]u8) = .empty,
+    part_name_ids: std.StringHashMapUnmanaged(u32) = .empty,
+
     /// The size of the tables (tableBytes) at which `wantsCompaction`: twice what the last
     /// compaction kept, and never below `compaction_floor`.
     compact_at: usize = MIN_COMPACTION_BYTES,
@@ -278,6 +286,9 @@ pub const DAGBuilder = struct {
         for (self.concrete_leaves.items) |leaf| if (leaf.handle) |h| kernel.destruct(h);
         self.freeTables();
         self.settings_table.deinit(self.gpa);
+        for (self.part_names.items) |name| self.gpa.free(name);
+        self.part_names.deinit(self.gpa);
+        self.part_name_ids.deinit(self.gpa);
     }
 
     /// Frees the node tables, not the meshes their leaves hold.
@@ -543,6 +554,29 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .set_material, .flags = 0, .data = extra_idx }, snap);
     }
 
+    /// `target` named `name_id` (internPartName).
+    pub fn addSetName(self: *DAGBuilder, target: DAGNodeIndex, name_id: u32) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const extra_idx = try self.appendExtraData(&.{ target, name_id });
+        return try self.appendNodeWithRollback(.{ .tag = .set_name, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// The id of the part name `name`, the same for the same text.
+    pub fn internPartName(self: *DAGBuilder, name: []const u8) !u32 {
+        if (self.part_name_ids.get(name)) |id| return id;
+        const copy = try self.gpa.dupe(u8, name);
+        errdefer self.gpa.free(copy);
+        const id: u32 = @intCast(self.part_names.items.len);
+        try self.part_names.append(self.gpa, copy);
+        errdefer _ = self.part_names.pop();
+        try self.part_name_ids.put(self.gpa, copy, id);
+        return id;
+    }
+
+    pub fn partName(self: *const DAGBuilder, id: u32) []const u8 {
+        return self.part_names.items[id];
+    }
+
     pub fn addTranslate(self: *DAGBuilder, target: DAGNodeIndex, x: f64, y: f64, z: f64) !DAGNodeIndex {
         return self.addNumericTransformNode(.translate, target, x, y, z);
     }
@@ -730,6 +764,8 @@ pub const DAGBuilder = struct {
         // stay the same: the table is shared, and not freed with the copy's.
         errdefer fresh.freeTables();
         fresh.settings_table = self.settings_table;
+        fresh.part_names = self.part_names;
+        fresh.part_name_ids = self.part_name_ids;
         const renumbered = try self.gpa.alloc(DAGNodeIndex, self.nodes.items.len);
         errdefer self.gpa.free(renumbered);
 
@@ -989,6 +1025,13 @@ pub const DAGBuilder = struct {
         return .{
             .target = self.extra_data.items[node.data],
             .material_id = self.extra_data.items[node.data + 1],
+        };
+    }
+
+    pub inline fn getNamePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, name_id: u32 } {
+        return .{
+            .target = self.extra_data.items[node.data],
+            .name_id = self.extra_data.items[node.data + 1],
         };
     }
 

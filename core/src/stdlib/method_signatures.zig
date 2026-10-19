@@ -45,6 +45,7 @@ pub const CONTAINS = Signature{ .positional = &.{"point"} };
 pub const RAY_CAST = Signature{ .positional = &.{ "origin", "end" } };
 
 // --- Materials and files ---
-pub const MATERIAL = Signature{ .keywords = &.{ "color", "alpha", "roughness", "metallic", "transmission" } };
+pub const MATERIAL = Signature{ .keywords = &.{ "color", "alpha", "roughness", "metallic", "transmission", "density" } };
+pub const NAMED = Signature{ .positional = &.{"name"} };
 pub const EXPORT = Signature{ .positional = &.{"path"} };
 pub const EXPORT_GLTF = Signature{ .positional = &.{ "path", "draco" } };

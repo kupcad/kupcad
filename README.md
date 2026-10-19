@@ -40,6 +40,7 @@ A passing run prints nothing but the summary. A test that provokes a warning on 
 kupcad build part.kup -o part.stl                  # export (stl | glb | gltf | step), --draco for GLB
 kupcad build part.kup --param width=50 -f step     # inject parameters, pick a format (-p/-o/-f/-d short flags)
 kupcad build part.kup -P bracket.json              # parameter values from a JSON object
+kupcad build part.kup --bom bom.json               # also write the parts list (count, volume, mass)
 kupcad check part.kup                              # lint
 kupcad fmt part.kup                                # format
 kupcad watch part.kup -P bracket.json              # rebuild on change, with parameter values

@@ -34,6 +34,24 @@ final_part = assemble(name: "HousingAssembly", parts: [housing, ring])
 
 **`sides:` or `segments:`.** `sides:` is a faceted shape: `cylinder(d: 8, h: 5, sides: 6)` is a hexagonal prism (a nut trap), `circle(r: 5, sides: 6)` a hexagon, and `cylinder(r1:, r2:, sides:)` a frustum; the first corner lies on +x. It is the same on both engines. `segments:` only says how finely a round shape is drawn, overriding the resolution (`CAD.config`) for that call: the mesh engine draws a cylinder with that many facets, while the exact B-Rep engine keeps it round. Use `sides:` whenever the facets are the design; giving both is an `ArgumentError`, and a sphere has no `sides:`.
 
+### Parts list (`named`, `bom`)
+
+An assembly's parts list counts its Solids by part: a copy of a part placed elsewhere (`translate`, `rotate`) is the same part again. `named` gives a part the name the list shows, and `material(density:)` (g/cm³) its mass:
+
+```ruby
+bolt = cylinder(r: 1.5, h: 20).material(color: "#888888", density: 7.85).named("M3 bolt")
+plate = cube(x: 40, y: 30, z: 3).named("plate")
+bolts = [[5, 5], [35, 5], [5, 25], [35, 25]].map { |p| bolt.translate(p[0], p[1], 0) }
+mount = assemble(name: "Mount", parts: [plate] + bolts)
+
+mount.bom   # [{name: "plate", count: 1, volume: 3600, size: [40, 30, 3], density: nil, mass: nil},
+            #  {name: "M3 bolt", count: 4, volume: 107.0, size: [2.7, 2.9, 20], density: 7.85, mass: 0.84}]
+```
+
+* **A part** is the shape under a Solid's placement, with its name and material: two Solids are copies when that shape is the same one (equal content, however it was reached) and so are the name and material. A different color or density is another part. A mirrored or scaled copy is a part of its own, with the name it was made with (a left and a right bracket), so rename it to tell them apart: `left.mirror(1, 0, 0).named("bracket R")`. A union of copies is one fused Solid, so one part: assemble the copies to count them.
+* **A row** is a Map: `name` (nil when unnamed), `count`, `volume` (mm³), `size` (the bounding box's extent along x, y and z in mm, as the part is made, before its placement), `density` (g/cm³) and `mass` (g, the volume times the density; nil without one). Rows come in the order their parts first appear. The outermost `named` and `material` of a Solid are its part's, as the viewport shows its outermost material.
+* **Where:** `assembly.bom`, `solid.bom` (one part), and `kupcad build part.kup --bom bom.json`, which writes the final model's list as JSON (`{"parts": [...]}`, with `null` for what a part has none of). A name changes nothing an export or the viewport shows. The B-Rep engine can't measure volume yet, so a list of B-Rep parts is a `NotImplementedError`.
+
 ### Batch CSG & Operator Overloading
 
 You can use standard math operators (`+`, `-`, `&`) for binary CSG, or utilize batch operations for arrays of geometry to heavily optimize the evaluation graph:
@@ -445,8 +463,9 @@ KupCAD also provides non-destructive inline modifiers to alter visibility in the
 env = cube(100).ghost           # Shows a semi-transparent copy; env is the cube itself
 bolt = cylinder(r: 3).highlight # Forces high-contrast visibility
 
-# Material metadata assigned to the geometry handle (propagates to GLB exports)
-part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8)
+# Material metadata assigned to the geometry handle (propagates to GLB exports);
+# density (g/cm³) is for the parts list's mass, and shows nowhere
+part = cube(10).material(color: "#FF0000", roughness: 0.2, metallic: 0.8, density: 1.24)
 
 ```
 
@@ -570,7 +589,7 @@ KupCAD ships as a monolithic executable containing a complete developer toolchai
 * `kupcad doc`: prints the script's parameters as JSON, for a UI to build its controls from: each `param(:name, default:, validate:)` with its name, its type (from the default), its default and its `validate` rules as `param` takes them, `min`, `max` and the `in` choices (null when the list holds something only a run can compute). The script's `# @title`, `# @description` and `# @author` comments fill `meta`. The browser build gives the same JSON (`extract_params_wasm`).
 * `kupcad check`: syntax errors, compile errors and lint findings, before anything runs (see *Linting* below). Given a directory, `check` and `fmt` take every `.kup` file under it except in hidden directories (`.git`, `.kupcad` with the installed packages); a hidden path named outright is still taken.
 * `kupcad pkg`: Lockfile-driven dependency resolver (`add`, `install`, `doctor`) fetching GitHub packages into CAFS under `~/.kupcad` (override with `KUPCAD_HOME`), with lockfile integrity enforcement.
-* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`; glTF output is in metres and Y-up as glTF defines, with the mesh kept in millimetres under a 0.001 node scale; a `.gltf` file is glTF JSON with its buffer embedded as a base64 data URI, a `.glb` file is binary glTF, and so is `export_gltf("part.glb")` while `export_gltf("part.gltf")` writes JSON; with `--draco` each part's primitive carries its own compressed vertices; an empty model is an error for STL as for glTF, never a file with no triangles; every glTF file, Draco or not, passes the Khronos glTF Validator, which CI runs as `pnpm check:gltf`) with CLI parameter injection (`--param key=value`, or `-p`, repeatable, and `-P file.json`: the value is read as the parameter's type and goes through `param`'s validation, see §4; the name can't be empty). Exits non-zero on any failure, so it is safe to use as a CI step.
+* `kupcad build`: Multi-Target Exporter (`STEP`, `STL`, `GLB`/`GLTF`, `--draco`; glTF output is in metres and Y-up as glTF defines, with the mesh kept in millimetres under a 0.001 node scale; a `.gltf` file is glTF JSON with its buffer embedded as a base64 data URI, a `.glb` file is binary glTF, and so is `export_gltf("part.glb")` while `export_gltf("part.gltf")` writes JSON; with `--draco` each part's primitive carries its own compressed vertices; an empty model is an error for STL as for glTF, never a file with no triangles; every glTF file, Draco or not, passes the Khronos glTF Validator, which CI runs as `pnpm check:gltf`) with CLI parameter injection (`--param key=value`, or `-p`, repeatable, and `-P file.json`: the value is read as the parameter's type and goes through `param`'s validation, see §4; the name can't be empty), and `--bom bom.json` for the model's parts list beside the export (see Parts list). Exits non-zero on any failure, so it is safe to use as a CI step.
 * `kupcad watch`: builds a script, then rebuilds it whenever it, a module it imports or a file it reads as data changes (every imported `.kup` file is watched, and a file restored to an older version counts as a change). It takes `-p` and `-P` as `kupcad build` does, for every build it makes (`kupcad watch part.kup -P bracket.json`). A build that fails is reported like `kupcad build`, syntax errors with their file, line and column, and watching goes on until the fix.
 * `kupcad dev`: VM development toolkit offering `ast-dump`, `disasm`, `lex-dump` and `bench`. `kupcad dev bench part.kup` times the script's phases, parse, compile, VM run and the evaluation of the geometry it leaves, each a cold run, and prints the median of `--repeat N` runs (5 by default) so one slow run doesn't set the figure; one more run with the tracing profiler attached gives the per-function table (`--no-profile` skips it, `--no-eval` the geometry, `--json` prints the medians as JSON for scripts that track them). The script's own output (`puts`, `inspect`, `benchmark`) is not shown, so the report is all there is on stdout.
 

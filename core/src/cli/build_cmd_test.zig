@@ -91,6 +91,7 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         // refused by param(), which knows the type: see the -p test below.)
         .{ .args = &.{ "model.kup", "-p", "=5" }, .message = "Error: Param '=5' has no name. Use --param key=value.\n" },
         .{ .args = &.{ "model.kup", "-P" }, .message = "Error: Missing parameter file after -P\n" },
+        .{ .args = &.{ "model.kup", "--bom" }, .message = "Error: Missing parts list path after --bom\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
         .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step\n" },
     };
@@ -133,6 +134,34 @@ test "build_cmd: valid script succeeds and writes the export" {
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.startsWith(u8, res.text(), "Successfully built "));
     try testing.expect(fx.outputExists());
+}
+
+test "build_cmd: --bom writes the model's parts list beside the export" {
+    var fx = try Fixture.init(
+        \\bolt = cylinder(r: 1, h: 10).named("bolt").material(density: 8)
+        \\assemble(name: "pair", parts: [bolt, bolt.translate(5, 0, 0), cube(2)])
+        \\
+    );
+    defer fx.deinit();
+    const bom_path = try std.fs.path.join(testing.allocator, &.{ fx.dir, "bom.json" });
+    defer testing.allocator.free(bom_path);
+    var res = try runBuild(&.{ fx.input, "-o", fx.output, "--bom", bom_path });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(fx.outputExists());
+
+    const text = try fx.tmp.dir.readFileAlloc(testing.io, "bom.json", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(text);
+    const Row = struct { name: ?[]const u8, count: u32, volume: f64, size: [3]f64, density: ?f64, mass: ?f64 };
+    const parsed = try std.json.parseFromSlice(struct { parts: []const Row }, testing.allocator, text, .{});
+    defer parsed.deinit();
+    const parts = parsed.value.parts;
+    try testing.expectEqual(@as(usize, 2), parts.len);
+    try testing.expectEqualStrings("bolt", parts[0].name.?);
+    try testing.expectEqual(@as(u32, 2), parts[0].count);
+    try testing.expectApproxEqAbs(parts[0].volume * 8 / 1000, parts[0].mass.?, 1e-12);
+    try testing.expect(parts[1].name == null and parts[1].mass == null);
+    try testing.expectEqual([3]f64{ 2, 2, 2 }, parts[1].size);
 }
 
 test "build_cmd: --param sets the script's param" {

@@ -1,5 +1,6 @@
-//! How a model is shaded: `MaterialDef` (color, alpha, roughness, metallic, transmission and
-//! a display role) and `parseHexColor` for the "#RRGGBB" / "#RGB" colors scripts give.
+//! How a model is shaded, and what it is made of: `MaterialDef` (color, alpha, roughness,
+//! metallic, transmission, a display role, and a density for the parts list) and
+//! `parseHexColor` for the "#RRGGBB" / "#RGB" colors scripts give.
 
 const std = @import("std");
 
@@ -14,6 +15,8 @@ pub const MaterialDef = struct {
     metallic: f64 = 0.0,
     transmission: f64 = 0.0,
     role: MaterialRole = .standard,
+    /// g/cm³, for a part's mass in the parts list (stdlib/bom.zig); shows nowhere.
+    density: ?f64 = null,
 
     /// Feeds every property to `hasher`, for fingerprints of what a model shows.
     pub fn hashInto(self: MaterialDef, hasher: *std.hash.Wyhash) void {
@@ -23,6 +26,11 @@ pub const MaterialDef = struct {
         hasher.update(std.mem.asBytes(&self.metallic));
         hasher.update(std.mem.asBytes(&self.transmission));
         hasher.update(std.mem.asBytes(&self.role));
+        // The optional's bytes hold padding, which hashes as anything
+        if (self.density) |d| {
+            hasher.update(&.{1});
+            hasher.update(std.mem.asBytes(&d));
+        } else hasher.update(&.{0});
     }
 };
 

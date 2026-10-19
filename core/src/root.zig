@@ -59,6 +59,7 @@ test {
     _ = @import("stdlib/params_test.zig");
     _ = @import("stdlib/json_test.zig");
     _ = @import("stdlib/json_fuzz_test.zig");
+    _ = @import("stdlib/bom_test.zig");
     _ = @import("core/json_input.zig");
     _ = @import("core/import_kind_test.zig");
     _ = @import("core/text_test.zig");

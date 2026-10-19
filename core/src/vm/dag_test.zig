@@ -180,7 +180,8 @@ test "DAG: compaction keeps the live nodes with their payloads, hashes and meshe
     const many = try b.addBatchUnion(&.{ cube, ball, cut });
     const moved = try b.addTranslate(many, 1, 2, 3);
     const tinted = try b.addSetMaterial(moved, 2);
-    const hulled = try b.addHull(tinted);
+    const named = try b.addSetName(tinted, try b.internPartName("frame"));
+    const hulled = try b.addHull(named);
     const small = try b.addSquare(1, 1, true);
     const big = try b.addSquare(2, 2, true);
     const lofted = try b.addLoft(small, big, 4);
@@ -219,6 +220,8 @@ test "DAG: compaction keeps the live nodes with their payloads, hashes and meshe
         try std.testing.expectEqual(hashes_before[old], try b.recomputedHash(new));
     }
     try std.testing.expectEqual(@as(dag.SettingsId, 1), b.nodes.items[renumbered[ball]].settings);
+    // The part names stay, as the settings do
+    try std.testing.expectEqualStrings("frame", b.partName(b.getNamePayload(b.nodes.items[renumbered[named]]).name_id));
     // An identical node is still found, at its new index.
     try std.testing.expectEqual(renumbered[cube], try b.addCube(1, 2, 3, true));
     try std.testing.expectEqual(renumbered[moved], try b.addTranslate(renumbered[many], 1, 2, 3));
@@ -240,6 +243,10 @@ test "DAG: a node is found again exactly when every part of its payload matches"
     const moved_pts = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 2 } };
     const faces = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } };
     const contours = [_][]const [2]f64{ &tri, &tri };
+    // One name, one id: a name doesn't make the same shape another node
+    const bolt = try b.internPartName("bolt");
+    const nut = try b.internPartName("nut");
+    try std.testing.expectEqual(bolt, try b.internPartName("bolt"));
     const moved_contours = [_][]const [2]f64{ &tri, &moved_tri };
     const cases = [_]struct { layout: []const u8, first: dag.DAGNodeIndex, again: dag.DAGNodeIndex, changed: []const dag.DAGNodeIndex }{
         .{ .layout = "numbers", .first = try b.addCube(1, 2, 3, false), .again = try b.addCube(1, 2, 3, false), .changed = &.{ try b.addCube(1, 2, 4, false), try b.addCube(1, 2, 3, true) } },
@@ -247,6 +254,7 @@ test "DAG: a node is found again exactly when every part of its payload matches"
         .{ .layout = "operand_list", .first = try b.addBatchUnion(&.{ cube, ball }), .again = try b.addBatchUnion(&.{ cube, ball }), .changed = &.{try b.addBatchUnion(&.{ cube, ball, cube })} },
         .{ .layout = "target_numbers", .first = try b.addTranslate(cube, 1, 2, 3), .again = try b.addTranslate(cube, 1, 2, 3), .changed = &.{ try b.addTranslate(ball, 1, 2, 3), try b.addTranslate(cube, 1, 2, 4), try b.addRotate(cube, 1, 2, 3) } },
         .{ .layout = "target_value", .first = try b.addSetMaterial(cube, 1), .again = try b.addSetMaterial(cube, 1), .changed = &.{try b.addSetMaterial(cube, 2)} },
+        .{ .layout = "target_value (a name)", .first = try b.addSetName(cube, bolt), .again = try b.addSetName(cube, bolt), .changed = &.{ try b.addSetName(cube, nut), try b.addSetMaterial(cube, bolt) } },
         .{ .layout = "loft", .first = try b.addLoft(small, big, 3), .again = try b.addLoft(small, big, 3), .changed = &.{ try b.addLoft(small, big, 4), try b.addLoft(big, small, 3) } },
         .{ .layout = "polygon", .first = try b.addPolygon(@constCast(&tri)), .again = try b.addPolygon(@constCast(&tri)), .changed = &.{try b.addPolygon(@constCast(&moved_tri))} },
         .{ .layout = "polygons", .first = try b.addPolygonsEvenOdd(&contours), .again = try b.addPolygonsEvenOdd(&contours), .changed = &.{ try b.addPolygonsEvenOdd(&moved_contours), try b.addPolygonsEvenOdd(contours[0..1]) } },

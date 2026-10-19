@@ -18,6 +18,7 @@ const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
 const assembly_mod = @import("assembly.zig");
+const bom = @import("bom.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
 const debug_mod = @import("debug.zig");
@@ -182,6 +183,8 @@ pub const mesh_methods = [_]MeshMethod{
     method("repeat_linear", .transform, methods.meshRepeatLinear, &sig.REPEAT_LINEAR, .receiver),
     method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver),
     method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
+    method("named", .transform, bom.meshNamed, &sig.NAMED, .receiver),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
     method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
     method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver),
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
@@ -195,6 +198,7 @@ pub const mesh_methods = [_]MeshMethod{
 pub const assembly_methods = [_]MeshMethod{
     method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
     method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
     // Placing a whole subassembly: its bounds, and every part moved alike.
     method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
     method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),

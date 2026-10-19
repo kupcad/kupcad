@@ -21,6 +21,7 @@ const Linter = @import("tools/lint/linter.zig").Linter;
 const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
 const step_exporter = @import("exporters/3d/step.zig");
+const bom = @import("stdlib/bom.zig");
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -284,18 +285,42 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
 /// list). Handles are borrowed from the VM.
 pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
     try out.appendSlice(allocator, vm.display_list.items);
-    if (vm.stack_top == 0) return;
-    const final_val = vm.stack[0];
-    if (final_val.isGeometry()) return out.append(allocator, try vm.ensureConcrete(final_val));
-    const items: []const value.Value = if (final_val.isAssembly())
-        final_val.asAssembly().parts.items.items
-    else if (final_val.isArray())
-        final_val.asArray().items.items
-    else
-        &.{};
-    for (items) |part| {
+    var single: [1]value.Value = undefined;
+    for (modelValues(vm, &single)) |part| {
         if (part.isGeometry()) try out.append(allocator, try vm.ensureConcrete(part));
     }
+}
+
+/// What the script left as its model: its final value, a Solid (in `single`), an Assembly's
+/// parts or an Array's items (the Solids among them are the model); none for anything else.
+pub fn modelValues(vm: *VM, single: *[1]value.Value) []const value.Value {
+    if (vm.stack_top == 0) return &.{};
+    const final_val = vm.stack[0];
+    if (final_val.isGeometry()) {
+        single.* = .{final_val};
+        return single;
+    }
+    if (final_val.isAssembly()) return final_val.asAssembly().parts.items.items;
+    if (final_val.isArray()) return final_val.asArray().items.items;
+    return &.{};
+}
+
+/// The parts list (stdlib/bom.zig) of the model the script left (modelValues), as
+/// `kupcad build --bom` writes it; error.NoGeometry when it holds no Solid.
+pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
+    var single: [1]value.Value = undefined;
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(allocator);
+    for (modelValues(vm, &single)) |part| {
+        if (part.isGeometry()) try solids.append(allocator, part);
+    }
+    if (solids.items.len == 0) return error.NoGeometry;
+    const parts = try bom.collect(vm, allocator, solids.items);
+    defer allocator.free(parts);
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    try bom.writeJson(allocator, &out.writer, parts);
+    return out.toOwnedSlice();
 }
 
 /// The formats a model exports to. The tag names are what `kupcad build --format` and the

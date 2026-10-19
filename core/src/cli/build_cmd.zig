@@ -29,6 +29,8 @@ pub const USAGE =
     \\
 ++ param_flags.USAGE ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
+    \\      --bom <file.json>     Also write the model's parts list: each part, how many
+    \\                            copies, its volume, size and mass
     \\  -h, --help                Show this help
     \\
 ;
@@ -117,6 +119,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var output_path: ?[]const u8 = null;
     var explicit_format: ?Format = null;
     var use_draco: bool = false;
+    var bom_path: ?[]const u8 = null;
 
     // The values `-p` and `-P` give, in order: the later of two for one parameter wins
     var params: api.ParamValues = .{};
@@ -136,6 +139,11 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
             };
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
             use_draco = true;
+        } else if (std.mem.eql(u8, arg, "--bom")) {
+            bom_path = args_iter.next() orelse {
+                reporter.err("Error: Missing parts list path after {s}\n", .{arg});
+                return .failure;
+            };
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             const name = args_iter.next() orelse {
                 reporter.err("Error: Missing format after {s}\n", .{arg});
@@ -248,5 +256,16 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     });
 
     reporter.out("Successfully built {s} ({d} bytes)\n", .{ final_output, output_bytes.len });
+
+    if (bom_path) |path| {
+        // A part the script can read about (a B-Rep one has no volume yet) was raised by the VM
+        const parts = api.billOfMaterials(allocator, &session.vm) catch |err| {
+            reporter.err("Parts list failed: {}\n", .{err});
+            return .failure;
+        };
+        defer allocator.free(parts);
+        try cwd.writeFile(io, .{ .sub_path = path, .data = parts });
+        reporter.out("Wrote the parts list to {s}\n", .{path});
+    }
     return .success;
 }
