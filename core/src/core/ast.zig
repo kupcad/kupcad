@@ -981,9 +981,11 @@ pub const Builder = struct {
         return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
-    pub fn symbolNode(self: *Builder, lexeme_str: []const u8, main_token: u24) !NodeIndex {
-        const clean_str = if (lexeme_str.len > 0 and lexeme_str[0] == ':') lexeme_str[1..] else lexeme_str;
-        const str_id = try self.intern(clean_str);
+    /// A symbol's node, `name` its token's text: the lexer gives it without the colon (and
+    /// without the quotes of `:"a b"`). A leading colon is the name's own: `:":"` is the
+    /// symbol named ":", which used to lose it and become the empty symbol.
+    pub fn symbolNode(self: *Builder, name: []const u8, main_token: u24) !NodeIndex {
+        const str_id = try self.intern(name);
         return self.createNode(.symbol, main_token, @backingInt(str_id));
     }
 

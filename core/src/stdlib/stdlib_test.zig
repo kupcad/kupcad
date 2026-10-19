@@ -1191,6 +1191,16 @@ test "Stdlib: single quotes and %q keep every backslash but before a backslash o
     });
 }
 
+test "Stdlib: a quoted symbol's name keeps a leading colon" {
+    // `:":"` was the empty symbol: the parser stripped a colon the lexer had already left out.
+    try expectScripts(&.{
+        .{ .src = "r = \"#{:\":\"}\"", .expected = .{ .str = ":" } },
+        .{ .src = "r = \"#{:\"::x\"}\"", .expected = .{ .str = "::x" } },
+        .{ .src = "r = :\":\" == :\"\"", .expected = .{ .boolean = false } },
+        .{ .src = "r = { k: :\":\" }[:k] == :\":\"", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: Strings index by character and Arrays and Strings by Range, as in Ruby" {
     try expectScripts(&.{
         // `"abc"[0]` used to be "TypeError: Cannot index target."

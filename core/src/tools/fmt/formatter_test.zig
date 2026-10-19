@@ -1072,3 +1072,10 @@ test "Formatter: a single-quoted string keeps its text, backslashes and all, and
     // %q is written as a double-quoted string, as it always was; its value stays.
     try expectStableFormat("z = %q(a \\) b \\d)\n", "z = \"a ) b \\\\d\"\n");
 }
+
+test "Formatter: a quoted symbol named with colons keeps its name" {
+    // The parser dropped a leading colon of the name, so `:":"` was the empty symbol and
+    // formatted to a lone `:`, which doesn't parse (found by the nightly fuzzer).
+    try expectStableFormat("x = :\":\"\n", "x = :\":\"\n");
+    try expectStableFormat("y = :\"::x\"\n", "y = :\"::x\"\n");
+}
