@@ -2,6 +2,28 @@
 
 const std = @import("std");
 
+const VM = @import("vm/vm.zig").VM;
+const InterpretResult = @import("vm/vm.zig").InterpretResult;
+const chunk = @import("vm/chunk.zig");
+const Document = @import("core/document.zig").Document;
+const Compiler = @import("compiler/compiler.zig").Compiler;
+const registry = @import("stdlib/registry.zig");
+const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
+const value = @import("core/value.zig");
+const disassembler = @import("tools/dev/disassembler.zig");
+const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
+
+/// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
+pub const NUMBER_TOLERANCE = 1e-9;
+
+/// `rescue <Kind> => e` for every runtime error kind, each giving "<Kind>: <message>",
+/// so an expected string checks the error's class as well as its message.
+const RESCUE_BY_KIND = blk: {
+    var text: []const u8 = "";
+    for (@typeInfo(ErrorKind).@"enum".field_names) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
+    break :blk text;
+};
+
 /// Call first in a test that drives a failure path whose warning is the expected outcome
 /// (a rejected lockfile, a refused connection), and restore the level when it ends:
 ///
@@ -25,20 +47,6 @@ pub const ExpectedWarnings = struct {
         std.testing.log_level = self.previous;
     }
 };
-
-const VM = @import("vm/vm.zig").VM;
-const InterpretResult = @import("vm/vm.zig").InterpretResult;
-const chunk = @import("vm/chunk.zig");
-const Document = @import("core/document.zig").Document;
-const Compiler = @import("compiler/compiler.zig").Compiler;
-const registry = @import("stdlib/registry.zig");
-const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
-const value = @import("core/value.zig");
-const disassembler = @import("tools/dev/disassembler.zig");
-const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
-
-/// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
-pub const NUMBER_TOLERANCE = 1e-9;
 
 /// A VM with the standard library, muted: its errors are what a test expects, and the
 /// test runner treats logged errors as failures. Script output (puts) stays out of the log.
@@ -72,14 +80,6 @@ pub fn runWith(allocator: std.mem.Allocator, vm: *VM, source: []const u8) !Inter
     try comp.compile(doc.tree.root);
     return vm.interpret(&out_chunk);
 }
-
-/// `rescue <Kind> => e` for every runtime error kind, each giving "<Kind>: <message>",
-/// so an expected string checks the error's class as well as its message.
-const RESCUE_BY_KIND = blk: {
-    var text: []const u8 = "";
-    for (@typeInfo(ErrorKind).@"enum".field_names) |kind| text = text ++ "rescue " ++ kind ++ " => e\n  \"" ++ kind ++ ": \" + e.message\n";
-    break :blk text;
-};
 
 /// Wraps `src` so the global `r` holds the rescued error as "<Kind>: <message>", or
 /// "no error" when nothing was raised.

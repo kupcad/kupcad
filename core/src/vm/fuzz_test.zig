@@ -22,6 +22,9 @@ const RUN_INSTRUCTION_LIMIT = 50_000;
 /// Script memory a run may hold (strings, arrays, maps): a doubling string ends here.
 const RUN_MEMORY_LIMIT = 16 * 1024 * 1024;
 
+/// Generated programs each plain test run runs.
+const PLAIN_RUN_PROGRAMS = 100;
+
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: a script runs without crashing the VM" {
     const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
@@ -55,9 +58,6 @@ test "Fuzz programs: generated programs run on the VM" {
         try runProgram(.{ .random = prng.random() });
     }
 }
-
-/// Generated programs each plain test run runs.
-const PLAIN_RUN_PROGRAMS = 100;
 
 /// Runs `source`, if it compiles, on a VM closed off for it.
 fn runScript(source: []const u8) !void {

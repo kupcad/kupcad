@@ -5,17 +5,17 @@ const std = @import("std");
 const testing = std.testing;
 const support = @import("../test_support.zig");
 
-/// Each part of `model`'s list as "name xCOUNT", joined with "; ".
-fn listing(comptime model: []const u8) []const u8 {
-    return model ++ "\nr = model.bom.map { |p| \"#{p[:name]} x#{p[:count]}\" }.join(\"; \")";
-}
-
 const MOUNT =
     \\bolt = cylinder(r: 1.5, h: 20).named("M3 bolt")
     \\plate = cube(x: 40, y: 30, z: 3).named("plate")
     \\bolts = [[5, 5], [35, 5], [5, 25], [35, 25]].map { |p| bolt.translate(p[0], p[1], 0) }
     \\model = assemble(name: "Mount", parts: [plate] + bolts + [bolt.rotate(90, 0, 0)])
 ;
+
+/// Each part of `model`'s list as "name xCOUNT", joined with "; ".
+fn listing(comptime model: []const u8) []const u8 {
+    return model ++ "\nr = model.bom.map { |p| \"#{p[:name]} x#{p[:count]}\" }.join(\"; \")";
+}
 
 test "bom: copies placed by translate and rotate are one part, counted" {
     try support.expectScripts(&.{

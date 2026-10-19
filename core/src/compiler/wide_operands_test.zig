@@ -43,6 +43,15 @@ const UNCOVERED = [_]struct { op: chunk.OpCode, reason: []const u8 }{
     .{ .op = .op_import_wide, .reason = "an import needs a file; import_test.zig runs them" },
 };
 
+/// The cases a generated script reaches without PADDING, by their opcodes alone (the
+/// sources are built at run time).
+const GENERATED_OPS = [_]struct { ops: []const chunk.OpCode }{
+    .{ .ops = &.{ .op_get_local_wide, .op_set_local_wide } },
+    .{ .ops = &.{.op_build_array_wide} },
+    .{ .ops = &.{.op_build_map_wide} },
+    .{ .ops = &.{.op_switch_wide} },
+};
+
 comptime {
     @setEvalBranchQuota(100_000);
     for (@typeInfo(chunk.OpCode).@"enum".field_names) |name| {
@@ -58,15 +67,6 @@ comptime {
         if (!covered) @compileError("chunk." ++ name ++ " has no case in wide_operands_test.zig");
     }
 }
-
-/// The cases a generated script reaches without PADDING, by their opcodes alone (the
-/// sources are built at run time).
-const GENERATED_OPS = [_]struct { ops: []const chunk.OpCode }{
-    .{ .ops = &.{ .op_get_local_wide, .op_set_local_wide } },
-    .{ .ops = &.{.op_build_array_wide} },
-    .{ .ops = &.{.op_build_map_wide} },
-    .{ .ops = &.{.op_switch_wide} },
-};
 
 test "wide operands: each wide opcode compiles where its operand needs it, and runs right" {
     const padding = try paddingSource();

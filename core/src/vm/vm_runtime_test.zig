@@ -26,6 +26,12 @@ var mock_destructor_called = false;
 
 var mock_last_destroyed_handle: ?geom.GeometryHandle = null;
 
+/// The native stack MAX_NESTED_RUNS levels may take: half of the 16 MiB a script runs on
+/// (Zig links executables with that main stack and spawns threads with it), leaving the
+/// rest to what runs inside the deepest level. A debug build takes about 32 KiB a level,
+/// a release one about 4 KiB.
+const NESTED_RUN_STACK_BUDGET = 8 * 1024 * 1024;
+
 fn mockMeshDestructor(handle: geom.GeometryHandle) void {
     mock_destructor_called = true;
     mock_last_destroyed_handle = handle;
@@ -1198,12 +1204,6 @@ test "VM: running out of memory for the stack is an error, not a panic" {
 
     try testing.expectEqual(.runtime_error, vm.interpret(&out_chunk));
 }
-
-/// The native stack MAX_NESTED_RUNS levels may take: half of the 16 MiB a script runs on
-/// (Zig links executables with that main stack and spawns threads with it), leaving the
-/// rest to what runs inside the deepest level. A debug build takes about 32 KiB a level,
-/// a release one about 4 KiB.
-const NESTED_RUN_STACK_BUDGET = 8 * 1024 * 1024;
 
 /// The address of the native's frame, as a Number: how deep the native stack is.
 fn stackHere(_: *anyopaque, _: value.NativeArgs) anyerror!value.Value {

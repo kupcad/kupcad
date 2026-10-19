@@ -7,6 +7,8 @@ const support = @import("../test_support.zig");
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;
 
+const TO_S_CLASS = "class P\n  def initialize(x)\n    @x = x\n  end\n  def to_s\n    \"P(#{@x})\"\n  end\nend\n";
+
 test "Language: iterators follow the receiver as the block grows it" {
     // The block pushed to the array it iterated; the slice taken once read the freed buffer
     // (the values came back as 1.19e104). As in Ruby, the iteration reaches what was pushed.
@@ -371,8 +373,6 @@ test "Language: == compares Arrays, Maps and Ranges by content" {
         .{ .src = "r = \"#{[1] == 1} #{\"a\" == [\"a\"]}\"", .expected = .{ .str = "false false" } },
     });
 }
-
-const TO_S_CLASS = "class P\n  def initialize(x)\n    @x = x\n  end\n  def to_s\n    \"P(#{@x})\"\n  end\nend\n";
 
 test "Language: puts and interpolation show an instance by its own to_s" {
     // The method was ignored: the instance showed as "#<P>" in both.

@@ -13,6 +13,12 @@ const SessionPreview = @import("lsp_preview.zig").SessionPreview;
 
 const URI = "file:///work/part.kup";
 
+/// An editor that watches files for the server by paths relative to a folder.
+const WATCHING_EDITOR: lsp.types.ClientCapabilities = .{ .workspace = .{
+    .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = true },
+} };
+const READS_SIZE = "import size from \"./size.json\"\ncube(size[:side])\n";
+
 /// Collects what the server writes; reading ends the stream (the handler is called directly).
 const Outbox = struct {
     transport: lsp.Transport = .{ .vtable = &.{ .readJsonMessage = read, .writeJsonMessage = write } },
@@ -117,12 +123,6 @@ const Server = struct {
         return kernel.volume(self.preview.session.nodes.items[@backingInt(id)].cached_handle orelse return error.TestExpectedModel);
     }
 };
-
-/// An editor that watches files for the server by paths relative to a folder.
-const WATCHING_EDITOR: lsp.types.ClientCapabilities = .{ .workspace = .{
-    .didChangeWatchedFiles = .{ .dynamicRegistration = true, .relativePatternSupport = true },
-} };
-const READS_SIZE = "import size from \"./size.json\"\ncube(size[:side])\n";
 
 test "LSP: editing a document logs nothing above debug" {
     // The runner fails a test that logs an error and prints its warnings: the handler used

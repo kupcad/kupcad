@@ -17,6 +17,17 @@ const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
 /// The one key `with { }` takes.
 const TYPE_KEY = "type";
 
+/// Every type name, for an error that lists them: `"kup", "stl", "step" or "json"`.
+pub const TYPE_NAMES = blk: {
+    const kinds = std.enums.values(Kind);
+    var text: []const u8 = "";
+    for (kinds, 0..) |kind, i| {
+        const separator = if (i == 0) "" else if (i + 1 == kinds.len) " or " else ", ";
+        text = text ++ separator ++ "\"" ++ kind.typeName() ++ "\"";
+    }
+    break :blk text;
+};
+
 pub const Kind = enum {
     module,
     stl,
@@ -59,17 +70,6 @@ pub const Kind = enum {
         }
         return null;
     }
-};
-
-/// Every type name, for an error that lists them: `"kup", "stl", "step" or "json"`.
-pub const TYPE_NAMES = blk: {
-    const kinds = std.enums.values(Kind);
-    var text: []const u8 = "";
-    for (kinds, 0..) |kind, i| {
-        const separator = if (i == 0) "" else if (i + 1 == kinds.len) " or " else ", ";
-        text = text ++ separator ++ "\"" ++ kind.typeName() ++ "\"";
-    }
-    break :blk text;
 };
 
 /// What the extension of `path` makes it.

@@ -30,18 +30,6 @@ const Buffer = [MAX_INPUT_BYTES]u8;
 /// What an extracted fuzz archive may hold: small, so a run stays fast and its blobs few.
 const FUZZ_EXTRACT_LIMITS: cafs_mod.ExtractLimits = .{ .max_total_bytes = 256 * 1024, .max_file_count = 32 };
 
-fn fuzzParser(comptime check: fn ([]const u8) anyerror!void, seeds: []const []const u8) !void {
-    const buf = try testing.allocator.create(Buffer);
-    defer testing.allocator.destroy(buf);
-    try testing.fuzz(buf, struct {
-        fn one(b: *Buffer, smith: *testing.Smith) anyerror!void {
-            try check(b[0..smith.slice(b)]);
-        }
-    }.one, .{ .corpus = seeds });
-}
-
-// --- STL ---
-
 const ASCII_STL =
     \\solid part
     \\  facet normal 0 0 1
@@ -63,6 +51,18 @@ const BINARY_STL = blk: {
     for (vertices, 0..) |v, i| std.mem.writeInt(u32, bytes[84 + 12 + i * 4 ..][0..4], @bitCast(v), .little);
     break :blk bytes;
 };
+
+fn fuzzParser(comptime check: fn ([]const u8) anyerror!void, seeds: []const []const u8) !void {
+    const buf = try testing.allocator.create(Buffer);
+    defer testing.allocator.destroy(buf);
+    try testing.fuzz(buf, struct {
+        fn one(b: *Buffer, smith: *testing.Smith) anyerror!void {
+            try check(b[0..smith.slice(b)]);
+        }
+    }.one, .{ .corpus = seeds });
+}
+
+// --- STL ---
 
 test "fuzz: an STL file a script imports" {
     try fuzzParser(checkStl, &.{ ASCII_STL, &BINARY_STL, "solid empty\nendsolid empty\n" });

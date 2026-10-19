@@ -8,6 +8,19 @@ const Kind = import_kind.Kind;
 const Document = @import("document.zig").Document;
 const support = @import("../test_support.zig");
 
+const ASCII_STL =
+    \\solid part
+    \\  facet normal 0 0 1
+    \\    outer loop
+    \\      vertex 0 0 0
+    \\      vertex 10 0 0
+    \\      vertex 0 10 0
+    \\    endloop
+    \\  endfacet
+    \\endsolid part
+    \\
+;
+
 test "import kind: a path's extension, in any case, makes it a file's; any other is a module" {
     const cases = [_]struct { []const u8, Kind }{
         .{ "./logo.stl", .stl },
@@ -83,19 +96,6 @@ test "import kind: a `with { }` it can't take, or a file import naming several v
         try testing.expectEqualStrings(case.message, doc.diagnostics[0].message);
     }
 }
-
-const ASCII_STL =
-    \\solid part
-    \\  facet normal 0 0 1
-    \\    outer loop
-    \\      vertex 0 0 0
-    \\      vertex 10 0 0
-    \\      vertex 0 10 0
-    \\    endloop
-    \\  endfacet
-    \\endsolid part
-    \\
-;
 
 test "import kind: a run reads the file as its type says, whatever the file is called" {
     const files = [_]support.ScriptFile{

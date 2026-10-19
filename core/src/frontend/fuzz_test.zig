@@ -14,6 +14,9 @@ const program = @import("fuzz_program.zig");
 /// What describeError calls an error that is the compiler's fault, not the script's.
 const INTERNAL_COMPILER_ERROR = "internal compiler error";
 
+/// Generated programs each plain test run checks.
+const PLAIN_RUN_PROGRAMS = 100;
+
 // The name is `-Dfuzz-target`'s filter in build.zig: renaming it means changing that.
 test "fuzz: the front end takes any input" {
     const buf = try testing.allocator.create([corpus.MAX_INPUT_BYTES]u8);
@@ -48,9 +51,6 @@ test "Fuzz programs: generated programs parse and go through the front end" {
         try checkGenerated(.{ .random = prng.random() });
     }
 }
-
-/// Generated programs each plain test run checks.
-const PLAIN_RUN_PROGRAMS = 100;
 
 /// Where a source comes from: any bytes may fail to parse; a generated program must not.
 const Source = enum { any, generated };

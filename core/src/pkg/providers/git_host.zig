@@ -8,6 +8,14 @@ const ParsedPackage = provider.ParsedPackage;
 
 const Error = std.mem.Allocator.Error;
 
+const HOSTS = std.EnumArray(provider.ProviderType, ?GitHost).init(.{
+    .github = .{ .tags_page_size = 100, .tags_url = github.tags, .commit_url = github.commit, .archive_url = github.archive },
+    .gitlab = .{ .tags_page_size = 100, .tags_url = gitlab.tags, .commit_url = gitlab.commit, .archive_url = gitlab.archive },
+    .gitea = .{ .tags_page_size = 50, .tags_url = gitea.tags, .commit_url = gitea.commit, .archive_url = gitea.archive },
+    .http = null,
+    .local = null,
+});
+
 pub const GitHost = struct {
     /// Tags per page of the tag list (the most the host's API gives).
     tags_page_size: usize,
@@ -18,14 +26,6 @@ pub const GitHost = struct {
     /// The archive of the repository at `commit_sha`.
     archive_url: *const fn (allocator: std.mem.Allocator, pkg: ParsedPackage, commit_sha: []const u8) Error![]const u8,
 };
-
-const HOSTS = std.EnumArray(provider.ProviderType, ?GitHost).init(.{
-    .github = .{ .tags_page_size = 100, .tags_url = github.tags, .commit_url = github.commit, .archive_url = github.archive },
-    .gitlab = .{ .tags_page_size = 100, .tags_url = gitlab.tags, .commit_url = gitlab.commit, .archive_url = gitlab.archive },
-    .gitea = .{ .tags_page_size = 50, .tags_url = gitea.tags, .commit_url = gitea.commit, .archive_url = gitea.archive },
-    .http = null,
-    .local = null,
-});
 
 /// The git host `kind` names; null for a package that isn't on one (an http archive, a
 /// local file), which has no commits or tags.

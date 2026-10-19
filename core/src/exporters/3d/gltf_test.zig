@@ -10,6 +10,11 @@ const mesh_check = @import("../../kernel/mesh_check.zig");
 const GLB_HEADER_LEN = 12;
 const CHUNK_HEADER_LEN = 8;
 
+const PARTS_SOURCE =
+    \\[cube(2), sphere(1).translate(x: 5).material(color: "#FF0000"),
+    \\ (cube(2).material(color: "#00FF00") + cylinder(r: 1, h: 4).translate(x: 1)).translate(y: 10)]
+;
+
 test "GLTF: Zero-Copy GLB export generates valid binary container" {
     var vm = try VM.init(std.testing.allocator, std.testing.io);
     defer vm.deinit();
@@ -297,11 +302,6 @@ fn viewBytes(glb: *const Glb, index: usize) []const u8 {
     const offset = if (view.get("byteOffset")) |o| int(o) else 0;
     return glb.bin[offset..][0..int(view.get("byteLength").?)];
 }
-
-const PARTS_SOURCE =
-    \\[cube(2), sphere(1).translate(x: 5).material(color: "#FF0000"),
-    \\ (cube(2).material(color: "#00FF00") + cylinder(r: 1, h: 4).translate(x: 1)).translate(y: 10)]
-;
 
 test "GLTF: the primitives of an export close every part" {
     // A part split by material is several primitives over its one set of vertices.

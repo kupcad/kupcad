@@ -18,6 +18,8 @@ const support = @import("../test_support.zig");
 const SMALL_INSTRUCTION_BUDGET: usize = 10_000;
 const SMALL_MEMORY_BUDGET: usize = 256 * 1024;
 
+const TOO_MANY_VARIABLES = std.fmt.comptimePrint("too many variables in one function (at most {d}, and {d} captured from outside)", .{ limits.MAX_LOCALS, limits.MAX_UPVALUES });
+
 /// One check per limit, by the limit's name.
 const CASES = .{
     .MAX_CONSTANTS = constants,
@@ -59,8 +61,6 @@ test "limits: every limit stops a hostile script with a clean error" {
 }
 
 // --- The cases ---
-
-const TOO_MANY_VARIABLES = std.fmt.comptimePrint("too many variables in one function (at most {d}, and {d} captured from outside)", .{ limits.MAX_LOCALS, limits.MAX_UPVALUES });
 
 fn constants() !void {
     // Distinct literals, each one a constant of the script's function.

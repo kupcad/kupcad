@@ -2,6 +2,12 @@ const std = @import("std");
 const testing = std.testing;
 const Fetcher = @import("fetcher.zig").Fetcher;
 const ParsedPackage = @import("provider.zig").ParsedPackage;
+const semver = @import("../../core/semver.zig");
+const Release = @import("fetcher.zig").Release;
+
+const SHA_A: [40]u8 = @splat('a');
+const SHA_B: [40]u8 = @splat('b');
+const SHA_C: [40]u8 = @splat('c');
 
 // Guards the audit fix where non-GitHub hosts used the raw ref as the request URL.
 test "Fetcher: commitApiUrl dispatches per provider and never uses the ref as a URL" {
@@ -52,12 +58,6 @@ test "Fetcher: parseCommitShaResponse validates the response shape" {
         };
     }
 }
-
-const semver = @import("../../core/semver.zig");
-const Release = @import("fetcher.zig").Release;
-const SHA_A: [40]u8 = @splat('a');
-const SHA_B: [40]u8 = @splat('b');
-const SHA_C: [40]u8 = @splat('c');
 
 test "Fetcher: tagsApiUrl lists each host's tags with their commits, by page" {
     const cases = [_]struct { spec: []const u8, url: []const u8 }{

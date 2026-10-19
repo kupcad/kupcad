@@ -39,18 +39,21 @@ const MAX_CLASSES = 3;
 /// The most a generated loop counts to.
 const MAX_LOOP = 4;
 
+const VAR_NAMES = names("v", MAX_VARS);
+const PARAM_NAMES = names("p", 3);
+const BLOCK_NAMES = names("x", MAX_NESTING + 1);
+const METHOD_NAMES = names("m", MAX_METHODS);
+const CLASS_NAMES = names("C", MAX_CLASSES);
+
+/// The odds, one in this many, that a random program ends a list of statements.
+const RANDOM_STOP_ODDS = 6;
+
 /// What an expression gives, as far as the generator keeps track.
 const Kind = enum { number, string, boolean, symbol, array, map, range, solid, sketch };
 
 const Var = struct { name: []const u8, kind: Kind };
 const Method = struct { name: []const u8, arity: u8 };
 const Class = struct { name: []const u8, arity: u8 };
-
-const VAR_NAMES = names("v", MAX_VARS);
-const PARAM_NAMES = names("p", 3);
-const BLOCK_NAMES = names("x", MAX_NESTING + 1);
-const METHOD_NAMES = names("m", MAX_METHODS);
-const CLASS_NAMES = names("C", MAX_CLASSES);
 
 fn names(comptime prefix: []const u8, comptime n: usize) [n][]const u8 {
     var out: [n][]const u8 = undefined;
@@ -66,9 +69,6 @@ pub const Choices = union(enum) {
     /// first option almost every time (a number out of range falls back to it).
     random: std.Random,
 };
-
-/// The odds, one in this many, that a random program ends a list of statements.
-const RANDOM_STOP_ODDS = 6;
 
 /// The program for `choices`; the caller owns it.
 pub fn generate(gpa: std.mem.Allocator, choices: Choices) Error![]u8 {
