@@ -89,6 +89,37 @@ jobs:
           path: ${{ env.ZIG_LOCAL_CACHE_DIR }}/f/
           if-no-files-found: ignore
 
+  release-fast:
+    # Every test built ReleaseFast, which compiles out the safety checks the pull-request
+    # tests keep (Debug and ReleaseSafe): code that is right only while they run, such as
+    # undefined behaviour a check would have stopped, fails here.
+    name: Tests in ReleaseFast (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@v1
+        with:
+          zig-version-file: .tool-versions
+
+      - name: Setup `wasmtime`
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Run the tests
+        working-directory: core
+        run: zig build test -Doptimize=fast --summary line
+
+      - name: Run the wasm tests
+        if: ${{ !cancelled() }}
+        working-directory: core
+        run: zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=fast --summary line
+
   gc-stress:
     # Every test with every VM collecting at each object allocation: a value a native or
     # the VM forgot to root is swept at once and the test fails where it is used.
