@@ -519,11 +519,15 @@ pub const Handler = struct {
         defer closed.deinit(self.allocator);
         defer self.tellOfCrash();
         try self.preview.remove(closed.module_path);
+        // A document another one imports is read from disk now, which may differ from the
+        // text the editor had
+        if (self.preview_module != null) self.preview_pending = true;
     }
 
-    /// A file the editor watches for the preview (watchFilesRead) was saved, created or
-    /// deleted: the modules that read it run again once the editor is quiet. The extension
-    /// also reports every `.kup` file it sees change, which no run read as data.
+    /// A file was saved, created or deleted on disk: one the editor watches for the preview
+    /// (watchFilesRead), or a `.kup` file, which the extension reports. The modules that
+    /// read it, as data or as an import of a module that isn't open, run again once the
+    /// editor is quiet. An open document's own text is what the preview reads, not the disk.
     pub fn @"workspace/didChangeWatchedFiles"(
         self: *Handler,
         arena: std.mem.Allocator,
@@ -532,20 +536,13 @@ pub const Handler = struct {
         defer self.tellOfCrash();
         var changed = false;
         for (params.changes) |change| {
+            if (self.files.contains(change.uri)) continue;
             const path = try self.modulePath(arena, change.uri);
-            if (!self.watches(path)) continue;
-            logger.debug("Watched file changed: {s}", .{path});
-            try self.preview.dataFileChanged(path);
+            if (!try self.preview.fileChanged(path)) continue;
+            logger.debug("{s} changed on disk", .{path});
             changed = true;
         }
         if (changed and self.preview_module != null) self.preview_pending = true;
-    }
-
-    fn watches(self: *const Handler, path: []const u8) bool {
-        for (self.watched_files) |watched| {
-            if (std.mem.eql(u8, watched, path)) return true;
-        }
-        return false;
     }
 
     pub fn @"textDocument/formatting"(

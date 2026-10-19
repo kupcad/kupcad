@@ -94,7 +94,8 @@ test "lsp worker: the files a run read reach the server, and a change to one run
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
     try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{0}, path });
     try lsp_worker.writeFrame(&requests.writer, .files_read, &.{});
-    try lsp_worker.writeFrame(&requests.writer, .data_changed, &.{"a.json"});
+    try lsp_worker.writeFrame(&requests.writer, .file_changed, &.{"a.json"});
+    try lsp_worker.writeFrame(&requests.writer, .file_changed, &.{"unread.json"});
 
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
@@ -108,7 +109,8 @@ test "lsp worker: the files a run read reach the server, and a change to one run
     try lsp_worker.serve(testing.io, testing.allocator, &preview, &in, &replies.writer);
 
     var out: std.Io.Reader = .fixed(replies.written());
-    const expected = [_][]const u8{ &.{0}, &.{@backingInt(std.meta.Tag(@import("lsp_preview.zig").Outcome).nothing)}, "a.json\x00b.json", &.{0} };
+    // Updated, evaluated (nothing to show: no mesh wanted), the files, a file it read, one it didn't
+    const expected = [_][]const u8{ &.{0}, &.{@backingInt(std.meta.Tag(@import("lsp_preview.zig").Outcome).nothing)}, "a.json\x00b.json", &.{1}, &.{0} };
     for (expected) |payload| {
         const reply = try lsp_worker.readFrame(&out, testing.allocator);
         defer testing.allocator.free(reply.payload);

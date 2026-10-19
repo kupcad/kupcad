@@ -47,7 +47,12 @@ const Server = struct {
     arena: std.heap.ArenaAllocator,
 
     fn init(self: *Server) !void {
-        try self.preview.init(testing.allocator, testing.io, false);
+        try self.initReading(false);
+    }
+
+    /// `read_workspace`: imports read the files in the workspace folder `initialize` names.
+    fn initReading(self: *Server, read_workspace: bool) !void {
+        try self.preview.init(testing.allocator, testing.io, read_workspace);
         self.outbox = .{};
         self.handler = Handler.init(testing.allocator, testing.io, &self.outbox.transport, self.preview.preview(), null);
         self.arena = std.heap.ArenaAllocator.init(testing.allocator);
@@ -502,4 +507,53 @@ test "LSP: a watched file's glob pattern matches only its path" {
     const pattern = try @import("lsp.zig").globEscaped(testing.allocator, "data/[a]*{b}?.json");
     defer testing.allocator.free(pattern);
     try testing.expectEqualStrings("data/[[]a][*][{]b[}][?].json", pattern);
+}
+
+test "LSP: a module a document imports, changed on disk while not open, updates the preview" {
+    // It ran from the VM's import cache, which kept the first version it read.
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "hw.kup", .data = "def bolt\n  cube(2)\nend\nexport bolt\n" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const root_uri = try std.mem.concat(testing.allocator, u8, &.{ "file://", root });
+    defer testing.allocator.free(root_uri);
+    const main_uri = try std.mem.concat(testing.allocator, u8, &.{ root_uri, "/main.kup" });
+    defer testing.allocator.free(main_uri);
+    const hw_uri = try std.mem.concat(testing.allocator, u8, &.{ root_uri, "/hw.kup" });
+    defer testing.allocator.free(hw_uri);
+
+    var server: Server = undefined;
+    try server.initReading(true);
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = root_uri });
+    try server.open(main_uri, "import { bolt } from \"./hw.kup\"\nbolt()\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 8), try server.volumeOf("main.kup"), 1e-9);
+
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "hw.kup", .data = "def bolt\n  cube(3)\nend\nexport bolt\n" });
+    try server.changeWatched(hw_uri);
+    try testing.expect(server.handler.preview_pending);
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 27), try server.volumeOf("main.kup"), 1e-9);
+
+    // A .kup file nothing imports runs nothing
+    try server.changeWatched(try std.mem.concat(server.arena.allocator(), u8, &.{ root_uri, "/other.kup" }));
+    try testing.expect(!server.handler.preview_pending);
+
+    // Open, its text is what the preview reads, not the disk; closed, the disk again
+    try server.open(hw_uri, "def bolt\n  cube(4)\nend\nexport bolt\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 64), try server.volumeOf("main.kup"), 1e-9);
+    try server.changeWatched(hw_uri);
+    try testing.expect(!server.handler.preview_pending);
+    try server.close(hw_uri);
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 27), try server.volumeOf("main.kup"), 1e-9);
+
+    // Deleted, it is forgotten, and the import says it is missing
+    try tmp.dir.deleteFile(testing.io, "hw.kup");
+    try server.changeWatched(hw_uri);
+    try testing.expect(server.handler.preview_pending);
+    try testing.expect(server.preview.session.workspace.path_to_id.get("hw.kup") == null);
 }

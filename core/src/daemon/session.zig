@@ -259,6 +259,8 @@ pub const ScriptSession = struct {
     pub fn removeModule(self: *ScriptSession, path: []const u8) !void {
         const id = self.workspace.path_to_id.get(path) orelse return;
         try self.markFileEdited(path);
+        // Its importers import it afresh, not from the VM's cache
+        self.vm.forgetModule(path);
 
         const index = @backingInt(id);
         var node = self.nodes.orderedRemove(index);

@@ -53,7 +53,7 @@ pub const Preview = struct {
         setRoot: *const fn (ptr: *anyopaque, root: []const u8) anyerror!void,
         update: *const fn (ptr: *anyopaque, module_path: []const u8, source: []const u8) anyerror!void,
         remove: *const fn (ptr: *anyopaque, module_path: []const u8) anyerror!void,
-        dataFileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!void,
+        fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
         evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
@@ -75,10 +75,12 @@ pub const Preview = struct {
         return self.vtable.remove(self.ptr, module_path);
     }
 
-    /// The file at `path` (its path in the project), which a run read as data
-    /// (`import_json`, `import_stl`), changed on disk: the modules that read it run again.
-    pub fn dataFileChanged(self: Preview, path: []const u8) !void {
-        return self.vtable.dataFileChanged(self.ptr, path);
+    /// The file at `path` (its path in the project) changed on disk: a module a document
+    /// imports, not open itself, is read again, and the modules that read the file as data
+    /// (`import_json`, `import_stl`) or import it run again. False when nothing read it, so
+    /// nothing has to run.
+    pub fn fileChanged(self: Preview, path: []const u8) !bool {
+        return self.vtable.fileChanged(self.ptr, path);
     }
 
     /// The files the modules' last runs read as data, by their paths in the project, sorted
@@ -168,7 +170,7 @@ pub const SessionPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
-            .dataFileChanged = dataFileChangedImpl,
+            .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
@@ -186,24 +188,46 @@ pub const SessionPreview = struct {
     }
 
     /// Replaces the module's source; the modules importing it are evaluated again with it.
+    /// The modules it imports that aren't open are read from disk into the session, so a
+    /// change to one on disk shows (fileChanged): they ran from the VM's import cache, which
+    /// kept the first version it read.
     pub fn update(self: *SessionPreview, module_path: []const u8, source: []const u8) !void {
         self.dropHover();
         try self.documents.vfs().writeFile(module_path, source);
         _ = try self.session.workspace.upsertModule(module_path, source);
-        try self.session.workspace.linkDependencies();
-        try self.session.buildReverseGraph();
+        try self.session.loadImports();
         try self.session.markFileEdited(module_path);
     }
 
+    /// Forgets a document the editor closed. One that another document imports is read
+    /// from disk again, as it is now.
     pub fn remove(self: *SessionPreview, module_path: []const u8) !void {
         self.dropHover();
         try self.session.removeModule(module_path);
         _ = self.documents.deleteFile(module_path);
+        try self.session.loadImports();
     }
 
-    pub fn dataFileChanged(self: *SessionPreview, path: []const u8) !void {
-        self.dropHover();
-        _ = try self.session.markDataFileEdited(path);
+    pub fn fileChanged(self: *SessionPreview, path: []const u8) !bool {
+        var affected = try self.session.markDataFileEdited(path);
+        if (self.session.workspace.path_to_id.contains(path) and !self.documents.nodes.contains(path)) {
+            try self.reloadModule(path);
+            affected = true;
+        }
+        if (affected) self.dropHover();
+        return affected;
+    }
+
+    /// Reads a module that isn't open again, with the imports it gained; one that can't be
+    /// read (deleted) is forgotten, and its importers say it is missing.
+    fn reloadModule(self: *SessionPreview, path: []const u8) !void {
+        const source = self.sandbox.vfs().readFile(self.allocator, path) catch {
+            return self.session.removeModule(path);
+        };
+        defer self.allocator.free(source);
+        _ = try self.session.workspace.upsertModule(path, source);
+        try self.session.loadImports();
+        try self.session.markFileEdited(path);
     }
 
     pub fn filesRead(self: *SessionPreview, allocator: std.mem.Allocator) ![][]u8 {
@@ -308,8 +332,8 @@ pub const SessionPreview = struct {
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
     }
-    fn dataFileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!void {
-        return cast(ptr).dataFileChanged(path);
+    fn fileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!bool {
+        return cast(ptr).fileChanged(path);
     }
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);

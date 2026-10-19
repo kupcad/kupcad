@@ -43,13 +43,14 @@ pub const Kind = enum(u8) {
     hover,
     /// (empty) Stops the running evaluation; no reply.
     cancel,
-    /// To set_root, update, remove and data_changed: u8 0 (done) or 1 (failed). To
-    /// evaluate: u8 the outcome's tag, then the GLB for a mesh. To hover: u8 0 (doesn't
-    /// compile) or 1, then the facts. To files_read: the paths, PATH_SEPARATOR between them.
+    /// To set_root, update and remove: u8 0 (done) or 1 (failed). To evaluate: u8 the
+    /// outcome's tag, then the GLB for a mesh. To hover: u8 0 (doesn't compile) or 1, then
+    /// the facts. To file_changed: u8 1 when a module read the file, else 0 (failed too). To
+    /// files_read: the paths, PATH_SEPARATOR between them.
     reply,
     // Added after the first kinds, whose values stay as they were.
-    /// path: a file a run read as data changed.
-    data_changed,
+    /// path: a file changed on disk.
+    file_changed,
     /// (empty) The files the runs read as data.
     files_read,
     _,
@@ -160,7 +161,13 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
             try replyStatus(output, preview.update(parts[0], parts[1]));
         },
         .remove => try replyStatus(output, preview.remove(frame.payload)),
-        .data_changed => try replyStatus(output, preview.dataFileChanged(frame.payload)),
+        .file_changed => {
+            const affected = preview.fileChanged(frame.payload) catch |err| blk: {
+                logger.warn("Preview worker: {s} changed: {}", .{ frame.payload, err });
+                break :blk false;
+            };
+            try writeFrame(output, .reply, &.{&.{@intFromBool(affected)}});
+        },
         .files_read => {
             const files = try preview.filesRead(allocator);
             defer freeFiles(allocator, files);
@@ -318,7 +325,7 @@ pub const WorkerPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
-            .dataFileChanged = dataFileChangedImpl,
+            .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
@@ -371,8 +378,14 @@ pub const WorkerPreview = struct {
     }
 
     /// A worker that isn't running has run nothing that read it: the next one reads it anew.
-    pub fn dataFileChanged(self: *WorkerPreview, path: []const u8) !void {
-        if (self.worker) |w| self.tell(w, path, .data_changed, &.{path}) catch {};
+    pub fn fileChanged(self: *WorkerPreview, path: []const u8) !bool {
+        const w = self.worker orelse return false;
+        const reply = self.request(w, .file_changed, &.{path}) catch |err| {
+            _ = self.ended(w, err, path);
+            return false;
+        };
+        defer self.allocator.free(reply.payload);
+        return reply.payload.len == 1 and reply.payload[0] == 1;
     }
 
     /// None while no worker runs: a new one has read nothing yet.
@@ -505,8 +518,8 @@ pub const WorkerPreview = struct {
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
     }
-    fn dataFileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!void {
-        return cast(ptr).dataFileChanged(path);
+    fn fileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!bool {
+        return cast(ptr).fileChanged(path);
     }
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
