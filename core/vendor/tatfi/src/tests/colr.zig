@@ -475,6 +475,10 @@ test "colr1 static cyclic_dependency" {
     const vec_painter = init_painter(&commands);
 
     try face.paint_color_glyph(.{179}, 0, .new(0, 0, 0, 255), vec_painter);
+    // The cycle is found where it closes. With std.mem.containsAtLeastScalar's arguments in
+    // their pre-0.17 order (minimum before element) the check never matched, and the paint
+    // went on 64 levels deep, to the recursion stack's capacity: 130 commands.
+    try t.expectEqual(@as(usize, 6), commands.items.len);
 }
 
 test "colr1 variable sweep_gradient" {

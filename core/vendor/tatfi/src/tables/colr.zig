@@ -316,8 +316,9 @@ fn parse_paint(
     var s = try parser.Stream.new_at(self.data, offset);
     const format = try s.read(u8);
 
-    // Cycle detected
-    if (std.mem.containsAtLeastScalar(usize, recursion_stack.items, 1, offset))
+    // Cycle detected: this paint is already on the stack (Zig 0.17 takes the element before
+    // the minimum; in the old order the check never matched)
+    if (std.mem.containsAtLeastScalar(usize, recursion_stack.items, offset, 1))
         return error.Overflow;
 
     recursion_stack.appendBounded(offset) catch return error.ParseFail;
