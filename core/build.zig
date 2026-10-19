@@ -278,6 +278,7 @@ pub fn build(b: *std.Build) void {
     const is_wasm = target.result.cpu.arch == .wasm32;
     const is_x86_64 = target.result.cpu.arch == .x86_64;
     const is_macos = target.result.os.tag == .macos;
+    const is_windows = target.result.os.tag == .windows;
 
     const wasm_threads = b.option(
         bool,
@@ -398,19 +399,19 @@ pub fn build(b: *std.Build) void {
     if (enable_parallel and !is_wasm) {
         native_mod.addIncludePath(b.path("vendor/oneTBB/include"));
 
-        const tbb_flags: []const []const u8 = if (is_macos)
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-D_XOPEN_SOURCE" }
-        else if (is_x86_64)
-            // Safely pass waitpkg exclusively to the Clang C++ frontend.
-            // This satisfies oneTBB's internal macros without poisoning Manifold or the global Zig target
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1", "-Xclang", "-target-feature", "-Xclang", "+waitpkg" }
-        else
-            // Fallback for ARM Linux, Windows on ARM, etc.
-            &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
+        const tbb_common: []const []const u8 = &.{ "-std=c++17", "-fexceptions", "-DTBB_USE_DEBUG=0", "-D__TBB_BUILD=1" };
+        const tbb_macos: []const []const u8 = if (is_macos) &.{"-D_XOPEN_SOURCE"} else &.{};
+        // oneTBB pauses with tpause on x86 CPUs that have WAITPKG, which it checks at run time:
+        // the feature is on for its own files only, not for Manifold's or the Zig target's, as
+        // its CMake build does. Both x86_64 systems need it, so it adds to the macOS flags.
+        const tbb_x86_64: []const []const u8 = if (is_x86_64) &.{ "-Xclang", "-target-feature", "-Xclang", "+waitpkg" } else &.{};
         native_mod.addCSourceFiles(.{
             .files = tbb_sources,
-            .flags = tbb_flags,
+            .flags = std.mem.concat(b.allocator, []const u8, &.{ tbb_common, tbb_macos, tbb_x86_64 }) catch @panic("OOM"),
         });
+        // oneTBB checks the signature of a DLL before it loads one (dynamic_link.cpp) and asks
+        // for wintrust with `#pragma comment(lib)`, which only MSVC's linker reads
+        if (is_windows) native_mod.linkSystemLibrary("wintrust", .{});
     }
 
     const sqlite_flags: []const []const u8 = if (is_wasm)
