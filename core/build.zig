@@ -1,4 +1,5 @@
 const std = @import("std");
+const TestGroup = @import("src/test_group.zig").TestGroup;
 
 /// The example models in ../examples, built and fingerprinted by src/examples_test.zig
 /// (which also checks that every example there is listed here).
@@ -192,6 +193,44 @@ const kupcad_bindings = &[_][]const u8{
     "src/locus/src/bindings/parallel_c.cpp",
 };
 
+/// What every module rooted at src/root.zig links and imports besides `module_imports`:
+/// the kupcad module and each test group's.
+const Core = struct {
+    build_info: *std.Build.Step.Options,
+    native: *std.Build.Step.Compile,
+    sqlite: *std.Build.Module,
+
+    fn configure(core: Core, module: *std.Build.Module) void {
+        module.addOptions("build_info", core.build_info);
+        module.linkLibrary(core.native);
+        module.addImport("sqlite", core.sqlite);
+    }
+};
+
+/// What the tests of a module rooted at src/root.zig read besides their sources.
+const TestInputs = struct {
+    /// Whether the lint and example snapshot tests rewrite their snapshots.
+    snapshot_options: *std.Build.Step.Options,
+    /// The example names, and the same switch.
+    examples_options: *std.Build.Step.Options,
+
+    /// Adds them to `module`, whose tests are `group`'s (null: every group's).
+    fn add(inputs: TestInputs, b: *std.Build, module: *std.Build.Module, group: ?[]const u8) void {
+        module.addOptions("lint_snapshot_options", inputs.snapshot_options);
+        module.addOptions("examples", inputs.examples_options);
+        const test_options = b.addOptions();
+        test_options.addOption(?[]const u8, "group", group);
+        module.addOptions("test_options", test_options);
+        // The examples are outside the module, so each comes in as an import (the build
+        // reruns the test when one changes).
+        for (EXAMPLES) |name| {
+            module.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
+        }
+        // So is the README, whose table of error codes a test keeps complete.
+        module.addAnonymousImport("docs/README.md", .{ .root_source_file = b.path("docs/README.md") });
+    }
+};
+
 /// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C++ libraries' asserts
 /// (Manifold has many, some costly) are compiled out of release binaries, as their own
 /// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
@@ -289,14 +328,16 @@ pub fn build(b: *std.Build) void {
     // ====================================================================
     // KupCAD Core Module
     // ====================================================================
-    const mod = b.addModule("kupcad", .{
+    // The kupcad module and each test group's module (src/test_group.zig) are made alike
+    const core_options: std.Build.Module.CreateOptions = .{
         .root_source_file = b.path("src/root.zig"),
         .target = active_target,
         .optimize = optimize,
         .link_libc = true,
         .link_libcpp = true,
         .imports = module_imports,
-    });
+    };
+    const mod = b.addModule("kupcad", core_options);
     // The version, read from build.zig.zon so it has one source: `kupcad --version`, the
     // language server's serverInfo and the package client's User-Agent read it.
     const build_info = b.addOptions();
@@ -306,7 +347,6 @@ pub fn build(b: *std.Build) void {
     build_info.addOption(bool, "gc_stress", b.option(bool, "gc-stress", "Collect garbage at every allocation in every VM, to find unrooted values (slow)") orelse false);
     // Whether oneTBB is built in, for the tests that check both kernels run on it.
     build_info.addOption(bool, "tbb", enable_parallel and !is_wasm);
-    mod.addOptions("build_info", build_info);
 
     // The C and C++ libraries (Clipper2, Manifold, oneTBB, SQLite, Draco) and KupCAD's
     // bindings to them, as one static library the module links. Outside the Zig module, a
@@ -403,14 +443,14 @@ pub fn build(b: *std.Build) void {
         .name = "kupcad_native",
         .root_module = native_mod,
     });
-    mod.linkLibrary(native);
 
     const sqlite_mod = b.createModule(.{
         .root_source_file = b.path("vendor/sqlite/sqlite_bindings.zig"),
         .target = active_target,
         .optimize = optimize,
     });
-    mod.addImport("sqlite", sqlite_mod);
+    const core: Core = .{ .build_info = build_info, .native = native, .sqlite = sqlite_mod };
+    core.configure(mod);
 
     // ====================================================================
     // Targets
@@ -537,27 +577,30 @@ pub fn build(b: *std.Build) void {
         const update_snapshots = b.option(bool, "update-snapshots", "Rewrite the lint and example snapshots (src/tools/lint/snapshots, src/examples.snap) from the current output") orelse false;
         const snapshot_options = b.addOptions();
         snapshot_options.addOption(bool, "update", update_snapshots);
-        mod.addOptions("lint_snapshot_options", snapshot_options);
-
-        // The examples are outside the module, so each comes in as an import (the build
-        // reruns the test when one changes).
         const examples_options = b.addOptions();
         examples_options.addOption([]const []const u8, "names", &EXAMPLES);
         examples_options.addOption(bool, "update", update_snapshots);
-        mod.addOptions("examples", examples_options);
-        for (EXAMPLES) |name| {
-            mod.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
-        }
-        // So is the README, whose table of error codes a test keeps complete.
-        mod.addAnonymousImport("docs/README.md", .{ .root_source_file = b.path("docs/README.md") });
+        const test_inputs: TestInputs = .{ .snapshot_options = snapshot_options, .examples_options = examples_options };
+        // The kupcad module has every test, for `zig build fuzz`
+        test_inputs.add(b, mod, null);
 
-        const mod_tests = b.addTest(.{
-            .root_module = mod,
-            .filters = test_filters,
-        });
-        const run_mod_tests = b.addRunArtifact(mod_tests);
-        // Rewriting the snapshots must run the tests even when nothing they embed changed.
-        if (update_snapshots) run_mod_tests.has_side_effects = true;
+        const test_step = b.step("test", "Run tests");
+        // A test binary for each group, which the build runs at once: in one binary the
+        // module's tests ran one after another, for about a minute.
+        for (std.enums.values(TestGroup)) |group| {
+            const group_mod = b.createModule(core_options);
+            core.configure(group_mod);
+            test_inputs.add(b, group_mod, @tagName(group));
+            const group_tests = b.addTest(.{
+                .name = b.fmt("test-{s}", .{@tagName(group)}),
+                .root_module = group_mod,
+                .filters = test_filters,
+            });
+            const run_group_tests = b.addRunArtifact(group_tests);
+            // Rewriting the snapshots must run the tests even when nothing they embed changed.
+            if (update_snapshots) run_group_tests.has_side_effects = true;
+            test_step.dependOn(&run_group_tests.step);
+        }
 
         const exe_tests = b.addTest(.{
             .root_module = exe.root_module,
@@ -580,8 +623,6 @@ pub fn build(b: *std.Build) void {
         });
         const run_cli_tests = b.addRunArtifact(cli_tests);
 
-        const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&run_mod_tests.step);
         test_step.dependOn(&run_exe_tests.step);
         test_step.dependOn(&run_cli_tests.step);
 
