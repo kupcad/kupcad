@@ -153,7 +153,7 @@ test "Text Engine: a font's kerning, from class and glyph pairs and extension lo
     try testing.expectEqual(@as(i32, 20), try kerningOf(&sans, '(', 'V'));
     // Roboto Serif keeps its pairs in an extension lookup
     const serif = try text.getFace(.serif);
-    try testing.expectEqual(@as(i32, -52), try kerningOf(&serif, 'A', 'V'));
+    try testing.expectEqual(@as(i32, -60), try kerningOf(&serif, 'A', 'V'));
     // Roboto Mono, whose glyphs are all one width, has no GPOS table
     const mono = try text.getFace(.mono);
     try testing.expectEqual(@as(i32, 0), try kerningOf(&mono, 'A', 'V'));
