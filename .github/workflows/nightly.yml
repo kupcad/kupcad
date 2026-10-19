@@ -33,10 +33,10 @@ jobs:
             runs: 400K
           - target: runtime_programs
             runs: 500K
-          # Eight parsers of files and responses, each run to the limit: 200K took 7 minutes
-          # on a laptop, so this is about 35 there; not yet measured on a hosted runner.
+          # Eight parsers of files and responses, each run to the limit: 1M took 27 minutes
+          # on a hosted runner, build included (2026-10-19), so this is about 75.
           - target: importers
-            runs: 1M
+            runs: 3M
     steps:
       - name: Checkout
         uses: actions/checkout@v7
