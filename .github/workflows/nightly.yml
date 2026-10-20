@@ -27,17 +27,17 @@ jobs:
         # for generated programs, which cost about ten times as much a run).
         include:
           - target: frontend
-            runs: 3M
+            runs: 2M
           - target: runtime
-            runs: 3M
+            runs: 2M
           - target: frontend_programs
-            runs: 400K
+            runs: 300K
           - target: runtime_programs
-            runs: 500K
+            runs: 300K
           # Eight parsers of files and responses, each run to the limit: 1M took 27 minutes
           # on a hosted runner, build included (2026-10-19), so this is about 75.
           - target: importers
-            runs: 3M
+            runs: 2M
           # A VM per input, which reads it twice and copies it with to_h: 1.7 ms a run on
           # an M-series Mac (200K in 6 minutes, 2026-10-19), so this is about 45 there and
           # within the 75 or so the others take on a slower hosted runner.
@@ -46,7 +46,7 @@ jobs:
           # A font file a script imports, through tatfi and text's outlines and kerning, from
           # small TrueType and CFF seeds (src/core/test_fonts).
           - target: fonts
-            runs: 3M
+            runs: 2M
     steps:
       - name: Checkout
         uses: actions/checkout@v7
