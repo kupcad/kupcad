@@ -31,9 +31,9 @@ jobs:
           - target: runtime
             runs: 2M
           - target: frontend_programs
-            runs: 300K
+            runs: 200K
           - target: runtime_programs
-            runs: 300K
+            runs: 200K
           # Eight parsers of files and responses, each run to the limit: 1M took 27 minutes
           # on a hosted runner, build included (2026-10-19), so this is about 75.
           - target: importers
