@@ -42,11 +42,11 @@ jobs:
           # an M-series Mac (200K in 6 minutes, 2026-10-19), so this is about 45 there and
           # within the 75 or so the others take on a slower hosted runner.
           - target: json
-            runs: 1500K
+            runs: 2M
           # A font file a script imports, through tatfi and text's outlines and kerning, from
           # small TrueType and CFF seeds (src/core/test_fonts).
           - target: fonts
-            runs: 1500K
+            runs: 3M
     steps:
       - name: Checkout
         uses: actions/checkout@v7
