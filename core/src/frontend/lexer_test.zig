@@ -365,7 +365,7 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // Closed after the interpolation, the string's rest still isn't.
     var lexer3 = Lexer.init("'one' :\"two\" %w[three \"a #{1} b", 0);
     try testing.expectEqual(.raw_string, lexer3.next().tag);
-    try testing.expectEqual(.symbol, lexer3.next().tag);
+    try testing.expectEqual(.quoted_symbol, lexer3.next().tag);
     try testing.expectEqual(.unterminated_string, lexer3.next().tag);
     var lexer4 = Lexer.init("\"a #{1} b", 0);
     try testing.expectEqual(.string_start, lexer4.next().tag);
@@ -443,9 +443,18 @@ test "Lexer: parses quoted symbols" {
     ;
 
     try test_utils.expectTokens(Lexer, source, .{
-        test_utils.t(.symbol, "string-key"),
-        test_utils.t(.symbol, "spaced key"),
+        test_utils.t(.quoted_symbol, "string-key"),
+        test_utils.t(.quoted_symbol, "spaced key"),
         test_utils.t(.eof, ""),
+    });
+}
+
+test "Lexer: a quoted symbol lexes as the string in the same quotes" {
+    // Its text was cut at the first quote and kept for its name as it was: `:"a#{x}"` was
+    // never interpolated, and a `"` inside `#{}` ended it.
+    try expectTokens(":\"a\\tb\" :'c\\'d' :\"x#{\"y\"}z\"", &.{
+        t(.quoted_symbol, "a\\tb"), t(.raw_symbol, "c\\'d"), t(.symbol_start, "x"),
+        t(.string, "y"),            t(.string_end, "z"),     t(.eof, ""),
     });
 }
 
@@ -585,9 +594,9 @@ test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
 
 test "KupCAD Lexer: Quoted Symbols with Escaped Quotes" {
     try expectTokens("map = { :\"complex \\\"key\\\"\" => 1 }", &.{
-        t(.ident, "map"),                  t(.equal, "="),  t(.l_brace, "{"),
-        t(.symbol, "complex \\\"key\\\""), t(.arrow, "=>"), t(.number, "1"),
-        t(.r_brace, "}"),                  t(.eof, ""),
+        t(.ident, "map"),                         t(.equal, "="),  t(.l_brace, "{"),
+        t(.quoted_symbol, "complex \\\"key\\\""), t(.arrow, "=>"), t(.number, "1"),
+        t(.r_brace, "}"),                         t(.eof, ""),
     });
 }
 

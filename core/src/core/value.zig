@@ -6,6 +6,7 @@ const std = @import("std");
 const dag = @import("../vm/dag.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
+const lexer = @import("../frontend/lexer.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
 /// print in scientific notation instead (1e-7), as in JavaScript.
@@ -624,10 +625,12 @@ pub const Value = packed struct {
                 },
                 .symbol => {
                     // As in Ruby: `:name` when inspected, the bare name otherwise (puts,
-                    // interpolation, join), which used to keep the colon too.
+                    // interpolation, join), which used to keep the colon too. A name `:name`
+                    // wouldn't read back as is quoted, `:"a b"`; it was `:a b`.
                     const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
-                    if (is_inspect) try writer.writeAll(":");
-                    try writer.writeAll(sym.chars);
+                    if (!is_inspect) return writer.writeAll(sym.chars);
+                    try writer.writeAll(":");
+                    if (lexer.isBareSymbol(sym.chars)) try writer.writeAll(sym.chars) else try writeQuoted(writer, sym.chars);
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
@@ -692,7 +695,8 @@ fn writeEntries(keys: []const Value, values: []const Value, writer: *std.Io.Writ
     try writer.writeAll("{");
     for (keys, values, 0..) |key, v, i| {
         if (i > 0) try writer.writeAll(", ");
-        if (key.isSymbol()) {
+        // `k: 1` as a script writes it; a Symbol that isn't a name keeps `=>` (`:"a b" => 1`)
+        if (key.isSymbol() and lexer.isLabelName(key.asSymbol().chars)) {
             try writer.print("{s}: ", .{key.asSymbol().chars});
         } else {
             try key.stringifyNested(true, writer, &here);

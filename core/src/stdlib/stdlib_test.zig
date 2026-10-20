@@ -974,6 +974,10 @@ test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
     try expectScripts(&.{
         .{ .src = "r = \"#{:m3} #{[:a, :b].join(\"-\")} #{:c.to_s}\"", .expected = .{ .str = "m3 a-b c" } },
         .{ .src = "r = \"#{:m3.inspect} #{[:a].inspect} #{{ k: :v }.inspect}\"", .expected = .{ .str = ":m3 [:a] {k: :v}" } },
+        // Quoted, as written, when `:name` wouldn't read it back: `:"a b"` inspected as `:a b`
+        .{ .src = "r = [:\"a b\", :\"a\\\"b\", :\"\", :if, :a?, :x=, :@a, :\"1a\"].inspect", .expected = .{ .str = "[:\"a b\", :\"a\\\"b\", :\"\", :if, :a?, :x=, :@a, :\"1a\"]" } },
+        .{ .src = "r = %i[a-b c].inspect", .expected = .{ .str = "[:\"a-b\", :c]" } },
+        .{ .src = "r = { :\"a b\" => 1, k: 2, :if => 3 }.inspect", .expected = .{ .str = "{:\"a b\" => 1, k: 2, :if => 3}" } },
     });
 }
 

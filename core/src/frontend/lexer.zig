@@ -32,7 +32,14 @@ pub const Tag = enum {
     string_start,
     string_mid,
     string_end,
+    /// `:name`: the token is the name.
     symbol,
+    /// `:"..."` with no `#{`: the text between the quotes, its escapes read as a string's are.
+    quoted_symbol,
+    /// `:'...'`: the text between the quotes, read as a single-quoted string's is.
+    raw_symbol,
+    /// `:"...#{`: the text up to the `#{`, as `string_start`; the rest are the string's tokens.
+    symbol_start,
     docstring,
     comment,
     keyword_do,
@@ -643,16 +650,17 @@ pub const Lexer = struct {
             }
         }
 
-        // Quoted Symbols (e.g. :"key name")
+        // Quoted symbols (`:"key #{i}"`, `:'a b'`), read as the string in the same quotes is
         if (is_symbol and self.index < self.buffer.len and (self.peek() == '"' or self.peek() == '\'')) {
-            const quote = self.peek();
-            const content_offset = self.index + 1; // skip quote in AST offset
-            const lexeme = utils.LexerUtils.consumeQuotedString(self.buffer, &self.index, quote) orelse
-                return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start_loc.offset..] };
-
-            var content_loc = start_loc;
-            content_loc.offset = @intCast(content_offset);
-            return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
+            var tok = self.consumeString(self.getLoc(), self.peek());
+            tok.tag = switch (tok.tag) {
+                .string => .quoted_symbol,
+                .raw_string => .raw_symbol,
+                .string_start => .symbol_start,
+                .unterminated_string => return .{ .tag = .unterminated_string, .loc = start_loc, .lexeme = self.buffer[start_loc.offset..] },
+                else => tok.tag,
+            };
+            return tok;
         }
 
         // Standard Symbols (e.g. :name, :valid?, :x=)

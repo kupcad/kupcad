@@ -200,7 +200,7 @@ test "Compiler: compiles string interpolation" {
     const num = try b.number("42", 0);
     const span = try b.addNodes(&.{ str1, num });
 
-    const interp_node = try b.interpolatedString(span, 0);
+    const interp_node = try b.interpolated(.interpolated_string, span, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);

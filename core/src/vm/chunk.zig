@@ -40,6 +40,8 @@ pub const OpCode = enum(u8) {
     op_map_spread,
     op_build_range,
     op_interpolate,
+    /// The String on top of the stack as the Symbol of that name (`:"part_#{i}"`).
+    op_to_symbol,
     op_get_index,
     op_set_index,
 

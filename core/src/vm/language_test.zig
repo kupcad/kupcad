@@ -523,3 +523,18 @@ test "Language: a lone target with a comma takes the first element, a lone splat
         .{ .src = "a, *rest = 1, 2, 3\nr = rest", .expected = .{ .nums = &.{ 2, 3 } } },
     });
 }
+
+test "Language: a quoted symbol is read as the string in the same quotes" {
+    // Its name was its text as written: `:"a\tb"` kept the backslash and `:"p_#{i}"` its
+    // `#{i}`, as Ruby doesn't
+    try expectScripts(&.{
+        .{ .src = "r = :\"a\\\"b\\tc\" == \"a\\\"b\\tc\".to_sym", .expected = .{ .boolean = true } },
+        .{ .src = "r = :\"\\u00e9 \\#{x}\".to_s", .expected = .{ .str = "\u{e9} #{x}" } },
+        .{ .src = "r = :'a\\'b \\n'.to_s", .expected = .{ .str = "a'b \\n" } },
+        .{ .src = "r = :\"x\" == :x", .expected = .{ .boolean = true } },
+        .{ .src = "i = 2\nr = :\"part_#{i}\" == :part_2", .expected = .{ .boolean = true } },
+        .{ .src = "i = 2\nr = :\"part_#{i}\" == :part_2", .expected = .{ .boolean = true }, .gc_stress = true },
+        .{ .src = "r = \"#{:\"#{1}#{\"a\"}\".class} #{:\"#{1}#{\"a\"}\"}\"", .expected = .{ .str = "Symbol 1a" } },
+        .{ .src = "k = \"b\"\nr = { :\"a #{k}\" => 1 }[:\"a b\"]", .expected = .{ .num = 1 } },
+    });
+}

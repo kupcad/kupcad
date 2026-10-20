@@ -511,7 +511,7 @@ const Generator = struct {
             },
             .boolean => try g.emit(if (g.pick(2) == 0) "true" else "false"),
             .symbol => {
-                const symbols = [_][]const u8{ ":a", ":xy", ":\"with space\"", ":inch" };
+                const symbols = [_][]const u8{ ":a", ":xy", ":\"with space\"", ":inch", ":\"tab\\t#{1 + 1}\"", ":'a\\'b'" };
                 try g.emit(symbols[g.pick(symbols.len)]);
             },
             .array => {

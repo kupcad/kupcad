@@ -462,6 +462,10 @@ pub const Compiler = struct {
             .ternary_op => try self.compileTernaryOp(node, expected_entry_depth),
             .range => try self.compileRange(node),
             .interpolated_string => try self.compileInterpolatedString(node),
+            .interpolated_symbol => {
+                try self.compileInterpolatedString(node);
+                try self.emitOp(.op_to_symbol);
+            },
             .multiple_assignment => try self.compileMultipleAssignment(node),
             .class_stmt => try self.compileClassStmt(node, node_idx),
             .module_stmt => try self.compileModuleStmt(node),

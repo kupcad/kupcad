@@ -118,7 +118,7 @@ fn dumpNode(
             try children.append(allocator, ws.condition);
             try children.append(allocator, ws.body);
         },
-        .array_literal, .interpolated_string => {
+        .array_literal, .interpolated_string, .interpolated_symbol => {
             try children.appendSlice(allocator, tree.getNodes(tree.nodeSpan(node)));
         },
         else => {}, // No children, or unhandled in quick-dump

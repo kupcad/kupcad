@@ -4484,7 +4484,7 @@ test "KupCAD Parser: an unclosed literal or a stray character is reported for wh
     try expectSingleDiagnostic("x = <<~EOS\n  line\n", "This heredoc is never closed: no line 'EOS' before the end of the file");
     // A heredoc's body starts on the line after its opener, so nothing may run onto it.
     try expectSingleDiagnostic("f(<<~A, \"x\ny\")\n  body\nA\n", "This runs onto the next line, where the heredoc opened on this line has its body; end it on this line");
-    for ([_][]const u8{ "x = \"abc\n", "x = 'abc\n", "x = :\"abc\n", "x = %w[a b\n", "x = \"a #{1} b\n" }) |source| {
+    for ([_][]const u8{ "x = \"abc\n", "x = 'abc\n", "x = :\"abc\n", "x = :'abc\n", "x = :\"a #{1} b\n", "x = %w[a b\n", "x = \"a #{1} b\n" }) |source| {
         errdefer std.debug.print("source: {s}\n", .{source});
         try expectSingleDiagnostic(source, "This string is never closed before the end of the file");
     }
@@ -4497,6 +4497,9 @@ test "KupCAD Parser: an escape a string can't hold is a syntax error at the esca
         .{ .src = "x = \"C:\\data\"", .message = "Unknown escape '\\d' in a string; write '\\\\' for a backslash", .at = "\\d" },
         .{ .src = "x = \"#{1} and \\z\"", .message = "Unknown escape '\\z'", .at = "\\z" },
         .{ .src = "x = <<~EOS\n  a\\1\nEOS\n", .message = "Unknown escape '\\1'", .at = "\\1" },
+        // A double-quoted symbol's escapes are a string's (it kept them as text)
+        .{ .src = "x = :\"a\\q\"", .message = "Unknown escape '\\q'", .at = "\\q" },
+        .{ .src = "x = :\"#{1}\\u12\"", .message = "'\\u' takes 4 hex digits", .at = "\\u12" },
         .{ .src = "x = \"\\u12\"", .message = "'\\u' takes 4 hex digits (\\u00e9) or 1 to 6 in braces (\\u{1F600})", .at = "\\u12" },
         .{ .src = "x = \"\\u{}\"", .message = "'\\u' takes 4 hex digits", .at = "\\u{}" },
         .{ .src = "x = \"\\uDBFF\"", .message = "U+DBFF is a UTF-16 surrogate, not a character", .at = "\\uDBFF" },

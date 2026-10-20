@@ -127,7 +127,7 @@ const Walk = struct {
         const c = self.c;
         const code = self.code;
         switch (op) {
-            .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block => {},
+            .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block, .op_to_symbol => {},
 
             // 1-byte constant index
             .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => try checkConstant(c, code[try self.take(1)]),

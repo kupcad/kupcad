@@ -57,6 +57,8 @@ pub const CORPUS = [_][]const u8{
     // to `[:a:]` and `{ a b: 1 }` (the nightly fuzzer)
     "%i\x7f\r\rM:%i\x7f",
     "x = %i(a: b) + %i[c d]\nm = { :\"a b\" => 1, :a= => 2, :if => 3 }",
+    // Quoted symbols, read as the string in the same quotes: escapes, interpolation
+    "s = :\"tab\\t#{1 + 1}\" == :'a\\'b'\nt = { :\"k #{s}\" => :\"#{:\"x\"}\" }.inspect",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
     "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
     "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",

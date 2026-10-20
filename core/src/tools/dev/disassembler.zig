@@ -68,6 +68,7 @@ pub fn disassembleInstruction(c: *const chunk.Chunk, offset: usize, writer: anyt
         .op_is_nil,
         .op_case_equal,
         .op_break_block,
+        .op_to_symbol,
         => {
             return simpleInstruction(@tagName(op), offset, writer);
         },

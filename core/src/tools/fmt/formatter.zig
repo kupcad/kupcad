@@ -371,9 +371,9 @@ pub const Formatter = struct {
             // their form. The value can't change: equivalence checks it.
             .number => try self.out.appendSlice(self.allocator, self.tokenText(node.main_token)),
             .string => try self.formatString(tree, node),
-            .interpolated_string => {
-                const parts = tree.nodeSpan(node);
-                try self.formatInterpolatedString(tree, tree.getNodes(parts));
+            .interpolated_string, .interpolated_symbol => {
+                if (node.tag == .interpolated_symbol) try self.out.append(self.allocator, ':');
+                try self.formatInterpolatedString(tree, tree.getNodes(tree.nodeSpan(node)));
             },
             .symbol => try self.formatSymbol(tree, node),
             .boolean => {
@@ -384,13 +384,9 @@ pub const Formatter = struct {
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(node.data))),
             .array_literal => {
-                if (self.isUnquotableSymbolList(tree, node)) {
-                    try self.out.appendSlice(self.allocator, self.tokenText(node.main_token));
-                } else {
-                    const items = try self.arrayItems(tree, tree.getNodes(tree.nodeSpan(node)));
-                    defer self.allocator.free(items);
-                    try self.formatList(tree, items, .{ .open = "[", .close = "]" }, node.main_token, tree.arrayLiteral(node).end_token);
-                }
+                const items = try self.arrayItems(tree, tree.getNodes(tree.nodeSpan(node)));
+                defer self.allocator.free(items);
+                try self.formatList(tree, items, .{ .open = "[", .close = "]" }, node.main_token, tree.arrayLiteral(node).end_token);
             },
             .hash_literal => {
                 const items = try self.hashItems(tree, tree.getHashEntries(tree.nodeSpan(node)));
@@ -567,37 +563,38 @@ pub const Formatter = struct {
                 try self.out.append(self.allocator, string_escape.closingDelimiter(opener[opener.len - 1]));
                 return;
             }
-            if (self.openingQuote(node.main_token)) |quote| {
-                try self.out.append(self.allocator, quote);
-                try self.out.appendSlice(self.allocator, raw);
-                try self.out.append(self.allocator, quote);
-                return;
-            }
+            if (self.openingQuote(node.main_token)) |quote| return self.appendInQuotes(quote, raw);
         }
-        try self.out.append(self.allocator, '"');
-        try string_escape.appendEscaped(&self.out, self.allocator, tree.getString(@fromBackingInt(node.data)));
-        try self.out.append(self.allocator, '"');
+        try self.appendEscapedInQuotes(tree.getString(@fromBackingInt(node.data)));
     }
 
-    /// `:name`, or a quoted symbol (`:"with space"`) in its quotes; it used to lose them.
+    /// `:name`, or a quoted symbol in its quotes, its escapes as written (`:"a\tb"`,
+    /// `:'a b'`). One with no text of its own, a `%i[]` word, is `:name` when that reads back
+    /// as it, else double-quoted with its name escaped: `%i[a-b]` is `[:"a-b"]`.
     fn formatSymbol(self: *Formatter, tree: *const ast.Tree, node: *const ast.Node) Error!void {
-        const name = tree.getString(@fromBackingInt(node.data));
         try self.out.append(self.allocator, ':');
-        const quote: ?u8 = if (node.main_token < self.token_starts.len and std.mem.eql(u8, self.tokenText(node.main_token), name)) self.openingQuote(node.main_token) else null;
-        if (quote) |q| try self.out.append(self.allocator, q);
-        try self.out.appendSlice(self.allocator, name);
-        if (quote) |q| try self.out.append(self.allocator, q);
+        if (node.main_token < self.token_tags.len) switch (self.token_tags[node.main_token]) {
+            .quoted_symbol => return self.appendInQuotes('"', self.tokenText(node.main_token)),
+            .raw_symbol => return self.appendInQuotes('\'', self.tokenText(node.main_token)),
+            else => {},
+        };
+        const name = tree.getString(@fromBackingInt(node.data));
+        if (lexer.isBareSymbol(name)) return self.out.appendSlice(self.allocator, name);
+        try self.appendEscapedInQuotes(name);
     }
 
-    /// Whether an array is a `%i[]` with a word that `:word` doesn't read back as
-    /// (`%i[a-b]`): it stays as written, since a quoted symbol keeps its backslashes and ends
-    /// at its first quote, so not every word has a quoted form either.
-    fn isUnquotableSymbolList(self: *const Formatter, tree: *const ast.Tree, node: *const ast.Node) bool {
-        if (node.main_token >= self.token_tags.len or self.token_tags[node.main_token] != .percent_i) return false;
-        for (tree.getNodes(tree.nodeSpan(node))) |word| {
-            if (!lexer.isBareSymbol(tree.getString(@fromBackingInt(tree.getNode(word).?.data)))) return true;
-        }
-        return false;
+    /// `text` as written, between `quote`s.
+    fn appendInQuotes(self: *Formatter, quote: u8, text: []const u8) Error!void {
+        try self.out.append(self.allocator, quote);
+        try self.out.appendSlice(self.allocator, text);
+        try self.out.append(self.allocator, quote);
+    }
+
+    /// `value` as a double-quoted literal of it, escaped.
+    fn appendEscapedInQuotes(self: *Formatter, value: []const u8) Error!void {
+        try self.out.append(self.allocator, '"');
+        try string_escape.appendEscaped(&self.out, self.allocator, value);
+        try self.out.append(self.allocator, '"');
     }
 
     /// Whether a String part of an interpolated string is one of its pieces between `"`, `}`
@@ -606,7 +603,7 @@ pub const Formatter = struct {
     fn isStringSegment(self: *const Formatter, part: *const ast.Node) bool {
         if (part.main_token >= self.token_tags.len) return false;
         return switch (self.token_tags[part.main_token]) {
-            .string_start, .string_mid, .string_end => true,
+            .string_start, .symbol_start, .string_mid, .string_end => true,
             else => false,
         };
     }

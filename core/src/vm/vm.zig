@@ -754,6 +754,14 @@ pub const VM = struct {
                     frame.ip += 1;
                     if (ended(self.executeInterpolate(count))) |res| return res;
                 },
+                .op_to_symbol => {
+                    // The String stays on the stack, rooted, while the Symbol is made
+                    const sym = self.allocateSymbol(self.stack[self.stack_top - 1].asString().chars) catch |err| {
+                        if (ended(self.allocationFailed(err))) |res| return res;
+                        continue;
+                    };
+                    self.stack[self.stack_top - 1] = sym;
+                },
                 .op_array_push => {
                     // Peek instead of Pop to keep `val` rooted during potential reallocation
                     const val = self.stack[self.stack_top - 1];
