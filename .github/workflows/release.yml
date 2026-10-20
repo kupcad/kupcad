@@ -1,27 +1,84 @@
 name: Release
 
-# A version tag (v0.2.0, or v0.2.0-rc.1 for a pre-release) builds the kupcad CLI for each
-# target in .goreleaser.yaml and uploads the archives to the tag's GitHub release.
+# A version tag (v0.2.0, or v0.2.0-rc.1 for a pre-release) builds the kupcad CLI on a runner
+# of each system and architecture it ships for, checks each binary runs there, and publishes
+# them, packaged with their licenses (core/scripts/package-release.sh), as the tag's GitHub
+# release.
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    name: Release the CLI
+  version:
+    name: Check the tag
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `kupcad --version` reads build.zig.zon: a tag that says otherwise would release
+      # binaries reporting another version
+      - name: The tag is the version in build.zig.zon
+        id: version
+        run: |
+          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' core/build.zig.zon)
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME, but core/build.zig.zon has version $version: tag v$version, or change the version first"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linux binaries link the glibc they name, so they run on any distribution from
+          # 2018 on, not only on ones as new as the runner's
+          - platform: linux_amd64
+            os: ubuntu-latest
+            target: x86_64-linux-gnu.2.28
+            binary: kupcad
+          - platform: linux_arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-linux-gnu.2.28
+            binary: kupcad
+          - platform: darwin_arm64
+            os: macos-latest
+            target: aarch64-macos
+            binary: kupcad
+          - platform: darwin_amd64
+            os: macos-15-intel
+            target: x86_64-macos
+            binary: kupcad
+          - platform: windows_amd64
+            os: windows-latest
+            target: x86_64-windows-gnu
+            binary: kupcad.exe
+          - platform: windows_arm64
+            os: windows-11-arm
+            target: aarch64-windows-gnu
+            binary: kupcad.exe
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           submodules: true
-          # The changelog is made from the commits since the last tag
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Install Zig
@@ -29,21 +86,56 @@ jobs:
         with:
           zig-version-file: .tool-versions
 
-      # `kupcad --version` reads build.zig.zon: a tag that says otherwise would release
-      # binaries reporting another version
-      - name: Check the tag is the version in build.zig.zon
-        run: |
-          version=$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' core/build.zig.zon)
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME, but core/build.zig.zon has version $version: tag v$version, or change the version first"
-            exit 1
-          fi
+      # ReleaseSafe, the mode CI tests release builds in (linux release-safe): safety checks
+      # stay on
+      - name: Build
+        working-directory: core
+        run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} -p ../out
 
-      - name: Build and release
-        uses: goreleaser/goreleaser-action@v7
+      # On the system it ships for: it reports the tag's version and builds an example
+      - name: Run it
+        working-directory: examples
+        run: |
+          kupcad=../out/bin/${{ matrix.binary }}
+          test "$("$kupcad" --version)" = "kupcad ${{ needs.version.outputs.version }}"
+          "$kupcad" build standoff.kup -o standoff.stl
+          test -s standoff.stl
+
+      - name: Keep the binary
+        uses: actions/upload-artifact@v7
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+          name: ${{ matrix.platform }}
+          path: out/bin/${{ matrix.binary }}
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # The submodules hold the vendored libraries' license files the archives carry
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Collect the binaries
+        uses: actions/download-artifact@v8
+        with:
+          path: binaries
+
+      - name: Package them
+        run: core/scripts/package-release.sh "${{ needs.version.outputs.version }}" binaries dist
+
+      # A tag with a suffix (v0.2.0-rc.1) is a pre-release
+      - name: Publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=()
+          if [[ $TAG == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" dist/kupcad_* dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"

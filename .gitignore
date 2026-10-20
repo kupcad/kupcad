@@ -4,5 +4,5 @@
 # nodejs
 /node_modules
 
-# goreleaser (release archives, `goreleaser release --snapshot`)
+# release archives (core/scripts/package-release.sh)
 /dist/

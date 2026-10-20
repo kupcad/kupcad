@@ -85,10 +85,12 @@ wasm-opt --all-features -Oz core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kup
 
 To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints), commit, and
 push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow
-checks the tag matches, builds every target in `.goreleaser.yaml` with Zig, and uploads the
-archives and checksums to the tag's GitHub release; a tag like `v0.2.0-rc.1` makes a
-pre-release. `goreleaser release --snapshot --clean` builds the same archives into `dist/`
-without releasing anything.
+checks the tag matches, builds the CLI on a runner of each system and architecture it ships for
+(Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
+built), and publishes the archives and their checksums as the tag's GitHub release; a tag like
+`v0.2.0-rc.1` makes a pre-release. `core/scripts/package-release.sh` packages the binaries with
+their licenses: given a folder per platform (`linux_amd64/kupcad`, ...), it writes the same
+archives into a folder of your own.
 
 ## License
 
