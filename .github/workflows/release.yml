@@ -92,7 +92,19 @@ jobs:
         working-directory: core
         run: zig build -Doptimize=ReleaseSafe -Dtarget=${{ matrix.target }} -p ../out
 
-      # On the system it ships for: it reports the tag's version and builds an example
+      # A Linux binary holds its debug information (95 MB, against 13 MB without); macOS and
+      # Windows keep theirs in files that aren't shipped. The release binary loses it, keeping
+      # its symbol table, and the unstripped one is kept as a workflow artifact, to turn the
+      # addresses in a crash report into files and lines with the exact build.
+      - name: Keep the debug information apart
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p debug
+          cp out/bin/kupcad debug/kupcad
+          strip --strip-debug out/bin/kupcad
+
+      # On the system it ships for, as it ships: it reports the tag's version and builds an
+      # example
       - name: Run it
         working-directory: examples
         run: |
@@ -104,9 +116,18 @@ jobs:
       - name: Keep the binary
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.platform }}
+          name: release-${{ matrix.platform }}
           path: out/bin/${{ matrix.binary }}
           if-no-files-found: error
+
+      - name: Keep the unstripped binary
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: debug-${{ matrix.platform }}
+          path: debug/kupcad
+          if-no-files-found: error
+          retention-days: 90
 
   release:
     name: Publish the release
@@ -122,13 +143,17 @@ jobs:
           submodules: true
           persist-credentials: false
 
+      # The release binaries alone, a folder per platform as package-release.sh takes them
       - name: Collect the binaries
         uses: actions/download-artifact@v8
         with:
+          pattern: release-*
           path: binaries
 
       - name: Package them
-        run: core/scripts/package-release.sh "${{ needs.version.outputs.version }}" binaries dist
+        run: |
+          for dir in binaries/release-*; do mv "$dir" "binaries/${dir#binaries/release-}"; done
+          core/scripts/package-release.sh "${{ needs.version.outputs.version }}" binaries dist
 
       # A tag with a suffix (v0.2.0-rc.1) is a pre-release
       - name: Publish

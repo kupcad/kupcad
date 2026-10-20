@@ -88,9 +88,11 @@ push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`. The Rele
 checks the tag matches, builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
 built), and publishes the archives and their checksums as the tag's GitHub release; a tag like
-`v0.2.0-rc.1` makes a pre-release. `core/scripts/package-release.sh` packages the binaries with
-their licenses: given a folder per platform (`linux_amd64/kupcad`, ...), it writes the same
-archives into a folder of your own.
+`v0.2.0-rc.1` makes a pre-release. The Linux binaries are stripped of their debug information
+(13 MB, not 95); the run keeps them unstripped as its `debug-*` artifacts for 90 days, to turn
+a crash report's addresses into files and lines. `core/scripts/package-release.sh` packages the
+binaries with their licenses: given a folder per platform (`linux_amd64/kupcad`, ...), it writes
+the same archives into a folder of your own.
 
 ## License
 
