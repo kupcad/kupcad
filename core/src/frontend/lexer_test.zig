@@ -731,6 +731,31 @@ test "KupCAD Lexer: Symbols with underscores and UTF-8 characters" {
     });
 }
 
+test "Lexer: a setter symbol keeps its `=` up to the end of the source, but not before `>`" {
+    try expectTokens(":a=", &.{ t(.symbol, "a="), t(.eof, "") });
+    try expectTokens(":a=>1", &.{ t(.symbol, "a"), t(.arrow, "=>"), t(.number, "1"), t(.eof, "") });
+}
+
+test "Lexer: isBareSymbol is what `:name` reads back as, isLabelName what `name:` does" {
+    // The formatter writes a symbol that isn't either in another form (fmt's own tests)
+    for ([_][]const u8{ "a", "_x", "θ_angle", "valid?", "destroy!", "x=", "@a", "$a", "A", "if", "a?b" }) |name| {
+        errdefer std.debug.print("name: {s}\n", .{name});
+        try testing.expect(lexer_mod.isBareSymbol(name));
+    }
+    for ([_][]const u8{ "", "a:", "M:%i", "a-b", "1a", "a b", "a=b", "a\"b" }) |name| {
+        errdefer std.debug.print("name: {s}\n", .{name});
+        try testing.expect(!lexer_mod.isBareSymbol(name));
+    }
+    for ([_][]const u8{ "a", "valid?", "A", "@a", "$a", "θ" }) |name| {
+        errdefer std.debug.print("name: {s}\n", .{name});
+        try testing.expect(lexer_mod.isLabelName(name));
+    }
+    for ([_][]const u8{ "", "if", "a b", "a=", "a-b", "$$a", " a" }) |name| {
+        errdefer std.debug.print("name: {s}\n", .{name});
+        try testing.expect(!lexer_mod.isLabelName(name));
+    }
+}
+
 test "KupCAD Lexer: Range operators (inclusive and exclusive)" {
     try expectTokens("1..10\n0...len", &.{
         t(.number, "1"), t(.dot_dot, ".."),      t(.number, "10"), t(.newline, "\n"),

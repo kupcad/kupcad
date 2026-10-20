@@ -1130,3 +1130,32 @@ test "Formatter: a map key that is a name or a call keeps its value after =>" {
     try expectStableFormat("m = { (1...5).k: 1, \"s\" => 2 }\n", "m = { (1...5).k => 1, \"s\" => 2 }\n");
     try expectStableFormat("k = 2\nm = { k => 1 }\n", "k = 2\nm = { k => 1 }\n");
 }
+
+test "Formatter: a symbol map key that isn't a name keeps its `=>`" {
+    // `{ :"a b" => 1 }` was written `{ a b: 1 }`, and `:a=` and `:if` as `a=:` and `if:`,
+    // none of which parse
+    try expectStableFormat(
+        "m = { :\"a b\" => 1, :a= => 2, :\"if\" => 3, :if => 4, :\"b\" => 5 }\n",
+        "m = { :\"a b\" => 1, :a= => 2, :\"if\" => 3, :if => 4, b: 5 }\n",
+    );
+}
+
+test "Formatter: a `%i[]` with a word that isn't a bare symbol stays as written" {
+    // `%i[a:]` was written `[:a:]`, another program (the nightly front-end fuzzer, with DEL
+    // for the delimiter). A quoted symbol keeps its backslashes and ends at its first quote,
+    // so not every word has a quoted form either (`%i[a"b'c]`).
+    const kept = [_][]const u8{
+        "x = %i[M:%i]\n",
+        "x = %i(a: b)\n",
+        "x = %i[a-b c]\n",
+        "x = %i[a\"b'c]\n",
+        "x = %i[a\\ b]\n",
+        "x = %I[1a]\n",
+        "%i\x7f\r\rM:%i\x7f\n",
+    };
+    for (kept) |source| {
+        errdefer std.debug.print("source:\n{s}\n", .{source});
+        try expectFormat(source, source);
+    }
+    try expectStableFormat("x = %i[a b= c? @d]\n", "x = [:a, :b=, :c?, :@d]\n");
+}

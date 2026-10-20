@@ -12,7 +12,8 @@ const parser = @import("../../frontend/parser.zig");
 const Precedence = parser.Precedence;
 const token_span = @import("../../core/token_span.zig");
 const string_escape = @import("../../core/string_escape.zig");
-const TokenTag = @import("../../frontend/lexer.zig").Tag;
+const lexer = @import("../../frontend/lexer.zig");
+const TokenTag = lexer.Tag;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
 
@@ -383,9 +384,13 @@ pub const Formatter = struct {
             .self_expr => try self.out.appendSlice(self.allocator, "self"),
             .identifier => try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(node.data))),
             .array_literal => {
-                const items = try self.arrayItems(tree, tree.getNodes(tree.nodeSpan(node)));
-                defer self.allocator.free(items);
-                try self.formatList(tree, items, .{ .open = "[", .close = "]" }, node.main_token, tree.arrayLiteral(node).end_token);
+                if (self.isUnquotableSymbolList(tree, node)) {
+                    try self.out.appendSlice(self.allocator, self.tokenText(node.main_token));
+                } else {
+                    const items = try self.arrayItems(tree, tree.getNodes(tree.nodeSpan(node)));
+                    defer self.allocator.free(items);
+                    try self.formatList(tree, items, .{ .open = "[", .close = "]" }, node.main_token, tree.arrayLiteral(node).end_token);
+                }
             },
             .hash_literal => {
                 const items = try self.hashItems(tree, tree.getHashEntries(tree.nodeSpan(node)));
@@ -582,6 +587,17 @@ pub const Formatter = struct {
         if (quote) |q| try self.out.append(self.allocator, q);
         try self.out.appendSlice(self.allocator, name);
         if (quote) |q| try self.out.append(self.allocator, q);
+    }
+
+    /// Whether an array is a `%i[]` with a word that `:word` doesn't read back as
+    /// (`%i[a-b]`): it stays as written, since a quoted symbol keeps its backslashes and ends
+    /// at its first quote, so not every word has a quoted form either.
+    fn isUnquotableSymbolList(self: *const Formatter, tree: *const ast.Tree, node: *const ast.Node) bool {
+        if (node.main_token >= self.token_tags.len or self.token_tags[node.main_token] != .percent_i) return false;
+        for (tree.getNodes(tree.nodeSpan(node))) |word| {
+            if (!lexer.isBareSymbol(tree.getString(@fromBackingInt(tree.getNode(word).?.data)))) return true;
+        }
+        return false;
     }
 
     /// Whether a String part of an interpolated string is one of its pieces between `"`, `}`
@@ -809,7 +825,8 @@ pub const Formatter = struct {
                     try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
                     try self.out.append(self.allocator, ':');
                 } else {
-                    if (key_node.tag == .symbol) {
+                    // `:"a b" => 1` and `:if => 1` stay as they are: `a b: 1` and `if: 1` aren't keys
+                    if (key_node.tag == .symbol and lexer.isLabelName(tree.getString(@fromBackingInt(key_node.data)))) {
                         try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
                         try self.out.appendSlice(self.allocator, ": ");
                     } else {

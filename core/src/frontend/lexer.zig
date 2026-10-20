@@ -187,6 +187,31 @@ inline fn isIdentChar(c: u8) bool {
     return utils.LexerUtils.isIdentChar(c);
 }
 
+/// Where the name of a bare symbol starting at `start` ends (`name`, `_internal`, `θ_angle`,
+/// `valid?`, `destroy!`, `x=`), or `start` when none starts there. A trailing `=` is part
+/// of it unless `>` follows, which makes it `=>`.
+fn bareSymbolEnd(buffer: []const u8, start: usize) usize {
+    if (start >= buffer.len or !isIdentStart(buffer[start])) return start;
+    var end = start;
+    while (end < buffer.len and isIdentChar(buffer[end])) end += 1;
+    if (end < buffer.len and buffer[end] == '=' and (end + 1 == buffer.len or buffer[end + 1] != '>')) end += 1;
+    return end;
+}
+
+/// Whether `name` reads back from `:name`; any other symbol (`%i[a-b]`) is written quoted
+/// or in `%i[]`.
+pub fn isBareSymbol(name: []const u8) bool {
+    return name.len > 0 and bareSymbolEnd(name, 0) == name.len;
+}
+
+/// Whether `name` lexes as one identifier or constant, as the name of a map key or named
+/// argument written `name:` must; a keyword (`if`) or any other name isn't one.
+pub fn isLabelName(name: []const u8) bool {
+    var lexer = Lexer.init(name, 0);
+    const tok = lexer.next();
+    return (tok.tag == .ident or tok.tag == .constant) and tok.lexeme.len == name.len;
+}
+
 pub const InterpState = struct {
     brace_depth: u32,
     open_delim: u8,
@@ -630,26 +655,14 @@ pub const Lexer = struct {
             return .{ .tag = .symbol, .loc = content_loc, .lexeme = lexeme };
         }
 
-        // Standard Symbols (e.g. :name, :_internal, :θ_angle, :valid?, :destroy!)
-        if (is_symbol and self.index < self.buffer.len and (self.peek() == '_' or isIdentStart(self.peek()))) {
-            const start = self.index;
-            while (self.index < self.buffer.len and isIdentChar(self.peek())) {
-                self.advance();
-            }
-
-            // Allow trailing predicate/bang/setter suffix in symbols
-            if (self.index < self.buffer.len) {
-                const trailing = self.peek();
-                if (trailing == '?' or trailing == '!') {
-                    self.advance();
-                } else if (trailing == '=' and self.index + 1 < self.buffer.len and self.buffer[self.index + 1] != '>') {
-                    self.advance();
-                }
-            }
-
+        // Standard Symbols (e.g. :name, :valid?, :x=)
+        const start = self.index;
+        const end = bareSymbolEnd(self.buffer, start);
+        if (is_symbol and end > start) {
+            self.index = end;
             var content_loc = start_loc;
             content_loc.offset = @intCast(start);
-            return .{ .tag = .symbol, .loc = content_loc, .lexeme = self.buffer[start..self.index] };
+            return .{ .tag = .symbol, .loc = content_loc, .lexeme = self.buffer[start..end] };
         }
 
         return .{ .tag = .colon, .loc = start_loc, .lexeme = ":" };
