@@ -262,6 +262,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `invalid-number` | A malformed number, or one beyond the largest (`1e999`). |
 | `unexpected-token` | Something other than what the syntax needs here, such as an unclosed parenthesis (`cube(1`). |
 | `invalid-expression` | A token that can't start an expression (`x = )`). |
+| `invalid-assignment` | An assignment to a call (`f() = 1`, `part.size() += 1`), which gives a value but holds none: assign to a variable, an attribute (`part.size = 2`) or an element (`list[0] = 2`). |
 | `nesting-too-deep` | Code, or interpolation in a string, nested deeper than the limit. |
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |

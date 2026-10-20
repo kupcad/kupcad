@@ -30,6 +30,7 @@ pub const Code = enum {
     // The structure of the code
     @"unexpected-token",
     @"invalid-expression",
+    @"invalid-assignment",
     @"nesting-too-deep",
     @"misplaced-import",
     @"import-without-from",
@@ -71,6 +72,7 @@ pub const Code = enum {
             .@"invalid-number" => "A malformed number, or one beyond the largest (1.8e308).",
             .@"unexpected-token" => "Something other than what the syntax needs here, such as an unclosed parenthesis.",
             .@"invalid-expression" => "A token that can't start an expression.",
+            .@"invalid-assignment" => "An assignment to a call, which gives a value but holds none.",
             .@"nesting-too-deep" => "Code, or interpolation in a string, nested deeper than the limit.",
             .@"misplaced-import" => "An import or export inside a method, class or block; they belong at the top level.",
             .@"import-without-from" => "An import without its 'from' path.",

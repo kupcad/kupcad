@@ -682,9 +682,14 @@ pub const Parser = struct {
             },
             .method_call => {
                 const mc = self.b.tree.methodCall(left_node);
-                if (mc.args.start == mc.args.end and mc.block == .none) {
+                // An attribute is a name on a receiver, without parentheses: `part.size = 2`.
+                // A call (`f() = 1`, `part.size() += 1`) was taken for one too, and `f()`, with
+                // no receiver, reached the compiler as an attribute of nothing (the fuzzer).
+                if (mc.receiver != .none and mc.args.start == mc.args.end and mc.block == .none and self.tokens.tags[mc.name_token + 1] != .l_paren) {
                     return self.b.propertyAssignment(mc.receiver, mc.method_name, tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
                 }
+                self.reportError(self.getLoc(op_tok), .@"invalid-assignment", "A call gives a value but holds none: assign to a variable, an attribute (`part.size = 2`) or an element (`list[0] = 2`)", .{});
+                return ParseError.InvalidExpression;
             },
             .index_access => {
                 const ia = self.b.tree.indexAccess(left_node);

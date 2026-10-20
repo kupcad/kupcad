@@ -35,6 +35,7 @@ test "Error codes: a script for each code gets that code" {
         .{ .@"invalid-number", "x = 1e999" },
         .{ .@"unexpected-token", "cube(1" },
         .{ .@"invalid-expression", "x = )" },
+        .{ .@"invalid-assignment", "f() = 1" },
         .{ .@"misplaced-import", "def f\n  import { a } from \"./a.kup\"\nend" },
         .{ .@"import-without-from", "import { a }" },
         .{ .@"import-attribute", "import m from \"./m.dat\" with { type: \"yaml\" }" },

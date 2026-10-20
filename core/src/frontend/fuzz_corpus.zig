@@ -45,6 +45,10 @@ pub const CORPUS = [_][]const u8{
     // read as a call without parentheses, so the output didn't parse (the nightly fuzzer)
     "[1, *[2, 3], 4]\nm = { (1...5).k: 1, \"s\" => 2, **{ j: 3 } }\nr = (1..5).to_a + (1...5).to_",
     "k = 2\nm = { k => 1, a.k => 2, a.k: 3 }",
+    // Assignments to calls, which reached the compiler as an attribute of nothing and failed an
+    // assertion there (the nightly fuzzer)
+    "G()+=G",
+    "f() = 1\np.size() += 1\np.size = 2",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
     "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
     "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",

@@ -4567,3 +4567,24 @@ test "KupCAD Parser: an import's path may be single-quoted" {
     _ = try pt.parser.parseProgram();
     try testing.expectEqual(@as(usize, 0), pt.parser.diagnostics.list.items.len);
 }
+
+test "Parser: an assignment to a call is invalid-assignment; an attribute or an element is assigned" {
+    // `f()`, a call with no receiver, was taken for an attribute of nothing and failed an
+    // assertion in the compiler (found by the nightly fuzzer: `G()+=G`); `p.size() += 1`, with
+    // parentheses, was taken for the attribute `p.size`.
+    const message = "A call gives a value but holds none: assign to a variable, an attribute (`part.size = 2`) or an element (`list[0] = 2`)";
+    const calls = [_][]const u8{ "G()+=G", "f() = 1", "p.size() += 1", "p.size(2) = 3", "p.each { |x| x } = 1" };
+    for (calls) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        try expectSingleDiagnostic(src, message);
+        var doc = try Document.parse(testing.allocator, src);
+        defer doc.deinit();
+        try testing.expectEqual(.@"invalid-assignment", doc.diagnostics[0].code);
+    }
+    for ([_][]const u8{ "p.size = 2", "p.size += 3", "p&.size = 1", "list[0] = 2", "x ||= 1" }) |src| {
+        errdefer std.debug.print("source: {s}\n", .{src});
+        var doc = try Document.parse(testing.allocator, src);
+        defer doc.deinit();
+        try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+    }
+}
