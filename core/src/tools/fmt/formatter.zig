@@ -1139,11 +1139,10 @@ pub const Formatter = struct {
             if (item.modifier) |mod| try self.out.appendSlice(self.allocator, getArgModifierStr(mod));
             try self.out.appendSlice(self.allocator, tree.getString(item.name));
         }
-        // `a, = list` takes the first element; without its comma it assigned the whole list.
-        if (targets.len == 1 and targets[0].modifier == null) try self.out.append(self.allocator, ',');
-        try self.out.append(self.allocator, ' ');
-        if (ma.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op)); // `a, b += 1` (the operator was dropped)
-        try self.out.appendSlice(self.allocator, "= ");
+        // `a, = list` takes the first element and `*a, = list` all of them; without its comma
+        // the first assigned the whole list, and the second, a splat alone, doesn't parse.
+        if (targets.len == 1) try self.out.append(self.allocator, ',');
+        try self.out.appendSlice(self.allocator, " = ");
         const value_node = tree.getNode(ma.value).?;
         if (value_node.tag == .array_literal and self.isPackedList(value_node)) {
             try self.formatPackedList(tree, value_node); // `a, b = 1, 2`, as written, not `[1, 2]`

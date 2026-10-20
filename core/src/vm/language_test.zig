@@ -515,3 +515,11 @@ test "Language: a map key that is a name or a method call is its value" {
         .{ .src = "k = 2\nm = { k => 1, **{ j: 3 } }\nr = [m[2], m[:j]]", .expected = .{ .nums = &.{ 1, 3 } } },
     });
 }
+
+test "Language: a lone target with a comma takes the first element, a lone splat all of them" {
+    try expectScripts(&.{
+        .{ .src = "a, = [1, 2, 3]\nr = a", .expected = .{ .num = 1 } },
+        .{ .src = "*m, = [1, 2, 3]\nr = m", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "a, *rest = 1, 2, 3\nr = rest", .expected = .{ .nums = &.{ 2, 3 } } },
+    });
+}

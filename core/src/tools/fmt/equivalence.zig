@@ -91,7 +91,6 @@ fn fingerprint(tree: *const ast.Tree, node: *const ast.Node) u64 {
         },
         .multiple_assignment => {
             const ma = tree.multipleAssignment(node);
-            h.add(ma.op);
             for (tree.getLhsExprs(ma.lhs)) |lhs| {
                 h.string(tree, lhs.name);
                 h.add(lhs.modifier);

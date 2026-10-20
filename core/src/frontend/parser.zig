@@ -631,13 +631,16 @@ pub const Parser = struct {
                 } else break;
             }
 
-            if (isAssignmentOp(self.tag(0))) {
-                const op_tag = self.tag(0);
-                self.advance();
-                const val_node = try self.parseExpressionList();
-                const span = try self.b.addLhsExprs(self.scratch_lhs_exprs.items[s_len..]);
-                return self.b.multipleAssignment(span, tagToAssignmentOp(op_tag), val_node, start_tok) catch ParseError.OutOfMemory;
-            } else return ParseError.UnexpectedToken;
+            if (!isAssignmentOp(self.tag(0))) return ParseError.UnexpectedToken;
+            // `a, b += 1` was taken for `a, b = 1`: the operator was parsed, then never applied
+            if (self.tag(0) != .equal) {
+                self.reportError(self.getLoc(self.tok_idx), .@"invalid-assignment", "Several names take `=` alone, not `{s}`: give each its own (`a {s} 1`)", .{ self.lexeme(0), self.lexeme(0) });
+                return ParseError.InvalidExpression;
+            }
+            self.advance();
+            const val_node = try self.parseExpressionList();
+            const span = try self.b.addLhsExprs(self.scratch_lhs_exprs.items[s_len..]);
+            return self.b.multipleAssignment(span, val_node, start_tok) catch ParseError.OutOfMemory;
         }
         return try self.parseExpression(.none);
     }

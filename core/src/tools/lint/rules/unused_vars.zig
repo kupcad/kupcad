@@ -60,11 +60,7 @@ pub const UnusedVarsRule = struct {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
                     const var_name = tree.getString(lhs.name);
-                    if (ma.op != null) {
-                        try engine.markUsed(var_name);
-                    } else if (isLocal(var_name)) {
-                        try engine.declareAssigned(var_name, engine.getLoc(node.main_token), false);
-                    }
+                    if (isLocal(var_name)) try engine.declareAssigned(var_name, engine.getLoc(node.main_token), false);
                 }
             },
             .for_stmt => {

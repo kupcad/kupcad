@@ -993,7 +993,10 @@ test "Formatter: lambda parameters, bracketed returns, super(), aliases and mult
     try expectStableFormat("def r\n  return 1, 2\nend\n", "def r\n  return 1, 2\nend\n");
     try expectStableFormat("class B < A\n  def f\n    super()\n  end\n  def g\n    super\n  end\nend\n", "class B < A\n  def f\n    super()\n  end\n\n  def g\n    super\n  end\nend\n");
     try expectStableFormat("import { a as b, c } from \"./x.kup\"\n", "import { a as b, c } from \"./x.kup\"\n");
-    try expectStableFormat("a, b = 1, 2\nc, d = [3, 4]\na, b += 1\n", "a, b = 1, 2\nc, d = [3, 4]\na, b += 1\n");
+    try expectStableFormat("a, b = 1, 2\nc, d = [3, 4]\ne, = [5, 6]\n", "a, b = 1, 2\nc, d = [3, 4]\ne, = [5, 6]\n");
+    // A splat alone keeps its comma too: without it the output didn't parse (the nightly
+    // front-end fuzzer, from `*m , **=[...]`)
+    try expectStableFormat("*m, = [1, 2]\n", "*m, = [1, 2]\n");
 }
 
 test "Formatter: comments on case, when, else, begin, rescue and ensure lines stay there" {
@@ -1045,7 +1048,8 @@ test "Formatter: the checked API accepts the constructs it used to refuse" {
         "def r\n  return []\nend\n",
         "import { a as b } from \"./x.kup\"\n",
         "class B < A\n  def f\n    super()\n  end\nend\n",
-        "a, b += 1\n",
+        "a, = [1, 2]\n",
+        "*m, = [1, 2]\n",
     }) |source| {
         errdefer std.debug.print("source:\n{s}\n", .{source});
         const formatted = try api.formatCode(testing.allocator, source, .{});

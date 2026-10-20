@@ -4588,3 +4588,18 @@ test "Parser: an assignment to a call is invalid-assignment; an attribute or an 
         try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
     }
 }
+
+test "Parser: several names take `=` alone; another operator is invalid-assignment" {
+    // `a, b += 5` parsed and then assigned as `a, b = 5`: the operator was never applied
+    for ([_][2][]const u8{
+        .{ "a, b += 5", "Several names take `=` alone, not `+=`: give each its own (`a += 1`)" },
+        .{ "*m, **= [1]", "Several names take `=` alone, not `**=`: give each its own (`a **= 1`)" },
+        .{ "a, b ||= 1", "Several names take `=` alone, not `||=`: give each its own (`a ||= 1`)" },
+    }) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case[0]});
+        try expectSingleDiagnostic(case[0], case[1]);
+        var doc = try Document.parse(testing.allocator, case[0]);
+        defer doc.deinit();
+        try testing.expectEqual(.@"invalid-assignment", doc.diagnostics[0].code);
+    }
+}

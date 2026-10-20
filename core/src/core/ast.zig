@@ -160,9 +160,9 @@ pub const Assignment = struct {
     value: NodeIndex,
 };
 
+/// `a, b = 1, 2`: several names take `=` alone, so there is no operator to hold.
 pub const MultipleAssignment = struct {
     lhs: Span, // Span of LhsExpr
-    op: ?BinaryOp = null,
     value: NodeIndex,
 };
 
@@ -490,11 +490,9 @@ pub const Tree = struct {
 
     pub fn multipleAssignment(self: *const Tree, node: *const Node) MultipleAssignment {
         const base = node.data;
-        const op_val = self.extra_data.items[base + 2];
         return .{
             .lhs = .{ .start = self.extra_data.items[base], .end = self.extra_data.items[base + 1] },
-            .op = if (op_val == std.math.maxInt(u32)) null else @fromBackingInt(@as(u5, @intCast(op_val))),
-            .value = @fromBackingInt(self.extra_data.items[base + 3]),
+            .value = @fromBackingInt(self.extra_data.items[base + 2]),
         };
     }
 
@@ -1023,8 +1021,8 @@ pub const Builder = struct {
         return self.createNode(.assignment, main_token, data_idx);
     }
 
-    pub fn multipleAssignment(self: *Builder, lhs: Span, op: ?BinaryOp, val: NodeIndex, main_token: u24) !NodeIndex {
-        const data_idx = try self.addExtra(.{ lhs, op, val });
+    pub fn multipleAssignment(self: *Builder, lhs: Span, val: NodeIndex, main_token: u24) !NodeIndex {
+        const data_idx = try self.addExtra(.{ lhs, val });
         return self.createNode(.multiple_assignment, main_token, data_idx);
     }
 

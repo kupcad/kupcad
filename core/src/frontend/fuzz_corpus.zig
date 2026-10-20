@@ -49,6 +49,10 @@ pub const CORPUS = [_][]const u8{
     // assertion there (the nightly fuzzer)
     "G()+=G",
     "f() = 1\np.size() += 1\np.size = 2",
+    // A lone splat, whose comma the formatter dropped so its output didn't parse, and several
+    // names with a compound operator, which was parsed and never applied (the nightly fuzzer)
+    " *m , **=[1, *[2, 3], 4]\nm , **= { \nm , **=[1, *[2, 3], 4]\n",
+    "*m, = [1, 2]\na, = [3]\n",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
     "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
     "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
