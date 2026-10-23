@@ -1,30 +1,32 @@
 //! The `param` built-in (`nativeParam`): `param(:name)` reads a parameter, and with
 //! `default:` and `validate:` declares it, taking the host's injected value over the default,
-//! checking its type, range and choices with `core/params/`, and recording it in the VM's
-//! parameter registry.
+//! reading it as its default's type (`readNumber`, `readBoolean`), checking its range and
+//! choices, and recording it in the VM's parameter registry.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const parameters = @import("../core/parameters.zig");
-const util = @import("methods/util.zig");
-
-const number_param = @import("../core/params/number.zig");
-const boolean_param = @import("../core/params/boolean.zig");
-const string_param = @import("../core/params/string.zig");
-const choice_param = @import("../core/params/choice.zig");
+const arguments = @import("arguments.zig");
 
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
 /// declares it, taking the host's value (`-p name=text`, `-P file.json`) over the default
 /// and reading it as the default's type: text from `-p` becomes a number, a boolean, a
 /// String or a Symbol as the parameter is one.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    const parsed = try util.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
+    const parsed = try arguments.parseKwargs(struct {
+        default: ?value.Value = null,
+        validate: ?value.Value = null,
+        // For a host's controls (`kupcad doc`): checked here, not applied to the value
+        step: ?f64 = null,
+        unit: ?[]const u8 = null,
+        group: ?[]const u8 = null,
+    }, vm, args, "param");
     if (parsed.positional.len != 1) {
         return vm.fail(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});
     }
 
-    const name = try util.requireName(vm, parsed.positional[0], "param", "the parameter name");
+    const name = try arguments.requireName(vm, parsed.positional[0], "param", "the parameter name");
     const sym_key = try vm.allocateSymbol(name);
     vm.push(sym_key);
     defer _ = vm.pop();
@@ -46,18 +48,25 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     if (default_val.isBool()) p_type = .boolean;
     if (default_val.isSymbol()) p_type = .symbol;
 
+    if (parsed.opts.step) |step| {
+        if (!(step > 0) or !std.math.isFinite(step)) return vm.fail(.ValueError, "parameter :{s} step must be a number greater than 0, got {f}", .{ sym_chars, value.fmtNumber(step) });
+    }
+    if (p_type != .number and (parsed.opts.step != null or parsed.opts.unit != null)) {
+        return vm.fail(.ArgumentError, "parameter :{s} is a {s} by its default, and {s} is for a number", .{ sym_chars, @tagName(p_type), if (parsed.opts.step != null) "step:" else "unit:" });
+    }
+
     var min_val: f64 = std.math.nan(f64);
     var max_val: f64 = std.math.nan(f64);
     var choices_array: ?*value.ObjArray = null;
     if (parsed.opts.validate) |rules| {
         if (!rules.isMap()) {
-            return vm.fail(.TypeError, "param expects a Map for validate, got {s}", .{util.typeName(vm, rules)});
+            return vm.fail(.TypeError, "param expects a Map for validate, got {s}", .{arguments.typeName(vm, rules)});
         }
-        const checks = try util.parseKwargs(struct { min: ?f64 = null, max: ?f64 = null, in: ?value.Value = null }, vm, &.{rules}, "param validate");
+        const checks = try arguments.parseKwargs(struct { min: ?f64 = null, max: ?f64 = null, in: ?value.Value = null }, vm, &.{rules}, "param validate");
         if (checks.opts.min) |n| min_val = n;
         if (checks.opts.max) |n| max_val = n;
         if (checks.opts.in) |choices| {
-            _ = try util.requireArray(vm, choices, "param validate", "in");
+            _ = try arguments.requireArray(vm, choices, "param validate", "in");
             choices_array = choices.asArray();
         }
     }
@@ -76,38 +85,33 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     // --- MODULAR NORMALIZATION & VALIDATION ---
     switch (p_type) {
         .number => {
-            const num = number_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a number", injected_val);
+            const num = readNumber(injected_val) orelse return typeMismatch(vm, sym_chars, "a number", injected_val);
             injected_val = value.Value.initNumber(num);
-
-            number_param.validate(num, min_val, max_val) catch |err| {
-                switch (err) {
-                    error.BelowMin => return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) }),
-                    error.AboveMax => return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) }),
-                    else => unreachable,
-                }
-            };
+            // An unset bound is NaN, which no comparison passes
+            if (num < min_val) return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) });
+            if (num > max_val) return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) });
         },
         .boolean => {
-            const b = boolean_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "true or false", injected_val);
+            const b = readBoolean(injected_val) orelse return typeMismatch(vm, sym_chars, "true or false", injected_val);
             injected_val = value.Value.initBool(b);
         },
         // A symbol parameter's value is a Symbol: a String compared unequal to the symbols in
         // its `in:` choices, so `param(:size, default: :m3, validate: { in: [:m3, :m4] })`
         // refused even its own default.
         .string => {
-            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a String", injected_val);
+            const str = injected_val.nameChars() orelse return typeMismatch(vm, sym_chars, "a String", injected_val);
             injected_val = try vm.allocateString(str);
         },
         .symbol => {
-            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a Symbol", injected_val);
+            const str = injected_val.nameChars() orelse return typeMismatch(vm, sym_chars, "a Symbol", injected_val);
             injected_val = try vm.allocateSymbol(str);
         },
     }
 
     if (choices_array) |arr| {
-        choice_param.validate(vm, injected_val, arr) catch {
-            return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
-        };
+        for (arr.items.items) |choice| {
+            if (vm.valuesEqual(injected_val, choice)) break;
+        } else return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
     }
 
     // --- DOD REGISTRY UPSERT ---
@@ -133,9 +137,34 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     return injected_val;
 }
 
+/// A number parameter's value: a number, or text from the host (`-p width=10.5`) that reads
+/// as a finite one, as a script's numbers are (parseFloat reads "inf" and "nan" too).
+fn readNumber(val: value.Value) ?f64 {
+    if (val.isNumber()) return val.asNumber();
+    if (!val.isString()) return null;
+    const num = std.fmt.parseFloat(f64, val.asString().chars) catch return null;
+    return if (std.math.isFinite(num)) num else null;
+}
+
+/// A boolean parameter's value: true or false, the numbers 1 and 0, or the text "true",
+/// "false", "1" and "0".
+fn readBoolean(val: value.Value) ?bool {
+    if (val.isBool()) return val.asBool();
+    if (val.isNumber()) {
+        if (val.asNumber() == 1) return true;
+        if (val.asNumber() == 0) return false;
+    }
+    if (val.isString()) {
+        const text = val.asString().chars;
+        if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "1")) return true;
+        if (std.mem.eql(u8, text, "false") or std.mem.eql(u8, text, "0")) return false;
+    }
+    return null;
+}
+
 /// The TypeError for a value parameter `name` can't take: "parameter :w expects a number,
 /// got "abc"", the text quoted as `-p` gave it.
 fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{RuntimeError} {
     if (got.isString()) return vm.fail(.TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
-    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, util.typeName(vm, got) });
+    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, arguments.typeName(vm, got) });
 }

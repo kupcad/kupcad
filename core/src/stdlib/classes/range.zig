@@ -6,6 +6,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const iteration = @import("iteration.zig");
+const arguments = @import("../arguments.zig");
 
 fn spanOf(r: *value.ObjRange) iteration.Span {
     return .{ .start = r.start, .end = r.end, .step = r.step, .is_exclusive = r.is_exclusive };
@@ -13,13 +14,13 @@ fn spanOf(r: *value.ObjRange) iteration.Span {
 
 /// Range#each { |i| ... }
 pub fn rangeEach(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.Value {
-    const b = try iteration.requireBlock(vm, block, "Range#each");
+    const b = try arguments.requireBlock(vm, block, "Range#each");
     return iteration.each(vm, spanOf(r), value.Value.initObj(&r.obj), b, "Range#each");
 }
 
 /// Range#map { |i| ... }
 pub fn rangeMap(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.Value {
-    const b = try iteration.requireBlock(vm, block, "Range#map");
+    const b = try arguments.requireBlock(vm, block, "Range#map");
     return iteration.collect(vm, spanOf(r), b, "Range#map");
 }
 

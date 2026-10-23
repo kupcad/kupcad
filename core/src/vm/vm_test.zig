@@ -2,21 +2,16 @@
 //! loop, inline caches, globals and constants, REPL locals, the debugger and the profiler.
 
 const std = @import("std");
-const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
-const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Profiler = @import("profiler.zig").Profiler;
-const geom = @import("../kernel/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
-const InterpretResult = @import("vm.zig").InterpretResult;
-const ErrorKind = @import("error_kind.zig").ErrorKind;
 const helpers = @import("vm_test_helpers.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
 const compileAndRun = helpers.compileAndRun;
@@ -561,7 +556,7 @@ test "VM: redefining a global on a reused VM after its defining chunk was freed"
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
 
-    // Each run gets its own chunk, freed afterwards, as the daemon and LSP do
+    // Each run gets its own chunk, freed afterwards, as a session and the LSP do
     const runs = [_][]const u8{
         "shared_global = \"first run\"",
         "padding = \"0123456789abcdef0123456789abcdef\"\nshared_global = \"second run\"",

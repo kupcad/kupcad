@@ -9,7 +9,8 @@ const log_helpers = @import("../log.zig");
 /// The arguments of a command that takes files or directories, `--config <file>` and the
 /// options in `Flags`: a bool field `check` is the switch `--check`, a `?[]const u8` field
 /// `format` the option `--format <value>`. Anything else starting with `-` is an error, not
-/// a path: `fmt --check` used to read a file named "--check".
+/// a path: `fmt --check` used to read a file named "--check". A path is required unless
+/// `Flags` has a `stdin` switch and it is given: then the input is what is piped in.
 pub fn CommandOptions(comptime Flags: type) type {
     return struct {
         const Self = @This();
@@ -34,7 +35,8 @@ pub fn CommandOptions(comptime Flags: type) type {
                     try self.paths.append(allocator, arg);
                 }
             }
-            if (self.paths.items.len == 0) return error.MissingFilePath;
+            const from_stdin = if (@hasField(Flags, "stdin")) self.flags.stdin else false;
+            if (self.paths.items.len == 0 and !from_stdin) return error.MissingFilePath;
             return self;
         }
 

@@ -16,11 +16,11 @@ pub const Kind = enum { solid, sketch };
 pub fn kindOf(tag: dag.DAGTag) Kind {
     return switch (tag) {
         .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete => .solid,
-        .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .batch_hull_op, .hull => .solid,
+        .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .erode, .batch_hull_op, .hull => .solid,
         .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
-        .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => .sketch,
-        .cs_union_op, .cs_difference_op, .cs_intersection_op, .offset, .cs_transform => .sketch,
+        .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => .sketch,
+        .cs_union_op, .cs_difference_op, .cs_intersection_op, .cs_hull_op, .offset, .cs_transform, .cs_set_material, .cs_set_name => .sketch,
         .slice_op, .project_op => .sketch,
     };
 }
@@ -28,7 +28,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
 /// The kind of shape `tag` takes for its operands.
 pub fn operandKind(tag: dag.DAGTag) Kind {
     return switch (tag) {
-        .cs_union_op, .cs_difference_op, .cs_intersection_op, .extrude, .revolve, .offset, .cs_transform, .loft => .sketch,
+        .cs_union_op, .cs_difference_op, .cs_intersection_op, .cs_hull_op, .extrude, .revolve, .offset, .cs_transform, .cs_set_material, .cs_set_name, .loft => .sketch,
         else => .solid,
     };
 }
@@ -52,7 +52,7 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
         .target_numbers => |n| targetAndNumbers(b, node.data, kind, n),
         .target_value => {
             if (!fits(node.data, 2, extra.len)) return "its operand and value are outside extra_data";
-            if (node.tag == .set_name and extra[node.data + 1] >= b.part_names.items.len) return "its part name is outside the name table";
+            if ((node.tag == .set_name or node.tag == .cs_set_name) and extra[node.data + 1] >= b.part_names.items.len) return "its part name is outside the name table";
             return operands(b, node.data, 1, kind);
         },
         .loft => {
@@ -64,6 +64,10 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
             if (!fits(node.data, 2, extra.len)) return "its point range is outside extra_data";
             return numbers(b, extra[node.data], 2 * @as(usize, extra[node.data + 1]));
         },
+        .path => {
+            if (!fits(node.data, 2, extra.len)) return "its segment range is outside extra_data";
+            return numbers(b, extra[node.data], dag.PATH_START_NUMBERS + dag.PATH_SEGMENT_NUMBERS * @as(usize, extra[node.data + 1]));
+        },
         .polygons => {
             if (node.data >= extra.len) return "its contour count is outside extra_data";
             const count = extra[node.data];
@@ -71,6 +75,16 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
             for (0..count) |i| {
                 const at = node.data + 1 + 2 * i;
                 if (numbers(b, extra[at], 2 * @as(usize, extra[at + 1]))) |p| return p;
+            }
+            const curves_at = b.polygonsCurvesAt(node.data);
+            if (!fits(curves_at, 2, extra.len)) return "its curve count is outside extra_data";
+            const curves = extra[curves_at];
+            if (!fits(curves_at + 2, dag.CURVE_WORDS * @as(usize, curves), extra.len)) return "its curves are outside extra_data";
+            if (numbers(b, extra[curves_at + 1], dag.CURVE_NUMBERS * @as(usize, curves))) |p| return p;
+            for (0..curves) |i| {
+                const words = extra[curves_at + 2 + dag.CURVE_WORDS * i ..][0..dag.CURVE_WORDS];
+                if (words[0] >= count) return "a curve names a contour the node doesn't have";
+                if (words[2] < 2 or !fits(words[1], words[2], extra[node.data + 2 + 2 * words[0]])) return "a curve names points its contour doesn't have";
             }
             return null;
         },

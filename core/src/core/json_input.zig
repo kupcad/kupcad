@@ -1,5 +1,5 @@
 //! Reading JSON a person gives KupCAD: the project's `.kupcad.json`, a `-P` parameter file
-//! (and, next, the data files `import_json` reads). One reader for them all, so they accept
+//! and the data files `import_json` reads. One reader for them all, so they accept
 //! the same JSON (a key written twice is an error, error.DuplicateField) and place a syntax
 //! error at the same line and column.
 

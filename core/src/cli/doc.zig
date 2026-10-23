@@ -5,7 +5,6 @@ const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
 const log_helpers = @import("../log.zig");
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const Reporter = @import("reporter.zig").Reporter;
@@ -30,7 +29,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 /// gets them reported (as `kupcad check` does) and fails; it used to print the schema of
 /// whatever parsed and exit 0.
 pub fn run(allocator: std.mem.Allocator, file_path: []const u8, reporter: Reporter) !Outcome {
-    const source = fs.readFileLimit(reporter.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(reporter.io, allocator, file_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
         return .failure;
     };

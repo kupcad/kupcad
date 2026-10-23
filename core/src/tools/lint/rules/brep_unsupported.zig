@@ -4,7 +4,7 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const kernel = @import("../../../kernel/kernel.zig");
-const EngineType = @import("../../../kernel/geometry_handle.zig").EngineType;
+const EngineType = @import("../../../core/geometry_handle.zig").EngineType;
 const token_span = @import("../../../core/token_span.zig");
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
@@ -72,7 +72,7 @@ pub const BrepUnsupportedRule = struct {
                 const def = tree.defStmt(node);
                 try self.methods.append(engine.allocator, .{ .name = tree.getString(def.name), .first = token_span.first(tree, def.body), .last = token_span.last(tree, def.body) });
             },
-            .assignment => try self.shapes.observe(engine.allocator, tree, node),
+            .assignment, .import_stmt => try self.shapes.observe(engine.allocator, tree, node),
             .binary_op => {
                 const b = tree.binaryExpr(node);
                 switch (b.op) {
@@ -133,8 +133,9 @@ pub const BrepUnsupportedRule = struct {
         const name = tree.getString(call.method_name);
         if (literals.isCall(tree, node, null, "cylinder") and isCone(tree, call)) return .{ .feature = .cone, .what = "cylinder(r1:, r2:)" };
         const shape = if (call.receiver == .none) null else self.shapes.of(tree, call.receiver);
-        // A solid's offset is a Minkowski sum with a sphere; a sketch's is the kernel's offset.
-        if (shape == .solid and std.mem.eql(u8, name, "offset")) return .{ .feature = .minkowski, .what = "offset" };
+        // A solid's offset (and shell) is a Minkowski sum with a sphere; a sketch's is the
+        // kernel's offset.
+        if (shape == .solid and (std.mem.eql(u8, name, "offset") or std.mem.eql(u8, name, "shell"))) return .{ .feature = .minkowski, .what = name };
         const on_shape = call.receiver == .none or shape != null;
         if (on_shape) {
             inline for (comptime std.enums.values(kernel.Feature)) |feature| {

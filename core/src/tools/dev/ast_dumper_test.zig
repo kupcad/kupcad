@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const api = @import("../../api.zig");
+const Document = @import("../../frontend/document.zig").Document;
 const ast_dumper = @import("ast_dumper.zig");
 
 test "AST Dumper: produces correct tree format and semantic metadata" {
@@ -17,7 +17,7 @@ test "AST Dumper: produces correct tree format and semantic metadata" {
         \\end
     ;
 
-    var doc = try api.Document.parse(testing.allocator, source);
+    var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);

@@ -41,6 +41,9 @@ pub const CORPUS = [_][]const u8{
     // nightly fuzzer: the second pass moved those before `)` out to the bracket's indent)
     "iable --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = param(:width)",
     "f(\n  x, # trailing\n  # own line\n)",
+    // A comment after two statements sharing a line, which went to the first one and split
+    // the line on the second run (the nightly fuzzer)
+    "D0r;z>e --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = par\n",
     // A map key that is a call, written with `:`, which formats to `=>`: a name before `=>` was
     // read as a call without parentheses, so the output didn't parse (the nightly fuzzer)
     "[1, *[2, 3], 4]\nm = { (1...5).k: 1, \"s\" => 2, **{ j: 3 } }\nr = (1..5).to_a + (1...5).to_",
@@ -57,6 +60,10 @@ pub const CORPUS = [_][]const u8{
     // to `[:a:]` and `{ a b: 1 }` (the nightly fuzzer)
     "%i\x7f\r\rM:%i\x7f",
     "x = %i(a: b) + %i[c d]\nm = { :\"a b\" => 1, :a= => 2, :if => 3 }",
+    // Paths: open 2D geometry, joined, closed and stroked
+    "p = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])\n[p.named(\"edge\"), p.close, p.stroke(2, cap: :square).extrude(1), arc(r: 5, start: [0, 0], to: [8, 0], large: true).rotate(45)]",
+    // Quoted symbols, read as the string in the same quotes: escapes, interpolation
+    "s = :\"tab\\t#{1 + 1}\" == :'a\\'b'\nt = { :\"k #{s}\" => :\"#{:\"x\"}\" }.inspect",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
     "def f(n) = n == 0 ? 0 : [1].map { |x| f(n - 1) + x }[0]\nf(5000)",
     "class Loop < RuntimeError\n  def initialize\n    raise Loop\n  end\nend\nraise Loop",
@@ -68,6 +75,7 @@ pub const CORPUS = [_][]const u8{
     @embedFile("../tools/lint/snapshots/param_order.kup"),
     @embedFile("../tools/lint/snapshots/segments_as_sides.kup"),
     @embedFile("../tools/lint/snapshots/self_subtraction.kup"),
+    @embedFile("../tools/lint/snapshots/shape_mismatch.kup"),
     @embedFile("../tools/lint/snapshots/suppressed_error.kup"),
     @embedFile("../tools/lint/snapshots/suppressions.kup"),
     @embedFile("../tools/lint/snapshots/syntax_error.kup"),

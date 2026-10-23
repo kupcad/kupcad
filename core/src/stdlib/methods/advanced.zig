@@ -5,7 +5,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const error_kind = @import("../../vm/error_kind.zig");
@@ -16,13 +16,17 @@ const booleans = @import("booleans.zig");
 /// split_by_plane's arguments, positionally or as kwargs.
 const PLANE_ARGS = sig.SPLIT_BY_PLANE.positional;
 
-pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+/// `hull(others...)`: the convex hull of the shape and any others of its kind, Solids or
+/// Sketches.
+pub fn meshHull(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     var scratch = std.ArrayList(u32).empty;
     const alloc = vm.scratch_arena.allocator();
 
-    try scratch.append(alloc, receiver.dag_idx);
-    try booleans.appendOperands(vm, alloc, &scratch, args, true, "hull");
+    const is_3d = receiver.isGeometry();
+    try scratch.append(alloc, if (is_3d) receiver.asGeometry().dag_idx else receiver.asCrossSection().dag_idx);
+    try booleans.appendOperands(vm, alloc, &scratch, args, is_3d, "hull");
 
+    if (!is_3d) return try vm.allocateCrossSection(try vm.dag_builder.addSketchHull(scratch.items));
     const hull_idx = try vm.dag_builder.addBalancedChain(.hull, scratch.items);
     return try vm.allocateGeometry(.{ .symbolic = hull_idx });
 }
@@ -32,60 +36,146 @@ pub fn meshMinkowski(vm: *VM, receiver: *value.ObjGeometry, other: *value.ObjGeo
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-// Arguments arrive as raw Values (not f64) so a wrong type gets a TypeError naming it.
-pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, ny: value.Value, nz: value.Value, offset: ?value.Value) !value.Value {
-    const normal = [3]f64{
-        try util.requireNumber(vm, nx, "trim_by_plane", "nx"),
-        try util.requireNumber(vm, ny, "trim_by_plane", "ny"),
-        try util.requireNumber(vm, nz, "trim_by_plane", "nz"),
-    };
-    try util.requireNonZeroVector(vm, normal, "trim_by_plane", "plane normal");
-    const off = if (offset) |o| try util.requireNumber(vm, o, "trim_by_plane", "offset") else 0.0;
-    const new_idx = try vm.dag_builder.addTrimByPlane(receiver.dag_idx, normal[0], normal[1], normal[2], off);
+/// `trim_by_plane(nx, ny, nz, offset)`: the part of the solid on the side of the plane its
+/// normal points to, the plane `offset` along it from the origin (see parsePlane for the
+/// forms the plane takes).
+pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+    const nx, const ny, const nz, const off = try parsePlane(vm, args, null, "trim_by_plane");
+    const new_idx = try vm.dag_builder.addTrimByPlane(receiver.dag_idx, nx, ny, nz, off);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// The plane [nx, ny, nz, offset] a plane method's arguments give: positionally (nx, ny,
+/// nz[, offset]) or ([nx, ny, nz][, offset]), or by keywords nx:, ny:, nz: or normal:,
+/// and offset: (0 unless given). Once any normal component is given the others are 0;
+/// with none, the normal is `default_normal`, or an error when there is none.
+pub fn parsePlane(vm: *VM, args: []const value.Value, default_normal: ?[3]f64, comptime method: []const u8) ![4]f64 {
+    const parsed = try arguments.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null, normal: ?value.Value = null }, sig.TRIM_BY_PLANE.keywords, vm, args, method);
+    const o = parsed.opts;
+    var pos = parsed.positional;
+    var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
+    var normal_given = false;
+    if (pos.len > 0 and pos[0].isArray()) {
+        // ([nx, ny, nz], offset)
+        if (o.normal != null) return vm.fail(.ArgumentError, method ++ " takes the normal once, as an Array or normal:", .{});
+        plane[0..3].* = try arguments.parseNumberArray(3, vm, pos[0], .{ .method = method, .name = "the plane normal" }, 3, 0);
+        normal_given = true;
+        pos = pos[1..];
+        if (pos.len > 1) return vm.fail(.ArgumentError, method ++ " expects ([nx, ny, nz], offset), got {d} arguments after the normal", .{pos.len});
+        if (pos.len == 1) plane[3] = try arguments.requireNumber(vm, pos[0], method, "offset");
+    } else {
+        if (pos.len != 0 and pos.len != PLANE_ARGS.len - 1 and pos.len != PLANE_ARGS.len) {
+            return vm.fail(.ArgumentError, method ++ " expects (nx, ny, nz[, offset]) or ([nx, ny, nz], offset), got {d} positional arguments", .{pos.len});
+        }
+        for (pos, 0..) |arg, i| plane[i] = try arguments.requireNumber(vm, arg, method, PLANE_ARGS[i]);
+        normal_given = pos.len > 0;
+    }
+    if (o.normal) |normal_val| {
+        if (normal_given or o.nx != null or o.ny != null or o.nz != null) return vm.fail(.ArgumentError, method ++ " takes normal: or nx, ny, nz, not both", .{});
+        plane[0..3].* = try arguments.parseNumberArray(3, vm, normal_val, .{ .method = method, .name = "the plane normal" }, 3, 0);
+        normal_given = true;
+    }
+    // Unset components are 0 once any is given: nz: 1 alone is the XY plane (it used to
+    // keep a default nx = 1, a diagonal plane)
+    inline for (PLANE_ARGS[0..3], 0..) |name, i| {
+        if (@field(o, name)) |n| {
+            plane[i] = n;
+            normal_given = true;
+        }
+    }
+    if (o.offset) |off| plane[3] = off;
+    if (!normal_given) {
+        plane[0..3].* = default_normal orelse return vm.fail(.ArgumentError, method ++ " needs the plane's normal: nx, ny, nz, or an Array [nx, ny, nz]", .{});
+    }
+    try arguments.requireNonZeroVector(vm, plane[0..3].*, method, "plane normal");
+    return plane;
 }
 
 /// Offset corner styles; the values are the kernel's join_type codes.
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
+/// How far a miter join's corner may reach, in multiples of the offset, before it is
+/// squared off: without `miter_limit:`, and at least (the kernel raises a lower one to it).
+const MIN_MITER_LIMIT = 2.0;
 
-/// `offset(delta, join:)`. A Sketch grows by `delta` (shrinks, when it is negative), its
-/// corners joined as `join` says. A Solid grows by `delta` in every direction: a Minkowski
-/// sum with a sphere of that radius, the 3D form of a round join, so its edges and corners
-/// come out rounded. A Solid can't shrink (that is an erosion, which the kernel lacks) and
-/// has no other join.
+/// `offset(delta, join:, miter_limit:, segments:)`. A Sketch grows by `delta` (shrinks,
+/// when it is negative), its corners joined as `join` says, a miter's reaching at most
+/// `miter_limit` times `delta` before it is squared off. A Solid grows by `delta` in every
+/// direction: a Minkowski sum with a sphere of that radius, the 3D form of a round join, so
+/// its edges and corners come out rounded. A Solid can't shrink (that is an erosion, which
+/// the kernel lacks) and has no other join. The rounding, a join's or the sphere's, is as
+/// fine as the resolution makes a circle of radius `delta`, or `segments:` says (a sketch's
+/// took the kernel's own default, whatever the script's resolution).
 pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round };
-    const pos = util.positionalArgs(args);
+    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round, miter_limit: ?f64 = null, segments: i32 = 0 };
+    const pos = arguments.positionalArgs(args);
     var base = OffsetOpts{};
-    if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
-    const opts = (try util.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
+    if (pos.len > 0) base.delta = try arguments.requireNumber(vm, pos[0], "offset", "delta");
+    const opts = (try arguments.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, @abs(opts.delta));
 
     if (receiver.isCrossSection()) {
-        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join));
+        if (opts.miter_limit) |limit| {
+            // A limit that limits nothing would be silently ignored
+            if (opts.join != .miter) return vm.fail(.ArgumentError, "offset's miter_limit applies to join: :miter only, not join: :{s}", .{@tagName(opts.join)});
+            if (!(limit >= MIN_MITER_LIMIT) or !std.math.isFinite(limit)) {
+                return vm.fail(.ValueError, "offset miter_limit must be a number of at least {d} (a multiple of delta), got {f}", .{ MIN_MITER_LIMIT, value.fmtNumber(limit) });
+            }
+        }
+        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join), segments, opts.miter_limit orelse MIN_MITER_LIMIT);
         return try vm.allocateCrossSection(new_idx);
     }
     if (receiver.isGeometry()) {
-        if (!std.math.isFinite(opts.delta) or opts.delta <= 0.0) {
-            return vm.fail(.ValueError, "a Solid's offset only grows it: delta must be a finite number greater than zero, got {f}", .{value.fmtNumber(opts.delta)});
+        if (!std.math.isFinite(opts.delta) or opts.delta == 0.0) {
+            return vm.fail(.ValueError, "a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got {f}", .{value.fmtNumber(opts.delta)});
         }
         if (opts.join != .round) {
             return vm.fail(.ValueError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :{s}", .{@tagName(opts.join)});
         }
-        const sphere_idx = try vm.dag_builder.addSphere(opts.delta, util.autoSegments(vm, opts.delta));
-        const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
+        if (opts.miter_limit != null) {
+            return vm.fail(.ArgumentError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit", .{});
+        }
+        const solid = receiver.asGeometry().dag_idx;
+        if (opts.delta < 0) return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addErode(solid, -opts.delta, segments) });
+        const sphere_idx = try vm.dag_builder.addSphere(opts.delta, segments);
+        const new_idx = try vm.dag_builder.addBinary(.minkowski, solid, sphere_idx);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     }
-    return util.notDefinedFor(vm, "offset", receiver);
+    return arguments.notDefinedFor(vm, "offset", receiver);
+}
+
+/// `shell(thickness, segments:)`: the shape hollowed out to walls `thickness` thick, its
+/// outside kept: itself less its offset inward by `thickness`. A Sketch's is the band
+/// along its outlines; a Solid's is closed all round (a difference cuts it open), its
+/// inner edges rounded as the offset rounds them, by a sphere of `segments:`.
+pub fn meshShell(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const Opts = struct { thickness: ?f64 = null, segments: i32 = 0 };
+    const pos = arguments.positionalArgs(args);
+    var base = Opts{};
+    if (pos.len > 0) base.thickness = try arguments.requireNumber(vm, pos[0], "shell", "thickness");
+    const opts = (try arguments.parseKwargsOver(Opts, base, sig.SHELL.keywords, vm, args, "shell")).opts;
+    const thickness = opts.thickness orelse return vm.fail(.ArgumentError, "shell needs its walls' thickness: shell(thickness)", .{});
+    try arguments.requirePositive(vm, thickness, "shell", "thickness");
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, thickness);
+    const b = &vm.dag_builder;
+    if (receiver.isCrossSection()) {
+        const sketch = receiver.asCrossSection().dag_idx;
+        const inner = try b.addOffset(sketch, -thickness, @backingInt(JoinType.round), segments, MIN_MITER_LIMIT);
+        return try vm.allocateCrossSection(try b.addBinary(.cs_difference_op, sketch, inner));
+    }
+    const solid = receiver.asGeometry().dag_idx;
+    return try vm.allocateGeometry(.{ .symbolic = try b.addBinary(.difference_op, solid, try b.addErode(solid, thickness, segments)) });
 }
 
 pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !value.Value {
-    const z = if (height) |h| try util.requireNumber(vm, h, "slice", "height") else 0.0;
+    const z = if (height) |h| try arguments.requireNumber(vm, h, "slice", "height") else 0.0;
     const new_idx = try vm.dag_builder.addSlice(receiver.dag_idx, z);
     return try vm.allocateCrossSection(new_idx);
 }
 
 pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargsSubset(struct { cut: bool = false }, sig.PROJECT.keywords, vm, args, "project");
+    const parsed = try arguments.parseKwargsSubset(struct { cut: bool = false }, sig.PROJECT.keywords, vm, args, "project");
 
     if (parsed.opts.cut) {
         // project(cut: true) is a 2D slice exactly at Z=0
@@ -105,11 +195,9 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     var direction = [3]f64{ 0, 0, 1 };
 
     if (dir_arg.isArray()) {
-        direction = try util.parseNumberArray(3, vm, dir_arg, .{ .method = "on_face", .name = "the direction" }, 3, 0.0);
-        try util.requireNonZeroVector(vm, direction, "on_face", "direction");
-    } else if (dir_arg.isSymbol() or dir_arg.isString()) {
-        const dir_str = if (dir_arg.isSymbol()) dir_arg.asSymbol().chars else dir_arg.asString().chars;
-
+        direction = try arguments.parseNumberArray(3, vm, dir_arg, .{ .method = "on_face", .name = "the direction" }, 3, 0.0);
+        try arguments.requireNonZeroVector(vm, direction, "on_face", "direction");
+    } else if (dir_arg.nameChars()) |dir_str| {
         if (std.mem.eql(u8, dir_str, "top")) {
             direction = .{ 0, 0, 1 };
         } else if (std.mem.eql(u8, dir_str, "bottom")) {
@@ -126,10 +214,10 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
             return vm.fail(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
         }
     } else {
-        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
+        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{arguments.typeName(vm, dir_arg)});
     }
 
-    const tolerance = vm.config().tolerance;
+    const tolerance = vm.settingsOf(receiver).tolerance;
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
         return vm.fail(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
@@ -143,28 +231,10 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 }
 
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "split_by_plane", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "split_by_plane", receiver);
 
-    const parsed = try util.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
-    const positional = parsed.positional;
-    if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
-        return vm.fail(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
-    }
-
-    // Unset normal components are 0 once any is given, so split_by_plane(nz: 1)
-    // means the XY plane (it used to keep the default nx = 1, a diagonal plane).
-    var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
-    var normal_given = positional.len > 0;
-    for (positional, 0..) |arg, i| plane[i] = try util.requireNumber(vm, arg, "split_by_plane", PLANE_ARGS[i]);
-    inline for (PLANE_ARGS, 0..) |name, i| {
-        if (@field(parsed.opts, name)) |n| {
-            plane[i] = n;
-            if (i < 3) normal_given = true;
-        }
-    }
-    if (!normal_given) plane[0] = 1.0; // Default: split at the YZ plane.
-    const nx, const ny, const nz, const offset = plane;
-    try util.requireNonZeroVector(vm, .{ nx, ny, nz }, "split_by_plane", "plane normal");
+    // Without a normal, at the YZ plane
+    const nx, const ny, const nz, const offset = try parsePlane(vm, args, .{ 1, 0, 0 }, "split_by_plane");
 
     const target_idx = receiver.asGeometry().dag_idx;
 
@@ -193,7 +263,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 }
 
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "decompose", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "decompose", receiver);
     const handle = try vm.ensureConcrete(receiver); // Eager!
     try vm.requireFeature(handle.engine, .decompose);
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
@@ -229,10 +299,11 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
 pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var tolerance: ?f64 = null;
 
-    // Optional positional argument: part.simplify(0.01); nil keeps the configured tolerance.
-    if (args.len > 0 and !args[0].isNil()) tolerance = try util.requireNumber(vm, args[0], "simplify", "tolerance");
+    // Optional positional argument: part.simplify(0.01); nil keeps the tolerance the part
+    // was made under.
+    if (args.len > 0 and !args[0].isNil()) tolerance = try arguments.requireNumber(vm, args[0], "simplify", "tolerance");
 
-    const tol = tolerance orelse vm.config().tolerance;
+    const tol = tolerance orelse vm.settingsOf(value.Value.initGeometry(receiver)).tolerance;
 
     // Force concrete DAG evaluation up to this point and run simplification
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));

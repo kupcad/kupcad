@@ -1,0 +1,65 @@
+//! `kupcad run`: runs a script with its parameter values (`-p`, `-P`) and the project's
+//! memory limit, as `kupcad build` does, and writes no model: what it prints, and the
+//! errors it raises, are the result (a script may still export with `export_stl` and the
+//! rest). The model is built but not evaluated by the kernel, so a kernel error waits for
+//! `kupcad build`.
+
+const std = @import("std");
+const api = @import("../api.zig");
+const build_cmd = @import("build_cmd.zig");
+const param_flags = @import("param_flags.zig");
+const SessionManager = @import("../session/session_manager.zig").SessionManager;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const Args = @import("args.zig").Args;
+pub const Outcome = @import("outcome.zig").Outcome;
+const Reporter = @import("reporter.zig").Reporter;
+
+pub const USAGE =
+    \\Usage: kupcad run <file.kup> [options]
+    \\
+    \\Runs a script, printing what it prints, and writes no model (use kupcad build).
+    \\
+    \\Options:
+    \\
+++ param_flags.USAGE ++
+    \\  -h, --help                Show this help
+    \\
+;
+
+pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
+    return run(allocator, args_iter, .forProcess(init));
+}
+
+/// Runs `kupcad run` with the remaining CLI arguments (`next() ?[]const u8`); a script that
+/// doesn't parse, compile or run is a failure, reported.
+pub fn run(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !Outcome {
+    var params: api.ParamValues = .{};
+    defer params.deinit(allocator);
+    var input: ?[]const u8 = null;
+    while (args.next()) |arg| {
+        switch (try param_flags.take(allocator, arg, args, &params, reporter)) {
+            .taken => continue,
+            .refused => return .failure,
+            .other => {},
+        }
+        if (std.mem.startsWith(u8, arg, "-")) {
+            reporter.err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
+            return .failure;
+        }
+        if (input) |first| {
+            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ first, arg });
+            return .failure;
+        }
+        input = arg;
+    }
+    const input_path = input orelse {
+        reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
+        return .failure;
+    };
+    // The script reads and writes the disk, as under kupcad build
+    var disk = NativeVfs.init(reporter.io, std.Io.Dir.cwd());
+    var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
+    defer manager.deinit();
+    _ = try build_cmd.runScript(allocator, &manager, input_path, &params, null, reporter) orelse return .failure;
+    return .success;
+}

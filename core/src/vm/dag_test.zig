@@ -1,6 +1,7 @@
 const std = @import("std");
 const dag = @import("dag.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const bezier = @import("../core/bezier.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     // Setup
@@ -56,6 +57,22 @@ test "DAG: addBalancedChain subtracts the union of the cutters" {
 }
 
 // --- CSE hashing and child validation ---
+
+test "DAG: a projection as made is built under its target's settings, and the ones in force stay" {
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const fine = try b.internSettings(.{ .tolerance = 0.5 });
+    b.current_settings = fine;
+    const cube = try b.addCube(1, 1, 1, false);
+    b.current_settings = 0;
+    const as_made = try b.addProjectAsMade(cube);
+    try std.testing.expectEqual(fine, b.nodes.items[as_made].settings);
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), b.current_settings);
+    // A plain projection takes the settings in force, so the two are different nodes
+    const plain = try b.addProject(cube);
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), b.nodes.items[plain].settings);
+    try std.testing.expect(plain != as_made);
+}
 
 test "DAG: polyhedron hash separates points and faces" {
     var b1 = dag.DAGBuilder.init(std.testing.allocator);
@@ -187,7 +204,7 @@ test "DAG: compaction keeps the live nodes with their payloads, hashes and meshe
     const lofted = try b.addLoft(small, big, 4);
     const outline = try b.addPolygon(@constCast(&[_][2]f64{ .{ 0, 0 }, .{ 3, 0 }, .{ 0, 3 } }));
     const two = [_][]const [2]f64{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } };
-    const holed = try b.addPolygonsEvenOdd(&two);
+    const holed = try b.addPolygonsEvenOdd(&two, &.{});
     const shifted = try b.addCrossSectionTransform(holed, .{ 1, 0, 0, 1, 5, 5 });
     const tetra = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 1, 2 }, .{ 0, 3, 1 }, .{ 0, 2, 3 }, .{ 1, 3, 2 } });
     const dead_leaf = try b.addConcrete(kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed);
@@ -248,6 +265,9 @@ test "DAG: a node is found again exactly when every part of its payload matches"
     const nut = try b.internPartName("nut");
     try std.testing.expectEqual(bolt, try b.internPartName("bolt"));
     const moved_contours = [_][]const [2]f64{ &tri, &moved_tri };
+    const curve = bezier.Flattened{ .contour = 0, .first = 0, .count = 2, .cubic = .{ .c1 = .{ 0.3, 0.1 }, .c2 = .{ 0.6, 0.1 } } };
+    const bent_curve = bezier.Flattened{ .contour = 0, .first = 0, .count = 2, .cubic = .{ .c1 = .{ 0.3, 0.2 }, .c2 = .{ 0.6, 0.1 } } };
+    const other_run = bezier.Flattened{ .contour = 1, .first = 1, .count = 2, .cubic = .{ .c1 = .{ 0.3, 0.1 }, .c2 = .{ 0.6, 0.1 } } };
     const cases = [_]struct { layout: []const u8, first: dag.DAGNodeIndex, again: dag.DAGNodeIndex, changed: []const dag.DAGNodeIndex }{
         .{ .layout = "numbers", .first = try b.addCube(1, 2, 3, false), .again = try b.addCube(1, 2, 3, false), .changed = &.{ try b.addCube(1, 2, 4, false), try b.addCube(1, 2, 3, true) } },
         .{ .layout = "operands", .first = try b.addBinary(.difference_op, cube, ball), .again = try b.addBinary(.difference_op, cube, ball), .changed = &.{try b.addBinary(.difference_op, ball, cube)} },
@@ -257,7 +277,8 @@ test "DAG: a node is found again exactly when every part of its payload matches"
         .{ .layout = "target_value (a name)", .first = try b.addSetName(cube, bolt), .again = try b.addSetName(cube, bolt), .changed = &.{ try b.addSetName(cube, nut), try b.addSetMaterial(cube, bolt) } },
         .{ .layout = "loft", .first = try b.addLoft(small, big, 3), .again = try b.addLoft(small, big, 3), .changed = &.{ try b.addLoft(small, big, 4), try b.addLoft(big, small, 3) } },
         .{ .layout = "polygon", .first = try b.addPolygon(@constCast(&tri)), .again = try b.addPolygon(@constCast(&tri)), .changed = &.{try b.addPolygon(@constCast(&moved_tri))} },
-        .{ .layout = "polygons", .first = try b.addPolygonsEvenOdd(&contours), .again = try b.addPolygonsEvenOdd(&contours), .changed = &.{ try b.addPolygonsEvenOdd(&moved_contours), try b.addPolygonsEvenOdd(contours[0..1]) } },
+        .{ .layout = "polygons", .first = try b.addPolygonsEvenOdd(&contours, &.{}), .again = try b.addPolygonsEvenOdd(&contours, &.{}), .changed = &.{ try b.addPolygonsEvenOdd(&moved_contours, &.{}), try b.addPolygonsEvenOdd(contours[0..1], &.{}), try b.addPolygonsEvenOdd(&contours, &.{curve}) } },
+        .{ .layout = "polygons (a curve)", .first = try b.addPolygonsEvenOdd(&contours, &.{curve}), .again = try b.addPolygonsEvenOdd(&contours, &.{curve}), .changed = &.{ try b.addPolygonsEvenOdd(&contours, &.{bent_curve}), try b.addPolygonsEvenOdd(&contours, &.{other_run}) } },
         .{ .layout = "polyhedron", .first = try b.addPolyhedron(&pts, &faces), .again = try b.addPolyhedron(&pts, &faces), .changed = &.{try b.addPolyhedron(&moved_pts, &faces)} },
         .{ .layout = "none", .first = try b.addEmpty(true), .again = try b.addEmpty(true), .changed = &.{try b.addEmpty(false)} },
     };

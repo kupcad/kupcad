@@ -1,8 +1,8 @@
 const std = @import("std");
 const gltf = @import("gltf.zig");
+const MeshPart = @import("mesh_part.zig").MeshPart;
 const registry = @import("../../stdlib/registry.zig");
 const dag_evaluator = @import("../../vm/dag_evaluator.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const draco = @import("../../bindings/draco.zig");
 const mesh_check = @import("../../kernel/mesh_check.zig");
@@ -23,8 +23,8 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
     const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
-    const handles = [_]geom.GeometryHandle{handle};
-    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false, .glb);
+    const parts = [_]MeshPart{.{ .handle = handle }};
+    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb);
     defer std.testing.allocator.free(glb_bytes);
 
     // 1. Check GLB Magic Bytes "glTF"
@@ -73,6 +73,49 @@ fn parseGlb(bytes: []const u8) !Glb {
     };
 }
 
+/// Every mesh's primitives in the file's order: a mesh per part, each its own node.
+fn allPrimitives(glb: *const Glb) ![]std.json.Value {
+    var prims: std.ArrayList(std.json.Value) = .empty;
+    errdefer prims.deinit(std.testing.allocator);
+    for (glb.array("meshes")) |mesh| try prims.appendSlice(std.testing.allocator, mesh.object.get("primitives").?.array.items);
+    return prims.toOwnedSlice(std.testing.allocator);
+}
+
+test "GLTF: each part is a node named after it, under the root node that turns the scene" {
+    // The parts were one mesh on the root node, unnamed: a viewer showed one object.
+    const source = "lid = cube(1).named(\"lid\")\nassemble(name: \"box\", parts: [lid, lid.translate(x: 3), cube(2).translate(x: 6)])";
+    const bytes = try api.buildModel(std.testing.allocator, std.testing.io, source, .{ .format = .glb });
+    defer std.testing.allocator.free(bytes);
+    var glb = try parseGlb(bytes);
+    defer glb.deinit();
+    try expectValidLayout(&glb);
+    const nodes = glb.array("nodes");
+    const meshes = glb.array("meshes");
+    try std.testing.expectEqual(@as(usize, 4), nodes.len);
+    try std.testing.expectEqual(@as(usize, 3), meshes.len);
+    const root = nodes[0].object;
+    try std.testing.expect(root.get("rotation") != null and root.get("mesh") == null and root.get("name") == null);
+    const children = root.get("children").?.array.items;
+    try std.testing.expectEqual(@as(usize, 3), children.len);
+    for ([_][]const u8{ "lid", "lid_2", "part_1" }, 1..) |name, n| {
+        try std.testing.expectEqual(n, int(children[n - 1]));
+        const node = nodes[n].object;
+        try std.testing.expectEqualStrings(name, node.get("name").?.string);
+        try std.testing.expectEqual(n - 1, int(node.get("mesh").?));
+        try std.testing.expectEqualStrings(name, meshes[n - 1].object.get("name").?.string);
+    }
+
+    // A ghost is a node without a name, before the model's
+    const ghosted = try api.buildModel(std.testing.allocator, std.testing.io, "cube(1).ghost\ncube(2)", .{ .format = .glb });
+    defer std.testing.allocator.free(ghosted);
+    var with_ghost = try parseGlb(ghosted);
+    defer with_ghost.deinit();
+    const ghost_nodes = with_ghost.array("nodes");
+    try std.testing.expectEqual(@as(usize, 3), ghost_nodes.len);
+    try std.testing.expect(ghost_nodes[1].object.get("name") == null);
+    try std.testing.expectEqualStrings("part_1", ghost_nodes[2].object.get("name").?.string);
+}
+
 fn int(v: std.json.Value) usize {
     return @intCast(v.integer);
 }
@@ -108,7 +151,8 @@ fn expectValidLayout(glb: *const Glb) !void {
         try std.testing.expect(a.object.get("byteOffset") == null);
         try std.testing.expect(needed <= int(view.get("byteLength").?));
     }
-    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
+    const prims = try allPrimitives(glb);
+    defer std.testing.allocator.free(prims);
     for (prims) |p| {
         const pos = int(p.object.get("attributes").?.object.get("POSITION").?);
         const idx = int(p.object.get("indices").?);
@@ -126,7 +170,8 @@ fn expectValidLayout(glb: *const Glb) !void {
 /// The base colour of the material each primitive uses, in primitive order.
 fn primitiveColors(glb: *const Glb, out: [][4]f64) ![][4]f64 {
     const materials = glb.array("materials");
-    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
+    const prims = try allPrimitives(glb);
+    defer std.testing.allocator.free(prims);
     for (prims, 0..) |p, i| {
         const mat = materials[int(p.object.get("material").?)].object;
         const factor = mat.get("pbrMetallicRoughness").?.object.get("baseColorFactor").?.array.items;
@@ -178,7 +223,8 @@ test "GLTF: multi-part exports are valid and each part keeps its own material" {
 /// accessor with the total count, which no decoder accepts for a multi-part model.
 fn expectOwnPositionsPerPrimitive(glb: *const Glb) !void {
     const accessors = glb.array("accessors");
-    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
+    const prims = try allPrimitives(glb);
+    defer std.testing.allocator.free(prims);
     var total: usize = 0;
     for (prims, 0..) |p, i| {
         const pos = int(p.object.get("attributes").?.object.get("POSITION").?);
@@ -292,8 +338,8 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     try vm.setConfig(.{ .engine = .brep_native });
     const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
-    const handles = [_]geom.GeometryHandle{ mesh_part, brep_part };
-    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &handles, false, .glb));
+    const parts = [_]MeshPart{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
+    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb));
 }
 
 /// The bytes of buffer view `index`.
@@ -313,13 +359,43 @@ test "GLTF: the primitives of an export close every part" {
     const positions = std.mem.bytesAsSlice(f32, viewBytes(&glb, int(accessors[0].object.get("bufferView").?)));
     var indices: std.ArrayList(u32) = .empty;
     defer indices.deinit(std.testing.allocator);
-    for (glb.array("meshes")[0].object.get("primitives").?.array.items) |p| {
+    const prims = try allPrimitives(&glb);
+    defer std.testing.allocator.free(prims);
+    for (prims) |p| {
         const view = int(accessors[int(p.object.get("indices").?)].object.get("bufferView").?);
         for (std.mem.bytesAsSlice(u32, viewBytes(&glb, view))) |i| try indices.append(std.testing.allocator, i);
     }
     const triangles = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
     defer std.testing.allocator.free(triangles);
     try mesh_check.expectClosed(std.testing.allocator, triangles);
+}
+
+test "GLTF: Draco quantizes positions to the bits the export asks for" {
+    // The bits were fixed at 14 whatever the part or the use
+    const support = @import("../../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, "sphere(r: 10, segments: 96)"));
+    for ([_]u8{ 6, 20 }) |bits| {
+        errdefer std.debug.print("bits: {d}\n", .{bits});
+        const bytes = try api.exportModelFromVm(std.testing.allocator, &vm, .glb, .{ .draco = true, .draco_bits = bits });
+        defer std.testing.allocator.free(bytes);
+        var glb = try parseGlb(bytes);
+        defer glb.deinit();
+        const prims = try allPrimitives(&glb);
+        defer std.testing.allocator.free(prims);
+        const ext = prims[0].object.get("extensions").?.object.get("KHR_draco_mesh_compression").?.object;
+        const mesh = try draco.decodeMesh(std.testing.allocator, viewBytes(&glb, int(ext.get("bufferView").?)));
+        defer mesh.deinit(std.testing.allocator);
+        // The distinct x positions: on a grid of 2^bits steps at most
+        const xs = try std.testing.allocator.alloc(f32, mesh.positions.len / 3);
+        defer std.testing.allocator.free(xs);
+        for (xs, 0..) |*x, v| x.* = mesh.positions[3 * v];
+        std.mem.sort(f32, xs, {}, std.sort.asc(f32));
+        var distinct: usize = 1;
+        for (xs[1..], xs[0 .. xs.len - 1]) |x, before| distinct += @intFromBool(x != before);
+        if (bits == 6) try std.testing.expect(distinct <= 64) else try std.testing.expect(distinct > 64);
+    }
 }
 
 test "GLTF: each Draco primitive decodes to the mesh its accessors describe" {
@@ -334,8 +410,10 @@ test "GLTF: each Draco primitive decodes to the mesh its accessors describe" {
     defer glb.deinit();
 
     const accessors = glb.array("accessors");
-    const prims = glb.array("meshes")[0].object.get("primitives").?.array.items;
-    const plain_prims = plain.array("meshes")[0].object.get("primitives").?.array.items;
+    const prims = try allPrimitives(&glb);
+    defer std.testing.allocator.free(prims);
+    const plain_prims = try allPrimitives(&plain);
+    defer std.testing.allocator.free(plain_prims);
     try std.testing.expectEqual(plain_prims.len, prims.len);
     for (prims, plain_prims, 0..) |p, plain_p, n| {
         errdefer std.debug.print("primitive {d}\n", .{n});

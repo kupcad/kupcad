@@ -1,31 +1,39 @@
-//! The table of built-ins: the global functions (`global_functions`) and the Solid, Sketch
-//! and assembly methods (`mesh_methods`, `assembly_methods`), each with its category,
-//! signature and result kind, from which the compiler's intrinsics, the LSP's completions and
-//! the lint's lookups are derived; and `cadBinaryHandler`, which turns `+ - &` into booleans.
+//! The table of built-ins: the global functions (`global_functions`) and the Solid, Sketch,
+//! Path and assembly methods (`mesh_methods`, `path_methods`, `assembly_methods`), each with
+//! its category, signature, result kind and the shapes it is bound for, from which the
+//! compiler's intrinsics, the LSP's completions and the lint's lookups are derived
+//! (`methodAllows`); why a Path lacks a method (`missingMethodHint`, core/path.zig's OPEN_PATH_HINT);
+//! and `cadBinaryHandler`, which turns `+ - &` into booleans, `+` of two Paths into a
+//! join and a String's `%` into a format.
 
 const std = @import("std");
 const common = @import("classes/common.zig");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
-const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
+const paths = @import("paths.zig");
 const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
 const files = @import("files.zig");
+const mesh_import = @import("mesh_import.zig");
 const json = @import("json.zig");
+const drawing_import = @import("drawing_import.zig");
 const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
 const assembly_mod = @import("assembly.zig");
 const bom = @import("bom.zig");
+const path_mod = @import("../core/path.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
-const debug_mod = @import("debug.zig");
+const format = @import("format.zig");
 
 pub const Category = enum {
     primitive_3d,
     primitive_2d,
+    /// `line`, `polyline`, `arc`: makes a Path.
+    primitive_path,
     transform,
     csg_operator,
     workplane_method,
@@ -42,6 +50,7 @@ pub const Result = enum {
     receiver,
     solid,
     sketch,
+    path,
     number,
     boolean,
     string,
@@ -60,6 +69,7 @@ pub const Result = enum {
         return switch (self) {
             .solid => "Geometry",
             .sketch => "CrossSection",
+            .path => "Path",
             .number => "Number",
             .boolean => "Boolean",
             .string => "String",
@@ -87,9 +97,20 @@ pub const GlobalFunction = struct {
     func: value.NativeFn,
     category: Category,
     result: Result,
+    /// What it gives back instead when a call gives a keyword as `true` (`import_svg(path,
+    /// paths: true)` is an Array), for tools that read calls before they run.
+    result_when: ?ResultWhen = null,
     /// A primitive's parameters, for tools that read calls before they run.
     signature: ?*const Signature = null,
 };
+
+/// The result a global function gives when its `keyword` is `true`.
+pub const ResultWhen = struct { keyword: []const u8, result: Result };
+
+/// Which shapes a method is defined on: `respond_to?` and a call on the other kind answer
+/// as for any missing method (every method used to be bound to both, so a sketch said it
+/// responded to `hull` and then raised a TypeError).
+pub const On = enum { solids, sketches, both, paths };
 
 pub const MeshMethod = struct {
     name: []const u8,
@@ -98,13 +119,18 @@ pub const MeshMethod = struct {
     /// What it takes (stdlib/method_signatures.zig), for its parameter hints and lint.
     signature: *const Signature,
     result: Result,
+    on: On,
+
+    pub fn isOn(self: MeshMethod, on: On) bool {
+        return self.on == on or (self.on == .both and on != .paths);
+    }
 };
 
 pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
     "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
-    "Font",
+    "Font",     "Path",         "Random",
     // "Workplane": hidden with on_face (see the method table)
 };
 
@@ -122,7 +148,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "puts", .func = common.wrapGlobal(io_mod.nativePuts), .category = .io, .result = .nothing },
     .{ .name = "print", .func = common.wrapGlobal(io_mod.nativePrint), .category = .io, .result = .nothing },
     .{ .name = "inspect", .func = common.wrapGlobal(io_mod.nativeInspect), .category = .io, .result = .varies },
-    .{ .name = "debugger", .func = common.wrapGlobal(debug_mod.nativeDebugger), .category = .io, .result = .nothing },
+    .{ .name = "debugger", .func = common.wrapGlobal(diagnostics_mod.nativeDebugger), .category = .io, .result = .nothing },
     .{ .name = "param", .func = common.wrapGlobal(params_mod.nativeParam), .category = .io, .result = .varies },
     .{ .name = "assert", .func = common.wrapGlobal(diagnostics_mod.nativeAssert), .category = .io, .result = .nothing },
     .{ .name = "warn", .func = common.wrapGlobal(diagnostics_mod.nativeWarn), .category = .io, .result = .nothing },
@@ -138,78 +164,125 @@ pub const global_functions = [_]GlobalFunction{
     primitive("square", .primitive_2d, primitives.nativeSquare, &primitives.SQUARE),
     primitive("circle", .primitive_2d, primitives.nativeCircle, &primitives.CIRCLE),
     primitive("polygon", .primitive_2d, primitives.nativePolygon, &primitives.POLYGON),
+    primitive("line", .primitive_path, paths.nativeLine, &paths.LINE),
+    primitive("polyline", .primitive_path, paths.nativePolyline, &paths.POLYLINE),
+    primitive("arc", .primitive_path, paths.nativeArc, &paths.ARC),
     primitive("regular_polygon", .primitive_2d, primitives.nativeRegularPolygon, &primitives.REGULAR_POLYGON),
     primitive("torus", .primitive_3d, primitives.nativeTorus, &primitives.TORUS),
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
-    .{ .name = "import_stl", .func = common.wrapGlobal(files.nativeImportStl), .category = .file_io, .result = .solid },
+    .{ .name = "import_stl", .func = common.wrapGlobal(mesh_import.nativeImportStl), .category = .file_io, .result = .solid },
+    .{ .name = "import_obj", .func = common.wrapGlobal(mesh_import.nativeImportObj), .category = .file_io, .result = .solid },
+    .{ .name = "import_3mf", .func = common.wrapGlobal(mesh_import.nativeImport3mf), .category = .file_io, .result = .solid },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
+    .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_DXF },
+    .{ .name = "import_svg", .func = common.wrapGlobal(drawing_import.nativeImportSvg), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_SVG },
 };
 
 pub const mesh_methods = [_]MeshMethod{
-    method("union", .csg_operator, methods.meshUnion, &sig.SHAPES, .receiver),
-    method("difference", .csg_operator, methods.meshDifference, &sig.SHAPES, .receiver),
-    method("intersection", .csg_operator, methods.meshIntersection, &sig.SHAPES, .receiver),
-    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
-    method("rotate", .transform, methods.meshRotate, &sig.ROTATE, .receiver),
-    method("scale", .transform, methods.meshScale, &sig.SCALE, .receiver),
-    method("resize", .transform, methods.meshResize, &sig.RESIZE, .receiver),
-    method("project", .transform, methods.meshProject, &sig.PROJECT, .sketch),
-    method("slice", .transform, methods.meshSlice, &sig.SLICE, .sketch),
-    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
-    method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver),
-    method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver),
+    method("union", .csg_operator, methods.meshUnion, &sig.SHAPES, .receiver, .both),
+    method("difference", .csg_operator, methods.meshDifference, &sig.SHAPES, .receiver, .both),
+    method("intersection", .csg_operator, methods.meshIntersection, &sig.SHAPES, .receiver, .both),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver, .both),
+    method("rotate", .transform, methods.meshRotate, &sig.ROTATE, .receiver, .both),
+    method("scale", .transform, methods.meshScale, &sig.SCALE, .receiver, .both),
+    method("resize", .transform, methods.meshResize, &sig.RESIZE, .receiver, .solids),
+    method("project", .transform, methods.meshProject, &sig.PROJECT, .sketch, .solids),
+    method("slice", .transform, methods.meshSlice, &sig.SLICE, .sketch, .solids),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
+    method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver, .both),
+    method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver, .both),
     // `on_face` returns a Workplane, a value with no methods yet: hidden until the fluent
     // sketching API it belongs to exists (CadQuery's Workplane does the local-coordinate
     // sketching and extrusion; a bare one misleads). The implementation stays.
-    // method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane),
-    method("split_by_plane", .transform, methods.meshSplitByPlane, &sig.SPLIT_BY_PLANE, .array),
-    method("decompose", .transform, methods.meshDecompose, &sig.NONE, .array),
-    method("genus", .inspection_method, methods.meshGenus, &sig.NONE, .number),
-    method("simplify", .transform, methods.meshSimplify, &sig.SIMPLIFY, .receiver),
-    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
-    method("volume", .inspection_method, methods.meshVolume, &sig.NONE, .number),
-    method("surface_area", .inspection_method, methods.meshSurfaceArea, &sig.NONE, .number),
-    method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid),
-    method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid),
-    method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid),
-    method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid),
-    method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid),
-    method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver),
-    method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver),
-    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver),
-    method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver),
-    method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number),
-    method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean),
-    method("ray_cast", .inspection_method, methods.meshRayCast, &sig.RAY_CAST, .array),
-    method("repeat_linear", .transform, methods.meshRepeatLinear, &sig.REPEAT_LINEAR, .receiver),
-    method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver),
-    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
-    method("named", .transform, bom.meshNamed, &sig.NAMED, .receiver),
-    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
-    method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
-    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver),
-    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    // method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane, .solids),
+    method("split_by_plane", .transform, methods.meshSplitByPlane, &sig.SPLIT_BY_PLANE, .array, .solids),
+    method("decompose", .transform, methods.meshDecompose, &sig.NONE, .array, .solids),
+    method("genus", .inspection_method, methods.meshGenus, &sig.NONE, .number, .solids),
+    method("simplify", .transform, methods.meshSimplify, &sig.SIMPLIFY, .receiver, .solids),
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
+    method("volume", .inspection_method, methods.meshVolume, &sig.NONE, .number, .solids),
+    method("surface_area", .inspection_method, methods.meshSurfaceArea, &sig.NONE, .number, .solids),
+    method("area", .inspection_method, methods.sketchArea, &sig.NONE, .number, .sketches),
+    method("center_of_mass", .inspection_method, methods.meshCenterOfMass, &sig.NONE, .array, .solids),
+    method("intersects?", .inspection_method, methods.meshIntersects, &sig.INTERSECTS, .boolean, .solids),
+    method("mass", .inspection_method, bom.meshMass, &sig.NONE, .number, .solids),
+    method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid, .sketches),
+    method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid, .sketches),
+    method("hull", .transform, methods.meshHull, &sig.SHAPES, .receiver, .both),
+    method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid, .sketches),
+    method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid, .sketches),
+    method("sweep", .transform, methods.meshSweep, &sig.SWEEP, .solid, .sketches),
+    method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver, .solids),
+    method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver, .solids),
+    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver, .both),
+    method("shell", .transform, methods.meshShell, &sig.SHELL, .receiver, .both),
+    method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver, .both),
+    method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number, .solids),
+    method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean, .both),
+    method("ray_cast", .inspection_method, methods.meshRayCast, &sig.RAY_CAST, .array, .solids),
+    method("repeat_linear", .transform, methods.meshRepeatLinear, &sig.REPEAT_LINEAR, .receiver, .both),
+    method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver, .both),
+    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver, .both),
+    method("named", .transform, bom.meshNamed, &sig.NAMED, .receiver, .both),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array, .solids),
+    method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver, .solids),
+    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver, .solids),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
+    method("export_3mf", .file_io, files.meshExport3mf, &sig.EXPORT, .receiver, .solids),
+    method("export_obj", .file_io, files.meshExportObj, &sig.EXPORT_OBJ, .receiver, .solids),
+    method("export_svg", .file_io, files.meshExportSvg, &sig.EXPORT, .receiver, .both),
+    method("export_dxf", .file_io, files.meshExportDxf, &sig.EXPORT, .receiver, .both),
+};
+
+/// The methods of a Path (line, polyline, arc): open 2D geometry, moved as a Sketch is,
+/// gone on from its end, its corners rounded or cut, closed or stroked into one, labelled
+/// for a drawing, and drawn.
+pub const path_methods = [_]MeshMethod{
+    method("translate", .transform, paths.pathTranslate, &sig.TRANSLATE, .receiver, .paths),
+    method("rotate", .transform, paths.pathRotate, &sig.ROTATE, .receiver, .paths),
+    method("scale", .transform, paths.pathScale, &sig.SCALE, .receiver, .paths),
+    method("mirror", .transform, paths.pathMirror, &sig.MIRROR, .receiver, .paths),
+    method("line_to", .transform, paths.pathLineTo, &paths.LINE_TO, .receiver, .paths),
+    method("arc_to", .transform, paths.pathArcTo, &paths.ARC_TO, .receiver, .paths),
+    method("tangent_arc_to", .transform, paths.pathTangentArcTo, &paths.TANGENT_ARC_TO, .receiver, .paths),
+    method("fillet", .transform, paths.pathFillet, &paths.FILLET, .receiver, .paths),
+    method("chamfer", .transform, paths.pathChamfer, &paths.CHAMFER, .receiver, .paths),
+    method("close", .transform, paths.pathClose, &sig.NONE, .sketch, .paths),
+    method("stroke", .transform, paths.pathStroke, &paths.STROKE, .sketch, .paths),
+    method("named", .transform, paths.pathNamed, &sig.NAMED, .receiver, .paths),
+    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver, .paths),
+    method("bbox", .inspection_method, paths.pathBBox, &sig.NONE, .bounding_box, .paths),
+    method("start", .inspection_method, paths.pathStart, &sig.NONE, .array, .paths),
+    method("end", .inspection_method, paths.pathEnd, &sig.NONE, .array, .paths),
+    method("length", .inspection_method, paths.pathLength, &sig.NONE, .number, .paths),
+    method("export_svg", .file_io, files.meshExportSvg, &sig.EXPORT, .receiver, .paths),
+    method("export_dxf", .file_io, files.meshExportDxf, &sig.EXPORT, .receiver, .paths),
 };
 
 /// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
 /// for export, so it answers what it holds and writes its parts as one file. It had no
 /// methods at all: `assemble(...).export_step(...)` was a NoMethodError.
 pub const assembly_methods = [_]MeshMethod{
-    method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
-    method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
-    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
+    method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string, .solids),
+    method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array, .solids),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array, .solids),
+    method("mass", .inspection_method, bom.meshMass, &sig.NONE, .number, .solids),
     // Placing a whole subassembly: its bounds, and every part moved alike.
-    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
-    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
-    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
-    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver, .both),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
+    method("export_3mf", .file_io, files.meshExport3mf, &sig.EXPORT, .receiver, .solids),
+    method("export_obj", .file_io, files.meshExportObj, &sig.EXPORT_OBJ, .receiver, .solids),
+    method("export_svg", .file_io, files.meshExportSvg, &sig.EXPORT, .receiver, .both),
+    method("export_dxf", .file_io, files.meshExportDxf, &sig.EXPORT, .receiver, .both),
 };
 
 /// A primitive whose calls are checked against `signature` (common.checkArguments).
@@ -217,30 +290,39 @@ fn primitive(comptime name: []const u8, comptime category: Category, comptime fu
     const result: Result = switch (category) {
         .primitive_3d => .solid,
         .primitive_2d => .sketch,
-        else => @compileError("primitive " ++ name ++ " makes neither a solid nor a sketch"),
+        .primitive_path => .path,
+        else => @compileError("primitive " ++ name ++ " makes neither a solid, a sketch nor a path"),
     };
     return .{ .name = name, .func = common.wrapGlobalWith(func, signature.*), .category = category, .result = result, .signature = signature };
 }
 
-/// A method whose calls are checked against `signature` (common.checkArguments).
-fn method(comptime name: []const u8, comptime category: Category, comptime func: anytype, comptime signature: *const Signature, comptime result: Result) MeshMethod {
-    return .{ .name = name, .category = category, .func = common.wrapMethodWith(func, signature.*), .signature = signature, .result = result };
+/// A method whose calls are checked against `signature` (common.checkArguments), defined
+/// on the shapes `on` (an assembly's methods are bound to Assembly whatever it says).
+fn method(comptime name: []const u8, comptime category: Category, comptime func: anytype, comptime signature: *const Signature, comptime result: Result, comptime on: On) MeshMethod {
+    return .{ .name = name, .category = category, .func = common.wrapMethodWith(func, signature.*), .signature = signature, .result = result, .on = on };
+}
+
+/// The global function `name`, if it is a built-in.
+fn globalNamed(name: []const u8) ?*const GlobalFunction {
+    for (&global_functions) |*f| {
+        if (std.mem.eql(u8, f.name, name)) return f;
+    }
+    return null;
 }
 
 /// The signature of the global function `name`, if it is a primitive that declares one.
 pub fn signatureOf(name: []const u8) ?*const Signature {
-    for (global_functions) |f| {
-        if (std.mem.eql(u8, f.name, name)) return f.signature;
-    }
-    return null;
+    return (globalNamed(name) orelse return null).signature;
 }
 
 /// What the global function `name` gives back, if it is a built-in.
 pub fn resultOf(name: []const u8) ?Result {
-    for (global_functions) |f| {
-        if (std.mem.eql(u8, f.name, name)) return f.result;
-    }
-    return null;
+    return (globalNamed(name) orelse return null).result;
+}
+
+/// The result the global function `name` gives instead when a keyword is `true`, if it has one.
+pub fn resultWhenOf(name: []const u8) ?ResultWhen {
+    return (globalNamed(name) orelse return null).result_when;
 }
 
 /// What the method `name` of a solid, a sketch or an assembly gives back.
@@ -253,6 +335,35 @@ pub fn methodSignatureOf(name: []const u8) ?*const Signature {
     return if (methodNamed(name)) |m| m.signature else null;
 }
 
+/// What to do about a shape that lacks a method it is often asked for: a Path for
+/// `extrude` or `revolve`, which need a closed shape.
+/// Whether the shape method `name` is one of the shapes `on`'s (a Solid's `hull`, a
+/// Sketch's `extrude`, a Path's `close`); null when no shape has a method of that name.
+pub fn methodAllows(name: []const u8, on: On) ?bool {
+    var known = false;
+    for (&mesh_methods) |*m| {
+        if (!std.mem.eql(u8, m.name, name)) continue;
+        known = true;
+        if (m.isOn(on)) return true;
+    }
+    for (&path_methods) |*m| {
+        if (!std.mem.eql(u8, m.name, name)) continue;
+        known = true;
+        if (m.isOn(on)) return true;
+    }
+    return if (known) false else null;
+}
+
+/// Why `class` has no method `name`, when there is something to say: the VM adds it to
+/// the NoMethodError and the lint to its finding.
+pub fn missingMethodHint(class: []const u8, name: []const u8) ?[]const u8 {
+    if (!std.mem.eql(u8, class, "Path")) return null;
+    for ([_][]const u8{ "extrude", "revolve", "helix", "loft", "hull", "offset", "shell", "sweep" }) |needs_region| {
+        if (std.mem.eql(u8, name, needs_region)) return path_mod.OPEN_PATH_HINT;
+    }
+    return null;
+}
+
 /// A shape method named `name`: a solid's or a sketch's, else an assembly's (the exports
 /// they share are declared alike).
 fn methodNamed(name: []const u8) ?*const MeshMethod {
@@ -260,6 +371,9 @@ fn methodNamed(name: []const u8) ?*const MeshMethod {
         if (std.mem.eql(u8, m.name, name)) return m;
     }
     for (&assembly_methods) |*m| {
+        if (std.mem.eql(u8, m.name, name)) return m;
+    }
+    for (&path_methods) |*m| {
         if (std.mem.eql(u8, m.name, name)) return m;
     }
     return null;
@@ -312,9 +426,13 @@ fn buildLspCompletions() [core_namespaces.len + global_functions.len][]const u8 
 
 pub const lsp_completions = buildLspCompletions();
 
-/// The host fallback for a method no class defines: every built-in method is bound on a
-/// class, so this only reports it.
+/// The host's operators on what the VM doesn't combine itself: `+ - &` of two Solids or two
+/// Sketches as their boolean, `+` of two Paths as their join, and a String `%` arguments as
+/// a format (stdlib/format.zig); error.UnsupportedOperands for anything else.
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
+    // Two paths join where one ends and the next starts
+    if (op == .op_add and a.isPath() and b.isPath()) return paths.join(vm, a, b);
+    if (op == .op_modulo and a.isString()) return format.format(vm, a, b);
     const is_3d = a.isGeometry() and b.isGeometry();
     const is_2d = a.isCrossSection() and b.isCrossSection();
 

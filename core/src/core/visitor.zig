@@ -19,7 +19,7 @@ pub fn walk(comptime Context: type, ctx: *Context, tree: *const ast.Tree, node_i
         .invalid, .number, .string, .boolean, .identifier, .symbol, .nil, .self_expr, .namespace_access, .docstring => {},
 
         // Multi-child nodes
-        .interpolated_string, .array_literal => {
+        .interpolated_string, .interpolated_symbol, .array_literal => {
             for (tree.getNodes(tree.nodeSpan(node))) |child| try walk(Context, ctx, tree, child);
         },
         .hash_literal => {

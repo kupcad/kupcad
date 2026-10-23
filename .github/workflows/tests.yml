@@ -93,6 +93,12 @@ jobs:
           pip install -r core/scripts/requirements.txt
           pnpm check:3mf
 
+      # ezdxf's recovering reader and auditor: an error, or anything it had to fix, fails
+      # the check; an SVG must be well-formed XML with a path per shape.
+      - name: Validate exported SVG and DXF
+        if: matrix.name == 'linux debug'
+        run: pnpm check:drawings
+
       - name: Run wasm tests
         if: matrix.wasm_task != ''
         run: pnpm ${{ matrix.wasm_task }}

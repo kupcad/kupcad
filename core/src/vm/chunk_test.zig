@@ -127,3 +127,11 @@ test "Chunk: registry never holds a freed chunk or outlives its VM" {
     vm.deinit();
     try testing.expect(c.registry == null);
 }
+
+test "Chunk: operands are read big-endian, as the compiler writes them" {
+    const code = [_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9A };
+    try std.testing.expectEqual(@as(u16, 0x1234), chunk.readU16(&code, 0));
+    try std.testing.expectEqual(@as(u16, 0x3456), chunk.readU16(&code, 1));
+    try std.testing.expectEqual(@as(u32, 0x12345678), chunk.readU32(&code, 0));
+    try std.testing.expectEqual(@as(u32, 0x3456789A), chunk.readU32(&code, 1));
+}

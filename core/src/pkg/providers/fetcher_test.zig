@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const Fetcher = @import("fetcher.zig").Fetcher;
 const ParsedPackage = @import("provider.zig").ParsedPackage;
-const semver = @import("../../core/semver.zig");
+const semver = @import("../semver.zig");
 const Release = @import("fetcher.zig").Release;
 
 const SHA_A: [40]u8 = @splat('a');

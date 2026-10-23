@@ -11,23 +11,20 @@ const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
-const geom = @import("kernel/geometry_handle.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("vfs/readonly.zig").ReadOnlyVfs;
+const NativeVfs = @import("vfs/native.zig").NativeVfs;
 const limits = @import("core/limits.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const equivalence = @import("tools/fmt/equivalence.zig");
 const Linter = @import("tools/lint/linter.zig").Linter;
-const stl_exporter = @import("exporters/3d/stl.zig");
-const gltf_exporter = @import("exporters/3d/gltf.zig");
-const step_exporter = @import("exporters/3d/step.zig");
-const threemf_exporter = @import("exporters/3d/threemf.zig");
-const HandleScope = @import("vm/scope.zig").HandleScope;
-const bom = @import("stdlib/bom.zig");
+const format_mod = @import("exporters/format.zig");
+const model_mod = @import("exporters/model.zig");
+const export_mod = @import("exporters/export.zig");
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
-pub const Document = @import("core/document.zig").Document;
+pub const Document = @import("frontend/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 const suppressions = @import("tools/lint/suppressions.zig");
@@ -37,11 +34,24 @@ pub const Diagnostic = @import("core/errors.zig").Diagnostic;
 pub const ParamValues = @import("core/param_values.zig").ParamValues;
 pub const ParamValue = @import("core/param_values.zig").ParamValue;
 
+// The export layer (exporters/format.zig, model.zig, export.zig), for the CLI and the
+// browser build
+pub const ExportFormat = format_mod.ExportFormat;
+pub const ExportOptions = format_mod.ExportOptions;
+pub const Model = model_mod.Model;
+pub const collectModel = model_mod.collectModel;
+pub const modelParts = model_mod.modelParts;
+pub const billOfMaterials = model_mod.billOfMaterials;
+pub const exportModelFromVm = export_mod.exportModelFromVm;
+pub const PartFile = export_mod.PartFile;
+pub const exportPartsFromVm = export_mod.exportPartsFromVm;
+pub const freePartFiles = export_mod.freePartFiles;
+pub const exportMaterialLibrary = export_mod.exportMaterialLibrary;
+pub const materialLibraryPath = export_mod.materialLibraryPath;
+
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
 const MAX_FIX_PASSES = 10;
-/// How deep modelFingerprint follows Arrays of shapes inside Arrays (an Array can hold itself).
-const MAX_MODEL_NESTING = 64;
 
 /// Formats a parsed Document; the caller owns the result. It is checked before it is
 /// returned: it must parse, mean the same program (tools/fmt/equivalence.zig) and keep
@@ -190,7 +200,9 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
     vm.mute_errors = true;
-    var sandbox = ReadOnlyVfs.init(vm.vfs, null);
+    // Its imports are read from the disk, as `kupcad check` runs it
+    var disk = NativeVfs.init(io, std.Io.Dir.cwd());
+    var sandbox = ReadOnlyVfs.init(disk.vfs(), null);
     vm.vfs = sandbox.vfs();
     vm.line_index = &doc.line_index;
     vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
@@ -230,8 +242,14 @@ fn hashShapes(hasher: *std.hash.Wyhash, vm: *const VM, val: value.Value, depth: 
         hasher.update(std.mem.asBytes(&hashes[idx]));
         return true;
     }
+    if (val.isPath()) {
+        const p = val.asPath();
+        hasher.update(std.mem.asBytes(&p.start));
+        hasher.update(std.mem.sliceAsBytes(p.segments));
+        return true;
+    }
     const items: []const value.Value = if (val.isAssembly()) val.asAssembly().parts.items.items else if (val.isArray()) val.asArray().items.items else return true;
-    if (depth >= MAX_MODEL_NESTING) return false;
+    if (depth >= model_mod.MAX_MODEL_NESTING) return false;
     for (items) |item| {
         if (!hashShapes(hasher, vm, item, depth + 1)) return false;
     }
@@ -282,181 +300,6 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
     }
 }
 
-/// The meshes of the model the script left: its ghosts (the display list), then its
-/// Solids (modelValues), each evaluated. The handles are borrowed (see VM.ensureConcrete).
-pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
-    try out.appendSlice(allocator, vm.display_list.items);
-    var single: [1]value.Value = undefined;
-    for (modelValues(vm, &single)) |part| {
-        if (part.isGeometry()) try out.append(allocator, try vm.ensureConcrete(part));
-    }
-}
-
-/// What the script left as its model: its final value, a Solid (in `single`), an Assembly's
-/// parts or an Array's items (the Solids among them are the model); none for anything else.
-pub fn modelValues(vm: *VM, single: *[1]value.Value) []const value.Value {
-    if (vm.stack_top == 0) return &.{};
-    const final_val = vm.stack[0];
-    if (final_val.isGeometry()) {
-        single.* = .{final_val};
-        return single;
-    }
-    if (final_val.isAssembly()) return final_val.asAssembly().parts.items.items;
-    if (final_val.isArray()) return final_val.asArray().items.items;
-    return &.{};
-}
-
-/// The Solids of the model the script left (modelValues), rooted by its final value. Caller
-/// owns the list.
-fn modelSolids(allocator: std.mem.Allocator, vm: *VM) ![]value.Value {
-    var single: [1]value.Value = undefined;
-    var solids: std.ArrayList(value.Value) = .empty;
-    errdefer solids.deinit(allocator);
-    for (modelValues(vm, &single)) |part| {
-        if (part.isGeometry()) try solids.append(allocator, part);
-    }
-    return solids.toOwnedSlice(allocator);
-}
-
-/// The model's name: its Assembly's, if it is one.
-fn modelTitle(vm: *VM) ?[]const u8 {
-    if (vm.stack_top == 0 or !vm.stack[0].isAssembly()) return null;
-    return vm.stack[0].asAssembly().name.chars;
-}
-
-/// The parts list (stdlib/bom.zig) of the model the script left (modelValues), as
-/// `kupcad build --bom` writes it; error.NoGeometry when it holds no Solid.
-pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    if (solids.len == 0) return error.NoGeometry;
-    const parts = try bom.collect(vm, allocator, solids);
-    defer allocator.free(parts);
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer out.deinit();
-    try bom.writeJson(allocator, &out.writer, parts);
-    return out.toOwnedSlice();
-}
-
-/// The formats a model exports to. The tag names are what `kupcad build --format` and the
-/// browser build call them; the format travelled as a string, compared at every use.
-pub const ExportFormat = enum {
-    stl,
-    glb,
-    gltf,
-    step,
-    /// 3D Manufacturing Format: each part once, placed once per copy (exporters/3d/threemf.zig).
-    @"3mf",
-
-    /// The format named `name`, or null for a name that is none.
-    pub fn parse(name: []const u8) ?ExportFormat {
-        return std.meta.stringToEnum(ExportFormat, name);
-    }
-};
-
-/// The model the script left (modelValues) in `format`, its ghosts (the display list) beside
-/// it where the format shows them. A failure the script can read about (an engine that
-/// can't mesh, a failed union) is raised in the VM first, so `vm.last_error` says what went
-/// wrong.
-pub fn exportModelFromVm(
-    allocator: std.mem.Allocator,
-    vm: *VM,
-    format: ExportFormat,
-    use_draco: bool,
-) ![]const u8 {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    return exportSolids(allocator, vm, format, use_draco, solids, vm.display_list.items, modelTitle(vm));
-}
-
-/// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
-/// a 3MF model. error.NoGeometry when there is nothing to write.
-fn exportSolids(
-    allocator: std.mem.Allocator,
-    vm: *VM,
-    format: ExportFormat,
-    use_draco: bool,
-    solids: []const value.Value,
-    ghosts: []const geom.GeometryHandle,
-    title: ?[]const u8,
-) ![]const u8 {
-    if (solids.len == 0 and ghosts.len == 0) return error.NoGeometry;
-    switch (format) {
-        // The parts once each, placed per copy: the Solids themselves, not their meshes. The
-        // ghosts are the viewer's, as in an STL.
-        .@"3mf" => {
-            if (solids.len == 0) return error.NoGeometry;
-            return threemf_exporter.build(allocator, vm, solids, title);
-        },
-        .step => {
-            var handles = try handlesOf(allocator, vm, solids, ghosts);
-            defer handles.deinit(allocator);
-            try step_exporter.requireExactParts(vm, handles.items);
-            return step_exporter.buildStepBuffer(allocator, handles.items);
-        },
-        .stl, .glb, .gltf => {
-            var handles = try handlesOf(allocator, vm, solids, ghosts);
-            defer handles.deinit(allocator);
-            // Refuse parts the engine can't tessellate before any work on them.
-            for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-            // STL holds one mesh: the model's parts are united, the ghosts left out.
-            if (format == .stl) return stl_exporter.buildStlOfParts(allocator, vm, handles.items[ghosts.len..]);
-            const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-            return gltf_exporter.buildGltfBuffer(allocator, vm, handles.items, use_draco, container);
-        },
-    }
-}
-
-/// `ghosts`, then the meshes of `solids` (evaluated; borrowed, see VM.ensureConcrete).
-fn handlesOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !std.ArrayList(geom.GeometryHandle) {
-    var handles: std.ArrayList(geom.GeometryHandle) = .empty;
-    errdefer handles.deinit(allocator);
-    try handles.ensureTotalCapacity(allocator, ghosts.len + solids.len);
-    handles.appendSliceAssumeCapacity(ghosts);
-    for (solids) |solid| handles.appendAssumeCapacity(try vm.ensureConcrete(solid));
-    return handles;
-}
-
-/// One file `kupcad build --split` writes: a part of the model, as made (no placement).
-pub const PartFile = struct {
-    /// The part's name (the geometry graph's), or null when it has none.
-    name: ?[]const u8,
-    /// How many copies of it the model holds.
-    count: u32,
-    /// Owned by the allocator `exportPartsFromVm` was given.
-    bytes: []const u8,
-};
-
-/// Each part of the model's parts list (stdlib/bom.zig) in `format`, without its placement:
-/// a file to print each from. error.NoGeometry when the model holds no Solid.
-pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, use_draco: bool) ![]PartFile {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    if (solids.len == 0) return error.NoGeometry;
-    const grouping = try bom.group(vm, allocator, solids);
-    defer grouping.deinit(allocator);
-
-    var files: std.ArrayList(PartFile) = .empty;
-    errdefer freePartFiles(allocator, files.items);
-    defer files.deinit(allocator);
-    for (grouping.parts) |part| {
-        // Rooted while it is evaluated and written; a scope, as an error raised in it
-        // unwinds the stack
-        var scope = HandleScope.init(vm);
-        defer scope.deinit();
-        const made = try bom.madeOf(vm, part);
-        vm.push(made);
-        const bytes = try exportSolids(allocator, vm, format, use_draco, &.{made}, &.{}, part.name);
-        errdefer allocator.free(bytes);
-        try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
-    }
-    return files.toOwnedSlice(allocator);
-}
-
-pub fn freePartFiles(allocator: std.mem.Allocator, files: []const PartFile) void {
-    for (files) |file| allocator.free(file.bytes);
-}
-
 /// Why a build failed, in words a script author can act on. Filled by
 /// `buildModel` (BuildOptions.diagnostic); `message` is owned by the allocator passed to it.
 pub const BuildDiagnostic = struct {
@@ -484,8 +327,9 @@ pub const BuildOptions = struct {
     draco: bool = false,
     /// Values for `param(:name, ...)`, as `-p` and `-P` give them.
     params: ?*const ParamValues = null,
-    /// The filesystem imports and exports go through (the native one when null).
-    vfs: ?Vfs = null,
+    /// The file system imports and exports go through: none by default, so a script given
+    /// to the API reads and writes no files unless the caller passes one.
+    vfs: Vfs = .none,
     /// When the build fails with a message, `diagnostic.message` is set to it. Pass a
     /// fresh `.{}`.
     diagnostic: ?*BuildDiagnostic = null,
@@ -510,14 +354,13 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
 
-    if (options.vfs) |vfs| vm.vfs = vfs;
+    vm.vfs = options.vfs;
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
 
-    // STEP requires exact B-Rep geometry, not polygonal Manifold meshes
-    if (format == .step) {
+    if (format.requiredEngine()) |engine| {
         var settings = vm.config();
-        settings.engine = .brep_native;
+        settings.engine = engine;
         try vm.setConfig(settings);
     }
 
@@ -545,7 +388,7 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     vm.clearLastError();
 
     // Geometry is evaluated lazily, so kernel errors (e.g. the mesh budget) surface here.
-    return exportModelFromVm(allocator, &vm, format, options.draco) catch |err| {
+    return exportModelFromVm(allocator, &vm, format, .{ .draco = options.draco }) catch |err| {
         if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
         return err;
     };

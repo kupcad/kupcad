@@ -46,3 +46,26 @@ test "GitHost: an http or local package is on no git host" {
     try testing.expect(git_host.of(.local) == null);
     try testing.expect(git_host.of(.github) != null);
 }
+
+test "Providers: an http package's archive is its URL, a local one's the path it names, resolved" {
+    const HttpProvider = @import("http.zig").HttpProvider;
+    const LocalProvider = @import("local.zig").LocalProvider;
+    const http = try HttpProvider.formatArchiveUrl(testing.allocator, try ParsedPackage.parse("https://example.com/parts-1.2.tar.gz"), "");
+    defer testing.allocator.free(http);
+    try testing.expectEqualStrings("https://example.com/parts-1.2.tar.gz", http);
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "pkg.tar.gz", .data = "" });
+    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(dir);
+    const spec = try std.mem.concat(testing.allocator, u8, &.{ "file:", dir, "/./pkg.tar.gz" });
+    defer testing.allocator.free(spec);
+    const local = try LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse(spec), "");
+    defer testing.allocator.free(local);
+    const expected = try std.fs.path.join(testing.allocator, &.{ dir, "pkg.tar.gz" });
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, local);
+    // A path that isn't there is the install's error, not a link to nothing
+    try testing.expectError(error.FileNotFound, LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse("file:/nonexistent-kupcad-provider/pkg.tar.gz"), ""));
+}

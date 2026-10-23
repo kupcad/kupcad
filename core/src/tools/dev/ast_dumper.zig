@@ -2,16 +2,16 @@
 //! payload, for `kupcad dev ast-dump` (cli/dev.zig).
 
 const std = @import("std");
-const api = @import("../../api.zig");
+const Document = @import("../../frontend/document.zig").Document;
 const ast = @import("../../core/ast.zig");
 
-pub fn dump(allocator: std.mem.Allocator, doc: *const api.Document, out: *std.Io.Writer.Allocating) !void {
+pub fn dump(allocator: std.mem.Allocator, doc: *const Document, out: *std.Io.Writer.Allocating) !void {
     try dumpNode(allocator, doc, doc.tree.root, out, "", true);
 }
 
 fn dumpNode(
     allocator: std.mem.Allocator,
-    doc: *const api.Document,
+    doc: *const Document,
     node_idx: ast.NodeIndex,
     out: *std.Io.Writer.Allocating,
     prefix: []const u8,
@@ -118,7 +118,7 @@ fn dumpNode(
             try children.append(allocator, ws.condition);
             try children.append(allocator, ws.body);
         },
-        .array_literal, .interpolated_string => {
+        .array_literal, .interpolated_string, .interpolated_symbol => {
             try children.appendSlice(allocator, tree.getNodes(tree.nodeSpan(node)));
         },
         else => {}, // No children, or unhandled in quick-dump

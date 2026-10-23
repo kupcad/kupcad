@@ -368,6 +368,10 @@ test "Language: == compares Arrays, Maps and Ranges by content" {
         .{ .src = "r = \"#{{ a: 1, b: [2] } == { b: [2], a: 1 }} #{{ a: 1 } == { a: 2 }} #{{ a: 1 } == { a: 1, b: 2 }}\"", .expected = .{ .str = "true false false" } },
         .{ .src = "r = \"#{(1..3) == (1..3)} #{(1..3) == (1...3)} #{[1, 2].contains?(2)} #{[[1, 2]].contains?([1, 2])}\"", .expected = .{ .str = "true false true true" } },
         .{ .src = "r = case [1, 2]\nwhen [1] then \"one\"\nwhen [1, 2] then \"two\"\nelse \"none\"\nend", .expected = .{ .str = "two" } },
+        // A literal case table (op_switch) took NaN, neither below nor above a case, for
+        // the case it was compared with
+        .{ .src = "r = case Number::NAN\nwhen 1 then \"one\"\nwhen 2 then \"two\"\nwhen 3 then \"three\"\nelse \"none\"\nend", .expected = .{ .str = "none" } },
+        .{ .src = "r = case 2.0\nwhen 1 then \"one\"\nwhen 2 then \"two\"\nelse \"none\"\nend", .expected = .{ .str = "two" } },
         // A structure containing itself: equal to itself, not to another such structure.
         .{ .src = "a = []\na.push(a)\nb = []\nb.push(b)\nr = \"#{a == a} #{a == b}\"", .expected = .{ .str = "true false" } },
         .{ .src = "r = \"#{[1] == 1} #{\"a\" == [\"a\"]}\"", .expected = .{ .str = "false false" } },
@@ -391,6 +395,50 @@ test "Language: puts and interpolation show an instance by its own to_s" {
     vm.host.print_handler = capturePrint;
     try testing.expectEqual(.ok, try support.runOn(&vm, TO_S_CLASS ++ "puts P.new(3)\nprint P.new(4)"));
     try testing.expectEqualStrings("P(3)\nP(4)", captured_output.items);
+}
+
+test "Language: inspect shows an instance by its inspect, inherited too, or else its to_s" {
+    // inspect() looked in the instance's own class only, called only built-in methods and
+    // swallowed their errors: a script's inspect or to_s was never shown
+    const classes = "class A\n  def inspect\n    \"A!\"\n  end\nend\nclass B < A\nend\nclass C\n  def to_s\n    \"C()\"\n  end\nend\nclass D\nend\n";
+    var vm = try support.initVm();
+    defer vm.deinit();
+    captured_output.clearRetainingCapacity();
+    defer captured_output.clearAndFree(testing.allocator);
+    vm.host.print_handler = capturePrint;
+    try testing.expectEqual(.ok, try support.runOn(&vm, classes ++ "inspect(A.new)\ninspect(B.new)\ninspect(C.new)\ninspect(D.new)\ninspect(cube(1).bbox)\ninspect(\"s\")"));
+    var shown: std.ArrayList([]const u8) = .empty;
+    defer shown.deinit(testing.allocator);
+    var lines = std.mem.tokenizeScalar(u8, captured_output.items, '\n');
+    // Each line after its "[line, col] " prefix, when the run has a line index
+    while (lines.next()) |line| try shown.append(testing.allocator, if (std.mem.find(u8, line, "] ")) |at| line[at + 2 ..] else line);
+    const expected = [_][]const u8{ "A!", "A!", "C()", "#<D>", "BoundingBox(min: [0, 0, 0], max: [1, 1, 1])", "\"s\"" };
+    try testing.expectEqual(expected.len, shown.items.len);
+    for (expected, shown.items) |want, got| try testing.expectEqualStrings(want, got);
+
+    // An error in the method is the script's (a host that prints nothing runs none of it)
+    const failing = [_]struct { src: []const u8, expected: []const u8 }{
+        .{ .src = rescued("class Q\n  def inspect\n    5\n  end\nend\ninspect(Q.new)"), .expected = "TypeError: Q#inspect must return a String, got Number" },
+        .{ .src = rescued("class Q\n  def inspect\n    raise \"boom\"\n  end\nend\ninspect(Q.new)"), .expected = "RuntimeError: boom" },
+    };
+    for (failing) |case| {
+        var printing = try support.initVm();
+        defer printing.deinit();
+        printing.host.print_handler = capturePrint;
+        try testing.expectEqual(.ok, try support.runOn(&printing, case.src));
+        try testing.expectEqualStrings(case.expected, printing.globals.get("r").?.asString().chars);
+    }
+}
+
+test "Language: a class, rescue, range or module used wrongly says how" {
+    try expectScripts(&.{
+        .{ .src = rescued("class A\nend\nA.new(1)"), .expected = .{ .str = "ArgumentError: Expected 0 args for default constructor." } },
+        .{ .src = rescued("class B\n  def initialize\n    super\n  end\nend\nB.new"), .expected = .{ .str = "NoMethodError: Superclass method 'initialize' not found." } },
+        .{ .src = rescued("class C\n  def f\n    super\n  end\nend\nC.new.f"), .expected = .{ .str = "NoMethodError: Superclass method 'f' not found." } },
+        .{ .src = rescued("x = 5\nbegin\n  raise \"boom\"\nrescue x => e\n  2\nend"), .expected = .{ .str = "TypeError: Rescue type must be a Class." } },
+        .{ .src = rescued("(\"ab\"..\"c\").to_a"), .expected = .{ .str = "TypeError: a String range needs single characters, got \"ab\"..\"c\"" } },
+        .{ .src = rescued("module M\nend\nM::Nope"), .expected = .{ .str = "NameError: module M has no member 'Nope' (it has none)" } },
+    });
 }
 
 var captured_output: std.ArrayList(u8) = .empty;
@@ -521,5 +569,20 @@ test "Language: a lone target with a comma takes the first element, a lone splat
         .{ .src = "a, = [1, 2, 3]\nr = a", .expected = .{ .num = 1 } },
         .{ .src = "*m, = [1, 2, 3]\nr = m", .expected = .{ .nums = &.{ 1, 2, 3 } } },
         .{ .src = "a, *rest = 1, 2, 3\nr = rest", .expected = .{ .nums = &.{ 2, 3 } } },
+    });
+}
+
+test "Language: a quoted symbol is read as the string in the same quotes" {
+    // Its name was its text as written: `:"a\tb"` kept the backslash and `:"p_#{i}"` its
+    // `#{i}`, as Ruby doesn't
+    try expectScripts(&.{
+        .{ .src = "r = :\"a\\\"b\\tc\" == \"a\\\"b\\tc\".to_sym", .expected = .{ .boolean = true } },
+        .{ .src = "r = :\"\\u00e9 \\#{x}\".to_s", .expected = .{ .str = "\u{e9} #{x}" } },
+        .{ .src = "r = :'a\\'b \\n'.to_s", .expected = .{ .str = "a'b \\n" } },
+        .{ .src = "r = :\"x\" == :x", .expected = .{ .boolean = true } },
+        .{ .src = "i = 2\nr = :\"part_#{i}\" == :part_2", .expected = .{ .boolean = true } },
+        .{ .src = "i = 2\nr = :\"part_#{i}\" == :part_2", .expected = .{ .boolean = true }, .gc_stress = true },
+        .{ .src = "r = \"#{:\"#{1}#{\"a\"}\".class} #{:\"#{1}#{\"a\"}\"}\"", .expected = .{ .str = "Symbol 1a" } },
+        .{ .src = "k = \"b\"\nr = { :\"a #{k}\" => 1 }[:\"a b\"]", .expected = .{ .num = 1 } },
     });
 }

@@ -3,7 +3,7 @@ const testing = std.testing;
 const VM = @import("../vm/vm.zig").VM;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
 const chunk = @import("../vm/chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("registry.zig");
 const kernel = @import("../kernel/kernel.zig");
@@ -12,7 +12,7 @@ const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
 const test_support = @import("../test_support.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 const print = std.fmt.comptimePrint;
 const MAX_SEGS = limits.MAX_SEGMENTS;
@@ -411,6 +411,7 @@ test "Stdlib: a count that no integer holds says what is wrong, not the integer 
         .{ .src = comptime rescued("circle(r: 1, segments: Number::NAN)"), .expected = .{ .str = "ValueError: 'segments' must be a finite number, got NaN" } },
         // Within the type, the real range is checked and named.
         .{ .src = comptime rescued("cylinder(r: 1, h: 1, segments: 5000)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 5000" } },
+        .{ .src = comptime rescued("square(1).offset(1, segments: 5000)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 5000" } },
     });
 }
 
@@ -883,26 +884,24 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             const call = if (comptime std.mem.eql(u8, f.name, "text")) "text(\"A\", zz_unknown: 1)" else f.name ++ "(zz_unknown: 1)";
             comptime var accepted: []const u8 = "";
             inline for (sig.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
-            try expectScripts(&.{.{
-                .src = comptime rescued(call),
-                .expected = .{ .str = "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
-            }});
+            // A primitive with no keywords (line, polyline) says so
+            const expected = if (sig.keywords.len == 0) "ArgumentError: " ++ f.name ++ " takes no keywords" else "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")";
+            try expectScripts(&.{.{ .src = comptime rescued(call), .expected = .{ .str = expected } }});
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 10), checked);
+    try std.testing.expectEqual(@as(usize, 15), checked);
 }
 
 test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
     // The editor's hints and `kupcad check` read the Signature, so it must be what the
     // method parses. Sketch methods are called on a square, the rest on a cube.
     const manifest = @import("manifest.zig");
-    const sketch_methods = [_][]const u8{ "extrude", "revolve", "helix", "offset" };
     const counted = [_][]const u8{ "repeat_linear", "repeat_polar" }; // a count comes first
     var checked: usize = 0;
     inline for (manifest.mesh_methods) |m| {
         if (m.signature.keywords.len > 0) {
-            const receiver = comptime if (isOneOf(m.name, &sketch_methods)) "square(1)" else "cube(1)";
+            const receiver = comptime if (m.on == .sketches) "square(1)" else "cube(1)";
             const leading = comptime if (isOneOf(m.name, &counted)) "2, " else "";
             comptime var accepted: []const u8 = "";
             inline for (m.signature.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
@@ -913,7 +912,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 14), checked);
+    try std.testing.expectEqual(@as(usize, 17), checked);
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -974,6 +973,10 @@ test "Stdlib: a Symbol reads as its name, and inspects with its colon" {
     try expectScripts(&.{
         .{ .src = "r = \"#{:m3} #{[:a, :b].join(\"-\")} #{:c.to_s}\"", .expected = .{ .str = "m3 a-b c" } },
         .{ .src = "r = \"#{:m3.inspect} #{[:a].inspect} #{{ k: :v }.inspect}\"", .expected = .{ .str = ":m3 [:a] {k: :v}" } },
+        // Quoted, as written, when `:name` wouldn't read it back: `:"a b"` inspected as `:a b`
+        .{ .src = "r = [:\"a b\", :\"a\\\"b\", :\"\", :if, :a?, :x=, :@a, :\"1a\"].inspect", .expected = .{ .str = "[:\"a b\", :\"a\\\"b\", :\"\", :if, :a?, :x=, :@a, :\"1a\"]" } },
+        .{ .src = "r = %i[a-b c].inspect", .expected = .{ .str = "[:\"a-b\", :c]" } },
+        .{ .src = "r = { :\"a b\" => 1, k: 2, :if => 3 }.inspect", .expected = .{ .str = "{:\"a b\" => 1, k: 2, :if => 3}" } },
     });
 }
 
@@ -1039,6 +1042,343 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
         .{ .src = comptime rescued("Math.remap(1, 2, 2, 0, 1)"), .expected = .{ .str = "ValueError: Math.remap needs a range of two different numbers, got 2 and 2" } },
         .{ .src = comptime rescued("Math.close?(1, 2, -1)"), .expected = .{ .str = "ValueError: Math.close? tolerance must be zero or more, got -1" } },
         .{ .src = comptime rescued("Math.gcd(2.5, 5)"), .expected = .{ .str = "ValueError: Math.gcd requires an integer, got 2.5" } },
+    });
+}
+
+test "Stdlib: cube and square take their sizes as an Array, regular_polygon its size across flats" {
+    try expectScripts(&.{
+        .{ .src = "r = cube([1, 2, 3]).bbox.size", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = cube([1, 2, 3], true).bbox.min", .expected = .{ .nums = &.{ -0.5, -1, -1.5 } } },
+        .{ .src = "r = cube(size: [4, 5, 6]).bbox.size", .expected = .{ .nums = &.{ 4, 5, 6 } } },
+        .{ .src = "r = cube([2, 2, 2], round_r: 0.5).bbox.size", .expected = .{ .nums = &.{ 2, 2, 2 } } },
+        .{ .src = "r = square([2, 3]).bbox.size", .expected = .{ .nums = &.{ 2, 3, 0 } } },
+        .{ .src = "r = square(size: [2, 3], center: true).bbox.min", .expected = .{ .nums = &.{ -1, -1.5, 0 } } },
+        .{ .src = comptime rescued("cube([1, 2])"), .expected = .{ .str = "ValueError: cube expects the size to have 3 numbers, got 2" } },
+        .{ .src = comptime rescued("cube([1, -2, 3])"), .expected = .{ .str = "ValueError: cube expects y to be a finite number greater than zero, got -2" } },
+        .{ .src = comptime rescued("cube(size: \"x\")"), .expected = .{ .str = "TypeError: cube expects a number or an Array of sizes for size, got String" } },
+        .{ .src = comptime rescued("cube([1, 2, 3], true, 5)"), .expected = .{ .str = "ArgumentError: cube takes its sizes as an Array or as x, y, z: [w, d, h] and center, got 3 positional arguments" } },
+        // A keyword overrides a positional size, as it does a positional number
+        .{ .src = "r = square([1, 2], x: 3).bbox.size", .expected = .{ .nums = &.{ 3, 2, 0 } } },
+        // A hex nut by its wrench size: flats 10 apart, corners 10 / cos 30° apart
+        .{ .src = "s = regular_polygon(6, across_flats: 10).bbox.size\nr = [s[0].round(9), s[1].round(9)]", .expected = .{ .nums = &.{ 11.547005384, 10 } } },
+        .{ .src = comptime rescued("regular_polygon(5, across_flats: 10)"), .expected = .{ .str = "ArgumentError: regular_polygon takes across_flats: with an even number of sides (a hex nut's 6), got 5" } },
+        .{ .src = comptime rescued("regular_polygon(6, r: 5, across_flats: 10)"), .expected = .{ .str = "ArgumentError: regular_polygon takes r or across_flats, not both" } },
+        .{ .src = comptime rescued("regular_polygon(6, across_flats: -1)"), .expected = .{ .str = "ValueError: regular_polygon expects across_flats to be a finite number greater than zero, got -1" } },
+    });
+}
+
+test "Stdlib: a polyhedron's faces have three corners or more, a concave one cut along its inside" {
+    const BOX = "pts = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]]\nquads = [[0,3,2,1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]\n";
+    // An L-shaped prism: its caps are concave hexagons, its sides quads
+    const L = "l = [[0,0],[2,0],[2,1],[1,1],[1,2],[0,2]]\npts = l.map { |(x, y)| [x, y, 0] } + l.map { |(x, y)| [x, y, 1] }\nsides = (0...6).map { |i| [i, (i + 1) % 6, (i + 1) % 6 + 6, i + 6] }\n";
+    try expectScripts(&.{
+        .{ .src = BOX ++ "r = polyhedron(pts, quads).volume", .expected = .{ .num = 1 } },
+        .{ .src = L ++ "r = polyhedron(pts, [[5, 4, 3, 2, 1, 0], [6, 7, 8, 9, 10, 11]] + sides).volume", .expected = .{ .num = 3 } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face 0 has 2 corners; a face has at least 3" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, 1, 2]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face 0 has point 1 twice" } },
+        .{ .src = comptime rescued("polyhedron([[0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,1,1]], [[0, 1, 2, 3], [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])"), .expected = .{ .str = "ValueError: polyhedron face 0 encloses no area: its corners are in a line" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, 9, 4]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face index 9 is out of range (0..8)" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, :a, 4]] + quads)"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 0, entry 2), got Symbol" } },
+    });
+}
+
+test "Stdlib: rotate turns about a point or about any axis, and a copy turned so is the same part" {
+    try expectScripts(&.{
+        .{ .src = "r = cube(1).rotate(90).bbox.min", .expected = .{ .nums = &.{ -1, 0, 0 } } },
+        .{ .src = "r = cube(1).rotate(90, about: [1, 0, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = cube(1).rotate(0, 0, 90, about: [1, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = cube(1).rotate(90, axis: [1, 0, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        // A third of a turn about the diagonal takes x to y
+        .{ .src = "r = cube([2, 1, 1]).rotate(120, axis: [1, 1, 1]).bbox.size", .expected = .{ .nums = &.{ 1, 2, 1 } } },
+        .{ .src = "r = cube(1).rotate(angle: 45, axis: [0, 0, 1]).bbox.size.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 1.414213562, 1.414213562, 1 } } },
+        .{ .src = "r = cube(1).rotate(angle: 90).bbox.min", .expected = .{ .nums = &.{ -1, 0, 0 } } },
+        .{ .src = "r = square(1).rotate(90, about: [1, 0]).bbox.min.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = line([0, 0], [1, 0]).rotate(90, about: [1, 0]).start.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 1, -1 } } },
+        // Turned about an axis, a copy is still a rotate: one part, two copies
+        .{ .src = "c = cube([3, 2, 1]).named(\"block\")\nr = assemble(name: \"k\", parts: [c, c.rotate(70, axis: [1, 1, 0]).translate(9, 0, 0)]).bom.map { |row| row[:count] }", .expected = .{ .nums = &.{2} } },
+        .{ .src = comptime rescued("square(1).rotate(90, axis: [1, 0, 0])"), .expected = .{ .str = "ArgumentError: rotate: a Sketch turns about z only (it lies in the XY plane), so it takes no axis:" } },
+        .{ .src = comptime rescued("cube(1).rotate(1, 2, axis: [0, 0, 1])"), .expected = .{ .str = "ArgumentError: rotate takes an angle with axis:, or angles x, y and z, not both" } },
+        .{ .src = comptime rescued("cube(1).rotate(axis: [0, 0, 1])"), .expected = .{ .str = "ArgumentError: rotate with axis: needs the angle to turn by, in degrees" } },
+        .{ .src = comptime rescued("cube(1).rotate(45, axis: [0, 0, 0])"), .expected = .{ .str = "ValueError: rotate expects a non-zero axis, got [0, 0, 0]" } },
+        .{ .src = comptime rescued("square(1).rotate(90, about: [1, 0, 2])"), .expected = .{ .str = "ValueError: rotate: a Sketch turns about a point [x, y] (it lies in the XY plane), got z 2" } },
+        .{ .src = comptime rescued("cube(1).rotate(angle: 45, z: 3)"), .expected = .{ .str = "ArgumentError: rotate takes angle: (about z, or axis:) or angles x, y and z, not both" } },
+        .{ .src = comptime rescued("square(1).rotate(10, 0, 0)"), .expected = .{ .str = "ValueError: a Sketch can only rotate about z (it lies in the XY plane), got x 10 and y 0; extrude it to tilt it" } },
+    });
+}
+
+test "Stdlib: a plane's normal as an Array or keywords, a helix by pitch or turns, revolve's angle:" {
+    try expectScripts(&.{
+        // Every form of the plane z = 5
+        .{ .src = "r = cube(10).trim_by_plane(0, 0, 1, 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane([0, 0, 1], 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane(nz: 1, offset: 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane(normal: [0, 0, -1], offset: -5).bbox.max[2]", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).split_by_plane([0, 0, 1], 5).map { |p| p.volume.round(6) }", .expected = .{ .nums = &.{ 500, 500 } } },
+        .{ .src = "r = cube(10).split_by_plane(normal: [0, 0, 1], offset: 2).map { |p| p.volume.round(6) }", .expected = .{ .nums = &.{ 800, 200 } } },
+        .{ .src = comptime rescued("cube(10).trim_by_plane"), .expected = .{ .str = "ArgumentError: trim_by_plane needs the plane's normal: nx, ny, nz, or an Array [nx, ny, nz]" } },
+        .{ .src = comptime rescued("cube(10).trim_by_plane([0, 0, 1], normal: [0, 1, 0])"), .expected = .{ .str = "ArgumentError: trim_by_plane takes the normal once, as an Array or normal:" } },
+        .{ .src = comptime rescued("cube(10).split_by_plane(normal: [0, 0, 1], nz: 1)"), .expected = .{ .str = "ArgumentError: split_by_plane takes normal: or nx, ny, nz, not both" } },
+        // pitch 5 over 10 is two turns, the same solid as twist: 720
+        .{ .src = "p = square(2).translate(5, 0)\nr = p.helix(10, pitch: 5).volume.round(6) == p.helix(10, 720).volume.round(6) && p.helix(10, turns: 2).volume.round(6) == p.helix(10, 720).volume.round(6)", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("square(2).helix(10, twist: 90, pitch: 5)"), .expected = .{ .str = "ArgumentError: helix takes twist or pitch, not both" } },
+        .{ .src = comptime rescued("square(2).helix(10, 90, turns: 1)"), .expected = .{ .str = "ArgumentError: helix takes its twist positionally or as pitch: or turns:, not both" } },
+        .{ .src = comptime rescued("square(2).helix(10, pitch: 0)"), .expected = .{ .str = "ValueError: helix expects pitch to be a finite number greater than zero, got 0" } },
+        .{ .src = "p = square(2).translate(5, 0)\nr = p.revolve(angle: 90).volume == p.revolve(deg: 90).volume", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("square(2).translate(5, 0).revolve(deg: 90, angle: 90)"), .expected = .{ .str = "ArgumentError: revolve takes deg or angle, not both" } },
+    });
+}
+
+test "Stdlib: a solid's center of mass, its mass from its density, and whether two overlap" {
+    try expectScripts(&.{
+        .{ .src = "r = cube(2).center_of_mass", .expected = .{ .nums = &.{ 1, 1, 1 } } },
+        .{ .src = "r = cube([4, 2, 2], true).translate(10, 0, 0).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 10, 0, 0 } } },
+        // An L of two boxes balances nearer its corner, by volume
+        .{ .src = "r = (cube([2, 1, 1]) + cube([1, 2, 1])).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0.833333, 0.833333, 0.5 } } },
+        .{ .src = "r = cylinder(r: 1, h: 4).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0, 0, 2 } } },
+        // Overlapping, touching face to face, apart
+        .{ .src = "c = cube(2)\nr = [c.intersects?(c.translate(1, 0, 0)), c.intersects?(c.translate(2, 0, 0)), c.intersects?(c.translate(3, 0, 0))].inspect", .expected = .{ .str = "[true, false, false]" } },
+        .{ .src = comptime rescued("cube(2).intersects?(5)"), .expected = .{ .str = "TypeError: intersects? expects a Solid to test against, got Number" } },
+        // 1000 mm³ of aluminium
+        .{ .src = "r = cube(10).material(density: 2.7).mass", .expected = .{ .num = 2.7 } },
+        .{ .src = "p = cube(10).material(density: 2).named(\"plate\")\nr = assemble(name: \"k\", parts: [p, p.translate(20, 0, 0), cube(5).material(density: 8).named(\"weight\")]).mass", .expected = .{ .num = 5 } },
+        .{ .src = comptime rescued("cube(10).mass"), .expected = .{ .str = "ValueError: mass: the Solid has no density; give it one with material(density:), in g/cm³" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(10).named(\"plate\")]).mass"), .expected = .{ .str = "ValueError: mass: part 'plate' has no density; give it one with material(density:), in g/cm³" } },
+        .{ .src = comptime rescued("CAD.config(engine: :brep)\ncube(1).center_of_mass"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+    });
+}
+
+test "Stdlib: an outline fills whichever way it runs, a figure eight in both its lobes" {
+    // Clockwise, a polygon and a closed path were empty: the kernel's positive fill rule
+    const SQUARE = "sq = [[0, 0], [10, 0], [10, 10], [0, 10]]\n";
+    try expectScripts(&.{
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse).area", .expected = .{ .num = 100 } },
+        .{ .src = SQUARE ++ "r = polyline(sq.reverse).close.area", .expected = .{ .num = 100 } },
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse).extrude(2).volume", .expected = .{ .num = 200 } },
+        // By the even-odd rule, as polygon(paths:) fills its outlines: both triangles of a bow tie
+        .{ .src = "r = polygon([[0, 0], [10, 10], [10, 0], [0, 10]]).area", .expected = .{ .num = 50 } },
+    });
+}
+
+test "Stdlib: polygon rounds or cuts each of its corners, a concave one too" {
+    const SQUARE = "sq = [[0, 0], [10, 0], [10, 10], [0, 10]]\n";
+    const ELL = "ell = [[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]]\n";
+    try expectScripts(&.{
+        // Each corner loses 4 - π to its quarter arc, drawn here in fine chords
+        .{ .src = SQUARE ++ "r = (polygon(sq, round_r: 2, segments: 1024).area - (84 + 4 * Math::PI)).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = SQUARE ++ "r = polygon(sq, chamfer: 2).area", .expected = .{ .num = 92 } },
+        // Either way round
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse, chamfer: 2).area", .expected = .{ .num = 92 } },
+        // Five outer corners lose 4 - π each, the inner one gains it
+        .{ .src = ELL ++ "r = (polygon(ell, round_r: 2, segments: 1024).area - (175 - 4 * (4 - Math::PI))).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = ELL ++ "r = polygon(ell, chamfer: 1).area", .expected = .{ .num = 175 - 2.5 + 0.5 } },
+        // A square of 4 rounded by 2 is a circle: at 4 segments a turn, a diamond
+        .{ .src = "r = polygon([[0, 0], [4, 0], [4, 4], [0, 4]], round_r: 2, segments: 4).area", .expected = .{ .num = 8 } },
+        .{ .src = SQUARE ++ "r = polygon(sq, round_r: 2).bbox.size", .expected = .{ .nums = &.{ 10, 10, 0 } } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: polygon takes round_r or chamfer, not both" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, [[0, 1, 2, 3]], round_r: 1)"), .expected = .{ .str = "ArgumentError: polygon takes paths: or round_r:/chamfer:, not both yet" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, chamfer: 0)"), .expected = .{ .str = "ValueError: polygon expects chamfer to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, round_r: 6)"), .expected = .{ .str = "ValueError: polygon: the side from point 0 is 10 long, too short for the corners at its ends, which take 12 of it (round_r = 6)" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [1, 0], [2, 0]], round_r: 0.1)"), .expected = .{ .str = "ValueError: polygon: the sides double back at point 0, [0, 0], where no corner can be rounded" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [0, 0], [1, 0], [0, 1]], chamfer: 0.1)"), .expected = .{ .str = "ValueError: polygon point 1 repeats the one before it, [0, 0]: round_r: and chamfer: need each side to have a length" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [1, 0], [0, 1], [0, 0]], chamfer: 0.1)"), .expected = .{ .str = "ValueError: polygon's last point repeats its first, [0, 0] (a polygon closes itself): round_r: and chamfer: need each side to have a length" } },
+    });
+}
+
+test "Stdlib: a Sketch's hull is a Sketch, of the sketch alone or with others" {
+    const ELL = "ell = [[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]]\n";
+    try expectScripts(&.{
+        // The L's inner corner filled in: the 20 by 20 square less the triangle beyond the diagonal
+        .{ .src = ELL ++ "r = polygon(ell).hull.area", .expected = .{ .num = 400 - 112.5 } },
+        .{ .src = "r = square(1).hull(square(1).translate(3, 0)).area", .expected = .{ .num = 4 } },
+        .{ .src = "r = square(1).hull([square(1).translate(3, 0), square(1).translate(0, 3)]).area", .expected = .{ .num = 16 - 4.5 } },
+        .{ .src = "r = \"#{square(1).hull.class} #{cube(1).hull.class}\"", .expected = .{ .str = "CrossSection Geometry" } },
+        .{ .src = comptime rescued("square(1).hull(cube(1))"), .expected = .{ .str = "TypeError: hull expects a Sketch or an Array of them for argument 1, got Geometry" } },
+        .{ .src = comptime rescued("cube(1).hull(square(1))"), .expected = .{ .str = "TypeError: hull expects a Solid or an Array of them for argument 1, got CrossSection" } },
+    });
+}
+
+test "Stdlib: a negative offset shrinks a Solid, and shell hollows a shape to walls of a thickness" {
+    try expectScripts(&.{
+        // Every side in by 1: a cube of 8, its edges sharp (the rounding is the concave edges')
+        .{ .src = "r = cube(10).offset(-1).volume", .expected = .{ .num = 512 } },
+        .{ .src = "r = cube(10).offset(delta: -1).bbox.min", .expected = .{ .nums = &.{ 1, 1, 1 } } },
+        // An inner corner rounds by the sphere: a notched block shrunk keeps less than its sharp-cornered shrinking
+        .{ .src = "n = cube(10) - cube(5).translate(5, 5, -1)\nr = n.offset(-1).volume < 8 * 8 * 8 - 3 * 3 * 8", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(10).shell(1).volume", .expected = .{ .num = 1000 - 512 } },
+        .{ .src = "r = cube(10).shell(thickness: 1, segments: 8).bbox.size", .expected = .{ .nums = &.{ 10, 10, 10 } } },
+        // Walls thicker than half the part leave it whole
+        .{ .src = "r = cube(10).shell(6).volume", .expected = .{ .num = 1000 } },
+        .{ .src = "r = square(10).shell(1).area", .expected = .{ .num = 100 - 64 } },
+        .{ .src = comptime rescued("cube(10).shell"), .expected = .{ .str = "ArgumentError: shell needs its walls' thickness: shell(thickness)" } },
+        .{ .src = comptime rescued("cube(10).shell(0)"), .expected = .{ .str = "ValueError: shell expects thickness to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("cube(10).shell(1, join: :miter)"), .expected = .{ .str = "ArgumentError: shell does not take a keyword 'join' (it accepts: thickness, segments)" } },
+        .{ .src = comptime rescued("line([0, 0], [1, 0]).shell(1)"), .expected = .{ .str = "NoMethodError: undefined method 'shell' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
+    });
+}
+
+test "Stdlib: loft joins concave profiles, and runs through several sections at their heights" {
+    const ELL = "ell = polygon([[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]])\n";
+    try expectScripts(&.{
+        // An L to itself half the size: a frustum, h/3 (A + a + √(A a))
+        .{ .src = ELL ++ "r = ell.loft(ell.scale(0.5), 10).volume", .expected = .{ .num = 10.0 / 3.0 * (175 + 43.75 + 87.5) } },
+        .{ .src = ELL ++ "r = ell.loft(ell, -10).bbox.min", .expected = .{ .nums = &.{ 0, 0, -10 } } },
+        // Through a section at 10 and one at 20: two prisms, stacked
+        .{ .src = ELL ++ "r = square(4).loft([square(4), ell], [10, 20]).bbox.max", .expected = .{ .nums = &.{ 20, 20, 20 } } },
+        .{ .src = "r = square(4).loft([square(4), square(4)], [10, 25]).volume", .expected = .{ .num = 16 * 25 } },
+        .{ .src = comptime rescued("square(4).loft([square(4)], [10, 20])"), .expected = .{ .str = "ArgumentError: loft takes its sections as an Array and their heights as an Array of as many, got 1 section and 2 heights" } },
+        .{ .src = comptime rescued("square(4).loft([square(4), square(2)], [10, 5])"), .expected = .{ .str = "ValueError: loft's heights rise from the base: height 1 is 5, not above 10" } },
+        .{ .src = comptime rescued("square(4).loft([cube(1)], [10])"), .expected = .{ .str = "TypeError: loft expects a CrossSection at index 0 of the sections, got Geometry" } },
+        .{ .src = comptime rescued("square(4).loft([square(4)], 10)"), .expected = .{ .str = "TypeError: loft expects an Array for heights, got Number" } },
+    });
+}
+
+test "Stdlib: a Sketch sweeps along points in space, its frame turned only by the path's corners" {
+    const PROFILE = "prof = square(2, center: true)\n";
+    // A quarter of a circle of radius 1 in 16 chords (64 a turn), 2 wide: a corner's fill
+    const wedge = 2 * 8 * @sin(2 * std.math.pi / 64.0);
+    try expectScripts(&.{
+        // Straight up, the profile's y along y: a 2 by 2 prism
+        .{ .src = PROFILE ++ "b = prof.sweep([[0, 0, 0], [0, 0, 10]])\nr = [b.volume] + b.bbox.min + b.bbox.max", .expected = .{ .nums = &.{ 40, -1, -1, 0, 1, 1, 10 } } },
+        // Along x, then up: the bend fills round below, as a turn in the plane does
+        .{ .src = PROFILE ++ "r = prof.sweep([[0, 0, 0], [10, 0, 0], [10, 0, 10]], segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Up, then along x: the profile turned with the corner stays 2 high
+        .{ .src = PROFILE ++ "b = prof.sweep([[0, 0, 0], [0, 0, 10], [10, 0, 10]]).bbox\nr = b.min + b.max", .expected = .{ .nums = &.{ -1, -1, 0, 10, 1, 11 } } },
+        // Points in the plane ([x, y]) sweep as the Path through them does
+        .{ .src = PROFILE ++ "a = prof.sweep([[0, 0], [10, 0], [10, 10]], segments: 64).volume\nb = prof.sweep(polyline([[0, 0], [10, 0], [10, 10]]), segments: 64).volume\nr = a == b", .expected = .{ .boolean = true } },
+        .{ .src = PROFILE ++ "r = prof.sweep([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 0]], segments: 64).volume", .expected = .{ .num = 152 + 4 * wedge } },
+        // A turn of a helix in 24 lines: the tube's area times their length
+        .{ .src = "coil = (0..24).map { |i| a = i * 15.0; [10 * Math.cosd(a), 10 * Math.sind(a), a / 72] }\nc = circle(r: 1, segments: 32)\nv = c.sweep(coil, segments: 256).volume\nr = (v / (c.area * 24 * Math.sqrt((20 * Math.sind(7.5)) ** 2 + (5 / 24.0) ** 2)) - 1).abs < 1e-3", .expected = .{ .boolean = true } },
+        // One solid, its pieces fused: a coil is a tube (genus 0), a closed loop off any
+        // plane a ring (genus 1), the profile twisted along it to meet itself. Its pieces
+        // only met, by faces each placed by its own transform, and came out as dozens
+        .{ .src = "coil = (0..12).map { |i| a = i * 15.0; [10 * Math.cosd(a), 10 * Math.sind(a), a / 72] }\nt = circle(r: 1, segments: 16).sweep(coil)\nr = [t.genus, t.decompose.length]", .expected = .{ .nums = &.{ 0, 1 } } },
+        .{ .src = PROFILE ++ "seam = (0..40).map { |i| t = i * 9.0; [10 * Math.cosd(t) + 3 * Math.cosd(3 * t), 10 * Math.sind(t) - 3 * Math.sind(3 * t), 4 * Math.sind(2 * t)] }\nring = prof.scale(0.5).sweep(seam)\nr = [ring.genus, ring.decompose.length]", .expected = .{ .nums = &.{ 1, 1 } } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0]])"), .expected = .{ .str = "ValueError: sweep needs at least 2 points to follow, got 1" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0], [1, 0, 0]])"), .expected = .{ .str = "ValueError: sweep point 2 repeats the one before it, [1, 0, 0]" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0, 1]])"), .expected = .{ .str = "ValueError: sweep expects point 1 to have 2 to 3 numbers, got 4" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0], 5])"), .expected = .{ .str = "TypeError: sweep expects an Array for point 1, got Number" } },
+    });
+}
+
+test "Stdlib: a revolve through a small angle near its axis keeps its divisions" {
+    // A share of a turn of 1 or 2 segments was read by Manifold as its own default, which
+    // at a small radius is no division at all: an empty or broken solid
+    try expectScripts(&.{
+        .{ .src = "v = square(1).translate(x: 1).revolve(10, segments: 3).volume\nr = (v - 1.5 * 10 * Math::PI / 180).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(0.5).translate(x: 0.1).revolve(15).volume > 0", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: a Sketch sweeps along a Path, standing on it, its corners filled round outside" {
+    // A 2 by 2 profile across the path and up from it
+    const PROFILE = "prof = square(2, center: true).translate(y: 1)\n";
+    // A quarter of a circle of radius 1 in 16 chords (64 a turn), 2 high: a corner's fill
+    const wedge = 2 * 8 * @sin(2 * std.math.pi / 64.0);
+    try expectScripts(&.{
+        .{ .src = PROFILE ++ "r = prof.sweep(line([0, 0], [10, 0])).volume", .expected = .{ .num = 40 } },
+        .{ .src = PROFILE ++ "b = prof.sweep(path: line([0, 0], [10, 0])).bbox\nr = b.min + b.max", .expected = .{ .nums = &.{ 0, -1, 0, 10, 1, 2 } } },
+        // Two sides of 40 that overlap by 1 by 1 by 2 inside the turn, and the fill outside it
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, 10]]), segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Turning right instead: the fill is on the left
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, -10]]), segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Closed, a corner where it starts too: four sides, four overlaps, four fills
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]), segments: 64).volume", .expected = .{ .num = 152 + 4 * wedge } },
+        // An arc revolves the profile about its centre, either way round
+        .{ .src = PROFILE ++ "v = prof.sweep(arc(center: [0, 0], r: 10, start: 0, sweep: 360), segments: 256).volume\nr = (v - 2 * Math::PI * 10 * 4).abs < 0.05", .expected = .{ .boolean = true } },
+        .{ .src = PROFILE ++ "a = prof.sweep(arc(r: 10, start: [0, 10], to: [10, 0], ccw: false))\nb = prof.sweep(arc(r: 10, start: [10, 0], to: [0, 10]))\nr = Math.close?(a.volume, b.volume, 1e-9) && a.bbox.max == b.bbox.max", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep"), .expected = .{ .str = "ArgumentError: sweep needs the Path to sweep along: sweep(path)" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep(5)"), .expected = .{ .str = "TypeError: sweep expects a Path or an Array of points to sweep along, got Number" } },
+        .{ .src = comptime rescued("square(4, center: true).sweep(arc(center: [0, 0], r: 1, start: 0, sweep: 90))"), .expected = .{ .str = "ValueError: sweep: the profile reaches 2 to the path's left, as far as the centre of segment 0's arc of radius 1 or past it, where it would cross itself" } },
+        .{ .src = comptime rescued("(square(1) - square(2)).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "ValueError: sweep: an empty sketch has no profile" } },
+        .{ .src = comptime rescued("line([0, 0], [1, 0]).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "NoMethodError: undefined method 'sweep' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
+    });
+}
+
+test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
+    try expectScripts(&.{
+        .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
+        .{ .src = "r = square(1).repeat_linear(3, x: 2).bbox.size", .expected = .{ .nums = &.{ 5, 1, 0 } } },
+        .{ .src = "p = square(1).translate(5, 0).repeat_polar(4)\nr = [p.area] + p.bbox.size", .expected = .{ .nums = &.{ 4, 12, 12, 0 } } },
+        // Over 90 degrees, three copies 45 apart
+        .{ .src = "r = square(1).translate(5, 0).repeat_polar(3, 90).bbox.max.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 6, 6, 0 } } },
+        .{ .src = "r = \"#{square(1).repeat_linear(1, [2, 0]).class} #{square(1).repeat_polar(1).class}\"", .expected = .{ .str = "CrossSection CrossSection" } },
+        // Then swept like any sketch
+        .{ .src = "r = circle(r: 1, segments: 4).translate(5, 0).repeat_polar(6).extrude(2).volume.round(9)", .expected = .{ .num = 24 } },
+        .{ .src = comptime rescued("square(1).repeat_linear(2, [0, 0, 1])"), .expected = .{ .str = "ArgumentError: repeat_linear: a Sketch repeats in x and y, not z (got a z step of 1)" } },
+    });
+}
+
+test "Stdlib: a sketch's area, its holes left out" {
+    try expectScripts(&.{
+        .{ .src = "r = square(10).area", .expected = .{ .num = 100 } },
+        // A diamond of half-diagonal 2 (a circle drawn with 4 segments) cut out
+        .{ .src = "r = (square(10) - circle(r: 2, segments: 4).translate(5, 5)).area", .expected = .{ .num = 92 } },
+        .{ .src = comptime rescued("cube(1).area"), .expected = .{ .str = "NoMethodError: undefined method 'area' for Geometry" } },
+        .{ .src = comptime rescued("CAD.config(engine: :brep)\nsquare(2).area"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure sketches (bbox, align, center) yet; build this part with engine: :manifold" } },
+    });
+}
+
+test "Stdlib: CAD.preview? is false unless the host runs the script for a preview" {
+    try expectScripts(&.{.{ .src = "r = CAD.preview?", .expected = .{ .boolean = false } }});
+    var vm = try initVm();
+    defer vm.deinit();
+    vm.previewing = true;
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "r = CAD.preview?"));
+    try testing.expect(vm.globals.get("r").?.asBool());
+}
+
+test "Stdlib: Math.polar places a point by radius and angle, and lengths convert to millimetres" {
+    try expectScripts(&.{
+        // Exact where cosd and sind are: no 6e-16 off the axes
+        .{ .src = "r = [Math.polar(10, 90), Math.polar(2, 0), Math.polar(4, 30), Math.polar(-2, 180)].inspect", .expected = .{ .str = "[[0, 10], [2, 0], [3.464101615137755, 2], [2, 0]]" } },
+        .{ .src = "r = (0...4).map { |i| Math.polar(5, i * 360 / 4) }.inspect", .expected = .{ .str = "[[5, 0], [0, 5], [-5, 0], [0, -5]]" }, .gc_stress = true },
+        .{ .src = comptime rescued("Math.polar(1, :a)"), .expected = .{ .str = "TypeError: Math.polar expects a number for argument 2, got Symbol" } },
+        .{ .src = "r = [5.mm, 2.cm, 1.inch, 0.5.m, -3.cm, 2.5.inch]", .expected = .{ .nums = &.{ 5, 20, 25.4, 500, -30, 63.5 } } },
+        .{ .src = "r = cube(1.cm).bbox.size", .expected = .{ .nums = &.{ 10, 10, 10 } } },
+        .{ .src = comptime rescued("1e308.m"), .expected = .{ .str = "RangeError: 1e308.m is past the Number range in millimetres" } },
+    });
+}
+
+test "Stdlib: a rounded corner is never one chord, and an offset's rounding follows the resolution" {
+    // A quarter arc got its circle's count divided by 4 and rounded down, so every radius
+    // up to about 2.2 mm (5 to 7 segments a turn by default) was one chord: `round_r: 2`
+    // and `chamfer: 2` gave the same solid. A sketch's offset took the kernel's own default
+    // count, whatever the script's resolution or `segments:` said.
+    try expectScripts(&.{
+        .{ .src = "r = cube(10, round_r: 2).volume > cube(10, chamfer: 2).volume && cube(10, round_r: 2).volume < 1000", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(10, round_r: 2).extrude(1).volume > square(10, chamfer: 2).extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = cylinder(r: 5, h: 10, round_r: 1).volume > cylinder(r: 5, h: 10, chamfer: 1).volume", .expected = .{ .boolean = true } },
+        // The corner follows segments: too; it ignored it
+        .{ .src = "r = cylinder(r: 5, h: 10, round_r: 1, segments: 64).volume > cylinder(r: 5, h: 10, round_r: 1, segments: 8).volume", .expected = .{ .boolean = true } },
+        // Round joins of a 10 mm square's offset by 2: 8 segments a turn make its corners
+        // an octagon's quarters (area 100 + 80 + 11.31), 64 nearly a circle's (+ 12.57)
+        .{ .src = "r = square(10).offset(2, segments: 8).extrude(1).volume", .expected = .{ .num = 100 + 80 + 8 * 0.5 * 4 * @sin(std.math.pi / 4.0) } },
+        .{ .src = "v = square(10).offset(2, segments: 64).extrude(1).volume\nr = v > 192.5 && v < 100 + 80 + Math::PI * 4", .expected = .{ .boolean = true } },
+        .{ .src = "s = nil\nCAD.with_config(resolution: { segments: 8 }) do\n  s = square(10).offset(2)\nend\nr = s.extrude(1).volume == square(10).offset(2, segments: 8).extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(5).offset(1, segments: 64).volume > cube(5).offset(1, segments: 8).volume", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: a shape responds to the methods of its kind only" {
+    // Every shape method was bound to Solids and Sketches alike, so a sketch said it
+    // responded to a Solid's methods and raised when called.
+    try expectScripts(&.{
+        .{ .src = "r = \"#{square(1).respond_to?(:genus)} #{cube(1).respond_to?(:genus)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)} #{square(1).respond_to?(:hull)}\"", .expected = .{ .str = "false true true false true true" } },
+        // A Sketch takes a name and a material too, for a drawing
+        .{ .src = "r = \"#{square(1).respond_to?(:named)} #{square(1).named(\"a\").material(color: \"#FF0000\").class}\"", .expected = .{ .str = "true CrossSection" } },
+    });
+}
+
+test "Stdlib: a sketch is empty? when it has no area, and an empty one has no bbox" {
+    // `empty?` was false for every sketch and the bbox of an empty one was ±infinity.
+    const empty = "e = circle(r: 1).intersection(circle(r: 1).translate(x: 5))\n";
+    try expectScripts(&.{
+        .{ .src = empty ++ "r = e.empty?", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(1).empty?", .expected = .{ .boolean = false } },
+        .{ .src = empty ++ "r = e.bbox", .expected = .nil },
+        .{ .src = "r = square(2).bbox.max", .expected = .{ .nums = &.{ 2, 2, 0 } } },
+        .{ .src = comptime rescued(empty ++ "e.center"), .expected = .{ .str = "ValueError: center: an empty sketch has no bounds" } },
+        .{ .src = comptime rescued(empty ++ "e.revolve(360)"), .expected = .{ .str = "ValueError: revolve: an empty sketch has no profile" } },
     });
 }
 
@@ -1135,7 +1475,7 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         .{ .src = comptime rescued("-\"a\""), .expected = .{ .str = "TypeError: unary '-' expects a number, got String" } },
         .{ .src = comptime rescued("(1..nil)"), .expected = .{ .str = "TypeError: a range needs numbers or single characters, got Number..nil" } },
         // param checks its keywords, and its failures are typed.
-        .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, validate)" } },
+        .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, validate, step, unit, group)" } },
         .{ .src = comptime rescued("param(:w, default: 5, validate: { minimum: 1 })"), .expected = .{ .str = "ArgumentError: param validate does not take a keyword 'minimum' (it accepts: min, max, in)" } },
         .{ .src = comptime rescued("param(:w, default: 5, validate: { max: 3 })"), .expected = .{ .str = "ValueError: parameter :w value 5 is above its maximum 3" } },
         .{ .src = comptime rescued("param(:missing)"), .expected = .{ .str = "NameError: parameter :missing is used before it is defined" } },
@@ -1143,6 +1483,9 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         // center works on a Sketch: it used to evaluate the Sketch as a Solid.
         .{ .src = "r = square(2).center.extrude(1).bbox.min", .expected = .{ .nums = &.{ -1, -1, 0 } } },
         .{ .src = "r = square(2).align(square(4), \"xy\", \"max\").extrude(1).bbox.min", .expected = .{ .nums = &.{ 2, 2, 0 } } },
+        // Symbols name them too, as center's axes; the target side and an offset apart
+        .{ .src = "r = cube(2).align(cube(4), :z, :min, :max).bbox.min", .expected = .{ .nums = &.{ 0, 0, 4 } } },
+        .{ .src = "r = cube(2).align(cube(4), :x, :center, :center, 1).bbox.min", .expected = .{ .nums = &.{ 2, 0, 0 } } },
     });
 }
 
@@ -1349,6 +1692,168 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: the class methods no script had called answer as documented" {
+    try expectScripts(&.{
+        // Array: shift and unshift change the Array and answer the item or the Array
+        .{ .src = "a = [1, 2, 3]\nx = a.shift\nr = [x] + a", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = [].shift", .expected = .nil },
+        .{ .src = "b = [2]\nr = b.unshift(1)", .expected = .{ .nums = &.{ 1, 2 } } },
+        // Map: merge keeps the later key; keys between Strings and Symbols
+        .{ .src = "r = { a: 1, b: 2 }.merge({ b: 3, c: 4 }).inspect", .expected = .{ .str = "{a: 1, b: 3, c: 4}" } },
+        .{ .src = "r = { \"a\" => 1 }.symbolize_keys.inspect + \" \" + { a: 1 }.stringify_keys.inspect", .expected = .{ .str = "{a: 1} {\"a\" => 1}" } },
+        // String, Boolean, Number, Range, Object
+        .{ .src = "r = [\"hello\".starts_with?(\"he\"), \"hello\".starts_with?(\"lo\"), \"hello\".ends_with?(\"lo\"), \"hello\".ends_with?(\"\")].inspect", .expected = .{ .str = "[true, false, true, true]" } },
+        .{ .src = "r = true.invert == false && false.invert == true", .expected = .{ .boolean = true } },
+        .{ .src = "r = Number::INFINITY.infinite? && !1.infinite?", .expected = .{ .boolean = true } },
+        .{ .src = "r = (1..5).cover?(3) && !(1...5).cover?(5)", .expected = .{ .boolean = true } },
+        .{ .src = "r = 5.into { |x| x * 2 }", .expected = .{ .num = 10 } },
+        // Math
+        .{ .src = "r = [Math.cos(0), Math.acos(1), Math.atan2(0, -1), Math.floor(1.7), Math.ceil(1.2), Math.log2(8), Math.log10(1000)]", .expected = .{ .nums = &.{ 1, 0, std.math.pi, 1, 2, 3, 3 } } },
+        .{ .src = "r = [Math.atan2(1, 1), Math.lerp(0, 10, 0.25), Math.deg2rad(180), Math.rad2deg(Math::PI)]", .expected = .{ .nums = &.{ std.math.pi / 4.0, 2.5, std.math.pi, 180 } } },
+        .{ .src = "r = (Math.tan(Math::PI / 4) - 1).abs < 1e-12", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: a method's or primitive's argument error says what it needs" {
+    // Each of these is how a script learns what it got wrong; none was asserted
+    try expectScripts(&.{
+        // Transforms
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\")"), .expected = .{ .str = "ArgumentError: align(target, axes, my_align, [target_align], [offset]) requires at least 3 args" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", [1])"), .expected = .{ .str = "TypeError: align expects a String or Symbol target_align or a number offset as argument 4, got Array" } },
+        // The names were checked only where an axis letter matched, so a typo there, or
+        // axes with no letter, moved nothing without a word
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"q\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"q\", \"min\")"), .expected = .{ .str = "ArgumentError: align needs axes to move along, letters of x, y and z, got 'q'" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), 5, \"min\")"), .expected = .{ .str = "TypeError: align expects a String or Symbol for axes, got Number" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).transform"), .expected = .{ .str = "ArgumentError: transform expects a flat matrix Array" } },
+        .{ .src = comptime rescued("cube(1).transform([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])"), .expected = .{ .str = "ValueError: transform matrix is singular (determinant 0), which flattens the shape" } },
+        .{ .src = comptime rescued("cube(1).resize"), .expected = .{ .str = "ArgumentError: resize() requires an array of target dimensions [x, y, z]" } },
+        .{ .src = comptime rescued("cube(1).resize(5)"), .expected = .{ .str = "TypeError: resize expects an Array for the target size, got Number" } },
+        .{ .src = comptime rescued("cube(1).resize([-1, 1, 1])"), .expected = .{ .str = "ValueError: resize dimensions must be >= 0 (0 keeps that axis), got -1 at component 0" } },
+        .{ .src = comptime rescued("cube(1).repeat_linear"), .expected = .{ .str = "ArgumentError: repeat_linear requires a 'count' number" } },
+        .{ .src = comptime rescued("cube(1).repeat_polar"), .expected = .{ .str = "ArgumentError: repeat_polar requires a 'count' number" } },
+        // Measurements
+        .{ .src = comptime rescued("cube(1).min_gap(5)"), .expected = .{ .str = "TypeError: min_gap expects a Geometry to measure against, got Number" } },
+        .{ .src = comptime rescued("cube(1).contains?"), .expected = .{ .str = "ArgumentError: contains? expects a point [x, y, z]" } },
+        .{ .src = comptime rescued("square(1).contains?"), .expected = .{ .str = "ArgumentError: contains? on a sketch expects a point [x, y]" } },
+        .{ .src = comptime rescued("cube(1).ray_cast([0, 0, 0])"), .expected = .{ .str = "ArgumentError: ray_cast expects an origin [x, y, z] and an end point [x, y, z]" } },
+        // Sweeps, offsets, materials and parameters
+        .{ .src = comptime rescued("square(1).loft"), .expected = .{ .str = "ArgumentError: loft requires a target CrossSection and a z-height" } },
+        .{ .src = comptime rescued("square(1).loft(cube(1), 5)"), .expected = .{ .str = "TypeError: loft expects a CrossSection for the target, got Geometry" } },
+        .{ .src = comptime rescued("cube(1).offset(0)"), .expected = .{ .str = "ValueError: a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got 0" } },
+        .{ .src = comptime rescued("cube(1).offset(1, join: :miter)"), .expected = .{ .str = "ValueError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :miter" } },
+        .{ .src = comptime rescued("cube(1).material"), .expected = .{ .str = "ArgumentError: material requires keyword arguments (e.g. color: \"#FF0000\")" } },
+        .{ .src = comptime rescued("param(:x, default: 1, validate: 5)"), .expected = .{ .str = "TypeError: param expects a Map for validate, got Number" } },
+        // Primitives
+        .{ .src = comptime rescued("polygon(5)"), .expected = .{ .str = "TypeError: polygon expects an Array for points, got Number" } },
+        .{ .src = comptime rescued("polygon()"), .expected = .{ .str = "ArgumentError: polygon expects an Array of [x, y] points" } },
+        .{ .src = comptime rescued("polyhedron([[0, 0, 0]])"), .expected = .{ .str = "ArgumentError: polyhedron expects a points Array and a faces Array" } },
+        .{ .src = comptime rescued("text(5)"), .expected = .{ .str = "ArgumentError: text() expects a String as its first argument" } },
+        .{ .src = comptime rescued("text(\"A\", 10, tolerance: 1e-9)"), .expected = .{ .str = "ValueError: 'tolerance' must be at least size * 0.0001 (0.001), got 1e-9" } },
+        // Collections and settings
+        .{ .src = comptime rescued("[1, 2, 3].slice(Number::NAN, 1)"), .expected = .{ .str = "ValueError: Array#slice arguments must be numbers, got NaN." } },
+        .{ .src = comptime rescued("[1, 2].reduce"), .expected = .{ .str = "ArgumentError: reduce requires a block" } },
+        .{ .src = comptime rescued("[[]].to_h"), .expected = .{ .str = "ArgumentError: empty array cannot be converted to key-value pair." } },
+        .{ .src = comptime rescued("[1].to_h"), .expected = .{ .str = "ArgumentError: wrong element type (expected array)." } },
+        .{ .src = comptime rescued("\"abc\".upcase(1)"), .expected = .{ .str = "ArgumentError: String#upcase expects 0 arguments, got 1" } },
+        .{ .src = comptime rescued("(1..5).step(0)"), .expected = .{ .str = "ValueError: Range#step requires a finite, non-zero step, got 0" } },
+        .{ .src = comptime rescued("CAD.with_config(tolerance: 0.1)"), .expected = .{ .str = "ArgumentError: CAD.with_config requires a block" } },
+        // Exports of an empty model
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_3mf(\"x.3mf\")"), .expected = .{ .str = "GeometryError: export_3mf: the model is empty, there is nothing to write to 'x.3mf'" } },
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_obj(\"x.obj\")"), .expected = .{ .str = "GeometryError: export_obj: the model is empty, there is nothing to write to 'x.obj'" } },
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_gltf(\"x.gltf\")"), .expected = .{ .str = "GeometryError: export_gltf: the model is empty, there is nothing to write to 'x.gltf'" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"x.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
+    });
+}
+
+test "Stdlib: a miter join reaches as far as its miter_limit lets it" {
+    // The limit was fixed at the kernel's 2, its least: the 11° tip of this triangle
+    // mitres out about 10 times the offset, so it is squared off under 2 or 5 and kept
+    // under 20
+    const tip = "t = polygon([[0, 0], [10, 0], [0, 2]])\n";
+    const area = ".extrude(1).volume";
+    try expectScripts(&.{
+        .{ .src = tip ++ "r = t.offset(1, join: :miter)" ++ area ++ " == t.offset(1, join: :miter, miter_limit: 5)" ++ area, .expected = .{ .boolean = true } },
+        .{ .src = tip ++ "r = t.offset(1, join: :miter, miter_limit: 20)" ++ area ++ " > t.offset(1, join: :miter)" ++ area ++ " + 5", .expected = .{ .boolean = true } },
+        // A right angle mitres out √2 times: within the least limit
+        .{ .src = "r = square(10, center: true).offset(1, join: :miter)" ++ area, .expected = .{ .num = 144 } },
+        .{ .src = comptime rescued("square(1).offset(1, miter_limit: 3)"), .expected = .{ .str = "ArgumentError: offset's miter_limit applies to join: :miter only, not join: :round" } },
+        .{ .src = comptime rescued("square(1).offset(1, join: :miter, miter_limit: 1.5)"), .expected = .{ .str = "ValueError: offset miter_limit must be a number of at least 2 (a multiple of delta), got 1.5" } },
+        .{ .src = comptime rescued("cube(1).offset(1, miter_limit: 3)"), .expected = .{ .str = "ArgumentError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit" } },
+    });
+}
+
+test "Stdlib: min_gap finds a gap however wide, unless a search length caps it" {
+    // Without a search length it looked 100 mm only: a 149 mm gap answered 100, and so
+    // did an empty Solid
+    try expectScripts(&.{
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 150))", .expected = .{ .num = 149 } },
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 150), 50)", .expected = .{ .num = 50 } },
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 0.5))", .expected = .{ .num = 0 } },
+        // A pin inside a hollow box: their boxes overlap, the gap is the 3 mm to the wall
+        .{ .src = "shell = cube(10, center: true) - cube(8, center: true)\nr = shell.min_gap(cube(2, center: true))", .expected = .{ .num = 3 } },
+        .{ .src = "r = (cube(1) - cube(1)).min_gap(cube(1)) == Number::INFINITY", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force, closed within it" {
+    // contains? read the tolerance in force where it was called, so a later CAD.config
+    // changed how an earlier shape measured, and one made inside with_config measured
+    // under the outer settings
+    const made_coarse = "s = nil\nCAD.with_config(tolerance: 0.5) do\n  s = square(10)\nend\n";
+    try expectScripts(&.{
+        .{ .src = made_coarse ++ "r = s.contains?([10.3, 5])", .expected = .{ .boolean = true } },
+        .{ .src = made_coarse ++ "r = s.contains?([5, 5, 0.3])", .expected = .{ .boolean = true } },
+        .{ .src = made_coarse ++ "r = square(10).contains?([10.3, 5])", .expected = .{ .boolean = false } },
+        .{ .src = "s = square(10)\nCAD.config(tolerance: 0.5)\nr = s.contains?([10.3, 5])", .expected = .{ .boolean = false } },
+        // A Solid is closed too: a point on its surface is in it, one within its tolerance
+        // outside it as well (Manifold's winding number alone could go either way there)
+        .{ .src = "r = cube(10).contains?([10, 5, 5])", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(10).contains?([10.1, 5, 5])", .expected = .{ .boolean = false } },
+        .{ .src = "s = nil\nCAD.with_config(tolerance: 0.5) do\n  s = cube(10)\nend\nr = s.contains?([10.3, 5, 5])", .expected = .{ .boolean = true } },
+    });
+}
+
+test "Stdlib: a revolve, a twist and a helix take their share of a full turn's segments" {
+    // A partial revolve got a full turn's segments, a helix 64 slices whatever its turns,
+    // and a twist without slices: one step
+    const fixed = "CAD.config(resolution: { segments: 24 })\n";
+    const by_size = "CAD.config(resolution: { min_angle: 1, min_length: 1 })\n";
+    const cases = [_]struct { src: []const u8, expected: i32 }{
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve", .expected = 24 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(-90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(720)", .expected = 24 }, // a full turn at most
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(90, segments: 32)", .expected = 8 }, // per full turn
+        .{ .src = fixed ++ "r = circle(r: 1).translate(x: 3).helix(h: 20, twist: 3600)", .expected = 240 },
+        .{ .src = fixed ++ "r = square(1).helix(5, 90, 8)", .expected = 8 }, // slices: is the count itself
+        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90, slices: 3)", .expected = 3 },
+        .{ .src = fixed ++ "r = square(1).extrude(5, scale: 0.5)", .expected = 0 }, // a taper needs no slices
+        // At the profile's farthest point: from the z axis for a twist (the corner [3, 3],
+        // 2π·4.24 / 1 → 27), its farthest x for a revolve about y (8: 2π·8 → 51, a
+        // quarter 13)
+        .{ .src = by_size ++ "r = square(6, center: true).extrude(5, twist: 360)", .expected = 27 },
+        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve", .expected = 51 },
+        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve(90)", .expected = 13 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const node = vm.dag_builder.nodes.items[vm.globals.get("r").?.asGeometry().dag_idx];
+        const count = switch (node.tag) {
+            .revolve => vm.dag_builder.getRevolvePayload(node).segments,
+            .extrude => vm.dag_builder.getExtrudePayload(node).slices,
+            else => return error.NotASweep,
+        };
+        try testing.expectEqual(case.expected, count);
+    }
+}
+
 test "Stdlib: material checks its color and factors" {
     try expectScripts(&.{
         // An invalid color used to export as white, and factors out of 0..1 were kept.
@@ -1479,6 +1984,10 @@ test "Stdlib: sides: is a faceted shape, segments: only how smooth a round one i
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 2)"), .expected = .{ .str = "ValueError: 'sides' must be between 3 and 2048, got 2" } },
         .{ .src = comptime rescued("circle(r: 5, sides: 6, segments: 32)"), .expected = .{ .str = "ArgumentError: circle takes sides: (a faceted shape) or segments: (how smooth a round one is), not both" } },
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6, round_r: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes sides: or round_r:/chamfer:, not both yet" } },
+        // A corner is rounded or cut: `round_r` silently won over `chamfer`
+        .{ .src = comptime rescued("square(10, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: square takes round_r or chamfer, not both" } },
+        .{ .src = comptime rescued("cube(10, chamfer: 1, round_r: 1)"), .expected = .{ .str = "ArgumentError: cube takes chamfer or round_r, not both" } },
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes round_r or chamfer, not both" } },
         // A sphere has no flat sides to count.
         .{ .src = comptime rescued("sphere(r: 5, sides: 6)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'sides' (it accepts: r, d, radius, segments)" } },
     });
@@ -1522,7 +2031,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = brepLacks(.revolve) }, // was a 10 mm cube
-        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
+        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.revolve) }, // before measuring the profile for its segments
+        .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = brepLacks(.extrude) }, // a prism is an extrusion
@@ -1530,6 +2040,11 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(10).hull.extrude(1).simplify"), .expected = brepLacks(.sketch_hull) },
+        .{ .src = comptime rescued("cube(10).offset(-1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
@@ -1538,6 +2053,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
         .{ .src = comptime rescued("cube(10).volume"), .expected = brepLacks(.volume) }, // was 0
         .{ .src = comptime rescued("cube(10).empty?"), .expected = brepLacks(.volume) }, // was true
+        .{ .src = comptime rescued("square(10).empty?"), .expected = brepLacks(.sketch_measure) }, // was false
         .{ .src = comptime rescued("cube(10).surface_area"), .expected = brepLacks(.surface_area) },
         .{ .src = comptime rescued("cube(10).genus"), .expected = brepLacks(.genus) },
         .{ .src = comptime rescued("cube(10).bbox"), .expected = brepLacks(.bounding_box) }, // was all zeros
@@ -1549,6 +2065,12 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
         .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = brepLacks(.mesh) }, // was a bare EngineCannotTessellate
         .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("square(10).export_svg(\"s.svg\")"), .expected = brepLacks(.sketch_contours) },
+        .{ .src = comptime rescued("cube(10).export_dxf(\"c.dxf\")"), .expected = brepLacks(.project) },
         // What it has keeps working.
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
         .{ .src = comptime rescued("batch_hull([cube(10), cube(4, 4, 30)]).simplify"), .expected = "no error" },
@@ -1680,7 +2202,9 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
         "cube(10, \"20\", 30)",
         "cube(10, 20, 30, \"yes\")",
         "cube(x: \"10\")",
-        "cube(size: [1, 2, 3])",
+        // size: takes a number or an Array of sizes (cube(size: [1, 2, 3]) is a box)
+        "cube(size: [1, \"2\", 3])",
+        "cube(size: :big)",
         "square(10, 10, 1)",
         "cylinder(d: \"4\", h: 2)",
         "cylinder(r: 1, h: 2, center: 1)",
@@ -1752,9 +2276,8 @@ test "Stdlib: degenerate vectors and matrices are rejected" {
         "cube(1).split_by_plane(nx: 0)",
         "cube(1).ray_cast([1, 2, 3], [1, 2, 3])",
         "cube(1).min_gap(cube(1), 0)",
-        // A Solid's offset only grows it, and only with round edges.
+        // A Solid's offset is never by nothing, and only with round edges.
         "cube(1).offset(0)",
-        "cube(1).offset(delta: -1)",
         "cube(1).offset(1, join: :miter)",
         "cube(1).offset(1, join: :square)",
         "cube(1).offset(1, join: :bevel)",
@@ -1815,7 +2338,7 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,[2]]])"), .expected = .{ .str = "TypeError: polygon expects a number for a point index (path 0, entry 2), got Array" } },
         .{ .src = rescued("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,nil,1]], " ++ TETRA_FACES ++ ")"), .expected = .{ .str = "TypeError: polyhedron expects a number for a coordinate (point 3, component 1), got nil" } },
-        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1,2],[0,2,3],[1,3,2]])"), .expected = .{ .str = "ValueError: polyhedron faces must be triangles (3 point indices), but face 1 has 4" } },
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1,2],[0,2,3],[1,3,2]])"), .expected = .{ .str = "ValueError: polyhedron face 1 can't be cut into triangles: seen on its plane, its outline crosses itself (a face's corners lie in one plane, in order around it)" } },
         .{ .src = rescued("cube(1).translate(z: \"up\")"), .expected = .{ .str = "TypeError: translate expects a number for z, got String" } },
         .{ .src = rescued("cube(1).rotate(0, :y)"), .expected = .{ .str = "TypeError: rotate expects a number for y, got Symbol" } },
         .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,:s, 0,0,0])"), .expected = .{ .str = "TypeError: transform expects a number for a matrix entry (index 8), got Symbol" } },
@@ -2033,6 +2556,17 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
     });
 }
 
+test "Stdlib: a VM its host gave no file system reads no file and writes none" {
+    // VM.init gave every VM the disk at the working directory, so a host that didn't give
+    // its own (the LSP's hover run sets a sandbox after init) let a script use the disk
+    try test_support.expectScripts(&.{
+        .{ .src = comptime rescued("import_stl(\"build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file 'build.zig': FileNotFound" } },
+        .{ .src = comptime rescued("cube(1).export_stl(\"vm_no_files.stl\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'vm_no_files.stl': AccessDenied" } },
+        .{ .src = comptime rescued("cube(1).export_obj(\"vm_no_files.obj\", true)"), .expected = .{ .str = "RuntimeError: export_obj: could not write 'vm_no_files.obj': AccessDenied" } },
+    });
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "vm_no_files.stl", .{}));
+}
+
 test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes GeometryErrors" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
@@ -2076,9 +2610,19 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
         .{ .src = tetra ++ "r = polyhedron(pts, " ++ outward ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
         // ... and booleans with it were wrong.
         .{ .src = tetra ++ "r = (cube(1) - polyhedron(pts, " ++ inward ++ ")).volume", .expected = .{ .num = 1.0 - 1.0 / 6.0 } },
-        // loft hulls its profiles, which only matches a true loft for convex ones.
-        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the base profile is concave or has holes" } },
-        .{ .src = comptime rescued("square(4).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the top profile is concave or has holes" } },
+        // A hull would fill a concave profile in: its loft is the ruled surface, a notch
+        // and all (a prism of the notched square)
+        .{ .src = "r = polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]), 5).volume", .expected = .{ .num = (100 - 35) * 5 } },
+        // With holes: each hole lofted to the one at its place in the other's box, run
+        // through; a 16-gon of radius r has 8 r² sin(π/8) (the kernel's mesh keeps floats)
+        .{ .src = "p = square(10, center: true) - circle(r: 2, segments: 16)\nr = (p.loft(p, 5).volume - (100 - 32 * Math.sin(Math::PI / 8)) * 5).abs < 1e-4", .expected = .{ .boolean = true } },
+        // Two holes given the other way round: each frustum's volume is h/3 (A + a + √(Aa)),
+        // the square's 700 and the holes' 56 and 14 times sin(π/8)
+        .{ .src = "b = square(20, center: true) - circle(r: 2, segments: 16).translate(x: -5) - circle(r: 1, segments: 16).translate(x: 5)\n" ++
+            "t = square(10, center: true) - circle(r: 0.5, segments: 16).translate(x: 2.5) - circle(r: 1, segments: 16).translate(x: -2.5)\nr = (b.loft(t, 3).volume - (700 - 70 * Math.sin(Math::PI / 8))).abs < 1e-4", .expected = .{ .boolean = true } },
+        // Two outlines side by side, each lofted to its own
+        .{ .src = "p = square(2) + square(2).translate(x: 5)\nr = p.loft(p, 4).volume", .expected = .{ .num = 32 } },
+        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "ValueError: loft joins each outline and hole of one profile to one of the other, and the base has 0 holes where the top has 1" } },
         // A convex loft spans exactly [0, height]: square to equal square is a prism.
         .{ .src = "r = square(4).loft(square(4), 10).volume", .expected = .{ .num = 160 } },
         .{ .src = "r = square(4).loft(square(4), 10).bbox.max[2]", .expected = .{ .num = 10 } },
@@ -2104,24 +2648,24 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cylinder(r: 1, bogus: 1)", .method = "cylinder", .accepted = "r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments, sides" },
         .{ .src = "sphere(r: 1, bogus: 1)", .method = "sphere", .accepted = "r, d, radius, segments" },
         .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments, sides" },
-        .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius" },
+        .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius, across_flats" },
         .{ .src = "torus(bogus: 1)", .method = "torus", .accepted = "major_r, minor_r, segments" },
-        .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths" },
+        .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths, round_r, chamfer, segments" },
         .{ .src = "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ", bogus: 1)", .method = "polyhedron", .accepted = "points, faces" },
         .{ .src = "text(\"A\", bogus: 1)", .method = "text", .accepted = "size, tolerance, font, halign, valign" },
         .{ .src = "cube(1).translate(bogus: 1)", .method = "translate", .accepted = "x, y, z" },
-        .{ .src = "cube(1).rotate(bogus: 1)", .method = "rotate", .accepted = "x, y, z" },
+        .{ .src = "cube(1).rotate(bogus: 1)", .method = "rotate", .accepted = "x, y, z, angle, axis, about" },
         .{ .src = "cube(1).scale(bogus: 1)", .method = "scale", .accepted = "x, y, z" },
         .{ .src = "cube(1).mirror(bogus: 1)", .method = "mirror", .accepted = "x, y, z" },
         .{ .src = "cube(1).resize([2], bogus: 1)", .method = "resize", .accepted = "auto" },
         .{ .src = "cube(1).repeat_linear(2, bogus: 1)", .method = "repeat_linear", .accepted = "x, y, z" },
         .{ .src = "cube(1).repeat_polar(2, bogus: 1)", .method = "repeat_polar", .accepted = "angle" },
         .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
-        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, segments" },
-        .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
-        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
-        .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
-        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
+        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, angle, segments" },
+        .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, pitch, turns, slices" },
+        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
+        .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset, normal" },
+        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission, density" },
     };
@@ -2136,8 +2680,8 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
     try expectScripts(&iter_cases);
 
     try expectScripts(&.{
-        // The typos that motivated the check.
-        .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg, segments)" } },
+        // The typos that motivated the check (revolve(angle:) was one, and is deg: now).
+        .{ .src = comptime rescued("square(1).revolve(degree: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'degree' (it accepts: deg, angle, segments)" } },
         .{ .src = comptime rescued("cube(1).translate(X: 5)"), .expected = .{ .str = "ArgumentError: translate does not take a keyword 'X' (it accepts: x, y, z)" } },
         // Keywords valid for one primitive are not quietly accepted by another.
         .{ .src = comptime rescued("sphere(r: 5, h: 3)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'h' (it accepts: r, d, radius, segments)" } },
@@ -2323,9 +2867,12 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
         .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
+        .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
+        .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
+        .{ "shell", "c.shell(0.1)" },                            .{ "sweep", "s.sweep(line([0, 0], [1, 0]))" },
     };
     // They write files; each returns its receiver.
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
     @setEvalBranchQuota(20_000); // matching each method to its sample call at comptime
     var checked: usize = 0;
     inline for (manifest.mesh_methods) |m| {
@@ -2391,23 +2938,58 @@ test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
     });
 }
 
-test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
+test "Stdlib: assemble takes Solids and assemblies, naming the first that is neither" {
     // Anything else was accepted and then left out of every export without a word.
     try expectScripts(&.{
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Number at index 1" } },
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got CrossSection at index 0" } },
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got nil at index 0; leave out the nils with .compact" } },
-        .{ .src = comptime rescued("s = assemble(name: \"s\", parts: [cube(1)])\nassemble(name: \"k\", parts: [s])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Assembly at index 0; to nest an assembly, give its .parts" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got Number at index 1" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got CrossSection at index 0" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got nil at index 0; leave out the nils with .compact" } },
+        // As deep as a model's Arrays may nest, and no deeper
+        .{ .src = comptime rescued("a = assemble(name: \"0\", parts: [cube(1)])\n64.times { |i| a = assemble(name: i.to_s, parts: [a]) }"), .expected = .{ .str = "ValueError: assemble: assemblies nest at most 64 deep" } },
     });
 }
 
-test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
+test "Stdlib: an assembly of assemblies keeps them, and is measured, listed, moved and written as its Solids" {
+    const ROBOT =
+        \\bolt = cylinder(r: 1, h: 6).named("bolt").material(density: 8)
+        \\arm = assemble(name: "arm", parts: [cube([10, 2, 2]).named("bar").material(density: 1), bolt.translate(9, 1, 0)])
+        \\robot = assemble(name: "robot", parts: [arm, arm.translate(0, 10, 0), cube(3).named("base").material(density: 1)])
+        \\
+    ;
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try expectScripts(&.{
+        .{ .src = ROBOT ++ "r = robot.parts.map { |p| \"#{p.class}\" }.join(\" \")", .expected = .{ .str = "Assembly Assembly Geometry" } },
+        .{ .src = ROBOT ++ "r = robot.bbox.size", .expected = .{ .nums = &.{ 10, 12, 6 } } },
+        .{ .src = ROBOT ++ "r = robot.bom.map { |row| \"#{row[:name]} x#{row[:count]}\" }.join(\", \")", .expected = .{ .str = "bar x2, bolt x2, base x1" } },
+        .{ .src = ROBOT ++ "r = robot.translate(5, 0, 0).bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
+        // Two bars (40 mm³ each) and the base (27 mm³) at 1 g/cm³, and two bolts
+        .{ .src = ROBOT ++ "r = (robot.mass - 2 * bolt.mass).round(9)", .expected = .{ .num = 0.107 } },
+    });
+    // Written as its five Solids
+    var vm = try initVm();
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, ROBOT ++ "robot.export_3mf(\"robot.3mf\")\nr = robot"));
+    const model = try @import("../exporters/model.zig").collectModel(testing.allocator, &vm);
+    var collected = model;
+    defer collected.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 5), collected.solids.items.len);
+    try testing.expectEqualStrings("robot", collected.title.?);
+}
+
+test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ, and a drawing of them to SVG and DXF" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     const kit = "a = assemble(name: \"kit\", parts: [cube(1), cube(1).translate(3, 0, 0)])\n";
     const cases = [_]ScriptCase{
         .{ .src = kit ++ "r = \"#{a.export_stl(\"kit.stl\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_3mf(\"kit.3mf\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", true).class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Geometry" } },
+        .{ .src = kit ++ "r = \"#{a.export_svg(\"kit.svg\").class} #{a.export_dxf(\"kit.dxf\").class}\"", .expected = .{ .str = "Assembly Assembly" } },
+        .{ .src = "r = \"#{square(2).named(\"g\").export_svg(\"g.svg\").class} #{cube(1).export_dxf(\"c.dxf\").class}\"", .expected = .{ .str = "CrossSection Geometry" } },
         .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
         .{ .src = "CAD.config(engine: :brep)\na = assemble(name: \"b\", parts: [cube(1), cylinder(r: 1, h: 2)])\nr = \"#{a.export_step(\"b.step\").class}\"", .expected = .{ .str = "Assembly" } },
     };
@@ -2430,6 +3012,33 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
     defer testing.allocator.free(step_file);
     try testing.expect(std.mem.startsWith(u8, step_file, "ISO-10303-21;"));
     try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "kit.step"));
+    // A 3MF is a zip; the OBJ names the library asked for, which went beside it
+    const threemf = try mem_vfs.vfs().readFile(testing.allocator, "kit.3mf");
+    defer testing.allocator.free(threemf);
+    try testing.expectEqualStrings("PK", threemf[0..2]);
+    const obj = try mem_vfs.vfs().readFile(testing.allocator, "kit.obj");
+    defer testing.allocator.free(obj);
+    try testing.expect(std.mem.startsWith(u8, obj, "# KupCAD Export\n"));
+    try testing.expect(std.mem.find(u8, obj, "\nmtllib kit.mtl\n") != null);
+    try testing.expect(std.mem.find(u8, obj, "\nusemtl default\n") != null);
+    const mtl = try mem_vfs.vfs().readFile(testing.allocator, "kit.mtl");
+    defer testing.allocator.free(mtl);
+    try testing.expect(std.mem.startsWith(u8, mtl, "# KupCAD Export\nnewmtl default\n"));
+    // Without `mtl`, no library and no material
+    const plain = try mem_vfs.vfs().readFile(testing.allocator, "cube.obj");
+    defer testing.allocator.free(plain);
+    try testing.expect(std.mem.find(u8, plain, "mtllib") == null);
+    try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "cube.mtl"));
+    // The drawings: the assembly's two cubes projected, the sketch as itself, named
+    const svg = try mem_vfs.vfs().readFile(testing.allocator, "kit.svg");
+    defer testing.allocator.free(svg);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, svg, "<path "));
+    const dxf = try mem_vfs.vfs().readFile(testing.allocator, "kit.dxf");
+    defer testing.allocator.free(dxf);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, dxf, "LWPOLYLINE"));
+    const gasket = try mem_vfs.vfs().readFile(testing.allocator, "g.svg");
+    defer testing.allocator.free(gasket);
+    try testing.expect(std.mem.find(u8, gasket, "<path id=\"g\" ") != null);
 }
 
 test "Stdlib: ghost shows a copy and gives the shape back to use" {
@@ -2450,19 +3059,22 @@ test "Stdlib: every export refuses a Sketch the same way" {
     try expectScripts(&.{
         .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_3mf(\"s.3mf\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_3mf' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_obj(\"s.obj\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_obj' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for CrossSection" } },
     });
 }
 
 test "Stdlib: each Assembly method gives back what the manifest says it does" {
     const manifest = @import("manifest.zig");
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
     inline for (manifest.assembly_methods) |m| {
         if (comptime isOneOf(m.name, &writes_files)) {
             try testing.expectEqual(manifest.Result.receiver, m.result);
         } else {
             const expected = comptime if (m.result == .receiver) "Assembly" else m.result.className().?;
-            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
+            // A density, for mass
+            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1).material(density: 1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
         }
     }
 }

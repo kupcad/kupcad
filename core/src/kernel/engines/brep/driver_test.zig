@@ -1,6 +1,6 @@
 const std = @import("std");
 const driver = @import("driver.zig");
-const geom = @import("../../geometry_handle.zig");
+const geom = @import("../../../core/geometry_handle.zig");
 const step_exporter = @import("../../../exporters/3d/step.zig");
 const EngineConfig = @import("../../../core/engine_config.zig").EngineConfig;
 
@@ -208,7 +208,10 @@ test "Driver: unsupported or failed B-Rep operations report null, never a stand-
     // offset is unimplemented; it used to return the unchanged sketch (silently wrong).
     const sq = driver.driver.squareFn(&TEST_CONFIG, 10, 10, false) orelse return error.KernelFailed;
     defer driver.driver.destructCrossSectionFn(sq);
-    try std.testing.expect(driver.driver.offsetFn(sq, 1, 0) == null);
+    try std.testing.expect(driver.driver.offsetFn(sq, 1, 0, 8, 2) == null);
+    // Nor contours, which Locus doesn't expose yet
+    try std.testing.expect(driver.driver.crossSectionContoursFn(sq, std.testing.allocator) == null);
+    try std.testing.expect(!driver.supports(.sketch_contours));
 }
 
 test "BRep Driver: solids keep the tolerance they were built under, and pass it on" {

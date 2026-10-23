@@ -4,12 +4,13 @@
 //! an arena.
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 const build_info = @import("build_info");
 
@@ -51,9 +52,11 @@ pub const GC = struct {
 
     geometries: std.ArrayList(*value.ObjGeometry) = .empty,
     cross_sections: std.ArrayList(*value.ObjCrossSection) = .empty,
+    paths: std.ArrayList(*value.ObjPath) = .empty,
     assemblies: std.ArrayList(*value.ObjAssembly) = .empty,
     workplanes: std.ArrayList(*value.ObjWorkplane) = .empty,
     fonts: std.ArrayList(*value.ObjFont) = .empty,
+    randoms: std.ArrayList(*value.ObjRandom) = .empty,
 
     // GC triggering metrics
     bytes_allocated: usize,
@@ -109,9 +112,11 @@ pub const GC = struct {
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
+        self.paths.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
         self.fonts.deinit(self.allocator);
+        self.randoms.deinit(self.allocator);
         self.builtins.deinit();
     }
 
@@ -206,11 +211,12 @@ pub const GC = struct {
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
                 self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
-                self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len;
+                self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len +
+                self.randoms.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
                 vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
-                // Instruct the VM to halt execution immediately so the daemon stays alive
+                // Halt the script now, so a long-lived host (the LSP, `kupcad watch`) stays alive
                 vm.cancel_token.store(true, .release);
                 return;
             };
@@ -468,6 +474,17 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// A Path of `segments` from `start`, which it takes (allocated by trackingAllocator);
+    /// the caller roots `name`.
+    pub fn allocatePath(self: *GC, vm: *VM, start: [2]f64, segments: []path_mod.Segment, name: ?*value.ObjString, material_id: ?u32) !*value.ObjPath {
+        const ptr = try self.allocateObject(vm, value.ObjPath, &self.paths, .path);
+        ptr.start = start;
+        ptr.segments = segments;
+        ptr.name = name;
+        ptr.material_id = material_id;
+        return ptr;
+    }
+
     pub fn allocateAssembly(self: *GC, vm: *VM, name: *value.ObjString, parts: *value.ObjArray) !*value.ObjAssembly {
         const ptr = try self.allocateObject(vm, value.ObjAssembly, &self.assemblies, .assembly);
         ptr.name = name;
@@ -482,6 +499,14 @@ pub const GC = struct {
         const ptr = try self.allocateObject(vm, value.ObjFont, &self.fonts, .font);
         ptr.bytes = bytes;
         ptr.name = name;
+        return ptr;
+    }
+
+    /// A Random seeded with `seed` (a whole number), its state `state`.
+    pub fn allocateRandom(self: *GC, vm: *VM, seed: f64, state: u64) !*value.ObjRandom {
+        const ptr = try self.allocateObject(vm, value.ObjRandom, &self.randoms, .random);
+        ptr.seed = seed;
+        ptr.state = state;
         return ptr;
     }
 
@@ -680,6 +705,7 @@ pub const GC = struct {
                 self.markObject(&wp_obj.parent.obj);
             },
             .font => self.markObject(&obj.as(value.ObjFont).name.obj),
+            .path => if (obj.as(value.ObjPath).name) |name| self.markObject(&name.obj),
             else => {},
         }
     }
@@ -734,9 +760,11 @@ pub const GC = struct {
 
         self.sweepList(vm, value.ObjGeometry, &self.geometries);
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
+        self.sweepList(vm, value.ObjPath, &self.paths);
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
         self.sweepList(vm, value.ObjFont, &self.fonts);
+        self.sweepList(vm, value.ObjRandom, &self.randoms);
 
         // --- CACHE EVICTION ---
         // Results no live solid or sketch refers to. Without room to work it out, nothing
@@ -797,8 +825,14 @@ pub const GC = struct {
                 self.trackingAllocator().free(font.bytes);
                 self.destroyObject(value.ObjFont, font);
             },
+            .random => self.destroyObject(value.ObjRandom, obj.as(value.ObjRandom)),
             .cross_section => {
                 self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));
+            },
+            .path => {
+                const p = obj.as(value.ObjPath);
+                self.trackingAllocator().free(p.segments);
+                self.destroyObject(value.ObjPath, p);
             },
             .string => {
                 const str_obj = obj.as(value.ObjString);

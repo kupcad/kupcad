@@ -2,8 +2,6 @@
 //! itself, which `text(font:)` draws with, kerned; files that aren't fonts text can draw with
 //! are ImportErrors naming them.
 
-const std = @import("std");
-const testing = std.testing;
 const support = @import("../test_support.zig");
 const rescued = support.rescued;
 
@@ -13,6 +11,8 @@ const FILES = [_]support.ScriptFile{
     .{ .path = "fonts/Test.otf", .data = @embedFile("../core/test_fonts/gpos-kerning.otf") },
     .{ .path = "fonts/Test.ttf", .data = @embedFile("../core/test_fonts/kern-table.ttf") },
     .{ .path = "fonts/unnamed.ttf", .data = @embedFile("../core/test_fonts/unnamed.ttf") },
+    .{ .path = "fonts/no-cmap.ttf", .data = @embedFile("../core/test_fonts/no-cmap.ttf") },
+    .{ .path = "fonts/no-outlines.ttf", .data = @embedFile("../core/test_fonts/no-outlines.ttf") },
     .{ .path = "fonts/scan.bin", .data = @embedFile("../core/test_fonts/gpos-kerning.otf") },
     .{ .path = "fonts/broken.ttf", .data = "not a font" },
     // A font made a module's export, as a project's shared label font would be
@@ -51,6 +51,9 @@ test "Font: a file text can't draw with, a missing glyph and a wrong font are er
     try support.expectScripts(&.{
         withFiles(rescued("import f from \"./fonts/broken.ttf\""), .{ .str = "ImportError: 'fonts/broken.ttf' isn't a font text can draw with: it isn't a TrueType or OpenType font" }),
         withFiles(rescued("import f from \"./fonts/missing.ttf\""), .{ .str = "ImportError: could not read font file 'fonts/missing.ttf': FileNotFound" }),
+        // A font, but not one text can draw: nothing to draw, or no character to find
+        withFiles(rescued("import f from \"./fonts/no-outlines.ttf\""), .{ .str = "ImportError: 'fonts/no-outlines.ttf' isn't a font text can draw with: it has no outlines (TrueType or CFF ones; a variable CFF2 font's and a bitmap font's aren't read)" }),
+        withFiles(rescued("import f from \"./fonts/no-cmap.ttf\""), .{ .str = "ImportError: 'fonts/no-cmap.ttf' isn't a font text can draw with: it maps no characters to glyphs (it has no cmap table)" }),
         withFiles(rescued("import f from \"./fonts/Test.otf\"\ntext(\"x\", font: f)"), .{ .str = "ValueError: text: the font 'KupCAD Test CFF Regular' has no glyph for 'x' (U+0078)" }),
         withFiles(rescued("text(\"A\", font: 5)"), .{ .str = "TypeError: text: font is the name of a font (\"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\") or a Font imported from a font file, got Number" }),
     });

@@ -1,7 +1,19 @@
 3:1 W [unused-variable] Unused variable 'empty'. Prefix with '_' if intentional.
 3:9 W [self-subtraction] 'plate - plate' subtracts a shape from itself, which leaves nothing
---- after --fix (1 fixed) ---
+4:1 W [unused-variable] Unused variable 'part'. Prefix with '_' if intentional.
+6:1 W [unused-variable] Unused variable 'flat'. Prefix with '_' if intentional.
+6:9 W [self-subtraction] 'profile - profile' subtracts a shape from itself, which leaves nothing
+7:1 W [unused-variable] Unused variable 'gone'. Prefix with '_' if intentional.
+7:8 W [self-subtraction] 'plate.difference(plate)' subtracts a shape from itself, which leaves nothing
+8:1 W [unused-variable] Unused variable 'kept'. Prefix with '_' if intentional.
+--- after --fix (5 fixed) ---
 plate = cube(10)
 hole = cylinder(r: 2, h: 20)
 _empty = plate - plate
-part = plate - hole
+_part = plate - hole
+profile = square(4)
+_flat = (profile) - profile
+_gone = plate.difference(plate)
+_kept = plate.difference(hole)
+n = 5
+zero = n - n

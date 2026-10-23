@@ -11,14 +11,14 @@ const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
 const gltf = @import("../exporters/3d/gltf.zig");
 const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const VM = @import("../vm/vm.zig").VM;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const MeshPart = @import("../exporters/3d/mesh_part.zig").MeshPart;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
@@ -152,10 +152,10 @@ pub const SessionPreview = struct {
         };
         errdefer self.documents.deinit();
         self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), if (self.workspace) |*w| w.vfs() else null);
-        self.session = try ScriptSession.init(allocator, io);
-        self.session.vm.vfs = self.sandbox.vfs();
+        self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        self.session.vm.previewing = true;
     }
 
     pub fn deinit(self: *SessionPreview) void {
@@ -274,8 +274,8 @@ pub const SessionPreview = struct {
             logger.warn("the viewport can't show this model: the {s} engine can't {s} yet", .{ handle.engine.scriptName(), kernel.Feature.mesh.describe() });
             return .nothing;
         }
-        const handles = [_]geom.GeometryHandle{handle};
-        const glb = gltf.buildGltfBuffer(allocator, &self.session.vm, &handles, false, .glb) catch |err| {
+        const parts = [_]MeshPart{.{ .handle = handle }};
+        const glb = gltf.buildGltfBuffer(allocator, self.session.vm.materials.items, &parts, null, .glb) catch |err| {
             logger.warn("Failed to build the preview's GLB: {}", .{err});
             return .nothing;
         };
@@ -374,11 +374,12 @@ pub const HoverRun = struct {
         self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
         self.vm = try VM.init(allocator, io);
         errdefer self.vm.deinit();
-        // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
         self.vm.vfs = sandbox;
         self.vm.mute_errors = true; // its errors are the document's diagnostics
         self.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        // Hovers read the run the preview shows
+        self.vm.previewing = true;
         try registry.registerStandardLibrary(&self.vm);
 
         var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
@@ -408,7 +409,7 @@ pub const HoverRun = struct {
         var val: value.Value = value.Value.initNil();
 
         if (node.tag == .identifier or node.tag == .assignment) {
-            const name = if (node.tag == .identifier) doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) else doc.tree.getString(doc.tree.assignment(node).name);
+            const name = if (node.tag == .identifier) doc.tree.nodeString(node) else doc.tree.getString(doc.tree.assignment(node).name);
             val = self.vm.globals.get(name) orelse return error.NoValue;
         } else if (node.tag == .method_call) {
             // The call alone, in the run's VM, so it sees the run's variables.
@@ -454,12 +455,13 @@ pub const HoverRun = struct {
             if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
                 if (kernel.supports(cs_handle.engine, .sketch_measure)) {
                     const area = kernel.crossSectionArea(cs_handle);
-                    const rect = kernel.crossSectionBounds(cs_handle);
-
-                    const w = rect.max[0] - rect.min[0];
-                    const l = rect.max[1] - rect.min[1];
-
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    if (kernel.crossSectionBounds(cs_handle)) |rect| {
+                        const w = rect.max[0] - rect.min[0];
+                        const l = rect.max[1] - rect.min[1];
+                        try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    } else {
+                        try writer.print("- **Bounds:** empty\n", .{});
+                    }
                     try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
                 }
             } else |_| {}

@@ -3,9 +3,10 @@
 //! `ObjClass`, `ObjGeometry`, ...), with number formatting and `Value.stringify` printing.
 
 const std = @import("std");
-const dag = @import("../vm/dag.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
+const path_mod = @import("path.zig");
+const identifier = @import("identifier.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
 /// print in scientific notation instead (1e-7), as in JavaScript.
@@ -56,10 +57,14 @@ pub const ObjType = enum(u8) {
     range,
     bbox,
     cross_section,
+    /// An open 2D path (core/path.zig): lines and arcs from a start.
+    path,
     geometry,
     assembly,
     workplane,
     font,
+    /// A seeded random number generator (class Random).
+    random,
 };
 
 /// The Base Header for ALL heap-allocated objects.
@@ -276,7 +281,7 @@ pub const ObjRange = struct {
 };
 
 pub const GeometryState = union(enum) {
-    symbolic: dag.DAGNodeIndex,
+    symbolic: geom.DAGNodeIndex,
     concrete: geom.GeometryHandle,
 };
 
@@ -302,7 +307,7 @@ pub const ObjGeometry = struct {
 
     // The DAG root index representing how this geometry was formed.
     // We retain this permanently so we can always append to it later.
-    dag_idx: dag.DAGNodeIndex,
+    dag_idx: geom.DAGNodeIndex,
 
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,
@@ -318,6 +323,21 @@ pub const ObjCrossSection = struct {
     dag_idx: u32,
 };
 
+/// A Path: open 2D geometry, its segments owned by the GC's tracking allocator, with the
+/// name and material it carries for a drawing (as a Sketch's `named` and `material`).
+pub const ObjPath = struct {
+    obj: Obj,
+    start: [2]f64,
+    segments: []path_mod.Segment,
+    name: ?*ObjString,
+    /// The material's index in the VM's, or null.
+    material_id: ?u32,
+
+    pub fn end(self: *const ObjPath) [2]f64 {
+        return path_mod.endOf(self.start, self.segments);
+    }
+};
+
 pub const ObjAssembly = struct {
     obj: Obj,
     name: *ObjString,
@@ -331,6 +351,14 @@ pub const ObjFont = struct {
     obj: Obj,
     bytes: []u8,
     name: *ObjString,
+};
+
+/// A random number generator a script made (`Random.new(seed)`, class Random): SplitMix64's
+/// state, and the seed it started from (stdlib/classes/random.zig).
+pub const ObjRandom = struct {
+    obj: Obj,
+    seed: f64,
+    state: u64,
 };
 
 /// Signature for all Native CAD Built-ins. Takes an opaque VM pointer to avoid circular
@@ -455,6 +483,9 @@ pub const Value = packed struct {
     pub inline fn isCrossSection(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .cross_section;
     }
+    pub inline fn isPath(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .path;
+    }
     pub inline fn isInstance(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .instance;
     }
@@ -488,6 +519,9 @@ pub const Value = packed struct {
     pub inline fn isFont(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .font;
     }
+    pub inline fn isRandom(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .random;
+    }
     pub inline fn isBoundMethod(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .bound_method;
     }
@@ -516,6 +550,9 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asCrossSection(self: Value) *ObjCrossSection {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asPath(self: Value) *ObjPath {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asInstance(self: Value) *ObjInstance {
@@ -553,6 +590,13 @@ pub const Value = packed struct {
         std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+    /// The text of a String or a Symbol, which a script writes a name as either way
+    /// (`halign: :center` or `"center"`); null for any other value.
+    pub fn nameChars(self: Value) ?[]const u8 {
+        if (self.isString()) return self.asString().chars;
+        if (self.isSymbol()) return self.asSymbol().chars;
+        return null;
+    }
     pub inline fn asFunction(self: Value) *ObjFunction {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
@@ -574,6 +618,11 @@ pub const Value = packed struct {
 
     pub inline fn asFont(self: Value) *ObjFont {
         std.debug.assert(self.isFont());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asRandom(self: Value) *ObjRandom {
+        std.debug.assert(self.isRandom());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
@@ -624,10 +673,12 @@ pub const Value = packed struct {
                 },
                 .symbol => {
                     // As in Ruby: `:name` when inspected, the bare name otherwise (puts,
-                    // interpolation, join), which used to keep the colon too.
+                    // interpolation, join), which used to keep the colon too. A name `:name`
+                    // wouldn't read back as is quoted, `:"a b"`; it was `:a b`.
                     const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
-                    if (is_inspect) try writer.writeAll(":");
-                    try writer.writeAll(sym.chars);
+                    if (!is_inspect) return writer.writeAll(sym.chars);
+                    try writer.writeAll(":");
+                    if (identifier.isBareSymbol(sym.chars)) try writer.writeAll(sym.chars) else try writeQuoted(writer, sym.chars);
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
@@ -669,12 +720,18 @@ pub const Value = packed struct {
                     const cs: *ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
                 },
+                .path => {
+                    const p: *ObjPath = @alignCast(@fieldParentPtr("obj", obj));
+                    const end = p.end();
+                    try writer.print("<Path {d} segment{s} from [{f}, {f}] to [{f}, {f}]>", .{ p.segments.len, if (p.segments.len == 1) "" else "s", fmtNumber(p.start[0]), fmtNumber(p.start[1]), fmtNumber(end[0]), fmtNumber(end[1]) });
+                },
                 .workplane => try writer.writeAll("<Workplane>"),
                 // puts and interpolation give its name, inspect says what it is too
                 .font => {
                     const name = obj.as(ObjFont).name.chars;
                     if (is_inspect) try writer.print("#<Font {s}>", .{name}) else try writer.writeAll(name);
                 },
+                .random => try writer.print("#<Random seed: {f}>", .{fmtNumber(obj.as(ObjRandom).seed)}),
                 .bbox => {
                     const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
                     const f = fmtNumber;
@@ -692,7 +749,8 @@ fn writeEntries(keys: []const Value, values: []const Value, writer: *std.Io.Writ
     try writer.writeAll("{");
     for (keys, values, 0..) |key, v, i| {
         if (i > 0) try writer.writeAll(", ");
-        if (key.isSymbol()) {
+        // `k: 1` as a script writes it; a Symbol that isn't a name keeps `=>` (`:"a b" => 1`)
+        if (key.isSymbol() and identifier.isLabelName(key.asSymbol().chars)) {
             try writer.print("{s}: ", .{key.asSymbol().chars});
         } else {
             try key.stringifyNested(true, writer, &here);

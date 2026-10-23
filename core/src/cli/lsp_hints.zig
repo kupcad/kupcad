@@ -6,12 +6,13 @@
 
 const std = @import("std");
 const ast = @import("../core/ast.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const visitor = @import("../core/visitor.zig");
 const token_span = @import("../core/token_span.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const Signature = @import("../stdlib/signature.zig").Signature;
-const Shapes = @import("../tools/lint/shapes.zig").Shapes;
+const shapes_mod = @import("../tools/lint/shapes.zig");
+const Shapes = shapes_mod.Shapes;
 
 pub const Hint = struct {
     /// Where it goes in the source: the start of the argument, or the end of the variable.
@@ -73,7 +74,7 @@ const Walker = struct {
         if (value.tag != .method_call) return;
         const call = tree.methodCall(value);
         const name = tree.getString(call.method_name);
-        const result = if (call.receiver == .none) manifest.resultOf(name) orelse return else blk: {
+        const result = if (call.receiver == .none) shapes_mod.globalResult(tree, call) orelse return else blk: {
             const receiver = self.shapes.of(tree, call.receiver) orelse return;
             const result = manifest.methodResultOf(name) orelse return;
             if (result == .receiver) break :blk if (receiver == .solid) manifest.Result.solid else manifest.Result.sketch;
@@ -96,6 +97,6 @@ const Walker = struct {
     fn isNamed(tree: *const ast.Tree, idx: ast.NodeIndex, name: []const u8) bool {
         const node = tree.getNode(idx) orelse return false;
         if (node.tag != .identifier) return false;
-        return std.mem.eql(u8, tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), name);
+        return std.mem.eql(u8, tree.nodeString(node), name);
     }
 };

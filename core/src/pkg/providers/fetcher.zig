@@ -9,7 +9,7 @@ const Cafs = cafs_mod.Cafs;
 const http_client = @import("../http_client.zig");
 const limits = @import("../limits.zig");
 const validate = @import("../validate.zig");
-const semver = @import("../../core/semver.zig");
+const semver = @import("../semver.zig");
 const git_host = @import("git_host.zig");
 
 /// Read buffer for the size-limited archive stream.

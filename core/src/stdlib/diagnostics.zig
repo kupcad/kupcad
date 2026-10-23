@@ -1,11 +1,12 @@
 //! Built-ins for checking and timing a script: `assert` (`nativeAssert`) raises an
 //! AssertionError, or the given class, through the VM's rescue machinery; `warn` prints a
-//! warning through the host; `benchmark` times its block.
+//! warning through the host; `benchmark` times its block; `debugger` pauses in the host's
+//! debugger (cli/debugger.zig in a terminal).
 
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
 
 /// assert(condition, message = "Assertion failed.", error_class = AssertionError) { message }
 /// -> raises when the condition is false or nil; the block, if given, builds the message
@@ -46,7 +47,7 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
 
 fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !value.Value {
     if (msg.isString()) return msg;
-    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{util.typeName(vm, msg)});
+    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{arguments.typeName(vm, msg)});
 }
 
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {
@@ -92,4 +93,13 @@ pub fn nativeBenchmark(vm: *VM, label_str: ?*value.ObjString, block: *value.ObjC
     }
 
     return result;
+}
+
+/// `debugger`: opens the host's debugger (`VM.debugger_handler`) on the paused frame and
+/// steps with it from there; nothing without one.
+pub fn nativeDebugger(vm: *VM) !value.Value {
+    const open = vm.debugger_handler orelse return value.Value.initNil();
+    vm.debugger_step_handler = open;
+    open(vm);
+    return value.Value.initNil();
 }

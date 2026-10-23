@@ -22,6 +22,7 @@ const CASES = [_][]const u8{
     "param_order",
     "segments_as_sides",
     "self_subtraction",
+    "shape_mismatch",
     "suppressed_error",
     "suppressions",
     "syntax_error",

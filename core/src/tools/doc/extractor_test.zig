@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const extractor = @import("extractor.zig");
 
 test "Extractor: Parses Presentation Data and Param Config into Schema" {
@@ -86,14 +86,36 @@ test "Extractor: the schema is what param accepts, choices included, as JSON" {
     try testing.expectEqualStrings(
         \\{"meta":{"title":null,"description":null,"author":null},"parameters":[
     ++
-        \\{"name":"width","type":"number","default_value":20,"validate":{"min":10,"max":100,"in":null}},
+        \\{"name":"width","type":"number","default_value":20,"validate":{"min":10,"max":100,"in":null},"step":null,"unit":null,"group":null},
     ++
-        \\{"name":"material","type":"string","default_value":"PLA","validate":{"min":null,"max":null,"in":["PLA","PETG","ABS"]}},
+        \\{"name":"material","type":"string","default_value":"PLA","validate":{"min":null,"max":null,"in":["PLA","PETG","ABS"]},"step":null,"unit":null,"group":null},
     ++
-        \\{"name":"mount","type":"string","default_value":"screw","validate":{"min":null,"max":null,"in":["screw","clip"]}},
+        \\{"name":"mount","type":"string","default_value":"screw","validate":{"min":null,"max":null,"in":["screw","clip"]},"step":null,"unit":null,"group":null},
     ++
-        \\{"name":"holes","type":"number","default_value":4,"validate":{"min":null,"max":null,"in":[2,4,-6]}},
+        \\{"name":"holes","type":"number","default_value":4,"validate":{"min":null,"max":null,"in":[2,4,-6]},"step":null,"unit":null,"group":null},
     ++
-        \\{"name":"size","type":"number","default_value":1,"validate":{"min":null,"max":null,"in":null}}]}
+        \\{"name":"size","type":"number","default_value":1,"validate":{"min":null,"max":null,"in":null},"step":null,"unit":null,"group":null}]}
     , out.written());
+}
+
+test "Extractor: step, unit and group, for a host's controls, from literals only" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\u = "in"
+        \\width = param(:width, default: 20, step: 0.5, unit: "mm", group: "Size")
+        \\label = param(:label, default: "A", group: :Text)
+        \\depth = param(:depth, default: 5, unit: u)
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const width = schema.parameters[0];
+    try testing.expectEqual(@as(f64, 0.5), width.step.?);
+    try testing.expectEqualStrings("mm", width.unit.?);
+    try testing.expectEqualStrings("Size", width.group.?);
+    try testing.expectEqualStrings("Text", schema.parameters[1].group.?);
+    try testing.expect(schema.parameters[1].step == null);
+    // A variable's value is the run's to know
+    try testing.expect(schema.parameters[2].unit == null);
 }

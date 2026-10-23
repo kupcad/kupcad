@@ -26,6 +26,11 @@ test "param: text from the host is read as the type the parameter's default has"
         .{ .name = "label", .text = "Gear A", .source = "r = param(:label, default: \"x\")", .expected = .{ .str = "Gear A" } },
         .{ .name = "label", .text = "", .source = "r = param(:label, default: \"x\")", .expected = .{ .str = "" } },
         .{ .name = "size", .text = "m4", .source = "s = param(:size, default: :m3, validate: { in: [:m3, :m4] })\nr = s == :m4 && s.class == Symbol", .expected = .{ .boolean = true } },
+        .{ .name = "on", .text = "1", .source = "r = param(:on, default: false)", .expected = .{ .boolean = true } },
+        .{ .name = "on", .text = "false", .source = "r = param(:on, default: true)", .expected = .{ .boolean = false } },
+        .{ .name = "w", .text = "-1000", .source = "r = param(:w, default: 1)", .expected = .{ .num = -1000 } },
+        .{ .name = "w", .text = "10", .source = "r = param(:w, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 10 } },
+        .{ .name = "w", .text = "20", .source = "r = param(:w, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 20 } },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}={s}: {s}\n", .{ case.name, case.text, case.source });
@@ -33,6 +38,21 @@ test "param: text from the host is read as the type the parameter's default has"
         defer vm.deinit();
         try testing.expectEqual(.ok, try runWith(case.name, .{ .text = case.text }, case.source, &vm));
         try support.expectValue(case.expected, vm.globals.get("r").?);
+    }
+}
+
+test "param: text a host gives that isn't UTF-8 is an error where a String must be text" {
+    // A shell passes bytes (`-p label=$'\xff'`); a script can't write them itself
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("text(label)"), .expected = "ValueError: text: the String isn't valid UTF-8" },
+        .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("label.split(\"\")"), .expected = "ValueError: split: the String isn't valid UTF-8" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case.source});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        try testing.expectEqual(.ok, try runWith("label", .{ .text = "a\xff" }, case.source, &vm));
+        try support.expectValue(.{ .str = case.expected }, vm.globals.get("r").?);
     }
 }
 
@@ -54,6 +74,9 @@ test "param: a value the parameter can't take is an error naming it and what was
         .{ .name = "label", .v = .{ .number = 5 }, .source = "param(:label, default: \"x\")", .message = "TypeError: parameter :label expects a String, got Number" },
         .{ .name = "size", .v = .{ .text = "m5" }, .source = "param(:size, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :size value is not one of its allowed choices" },
         .{ .name = "w", .v = .{ .text = "200" }, .source = "param(:w, default: 1, validate: { max: 100 })", .message = "ValueError: parameter :w value 200 is above its maximum 100" },
+        .{ .name = "w", .v = .{ .number = 5 }, .source = "param(:w, default: 15, validate: { min: 10, max: 20 })", .message = "ValueError: parameter :w value 5 is below its minimum 10" },
+        .{ .name = "on", .v = .{ .number = 42 }, .source = "param(:on, default: false)", .message = "TypeError: parameter :on expects true or false, got Number" },
+        .{ .name = "size", .v = .{ .text = "M3" }, .source = "param(:size, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :size value is not one of its allowed choices" },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}: {s}\n", .{ case.name, case.source });
@@ -62,4 +85,21 @@ test "param: a value the parameter can't take is an error naming it and what was
         try testing.expectEqual(.runtime_error, try runWith(case.name, case.v, case.source, &vm));
         try testing.expectEqualStrings(case.message, vm.last_error orelse "");
     }
+}
+
+test "param: step, unit and group are a host's hints, checked but not applied to the value" {
+    try support.expectScripts(&.{
+        .{ .src = "r = param(:w, default: 10, step: 0.5, unit: \"mm\", group: \"Size\")", .expected = .{ .num = 10 } },
+        .{ .src = "r = param(:label, default: \"A\", group: :Text)", .expected = .{ .str = "A" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, step: 0)"), .expected = .{ .str = "ValueError: parameter :w step must be a number greater than 0, got 0" } },
+        .{ .src = comptime support.rescued("param(:label, default: \"A\", step: 1)"), .expected = .{ .str = "ArgumentError: parameter :label is a string by its default, and step: is for a number" } },
+        .{ .src = comptime support.rescued("param(:on, default: true, unit: \"mm\")"), .expected = .{ .str = "ArgumentError: parameter :on is a boolean by its default, and unit: is for a number" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, step: \"x\")"), .expected = .{ .str = "TypeError: param expects a number for step, got String" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, colour: \"x\")"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'colour' (it accepts: default, validate, step, unit, group)" } },
+    });
+    // A value off the step is the host's to give: -p 10.3 with step: 0.5 stays 10.3
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try runWith("w", .{ .text = "10.3" }, "r = param(:w, default: 10, step: 0.5)", &vm));
+    try support.expectValue(.{ .num = 10.3 }, vm.globals.get("r").?);
 }

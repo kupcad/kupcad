@@ -7,7 +7,6 @@ release archive at the path given (in the repository: under `core/vendor/` and `
 | Component | Used for | License | Copyright | License text |
 |---|---|---|---|---|
 | [Manifold](https://github.com/elalish/manifold) | the mesh geometry kernel | Apache-2.0 | The Manifold Authors | `licenses/manifold/LICENSE` |
-| [Clipper2](https://github.com/AngusJohnson/Clipper2) | 2D polygon booleans and offsets | BSL-1.0 | Angus Johnson | `licenses/clipper2/LICENSE` |
 | [oneTBB](https://github.com/oneapi-src/oneTBB) | parallel geometry (not in the WebAssembly build) | Apache-2.0; its third-party parts as listed | Intel Corporation | `licenses/onetbb/LICENSE.txt`, `licenses/onetbb/third-party-programs.txt` |
 | [Draco](https://github.com/google/draco) | glTF mesh compression | Apache-2.0 | The Draco Authors | `licenses/draco/LICENSE` |
 | [Eigen](https://gitlab.com/libeigen/eigen) | linear algebra in the B-Rep engine | MPL-2.0 (a few files under the licenses listed) | Eigen's authors | `licenses/eigen/LICENSE`, `licenses/eigen/LICENSES/` |

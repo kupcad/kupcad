@@ -45,7 +45,7 @@ pub const NegativeDimRule = struct {
     fn checkNode(ptr: *anyopaque, engine: *linter.Linter, tree: *const ast.Tree, node_idx: ast.NodeIndex) !void {
         const self: *NegativeDimRule = @ptrCast(@alignCast(ptr));
         const node = tree.getNode(node_idx) orelse return;
-        if (node.tag == .assignment) return self.shapes.observe(engine.allocator, tree, node);
+        if (node.tag == .assignment or node.tag == .import_stmt) return self.shapes.observe(engine.allocator, tree, node);
         if (node.tag != .method_call) return;
         const call = tree.methodCall(node);
         const method = tree.getString(call.method_name);

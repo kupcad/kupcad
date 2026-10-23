@@ -23,6 +23,24 @@ test "Resolution: a fixed count wins, otherwise the finer of angle and length ru
     try testing.expectEqual(@as(u32, 6), fixed.segmentsFor(1000));
 }
 
+test "turnShare: a sweep gets its share of a full turn's segments, rounded up, at least one" {
+    const cases = [_]struct { per_turn: u32, turns: f64, expected: u32 }{
+        .{ .per_turn = 32, .turns = 0.25, .expected = 8 },
+        .{ .per_turn = 32, .turns = (std.math.pi / 2.0) / (2.0 * std.math.pi), .expected = 8 }, // an arc's, from radians
+        .{ .per_turn = 30, .turns = 120.0 / 360.0, .expected = 10 }, // a ratio rounded a bit off a whole share
+        .{ .per_turn = 30, .turns = 0.34, .expected = 11 }, // 10.2, rounded up
+        .{ .per_turn = 30, .turns = 10, .expected = 300 }, // a helix's ten turns
+        .{ .per_turn = 30, .turns = -0.5, .expected = 15 }, // either way round
+        .{ .per_turn = 30, .turns = 1e-12, .expected = 1 },
+        .{ .per_turn = 30, .turns = 0, .expected = 1 },
+        .{ .per_turn = 2048, .turns = 100, .expected = limits.MAX_SEGMENTS },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("{d} per turn, {d} turns\n", .{ case.per_turn, case.turns });
+        try testing.expectEqual(case.expected, engine_config.turnShare(case.per_turn, case.turns));
+    }
+}
+
 test "EngineConfig: automatic counts stay within MAX_SEGMENTS" {
     const fine: EngineConfig = .{ .resolution = .{ .min_angle = 1e-9, .min_length = 1e-9 } };
     try testing.expectEqual(@as(u32, limits.MAX_SEGMENTS), fine.segmentsFor(1e6));

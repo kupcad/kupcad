@@ -143,3 +143,14 @@ test "Value: a NaN of any payload is a number, never a tag or a pointer" {
     const widened: f64 = @floatCast(@as(f32, @bitCast(@as(u32, 0x7FE00001))));
     try testing.expect(value.Value.initNumber(widened).isNumber());
 }
+
+test "Value: nameChars is a String's or a Symbol's text, and nothing for any other value" {
+    var vm = try @import("../test_support.zig").initVm();
+    defer vm.deinit();
+    const string = try vm.allocateString("center");
+    const symbol = try vm.allocateSymbol("center");
+    try testing.expectEqualStrings("center", string.nameChars().?);
+    try testing.expectEqualStrings("center", symbol.nameChars().?);
+    try testing.expectEqual(@as(?[]const u8, null), value.Value.initNumber(1).nameChars());
+    try testing.expectEqual(@as(?[]const u8, null), value.Value.initNil().nameChars());
+}

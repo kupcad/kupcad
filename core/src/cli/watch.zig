@@ -1,33 +1,37 @@
 //! `kupcad watch`: builds a script, then rebuilds it through a pinned `ScriptSession`
-//! whenever the `Watcher` sees it or a module it imports change.
+//! whenever the `Watcher` sees it or a module it imports change; given export options
+//! (export_flags.zig, as `kupcad build` takes them), each build that succeeds writes them.
 
 const std = @import("std");
-const watcher_mod = @import("../daemon/watcher.zig");
+const watcher_mod = @import("../session/watcher.zig");
 const Watcher = watcher_mod.Watcher;
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
 const Reporter = @import("reporter.zig").Reporter;
 const build_cmd = @import("build_cmd.zig");
 const fs = @import("fs.zig");
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
-const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
-const debug = @import("../stdlib/debug.zig");
+const SessionManager = @import("../session/session_manager.zig").SessionManager;
+const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const ExportFlags = @import("export_flags.zig").ExportFlags;
+const export_usage = @import("export_flags.zig").USAGE;
 
 pub const USAGE =
     \\Usage: kupcad watch <file.kup> [options]
     \\
     \\Builds a script, then rebuilds it whenever it, a module it imports or a file it
-    \\reads as data changes.
+    \\reads as data changes. With an export option, as build takes them, each build
+    \\that succeeds writes its files.
     \\
     \\Options:
     \\
-++ param_flags.USAGE ++
+++ export_usage ++ param_flags.USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -37,8 +41,13 @@ pub const Options = struct {
     file_path: []const u8,
     /// `-p` and `-P`, as `kupcad build` takes them: every build of the session uses them.
     params: api.ParamValues = .{},
+    /// What each build that succeeds writes, when `writes`.
+    exports: ExportFlags = .{},
+    /// Whether an export option was given: without one, a build writes nothing.
+    writes: bool = false,
 
     pub fn deinit(self: *Options, allocator: std.mem.Allocator) void {
+        self.exports.deinit(allocator);
         self.params.deinit(allocator);
     }
 };
@@ -51,6 +60,14 @@ pub fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Repor
     while (args.next()) |arg| {
         switch (try param_flags.take(allocator, arg, args, &options.params, reporter)) {
             .taken => continue,
+            .refused => return refuse(allocator, &options),
+            .other => {},
+        }
+        switch (try options.exports.take(allocator, arg, args, reporter)) {
+            .taken => {
+                options.writes = true;
+                continue;
+            },
             .refused => return refuse(allocator, &options),
             .other => {},
         }
@@ -69,6 +86,7 @@ pub fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Repor
         reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
         return refuse(allocator, &options);
     }
+    if (options.writes and !try options.exports.settle(allocator, reporter)) return refuse(allocator, &options);
     return options;
 }
 
@@ -83,8 +101,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer options.deinit(allocator);
     const file_path = options.file_path;
 
-    // Spin up the cache controller
-    var manager = SessionManager.init(allocator, init.io, 1);
+    // Spin up the cache controller; the script reads and writes the disk
+    var disk = NativeVfs.init(init.io, std.Io.Dir.cwd());
+    var manager = SessionManager.init(allocator, init.io, 1, disk.vfs());
     defer manager.deinit();
 
     // Pin the session: the watcher holds this pointer for the life of the process.
@@ -92,7 +111,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer manager.release(lease);
     const session = lease.session;
     session.setParams(&options.params);
-    session.vm.debugger_handler = debug.terminalDebugger(init.io);
+    session.vm.debugger_handler = debugger.terminalDebugger(init.io);
     // A long-lived session caps the script heap: the project's `vm_memory_limit`, else the
     // interactive default, so a runaway loop ends with an error instead of the machine.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
@@ -101,8 +120,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
         return .failure;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit orelse limits.INTERACTIVE_MEMORY_LIMIT);
+    if (options.writes) try options.exports.prepare(&session.vm);
 
-    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(init.io, allocator, file_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
         return .failure;
     };
@@ -111,7 +131,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     _ = try session.workspace.addModule(file_path, source);
     try session.loadImports();
 
-    var printer = EventPrinter{ .allocator = allocator, .session = session, .root_path = file_path, .reporter = reporter };
+    var printer = EventPrinter{ .allocator = allocator, .session = session, .root_path = file_path, .reporter = reporter, .exports = if (options.writes) &options.exports else null };
     var watcher = try Watcher.init(session, init.io, printer.listener());
     defer watcher.deinit();
 
@@ -125,13 +145,15 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
 /// Prints the watcher's events the way `kupcad build` reports: diagnostics with their
 /// file, line and column, then a one-line summary.
-const EventPrinter = struct {
+pub const EventPrinter = struct {
     allocator: std.mem.Allocator,
     session: *ScriptSession,
     root_path: []const u8,
     reporter: Reporter,
+    /// What a build that succeeds writes, if anything.
+    exports: ?*const ExportFlags = null,
 
-    fn listener(self: *EventPrinter) watcher_mod.Listener {
+    pub fn listener(self: *EventPrinter) watcher_mod.Listener {
         return .{ .ptr = self, .onEvent = onEvent };
     }
 
@@ -139,7 +161,13 @@ const EventPrinter = struct {
         const self: *EventPrinter = @ptrCast(@alignCast(ptr));
         switch (event) {
             .changed => |path| self.reporter.err("Changed: {s}\n", .{path}),
-            .built => self.reporter.err("Built {s}\n", .{self.root_path}),
+            .built => {
+                self.reporter.err("Built {s}\n", .{self.root_path});
+                // A file that can't be written is reported, and the next build tries again
+                if (self.exports) |exports| _ = exports.write(self.allocator, &self.session.vm, self.root_path, self.reporter) catch |err| {
+                    self.reporter.err("Could not write the model: {s}\n", .{@errorName(err)});
+                };
+            },
             .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.reporter) catch |err| {
                 self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root_path, @errorName(err) });
             },

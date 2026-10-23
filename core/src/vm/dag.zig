@@ -4,17 +4,44 @@
 //! evaluated later, by `dag_evaluator.zig`.
 
 const std = @import("std");
+const rounded_rect = @import("../core/rounded_rect.zig");
+const path_mod = @import("../core/path.zig");
+const bezier = @import("../core/bezier.zig");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
 const dag_verifier = @import("dag_verifier.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
-pub const DAGNodeIndex = u32;
+pub const DAGNodeIndex = geom.DAGNodeIndex;
 
 /// Every node is checked as it is added (dag_verifier.zig) where a check costs nothing
 /// that matters: Debug and test builds.
 const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
+
+/// A closed path's numbers: its start (x, y), then per segment its end (x, y), its kind
+/// (PathSegmentKind), an arc's centre (x, y) and radius, its way round and its angle, a
+/// cubic's two controls (x, y each), and its chords.
+pub const PATH_START_NUMBERS = 2;
+pub const PATH_SEGMENT_NUMBERS = 13;
+/// What a closed path's segment is, as its number says.
+const PathSegmentKind = enum(u8) { line = 0, arc = 1, cubic = 2 };
+/// A polygons node's curve's numbers: its two controls (x, y each).
+pub const CURVE_NUMBERS = 4;
+/// A polygons node's curve's words in extra_data: its contour, first point and point count.
+pub const CURVE_WORDS = 3;
+
+/// A closed path as read from its node (DAGBuilder.readClosedPath).
+pub const ClosedPath = struct {
+    start: [2]f64,
+    segments: []path_mod.Segment,
+    chords: []u32,
+
+    pub fn deinit(self: ClosedPath, allocator: std.mem.Allocator) void {
+        allocator.free(self.segments);
+        allocator.free(self.chords);
+    }
+};
 
 /// The size of the tables below which the graph is never compacted (DAGBuilder.compact).
 const MIN_COMPACTION_BYTES: usize = 1 << 20;
@@ -52,18 +79,33 @@ pub const DAGTag = enum(u8) {
     hull,
     loft,
     minkowski,
+    /// A Solid shrunk on every side (an inward `offset`, `shell`): its radius and the
+    /// rounding sphere's segments.
+    erode,
     trim_by_plane,
     transform_matrix,
     cs_union_op,
     cs_difference_op,
     cs_intersection_op,
+    /// The convex hull of one or more sketches (`hull`), an operand list as batch_hull_op's.
+    cs_hull_op,
     offset,
     cs_transform,
+    /// `square(round_r:)`: a rectangle with rounded corners (core/rounded_rect.zig), kept
+    /// as such so the 2D exporters know its corners' circles; it was the points.
+    rounded_square,
+    /// A Path closed into a sketch (`close`): its start and segments (core/path.zig), with
+    /// the chords each arc is drawn with, kept so the 2D exporters know its arcs.
+    closed_path,
     polygon,
     polygons_even_odd,
     set_material,
     /// A part's name (`named`), for the parts list: the shape is its operand's.
     set_name,
+    /// A sketch's material and name (`material`, `named`), for a drawing: the shape is its
+    /// operand's (exporters/parts.zig reads them). Tags of their own, as every sketch node has.
+    cs_set_material,
+    cs_set_name,
     /// Leaf wrapping an already-evaluated handle (decompose/simplify results).
     /// `data` indexes `concrete_leaves`, which owns the handle.
     concrete,
@@ -73,17 +115,20 @@ pub const DAGTag = enum(u8) {
 pub fn scriptName(tag: DAGTag) []const u8 {
     return switch (tag) {
         .cube, .cylinder, .sphere, .translate, .rotate, .scale, .square, .circle, .extrude, .revolve, .mirror, .hull, .loft, .minkowski, .trim_by_plane, .offset, .polygon => @tagName(tag),
+        .rounded_square => "square",
+        .closed_path => "close",
         .union_op, .batch_union_op, .cs_union_op => "union",
         .difference_op, .cs_difference_op => "difference",
         .intersection_op, .cs_intersection_op => "intersection",
         .polyhedron_op => "polyhedron",
-        .batch_hull_op => "hull",
+        .batch_hull_op, .cs_hull_op => "hull",
         .slice_op => "slice",
         .project_op => "project",
         .transform_matrix, .cs_transform => "transform",
+        .erode => "offset",
         .polygons_even_odd => "polygon",
-        .set_material => "material",
-        .set_name => "named",
+        .set_material, .cs_set_material => "material",
+        .set_name, .cs_set_name => "named",
         .empty_solid, .empty_sketch => "empty",
         .concrete => "geometry",
     };
@@ -108,7 +153,12 @@ pub const Layout = union(enum) {
     loft,
     /// extra_data at `data`: the index of the points' numbers (x, y each), then their count.
     polygon,
-    /// extra_data at `data`: the contour count, then a polygon's two words per contour.
+    /// extra_data at `data`: the index of a closed path's numbers (PATH_START_NUMBERS, then
+    /// PATH_SEGMENT_NUMBERS per segment), then its segment count.
+    path,
+    /// extra_data at `data`: the contour count, then a polygon's two words per contour,
+    /// then the count of the curves the contours' points were flattened from, the index
+    /// of their numbers (CURVE_NUMBERS each) and CURVE_WORDS per curve.
     polygons,
     /// extra_data at `data`: the points' start and count, the faces' start and count, and
     /// the two halves of the mesh's hash.
@@ -119,7 +169,7 @@ pub const Layout = union(enum) {
     /// Whether the payload's parts can be of different lengths from node to node.
     pub fn variesInLength(self: Layout) bool {
         return switch (self) {
-            .operand_list, .polygon, .polygons => true,
+            .operand_list, .polygon, .path, .polygons => true,
             else => false,
         };
     }
@@ -131,17 +181,20 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .cube => .{ .numbers = 3 },
         .cylinder => .{ .numbers = 4 },
         .sphere, .square, .circle => .{ .numbers = 2 },
+        .rounded_square => .{ .numbers = 4 },
+        .closed_path => .path,
         .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => .{ .operands = 2 },
         .hull, .project_op => .{ .operands = 1 },
-        .batch_union_op, .batch_hull_op => .operand_list,
+        .batch_union_op, .batch_hull_op, .cs_hull_op => .operand_list,
         .translate, .rotate, .scale, .mirror => .{ .target_numbers = 3 },
         .transform_matrix => .{ .target_numbers = 12 },
         .trim_by_plane => .{ .target_numbers = 4 },
-        .slice_op, .offset => .{ .target_numbers = 1 },
+        .slice_op => .{ .target_numbers = 1 },
+        .offset => .{ .target_numbers = 3 },
         .extrude => .{ .target_numbers = 5 },
-        .revolve => .{ .target_numbers = 2 },
+        .revolve, .erode => .{ .target_numbers = 2 },
         .cs_transform => .{ .target_numbers = 6 },
-        .set_material, .set_name => .target_value,
+        .set_material, .set_name, .cs_set_material, .cs_set_name => .target_value,
         .loft => .loft,
         .polygon => .polygon,
         .polygons_even_odd => .polygons,
@@ -163,7 +216,7 @@ pub const BinaryPayload = struct { left: DAGNodeIndex, right: DAGNodeIndex };
 pub const ExtrudePayload = struct { target: DAGNodeIndex, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64 };
 pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees: f64 };
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
-pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
+pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8, segments: i32, miter_limit: f64 };
 pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
@@ -174,6 +227,8 @@ const PayloadPart = union(enum) {
     numbers: []const f64,
     /// A plain value: a count, a material id, a polyhedron's mesh hash.
     value: u64,
+    /// Plain words of extra_data: a polygons node's curves' places.
+    words: []const u32,
     points: []const [3]f64,
     faces: []const [3]u32,
     /// A concrete leaf's serial.
@@ -215,12 +270,17 @@ const PayloadParts = struct {
                 else => null,
             },
             .polygon => if (step == 0) .{ .numbers = b.numbers.items[extra[at]..][0 .. 2 * extra[at + 1]] } else null,
+            .path => if (step == 0) .{ .numbers = b.numbers.items[extra[at]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * extra[at + 1]] } else null,
             .polygons => if (step == 0)
                 .{ .value = extra[at] }
             else if (step <= extra[at])
                 .{ .numbers = b.numbers.items[extra[at + 2 * step - 1]..][0 .. 2 * extra[at + 2 * step]] }
-            else
-                null,
+            else switch (step - extra[at]) {
+                1 => .{ .value = b.polygonsCurveCount(at) },
+                2 => .{ .numbers = b.numbers.items[extra[b.polygonsCurvesAt(at) + 1]..][0 .. CURVE_NUMBERS * b.polygonsCurveCount(at)] },
+                3 => .{ .words = extra[b.polygonsCurvesAt(at) + 2 ..][0 .. CURVE_WORDS * b.polygonsCurveCount(at)] },
+                else => null,
+            },
             .polyhedron => switch (step) {
                 0 => .{ .value = (@as(u64, extra[at + 4]) << 32) | extra[at + 5] },
                 1 => .{ .points = b.poly_points.items[extra[at]..][0..extra[at + 1]] },
@@ -437,6 +497,12 @@ pub const DAGBuilder = struct {
     }
 
     pub fn addBatchUnion(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        return self.addOperandList(.batch_union_op, targets);
+    }
+
+    /// A node of `tag` over `targets`: their count, then the targets (layout operand_list).
+    fn addOperandList(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        std.debug.assert(layoutOf(tag) == .operand_list);
         const snap = self.snapshot();
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
@@ -444,7 +510,7 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, @intCast(targets.len));
         try self.extra_data.appendSlice(alloc, targets);
 
-        return try self.appendNodeWithRollback(.{ .tag = .batch_union_op, .flags = 0, .data = extra_idx }, snap);
+        return try self.appendNodeWithRollback(.{ .tag = tag, .flags = 0, .data = extra_idx }, snap);
     }
 
     /// The empty Solid (`is_3d`) or Sketch.
@@ -475,6 +541,14 @@ pub const DAGBuilder = struct {
         const snap = self.snapshot();
         const num_idx = try self.appendNumbers(&.{ x, y });
         return try self.appendNodeWithRollback(.{ .tag = .square, .flags = if (center) 1 else 0, .data = num_idx }, snap);
+    }
+
+    /// A rectangle with rounded corners (rounded_rect.RoundedRect: `radius` as given,
+    /// `segments` a full circle's share, resolved).
+    pub fn addRoundedSquare(self: *DAGBuilder, rect: rounded_rect.RoundedRect) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx = try self.appendNumbers(&.{ rect.x, rect.y, rect.radius, @floatFromInt(rect.segments) });
+        return try self.appendNodeWithRollback(.{ .tag = .rounded_square, .flags = if (rect.center) 1 else 0, .data = num_idx }, snap);
     }
 
     pub fn addCircle(self: *DAGBuilder, radius: f64, segments: i32) !DAGNodeIndex {
@@ -516,7 +590,10 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .polyhedron_op, .flags = 0, .data = data_offset }, snap);
     }
 
-    pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64) !DAGNodeIndex {
+    /// The sketch of `contours` filled by the even-odd rule, with `curves` the curves runs
+    /// of their points were flattened from (a text's glyphs'), for a drawing to write
+    /// exactly; each must name points its contour has.
+    pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64, curves: []const bezier.Flattened) !DAGNodeIndex {
         const snap = self.snapshot();
         const alloc = self.allocator();
         const data_offset: u32 = @intCast(self.extra_data.items.len);
@@ -532,7 +609,54 @@ pub const DAGBuilder = struct {
             try self.extra_data.appendSlice(alloc, &.{ pts_start, @intCast(contour.len) });
         }
 
+        try self.extra_data.appendSlice(alloc, &.{ @intCast(curves.len), @intCast(self.numbers.items.len) });
+        for (curves) |curve| {
+            std.debug.assert(curve.contour < contours.len and curve.count >= 2 and curve.first + curve.count <= contours[curve.contour].len);
+            try self.numbers.appendSlice(alloc, &.{ curve.cubic.c1[0], curve.cubic.c1[1], curve.cubic.c2[0], curve.cubic.c2[1] });
+            try self.extra_data.appendSlice(alloc, &.{ curve.contour, curve.first, curve.count });
+        }
+
         return try self.appendNodeWithRollback(.{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset }, snap);
+    }
+
+    /// Where a polygons node's curves start in extra_data (their count), the node's
+    /// payload at `at`.
+    pub fn polygonsCurvesAt(self: *const DAGBuilder, at: u32) u32 {
+        return at + 1 + 2 * self.extra_data.items[at];
+    }
+
+    pub fn polygonsCurveCount(self: *const DAGBuilder, at: u32) u32 {
+        return self.extra_data.items[self.polygonsCurvesAt(at)];
+    }
+
+    /// A polygons node's contours and curves, read from its payload.
+    pub const PolygonsPayload = struct {
+        b: *const DAGBuilder,
+        at: u32,
+
+        /// Contour `i`'s points.
+        pub fn contour(self: PolygonsPayload, i: u32) []const [2]f64 {
+            const extra = self.b.extra_data.items;
+            const flat = self.b.numbers.items[extra[self.at + 1 + 2 * i]..][0 .. 2 * extra[self.at + 2 + 2 * i]];
+            return @as([*]const [2]f64, @ptrCast(flat.ptr))[0..extra[self.at + 2 + 2 * i]];
+        }
+
+        pub fn curveCount(self: PolygonsPayload) u32 {
+            return self.b.polygonsCurveCount(self.at);
+        }
+
+        /// Curve `i`: which of a contour's points it became, and its controls.
+        pub fn curve(self: PolygonsPayload, i: u32) bezier.Flattened {
+            const extra = self.b.extra_data.items;
+            const curves_at = self.b.polygonsCurvesAt(self.at);
+            const words = extra[curves_at + 2 + CURVE_WORDS * i ..][0..CURVE_WORDS];
+            const n = self.b.numbers.items[extra[curves_at + 1] + CURVE_NUMBERS * i ..][0..CURVE_NUMBERS];
+            return .{ .contour = words[0], .first = words[1], .count = words[2], .cubic = .{ .c1 = .{ n[0], n[1] }, .c2 = .{ n[2], n[3] } } };
+        }
+    };
+
+    pub fn getPolygonsPayload(self: *const DAGBuilder, node: DAGNode) PolygonsPayload {
+        return .{ .b = self, .at = node.data };
     }
 
     /// Registers an evaluated handle as a DAG leaf. On success the builder takes
@@ -548,17 +672,31 @@ pub const DAGBuilder = struct {
         return idx;
     }
 
+    /// The solid `target` with material `material_id` (the VM's).
     pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
-        const snap = self.snapshot();
-        const extra_idx = try self.appendExtraData(&.{ target, material_id });
-        return try self.appendNodeWithRollback(.{ .tag = .set_material, .flags = 0, .data = extra_idx }, snap);
+        return self.addLabel(.set_material, target, material_id);
     }
 
-    /// `target` named `name_id` (internPartName).
+    /// The solid `target` named `name_id` (internPartName).
     pub fn addSetName(self: *DAGBuilder, target: DAGNodeIndex, name_id: u32) !DAGNodeIndex {
+        return self.addLabel(.set_name, target, name_id);
+    }
+
+    /// The sketch `target` with material `material_id` (the VM's).
+    pub fn addSketchMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
+        return self.addLabel(.cs_set_material, target, material_id);
+    }
+
+    /// The sketch `target` named `name_id` (internPartName).
+    pub fn addSketchName(self: *DAGBuilder, target: DAGNodeIndex, name_id: u32) !DAGNodeIndex {
+        return self.addLabel(.cs_set_name, target, name_id);
+    }
+
+    /// A name or material node (`target_value` layout) of `tag` on `target`.
+    fn addLabel(self: *DAGBuilder, tag: DAGTag, target: DAGNodeIndex, id: u32) !DAGNodeIndex {
         const snap = self.snapshot();
-        const extra_idx = try self.appendExtraData(&.{ target, name_id });
-        return try self.appendNodeWithRollback(.{ .tag = .set_name, .flags = 0, .data = extra_idx }, snap);
+        const extra_idx = try self.appendExtraData(&.{ target, id });
+        return try self.appendNodeWithRollback(.{ .tag = tag, .flags = 0, .data = extra_idx }, snap);
     }
 
     /// The id of the part name `name`, the same for the same text.
@@ -595,14 +733,12 @@ pub const DAGBuilder = struct {
     }
 
     pub fn addBatchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
-        const snap = self.snapshot();
-        const alloc = self.allocator();
-        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        return self.addOperandList(.batch_hull_op, targets);
+    }
 
-        try self.extra_data.append(alloc, @intCast(targets.len));
-        try self.extra_data.appendSlice(alloc, targets);
-
-        return try self.appendNodeWithRollback(.{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx }, snap);
+    /// The hull of one sketch or of several together.
+    pub fn addSketchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        return self.addOperandList(.cs_hull_op, targets);
     }
 
     pub fn addLoft(self: *DAGBuilder, base: DAGNodeIndex, top: DAGNodeIndex, height: f64) !DAGNodeIndex {
@@ -614,6 +750,16 @@ pub const DAGBuilder = struct {
 
     pub fn addProject(self: *DAGBuilder, target: DAGNodeIndex) !DAGNodeIndex {
         return self.addSingleTargetNode(.project_op, target);
+    }
+
+    /// `target` projected onto XY under the settings `target` was made under, not the
+    /// ones in force: a drawing of a Solid made under its own (CAD.with_config) measures
+    /// it as it was made.
+    pub fn addProjectAsMade(self: *DAGBuilder, target: DAGNodeIndex) !DAGNodeIndex {
+        const in_force = self.current_settings;
+        defer self.current_settings = in_force;
+        self.current_settings = self.nodes.items[target].settings;
+        return self.addProject(target);
     }
 
     pub fn addSlice(self: *DAGBuilder, target: DAGNodeIndex, height: f64) !DAGNodeIndex {
@@ -637,11 +783,20 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .extrude, .flags = 0, .data = extra_idx }, snap);
     }
 
-    pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8) !DAGNodeIndex {
+    /// `segments`: how many a full circle of round joins gets; `miter_limit`: how far, in
+    /// multiples of `delta`, a miter join's corner may reach before it is squared off.
+    pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8, segments: i32, miter_limit: f64) !DAGNodeIndex {
         const snap = self.snapshot();
-        const num_idx = try self.appendNumbers(&.{delta});
+        const num_idx = try self.appendNumbers(&.{ delta, @floatFromInt(segments), miter_limit });
         const extra_idx = try self.appendExtraData(&.{ target, num_idx });
         return try self.appendNodeWithRollback(.{ .tag = .offset, .flags = join_type, .data = extra_idx }, snap);
+    }
+
+    pub fn addErode(self: *DAGBuilder, target: DAGNodeIndex, radius: f64, segments: i32) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx = try self.appendNumbers(&.{ radius, @floatFromInt(segments) });
+        const extra_idx = try self.appendExtraData(&.{ target, num_idx });
+        return try self.appendNodeWithRollback(.{ .tag = .erode, .flags = 0, .data = extra_idx }, snap);
     }
 
     pub fn addRevolve(self: *DAGBuilder, target: DAGNodeIndex, segments: i32, degrees: f64) !DAGNodeIndex {
@@ -663,6 +818,49 @@ pub const DAGBuilder = struct {
         const num_idx = try self.appendNumbers(&mat);
         const extra_idx = try self.appendExtraData(&.{ target, num_idx });
         return try self.appendNodeWithRollback(.{ .tag = .cs_transform, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// A Path closed into a sketch: `start`, then each segment with the chords it is drawn
+    /// with (`chords[i]`, 0 for a line), as numbers.
+    pub fn addClosedPath(self: *DAGBuilder, start: [2]f64, segments: []const path_mod.Segment, chords: []const u32) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.append(self.allocator(), start[0]);
+        try self.numbers.append(self.allocator(), start[1]);
+        for (segments, chords) |segment, count| {
+            const arc = segment.arc orelse path_mod.Arc{ .center = .{ 0, 0 }, .radius = 0 };
+            const cubic = segment.cubic orelse path_mod.Cubic{ .c1 = .{ 0, 0 }, .c2 = .{ 0, 0 } };
+            const kind: PathSegmentKind = if (segment.arc != null) .arc else if (segment.cubic != null) .cubic else .line;
+            try self.numbers.appendSlice(self.allocator(), &.{
+                segment.to[0], segment.to[1], @floatFromInt(@backingInt(kind)), arc.center[0], arc.center[1],        arc.radius, @floatFromInt(@intFromBool(segment.ccw)), segment.angle,
+                cubic.c1[0],   cubic.c1[1],   cubic.c2[0],                      cubic.c2[1],   @floatFromInt(count),
+            });
+        }
+        const extra_idx = try self.appendExtraData(&.{ num_idx, @intCast(segments.len) });
+        return try self.appendNodeWithRollback(.{ .tag = .closed_path, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// A closed path's start, segments and chords, read back from its node; owned by
+    /// `allocator` (ClosedPath.deinit).
+    pub fn readClosedPath(self: *const DAGBuilder, alloc: std.mem.Allocator, node: DAGNode) !ClosedPath {
+        const count = self.extra_data.items[node.data + 1];
+        const numbers = self.numbers.items[self.extra_data.items[node.data]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * count];
+        const segments = try alloc.alloc(path_mod.Segment, count);
+        errdefer alloc.free(segments);
+        const chords = try alloc.alloc(u32, count);
+        for (segments, chords, 0..) |*segment, *chord, i| {
+            const n = numbers[PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * i ..][0..PATH_SEGMENT_NUMBERS];
+            const kind: PathSegmentKind = @fromBackingInt(@intCast(@as(u8, @intFromFloat(n[2]))));
+            segment.* = .{
+                .to = .{ n[0], n[1] },
+                .arc = if (kind == .arc) .{ .center = .{ n[3], n[4] }, .radius = n[5] } else null,
+                .ccw = n[6] != 0,
+                .angle = n[7],
+                .cubic = if (kind == .cubic) .{ .c1 = .{ n[8], n[9] }, .c2 = .{ n[10], n[11] } } else null,
+            };
+            chord.* = @intFromFloat(n[12]);
+        }
+        return .{ .start = .{ numbers[0], numbers[1] }, .segments = segments, .chords = chords };
     }
 
     pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
@@ -688,7 +886,7 @@ pub const DAGBuilder = struct {
             .operand_list => extra[node.data + 1 ..][0..extra[node.data]],
             .target_numbers, .target_value => extra[node.data..][0..1],
             .loft => extra[node.data..][0..2],
-            .none, .numbers, .polygon, .polygons, .polyhedron, .concrete => &.{},
+            .none, .numbers, .polygon, .path, .polygons, .polyhedron, .concrete => &.{},
         };
     }
 
@@ -830,6 +1028,11 @@ pub const DAGBuilder = struct {
                 const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at]..][0 .. 2 * count]);
                 copy.data = try fresh.appendExtraData(&.{ numbers_at, count });
             },
+            .path => {
+                const count = extra[at + 1];
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * count]);
+                copy.data = try fresh.appendExtraData(&.{ numbers_at, count });
+            },
             .polygons => {
                 const count = extra[at];
                 copy.data = try fresh.appendExtraData(&.{count});
@@ -839,6 +1042,11 @@ pub const DAGBuilder = struct {
                     const numbers_at = try fresh.appendNumbers(self.numbers.items[points..][0 .. 2 * len]);
                     _ = try fresh.appendExtraData(&.{ numbers_at, len });
                 }
+                const curves_at = self.polygonsCurvesAt(at);
+                const curves = extra[curves_at];
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[curves_at + 1]..][0 .. CURVE_NUMBERS * curves]);
+                _ = try fresh.appendExtraData(&.{ curves, numbers_at });
+                _ = try fresh.appendExtraData(extra[curves_at + 2 ..][0 .. CURVE_WORDS * curves]);
             },
             .polyhedron => {
                 const points_at: u32 = @intCast(fresh.poly_points.items.len);
@@ -909,6 +1117,11 @@ pub const DAGBuilder = struct {
         };
     }
 
+    pub inline fn getRoundedSquarePayload(self: *const DAGBuilder, node: DAGNode) rounded_rect.RoundedRect {
+        const n = self.numbers.items[node.data..][0..4];
+        return .{ .x = n[0], .y = n[1], .center = (node.flags & 1) != 0, .radius = n[2], .segments = @intFromFloat(n[3]) };
+    }
+
     pub inline fn getCirclePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, segments: i32 } {
         return .{
             .radius = self.numbers.items[node.data],
@@ -934,12 +1147,6 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub const getMirrorPayload = getTranslatePayload;
-
-    pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
-        return .{ .target = self.extra_data.items[node.data] };
-    }
-
     pub inline fn getLoftPayload(self: *const DAGBuilder, node: DAGNode) LoftPayload {
         return .{
             .base = self.extra_data.items[node.data],
@@ -953,10 +1160,15 @@ pub const DAGBuilder = struct {
             .target = self.extra_data.items[node.data],
             .delta = self.numbers.items[self.extra_data.items[node.data + 1]],
             .join_type = node.flags,
+            .segments = @intFromFloat(self.numbers.items[self.extra_data.items[node.data + 1] + 1]),
+            .miter_limit = self.numbers.items[self.extra_data.items[node.data + 1] + 2],
         };
     }
 
-    pub const getProjectPayload = getHullPayload;
+    pub inline fn getErodePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, radius: f64, segments: i32 } {
+        const at = self.extra_data.items[node.data + 1];
+        return .{ .target = self.extra_data.items[node.data], .radius = self.numbers.items[at], .segments = @intFromFloat(self.numbers.items[at + 1]) };
+    }
 
     pub inline fn getSlicePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, height: f64 } {
         return .{
@@ -1067,6 +1279,10 @@ pub const DAGBuilder = struct {
                 hasher.update(std.mem.sliceAsBytes(numbers));
             },
             .value => |v| hasher.update(std.mem.asBytes(&v)),
+            .words => |words| {
+                if (sized) hasher.update(std.mem.asBytes(&@as(u64, words.len)));
+                hasher.update(std.mem.sliceAsBytes(words));
+            },
             .serial => |v| hasher.update(std.mem.asBytes(&v)),
             // Covered by the mesh hash before them, computed once when the node was made:
             // a polyhedron can have millions of points.
@@ -1099,6 +1315,7 @@ pub const DAGBuilder = struct {
             .points => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.points)),
             .faces => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.faces)),
             .value => |x| x == b.value,
+            .words => |x| std.mem.eql(u32, x, b.words),
             .serial => |x| x == b.serial,
         };
     }

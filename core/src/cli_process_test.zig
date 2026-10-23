@@ -64,6 +64,7 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "strict.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "quiet.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "typo.json", .data = "{\n  \"lint\": {\n    \"unused-variabel\": \"off\"\n  }\n}" });
+        try tmp.dir.createDirPath(testing.io, "empty");
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -138,6 +139,7 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "check", "missing.kup" }, .code = 1, .absent = "Success" },
         .{ .args = &.{"pkg"}, .code = 1, .contains = "Usage: kupcad pkg <init|add|install|prune|doctor>" },
         .{ .args = &.{ "pkg", "frobnicate" }, .code = 1, .contains = "Unknown pkg command 'frobnicate'", .absent = "ManifestNotFound" },
+        .{ .args = &.{ "pkg", "prune", "--forse" }, .code = 1, .contains = "Unexpected argument '--forse' for kupcad pkg prune" },
         .{ .args = &.{"watch"}, .code = 1, .contains = "Missing input file path" },
         .{ .args = &.{"dev"}, .code = 1 },
         .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },
@@ -148,6 +150,8 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "fmt", "--bogus", "valid.kup" }, .code = 1, .contains = "Unknown option '--bogus'" },
         .{ .args = &.{ "fmt", "--check", "--write", "valid.kup" }, .code = 1, .contains = "--check and --write can't be used together" },
         .{ .args = &.{ "fmt", "--check", "syntax_error.kup" }, .code = 1, .contains = "has syntax errors" },
+        .{ .args = &.{ "fmt", "--stdin", "valid.kup" }, .code = 1, .contains = "--stdin formats what is piped in: it takes no files and no --write" },
+        .{ .args = &.{ "fmt", "--stdin", "--write" }, .code = 1, .contains = "--stdin formats what is piped in" },
         .{ .args = &.{"check"}, .code = 1, .contains = "Missing file path\n\nUsage: kupcad check" },
     });
 }
@@ -305,6 +309,68 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     try testing.expect(std.mem.find(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
+test "kupcad: pkg install needs kupcad.json; install, prune and doctor run on a fresh store" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+
+    const without = try kupcadIn(sb.path, &.{ "pkg", "install" }, &env);
+    defer without.deinit();
+    try testing.expectEqual(@as(u8, 1), without.code);
+    try testing.expect(std.mem.find(u8, without.stderr, "could not read kupcad.json") != null);
+    try testing.expect(std.mem.find(u8, without.stderr, "run `kupcad pkg init` to create one") != null);
+
+    const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
+    defer created.deinit();
+    try testing.expectEqual(@as(u8, 0), created.code);
+    const steps = [_]struct { args: []const []const u8, says: []const u8 }{
+        .{ .args = &.{ "pkg", "install" }, .says = "Workspace linked successfully." },
+        .{ .args = &.{ "pkg", "prune" }, .says = "Pruned 0 files" },
+        .{ .args = &.{ "pkg", "prune", "--force" }, .says = "Pruned 0 files" },
+        .{ .args = &.{ "pkg", "doctor" }, .says = "System health check complete." },
+    };
+    for (steps) |step| {
+        errdefer std.debug.print("kupcad {any}\n", .{step.args});
+        const run = try kupcadIn(sb.path, step.args, &env);
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        const said = try std.mem.concat(testing.allocator, u8, &.{ run.stdout, run.stderr });
+        defer testing.allocator.free(said);
+        try testing.expect(std.mem.find(u8, said, step.says) != null);
+    }
+}
+
+test "kupcad: dev ast-dump, disasm and lex-dump write their file beside the script" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "heredoc.kup", .data = "x = <<~EOS\n  hi\nEOS\ncube(1)\n" });
+    const dumps = [_]struct { name: []const u8, script: []const u8, file: []const u8, starts: []const u8 }{
+        .{ .name = "ast-dump", .script = "valid.kup", .file = "valid.kup.dump", .starts = "└── block" },
+        .{ .name = "disasm", .script = "valid.kup", .file = "valid.kup.disasm", .starts = "== main ==" },
+        .{ .name = "lex-dump", .script = "valid.kup", .file = "valid.kup.lex", .starts = "== Lexer Token Dump ==" },
+        // A heredoc's tokens: their bodies were leaked
+        .{ .name = "lex-dump", .script = "heredoc.kup", .file = "heredoc.kup.lex", .starts = "== Lexer Token Dump ==" },
+    };
+    for (dumps) |dump| {
+        errdefer std.debug.print("kupcad dev {s} {s}\n", .{ dump.name, dump.script });
+        const run = try kupcad(sb.path, &.{ "dev", dump.name, dump.script });
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        try testing.expect(std.mem.find(u8, run.stderr, "leaked") == null);
+        const written = try sb.tmp.dir.readFileAlloc(testing.io, dump.file, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(written);
+        try testing.expect(std.mem.startsWith(u8, written, dump.starts));
+    }
+    const missing = try kupcad(sb.path, &.{ "dev", "disasm" });
+    defer missing.deinit();
+    try testing.expectEqual(@as(u8, 1), missing.code);
+    try testing.expect(std.mem.find(u8, missing.stderr, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>") != null);
+}
+
 test "kupcad: build of a script in a subfolder imports its neighbours" {
     var sb = try Sandbox.init();
     defer sb.deinit();
@@ -345,6 +411,10 @@ test "kupcad: check --format json and sarif write one document to stdout" {
 test "kupcad: check --max-warnings fails a run with more warnings than that" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "Failed: 1 warning, more than --max-warnings 0." },
+        .{ .args = &.{ "check", "--max-warnings", "many", "unused.kup" }, .code = 1, .contains = "Error: --max-warnings takes a whole number, not 'many'" },
+        .{ .args = &.{ "check", "--format", "yaml", "unused.kup" }, .code = 1, .contains = "Error: --format is text, json or sarif, not 'yaml'" },
+        // A folder with no script has nothing wrong in it
+        .{ .args = &.{ "check", "empty" }, .code = 0, .contains = "across 0 files" },
         .{ .args = &.{ "check", "--max-warnings", "1", "unused.kup" }, .code = 0 },
         .{ .args = &.{ "check", "--format", "json", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "1 warning, more than --max-warnings 0" },
         .{ .args = &.{ "check", "--format", "xml", "unused.kup" }, .code = 1, .contains = "--format is text, json or sarif, not 'xml'" },
@@ -490,6 +560,29 @@ const Conversation = struct {
         }
     }
 };
+
+test "kupcad: fmt --stdin formats what is piped in, and --check fails when it isn't formatted" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const cases = [_]struct { args: []const []const u8, code: u8, out: []const u8 }{
+        .{ .args = &.{ "fmt", "--stdin" }, .code = 0, .out = "x = 1 + 2\n" },
+        .{ .args = &.{ "fmt", "--stdin", "--check" }, .code = 1, .out = "<stdin>\n" },
+    };
+    for (cases) |case| {
+        var talk: Conversation = undefined;
+        try talk.start(sb.path, case.args);
+        try talk.writer.interface.writeAll("x=1+  2");
+        try talk.writer.interface.flush();
+        // Its output to the end before it is waited for, which closes the pipes
+        talk.child.stdin.?.close(testing.io);
+        talk.child.stdin = null;
+        const out = try talk.reader.interface.allocRemaining(testing.allocator, .limited(1 << 16));
+        defer testing.allocator.free(out);
+        const term = try talk.child.wait(testing.io);
+        try testing.expectEqual(std.process.Child.Term{ .exited = case.code }, term);
+        try testing.expectEqualStrings(case.out, out);
+    }
+}
 
 fn u32Le(n: u32) [4]u8 {
     var b: [4]u8 = undefined;

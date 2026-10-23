@@ -7,7 +7,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
-const util = @import("../methods/util.zig");
+const arguments = @import("../arguments.zig");
 const iteration = @import("iteration.zig");
 const number = @import("number.zig");
 
@@ -105,9 +105,19 @@ fn mathHypot(vm: *VM, receiver: value.Value, nums: []const value.Value) !value.V
     for (nums, 1..) |n, i| {
         var label_buf: [24]u8 = undefined;
         const label = std.mem.print(&label_buf, "argument {d}", .{i}) catch "an argument";
-        len = std.math.hypot(len, try util.requireNumber(vm, n, "Math.hypot", label));
+        len = std.math.hypot(len, try arguments.requireNumber(vm, n, "Math.hypot", label));
     }
     return value.Value.initNumber(len);
+}
+
+/// Math.polar(r, deg): the point `[x, y]` at `r` from the origin, `deg` degrees counter-
+/// clockwise from +x, exact where `cosd` and `sind` are (`Math.polar(10, 90)` is `[0, 10]`):
+/// a bolt circle's centres are `(0...n).map { |i| Math.polar(r, i * 360 / n) }`.
+fn mathPolar(vm: *VM, receiver: value.Value, r: f64, deg: f64) !value.Value {
+    _ = receiver;
+    const x = try result(vm, "Math.polar", &.{ r, deg }, r * cosd(deg));
+    const y = try result(vm, "Math.polar", &.{ r, deg }, r * sind(deg));
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, &.{ x, y })).obj);
 }
 
 // --- Angles in degrees -----------------------------------------------------------------
@@ -235,11 +245,11 @@ fn mathExtremum(comptime pick: anytype, comptime name: []const u8) value.NativeF
         fn call(vm: *VM, receiver: value.Value, nums: []const value.Value) !value.Value {
             _ = receiver;
             if (nums.len == 0) return value.Value.initNil();
-            var best = try util.requireNumber(vm, nums[0], name, "argument 1");
+            var best = try arguments.requireNumber(vm, nums[0], name, "argument 1");
             for (nums[1..], 2..) |n, i| {
                 var label_buf: [24]u8 = undefined;
                 const label = std.mem.print(&label_buf, "argument {d}", .{i}) catch "an argument";
-                best = pick(best, try util.requireNumber(vm, n, name, label));
+                best = pick(best, try arguments.requireNumber(vm, n, name, label));
             }
             return value.Value.initNumber(best);
         }
@@ -329,6 +339,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "clamp", .func = common.wrapMethod(mathClamp) },
     .{ .name = "lerp", .func = math3(lerp, "Math.lerp") },
     .{ .name = "hypot", .func = common.wrapMethod(mathHypot) },
+    .{ .name = "polar", .func = common.wrapMethod(mathPolar) },
     .{ .name = "sign", .func = math1(sign, "Math.sign") },
     .{ .name = "snap", .func = common.wrapMethod(mathSnap) },
     .{ .name = "remap", .func = common.wrapMethod(mathRemap) },

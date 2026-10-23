@@ -7,7 +7,6 @@ const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
 const common = @import("classes/common.zig");
-const primitives = @import("primitives.zig");
 const std_exceptions = @import("exceptions.zig");
 const core_classes = @import("core_classes.zig");
 const manifest = @import("manifest.zig");
@@ -15,6 +14,7 @@ const object_mod = @import("classes/object.zig");
 const array_class_mod = @import("classes/array.zig");
 const string_class_mod = @import("classes/string.zig");
 const map_class_mod = @import("classes/map.zig");
+const random_class_mod = @import("classes/random.zig");
 const kernel = @import("../kernel/kernel.zig");
 const module_compiler = @import("../compiler/module_compiler.zig");
 
@@ -81,6 +81,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.map_class = try defineValueClass(vm, "Map");
     vm.json_object_class = try defineValueClass(vm, "JsonObject");
     vm.font_class = try defineValueClass(vm, "Font");
+    vm.random_class = try defineValueClass(vm, "Random");
     vm.number_class = try defineValueClass(vm, "Number");
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
@@ -94,6 +95,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.bbox_class = try defineValueClass(vm, "BoundingBox");
     vm.geometry_class = try defineValueClass(vm, "Geometry");
     vm.cross_section_class = try defineValueClass(vm, "CrossSection");
+    vm.path_class = try defineValueClass(vm, "Path");
     vm.nil_class = try defineValueClass(vm, "NilClass");
     vm.proc_class = try defineValueClass(vm, "Proc");
     vm.method_class = try defineValueClass(vm, "Method");
@@ -108,6 +110,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(array_class_mod.arrayNew));
     try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(string_class_mod.stringNew));
     try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
+    try bindNew(vm, vm.random_class.?, "Random.new", common.wrapMethod(random_class_mod.randomNew));
 
     // --- Formalize Kernel, Solid and Sketch2D Classes ---
     const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
@@ -123,6 +126,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
             .io => kernel_class,
             .primitive_3d => solid_class,
             .primitive_2d => sketch2d_class,
+            .primitive_path => vm.path_class.?,
             else => continue,
         };
         try bindNativeClassMethod(vm, class, def.name, def.func);
@@ -133,9 +137,11 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try vm.cross_section_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
     try vm.assembly_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
     for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.assembly_class.?, def.name, def.func);
+    try vm.path_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.path_methods.len);
+    for (manifest.path_methods) |def| try bindNativeMethod(vm, vm.path_class.?, def.name, def.func);
     for (manifest.mesh_methods) |def| {
-        try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
-        try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);
+        if (def.isOn(.solids)) try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
+        if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);
     }
 
     // Set up GC module (as an instance of a pseudo-class)
@@ -166,6 +172,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Bind Host Platform Interface Hooks
     vm.host = .{
         .binary_handler = manifest.cadBinaryHandler,
+        .missing_method_hint = manifest.missingMethodHint,
         .print_handler = defaultPrintHandler,
         .mesh_destructor = kernel.destruct,
         .compile_module = module_compiler.compileModule,

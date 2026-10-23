@@ -2,6 +2,23 @@ const std = @import("std");
 const testing = std.testing;
 const bezier = @import("bezier.zig");
 
+test "Bezier: a quadratic raised to a cubic is the same curve, run back by swapping its controls" {
+    const cubic = bezier.quadraticAsCubic(.{ 0, 0 }, .{ 1, 2 }, .{ 2, 0 });
+    try testing.expectApproxEqAbs(2.0 / 3.0, cubic.c1[0], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c1[1], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c2[0], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c2[1], 1e-12);
+    // The quadratic's midpoint: a quarter of each end and half the control
+    const mid = bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 1), mid[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1), mid[1], 1e-12);
+    try testing.expectEqual([2]f64{ 0, 0 }, bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 0));
+    try testing.expectEqual([2]f64{ 2, 0 }, bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 1));
+    const back = cubic.reversed();
+    try testing.expectEqual(cubic.c1, back.c2);
+    try testing.expectEqual(cubic.c2, back.c1);
+}
+
 test "Bezier: Flattens a perfectly straight quadratic line to a single segment" {
     var points: std.ArrayList([2]f64) = .empty;
     defer points.deinit(testing.allocator);
@@ -32,4 +49,37 @@ test "Bezier: Adaptively subdivides sharp cubic curve" {
     const last_point = points.items[points.items.len - 1];
     try testing.expectEqual(10.0, last_point[0]);
     try testing.expectEqual(0.0, last_point[1]);
+}
+
+test "bezier: an ellipse's arc as a cubic, its controls along its tangents" {
+    // A quarter of the unit circle: the controls the well-known 0.5523 out along the tangents
+    const circle = bezier.Ellipse.circle(.{ 0, 0 }, 1);
+    const quarter = circle.cubic(0, std.math.pi / 2.0, circle.at(0), circle.at(std.math.pi / 2.0));
+    const kappa = 4.0 / 3.0 * (std.math.sqrt2 - 1);
+    try testing.expectApproxEqAbs(@as(f64, 1), quarter.c1[0], 1e-12);
+    try testing.expectApproxEqAbs(kappa, quarter.c1[1], 1e-12);
+    try testing.expectApproxEqAbs(kappa, quarter.c2[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1), quarter.c2[1], 1e-12);
+    // Clockwise, the controls lead the other way
+    const back = circle.cubic(0, -std.math.pi / 2.0, circle.at(0), circle.at(-std.math.pi / 2.0));
+    try testing.expectApproxEqAbs(-kappa, back.c1[1], 1e-12);
+    // An ellipse turned a quarter: its x axis along y, so its point at 0 is up, at 2 out
+    const turned = bezier.Ellipse{ .center = .{ 5, 0 }, .rx = 2, .ry = 1, .axis = .{ 0, 1 } };
+    const p = turned.at(0);
+    try testing.expectApproxEqAbs(@as(f64, 5), p[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 2), p[1], 1e-12);
+    const d = turned.tangentAt(0);
+    try testing.expectApproxEqAbs(@as(f64, -1), d[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0), d[1], 1e-12);
+}
+
+test "bezier: a cubic is straight when its controls are on its chord, between its ends" {
+    const third = bezier.Cubic{ .c1 = .{ 10.0 / 3.0, 0 }, .c2 = .{ 20.0 / 3.0, 0 } };
+    try testing.expect(bezier.isStraight(.{ 0, 0 }, third, .{ 10, 0 }));
+    // Bunched at one end, or crossing over, it still runs along the chord
+    try testing.expect(bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 9, 9 }, .c2 = .{ 1, 1 } }, .{ 10, 10 }));
+    // Off it, past an end, or a loop back to where it started: a curve
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 1e-6 }, .c2 = .{ 7, 0 } }, .{ 10, 0 }));
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 0 }, .c2 = .{ 12, 0 } }, .{ 10, 0 }));
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 0 }, .c2 = .{ 7, 0 } }, .{ 0, 0 }));
 }

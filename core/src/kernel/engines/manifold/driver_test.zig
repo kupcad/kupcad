@@ -2,59 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const driver = @import("driver.zig");
 
-test "Math3D: vecDot calculates correct scalar product" {
-    const a = [_]f64{ 1.0, 2.0, 3.0 };
-    const b = [_]f64{ 4.0, 5.0, 6.0 };
-
-    // 1*4 + 2*5 + 3*6 = 32
-    try testing.expectEqual(@as(f64, 32.0), driver.vecDot(a, b));
-
-    const orthogonal_a = [_]f64{ 1.0, 0.0, 0.0 };
-    const orthogonal_b = [_]f64{ 0.0, 1.0, 0.0 };
-    try testing.expectEqual(@as(f64, 0.0), driver.vecDot(orthogonal_a, orthogonal_b));
-}
-
-test "Math3D: vecNormalize scales vector to unit length safely" {
-    const v1 = [_]f64{ 0.0, 5.0, 0.0 };
-    const norm1 = driver.vecNormalize(v1);
-    try testing.expectEqual(@as(f64, 0.0), norm1[0]);
-    try testing.expectEqual(@as(f64, 1.0), norm1[1]);
-    try testing.expectEqual(@as(f64, 0.0), norm1[2]);
-
-    // Zero vector fallback
-    const v2 = [_]f64{ 0.0, 0.0, 0.0 };
-    const norm2 = driver.vecNormalize(v2);
-    try testing.expectEqual(@as(f64, 0.0), norm2[0]);
-    try testing.expectEqual(@as(f64, 0.0), norm2[1]);
-    try testing.expectEqual(@as(f64, 0.0), norm2[2]);
-}
-
-test "Math3D: computeNormal evaluates correct right-hand normal" {
-    // A triangle lying flat on the XY plane, drawn counter-clockwise
-    const v0 = [_]f64{ 0.0, 0.0, 0.0 };
-    const v1 = [_]f64{ 1.0, 0.0, 0.0 };
-    const v2 = [_]f64{ 0.0, 1.0, 0.0 };
-
-    const normal = driver.computeNormal(v0, v1, v2);
-
-    // Should point exactly +Z
-    try testing.expectEqual(@as(f64, 0.0), normal[0]);
-    try testing.expectEqual(@as(f64, 0.0), normal[1]);
-    try testing.expectEqual(@as(f64, 1.0), normal[2]);
-}
-
-test "Math3D: computeCentroid averages vertices exactly" {
-    const v0 = [_]f64{ -3.0, 0.0, 0.0 };
-    const v1 = [_]f64{ 3.0, 0.0, 0.0 };
-    const v2 = [_]f64{ 0.0, 6.0, 9.0 };
-
-    const centroid = driver.computeCentroid(v0, v1, v2);
-
-    try testing.expectEqual(@as(f64, 0.0), centroid[0]);
-    try testing.expectEqual(@as(f64, 2.0), centroid[1]);
-    try testing.expectEqual(@as(f64, 3.0), centroid[2]);
-}
-
 test "Manifold Driver: cube generates exact volume and surface area" {
     // 10x10x10 cube
     const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
@@ -217,19 +164,24 @@ test "Manifold Driver: boolean difference calculates correct subtracted volume" 
     try testing.expectApproxEqAbs(@as(f64, 500.0), vol, 1e-5);
 }
 
-test "Manifold Driver: containsPoint evaluates spatial inclusion correctly" {
+test "Manifold Driver: containsPoint counts a point within the tolerance of the surface, the solid closed" {
     const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
-
-    // Origin is dead-center of the cube
-    try testing.expect(driver.driver.containsPointFn(handle, .{ 0.0, 0.0, 0.0 }));
-
-    // Edge/Inside
-    try testing.expect(driver.driver.containsPointFn(handle, .{ 4.9, 4.9, 4.9 }));
-
-    // Outside the 10x10x10 boundary
-    try testing.expect(!driver.driver.containsPointFn(handle, .{ 10.0, 10.0, 10.0 }));
-    try testing.expect(!driver.driver.containsPointFn(handle, .{ -6.0, 0.0, 0.0 }));
+    const config = @import("../../../core/engine_config.zig").EngineConfig{ .tolerance = 1e-3 };
+    const cases = [_]struct { pt: [3]f64, inside: bool }{
+        .{ .pt = .{ 0, 0, 0 }, .inside = true }, // dead centre
+        .{ .pt = .{ 4.9, 4.9, 4.9 }, .inside = true },
+        .{ .pt = .{ 5, 0, 0 }, .inside = true }, // on a face
+        .{ .pt = .{ 5, 5, 5 }, .inside = true }, // on a corner
+        .{ .pt = .{ 5.0005, 0, 0 }, .inside = true }, // within the tolerance outside it
+        .{ .pt = .{ 5.002, 0, 0 }, .inside = false },
+        .{ .pt = .{ 10, 10, 10 }, .inside = false },
+        .{ .pt = .{ -6, 0, 0 }, .inside = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("point {any}\n", .{case.pt});
+        try testing.expectEqual(@as(?bool, case.inside), driver.driver.containsPointFn(testing.allocator, handle, &config, case.pt));
+    }
 }
 
 test "Manifold Driver: scale modifies geometry and volume non-uniformly" {
@@ -394,7 +346,7 @@ test "Manifold Driver: slice extracts 2D cross section from 3D geometry" {
     defer driver.driver.destructCrossSectionFn(cs);
 
     // Offset the 2D cross section inward by 1 unit
-    const offset_cs = driver.driver.offsetFn(cs, -1.0, 1) orelse return error.OffsetFailed;
+    const offset_cs = driver.driver.offsetFn(cs, -1.0, 1, 8, 2) orelse return error.OffsetFailed;
     defer driver.driver.destructCrossSectionFn(offset_cs);
 
     // Extrude the offset slice back into 3D to check it
@@ -444,7 +396,7 @@ test "Manifold Driver: crossSectionArea and crossSectionBounds evaluate 2D profi
     defer driver.driver.destructCrossSectionFn(sq);
 
     const area = driver.driver.crossSectionAreaFn(sq);
-    const bounds = driver.driver.crossSectionBoundsFn(sq);
+    const bounds = driver.driver.crossSectionBoundsFn(sq).?;
 
     // Area = 10 * 20 = 200
     try testing.expectApproxEqAbs(@as(f64, 200.0), area, 1e-4);
@@ -505,9 +457,54 @@ test "Manifold Driver: a sketch's area counts its holes, and its bounds follow i
 
     const moved = driver.driver.crossSectionTransformFn(ring, .{ 1, 0, 0, 1, 20, -3 }) orelse return error.Failed;
     defer driver.driver.destructCrossSectionFn(moved);
-    const b = driver.driver.crossSectionBoundsFn(moved);
+    const b = driver.driver.crossSectionBoundsFn(moved).?;
     try testing.expectEqual([2]f64{ 15, -8 }, b.min);
     try testing.expectEqual([2]f64{ 25, 2 }, b.max);
+}
+
+test "Manifold Driver: a sketch's contours are its outlines, outer ones counter-clockwise and holes clockwise" {
+    const outer = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(outer);
+    const hole = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(hole);
+    const ring = driver.driver.crossSectionBooleanFn(outer, hole, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(ring);
+
+    const contours = driver.driver.crossSectionContoursFn(ring, testing.allocator) orelse return error.Failed;
+    defer contours.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), contours.count());
+    try testing.expectEqual(@as(usize, 8), contours.points.len);
+    var outer_area: f64 = 0;
+    var hole_area: f64 = 0;
+    for (0..contours.count()) |ci| {
+        const contour = contours.contour(ci);
+        try testing.expectEqual(@as(usize, 4), contour.len);
+        // The shoelace formula: positive counter-clockwise
+        var twice: f64 = 0;
+        for (contour, 0..) |p, i| {
+            const q = contour[(i + 1) % contour.len];
+            twice += p[0] * q[1] - q[0] * p[1];
+        }
+        if (twice > 0) outer_area = twice / 2 else hole_area = twice / 2;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 100), outer_area, 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, -16), hole_area, 1e-9);
+
+    // An empty sketch has none
+    const nothing = driver.driver.crossSectionBooleanFn(outer, outer, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(nothing);
+    const none = driver.driver.crossSectionContoursFn(nothing, testing.allocator) orelse return error.Failed;
+    defer none.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), none.count());
+}
+
+test "Manifold Driver: an empty cross-section has no bounds" {
+    // Manifold's box of nothing is inverted and infinite, which was passed on as a bbox.
+    const sq = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const nothing = driver.driver.crossSectionBooleanFn(sq, sq, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(nothing);
+    try testing.expect(driver.driver.crossSectionBoundsFn(nothing) == null);
 }
 
 test "Manifold Driver: the C++ keeps its asserts only in Debug builds" {

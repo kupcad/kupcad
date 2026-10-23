@@ -106,9 +106,8 @@ pub const Diagnostic = struct {
 
     /// "line:col: message [code]", the one-line form for where there is no room for a caret.
     pub fn formatLine(self: Diagnostic, allocator: std.mem.Allocator, line_index: *const LineIndex) ![]u8 {
-        const line = line_index.getLine(self.loc.offset) + 1;
-        const col = line_index.getUtf8Column(self.loc.offset) + 1;
-        return allocator.print("{d}:{d}: {s} [{s}]", .{ line, col, self.message, self.code.name() });
+        const at = line_index.humanPosition(self.loc.offset);
+        return allocator.print("{d}:{d}: {s} [{s}]", .{ at.line, at.column, self.message, self.code.name() });
     }
 };
 

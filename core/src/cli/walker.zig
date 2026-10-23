@@ -3,7 +3,6 @@
 
 const std = @import("std");
 const fs = @import("fs.zig");
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const Reporter = @import("reporter.zig").Reporter;
 
 /// Generic file processor callback.
@@ -64,7 +63,7 @@ fn reportUnreadable(reporter: Reporter, path: []const u8, err: anyerror) void {
 
 /// False if the file could not be read (reported; the walk continues).
 fn readAndProcess(reporter: Reporter, allocator: std.mem.Allocator, file_path: []const u8, context: ?*anyopaque, processFn: ProcessFileFn) !bool {
-    const source = fs.readFileLimit(reporter.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(reporter.io, allocator, file_path) catch |err| {
         reportUnreadable(reporter, file_path, err);
         return false;
     };

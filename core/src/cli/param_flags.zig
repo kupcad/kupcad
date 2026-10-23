@@ -5,7 +5,6 @@
 const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const Reporter = @import("reporter.zig").Reporter;
 
 /// The options' lines of a command's USAGE.
@@ -68,7 +67,7 @@ fn parseParam(pair: []const u8) error{ MissingEquals, EmptyName }!struct { name:
 /// Reads the parameter file at `path` (`-P`) into `params`; false, the refusal reported, when
 /// it can't be read or isn't one JSON object of names and values.
 fn readParamsFile(allocator: std.mem.Allocator, path: []const u8, params: *api.ParamValues, reporter: Reporter) !bool {
-    const text = fs.readFileLimit(reporter.io, allocator, path, MAX_FILE_SIZE) catch |err| {
+    const text = fs.readFile(reporter.io, allocator, path) catch |err| {
         reporter.err("Error: Could not read parameter file '{s}': {s}\n", .{ path, @errorName(err) });
         return false;
     };

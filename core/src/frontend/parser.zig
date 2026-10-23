@@ -200,11 +200,12 @@ pub const Parser = struct {
         };
     }
 
-    /// The node of the string piece `raw` (token `tok`), its escapes decoded. An invalid
-    /// escape is reported where it is and leaves an invalid node.
-    fn stringNode(self: *Parser, raw: []const u8, tok: u24) ParseError!ast.NodeIndex {
+    /// The node of the string piece or quoted symbol `raw` (token `tok`), `node_tag` `.string` or
+    /// `.symbol`, its escapes decoded. An invalid escape is reported where it is and leaves
+    /// an invalid node.
+    fn quotedNode(self: *Parser, node_tag: ast.Tag, raw: []const u8, tok: u24) ParseError!ast.NodeIndex {
         var problem: string_escape.Problem = undefined;
-        return self.b.stringNodeUnescaped(raw, tok, &problem) catch |err| switch (err) {
+        return self.b.quotedNode(node_tag, raw, tok, &problem) catch |err| switch (err) {
             error.InvalidEscape => {
                 self.reportEscape(self.getLoc(tok), problem);
                 return self.b.invalidNode(tok) catch ParseError.OutOfMemory;
@@ -681,7 +682,7 @@ pub const Parser = struct {
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
         switch (left_node.tag) {
             .identifier => {
-                return self.b.assignment(@as(ast.StringId, @fromBackingInt(left_node.data)), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
+                return self.b.assignment(self.b.tree.stringId(left_node), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
             },
             .method_call => {
                 const mc = self.b.tree.methodCall(left_node);
@@ -1629,7 +1630,7 @@ pub const Parser = struct {
                 self.advance();
                 self.skipComments();
 
-                left = try self.stringNode(raw_lexeme, str_tok);
+                left = try self.quotedNode(.string, raw_lexeme, str_tok);
             },
             .heredoc => {
                 const str_tok = self.tok_idx;
@@ -1643,13 +1644,21 @@ pub const Parser = struct {
                 self.advance();
                 self.skipComments();
                 // The delimiter is the byte before the text: the quote, or %q's bracket.
-                left = try self.b.stringNodeRaw(raw_lexeme, str_tok, self.source[self.tokens.starts[str_tok] - 1]);
+                left = try self.b.quotedNodeRaw(.string, raw_lexeme, str_tok, self.source[self.tokens.starts[str_tok] - 1]);
             },
             .symbol => {
                 self.advance();
                 left = try self.b.symbolNode(self.tokens.lexeme(self.source, start_tok), start_tok);
             },
-            .string_start => left = try self.parseInterpolatedString(),
+            .quoted_symbol => {
+                self.advance();
+                left = try self.quotedNode(.symbol, self.tokens.lexeme(self.source, start_tok), start_tok);
+            },
+            .raw_symbol => {
+                self.advance();
+                left = try self.b.quotedNodeRaw(.symbol, self.tokens.lexeme(self.source, start_tok), start_tok, '\'');
+            },
+            .string_start, .symbol_start => left = try self.parseInterpolatedString(),
             .keyword_true => {
                 self.advance();
                 left = try self.b.booleanNode(true, start_tok);
@@ -1744,13 +1753,15 @@ pub const Parser = struct {
         return first;
     }
 
+    /// `"a#{x}b"`, or the symbol `:"a#{x}b"`, from its first piece's token.
     fn parseInterpolatedString(self: *Parser) ParseError!ast.NodeIndex {
         const start_tok = self.tok_idx;
+        const node_tag: ast.Tag = if (self.tag(0) == .symbol_start) .interpolated_symbol else .interpolated_string;
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
 
         const raw_start = self.lexeme(0);
-        try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_start, start_tok));
+        try self.scratch_nodes.append(self.allocator, try self.quotedNode(.string, raw_start, start_tok));
         self.advance();
 
         while (true) {
@@ -1772,7 +1783,7 @@ pub const Parser = struct {
 
             if (self.tag(0) == .string_end or self.tag(0) == .string_mid) {
                 const raw_part = self.lexeme(0);
-                try self.scratch_nodes.append(self.allocator, try self.stringNode(raw_part, self.tok_idx));
+                try self.scratch_nodes.append(self.allocator, try self.quotedNode(.string, raw_part, self.tok_idx));
                 const is_end = (self.tag(0) == .string_end);
                 self.advance();
                 if (is_end) break;
@@ -1784,7 +1795,7 @@ pub const Parser = struct {
         }
 
         const span = try self.b.addNodes(self.scratch_nodes.items[s_len..]);
-        return self.b.interpolatedString(span, start_tok) catch ParseError.OutOfMemory;
+        return self.b.interpolated(node_tag, span, start_tok) catch ParseError.OutOfMemory;
     }
 
     fn parsePercentArray(self: *Parser, t: Tag) ParseError!ast.NodeIndex {
@@ -2101,37 +2112,6 @@ pub const Parser = struct {
         }
         self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a block parameter name, found '{s}'", .{self.lexeme(0)});
         return ParseError.UnexpectedToken;
-    }
-
-    fn parseAssertOrEcho(self: *Parser) ParseError!ast.NodeIndex {
-        const start_tok = self.tok_idx;
-        self.advance();
-        const args = try self.parseParenArgs();
-        const end_tok = self.tok_idx;
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, end_tok, start_tok) catch return ParseError.OutOfMemory;
-        if (self.tag(0) == .semicolon) {
-            self.advance();
-            return call_node;
-        } else if (self.tag(0) == .l_brace) {
-            self.advance();
-            const child_block = try self.parseBlock(&.{.r_brace});
-            _ = try self.expect(.r_brace);
-            const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @backingInt(child_block);
-            return call_node;
-        } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
-            const child_stmt = try self.parseStatement();
-            const s_len = self.scratch_nodes.items.len;
-            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-            try self.scratch_nodes.append(self.allocator, child_stmt);
-            const child_main_token = self.b.tree.getNode(child_stmt).?.main_token;
-            const child_end_tok = self.tok_idx;
-            const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_end_tok, child_main_token);
-            const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @backingInt(block);
-            return call_node;
-        }
-        return call_node;
     }
 
     fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {

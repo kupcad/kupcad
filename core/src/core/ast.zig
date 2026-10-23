@@ -20,26 +20,53 @@ pub const UnaryOp = enum {
 };
 
 pub const BinaryOp = enum {
-    add, // +
-    subtract, // -
-    multiply, // *
-    divide, // /
-    modulo, // %
-    exponent, // ** or ^
-    equal, // ==
-    not_equal, // !=
-    less, // <
-    less_equal, // <=
-    greater, // >
-    greater_equal, // >=
-    spaceship, // <=>
-    logical_and, // &&
-    logical_or, // ||
-    shift_left, // <<
-    shift_right, // >>
-    bitwise_and, // & (CSG Intersection)
-    bitwise_or, // |
-    bitwise_xor, // ^
+    add,
+    subtract,
+    multiply,
+    divide,
+    modulo,
+    exponent,
+    equal,
+    not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    spaceship,
+    logical_and,
+    logical_or,
+    shift_left,
+    shift_right,
+    /// `&`, a CSG intersection of shapes
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
+
+    /// How the operator is written, as the formatter prints it and an error names it.
+    pub fn symbol(self: BinaryOp) []const u8 {
+        return switch (self) {
+            .add => "+",
+            .subtract => "-",
+            .multiply => "*",
+            .divide => "/",
+            .modulo => "%",
+            .exponent => "**",
+            .equal => "==",
+            .not_equal => "!=",
+            .less => "<",
+            .less_equal => "<=",
+            .greater => ">",
+            .greater_equal => ">=",
+            .spaceship => "<=>",
+            .logical_and => "&&",
+            .logical_or => "||",
+            .shift_left => "<<",
+            .shift_right => ">>",
+            .bitwise_and => "&",
+            .bitwise_or => "|",
+            .bitwise_xor => "^",
+        };
+    }
 };
 
 pub const ArgModifier = enum { splat, double_splat, block };
@@ -103,6 +130,9 @@ pub const Tag = enum(u8) {
     double_splat_expr,
     rescue_modifier,
     interpolated_string,
+    /// `:"part_#{i}"`: the Symbol named by the string its parts make, laid out as
+    /// `interpolated_string`'s.
+    interpolated_symbol,
 };
 
 // --- Thin Node (8 bytes) ---
@@ -396,6 +426,12 @@ pub const Tree = struct {
     pub inline fn stringId(self: *const Tree, node: *const Node) StringId {
         _ = self;
         return @as(StringId, @fromBackingInt(node.data));
+    }
+
+    /// The text a node of a name or a literal holds (an identifier's, a String's, a
+    /// Symbol's): its `stringId`'s.
+    pub fn nodeString(self: *const Tree, node: *const Node) []const u8 {
+        return self.getString(self.stringId(node));
     }
 
     // --- Accessor Helpers ---
@@ -971,24 +1007,26 @@ pub const Builder = struct {
         return self.createNode(.string, main_token, @backingInt(str_id));
     }
 
-    /// A single-quoted or `%q` literal's node (string_escape.unescapeRawInto), `open` its
-    /// opening delimiter.
-    pub fn stringNodeRaw(self: *Builder, lexeme_str: []const u8, main_token: u24, open: u8) !NodeIndex {
+    /// The node of a single-quoted or `%q` literal, `tag` `.string` or `.symbol` (`:'a b'`),
+    /// decoded by string_escape.unescapeRawInto, `open` its opening delimiter.
+    pub fn quotedNodeRaw(self: *Builder, tag: Tag, lexeme_str: []const u8, main_token: u24, open: u8) !NodeIndex {
         var buf = try std.ArrayList(u8).initCapacity(self.allocator, lexeme_str.len);
         defer buf.deinit(self.allocator);
         try string_escape.unescapeRawInto(&buf, self.allocator, lexeme_str, open);
         const str_id = try self.intern(buf.items);
-        return self.createNode(.string, main_token, @backingInt(str_id));
+        return self.createNode(tag, main_token, @backingInt(str_id));
     }
 
-    pub fn stringNodeUnescaped(self: *Builder, lexeme_str: []const u8, main_token: u24, problem: *string_escape.Problem) string_escape.Error!NodeIndex {
+    /// The node of a double-quoted literal, `tag` `.string` or `.symbol` (`:"a\tb"`), its
+    /// escapes decoded (internUnescaped).
+    pub fn quotedNode(self: *Builder, tag: Tag, lexeme_str: []const u8, main_token: u24, problem: *string_escape.Problem) string_escape.Error!NodeIndex {
         const str_id = try self.internUnescaped(lexeme_str, problem);
-        return self.createNode(.string, main_token, @backingInt(str_id));
+        return self.createNode(tag, main_token, @backingInt(str_id));
     }
 
-    /// A symbol's node, `name` its token's text: the lexer gives it without the colon (and
-    /// without the quotes of `:"a b"`). A leading colon is the name's own: `:":"` is the
-    /// symbol named ":", which used to lose it and become the empty symbol.
+    /// A bare symbol's node, `name` its token's text: the lexer gives it without the colon.
+    /// A quoted symbol is a `quotedNode` (a leading colon is the name's own: `:":"` is the
+    /// symbol named ":", which used to lose it and become the empty symbol).
     pub fn symbolNode(self: *Builder, name: []const u8, main_token: u24) !NodeIndex {
         const str_id = try self.intern(name);
         return self.createNode(.symbol, main_token, @backingInt(str_id));
@@ -1161,9 +1199,10 @@ pub const Builder = struct {
         return self.createNode(.namespace_access, main_token, data_idx);
     }
 
-    pub fn interpolatedString(self: *Builder, parts: Span, main_token: u24) !NodeIndex {
+    /// An `.interpolated_string` or `.interpolated_symbol` (`tag`) of `parts`.
+    pub fn interpolated(self: *Builder, tag: Tag, parts: Span, main_token: u24) !NodeIndex {
         const data_idx = try self.addExtra(.{parts});
-        return self.createNode(.interpolated_string, main_token, data_idx);
+        return self.createNode(tag, main_token, data_idx);
     }
 
     pub fn returnStmt(self: *Builder, val: NodeIndex, main_token: u24) !NodeIndex {

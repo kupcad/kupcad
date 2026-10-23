@@ -42,12 +42,22 @@ pub const MAX_SEGMENTS: i32 = 2048;
 // Upper bound for repeat_linear / repeat_polar copy counts. Each copy adds a
 // translate node plus a union node to the DAG, so this caps DAG growth per call.
 pub const MAX_PATTERN_COUNT: usize = 10_000;
+// Most points a sweep follows: each adds an extrusion and a corner's revolve to the DAG.
+pub const MAX_SWEEP_POINTS: usize = 10_000;
 // Largest array a range may materialize (Range#to_a, and the array Range#map returns).
 // Block-driven iteration (each, times, upto, downto) is NOT capped: every block call runs
 // through the dispatch loop, which checks cancellation and the instruction budget, just
 // like a `while` loop. Building an array is bounded by memory instead: 10M values is
 // ~130 MB, and the native build has no memory limit by default.
 pub const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
+// Most characters String#rjust and #ljust add, and the widest a `%` format's directive is.
+// A label or a table column is far shorter, and the padding is written in the native,
+// where the instruction budget can't stop it.
+pub const MAX_STRING_PAD: usize = 1_000_000;
+// Most corners a polyhedron's face has. A face is triangulated by ear clipping in the native
+// (core/triangulate.zig), O(n²) in its corners, where the instruction budget can't stop it;
+// a cap of a cylinder drawn at the finest resolution has MAX_SEGMENTS.
+pub const MAX_FACE_CORNERS: usize = 4096;
 // Upper bounds for the B-Rep solver iteration budgets set via CAD.config(brep: ...).
 // Both are per-call loops, so an unbounded user value turns one projection or
 // intersection into an effective hang. The caps sit 20x/200x above the defaults
@@ -63,6 +73,17 @@ pub const MAX_MARCHING_STEPS: u32 = 100_000;
 pub const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 // Largest JSON file `import_json` reads: its values take several times its size.
 pub const MAX_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+// Largest drawing `import_dxf` and `import_svg` read: its outlines take several times its size.
+pub const MAX_DRAWING_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+// Most pieces a drawing's blocks (DXF INSERTs) or clones (SVG <use>s) place: nested,
+// they multiply, so a small file could ask for more than memory holds.
+pub const MAX_DRAWING_PIECES: usize = 1_000_000;
+// Largest file of a 3MF package `import_3mf` unpacks: a zip's file says what it unpacks
+// to, so a small archive could ask for more than memory holds.
+pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
+// Most triangles a 3MF's build places: components within components multiply, so a small
+// file could ask for more than memory holds.
+pub const MAX_PLACED_TRIANGLES: usize = 20_000_000;
 // Largest font file `import_font` reads: the biggest CJK fonts are about 20 MiB, and the file
 // stays in memory while the run lasts.
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB

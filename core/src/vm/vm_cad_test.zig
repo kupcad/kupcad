@@ -3,20 +3,17 @@
 
 const std = @import("std");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
-const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
-const Profiler = @import("profiler.zig").Profiler;
-const geom = @import("../kernel/geometry_handle.zig");
+const Document = @import("../frontend/document.zig").Document;
 const VM = @import("vm.zig").VM;
 const InterpretResult = @import("vm.zig").InterpretResult;
-const ErrorKind = @import("error_kind.zig").ErrorKind;
 const helpers = @import("vm_test_helpers.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
 const writeGlobalOp = helpers.writeGlobalOp;
@@ -589,25 +586,6 @@ test "VM Edge Case: Robot Mount Bracket execution safely resolves Spatial Querie
 
     // Test that the return is the valid constructed Geometry
     try testing.expect(result.isGeometry());
-}
-
-test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    // 1. Simulate the stack state right before a native call
-    vm.push(value.Value.initNumber(10.0)); // Receiver (base slot)
-    vm.push(value.Value.initNumber(20.0)); // Arg 1
-    vm.push(value.Value.initNumber(30.0)); // Arg 2
-
-    // 2. The native FFI boundary is handed a pointer starting at Arg 1
-    const args_ptr = vm.stack.ptr + 1;
-
-    // 3. Extract the receiver safely
-    const receiver = vm.getReceiver(args_ptr);
-
-    // 4. Verify it correctly stepped back 1 slot to grab the receiver
-    try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
 }
 
 test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respond_to?)" {
@@ -1912,9 +1890,9 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     const test_stl = "vm_test_out.stl";
     const test_glb = "vm_test_out.glb";
 
-    const cwd = std.Io.Dir.cwd();
-    defer cwd.deleteFile(testing.io, test_stl) catch {};
-    defer cwd.deleteFile(testing.io, test_glb) catch {};
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const out_dir = tmp.dir;
 
     const source =
         \\part = Solid.cube(12.0)
@@ -1928,6 +1906,8 @@ test "VM: Instance export methods on Solid and Geometry objects" {
 
     var vm = try VM.init(alloc, testing.io);
     defer vm.deinit();
+    var disk = NativeVfs.init(testing.io, out_dir);
+    vm.vfs = disk.vfs();
     try registry.registerStandardLibrary(&vm);
 
     var exec_chunk = chunk.Chunk.init();
@@ -1945,7 +1925,7 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     try testing.expect(result_val.isGeometry());
 
     // --- Assert STL file was generated and has valid header ---
-    const stl_file = try cwd.openFile(vm.io, test_stl, .{});
+    const stl_file = try out_dir.openFile(vm.io, test_stl, .{});
     defer stl_file.close(vm.io);
 
     var stl_header: [84]u8 = undefined;
@@ -1953,7 +1933,7 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     try testing.expect(stl_bytes_read >= 84);
 
     // --- Assert GLTF binary (.glb) file was generated with magic header ---
-    const glb_file = try cwd.openFile(vm.io, test_glb, .{});
+    const glb_file = try out_dir.openFile(vm.io, test_glb, .{});
     defer glb_file.close(vm.io);
 
     var glb_header: [12]u8 = undefined;

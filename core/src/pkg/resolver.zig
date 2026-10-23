@@ -6,7 +6,6 @@ const std = @import("std");
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
-const LockedPackage = lockfile_mod.LockedPackage;
 const StringMap = lockfile_mod.StringMap;
 const provider = @import("providers/provider.zig");
 const cafs_mod = @import("cafs.zig");
@@ -393,19 +392,18 @@ pub const Resolver = struct {
                     const dep_pkg_id = try parsed.pkgId(self.allocator);
                     defer self.allocator.free(dep_pkg_id);
 
-                    if (self.lockfile.packages.get(dep_pkg_id)) |dep_locked| {
-                        const link_name = try self.allocator.print("{s}/{s}", .{ nested_pkg_dir_path, dep_alias });
-                        defer self.allocator.free(link_name);
+                    const dep_locked = self.lockfile.packages.get(dep_pkg_id) orelse return notLocked(dep_alias);
+                    const link_name = try self.allocator.print("{s}/{s}", .{ nested_pkg_dir_path, dep_alias });
+                    defer self.allocator.free(link_name);
 
-                        const target_path = try self.allocator.print("../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
-                        defer self.allocator.free(target_path);
+                    const target_path = try self.allocator.print("../../../{s}-{s}/pkg", .{ dep_pkg_id, dep_locked.resolved });
+                    defer self.allocator.free(target_path);
 
-                        try validate.validatePathSegment(dep_locked.resolved);
-                        fs.symLink(target_path, link_name) catch |err| {
-                            log.warn("Failed to link {s} -> {s}: {}", .{ link_name, target_path, err });
-                            return err;
-                        };
-                    }
+                    try validate.validatePathSegment(dep_locked.resolved);
+                    fs.symLink(target_path, link_name) catch |err| {
+                        log.warn("Failed to link {s} -> {s}: {}", .{ link_name, target_path, err });
+                        return err;
+                    };
                 }
             }
         }
@@ -419,20 +417,25 @@ pub const Resolver = struct {
             const pkg_id = try parsed.pkgId(self.allocator);
             defer self.allocator.free(pkg_id);
 
-            if (self.lockfile.packages.get(pkg_id)) |locked| {
-                const link_name = try self.allocator.print(PACKAGE_DIR ++ "/{s}", .{alias});
-                defer self.allocator.free(link_name);
+            const locked = self.lockfile.packages.get(pkg_id) orelse return notLocked(alias);
+            const link_name = try self.allocator.print(PACKAGE_DIR ++ "/{s}", .{alias});
+            defer self.allocator.free(link_name);
 
-                const target_path = try self.allocator.print(".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
-                defer self.allocator.free(target_path);
+            const target_path = try self.allocator.print(".store/{s}-{s}/pkg", .{ pkg_id, locked.resolved });
+            defer self.allocator.free(target_path);
 
-                fs.symLink(target_path, link_name) catch |err| {
-                    log.warn("Failed to link {s} -> {s}: {}", .{ link_name, target_path, err });
-                    return err;
-                };
-            } else {
-                log.warn("Dependency '{s}' is not in kupcad.lock; skipping link", .{alias});
-            }
+            fs.symLink(target_path, link_name) catch |err| {
+                log.warn("Failed to link {s} -> {s}: {}", .{ link_name, target_path, err });
+                return err;
+            };
         }
+    }
+
+    /// A dependency resolve should have locked isn't in kupcad.lock: the install fails, as
+    /// linking past it left the project without the package (an import of it failed later,
+    /// far from the cause).
+    fn notLocked(alias: []const u8) error{DependencyNotLocked} {
+        log.warn("Dependency '{s}' is not in kupcad.lock, so it can't be linked; run `kupcad pkg install` again", .{alias});
+        return error.DependencyNotLocked;
     }
 };

@@ -1,16 +1,16 @@
 //! The `CAD` object's methods, which read and change the VM's engine settings
 //! (`EngineConfig`): `CAD.config`, `CAD.with_config` for the length of a block, and
-//! `CAD.current_config`, which returns them as nested Maps.
+//! `CAD.current_config`, which returns them as nested Maps; and `CAD.preview?`, whether
+//! the run is the editor's preview.
 
-const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
-const util = @import("../methods/util.zig");
+const arguments = @import("../arguments.zig");
 const iteration = @import("iteration.zig");
 const engine_config = @import("../../core/engine_config.zig");
 const EngineConfig = engine_config.EngineConfig;
-const EngineType = @import("../../kernel/geometry_handle.zig").EngineType;
+const EngineType = @import("../../core/geometry_handle.zig").EngineType;
 
 /// The top-level settings of CAD.config: EngineConfig's fields, with the engine given by
 /// name and each nested group as a Map (parsed into its own struct by `applyGroup`).
@@ -26,7 +26,7 @@ const Settings = struct {
 /// `config` with `settings` applied. Unknown or mistyped settings and values the kernels
 /// can't use are errors, and nothing is applied then.
 fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !EngineConfig {
-    const parsed = try util.parseKwargs(Settings, vm, &.{value.Value.initObj(&settings.obj)}, "CAD.config");
+    const parsed = try arguments.parseKwargs(Settings, vm, &.{value.Value.initObj(&settings.obj)}, "CAD.config");
     const s = parsed.opts;
     var next = config;
     if (s.engine) |name| next.engine = EngineType.fromScriptName(name) orelse {
@@ -46,9 +46,9 @@ fn applySettings(vm: *VM, settings: *value.ObjMap, config: EngineConfig) !Engine
 /// `current` with the settings of the Map `v` applied; its keys are T's fields.
 fn applyGroup(comptime T: type, vm: *VM, v: value.Value, current: T, what: []const u8) !T {
     if (!v.isMap()) {
-        return vm.fail(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, util.typeName(vm, v) });
+        return vm.fail(.TypeError, "{s} expects a Map of settings, got {s}", .{ what, arguments.typeName(vm, v) });
     }
-    return (try util.parseKwargsOnto(T, current, vm, &.{v}, what)).opts;
+    return (try arguments.parseKwargsOnto(T, current, vm, &.{v}, what)).opts;
 }
 
 /// `config` as nested Maps with the same keys CAD.config takes.
@@ -87,9 +87,7 @@ fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Val
 /// of the active config, then restores it
 fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block: ?*value.ObjClosure) !value.Value {
     _ = receiver;
-    const body = block orelse {
-        return vm.fail(.ArgumentError, "CAD.with_config requires a block", .{});
-    };
+    const body = try arguments.requireBlock(vm, block, "CAD.with_config");
 
     // Inherit the current config, then apply overrides
     const new_config = try applySettings(vm, settings, vm.config());
@@ -109,7 +107,16 @@ fn cadCurrentConfig(vm: *VM, receiver: value.Value) !value.Value {
     return settingsMap(vm, EngineConfig, vm.config());
 }
 
+/// CAD.preview? -> whether the run is the editor's live preview: a script can leave out
+/// detail there (threads, text) that only an export needs. False for kupcad build, run,
+/// watch and the API.
+fn cadPreview(vm: *VM, receiver: value.Value) !value.Value {
+    _ = receiver;
+    return value.Value.initBool(vm.previewing);
+}
+
 pub const methods = [_]common.MethodDef{
+    .{ .name = "preview?", .func = common.wrapMethod(cadPreview) },
     .{ .name = "config", .func = common.wrapMethod(cadConfig) },
     .{ .name = "with_config", .func = common.wrapMethod(cadWithConfig) },
     .{ .name = "current_config", .func = common.wrapMethod(cadCurrentConfig) },

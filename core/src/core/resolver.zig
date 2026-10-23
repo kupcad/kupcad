@@ -1,6 +1,9 @@
 //! `Resolver`: walks the AST once and records, per node, whether a name is a local, an
-//! upvalue, a global or an instance variable (`ResolvedSymbol`), and which variables each
-//! closure captures; it also reports `break` and `next` outside a loop. Run by `document.zig`.
+//! upvalue, a global or an instance variable (`ResolvedSymbol`) and, for a local or an
+//! upvalue, the node that declared it (`declarations`: the assignment, the `def` or lambda
+//! whose parameter it is, the block parameter, the `for`), and which variables each
+//! closure captures; it also reports `break` and `next` outside a loop. Run by
+//! `frontend/document.zig`.
 
 const std = @import("std");
 const ast = @import("ast.zig");
@@ -29,6 +32,8 @@ pub const UpvalueCapture = packed struct {
 const Scope = struct {
     node: ast.NodeIndex, // The AST node defining this closure (e.g. lambda_expr). .none if it's just a block.
     locals: std.AutoHashMapUnmanaged(ast.StringId, u24) = .empty,
+    /// The node that declared each of `locals`: its first assignment, its `def`, ...
+    declared_by: std.AutoHashMapUnmanaged(ast.StringId, ast.NodeIndex) = .empty,
 
     // Tracks the exact captures this closure requires
     upvalues: std.ArrayList(UpvalueCapture) = .empty,
@@ -40,6 +45,7 @@ const Scope = struct {
 
     pub fn deinit(self: *Scope, allocator: std.mem.Allocator) void {
         self.locals.deinit(allocator);
+        self.declared_by.deinit(allocator);
         self.upvalues.deinit(allocator);
     }
 };
@@ -51,6 +57,9 @@ pub const Resolver = struct {
     token_lengths: []const u32,
 
     symbols: []ResolvedSymbol,
+    /// Per node: for a name that is a local or an upvalue, the node that declared it;
+    /// .none for anything else.
+    declarations: []ast.NodeIndex,
 
     // The side-table storing the finalized capture array for every closure node
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const UpvalueCapture) = .empty,
@@ -62,7 +71,10 @@ pub const Resolver = struct {
 
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, diagnostics: *errors.Diagnostics) !Resolver {
         const symbols = try allocator.alloc(ResolvedSymbol, tree.nodes.items.len);
+        errdefer allocator.free(symbols);
         @memset(symbols, .{ .kind = .unresolved, .index = 0 });
+        const declarations = try allocator.alloc(ast.NodeIndex, tree.nodes.items.len);
+        @memset(declarations, .none);
 
         return Resolver{
             .allocator = allocator,
@@ -70,6 +82,7 @@ pub const Resolver = struct {
             .token_starts = token_starts,
             .token_lengths = token_lengths,
             .symbols = symbols,
+            .declarations = declarations,
             .closure_captures = .empty,
             .active_method_blocks = .empty,
             .scopes = .empty,
@@ -86,6 +99,7 @@ pub const Resolver = struct {
         }
         self.scopes.deinit(self.allocator);
         self.allocator.free(self.symbols);
+        self.allocator.free(self.declarations);
 
         // Clean up the closure_captures side-table and its slices
         var it = self.closure_captures.iterator();
@@ -146,7 +160,8 @@ pub const Resolver = struct {
         scope.deinit(self.allocator);
     }
 
-    pub fn declareLocal(self: *Resolver, name: ast.StringId) !u24 {
+    /// `name` as a local of the innermost scope, declared by `by` unless it was already.
+    pub fn declareLocal(self: *Resolver, name: ast.StringId, by: ast.NodeIndex) !u24 {
         if (self.scopes.items.len == 0) return 0;
         const scope = &self.scopes.items[self.scopes.items.len - 1];
 
@@ -157,15 +172,25 @@ pub const Resolver = struct {
         const slot = scope.next_slot;
         scope.next_slot += 1;
         try scope.locals.put(self.allocator, name, slot);
+        try scope.declared_by.put(self.allocator, name, by);
         return slot;
     }
 
+    /// The node that declared `name` in the innermost scope (after declareLocal).
+    fn declaredBy(self: *const Resolver, name: ast.StringId) ast.NodeIndex {
+        if (self.scopes.items.len == 0) return .none;
+        return self.scopes.items[self.scopes.items.len - 1].declared_by.get(name) orelse .none;
+    }
+
+    /// A name resolved, and the node that declared it.
+    const Found = struct { symbol: ResolvedSymbol, declared_by: ast.NodeIndex };
+
     // Search for a local variable in the current closure (which may span multiple blocks)
-    fn findLocalInClosure(self: *Resolver, start_scope_idx: usize, name: ast.StringId) ?u24 {
+    fn findLocalInClosure(self: *Resolver, start_scope_idx: usize, name: ast.StringId) ?Found {
         var i = start_scope_idx;
         while (true) {
             const scope = &self.scopes.items[i];
-            if (scope.locals.get(name)) |slot| return slot;
+            if (scope.locals.get(name)) |slot| return .{ .symbol = .{ .kind = .local, .index = slot }, .declared_by = scope.declared_by.get(name).? };
             if (scope.is_closure or i == 0) break;
             i -= 1;
         }
@@ -173,11 +198,9 @@ pub const Resolver = struct {
     }
 
     // The Recursive Upvalue Algorithm!
-    fn resolveInClosure(self: *Resolver, closure_end_idx: usize, name: ast.StringId) !?ResolvedSymbol {
+    fn resolveInClosure(self: *Resolver, closure_end_idx: usize, name: ast.StringId) !?Found {
         // 1. Is it a local in THIS closure?
-        if (self.findLocalInClosure(closure_end_idx, name)) |slot| {
-            return .{ .kind = .local, .index = slot };
-        }
+        if (self.findLocalInClosure(closure_end_idx, name)) |found| return found;
 
         // Find the closure boundary that defines this scope block
         var i = closure_end_idx;
@@ -190,13 +213,13 @@ pub const Resolver = struct {
         const parent_closure_end_idx = i - 1;
         const parent_sym = try self.resolveInClosure(parent_closure_end_idx, name);
 
-        if (parent_sym) |psym| {
+        if (parent_sym) |parent| {
             // 3. The parent found it! Add an upvalue capture instruction to OUR closure boundary.
-            const is_local = (psym.kind == .local);
-            const index = psym.index;
+            const is_local = (parent.symbol.kind == .local);
+            const index = parent.symbol.index;
 
             const upvalue_idx = try self.addUpvalue(i, index, is_local);
-            return .{ .kind = .upvalue, .index = upvalue_idx };
+            return .{ .symbol = .{ .kind = .upvalue, .index = upvalue_idx }, .declared_by = parent.declared_by };
         }
 
         return null;
@@ -238,8 +261,9 @@ pub const Resolver = struct {
         // Trigger recursive local/upvalue resolution from the current depth
         if (self.scopes.items.len > 0) {
             const top_idx = self.scopes.items.len - 1;
-            if (try self.resolveInClosure(top_idx, name)) |sym| {
-                self.symbols[@backingInt(node)] = sym;
+            if (try self.resolveInClosure(top_idx, name)) |found| {
+                self.symbols[@backingInt(node)] = found.symbol;
+                self.declarations[@backingInt(node)] = found.declared_by;
                 return;
             }
         }
@@ -314,7 +338,7 @@ const ResolverContext = struct {
                     const param_node = tree.getNode(param_idx).?;
                     if (param_node.tag == .identifier) {
                         const name_id: ast.StringId = @fromBackingInt(param_node.data);
-                        _ = try self.resolver.declareLocal(name_id);
+                        _ = try self.resolver.declareLocal(name_id, param_idx);
                         try self.resolver.resolveUsage(name_id, param_idx);
                     }
                 }
@@ -323,14 +347,14 @@ const ResolverContext = struct {
                 try self.resolver.pushScope(true, false, node_idx);
                 const ds = tree.defStmt(node);
                 for (tree.getParams(ds.params)) |param| {
-                    _ = try self.resolver.declareLocal(param.name);
+                    _ = try self.resolver.declareLocal(param.name, node_idx);
                 }
             },
             .lambda_expr => {
                 try self.resolver.pushScope(true, false, node_idx);
                 const le = tree.lambdaExpr(node);
                 for (tree.getParams(le.params)) |param| {
-                    _ = try self.resolver.declareLocal(param.name);
+                    _ = try self.resolver.declareLocal(param.name, node_idx);
                 }
             },
             .for_stmt => {
@@ -338,7 +362,7 @@ const ResolverContext = struct {
                 self.resolver.loop_depth += 1;
                 const fs = tree.forStmt(node);
                 for (tree.getLhsExprs(fs.targets)) |target| {
-                    _ = try self.resolver.declareLocal(target.name);
+                    _ = try self.resolver.declareLocal(target.name, node_idx);
                 }
             },
             .class_stmt, .module_stmt, .singleton_class => {
@@ -346,12 +370,14 @@ const ResolverContext = struct {
             },
             .assignment => {
                 const assign = tree.assignment(node);
-                _ = try self.resolver.declareLocal(assign.name);
+                _ = try self.resolver.declareLocal(assign.name, node_idx);
+                // A reassignment's declaration is the first one
+                self.resolver.declarations[@backingInt(node_idx)] = self.resolver.declaredBy(assign.name);
             },
             .multiple_assignment => {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
-                    _ = try self.resolver.declareLocal(lhs.name);
+                    _ = try self.resolver.declareLocal(lhs.name, node_idx);
                 }
             },
             .identifier => {

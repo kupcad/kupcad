@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const hints_mod = @import("lsp_hints.zig");
 
 /// The hints for `source`, as "name@offset" (a parameter) or ":Class@offset" (a variable's
@@ -52,6 +52,10 @@ test "LSP hints: a variable assigned a built-in's result gets its class" {
     // A method that keeps its receiver's kind is typed by the receiver.
     try testing.expectEqualStrings(":CrossSection@2 size@12 :CrossSection@16", try hintsOf(a, "sk = square(1)\nt = sk.translate(x: 1)"));
     try testing.expectEqualStrings(":Number@1 size@9", try hintsOf(a, "v = cube(2).volume"));
+    // An import is a Sketch, or with paths: true an Array; with a flag only the run knows, nothing
+    try testing.expectEqualStrings(":CrossSection@4 path@19", try hintsOf(a, "logo = import_svg(\"logo.svg\")"));
+    try testing.expectEqualStrings(":Array@5 path@20", try hintsOf(a, "lines = import_svg(\"logo.svg\", paths: true)"));
+    try testing.expectEqualStrings("path@20", try hintsOf(a, "lines = import_svg(\"logo.svg\", paths: flag)"));
     // Not for the script's own methods, nor for what gives nil.
     try testing.expectEqualStrings("", try hintsOf(a, "class G\n  def volume = 1\nend\nv = G.new.volume"));
     try testing.expectEqualStrings("size@17", try hintsOf(a, "g = ghost { cube(1) }"));

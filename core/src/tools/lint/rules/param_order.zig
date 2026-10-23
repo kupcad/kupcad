@@ -82,7 +82,7 @@ pub const ParamOrderRule = struct {
     fn extractParamName(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
         const node = tree.getNode(node_idx) orelse return null;
         return switch (node.tag) {
-            .symbol, .string => tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
+            .symbol, .string => tree.nodeString(node),
             else => null,
         };
     }

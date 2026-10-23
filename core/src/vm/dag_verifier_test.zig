@@ -26,16 +26,18 @@ test "DAG verifier: what every builder makes is sound" {
     const ext = try b.addExtrude(sq, 2, 1, 0, 1, 1);
     _ = try b.addRevolve(try b.addCrossSectionTransform(circ, .{ 1, 0, 0, 1, 5, 0 }), 16, 360);
     _ = try b.addLoft(sq, poly, 3);
-    _ = try b.addOffset(sq, 0.5, 0);
+    _ = try b.addOffset(sq, 0.5, 0, 8, 2);
     _ = try b.addBinary(.cs_union_op, sq, circ);
     _ = try b.addSlice(try b.addBinary(.union_op, cube, ext), 0.5);
     _ = try b.addProject(cube);
     _ = try b.addBatchUnion(&.{ cube, ext });
     _ = try b.addBatchHull(&.{ cube, ext });
+    _ = try b.addSketchHull(&.{ sq, circ });
+    _ = try b.addErode(cube, 0.5, 8);
     _ = try b.addTrimByPlane(try b.addHull(cube), 0, 0, 1, 0);
     _ = try b.addTransformMatrix(try b.addMirror(cube, 1, 0, 0), .{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
     _ = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 0, 3, 2 }, .{ 1, 2, 3 } });
-    _ = try b.addPolygonsEvenOdd(&.{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } });
+    _ = try b.addPolygonsEvenOdd(&.{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } }, &.{.{ .contour = 1, .first = 0, .count = 2, .cubic = .{ .c1 = .{ 1, 1 }, .c2 = .{ 2, 1 } } }});
     _ = try b.addSetMaterial(cube, 1);
     _ = try b.addEmpty(true);
 }
@@ -51,11 +53,21 @@ test "DAG verifier: names what is wrong with a malformed node" {
     try expectProblem("an operand is a solid where a sketch belongs", &b, try nodeWith(&b, .extrude, &.{ cube, nums }));
     try expectProblem("an operand is a sketch where a solid belongs", &b, try nodeWith(&b, .translate, &.{ sq, nums }));
     try expectProblem("an operand is a sketch where a solid belongs", &b, try nodeWith(&b, .union_op, &.{ cube, sq }));
+    try expectProblem("an operand is a solid where a sketch belongs", &b, try nodeWith(&b, .cs_hull_op, &.{ 2, sq, cube }));
+    try expectProblem("an operand is a sketch where a solid belongs", &b, try nodeWith(&b, .erode, &.{ sq, nums }));
     try expectProblem("an operand isn't a node built before it", &b, try nodeWith(&b, .hull, &.{99}));
     try expectProblem("it has no operands", &b, try nodeWith(&b, .batch_union_op, &.{0}));
     try expectProblem("its numbers are outside the numbers table", &b, try nodeWith(&b, .translate, &.{ cube, 1000 }));
     try expectProblem("its operands are outside extra_data", &b, .{ .tag = .difference_op, .data = @intCast(b.extra_data.items.len) });
     try expectProblem("it names no concrete leaf", &b, .{ .tag = .concrete, .data = 0 });
+    // A polygons node of one triangle (its numbers at `nums`) with a curve that names a
+    // contour or points it doesn't have (the curve's numbers at `nums` too)
+    try b.numbers.appendSlice(testing.allocator, &.{ 0, 0, 0 });
+    try expectProblem("a curve names a contour the node doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 1, 0, 2 }));
+    try expectProblem("a curve names points its contour doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 2, 2 }));
+    try expectProblem("a curve names points its contour doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 0, 1 }));
+    try expectProblem("its curves are outside extra_data", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 5, nums }));
+    try expectProblem("sound", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 0, 3 }));
     try expectProblem("its settings id names no settings", &b, .{ .tag = .empty_solid, .settings = 7 });
 
     // A NaN in the numbers: the evaluator skips checking a moved solid on the promise
@@ -77,4 +89,10 @@ test "DAG verifier: every tag is a solid or a sketch, as the evaluator reads it"
     try testing.expectEqual(verifier.Kind.solid, verifier.kindOf(.extrude));
     try testing.expectEqual(verifier.Kind.solid, verifier.kindOf(.concrete));
     try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_transform));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_set_name));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.rounded_square));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.closed_path));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_hull_op));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.operandKind(.cs_set_material));
+    try testing.expectEqual(verifier.Kind.solid, verifier.operandKind(.set_material));
 }

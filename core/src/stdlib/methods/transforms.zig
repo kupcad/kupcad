@@ -3,14 +3,15 @@
 //! `repeat_polar`. Listed in `manifest.zig`.
 
 const std = @import("std");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const assembly = @import("../assembly.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const kernel = @import("../../kernel/kernel.zig");
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const limits = @import("../../core/limits.zig");
+const affine2 = @import("../../core/affine2.zig");
+const placement = @import("../../core/placement.zig");
 
 // A Sketch lies in the XY plane, so its transforms stay in that plane. A component that
 // would move it out of the plane is a ValueError: it used to be dropped silently, so
@@ -22,7 +23,7 @@ const MATRIX_3D_LEN = 12;
 const MATRIX_2D_LEN = 6;
 
 pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 0.0, "translate");
+    const vec = try arguments.parseVec3(vm, args, 0.0, "translate");
     if (receiver.isAssembly()) return assembly.translated(vm, receiver, vec);
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
@@ -31,49 +32,103 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
         if (vec[2] != 0.0) {
             return vm.fail(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
         }
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, vec[0], vec[1] };
+        const mat = affine2.translation(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "translate", receiver);
+    return arguments.notDefinedFor(vm, "translate", receiver);
 }
 
 /// `rotate(x, y, z)` in degrees, or `rotate(a)`: about z, for a Solid as for a Sketch
-/// (OpenSCAD's default; one angle used to mean x on a Solid and z on a Sketch).
+/// (OpenSCAD's default; one angle used to mean x on a Solid and z on a Sketch); `about:` a
+/// point turns it about that point, and a Solid turns `rotate(a, axis: [x, y, z])` about
+/// any axis (see parseRotation).
 pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try util.parseVec3(vm, args, 0.0, "rotate");
-    if (util.singleNumber(args)) {
-        const angle = vec[0]; // (written straight into `vec`, the aggregate read a cleared x)
-        vec = .{ 0.0, 0.0, angle };
-    }
     if (receiver.isGeometry()) {
-        const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
-        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+        const turn = try parseRotation(vm, args, false, "a Solid", "");
+        const a = turn.angles;
+        var node = receiver.asGeometry().dag_idx;
+        // About a point: there to the origin, turned, and back
+        if (turn.about) |p| node = try vm.dag_builder.addTranslate(node, -p[0], -p[1], -p[2]);
+        node = try vm.dag_builder.addRotate(node, a[0], a[1], a[2]);
+        if (turn.about) |p| node = try vm.dag_builder.addTranslate(node, p[0], p[1], p[2]);
+        return try vm.allocateGeometry(.{ .symbolic = node });
     } else if (receiver.isCrossSection()) {
-        const rad = try sketchRotation(vm, args, vec) * std.math.pi / 180.0;
-        const cos_a = std.math.cos(rad);
-        const sin_a = std.math.sin(rad);
-        const mat = [6]f64{ cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0 };
+        const mat = planarRotation(try parseRotation(vm, args, true, "a Sketch", "; extrude it to tilt it"));
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "rotate", receiver);
+    return arguments.notDefinedFor(vm, "rotate", receiver);
 }
 
-/// A Sketch turns about z only: `rotate(a)`, `rotate(z: a)` or `rotate(0, 0, a)`, in degrees.
-fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
-    _ = args;
-    if (vec[0] != 0.0 or vec[1] != 0.0) {
-        return vm.fail(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
+/// A turn as `rotate` is given it: the angles about x, y and z, in degrees, and the point
+/// it turns about (the origin when null).
+pub const Rotation = struct { angles: [3]f64, about: ?[3]f64 = null };
+
+const RotateOpts = struct {
+    x: ?value.Value = null,
+    y: ?value.Value = null,
+    z: ?value.Value = null,
+    angle: ?f64 = null,
+    axis: ?value.Value = null,
+    about: ?value.Value = null,
+};
+
+/// The turn `rotate`'s arguments ask for: `rotate(x, y, z)` (or an Array, or x:, y:, z:),
+/// `rotate(a)` or `rotate(angle: a)` about z, `rotate(a, axis: [x, y, z])` about that axis
+/// (right-handed; placement.eulerOfAxisAngle makes it the three angles), and `about: [x, y,
+/// z]` about that point. A `planar` shape (`what`, a Sketch or a Path) lies in the XY
+/// plane: it turns about z only, about a point [x, y]; `tilt_hint` says how to tilt one.
+pub fn parseRotation(vm: *VM, args: []const value.Value, planar: bool, comptime what: []const u8, comptime tilt_hint: []const u8) !Rotation {
+    const parsed = try arguments.parseKwargsSubset(RotateOpts, sig.ROTATE.keywords, vm, args, "rotate");
+    const o = parsed.opts;
+    const pos = parsed.positional;
+    const has_xyz = o.x != null or o.y != null or o.z != null;
+    var turn: Rotation = .{ .angles = @splat(0) };
+    if (o.axis) |axis_val| {
+        if (planar) return vm.fail(.ArgumentError, "rotate: " ++ what ++ " turns about z only (it lies in the XY plane), so it takes no axis:", .{});
+        if (has_xyz or pos.len > 1) return vm.fail(.ArgumentError, "rotate takes an angle with axis:, or angles x, y and z, not both", .{});
+        const axis = try arguments.parseNumberArray(3, vm, axis_val, .{ .method = "rotate", .name = "the axis" }, 3, 0);
+        try arguments.requireNonZeroVector(vm, axis, "rotate", "axis");
+        if (o.angle != null and pos.len > 0) return vm.fail(.ArgumentError, "rotate takes its angle once, as a number or angle:", .{});
+        const angle = o.angle orelse if (pos.len == 1) try arguments.requireNumber(vm, pos[0], "rotate", "angle") else return vm.fail(.ArgumentError, "rotate with axis: needs the angle to turn by, in degrees", .{});
+        turn.angles = placement.eulerOfAxisAngle(axis, angle);
+    } else if (o.angle) |angle| {
+        if (has_xyz or pos.len > 0) return vm.fail(.ArgumentError, "rotate takes angle: (about z, or axis:) or angles x, y and z, not both", .{});
+        turn.angles = .{ 0, 0, angle };
+    } else {
+        turn.angles = try arguments.vec3From(vm, pos, o, 0, "rotate");
+        // One bare angle turns about z (copied out first: the literal is written straight
+        // into `turn.angles`, and read a cleared x)
+        if (pos.len == 1 and pos[0].isNumber() and !has_xyz) {
+            const angle = turn.angles[0];
+            turn.angles = .{ 0, 0, angle };
+        }
     }
-    return vec[2];
+    if (planar and (turn.angles[0] != 0 or turn.angles[1] != 0)) {
+        return vm.fail(.ValueError, what ++ " can only rotate about z (it lies in the XY plane), got x {f} and y {f}" ++ tilt_hint, .{ value.fmtNumber(turn.angles[0]), value.fmtNumber(turn.angles[1]) });
+    }
+    if (o.about) |about_val| {
+        const p = try arguments.parseNumberArray(3, vm, about_val, .{ .method = "rotate", .name = "the point about:" }, 2, 0);
+        if (planar and p[2] != 0) return vm.fail(.ValueError, "rotate: " ++ what ++ " turns about a point [x, y] (it lies in the XY plane), got z {f}", .{value.fmtNumber(p[2])});
+        turn.about = p;
+    }
+    return turn;
+}
+
+/// The 2D matrix of a planar shape's turn (parseRotation's, about z): about its point when
+/// it has one, there to the origin, turned and back.
+pub fn planarRotation(turn: Rotation) affine2.Matrix {
+    const spin = affine2.rotation(turn.angles[2]);
+    const p = turn.about orelse return spin;
+    return affine2.compose(affine2.translation(p[0], p[1]), affine2.compose(spin, affine2.translation(-p[0], -p[1])));
 }
 
 /// `scale(x, y, z)`, `scale([x, y, z])`, `scale(x: 2)`, or `scale(s)`: the same factor on
 /// every axis, as every CAD tool reads it (one number used to stretch x alone).
 pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try util.parseVec3(vm, args, 1.0, "scale");
-    if (util.singleNumber(args)) {
+    var vec = try arguments.parseVec3(vm, args, 1.0, "scale");
+    if (arguments.singleNumber(args)) {
         const factor = vec[0];
         vec = @splat(factor);
     }
@@ -90,11 +145,11 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
         const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ vec[0], 0.0, 0.0, vec[1], 0.0, 0.0 };
+        const mat = affine2.scaling(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "scale", receiver);
+    return arguments.notDefinedFor(vm, "scale", receiver);
 }
 
 /// The move that puts the center of `bbox` at the origin on the axes in `axes` (x, y, z).
@@ -115,7 +170,7 @@ fn centerShift(bbox: geom.BoundingBox, axes: []const u8) [3]f64 {
 /// center(axes = "xyz"): moves the bounds' center to the origin on the axes named, a
 /// String or Symbol of x, y and z (`center(:xy)`).
 pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value.Value {
-    const axes_str = if (axes_arg) |a| try util.requireName(vm, a, "center", "axes") else "xyz";
+    const axes_str = if (axes_arg) |a| try arguments.requireName(vm, a, "center", "axes") else "xyz";
     // Any other letter used to be skipped, so `center("xq")` centered x alone.
     const valid = axes_str.len > 0 and for (axes_str) |c| {
         if (std.mem.findScalar(u8, "xyzXYZ", c) == null) break false;
@@ -127,7 +182,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         return vm.fail(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
     }
 
-    const shift = centerShift(try util.boundsOf(vm, receiver, "center"), axes_str);
+    const shift = centerShift(try arguments.boundsOf(vm, receiver, "center"), axes_str);
     const tx, const ty, const tz = shift;
 
     if (receiver.isAssembly()) return assembly.translated(vm, receiver, shift);
@@ -135,96 +190,99 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, tx, ty };
+        const mat = affine2.translation(tx, ty);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "center", receiver);
+    return arguments.notDefinedFor(vm, "center", receiver);
 }
 
+/// A side of a shape's box along an axis `align` lines up: its low end, its high end or
+/// its middle.
+const Alignment = enum {
+    min,
+    max,
+    center,
+
+    /// The alignment `text` names, or an ArgumentError listing the three.
+    fn parse(vm: *VM, text: []const u8) !Alignment {
+        return std.meta.stringToEnum(Alignment, text) orelse vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{text});
+    }
+
+    /// Where it is on `box` along `axis`.
+    fn on(self: Alignment, box: anytype, axis: usize) f64 {
+        return switch (self) {
+            .min => box.min[axis],
+            .max => box.max[axis],
+            .center => (box.min[axis] + box.max[axis]) / 2.0,
+        };
+    }
+};
+
+/// `align(target, axes, my_align, target_align = my_align, offset = 0)`: the shape moved
+/// along each of `axes` (letters of x, y and z) so its `my_align` side meets the target's
+/// `target_align` side, `offset` beyond it; the names are Strings or Symbols (`:z`, `:max`).
 pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    // Signature: align(target, axes, my_align, target_align = my_align, offset = 0.0)
-    if (args.len < 3 or !args[1].isString() or !args[2].isString()) {
+    if (args.len < 3) {
         return vm.fail(.ArgumentError, "align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
     }
-
     const target = args[0];
-    const axis_str = args[1].asString().chars;
-    const my_align_str = args[2].asString().chars;
-    var target_align_str = my_align_str;
+    const axes_text = try arguments.requireName(vm, args[1], "align", "axes");
+    const my_align = try Alignment.parse(vm, try arguments.requireName(vm, args[2], "align", "my_align"));
+    var target_align = my_align;
     var offset: f64 = 0.0;
-
     if (args.len > 3) {
-        if (args[3].isString()) {
-            target_align_str = args[3].asString().chars;
+        if (args[3].nameChars()) |text| {
+            target_align = try Alignment.parse(vm, text);
         } else if (args[3].isNumber()) {
             // Allow skipping target_align: align(target, axes, my_align, offset)
-            offset = try util.requireNumber(vm, args[3], "align", "offset");
+            offset = try arguments.requireNumber(vm, args[3], "align", "offset");
         } else if (!args[3].isNil()) { // nil keeps target_align = my_align
-            return vm.fail(.TypeError, "align expects a String target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
+            return vm.fail(.TypeError, "align expects a String or Symbol target_align or a number offset as argument 4, got {s}", .{arguments.typeName(vm, args[3])});
         }
     }
-    if (args.len > 4) offset = try util.requireNumber(vm, args[4], "align", "offset");
+    if (args.len > 4) offset = try arguments.requireNumber(vm, args[4], "align", "offset");
+
+    var axes = [3]bool{ false, false, false };
+    for (axes_text) |c| switch (std.ascii.toLower(c)) {
+        'x' => axes[0] = true,
+        'y' => axes[1] = true,
+        'z' => axes[2] = true,
+        else => {},
+    };
+    if (!axes[0] and !axes[1] and !axes[2]) {
+        return vm.fail(.ArgumentError, "align needs axes to move along, letters of x, y and z, got '{s}'", .{axes_text});
+    }
 
     // The target used to be evaluated as a Geometry whatever it was.
     if (!target.isGeometry() and !target.isCrossSection()) {
-        return vm.fail(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{util.typeName(vm, target)});
+        return vm.fail(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{arguments.typeName(vm, target)});
     }
-    const my_bbox = try util.boundsOf(vm, receiver, "align");
-    const target_bbox = try util.boundsOf(vm, target, "align");
-
-    var tx: f64 = 0;
-    var ty: f64 = 0;
-    var tz: f64 = 0;
-
-    for (axis_str) |c| {
-        var axis_idx: usize = 0;
-        switch (c) {
-            'x', 'X' => axis_idx = 0,
-            'y', 'Y' => axis_idx = 1,
-            'z', 'Z' => axis_idx = 2,
-            else => continue,
-        }
-
-        const my_min = my_bbox.min[axis_idx];
-        const my_max = my_bbox.max[axis_idx];
-        const my_center = my_min + (my_max - my_min) / 2.0;
-
-        const target_min = target_bbox.min[axis_idx];
-        const target_max = target_bbox.max[axis_idx];
-        const target_center = target_min + (target_max - target_min) / 2.0;
-
-        var my_pt: f64 = 0.0;
-        if (std.mem.eql(u8, my_align_str, "min")) my_pt = my_min else if (std.mem.eql(u8, my_align_str, "max")) my_pt = my_max else if (std.mem.eql(u8, my_align_str, "center")) my_pt = my_center else {
-            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{my_align_str});
-        }
-
-        var target_pt: f64 = 0.0;
-        if (std.mem.eql(u8, target_align_str, "min")) target_pt = target_min else if (std.mem.eql(u8, target_align_str, "max")) target_pt = target_max else if (std.mem.eql(u8, target_align_str, "center")) target_pt = target_center else {
-            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{target_align_str});
-        }
-
-        const delta = target_pt - my_pt + offset;
-        if (axis_idx == 0) tx = delta;
-        if (axis_idx == 1) ty = delta;
-        if (axis_idx == 2) tz = delta;
+    const my_bbox = try arguments.boundsOf(vm, receiver, "align");
+    const target_bbox = try arguments.boundsOf(vm, target, "align");
+    var move = [3]f64{ 0, 0, 0 };
+    for (axes, &move, 0..) |on_axis, *delta, axis| {
+        if (on_axis) delta.* = target_align.on(target_bbox, axis) - my_align.on(my_bbox, axis) + offset;
     }
+    const tx = move[0];
+    const ty = move[1];
+    const tz = move[2];
 
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, tx, ty };
+        const mat = affine2.translation(tx, ty);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "align", receiver);
+    return arguments.notDefinedFor(vm, "align", receiver);
 }
 
 pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 0.0, "mirror");
+    const vec = try arguments.parseVec3(vm, args, 0.0, "mirror");
     // The vector is the mirror plane's normal; the zero vector used to yield an empty solid.
-    try util.requireNonZeroVector(vm, vec, "mirror", "plane normal");
+    try arguments.requireNonZeroVector(vm, vec, "mirror", "plane normal");
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addMirror(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
@@ -233,15 +291,11 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         if (vec[2] != 0.0) {
             return vm.fail(.ValueError, "a Sketch can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
         }
-        const len = std.math.hypot(vec[0], vec[1]);
-        const nx = vec[0] / len;
-        const ny = vec[1] / len;
-        // The reflection I - 2nn^T (symmetric, so its column-major layout is the same).
-        const mat = [6]f64{ 1.0 - 2.0 * nx * nx, -2.0 * nx * ny, -2.0 * nx * ny, 1.0 - 2.0 * ny * ny, 0.0, 0.0 };
+        const mat = affine2.reflection(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "mirror", receiver);
+    return arguments.notDefinedFor(vm, "mirror", receiver);
 }
 
 pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -263,12 +317,12 @@ pub fn meshTransform(vm: *VM, receiver: value.Value, args: []const value.Value) 
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
-    return util.notDefinedFor(vm, "transform", receiver);
+    return arguments.notDefinedFor(vm, "transform", receiver);
 }
 
 fn parseMatrix(comptime N: usize, vm: *VM, val: value.Value) ![N]f64 {
     // Exact length: extra entries (e.g. a flat 4x4) used to be silently dropped.
-    return util.parseNumberArray(N, vm, val, .{
+    return arguments.parseNumberArray(N, vm, val, .{
         .method = "transform",
         .name = "the matrix",
         .elem = "a matrix entry",
@@ -286,15 +340,15 @@ fn requireInvertible(vm: *VM, det: f64) !void {
 }
 
 pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "resize", receiver);
-    const parsed = try util.parseKwargsSubset(struct { auto: bool = false }, sig.RESIZE.keywords, vm, args, "resize");
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "resize", receiver);
+    const parsed = try arguments.parseKwargsSubset(struct { auto: bool = false }, sig.RESIZE.keywords, vm, args, "resize");
     const auto = parsed.opts.auto;
 
     if (parsed.positional.len < 1) {
         return vm.fail(.ArgumentError, "resize() requires an array of target dimensions [x, y, z]", .{});
     }
     // Missing trailing dimensions are 0, which means "keep" (or "auto" with auto: true).
-    const target = try util.parseNumberArray(3, vm, args[0], .{
+    const target = try arguments.parseNumberArray(3, vm, args[0], .{
         .method = "resize",
         .name = "the target size",
         .elem = "a dimension",
@@ -308,7 +362,7 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const target_y = target[1];
     const target_z = target[2];
 
-    const bbox = try util.boundsOf(vm, receiver, "resize");
+    const bbox = try arguments.boundsOf(vm, receiver, "resize");
     const cur_x = bbox.max[0] - bbox.min[0];
     const cur_y = bbox.max[1] - bbox.min[1];
     const cur_z = bbox.max[2] - bbox.min[2];
@@ -348,7 +402,7 @@ fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
 }
 
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_linear", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "repeat_linear", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         return vm.fail(.ArgumentError, "repeat_linear requires a 'count' number", .{});
     }
@@ -365,31 +419,57 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
     const step: [3]f64 = if (args.len > 1 and args[1].isNil())
         @splat(0.0)
     else if (args.len > 1 and args[1].isArray())
-        try util.parseNumberArray(3, vm, args[1], .{ .method = "repeat_linear", .name = "the step" }, 1, 0.0)
+        try arguments.parseNumberArray(3, vm, args[1], .{ .method = "repeat_linear", .name = "the step" }, 1, 0.0)
     else
-        try util.parseVec3(vm, args[1..], 0.0, "repeat_linear");
-    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
+        try arguments.parseVec3(vm, args[1..], 0.0, "repeat_linear");
     const tx, const ty, const tz = step;
+    if (receiver.isCrossSection() and tz != 0) return vm.fail(.ArgumentError, "repeat_linear: a Sketch repeats in x and y, not z (got a z step of {f})", .{value.fmtNumber(tz)});
+    if (count <= 1) return Copies.same(vm, receiver);
 
     // One batch union of the copies: a chain of N − 1 unions took 60× the time.
-    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    var copies = try Copies.init(vm, receiver, count);
     defer copies.deinit(vm);
     for (1..count) |i| {
         const factor: f64 = @floatFromInt(i);
-        copies.add(try vm.dag_builder.addTranslate(copies.base, tx * factor, ty * factor, tz * factor));
+        copies.add(try copies.translated(vm, tx * factor, ty * factor, tz * factor));
     }
     return copies.unionOf(vm);
 }
 
-/// The copies a repeat pattern makes of its base shape, unioned in one batch.
+/// The copies a repeat pattern makes of its base shape, a Solid or a Sketch, moved as the
+/// shape moves and unioned in one batch.
 const Copies = struct {
     base: u32,
+    sketch: bool,
     indices: std.ArrayList(u32),
 
-    fn init(vm: *VM, base: u32, count: usize) !Copies {
+    fn init(vm: *VM, shape: value.Value, count: usize) !Copies {
+        const base = nodeOf(shape);
         var indices = try std.ArrayList(u32).initCapacity(vm.allocator, count);
         indices.appendAssumeCapacity(base);
-        return .{ .base = base, .indices = indices };
+        return .{ .base = base, .sketch = shape.isCrossSection(), .indices = indices };
+    }
+
+    fn nodeOf(shape: value.Value) u32 {
+        return if (shape.isCrossSection()) shape.asCrossSection().dag_idx else shape.asGeometry().dag_idx;
+    }
+
+    /// A pattern of one copy: the shape itself, as a new value.
+    fn same(vm: *VM, shape: value.Value) !value.Value {
+        if (shape.isCrossSection()) return vm.allocateCrossSection(nodeOf(shape));
+        return vm.allocateGeometry(.{ .symbolic = nodeOf(shape) });
+    }
+
+    /// The base moved by (x, y, z); a sketch's z is 0.
+    fn translated(self: *const Copies, vm: *VM, x: f64, y: f64, z: f64) !u32 {
+        if (self.sketch) return vm.dag_builder.addCrossSectionTransform(self.base, affine2.translation(x, y));
+        return vm.dag_builder.addTranslate(self.base, x, y, z);
+    }
+
+    /// The base turned `degrees` about z.
+    fn turned(self: *const Copies, vm: *VM, degrees: f64) !u32 {
+        if (self.sketch) return vm.dag_builder.addCrossSectionTransform(self.base, affine2.rotation(degrees));
+        return vm.dag_builder.addRotate(self.base, 0, 0, degrees);
     }
 
     fn deinit(self: *Copies, vm: *VM) void {
@@ -401,34 +481,34 @@ const Copies = struct {
     }
 
     fn unionOf(self: *const Copies, vm: *VM) !value.Value {
+        if (self.sketch) return vm.allocateCrossSection(try vm.dag_builder.addBalancedChain(.cs_union_op, self.indices.items));
         return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, self.indices.items) });
     }
 };
 
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "repeat_polar", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "repeat_polar", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         return vm.fail(.ArgumentError, "repeat_polar requires a 'count' number", .{});
     }
 
     const count = try checkedCount(vm, args[0].asNumber(), "repeat_polar");
 
-    const parsed = try util.parseKwargsSubset(struct { angle: ?f64 = null }, sig.REPEAT_POLAR.keywords, vm, args[1..], "repeat_polar");
+    const parsed = try arguments.parseKwargsSubset(struct { angle: ?f64 = null }, sig.REPEAT_POLAR.keywords, vm, args[1..], "repeat_polar");
     var total_angle: f64 = 360.0;
-    if (parsed.positional.len > 0) total_angle = try util.requireNumber(vm, parsed.positional[0], "repeat_polar", "angle");
+    if (parsed.positional.len > 0) total_angle = try arguments.requireNumber(vm, parsed.positional[0], "repeat_polar", "angle");
     if (parsed.opts.angle) |angle| total_angle = angle;
-    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
+    if (count <= 1) return Copies.same(vm, receiver);
 
     const step_angle = if (@abs(total_angle - 360.0) < 0.001)
         total_angle / @as(f64, @floatFromInt(count))
     else
         total_angle / @as(f64, @floatFromInt(count - 1));
 
-    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    var copies = try Copies.init(vm, receiver, count);
     defer copies.deinit(vm);
     for (1..count) |i| {
-        const rot_z = step_angle * @as(f64, @floatFromInt(i));
-        copies.add(try vm.dag_builder.addRotate(copies.base, 0, 0, rot_z));
+        copies.add(try copies.turned(vm, step_angle * @as(f64, @floatFromInt(i))));
     }
     return copies.unionOf(vm);
 }

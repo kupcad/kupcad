@@ -5,7 +5,7 @@ const std = @import("std");
 const VM = @import("vm/vm.zig").VM;
 const InterpretResult = @import("vm/vm.zig").InterpretResult;
 const chunk = @import("vm/chunk.zig");
-const Document = @import("core/document.zig").Document;
+const Document = @import("frontend/document.zig").Document;
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
 const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
@@ -51,7 +51,13 @@ pub const ExpectedWarnings = struct {
 /// A VM with the standard library, muted: its errors are what a test expects, and the
 /// test runner treats logged errors as failures. Script output (puts) stays out of the log.
 pub fn initVm() !VM {
-    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    return initVmWith(std.testing.allocator);
+}
+
+/// `initVm` on `allocator`: one that records no stack traces, for a test whose scripts are
+/// heavy (the testing allocator unwinds the stack on every allocation and free).
+pub fn initVmWith(allocator: std.mem.Allocator) !VM {
+    var vm = try VM.init(allocator, std.testing.io);
     errdefer vm.deinit();
     vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);

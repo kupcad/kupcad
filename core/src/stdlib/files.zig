@@ -1,61 +1,118 @@
-//! The script's file methods: `export_stl`, `export_gltf` and `export_step` on a Solid or an
-//! Assembly, and `import_stl` / `import_step` / `import_font` (`import_json` is in json.zig). The formats themselves are in exporters/3d
-//! (stl.zig, gltf.zig, step.zig), which knew nothing of scripts until these lived there.
+//! The script's file methods: `export_stl`, `export_gltf`, `export_step`, `export_3mf` and
+//! `export_obj` on a Solid or an Assembly, `export_svg` and `export_dxf` on any shape (a
+//! drawing, through exporters/export.zig), and `import_step` / `import_font` (`import_json`
+//! is in json.zig, the meshes' imports in mesh_import.zig, the drawings' in
+//! drawing_import.zig). The formats themselves are in exporters/3d and
+//! exporters/2d, which know nothing of scripts.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
-const geom = @import("../kernel/geometry_handle.zig");
-const kernel = @import("../kernel/kernel.zig");
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
+const assembly_mod = @import("assembly.zig");
 const stl = @import("../exporters/3d/stl.zig");
-const step = @import("../exporters/3d/step.zig");
+const export_mod = @import("../exporters/export.zig");
+const format_mod = @import("../exporters/format.zig");
+const ExportFormat = format_mod.ExportFormat;
+const ExportOptions = format_mod.ExportOptions;
 const gltf = @import("../exporters/3d/gltf.zig");
 const text = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 
-/// Appends the evaluated parts of `receiver`, a Solid (itself) or an Assembly (its Solids),
-/// to `out`; `method` names the export in the error for anything else. Handles are
-/// borrowed from the VM.
-pub fn receiverParts(vm: *VM, receiver: value.Value, comptime method: []const u8, out: *std.ArrayList(geom.GeometryHandle)) !void {
-    if (receiver.isGeometry()) return out.append(vm.allocator, try vm.ensureConcrete(receiver));
-    if (!receiver.isAssembly()) return util.notDefinedFor(vm, method, receiver);
-    for (receiver.asAssembly().parts.items.items) |part| try out.append(vm.allocator, try vm.ensureConcrete(part));
+/// The shapes of `receiver` an export writes: a Solid, an Assembly's parts with its name,
+/// and for a drawing a Sketch or a Path too, kept in `held`; `method` names the export in
+/// the error for anything else.
+fn shapesOf(vm: *VM, receiver: value.Value, comptime method: []const u8, format: ExportFormat, held: *std.ArrayList(value.Value)) !export_mod.Shapes {
+    if (format.dimension() == .@"2d" and (receiver.isCrossSection() or receiver.isPath())) {
+        try held.append(vm.allocator, receiver);
+        return if (receiver.isPath()) .{ .paths = held.items } else .{ .sketches = held.items };
+    }
+    if (receiver.isGeometry()) {
+        try held.append(vm.allocator, receiver);
+        return .{ .solids = held.items };
+    }
+    if (!receiver.isAssembly()) return arguments.notDefinedFor(vm, method, receiver);
+    // Its Solids, its assemblies' too
+    try assembly_mod.appendSolids(vm, held, receiver);
+    return .{ .solids = held.items, .title = receiver.asAssembly().name.chars };
+}
+
+/// Writes `receiver` to `filepath` in `format` as `options` say, as `kupcad build` writes
+/// the model: the script's `method`. An empty model is an error naming the file.
+fn exportTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: ExportFormat, options: ExportOptions, comptime method: []const u8) !void {
+    var held: std.ArrayList(value.Value) = .empty;
+    defer held.deinit(vm.allocator);
+    const shapes = try shapesOf(vm, receiver, method, format, &held);
+    const bytes = export_mod.exportShapes(vm.allocator, vm, format, options, shapes) catch |err| switch (err) {
+        error.NoGeometry => return vm.fail(.GeometryError, method ++ ": the model is empty, there is nothing to write to '{s}'", .{filepath}),
+        else => return err,
+    };
+    defer vm.allocator.free(bytes);
+    try writeFile(vm, filepath, bytes, method);
+}
+
+/// Writes `bytes` to `path` through the VM's file system; a write it refuses (a host that
+/// gave the script no file system, a directory that isn't there) is an error naming the file.
+fn writeFile(vm: *VM, path: []const u8, bytes: []const u8, comptime method: []const u8) !void {
+    vm.vfs.writeFile(path, bytes) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return vm.fail(.RuntimeError, method ++ ": could not write '{s}': {s}", .{ path, @errorName(err) }),
+    };
 }
 
 /// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var parts: std.ArrayList(geom.GeometryHandle) = .empty;
-    defer parts.deinit(vm.allocator);
-    try receiverParts(vm, receiver, "export_stl", &parts);
-
-    const stl_bytes = stl.buildStlOfParts(vm.allocator, vm, parts.items) catch |err| switch (err) {
-        error.NoGeometry => {
-            return vm.fail(.GeometryError, "export_stl: the model is empty, there is nothing to write to '{s}'", .{filepath});
-        },
-        else => return err,
-    };
-    defer vm.allocator.free(stl_bytes);
-
-    try vm.vfs.writeFile(filepath, stl_bytes);
-
+    try exportTo(vm, receiver, filepath, .stl, .{}, "export_stl");
     return receiver;
 }
 
-pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    const file_buf = vm.readScriptFile(path_str) catch |err| {
-        return vm.fail(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer vm.allocator.free(file_buf);
+/// `solid.export_3mf(path)` and `assembly.export_3mf(path)`: each part once, placed once
+/// per copy, with its name and colours.
+pub fn meshExport3mf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    try exportTo(vm, receiver, filepath, .@"3mf", .{}, "export_3mf");
+    return receiver;
+}
 
-    var stl_mesh = stl.parseStlBuffer(vm.allocator, file_buf) catch |err| {
-        return vm.fail(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer stl_mesh.deinit(vm.allocator);
+/// `solid.export_obj(path, mtl)` and `assembly.export_obj(path, mtl)`: Wavefront OBJ, an
+/// object per Solid; with `mtl` true, the materials go in a library beside it (part.mtl),
+/// as `--mtl` writes them.
+pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_opt: ?bool) !value.Value {
+    const mtl_path: ?[]u8 = if (mtl_opt orelse false) try export_mod.materialLibraryPath(vm.allocator, filepath) else null;
+    defer if (mtl_path) |p| vm.allocator.free(p);
+    try exportTo(vm, receiver, filepath, .obj, .{ .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null }, "export_obj");
+    if (mtl_path) |p| {
+        const library = try export_mod.exportMaterialLibrary(vm.allocator, vm);
+        defer vm.allocator.free(library);
+        try writeFile(vm, p, library, "export_obj");
+    }
+    return receiver;
+}
 
-    const dag_idx = try vm.dag_builder.addPolyhedron(stl_mesh.points, stl_mesh.faces);
-    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+/// `solid.export_gltf(path, draco)` and `assembly.export_gltf(path, draco)`: the parts kept
+/// apart, each a node named after it; glTF JSON for a `.gltf` path, binary glTF otherwise.
+pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
+    const format: ExportFormat = if (gltf.Container.forPath(filepath) == .gltf) .gltf else .glb;
+    try exportTo(vm, receiver, filepath, format, .{ .draco = draco_opt orelse false }, "export_gltf");
+    return receiver;
+}
+
+/// `solid.export_step(path)` and `assembly.export_step(path)`: exact B-Rep parts only.
+pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    try exportTo(vm, receiver, filepath, .step, .{}, "export_step");
+    return receiver;
+}
+
+/// `shape.export_svg(path)` and `shape.export_dxf(path)`: a Sketch as its drawing, a Path
+/// as it is, a Solid as its projection onto XY, an Assembly as its parts'.
+pub fn meshExportSvg(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    try exportTo(vm, receiver, filepath, .svg, .{}, "export_svg");
+    return receiver;
+}
+
+pub fn meshExportDxf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    try exportTo(vm, receiver, filepath, .dxf, .{}, "export_dxf");
+    return receiver;
 }
 
 /// import_font(path) -> the font file at `path` as a Font, for `text(font:)`: what
@@ -92,40 +149,6 @@ fn describeFontError(err: text.ImportedFontError) []const u8 {
         error.NoOutlines => "it has no outlines (TrueType or CFF ones; a variable CFF2 font's and a bitmap font's aren't read)",
         error.NoCharacterMap => "it maps no characters to glyphs (it has no cmap table)",
     };
-}
-
-pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
-    var handles = std.ArrayList(geom.GeometryHandle).empty;
-    defer handles.deinit(vm.allocator);
-
-    const use_draco = draco_opt orelse false;
-
-    try receiverParts(vm, receiver, "export_gltf", &handles);
-
-    for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-    const bytes = try gltf.buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, gltf.Container.forPath(filepath));
-    defer vm.allocator.free(bytes);
-
-    try vm.vfs.writeFile(filepath, bytes);
-
-    return receiver;
-}
-
-pub fn meshExportStep(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
-    var export_handles = std.ArrayList(geom.GeometryHandle).empty;
-    defer export_handles.deinit(vm.allocator);
-
-    try receiverParts(vm, receiver, "export_step", &export_handles);
-    try step.requireExactParts(vm, export_handles.items);
-
-    const step_bytes = step.buildStepBuffer(vm.allocator, export_handles.items) catch |err| {
-        return vm.fail(.GeometryError, "export_step could not write the STEP file ({s})", .{@errorName(err)});
-    };
-    defer vm.allocator.free(step_bytes);
-
-    try vm.vfs.writeFile(filepath, step_bytes);
-
-    return receiver;
 }
 
 pub fn nativeImportStep(vm: *VM, path_str: []const u8) !value.Value {

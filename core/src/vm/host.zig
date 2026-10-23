@@ -3,7 +3,7 @@
 
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
-const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
+const GeometryHandle = @import("../core/geometry_handle.zig").GeometryHandle;
 
 // Forward reference to VM
 const VM = @import("vm.zig").VM;
@@ -17,4 +17,7 @@ pub const Host = struct {
     /// compiler/module_compiler.zig); the chunk is the caller's. Without one, imports fail.
     compile_module: ?*const fn (vm: *VM, path: []const u8, source: []const u8, namespace: *value.Namespace) anyerror!*chunk.Chunk = null,
     print_handler: ?*const fn (vm: *VM, message: []const u8) void = null,
+    /// What to add to a NoMethodError, when the embedder knows why the method is missing
+    /// (a Path asked to extrude).
+    missing_method_hint: ?*const fn (class: []const u8, name: []const u8) ?[]const u8 = null,
 };

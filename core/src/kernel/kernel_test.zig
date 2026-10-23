@@ -2,11 +2,11 @@ const std = @import("std");
 const testing = std.testing;
 const kernel = @import("kernel.zig");
 const test_support = @import("../test_support.zig");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
 const chunk = @import("../vm/chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 
@@ -62,6 +62,7 @@ test "Kernel Dispatcher: rejects mixed-engine operands at runtime" {
     try testing.expect(kernel.boolean(b, m, .difference_op) == null);
     try testing.expect(kernel.boolean(m, b, .union_op) == null);
     try testing.expect(kernel.minkowski(m, b) == null);
+    try testing.expect(kernel.erode(b, 1, 8) == null);
     try testing.expect(kernel.batchBoolean(testing.allocator, &.{ m, b }, .union_op) == null);
     try testing.expect(kernel.batchHull(testing.allocator, &.{ b, m }) == null);
     try testing.expectEqual(@as(f64, 0.0), kernel.minGap(m, b, 1.0));
@@ -104,11 +105,31 @@ test "Kernel: ghost display list survives garbage collection" {
 
 const planar = @import("planar.zig");
 
+/// Whether `p` lies in the region of the closed `contours` (each one's last point joined
+/// back to its first).
 fn regionContains(contours: []const []const planar.Vec2, p: planar.Vec2, tolerance: f64) bool {
     var region = planar.RegionTest.init(p, tolerance);
-    for (contours) |c| region.addContour(c);
+    for (contours) |points| {
+        if (points.len < 2) continue;
+        var prev = points[points.len - 1];
+        for (points) |cur| {
+            region.addEdge(prev, cur);
+            prev = cur;
+        }
+    }
     return region.contains();
 }
+
+/// A polygon's points as a ring for planar.isConvexRing.
+const SliceRing = struct {
+    points: []const planar.Vec2,
+    pub fn len(self: SliceRing) usize {
+        return self.points.len;
+    }
+    pub fn at(self: SliceRing, i: usize) planar.Vec2 {
+        return self.points[i];
+    }
+};
 
 test "Kernel planar: point in region with holes, boundary and orientation" {
     const tol = 1e-9;
@@ -146,7 +167,7 @@ test "Kernel planar: point in region with holes, boundary and orientation" {
     try std.testing.expect(!regionContains(square, .{ 10.002, 5 }, 1e-3));
 }
 
-test "Kernel planar: isConvexPolygon" {
+test "Kernel planar: isConvexRing" {
     const Case = struct { pts: []const planar.Vec2, convex: bool };
     const cases = [_]Case{
         .{ .pts = &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } }, .convex = true },
@@ -159,6 +180,6 @@ test "Kernel planar: isConvexPolygon" {
     };
     for (cases) |case| {
         errdefer std.debug.print("points: {any}\n", .{case.pts});
-        try std.testing.expectEqual(case.convex, planar.isConvexPolygon(case.pts));
+        try std.testing.expectEqual(case.convex, planar.isConvexRing(SliceRing{ .points = case.pts }));
     }
 }

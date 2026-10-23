@@ -6,7 +6,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const common = @import("common.zig");
-const util = @import("../methods/util.zig");
+const arguments = @import("../arguments.zig");
 
 /// Object#is_a?(Class) -> true if the receiver is an instance of the class or a subclass
 fn objectIsA(vm: *VM, receiver: value.Value, class: *value.ObjClass) !value.Value {
@@ -17,7 +17,7 @@ fn objectIsA(vm: *VM, receiver: value.Value, class: *value.ObjClass) !value.Valu
 /// Object#respond_to?(Symbol|String) -> true if the receiver has that method (or, for an
 /// instance, that field)
 fn objectRespondTo(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
-    const query_name = try util.requireName(vm, name_val, "respond_to?", "the method name");
+    const query_name = try arguments.requireName(vm, name_val, "respond_to?", "the method name");
     const query_val = try vm.allocateString(query_name);
 
     if (receiver.isClass()) {
@@ -49,7 +49,8 @@ fn objectNilQ(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initBool(receiver.isNil());
 }
 
-/// Object#empty? -> nil, an empty String/Array/Map/JsonObject, or a Solid with no volume
+/// Object#empty? -> nil, an empty String/Array/Map/JsonObject, a Solid with no volume or a
+/// Sketch with no area (a sketch answered false whatever it held)
 fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isNil()) return value.Value.initBool(true);
     if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
@@ -60,6 +61,11 @@ fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
         const solid = try vm.ensureConcrete(receiver);
         try vm.requireFeature(solid.engine, .volume);
         return value.Value.initBool(kernel.volume(solid) == 0.0);
+    }
+    if (receiver.isCrossSection()) {
+        const sketch = try vm.ensureConcreteCrossSection(receiver);
+        try vm.requireFeature(sketch.engine, .sketch_measure);
+        return value.Value.initBool(kernel.crossSectionArea(sketch) == 0.0);
     }
     return value.Value.initBool(false);
 }
@@ -78,11 +84,11 @@ fn objectInto(vm: *VM, receiver: value.Value, block: ?*value.ObjClosure) !value.
 
 /// Object#method(:name) -> the method bound to the receiver, called with `.call`
 fn objectMethod(vm: *VM, receiver: value.Value, name_val: value.Value) !value.Value {
-    const method_name = try util.requireName(vm, name_val, "method", "the method name");
+    const method_name = try arguments.requireName(vm, name_val, "method", "the method name");
     const query_val = try vm.allocateString(method_name);
     const class = classOrObject(vm, receiver);
     const method_val = (if (class) |c| vm.findMethod(c, query_val) else null) orelse {
-        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, util.typeName(vm, receiver) });
+        return vm.fail(.NameError, "undefined method '{s}' for {s}", .{ method_name, arguments.typeName(vm, receiver) });
     };
     const bound = try vm.gc.allocateBoundMethod(vm, receiver, method_val);
     return value.Value.initObj(&bound.obj);

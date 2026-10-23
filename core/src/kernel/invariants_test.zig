@@ -6,7 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const kernel = @import("kernel.zig");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const mesh_check = @import("mesh_check.zig");
 const support = @import("../test_support.zig");
 
@@ -33,6 +33,8 @@ const SHAPES = [_][]const u8{
     "cube(1).hull(sphere(1).translate(x: 3))",
     "cube(4).minkowski(sphere(0.5, segments: 16))",
     "cube(2).offset(0.2)",
+    "(cube(4) - cylinder(r: 1, h: 6).translate(2, 2, -1)).offset(-0.3)",
+    "cube(4).shell(0.5)",
     "cube(2).mirror([1, 0, 0])",
     "cube(2).scale(2)",
     "text(\"Hi\", size: 5).extrude(1)",

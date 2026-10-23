@@ -1,6 +1,7 @@
 //! Engine-independent 2D geometry: point-in-region tests over polygon contours.
 
 const std = @import("std");
+const segmentDistanceSq = @import("../core/affine2.zig").segmentDistanceSq;
 
 pub const Vec2 = [2]f64;
 
@@ -15,17 +16,6 @@ pub fn edgeWinding(a: Vec2, b: Vec2, p: Vec2) i32 {
         return -1;
     }
     return 0;
-}
-
-/// Squared distance from `p` to the segment a - b.
-pub fn segmentDistanceSq(a: Vec2, b: Vec2, p: Vec2) f64 {
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const len_sq = dx * dx + dy * dy;
-    const t = if (len_sq == 0) 0 else std.math.clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len_sq, 0, 1);
-    const ex = a[0] + t * dx - p[0];
-    const ey = a[1] + t * dy - p[1];
-    return ex * ex + ey * ey;
 }
 
 /// Accumulates the contours of a region and answers whether `point` lies in it.
@@ -53,39 +43,14 @@ pub const RegionTest = struct {
         self.winding += edgeWinding(a, b, self.point);
     }
 
-    /// Adds a closed contour (the last point connects back to the first).
-    pub fn addContour(self: *RegionTest, points: []const Vec2) void {
-        if (points.len < 2) return;
-        var prev = points[points.len - 1];
-        for (points) |cur| {
-            self.addEdge(prev, cur);
-            prev = cur;
-        }
-    }
-
     pub fn contains(self: RegionTest) bool {
         return self.on_boundary or self.winding != 0;
     }
 };
 
-/// Whether the closed polygon `points` is convex (collinear points allowed). A region with
-/// holes or several outlines is never convex, so callers pass exactly one contour.
-pub fn isConvexPolygon(points: []const Vec2) bool {
-    return isConvexRing(SliceRing{ .points = points });
-}
-
-const SliceRing = struct {
-    points: []const Vec2,
-    pub fn len(self: SliceRing) usize {
-        return self.points.len;
-    }
-    pub fn at(self: SliceRing, i: usize) Vec2 {
-        return self.points[i];
-    }
-};
-
-/// `isConvexPolygon` over any closed ring with `len()` and `at(i)`, so engines can test
-/// their contours in place without copying them.
+/// Whether the closed ring (anything with `len()` and `at(i)`, so engines test their
+/// contours in place without copying them) is convex, collinear points allowed. A region
+/// with holes or several outlines is never convex, so callers pass exactly one contour.
 pub fn isConvexRing(ring: anytype) bool {
     const n = ring.len();
     if (n < 3) return false;

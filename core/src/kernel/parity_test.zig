@@ -7,7 +7,7 @@ const std = @import("std");
 const testing = std.testing;
 const api = @import("../api.zig");
 const kernel = @import("kernel.zig");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const support = @import("../test_support.zig");
 
 /// STEP writes coordinates with six decimals.
@@ -45,6 +45,9 @@ const REFUSED = [_][]const u8{
     "cylinder(r: 1, d: 2, h: 2)",
     "cube(size: 3, x: 1)",
     "cylinder(r: 1, h: 2, segments: 2049)",
+    "polygon([[0, 0], [4, 0], [4, 3]], round_r: -1)",
+    "polygon([[0, 0], [4, 0], [4, 3]], round_r: 5)",
+    "polyline([[0, 0], [4, 0], [4, 3]]).chamfer(4)",
 };
 
 test "parity: each shape both engines build has the same box on each" {

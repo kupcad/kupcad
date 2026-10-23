@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const chunk = @import("chunk.zig");
-const value = @import("../core/value.zig");
 
 pub const VerifierError = error{
     CorruptedBytecode,
@@ -49,25 +48,16 @@ pub fn verifyChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk) Verifier
     return verifyChunkDepth(allocator, c, .{ .local_count = c.local_count, .upvalue_count = 0 }, 0);
 }
 
-fn readU16(code: []const u8, at: usize) usize {
-    return (@as(usize, code[at]) << 8) | @as(usize, code[at + 1]);
-}
-
-fn readU32(code: []const u8, at: usize) usize {
-    return (@as(usize, code[at]) << 24) | (@as(usize, code[at + 1]) << 16) |
-        (@as(usize, code[at + 2]) << 8) | @as(usize, code[at + 3]);
-}
-
 fn checkConstant(c: *const chunk.Chunk, idx: usize) VerifierError!void {
     if (idx >= c.constants.items.len) return error.InvalidConstantIndex;
 }
 
 fn checkInlineCache(c: *const chunk.Chunk, code: []const u8, at: usize) VerifierError!void {
-    if (readU16(code, at) >= c.inline_caches.items.len) return error.InvalidInlineCacheIndex;
+    if (chunk.readU16(code, at) >= c.inline_caches.items.len) return error.InvalidInlineCacheIndex;
 }
 
 fn checkGlobalCache(c: *const chunk.Chunk, code: []const u8, at: usize) VerifierError!void {
-    if (readU16(code, at) >= c.global_caches.items.len) return error.InvalidGlobalCacheIndex;
+    if (chunk.readU16(code, at) >= c.global_caches.items.len) return error.InvalidGlobalCacheIndex;
 }
 
 fn verifyChunkDepth(allocator: std.mem.Allocator, c: *const chunk.Chunk, scope: Scope, depth: usize) VerifierError!void {
@@ -122,88 +112,68 @@ const Walk = struct {
         self.targets.append(self.allocator, target) catch return error.OutOfMemory;
     }
 
-    /// Checks the operands of `op`, whose opcode byte is behind `ip`, and steps over them.
+    /// Checks the operands of `op`, whose opcode byte is behind `ip`, as chunk.operandsOf
+    /// lays them out, and steps over them.
     fn operands(self: *Walk, op: chunk.OpCode) VerifierError!void {
         const c = self.c;
         const code = self.code;
-        switch (op) {
-            .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block => {},
-
-            // 1-byte constant index
-            .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => try checkConstant(c, code[try self.take(1)]),
-            // 2-byte constant index
-            .op_constant_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => try checkConstant(c, readU16(code, try self.take(2))),
-
-            // Slots
-            .op_get_local, .op_set_local => try self.scope.checkLocal(code[try self.take(1)]),
-            .op_get_local_wide, .op_set_local_wide => try self.scope.checkLocal(readU16(code, try self.take(2))),
-            .op_get_upvalue, .op_set_upvalue => try self.scope.checkUpvalue(code[try self.take(1)]),
-
-            // Counts and arities: 1 or 2 bytes; a call's argument count and CallFlags byte
-            .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack => _ = try self.take(1),
-            .op_build_array_wide, .op_build_map_wide, .op_pack_splat, .op_unpack_splat => _ = try self.take(2),
-            .op_call, .op_yield, .op_super_invoke => _ = try self.take(2),
-
-            // 1-byte map slot + 1- or 2-byte constant index
-            .op_extract_kwarg => try checkConstant(c, code[try self.take(2) + 1]),
-            .op_extract_kwarg_wide => try checkConstant(c, readU16(code, try self.take(3) + 1)),
-
-            // Name constant (1 or 2 bytes) + 2-byte GlobalCache
-            .op_get_global, .op_define_global => {
+        switch (chunk.operandsOf(op)) {
+            .none => {},
+            .constant => try checkConstant(c, code[try self.take(1)]),
+            .constant_wide => try checkConstant(c, chunk.readU16(code, try self.take(2))),
+            .local => try self.scope.checkLocal(code[try self.take(1)]),
+            .local_wide => try self.scope.checkLocal(chunk.readU16(code, try self.take(2))),
+            .upvalue => try self.scope.checkUpvalue(code[try self.take(1)]),
+            .count => _ = try self.take(1),
+            .count_wide, .count_pair, .call => _ = try self.take(2),
+            .kwarg => try checkConstant(c, code[try self.take(2) + 1]),
+            .kwarg_wide => try checkConstant(c, chunk.readU16(code, try self.take(3) + 1)),
+            .global => {
                 const at = try self.take(3);
                 try checkConstant(c, code[at]);
                 try checkGlobalCache(c, code, at + 1);
             },
-            .op_get_global_wide, .op_define_global_wide => {
+            .global_wide => {
                 const at = try self.take(4);
-                try checkConstant(c, readU16(code, at));
+                try checkConstant(c, chunk.readU16(code, at));
                 try checkGlobalCache(c, code, at + 2);
             },
-
-            // Name constant (1 or 2 bytes) + 2-byte inline cache
-            .op_get_property, .op_set_property, .op_get_ivar => {
+            .property => {
                 const at = try self.take(3);
                 try checkConstant(c, code[at]);
                 try checkInlineCache(c, code, at + 1);
             },
-            .op_get_property_wide, .op_set_property_wide, .op_get_ivar_wide => {
+            .property_wide => {
                 const at = try self.take(4);
-                try checkConstant(c, readU16(code, at));
+                try checkConstant(c, chunk.readU16(code, at));
                 try checkInlineCache(c, code, at + 2);
             },
-
-            // Name constant (1 or 2 bytes) + 1-byte arity + 1-byte CallFlags + 2-byte inline cache
-            .op_invoke => {
+            .invoke => {
                 const at = try self.take(5);
                 try checkConstant(c, code[at]);
                 try checkInlineCache(c, code, at + 3);
             },
-            .op_invoke_wide => {
+            .invoke_wide => {
                 const at = try self.take(6);
-                try checkConstant(c, readU16(code, at));
+                try checkConstant(c, chunk.readU16(code, at));
                 try checkInlineCache(c, code, at + 4);
             },
-
-            // u16 slot of the loop state (it spans two slots), then a 4-byte exit offset
-            .op_for_next => {
+            .for_next => {
                 const at = try self.take(2 + JUMP_OPERAND_SIZE);
-                try self.scope.checkLocal(readU16(code, at) + 1);
-                try self.jumpTo(self.ip + readU32(code, at + 2));
+                try self.scope.checkLocal(@as(usize, chunk.readU16(code, at)) + 1);
+                try self.jumpTo(self.ip + chunk.readU32(code, at + 2));
             },
-
-            // 4-byte jump offsets, from the end of the instruction
-            .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_setup_rescue => {
-                const offset = readU32(code, try self.take(JUMP_OPERAND_SIZE));
+            .jump => {
+                const offset = chunk.readU32(code, try self.take(JUMP_OPERAND_SIZE));
                 try self.jumpTo(self.ip + offset);
             },
-            .op_loop => {
-                const offset = readU32(code, try self.take(JUMP_OPERAND_SIZE));
+            .loop => {
+                const offset = chunk.readU32(code, try self.take(JUMP_OPERAND_SIZE));
                 if (self.ip < offset) return error.InvalidJumpOffset;
                 try self.jumpTo(self.ip - offset);
             },
-
-            .op_switch, .op_switch_wide => try self.jumpTable(op == .op_switch_wide),
-            .op_closure, .op_closure_wide => try self.closure(op == .op_closure_wide),
+            .switch_table, .switch_table_wide => |layout| try self.jumpTable(layout == .switch_table_wide),
+            .closure, .closure_wide => |layout| try self.closure(layout == .closure_wide),
         }
     }
 
@@ -212,15 +182,15 @@ const Walk = struct {
     fn jumpTable(self: *Walk, wide: bool) VerifierError!void {
         const code = self.code;
         const count_at = try self.take(if (wide) 2 else 1);
-        const case_count = if (wide) readU16(code, count_at) else @as(usize, code[count_at]);
+        const case_count = if (wide) chunk.readU16(code, count_at) else @as(usize, code[count_at]);
         const table = try self.take(case_count * SWITCH_ENTRY_SIZE + JUMP_OPERAND_SIZE);
         const after = self.ip;
         for (0..case_count) |i| {
             const entry = table + i * SWITCH_ENTRY_SIZE;
-            try checkConstant(self.c, readU16(code, entry));
-            try self.jumpTo(after + readU32(code, entry + 2));
+            try checkConstant(self.c, chunk.readU16(code, entry));
+            try self.jumpTo(after + chunk.readU32(code, entry + 2));
         }
-        try self.jumpTo(after + readU32(code, after - JUMP_OPERAND_SIZE));
+        try self.jumpTo(after + chunk.readU32(code, after - JUMP_OPERAND_SIZE));
     }
 
     /// op_closure: the function's constant (1 or 2 bytes) and a descriptor per upvalue it
@@ -228,7 +198,7 @@ const Walk = struct {
     fn closure(self: *Walk, wide: bool) VerifierError!void {
         const code = self.code;
         const idx_at = try self.take(if (wide) 2 else 1);
-        const func_idx = if (wide) readU16(code, idx_at) else @as(usize, code[idx_at]);
+        const func_idx = if (wide) chunk.readU16(code, idx_at) else @as(usize, code[idx_at]);
         try checkConstant(self.c, func_idx);
         // Anything but a function here means a corrupt script.
         const func_val = self.c.constants.items[func_idx];
@@ -239,7 +209,7 @@ const Walk = struct {
         // Each upvalue captures one of this frame's locals or one of its upvalues.
         for (0..func_obj.upvalue_count) |i| {
             const at = descriptors + i * UPVALUE_DESCRIPTOR_SIZE;
-            const captured = readU16(code, at + 1);
+            const captured = chunk.readU16(code, at + 1);
             switch (code[at]) { // the VM's is_local flag
                 1 => try self.scope.checkLocal(captured),
                 0 => try self.scope.checkUpvalue(captured),

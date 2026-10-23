@@ -44,12 +44,6 @@ pub fn callBlock(vm: *VM, block: *value.ObjClosure, args: []const value.Value) !
     return .{ .value = result };
 }
 
-pub fn requireBlock(vm: *VM, block: ?*value.ObjClosure, method: []const u8) !*value.ObjClosure {
-    return block orelse {
-        return vm.fail(.ArgumentError, "{s} requires a block", .{method});
-    };
-}
-
 /// Yields every value of `span` to `block`. Returns `receiver`, or the value of a
 /// `break` inside the block. Exceptions and `return` propagate unchanged.
 pub fn each(vm: *VM, span: Span, receiver: value.Value, block: *value.ObjClosure, method: []const u8) !value.Value {

@@ -23,3 +23,8 @@ part = cube(width + early)
 # kupcad:disable-next-line unused-varable
 # kupcad:disable-nextline unused-variable
 # kupcad:disable-line
+
+# Two rules hidden by one directive, listed with a comma and with a space
+spent = part - part # kupcad:disable-line unused-variable, self-subtraction
+spent_too = part - part # kupcad:disable-line unused-variable self-subtraction
+part

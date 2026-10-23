@@ -3,15 +3,17 @@
 //! memory and take Zig slices and bools in place of C pointers and ints.
 
 const std = @import("std");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 pub const ManifoldObj = opaque {};
 pub const ManifoldBox = opaque {};
 pub const ManifoldMeshGL = opaque {};
+pub const ManifoldMeshGL64 = opaque {};
 pub const ManifoldCrossSection = opaque {};
 pub const ManifoldPolygons = opaque {};
 pub const ManifoldSimplePolygon = opaque {};
 pub const ManifoldVecObj = opaque {};
+pub const ManifoldCrossSectionVec = opaque {};
 
 pub const OpType = enum(c_int) {
     add = 0,
@@ -97,6 +99,12 @@ extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: 
 extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+extern fn manifold_alloc_cross_section_vec() ?*ManifoldCrossSectionVec;
+extern fn manifold_cross_section_empty_vec(mem: ?*ManifoldCrossSectionVec) ?*ManifoldCrossSectionVec;
+// Runs ~vector() and frees the memory manifold_alloc_cross_section_vec gave
+extern fn manifold_delete_cross_section_vec(csv: ?*ManifoldCrossSectionVec) void;
+extern fn manifold_cross_section_vec_push_back(csv: ?*ManifoldCrossSectionVec, cs: ?*ManifoldCrossSection) void;
+extern fn manifold_cross_section_batch_hull(mem: ?*ManifoldCrossSection, css: ?*ManifoldCrossSectionVec) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
 extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
 extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
@@ -128,6 +136,14 @@ extern fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
 extern fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
 extern fn manifold_of_meshgl(mem: ?*ManifoldObj, mesh: ?*ManifoldMeshGL) ?*ManifoldObj;
+extern fn manifold_alloc_meshgl64() ?*ManifoldMeshGL64;
+extern fn manifold_delete_meshgl64(m: ?*ManifoldMeshGL64) void;
+extern fn manifold_get_meshgl64(mem: ?*ManifoldMeshGL64, m: ?*ManifoldObj) ?*ManifoldMeshGL64;
+extern fn manifold_meshgl64_num_prop(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_vert_properties_length(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_tri_length(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_vert_properties(mem: [*]f64, m: ?*ManifoldMeshGL64) [*]f64;
+extern fn manifold_meshgl64_tri_verts(mem: [*]u64, m: ?*ManifoldMeshGL64) [*]u64;
 
 extern fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
 extern fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
@@ -141,7 +157,6 @@ extern fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const Man
 extern fn manifold_polygons(mem: ?*ManifoldPolygons, ps: [*]?*ManifoldSimplePolygon, length: usize) ?*ManifoldPolygons;
 extern fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
 extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
-extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
 
@@ -308,6 +323,15 @@ pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f
 
 pub fn crossSectionBoolean(a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
     return manifold_cross_section_boolean(manifold_alloc_cross_section(), a, b, op);
+}
+
+/// The convex hull of the sketches together. The vector holds copies (a CrossSection
+/// shares its outlines), freed with it.
+pub fn crossSectionBatchHull(sketches: []const *ManifoldCrossSection) ?*ManifoldCrossSection {
+    const vec = manifold_cross_section_empty_vec(manifold_alloc_cross_section_vec() orelse return null);
+    defer manifold_delete_cross_section_vec(vec);
+    for (sketches) |cs| manifold_cross_section_vec_push_back(vec, cs);
+    return manifold_cross_section_batch_hull(manifold_alloc_cross_section(), vec);
 }
 
 pub fn square(x: f64, y: f64, center: bool) ?*ManifoldCrossSection {
@@ -489,6 +513,31 @@ pub fn meshGLTriVerts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
     return manifold_meshgl_tri_verts(mem, m);
 }
 
+pub fn allocMeshGL64() ?*ManifoldMeshGL64 {
+    return manifold_alloc_meshgl64();
+}
+pub fn deleteMeshGL64(m: ?*ManifoldMeshGL64) void {
+    manifold_delete_meshgl64(m);
+}
+pub fn getMeshGL64(mem: ?*ManifoldMeshGL64, m: ?*ManifoldObj) ?*ManifoldMeshGL64 {
+    return manifold_get_meshgl64(mem, m);
+}
+pub fn meshGL64NumProp(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_num_prop(m);
+}
+pub fn meshGL64VertPropertiesLength(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_vert_properties_length(m);
+}
+pub fn meshGL64TriLength(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_tri_length(m);
+}
+pub fn meshGL64VertProperties(mem: [*]f64, m: ?*ManifoldMeshGL64) [*]f64 {
+    return manifold_meshgl64_vert_properties(mem, m);
+}
+pub fn meshGL64TriVerts(mem: [*]u64, m: ?*ManifoldMeshGL64) [*]u64 {
+    return manifold_meshgl64_tri_verts(mem, m);
+}
+
 pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64, oz: f64, ex: f64, ey: f64, ez: f64) ?[]geom.RayHit {
     const vec = manifold_ray_cast(manifold_alloc_ray_hit_vec(), m, ox, oy, oz, ex, ey, ez);
     defer if (vec != null) manifold_delete_ray_hit_vec(vec);
@@ -511,12 +560,6 @@ pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64,
         };
     }
     return hits;
-}
-
-pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
-    const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
-    defer manifold_delete_simple_polygon(p);
-    return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
 }
 
 // manifoldc returns size_t; these were declared c_int, which read past 2^31 as negative

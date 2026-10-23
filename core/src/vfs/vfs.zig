@@ -1,12 +1,18 @@
 //! `Vfs`: the file system interface the VM and package manager write through, a pointer and
 //! vtable for reading, writing, making directories and linking. Implemented by `native.zig`,
-//! `memory.zig` and `readonly.zig`.
+//! `memory.zig` and `readonly.zig`, and by `Vfs.none`, which has no files.
 
 const std = @import("std");
 
 pub const Vfs = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
+
+    /// No files, and nothing can be written: what a VM reads and writes through until its
+    /// host gives it a file system, so a host that gives none lets a script touch no disk.
+    /// A read finds nothing (error.FileNotFound); a write or a link is refused
+    /// (error.AccessDenied).
+    pub const none: Vfs = .{ .ptr = &None.state, .vtable = &None.vtable };
 
     pub const VTable = struct {
         makePath: *const fn (ptr: *anyopaque, path: []const u8) anyerror!void,
@@ -45,5 +51,34 @@ pub const Vfs = struct {
 
     pub inline fn symLink(self: Vfs, target_path: []const u8, link_path: []const u8) !void {
         return self.vtable.symLink(self.ptr, target_path, link_path);
+    }
+};
+
+const None = struct {
+    /// What `Vfs.none` points at: it has no state, but a Vfs needs a pointer.
+    var state: u8 = 0;
+
+    const vtable: Vfs.VTable = .{
+        .makePath = makePath,
+        .readFile = readFile,
+        .writeFile = writeFile,
+        .hardLink = link,
+        .symLink = link,
+    };
+
+    fn makePath(_: *anyopaque, _: []const u8) anyerror!void {
+        return error.AccessDenied;
+    }
+
+    fn readFile(_: *anyopaque, _: std.mem.Allocator, _: []const u8) anyerror![]u8 {
+        return error.FileNotFound;
+    }
+
+    fn writeFile(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {
+        return error.AccessDenied;
+    }
+
+    fn link(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {
+        return error.AccessDenied;
     }
 };

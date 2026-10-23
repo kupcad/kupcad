@@ -6,7 +6,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const dag = @import("../../vm/dag.zig");
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 
 inline fn gatherAndBalance(vm: *VM, receiver: value.Value, args: []const value.Value, comptime name: []const u8, op_3d: dag.DAGTag, op_2d: dag.DAGTag) !value.Value {
     var scratch = std.ArrayList(u32).empty;
@@ -54,9 +54,9 @@ fn appendOperand(vm: *VM, alloc: std.mem.Allocator, list: *std.ArrayList(u32), v
     if (index) |i| {
         // An optional part left out is a nil in the list.
         const hint = if (val.isNil()) "; leave out the nils with .compact" else "";
-        _ = vm.raiseError(.TypeError, "{s} expects {s} at index {d} of argument {d}, got {s}{s}", .{ method, expected, i, argument, util.typeName(vm, val), hint });
+        _ = vm.raiseError(.TypeError, "{s} expects {s} at index {d} of argument {d}, got {s}{s}", .{ method, expected, i, argument, arguments.typeName(vm, val), hint });
     } else {
-        _ = vm.raiseError(.TypeError, "{s} expects {s} or an Array of them for argument {d}, got {s}", .{ method, expected, argument, util.typeName(vm, val) });
+        _ = vm.raiseError(.TypeError, "{s} expects {s} or an Array of them for argument {d}, got {s}", .{ method, expected, argument, arguments.typeName(vm, val) });
     }
     return error.RuntimeError;
 }

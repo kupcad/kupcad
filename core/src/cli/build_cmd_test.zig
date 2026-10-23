@@ -10,7 +10,7 @@ const STL_TRIANGLE_LEN = 50;
 const GLB_MAGIC = "glTF";
 const STEP_MAGIC = "ISO-10303-21";
 
-const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf) or pass --format.\n";
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf, .obj, .svg, .dxf) or pass --format.\n";
 
 const Result = struct {
     outcome: build_cmd.Outcome,
@@ -95,7 +95,7 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{ "model.kup", "--split" }, .message = "Error: Missing directory after --split\n" },
         .{ .args = &.{ "model.kup", "--split", "parts", "-o", "x.stl" }, .message = "Error: --split writes a file per part into its directory; leave out -o\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
-        .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step, 3mf\n" },
+        .{ .args = &.{ "model.kup", "--format", "wrl" }, .message = "Error: Unsupported format 'wrl'. Allowed: stl, glb, gltf, step, 3mf, obj, svg, dxf\n" },
     };
     for (cases) |case| {
         var res = try runBuild(case.args);
@@ -115,7 +115,11 @@ test "build_cmd: nonexistent input file fails" {
 test "build_cmd: script failures and empty exports return failure without writing output" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "x = undefined_var + 10\n", .message = "Build failed: " },
-        .{ .source = "x = 1\n", .message = "Export failed: error.NoGeometry\n" },
+        // The reason is the VM's report (a TypeError naming the value, see api_test)
+        .{ .source = "x = 1\n", .message = "Export failed: error.RuntimeError\n" },
+        // An empty Solid says so, with the file it would have written (it was
+        // "Export failed: error.NoGeometry")
+        .{ .source = "cube(1) - cube(2)\n", .message = "Error: the model is empty, there is nothing to write to '" },
     };
     for (cases) |case| {
         var fx = try Fixture.init(case.source);
@@ -193,9 +197,9 @@ test "build_cmd: --split writes each part once, as made, named after it" {
     defer res.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.find(u8, res.text(), "M3_bolt.stl (2 copies)") != null);
-    // STL unless -f says: a separator replaced, an unnamed part numbered, a name taken
-    // (case aside) given a number
-    for ([_][]const u8{ "parts/M3_bolt.stl", "parts/part 2.stl", "parts/m3_bolt 2.stl" }) |name| {
+    // STL unless -f says: a separator replaced, an unnamed part numbered among the unnamed
+    // (part_1, whatever its place), a name taken (case aside) given a number
+    for ([_][]const u8{ "parts/M3_bolt.stl", "parts/part_1.stl", "parts/m3_bolt_2.stl" }) |name| {
         errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
         const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
         testing.allocator.free(bytes);
@@ -204,24 +208,80 @@ test "build_cmd: --split writes each part once, as made, named after it" {
     var glb = try runBuild(&.{ fx.input, "--split", dir, "-f", "glb" });
     defer glb.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, glb.outcome);
-    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part 2.glb", testing.allocator, .limited(1 << 20));
+    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part_1.glb", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("glTF", bytes[0..4]);
 }
 
+test "build_cmd: --mtl writes an obj's materials beside it, and only an obj's" {
+    var fx = try Fixture.init("red = cube(1).material(color: \"#FF0000\")\nassemble(name: \"kit\", parts: [red, cube(2).translate(x: 5)])\n");
+    defer fx.deinit();
+    const output = try fx.path("part.obj");
+    defer testing.allocator.free(output);
+    var res = try runBuild(&.{ fx.input, "-o", output, "--mtl" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(std.mem.find(u8, res.text(), "part.mtl (") != null);
+    try testing.expectEqual(@as(usize, 3), try fx.entryCount()); // model.kup, part.obj, part.mtl
+    const obj = try fx.tmp.dir.readFileAlloc(testing.io, "part.obj", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(obj);
+    try testing.expect(std.mem.find(u8, obj, "\nmtllib part.mtl\n") != null);
+    try testing.expect(std.mem.find(u8, obj, "\nusemtl material_1\n") != null);
+    const mtl = try fx.tmp.dir.readFileAlloc(testing.io, "part.mtl", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(mtl);
+    try testing.expect(std.mem.find(u8, mtl, "newmtl material_1\nKd 1 0 0\n") != null);
+
+    // Another format has no library; refused rather than silently none
+    var stl = try runBuild(&.{ fx.input, "-f", "stl", "--mtl" });
+    defer stl.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, stl.outcome);
+    try testing.expectEqualStrings("Error: --mtl only applies to obj output, not stl\n", stl.text());
+
+    // The parts of a split share one library
+    const dir = try fx.path("parts");
+    defer testing.allocator.free(dir);
+    var split = try runBuild(&.{ fx.input, "--split", dir, "-f", "obj", "--mtl" });
+    defer split.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, split.outcome);
+    const part = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part_1.obj", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(part);
+    try testing.expect(std.mem.find(u8, part, "\nmtllib materials.mtl\n") != null);
+    const shared = try fx.tmp.dir.readFileAlloc(testing.io, "parts/materials.mtl", testing.allocator, .limited(1 << 20));
+    testing.allocator.free(shared);
+}
+
+test "build_cmd: --split in a 2D format draws each part and each sketch in a file of its own" {
+    // A 2D format crashed the split (an unreachable branch), and a sketch had no file.
+    var fx = try Fixture.init("lid = cube(4).named(\"lid\")\n[lid, lid.translate(x: 10), square(3).named(\"gasket\"), circle(r: 1)]\n");
+    defer fx.deinit();
+    const dir = try fx.path("parts");
+    defer testing.allocator.free(dir);
+    var res = try runBuild(&.{ fx.input, "--split", dir, "-f", "dxf" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(std.mem.find(u8, res.text(), "lid.dxf (2 copies)") != null);
+    for ([_][]const u8{ "parts/lid.dxf", "parts/gasket.dxf", "parts/part_1.dxf" }) |name| {
+        errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
+        const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(bytes);
+        try testing.expectEqual(@as(?FileKind, .dxf), detectFileKind(bytes));
+    }
+    try testing.expectEqual(@as(usize, 2), try fx.entryCount()); // model.kup and parts/
+}
+
 test "build_cmd: --split names a part's file safely, and each once" {
-    var names: build_cmd.PartFileNames = .{};
+    var names: @import("export_flags.zig").PartFileNames = .{};
     defer names.deinit(testing.allocator);
     const cases = [_]struct { name: ?[]const u8, number: usize, file: []const u8 }{
         .{ .name = "bracket", .number = 1, .file = "bracket.stl" },
-        .{ .name = "Bracket", .number = 2, .file = "Bracket 2.stl" },
-        .{ .name = null, .number = 3, .file = "part 3.stl" },
-        .{ .name = " . ", .number = 4, .file = "part 4.stl" },
+        .{ .name = "Bracket", .number = 2, .file = "Bracket_2.stl" },
+        .{ .name = null, .number = 3, .file = "part_3.stl" },
+        .{ .name = " . ", .number = 4, .file = "part_4.stl" },
         .{ .name = "a:b*c?\"d\x01", .number = 5, .file = "a_b_c__d_.stl" },
         .{ .name = "größe", .number = 6, .file = "größe.stl" },
     };
     for (cases) |case| {
-        const file = try names.next(testing.allocator, case.name, case.number, "stl");
+        const file = try names.next(testing.allocator, case.name, .part, case.number, "stl");
         defer testing.allocator.free(file);
         try testing.expectEqualStrings(case.file, file);
     }
@@ -299,9 +359,13 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
     defer testing.allocator.free(list);
     const missing = try fx.path("missing.json");
     defer testing.allocator.free(missing);
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "number.json", .data = "5" });
+    const number = try fx.path("number.json");
+    defer testing.allocator.free(number);
     const cases = [_]struct { file: []const u8, message: []const u8 }{
         .{ .file = list, .message = ": parameter 'gears' is an array; a parameter takes a number, a string, true or false\n" },
         .{ .file = missing, .message = "': FileNotFound\n" },
+        .{ .file = number, .message = ": a parameter file holds one JSON object of names and values, as {\"width\": 40}\n" },
     };
     for (cases) |case| {
         var res = try runBuild(&.{ fx.input, "-P", case.file, "-o", fx.output });
@@ -316,10 +380,13 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
 }
 
 /// What an exporter actually wrote, judged by content rather than by file name.
-const FileKind = enum { stl, glb, gltf, step };
+const FileKind = enum { stl, glb, gltf, step, obj, svg, dxf };
 
 fn detectFileKind(bytes: []const u8) ?FileKind {
     if (std.mem.startsWith(u8, bytes, GLB_MAGIC)) return .glb;
+    if (std.mem.startsWith(u8, bytes, "<?xml") and std.mem.find(u8, bytes, "<svg ") != null) return .svg;
+    if (std.mem.startsWith(u8, bytes, "0\nSECTION\n2\nHEADER\n")) return .dxf;
+    if (std.mem.startsWith(u8, bytes, "# KupCAD Export\n# millimetres")) return .obj;
     if (std.mem.startsWith(u8, bytes, "{\"asset\":")) return .gltf;
     if (std.mem.startsWith(u8, bytes, STEP_MAGIC)) return .step;
     // Binary STL: 80-byte header, u32 triangle count, then fixed-size triangle records.
@@ -328,6 +395,58 @@ fn detectFileKind(bytes: []const u8) ?FileKind {
         if (bytes.len == STL_HEADER_LEN + STL_COUNT_LEN + @as(usize, count) * STL_TRIANGLE_LEN) return .stl;
     }
     return null;
+}
+
+test "build_cmd: several -o write the one run to each, each in its own extension's format" {
+    var fx = try Fixture.init("red = cube(1).material(color: \"#FF0000\")\nassemble(name: \"kit\", parts: [red, cube(2).translate(x: 5)])\n");
+    defer fx.deinit();
+    const names = [_][]const u8{ "kit.stl", "kit.glb", "kit.obj", "kit.svg" };
+    var paths: [names.len][]u8 = undefined;
+    for (names, &paths) |name, *p| p.* = try fx.path(name);
+    defer for (paths) |p| testing.allocator.free(p);
+    // --draco is glb's and --mtl obj's: each applies to the outputs it fits
+    var res = try runBuild(&.{ fx.input, "-o", paths[0], "-o", paths[1], "-o", paths[2], "-o", paths[3], "--draco", "--mtl" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expectEqual(@as(usize, 4), std.mem.count(u8, res.text(), "Successfully built "));
+    try testing.expectEqual(@as(usize, 6), try fx.entryCount()); // model.kup, the four, kit.mtl
+    const kinds = [_]?FileKind{ .stl, .glb, null, null };
+    for (names, kinds) |name, kind| {
+        const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 22));
+        defer testing.allocator.free(bytes);
+        if (kind) |k| try testing.expectEqual(@as(?FileKind, k), detectFileKind(bytes));
+        if (std.mem.eql(u8, name, "kit.glb")) try testing.expect(std.mem.find(u8, bytes, "KHR_draco_mesh_compression") != null);
+        if (std.mem.eql(u8, name, "kit.obj")) try testing.expect(std.mem.find(u8, bytes, "\nmtllib kit.mtl\n") != null);
+        if (std.mem.eql(u8, name, "kit.svg")) try testing.expect(std.mem.startsWith(u8, bytes, "<?xml") or std.mem.startsWith(u8, bytes, "<svg"));
+    }
+}
+
+test "build_cmd: several -o refuse a --format, a .step beside a mesh, and an option none of them takes" {
+    var fx = try Fixture.init("cube(1)\n");
+    defer fx.deinit();
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{ "a.stl", "a.glb", "-f", "stl" }, .message = "Error: --format picks the format of one -o; with several, each one's extension picks its own\n" },
+        .{ .args = &.{ "a.stl", "a.step" }, .message = "Error: 'a.step' is built on the exact B-Rep engine, which can't write the other outputs yet: build it on its own\n" },
+        .{ .args = &.{ "a.step", "a.obj" }, .message = "Error: 'a.step' is built on the exact B-Rep engine, which can't write the other outputs yet: build it on its own\n" },
+        .{ .args = &.{ "a.stl", "a.obj", "--draco" }, .message = "Error: --draco only applies to glb and gltf output, not stl or obj\n" },
+        .{ .args = &.{ "a.stl", "a.stl", "--stroke-width", "0.2" }, .message = "Error: --stroke-width only applies to svg output, not stl\n" },
+    };
+    for (cases) |case| {
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(testing.allocator);
+        try args.append(testing.allocator, fx.input);
+        for (case.args) |arg| {
+            const is_path = std.mem.findScalar(u8, arg, '.') != null and arg[0] != '-' and !std.mem.eql(u8, arg, "0.2");
+            if (is_path) try args.append(testing.allocator, "-o");
+            try args.append(testing.allocator, arg);
+        }
+        var res = try runBuild(args.items);
+        defer res.deinit();
+        errdefer std.debug.print("{s}\n", .{res.text()});
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expectEqualStrings(case.message, res.text());
+    }
+    try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // nothing was written
 }
 
 test "build_cmd: detectFileKind recognises each export by content" {
@@ -346,6 +465,8 @@ const FormatCase = struct {
     /// `-f` value; null omits `-f`.
     format: ?[]const u8 = null,
     draco: bool = false,
+    /// Further flags, as given.
+    extra: []const []const u8 = &.{},
     expect: union(enum) {
         /// File name expected in the fixture dir and the format of its bytes.
         written: struct { name: []const u8, kind: FileKind },
@@ -363,6 +484,10 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.gltf", .expect = .{ .written = .{ .name = "part.gltf", .kind = .gltf } } },
         .{ .output = "part.step", .expect = .{ .written = .{ .name = "part.step", .kind = .step } } },
         .{ .output = "part.stp", .expect = .{ .written = .{ .name = "part.stp", .kind = .step } } },
+        .{ .output = "part.obj", .expect = .{ .written = .{ .name = "part.obj", .kind = .obj } } },
+        // A 2D format draws a Solid's projection
+        .{ .output = "part.svg", .expect = .{ .written = .{ .name = "part.svg", .kind = .svg } } },
+        .{ .output = "part.dxf", .expect = .{ .written = .{ .name = "part.dxf", .kind = .dxf } } },
         // An agreeing --format is accepted.
         .{ .output = "part.stl", .format = "stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
         .{ .output = "part.Stp", .format = "step", .expect = .{ .written = .{ .name = "part.Stp", .kind = .step } } },
@@ -371,7 +496,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.STL", .format = "glb", .expect = .{ .rejected = "Error: --format glb conflicts with output extension .STL\n" } },
         .{ .output = "part.stp", .format = "gltf", .expect = .{ .rejected = "Error: --format gltf conflicts with output extension .stp\n" } },
         // Unrecognized or missing extensions need an explicit --format.
-        .{ .output = "part.obj", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
+        .{ .output = "part.wrl", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
         .{ .output = "part", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
         .{ .output = "part.bin", .format = "stl", .expect = .{ .written = .{ .name = "part.bin", .kind = .stl } } },
         // Without -o the name is derived from the input stem and the format.
@@ -382,6 +507,17 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.glb", .draco = true, .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
         .{ .output = "part.stl", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not stl\n" } },
         .{ .output = null, .format = "step", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not step\n" } },
+        // Draco's precision, with Draco only, from 1 to 30 bits
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "20" }, .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
+        .{ .output = "part.glb", .extra = &.{ "--draco-bits", "20" }, .expect = .{ .rejected = "Error: --draco-bits sets Draco's precision; add --draco to compress\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "31" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got '31'\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "0" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got '0'\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "fine" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got 'fine'\n" } },
+        // An svg's outline width, a positive number, for svg only
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "0.01" }, .expect = .{ .written = .{ .name = "part.svg", .kind = .svg } } },
+        .{ .output = "part.dxf", .extra = &.{ "--stroke-width", "0.01" }, .expect = .{ .rejected = "Error: --stroke-width only applies to svg output, not dxf\n" } },
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "-1" }, .expect = .{ .rejected = "Error: --stroke-width must be a positive number of millimetres, got '-1'\n" } },
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "inf" }, .expect = .{ .rejected = "Error: --stroke-width must be a positive number of millimetres, got 'inf'\n" } },
     };
 
     for (cases) |case| {
@@ -399,6 +535,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         if (output_path) |p| try args.appendSlice(testing.allocator, &.{ "-o", p });
         if (case.format) |f| try args.appendSlice(testing.allocator, &.{ "-f", f });
         if (case.draco) try args.append(testing.allocator, "--draco");
+        try args.appendSlice(testing.allocator, case.extra);
 
         var res = try runBuild(args.items);
         defer res.deinit();

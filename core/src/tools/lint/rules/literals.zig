@@ -18,7 +18,7 @@ pub fn number(tree: *const ast.Tree, idx: ast.NodeIndex) ?f64 {
 pub fn symbol(tree: *const ast.Tree, idx: ast.NodeIndex) ?[]const u8 {
     const node = tree.getNode(idx) orelse return null;
     if (node.tag != .symbol) return null;
-    return tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
+    return tree.nodeString(node);
 }
 
 /// The keyword argument `name` of a call, if it is given.
@@ -37,7 +37,7 @@ pub fn isCall(tree: *const ast.Tree, node: *const ast.Node, receiver: ?[]const u
     if (!std.mem.eql(u8, tree.getString(call.method_name), method)) return false;
     if (receiver) |name| {
         const target = tree.getNode(call.receiver) orelse return false;
-        return target.tag == .identifier and std.mem.eql(u8, tree.getString(@as(ast.StringId, @fromBackingInt(target.data))), name);
+        return target.tag == .identifier and std.mem.eql(u8, tree.nodeString(target), name);
     }
     return call.receiver == .none;
 }

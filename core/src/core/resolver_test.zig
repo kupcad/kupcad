@@ -16,7 +16,7 @@ fn expectResolved(res: *const resolver.Resolver, tree: *const ast.Tree, name: []
     var found_match = false;
     for (tree.nodes.items, 0..) |node, i| {
         if (node.tag == .identifier) {
-            const id_str = tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
+            const id_str = tree.nodeString(&node);
             if (std.mem.eql(u8, id_str, name)) {
                 const sym = res.symbols[i];
                 // Because Parsers often leave "dead" orphan nodes behind when transforming
@@ -351,4 +351,48 @@ test "Resolver: correctly classifies class variables (@@) separately from instan
 
     // Class variables start with '@@' and resolve to .global (not .instance_var)
     try expectResolved(&res, tree, "@@class_var", .global, 0);
+}
+
+test "Resolver: a local's or an upvalue's use records the node that declared it" {
+    const Document = @import("../frontend/document.zig").Document;
+    const source =
+        \\a = 1
+        \\def f(p)
+        \\  p + a
+        \\end
+        \\[1].each { |q| q }
+        \\a = 2
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const tree = &doc.tree;
+    // The live nodes: the ones the parent map reaches (the parser leaves orphans behind)
+    var first_assignment: ast.NodeIndex = .none;
+    var checked: usize = 0;
+    for (tree.nodes.items, 0..) |node, i| {
+        const idx: ast.NodeIndex = @fromBackingInt(@as(u32, @intCast(i)));
+        if (doc.parents[i] == .none and idx != tree.root) continue;
+        const declared = doc.declarations[i];
+        switch (node.tag) {
+            .assignment => {
+                if (first_assignment == .none) first_assignment = idx;
+                // Both assignments of `a` are declared by the first
+                try testing.expectEqual(first_assignment, declared);
+                checked += 1;
+            },
+            .identifier => {
+                const name = tree.nodeString(&node);
+                const by = tree.getNode(declared) orelse return error.NoDeclaration;
+                const expected: ast.Tag = if (std.mem.eql(u8, name, "p")) .def_stmt else if (std.mem.eql(u8, name, "a")) .assignment else .identifier;
+                errdefer std.debug.print("{s}: {s}\n", .{ name, @tagName(by.tag) });
+                try testing.expectEqual(expected, by.tag);
+                if (std.mem.eql(u8, name, "a")) try testing.expectEqual(first_assignment, declared);
+                checked += 1;
+            },
+            else => {},
+        }
+    }
+    // The two assignments, p, a and q's use (declared by the block's parameter, a node
+    // the parent map doesn't reach)
+    try testing.expectEqual(@as(usize, 5), checked);
 }

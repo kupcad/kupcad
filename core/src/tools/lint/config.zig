@@ -20,4 +20,6 @@ pub const Config = struct {
     @"unknown-keyword": Level = .@"error",
     @"segments-as-sides": Level = .warning,
     @"brep-unsupported": Level = .warning,
+    /// A certain NoMethodError or TypeError when the script runs, so an error before it does.
+    @"shape-mismatch": Level = .@"error",
 };

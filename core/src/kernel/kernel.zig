@@ -12,7 +12,7 @@
 //! std.debug.assert, which is compiled out in ReleaseFast.
 
 const std = @import("std");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
@@ -36,6 +36,7 @@ pub const Feature = enum {
     revolve,
     loft,
     sketch_boolean,
+    sketch_hull,
     curved_hull,
     sphere,
     cone,
@@ -52,6 +53,8 @@ pub const Feature = enum {
     genus,
     bounding_box,
     sketch_measure,
+    /// A sketch's outlines as polylines (crossSectionContours), what a drawing is made of.
+    sketch_contours,
     contains_point,
     ray_cast,
     min_gap,
@@ -72,13 +75,14 @@ pub const Feature = enum {
             .revolve => "revolve sketches",
             .loft => "loft sketches",
             .sketch_boolean => "combine sketches (union, difference, intersection)",
+            .sketch_hull => "take the hull of sketches",
             .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's)",
             .sphere => "make exact spheres",
             .cone => "make cones (a cylinder with r1 different from r2)",
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
             .extrude_scale => "taper an extrusion (extrude scale:)",
             .offset => "offset sketches",
-            .minkowski => "take Minkowski sums (minkowski, a solid's offset)",
+            .minkowski => "take Minkowski sums (minkowski, a solid's offset, shell)",
             .trim_by_plane => "cut solids by a plane (trim_by_plane, split_by_plane)",
             .slice => "slice solids",
             .project => "project solids",
@@ -88,11 +92,12 @@ pub const Feature = enum {
             .genus => "count holes (genus)",
             .bounding_box => "measure bounding boxes (bbox, align, center, resize)",
             .sketch_measure => "measure sketches (bbox, align, center)",
+            .sketch_contours => "read a sketch's outlines (SVG and DXF export)",
             .contains_point => "test whether a point is inside (contains?)",
             .ray_cast => "cast rays",
             .min_gap => "measure gaps (min_gap)",
             .faces => "select faces (on_face)",
-            .mesh => "tessellate solids for STL, glTF or the viewport (STEP export works)",
+            .mesh => "tessellate solids for STL, glTF, 3MF, OBJ or the viewport (STEP export works)",
             .materials => "keep materials",
         };
     }
@@ -105,11 +110,11 @@ pub const Feature = enum {
         return switch (self) {
             .transform => &.{ "translate", "rotate", "scale", "mirror", "transform", "align", "center", "resize" },
             .boolean => &.{ "union", "difference", "intersection" },
-            .extrude => &.{ "extrude", "helix" },
+            .extrude => &.{ "extrude", "helix", "sweep" },
             .revolve => &.{ "revolve", "torus" },
             .loft => &.{"loft"},
             .sphere => &.{"sphere"},
-            .offset => &.{"offset"},
+            .offset => &.{ "offset", "shell" },
             .minkowski => &.{"minkowski"},
             .trim_by_plane => &.{ "trim_by_plane", "split_by_plane" },
             .slice => &.{"slice"},
@@ -123,8 +128,9 @@ pub const Feature = enum {
             .ray_cast => &.{"ray_cast"},
             .min_gap => &.{"min_gap"},
             .faces => &.{"on_face"},
-            .mesh => &.{ "export_stl", "export_gltf" },
-            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
+            .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
+            .sketch_contours => &.{ "export_svg", "export_dxf" },
+            .sketch_boolean, .sketch_hull, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };
@@ -259,8 +265,10 @@ pub inline fn revolve(cs: geom.CrossSectionHandle, segments: i32, revolve_degree
     return dispatch("revolveFn", cs, .{ segments, revolve_degrees });
 }
 
-pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
-    return dispatch("offsetFn", cs, .{ delta, join_type });
+/// `segments`: how many a full circle of round joins gets (the kernel's own default was
+/// used, whatever the script's resolution).
+pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
+    return dispatch("offsetFn", cs, .{ delta, join_type, segments, miter_limit });
 }
 
 pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
@@ -272,13 +280,20 @@ pub inline fn crossSectionArea(handle: geom.CrossSectionHandle) f64 {
     return dispatch("crossSectionAreaFn", handle, .{});
 }
 
-pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
+/// The box around a sketch, or null for an empty one (it was ±infinity).
+pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) ?geom.Rect2D {
     return dispatch("crossSectionBoundsFn", handle, .{});
 }
 
 /// How many vertices a sketch's contours have.
 pub inline fn crossSectionNumVerts(handle: geom.CrossSectionHandle) usize {
     return dispatch("crossSectionNumVertsFn", handle, .{});
+}
+
+/// A sketch's outlines (geom.Contours; none for an empty sketch), owned by `allocator`;
+/// null when the engine can't give them (supports(engine, .sketch_contours)).
+pub inline fn crossSectionContours(allocator: std.mem.Allocator, handle: geom.CrossSectionHandle) ?geom.Contours {
+    return dispatch("crossSectionContoursFn", handle, .{allocator});
 }
 
 /// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).
@@ -304,6 +319,12 @@ pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?g
 
 pub inline fn hull(handle: geom.GeometryHandle) ?geom.GeometryHandle {
     return dispatch("hullFn", handle, .{});
+}
+
+/// The solid shrunk by `radius` on every side (an erosion: a Solid's offset inward), its
+/// rounding sphere drawn with `segments`.
+pub inline fn erode(handle: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
+    return dispatch("erodeFn", handle, .{ radius, segments });
 }
 
 pub inline fn minkowski(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
@@ -339,8 +360,10 @@ pub inline fn surfaceArea(handle: geom.GeometryHandle) f64 {
     return dispatch("surfaceAreaFn", handle, .{});
 }
 
-pub inline fn containsPoint(handle: geom.GeometryHandle, pt: [3]f64) bool {
-    return dispatch("containsPointFn", handle, .{pt});
+/// Whether `pt` lies in the solid, closed within `config`'s tolerance (the settings it is
+/// measured under); null when the kernel couldn't tell, its scratch in `allocator`.
+pub inline fn containsPoint(allocator: std.mem.Allocator, handle: geom.GeometryHandle, config: *const EngineConfig, pt: [3]f64) ?bool {
+    return dispatchOn("containsPointFn", handle.engine, .{ allocator, handle, config, pt });
 }
 
 pub inline fn minGap(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
@@ -379,6 +402,11 @@ pub fn destruct(handle: geom.GeometryHandle) void {
     dispatch("destructFn", handle, .{});
 }
 
+/// Deep copy of a sketch; the caller owns the returned handle.
+pub inline fn cloneCrossSection(handle: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    return dispatch("cloneCrossSectionFn", handle, .{});
+}
+
 pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
     dispatch("destructCrossSectionFn", handle, .{});
 }
@@ -398,6 +426,13 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
     if (!allSameEngine(objs[0].engine, objs)) return null;
 
     return dispatchOn("batchHullFn", objs[0].engine, .{ allocator, objs });
+}
+
+/// The convex hull of the sketches together (one or more, all of one engine).
+pub inline fn crossSectionHull(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    if (sketches.len == 0) return null;
+    for (sketches) |cs| if (cs.engine != sketches[0].engine) return null;
+    return dispatchOn("crossSectionHullFn", sketches[0].engine, .{ allocator, sketches });
 }
 
 pub inline fn loft(engine: geom.EngineType, allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {

@@ -2,5 +2,9 @@
 # exported 3MF files with.
 lib3mf==2.5.0
 
+# ezdxf, which `pnpm check:drawings` (scripts/validate-drawings.py) reads exported DXF files
+# with, its auditor finding what a reader would have to fix.
+ezdxf==1.4.2
+
 # fontTools, which scripts/make-test-fonts.py makes the test fonts in src/core/test_fonts with.
 fonttools==4.67.0

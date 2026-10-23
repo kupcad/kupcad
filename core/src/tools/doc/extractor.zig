@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const visitor = @import("../../core/visitor.zig");
 
 pub const PresentationMeta = struct {
@@ -27,6 +27,12 @@ pub const ParamMetadata = struct {
     type: []const u8,
     default_value: ?std.json.Value,
     validate: ParamValidate,
+    /// A number control's increment, `step:`, when written as a literal.
+    step: ?f64 = null,
+    /// What a number is measured in, `unit:` ("mm", "deg").
+    unit: ?[]const u8 = null,
+    /// The heading a control goes under, `group:`.
+    group: ?[]const u8 = null,
 };
 
 pub const UiSchema = struct {
@@ -100,6 +106,9 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
     var def_val: ?std.json.Value = null;
     var p_type: []const u8 = "number";
     var val = ParamValidate{};
+    var step: ?f64 = null;
+    var unit: ?[]const u8 = null;
+    var group: ?[]const u8 = null;
 
     for (args) |arg| {
         if (arg.name == .none) continue;
@@ -117,6 +126,12 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
             }
         } else if (std.mem.eql(u8, kw_name, "validate")) {
             val = try extractValidate(allocator, tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "step")) {
+            step = extractNumber(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "unit")) {
+            unit = extractText(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "group")) {
+            group = extractText(tree, arg.value);
         }
     }
 
@@ -125,6 +140,9 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
         .type = p_type,
         .default_value = def_val,
         .validate = val,
+        .step = step,
+        .unit = unit,
+        .group = group,
     };
 }
 
@@ -161,9 +179,18 @@ fn extractChoices(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx:
 fn extractString(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
     const node = tree.getNode(node_idx) orelse return null;
     switch (node.tag) {
-        .string, .symbol, .identifier => return tree.getString(@as(ast.StringId, @fromBackingInt(node.data))),
+        .string, .symbol, .identifier => return tree.nodeString(node),
         else => return null,
     }
+}
+
+/// A String or Symbol literal's text; null for anything only the run can compute.
+fn extractText(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
+    const node = tree.getNode(node_idx) orelse return null;
+    return switch (node.tag) {
+        .string, .symbol => tree.nodeString(node),
+        else => null,
+    };
 }
 
 fn extractNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?f64 {
@@ -185,7 +212,7 @@ fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Va
     switch (node.tag) {
         .number => return .{ .float = tree.number(node) },
         .boolean => return .{ .bool = tree.boolean(node) },
-        .string, .symbol => return .{ .string = tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) },
+        .string, .symbol => return .{ .string = tree.nodeString(node) },
         .unary_op => {
             const un = tree.unaryExpr(node);
             if (un.op == .negate) {

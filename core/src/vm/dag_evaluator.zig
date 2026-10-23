@@ -4,13 +4,14 @@
 //! `evaluateDAG` and `evaluateCrossSectionDAG`, called from vm.zig.
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const dag = @import("dag.zig");
 const error_kind = @import("error_kind.zig");
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
-const log_helpers = @import("../log.zig");
+const geom = @import("../core/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
+const loft_mod = @import("../core/loft.zig");
 
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
 pub const ValueHandle = union(enum) {
@@ -237,59 +238,6 @@ pub const EvaluationFrameStack = struct {
     }
 };
 
-fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
-    if (depth > 20) {
-        log_helpers.printStdout("... [max depth reached]\n", .{});
-        return;
-    }
-    if (node_idx >= vm.dag_builder.nodes.items.len) {
-        log_helpers.printStdout("[OUT OF BOUNDS: {d}]\n", .{node_idx});
-        return;
-    }
-
-    const node = vm.dag_builder.nodes.items[node_idx];
-
-    var i: usize = 0;
-    while (i < depth) : (i += 1) log_helpers.printStdout("  ", .{});
-
-    log_helpers.printStdout("Node #{d}: {s}", .{ node_idx, @tagName(node.tag) });
-
-    switch (node.tag) {
-        .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
-            const p = vm.dag_builder.getBinaryPayload(node);
-            log_helpers.printStdout("\n", .{});
-            dumpDAG(vm, p.left, depth + 1);
-            dumpDAG(vm, p.right, depth + 1);
-        },
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name => {
-            const p = vm.dag_builder.getTranslatePayload(node);
-            log_helpers.printStdout("\n", .{});
-            dumpDAG(vm, p.target, depth + 1);
-        },
-        .extrude, .revolve => {
-            const p = vm.dag_builder.getExtrudePayload(node);
-            log_helpers.printStdout(" (sweeping 2D target)\n", .{});
-            dumpDAG(vm, p.target, depth + 1);
-        },
-        .loft => {
-            const p = vm.dag_builder.getLoftPayload(node);
-            log_helpers.printStdout(" (height: {d})\n", .{p.height});
-            dumpDAG(vm, p.base, depth + 1);
-            dumpDAG(vm, p.top, depth + 1);
-        },
-        .batch_union_op, .batch_hull_op => {
-            const targets = vm.dag_builder.getBatchUnionPayload(node);
-            log_helpers.printStdout(" (batch count: {d})\n", .{targets.len});
-            for (targets) |t_idx| {
-                dumpDAG(vm, t_idx, depth + 1);
-            }
-        },
-        else => {
-            log_helpers.printStdout("\n", .{});
-        },
-    }
-}
-
 fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHandle {
     var v_stack = IntermediateStack.init(vm.allocator);
     // Only evaluator-owned entries are destroyed on error; see StackEntry.
@@ -371,15 +319,15 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
             try pushAll(f_stack, &.{ p.left, p.right });
         },
         // Each stores its operand ('target') first in its extra_data payload
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
+        .translate, .rotate, .scale, .mirror, .hull, .erode, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
             try f_stack.push(b.extra_data.items[node.data]);
         },
         .loft => {
             const p = b.getLoftPayload(node);
             try pushAll(f_stack, &.{ p.base, p.top });
         },
-        .batch_union_op, .batch_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
-        .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .circle, .polygon, .polygons_even_odd => {},
+        .batch_union_op, .batch_hull_op, .cs_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
+        .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => {},
     }
 }
 
@@ -397,11 +345,13 @@ fn pushAll(f_stack: *EvaluationFrameStack, nodes: []const dag.DAGNodeIndex) !voi
 /// result. Kernel calls never consume their inputs and always return new handles.
 fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
     switch (node.tag) {
-        .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
-        .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull, .set_material, .set_name => try executeSolidOp(vm, v_stack, node, config),
+        .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
+        .union_op, .difference_op, .intersection_op, .minkowski, .erode, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull => try executeSolidOp(vm, v_stack, node, config),
+        .set_material, .set_name, .cs_set_material, .cs_set_name => try executeLabel(vm, v_stack, node),
         .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
         .extrude, .revolve, .loft => try executeSweep(vm, v_stack, node, config),
         .slice_op, .project_op, .offset, .cs_transform, .cs_union_op, .cs_difference_op, .cs_intersection_op => try executeSketchOp(vm, v_stack, node),
+        .cs_hull_op => try executeSketchHull(vm, v_stack, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
     }
 }
 
@@ -458,6 +408,22 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
         .circle => {
             const p = b.getCirclePayload(node);
             try pushSketch(vm, v_stack, node.tag, kernel.circle(&config, p.radius, p.segments));
+        },
+        .rounded_square => {
+            var pts: std.ArrayList([2]f64) = .empty;
+            defer pts.deinit(vm.allocator);
+            try b.getRoundedSquarePayload(node).appendPoints(vm.allocator, &pts);
+            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
+        },
+        .closed_path => {
+            const closed = try b.readClosedPath(vm.allocator, node);
+            defer closed.deinit(vm.allocator);
+            var pts: std.ArrayList([2]f64) = .empty;
+            defer pts.deinit(vm.allocator);
+            try path_mod.appendPoints(vm.allocator, &pts, closed.start, closed.segments, closed.chords, null);
+            // The last segment ends where the path starts, or the polygon closes it straight
+            if (pts.items.len > 1 and pts.items[pts.items.len - 1][0] == closed.start[0] and pts.items[pts.items.len - 1][1] == closed.start[1]) _ = pts.pop();
+            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
         },
         .polygon => {
             const pts = try readPoints(vm, b.extra_data.items[node.data], b.extra_data.items[node.data + 1]);
@@ -545,6 +511,14 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             try vm.requireFeature(solid.engine, .trim_by_plane);
             try pushSolid(vm, v_stack, node.tag, kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset));
         },
+        .erode => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getErodePayload(node);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .minkowski);
+            try pushSolid(vm, v_stack, node.tag, kernel.erode(solid, p.radius, p.segments));
+        },
         .hull => {
             const target = v_stack.pop();
             defer v_stack.release(target);
@@ -553,22 +527,28 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
             try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
         },
-        .set_material => {
-            const target = v_stack.pop();
-            defer v_stack.release(target);
-            const p = b.getMaterialPayload(node);
-            const solid = try geometryOf(target);
-            vm.warnUnsupported(solid.engine, .materials);
-            try pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
-        },
-        // A name is the parts list's alone: the shape is its operand's, in a handle of its
-        // own (the result cache owns each node's)
-        .set_name => {
-            const target = v_stack.pop();
-            defer v_stack.release(target);
-            try pushSolid(vm, v_stack, node.tag, kernel.clone(try geometryOf(target)));
-        },
         else => unreachable,
+    }
+}
+
+/// A name or a material on a Solid or a Sketch. A Solid's material goes into its mesh (its
+/// triangles' slot); a name, and a Sketch's material, are the parts list's and a drawing's
+/// alone (exporters/parts.zig reads them from the graph), so the shape is its operand's, in a
+/// handle of its own (the result cache owns each node's).
+fn executeLabel(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !void {
+    const target = v_stack.pop();
+    defer v_stack.release(target);
+    switch (target.value) {
+        .geometry => |solid| {
+            if (node.tag == .set_material) {
+                const p = vm.dag_builder.getMaterialPayload(node);
+                vm.warnUnsupported(solid.engine, .materials);
+                return pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
+            }
+            try pushSolid(vm, v_stack, node.tag, kernel.clone(solid));
+        },
+        .cross_section => |sketch| try pushSketch(vm, v_stack, node.tag, kernel.cloneCrossSection(sketch)),
+        else => return error.RuntimeError,
     }
 }
 
@@ -607,18 +587,73 @@ fn executeSweep(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config:
             const base_cs = try crossSectionOf(base);
             try vm.requireSameEngine(base_cs.engine, top_cs.engine);
             try vm.requireFeature(base_cs.engine, .loft);
-            // loft is a hull of the two profiles, which is only the true loft for convex
-            // ones; a concave profile would be filled in silently.
-            inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
-                if (kernel.crossSectionIsConvex(profile[1]) == false) {
-                    return vm.fail(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
-                }
-            }
             const p = b.getLoftPayload(node);
-            try pushSolid(vm, v_stack, node.tag, kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height));
+            // Two convex profiles' loft is their hull, exact; a hull would fill a concave
+            // one in, so it is the ruled surface between them
+            const convex = kernel.crossSectionIsConvex(base_cs) != false and kernel.crossSectionIsConvex(top_cs) != false;
+            const solid = if (convex) kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height) else try ruledLoft(vm, config, base_cs, top_cs, p.height);
+            try pushSolid(vm, v_stack, node.tag, solid);
         },
         else => unreachable,
     }
+}
+
+/// The loft of profiles of which one is concave, or of several outlines or with holes:
+/// core/loft.zig's ruled surface between each pair of their contours (`loft.match`), as a
+/// polyhedron, folded by how deep the pair nests: the outlines united, less the holes, with
+/// the islands in them added back, so a hole runs through.
+fn ruledLoft(vm: *VM, config: EngineConfig, base: geom.CrossSectionHandle, top: geom.CrossSectionHandle, height: f64) !?geom.GeometryHandle {
+    try vm.requireFeature(base.engine, .sketch_contours);
+    const base_outlines = kernel.crossSectionContours(vm.allocator, base) orelse return kernelFailed(vm, .loft);
+    defer base_outlines.deinit(vm.allocator);
+    const top_outlines = kernel.crossSectionContours(vm.allocator, top) orelse return kernelFailed(vm, .loft);
+    defer top_outlines.deinit(vm.allocator);
+    const base_rings = try ringsOf(vm.allocator, base_outlines);
+    defer vm.allocator.free(base_rings);
+    const top_rings = try ringsOf(vm.allocator, top_outlines);
+    defer vm.allocator.free(top_rings);
+    var mismatch: loft_mod.Mismatch = undefined;
+    const pairs = loft_mod.match(vm.allocator, base_rings, top_rings, &mismatch) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Mismatch => return vm.fail(.ValueError, "loft joins each outline and hole of one profile to one of the other, and the base has {d} {s} where the top has {d}", .{ mismatch.base, depthName(mismatch.depth), mismatch.top }),
+    };
+    defer vm.allocator.free(pairs);
+    if (pairs.len == 0) return vm.fail(.ValueError, "loft: an empty sketch has no outline to loft", .{});
+    var region: ?geom.GeometryHandle = null;
+    errdefer if (region) |r| kernel.destruct(r);
+    for (pairs) |pair| {
+        const mesh = loft_mod.ruled(vm.allocator, base_rings[pair.base], top_rings[pair.top], height) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Degenerate, error.SelfIntersecting => return vm.fail(.GeometryError, "loft: the profiles' outlines can't be joined (one has no area, crosses itself, or the height is 0)", .{}),
+        };
+        defer mesh.deinit(vm.allocator);
+        const solid = kernel.polyhedron(&config, vm.allocator, mesh.points, mesh.triangles) orelse return kernelFailed(vm, .loft);
+        const so_far = region orelse {
+            region = solid;
+            continue;
+        };
+        defer kernel.destruct(so_far);
+        defer kernel.destruct(solid);
+        region = null;
+        region = kernel.boolean(so_far, solid, if (pair.depth % 2 == 1) .difference_op else .union_op) orelse return kernelFailed(vm, .loft);
+    }
+    return region;
+}
+
+/// The points of each of `contours`, in their order; the slice is owned by `allocator`.
+fn ringsOf(allocator: std.mem.Allocator, contours: geom.Contours) ![]const []const [2]f64 {
+    const rings = try allocator.alloc([]const [2]f64, contours.count());
+    for (rings, 0..) |*ring, i| ring.* = contours.contour(i);
+    return rings;
+}
+
+/// What a profile's contours at `depth` are, many of them: outlines, holes in them, islands.
+fn depthName(depth: u32) []const u8 {
+    return switch (depth) {
+        0 => "outlines",
+        1 => "holes",
+        else => if (depth % 2 == 0) "islands in holes" else "holes in islands",
+    };
 }
 
 /// A sketch made from a solid (a slice, a projection) or from sketches.
@@ -646,7 +681,7 @@ fn executeSketchOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !voi
             const p = b.getOffsetPayload(node);
             const sketch = try crossSectionOf(target);
             try vm.requireFeature(sketch.engine, .offset);
-            try pushSketch(vm, v_stack, node.tag, kernel.offset(sketch, p.delta, p.join_type));
+            try pushSketch(vm, v_stack, node.tag, kernel.offset(sketch, p.delta, p.join_type, p.segments, p.miter_limit));
         },
         .cs_transform => {
             const target = v_stack.pop();
@@ -675,6 +710,28 @@ fn executeSketchOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !voi
         },
         else => unreachable,
     }
+}
+
+/// The hull of the `count` sketches on top of `v_stack` (popped and released here).
+fn executeSketchHull(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, count: usize) !void {
+    const entries = try vm.allocator.alloc(StackEntry, count);
+    defer vm.allocator.free(entries);
+    // Popped last first, so they keep their order
+    var i: usize = count;
+    while (i > 0) {
+        i -= 1;
+        entries[i] = v_stack.pop();
+    }
+    defer for (entries) |e| v_stack.release(e);
+
+    const sketches = try vm.allocator.alloc(geom.CrossSectionHandle, count);
+    defer vm.allocator.free(sketches);
+    for (entries, sketches) |e, *cs| {
+        cs.* = try crossSectionOf(e);
+        try vm.requireSameEngine(sketches[0].engine, cs.engine);
+    }
+    try vm.requireFeature(sketches[0].engine, .sketch_hull);
+    try pushSketch(vm, v_stack, tag, kernel.crossSectionHull(vm.allocator, sketches));
 }
 
 /// Moves the fresh result on top of `v_stack` into its cache, once checked. A borrowed

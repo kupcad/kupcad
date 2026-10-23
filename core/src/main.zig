@@ -11,6 +11,7 @@ const doc_cmd = @import("cli/doc.zig");
 const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 const watch_cmd = @import("cli/watch.zig");
+const run_cmd = @import("cli/run_cmd.zig");
 const outcome_mod = @import("cli/outcome.zig");
 const Outcome = outcome_mod.Outcome;
 const log_helpers = @import("log.zig");
@@ -34,6 +35,7 @@ const Command = struct {
 /// Every subcommand: dispatch and the usage text both come from this table.
 pub const COMMANDS = [_]Command{
     .{ .name = "build", .summary = "Run a KupCAD script and export its final geometry", .usage = build_cmd.USAGE, .run = build_cmd.execute },
+    .{ .name = "run", .summary = "Run a KupCAD script, printing what it prints, writing no model", .usage = run_cmd.USAGE, .run = run_cmd.execute },
     .{ .name = "watch", .summary = "Rebuild a script whenever it changes", .usage = watch_cmd.USAGE, .run = watch_cmd.execute },
     .{ .name = "check", .summary = "Lint and analyze KupCAD files", .usage = check_cmd.USAGE, .run = check_cmd.execute },
     .{ .name = "fmt", .summary = "Format KupCAD files", .usage = fmt_cmd.USAGE, .run = fmt_cmd.execute },

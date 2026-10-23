@@ -609,6 +609,14 @@ test "Formatter: a comment trailing any line of a statement stays with it" {
     );
 }
 
+test "Formatter: a comment after statements sharing a line trails the last of them" {
+    // It was the first one's, which split the line: `a; b # c` became `a # c` and `b` below.
+    // A comment from inside the last statement, which one line now holds, joins them there
+    // (the nightly fuzzer: the second run moved it to the first statement).
+    try expectStableFormat("a = 1; b = 2 # both\nc = 3\n", "a = 1; b = 2 # both\nc = 3\n");
+    try expectStableFormat("x; y = - -\n# inside\n2\n", "x; y = --2 # inside\n");
+}
+
 test "Formatter: comments above end or else stay inside their block" {
     // They used to move below `end` and into the else branch.
     try expectStableFormat(
@@ -1140,22 +1148,33 @@ test "Formatter: a symbol map key that isn't a name keeps its `=>`" {
     );
 }
 
-test "Formatter: a `%i[]` with a word that isn't a bare symbol stays as written" {
-    // `%i[a:]` was written `[:a:]`, another program (the nightly front-end fuzzer, with DEL
-    // for the delimiter). A quoted symbol keeps its backslashes and ends at its first quote,
-    // so not every word has a quoted form either (`%i[a"b'c]`).
+test "Formatter: a quoted symbol keeps its quotes and escapes, and a `%i[]` word gets them when it needs them" {
     const kept = [_][]const u8{
-        "x = %i[M:%i]\n",
-        "x = %i(a: b)\n",
-        "x = %i[a-b c]\n",
-        "x = %i[a\"b'c]\n",
-        "x = %i[a\\ b]\n",
-        "x = %I[1a]\n",
-        "%i\x7f\r\rM:%i\x7f\n",
+        "x = :\"a\\tb\"\n",
+        "x = :'a\\'b'\n",
+        "x = :\"if\"\n",
+        "x = :\"p_#{i}x\"\n",
+        "x = :\"#{a}#{b}\"\n",
+        "m = { :\"k #{1}\" => 2 }\n",
     };
     for (kept) |source| {
         errdefer std.debug.print("source:\n{s}\n", .{source});
         try expectFormat(source, source);
     }
-    try expectStableFormat("x = %i[a b= c? @d]\n", "x = [:a, :b=, :c?, :@d]\n");
+    // `%i[a:]` was written `[:a:]`, another program (the nightly front-end fuzzer, with DEL
+    // for the delimiter)
+    const words = [_]struct { source: []const u8, formatted: []const u8 }{
+        .{ .source = "x = %i[M:%i]\n", .formatted = "x = [:\"M:%i\"]\n" },
+        .{ .source = "%i\x7f\r\rM:%i\x7f\n", .formatted = "[:\"M:%i\"]\n" },
+        .{ .source = "x = %i(a: b)\n", .formatted = "x = [:\"a:\", :b]\n" },
+        .{ .source = "x = %i[a-b c]\n", .formatted = "x = [:\"a-b\", :c]\n" },
+        .{ .source = "x = %i[a\"b'c]\n", .formatted = "x = [:\"a\\\"b'c\"]\n" },
+        .{ .source = "x = %i[a\\ b]\n", .formatted = "x = [:\"a\\\\\", :b]\n" },
+        .{ .source = "x = %I[1a]\n", .formatted = "x = [:\"1a\"]\n" },
+        .{ .source = "x = %i[a b= c? @d]\n", .formatted = "x = [:a, :b=, :c?, :@d]\n" },
+    };
+    for (words) |case| {
+        errdefer std.debug.print("source:\n{s}\n", .{case.source});
+        try expectStableFormat(case.source, case.formatted);
+    }
 }

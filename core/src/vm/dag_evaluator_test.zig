@@ -3,12 +3,12 @@ const testing = std.testing;
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
 const dag = @import("dag.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
 const InterpretResult = @import("vm.zig").InterpretResult;
 const chunk = @import("chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 
 fn initVm() !VM {
@@ -270,12 +270,12 @@ test "DAG Builder: even-odd polygons with different contour splits are distinct"
     defer scratch_a.deinit();
     var scratch_b = dag.DAGBuilder.init(testing.allocator);
     defer scratch_b.deinit();
-    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] })];
-    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] })];
+    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] }, &.{})];
+    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] }, &.{})];
     try testing.expect(ha != hb);
 
-    const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] });
-    const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] });
+    const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] }, &.{});
+    const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] }, &.{});
     try testing.expect(a_idx != b_idx);
 
     const a_ext = try vm.dag_builder.addExtrude(a_idx, 1, 1, 0, 1, 1);
@@ -347,7 +347,7 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
 
     // 2. Add a 2D Offset operation
-    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8, 2);
 
     // 3. Evaluate explicitly requesting a 2D CrossSectionHandle (borrowed from vm.cs_cache)
     const handle = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
@@ -355,7 +355,7 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     try testing.expectEqual(.manifold, handle.engine);
 
     // Base area 10x10 = 100. Expanding by 2 on all sides makes it 14x14 = 196
-    const bounds = kernel.crossSectionBounds(handle);
+    const bounds = kernel.crossSectionBounds(handle).?;
     try testing.expectApproxEqAbs(@as(f64, -7.0), bounds.min[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 7.0), bounds.max[0], 1e-5);
 }
@@ -631,7 +631,7 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
-    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8, 2);
     // The sketch object comes first, as in a script: made after the evaluation, its
     // allocation collected (under -Dgc-stress) while nothing referred to the node, and
     // evicted the result the test then looks for.

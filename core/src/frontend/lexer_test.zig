@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
+const identifier = @import("../core/identifier.zig");
 const Lexer = lexer_mod.Lexer;
 
 const test_utils = @import("test_utils.zig");
@@ -365,7 +366,7 @@ test "KupCAD Lexer: EOF handling for unclosed strings and interpolations" {
     // Closed after the interpolation, the string's rest still isn't.
     var lexer3 = Lexer.init("'one' :\"two\" %w[three \"a #{1} b", 0);
     try testing.expectEqual(.raw_string, lexer3.next().tag);
-    try testing.expectEqual(.symbol, lexer3.next().tag);
+    try testing.expectEqual(.quoted_symbol, lexer3.next().tag);
     try testing.expectEqual(.unterminated_string, lexer3.next().tag);
     var lexer4 = Lexer.init("\"a #{1} b", 0);
     try testing.expectEqual(.string_start, lexer4.next().tag);
@@ -443,9 +444,18 @@ test "Lexer: parses quoted symbols" {
     ;
 
     try test_utils.expectTokens(Lexer, source, .{
-        test_utils.t(.symbol, "string-key"),
-        test_utils.t(.symbol, "spaced key"),
+        test_utils.t(.quoted_symbol, "string-key"),
+        test_utils.t(.quoted_symbol, "spaced key"),
         test_utils.t(.eof, ""),
+    });
+}
+
+test "Lexer: a quoted symbol lexes as the string in the same quotes" {
+    // Its text was cut at the first quote and kept for its name as it was: `:"a#{x}"` was
+    // never interpolated, and a `"` inside `#{}` ended it.
+    try expectTokens(":\"a\\tb\" :'c\\'d' :\"x#{\"y\"}z\"", &.{
+        t(.quoted_symbol, "a\\tb"), t(.raw_symbol, "c\\'d"), t(.symbol_start, "x"),
+        t(.string, "y"),            t(.string_end, "z"),     t(.eof, ""),
     });
 }
 
@@ -585,9 +595,9 @@ test "KupCAD Lexer: Percent Literals with Mathematical Symbols as Delimiters" {
 
 test "KupCAD Lexer: Quoted Symbols with Escaped Quotes" {
     try expectTokens("map = { :\"complex \\\"key\\\"\" => 1 }", &.{
-        t(.ident, "map"),                  t(.equal, "="),  t(.l_brace, "{"),
-        t(.symbol, "complex \\\"key\\\""), t(.arrow, "=>"), t(.number, "1"),
-        t(.r_brace, "}"),                  t(.eof, ""),
+        t(.ident, "map"),                         t(.equal, "="),  t(.l_brace, "{"),
+        t(.quoted_symbol, "complex \\\"key\\\""), t(.arrow, "=>"), t(.number, "1"),
+        t(.r_brace, "}"),                         t(.eof, ""),
     });
 }
 
@@ -736,24 +746,29 @@ test "Lexer: a setter symbol keeps its `=` up to the end of the source, but not 
     try expectTokens(":a=>1", &.{ t(.symbol, "a"), t(.arrow, "=>"), t(.number, "1"), t(.eof, "") });
 }
 
-test "Lexer: isBareSymbol is what `:name` reads back as, isLabelName what `name:` does" {
-    // The formatter writes a symbol that isn't either in another form (fmt's own tests)
-    for ([_][]const u8{ "a", "_x", "θ_angle", "valid?", "destroy!", "x=", "@a", "$a", "A", "if", "a?b" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(lexer_mod.isBareSymbol(name));
+test "Lexer: reads one identifier or constant exactly where core/identifier.zig says a label name is" {
+    // `Value.stringify` and the formatter write `name:` only for these, so the two must agree
+    for ([_][]const u8{ "a", "valid?", "A", "@a", "$a", "$_y", "θ", "", "if", "end", "a b", "a=", "a-b", "$", "$$a", "$1", " a", "1a", "a?b", "x!" }) |name| {
+        errdefer std.debug.print("name: '{s}'\n", .{name});
+        var lexer = lexer_mod.Lexer.init(name, 0);
+        const tok = lexer.next();
+        const one_name = (tok.tag == .ident or tok.tag == .constant) and tok.lexeme.len == name.len;
+        try testing.expectEqual(one_name, identifier.isLabelName(name));
     }
-    for ([_][]const u8{ "", "a:", "M:%i", "a-b", "1a", "a b", "a=b", "a\"b" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(!lexer_mod.isBareSymbol(name));
+}
+
+test "Lexer: every keyword tag is read from its word in core/identifier.zig's list, and only those" {
+    var tags: usize = 0;
+    inline for (comptime std.meta.fieldNames(lexer_mod.Tag)) |name| {
+        if (comptime std.mem.startsWith(u8, name, "keyword_")) {
+            const word = name["keyword_".len..];
+            errdefer std.debug.print("word: {s}\n", .{word});
+            try testing.expect(identifier.isKeyword(word));
+            try expectTokens(word, &.{ t(@field(lexer_mod.Tag, name), word), t(.eof, "") });
+            tags += 1;
+        }
     }
-    for ([_][]const u8{ "a", "valid?", "A", "@a", "$a", "θ" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(lexer_mod.isLabelName(name));
-    }
-    for ([_][]const u8{ "", "if", "a b", "a=", "a-b", "$$a", " a" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(!lexer_mod.isLabelName(name));
-    }
+    try testing.expectEqual(identifier.KEYWORDS.len, tags);
 }
 
 test "KupCAD Lexer: Range operators (inclusive and exclusive)" {

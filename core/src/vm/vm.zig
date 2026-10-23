@@ -4,6 +4,7 @@
 //! errors (`raiseError`).
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
@@ -14,15 +15,15 @@ const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
 const InstructionHooks = @import("instruction_hooks.zig").InstructionHooks;
 const value = @import("../core/value.zig");
+const ast = @import("../core/ast.zig");
 const parameters = @import("../core/parameters.zig");
 const host_mod = @import("host.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const dag_evaluator = @import("dag_evaluator.zig");
 const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
-const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const sequence = @import("sequence.zig");
@@ -36,7 +37,7 @@ pub const Host = host_mod.Host;
 const NATIVE_STACK_RESERVE = 16;
 
 /// Names an error lists (a module's exports, a JsonObject's keys) before "...".
-const MAX_NAMES_LISTED = 8;
+pub const MAX_NAMES_LISTED = 8;
 /// Backtraces list at most this many frames (see VM.BacktraceLines).
 const MAX_BACKTRACE_FRAMES = 32;
 /// Room for one backtrace line such as "    from script:12:3:in 'name'".
@@ -83,6 +84,14 @@ pub const CallFrame = struct {
     ip: usize,
     base_slot: usize,
     is_constructor: bool = false,
+
+    /// Where in the source the instruction the frame last ran came from; null for a frame
+    /// of no chunk.
+    pub fn sourceOffset(self: *const CallFrame) ?u32 {
+        const chunk_ptr = self.closure.function.chunk orelse return null;
+        const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
+        return exec_chunk.getOffset(if (self.ip > 0) self.ip - 1 else 0);
+    }
 };
 
 pub const RescueFrame = struct {
@@ -123,8 +132,10 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayList(CallFrame),
 
-    native_vfs_ptr: *NativeVfs,
-    vfs: Vfs,
+    /// What scripts read and write files through (`import`, `import_json`, `export_stl`):
+    /// `Vfs.none` until the host gives one (the CLI the disk, the LSP a read-only sandbox,
+    /// the browser memory), so no host reaches the disk by forgetting to set it.
+    vfs: Vfs = .none,
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
@@ -200,6 +211,7 @@ pub const VM = struct {
     object_class: ?*value.ObjClass = null,
     geometry_class: ?*value.ObjClass = null,
     cross_section_class: ?*value.ObjClass = null,
+    path_class: ?*value.ObjClass = null,
     /// The classes of values that are not instances (Ruby's NilClass, Proc, Method,
     /// Class, Module), so every value has a class.
     nil_class: ?*value.ObjClass = null,
@@ -209,6 +221,7 @@ pub const VM = struct {
     module_class: ?*value.ObjClass = null,
     assembly_class: ?*value.ObjClass = null,
     font_class: ?*value.ObjClass = null,
+    random_class: ?*value.ObjClass = null,
     workplane_class: ?*value.ObjClass = null,
 
     // DOD Memory Fields
@@ -219,6 +232,9 @@ pub const VM = struct {
     /// each run it frees the geometry its shapes no longer use (tidyGeometryGraph). A VM that
     /// runs one script and goes skips it.
     runs_many_scripts: bool = false,
+    /// The run is the editor's live preview (`CAD.preview?`), which its host sets: a
+    /// script can lighten what it draws there, as OpenSCAD's `$preview` lets one.
+    previewing: bool = false,
     static_true: ?*value.ObjString = null,
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,
@@ -293,19 +309,12 @@ pub const VM = struct {
             errdefer rescue_frames.deinit(allocator);
             try rescue_frames.ensureTotalCapacity(allocator, 256);
 
-            // Dynamically allocate the NativeVfs so its memory address stays valid
-            const native_vfs = try allocator.create(NativeVfs);
-            errdefer allocator.destroy(native_vfs);
-            native_vfs.* = NativeVfs.init(io, std.Io.Dir.cwd());
-
             break :vm VM{
                 .allocator = allocator,
                 .io = io,
                 .stack = initial_stack,
                 .stack_top = 0,
                 .frames = frames,
-                .native_vfs_ptr = native_vfs,
-                .vfs = native_vfs.vfs(),
                 .gc = memory.GC.init(allocator),
                 .globals = .empty,
                 .global_generation = next_global_generation.fetchAdd(1, .monotonic),
@@ -367,8 +376,6 @@ pub const VM = struct {
         self.clearDagCache();
         self.dag_cache.deinit(self.allocator);
         self.cs_cache.deinit(self.allocator);
-
-        self.allocator.destroy(self.native_vfs_ptr);
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);
@@ -652,10 +659,7 @@ pub const VM = struct {
                     self.push(exec_chunk.constants.items[const_idx]);
                 },
                 .op_constant_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.push(exec_chunk.constants.items[(high << 8) | low]);
+                    self.push(exec_chunk.constants.items[self.readOperand(exec_chunk, frame, true)]);
                 },
                 .op_get_local => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -663,10 +667,7 @@ pub const VM = struct {
                     self.push(self.getLocal(frame, slot));
                 },
                 .op_get_local_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.push(self.getLocal(frame, (high << 8) | low));
+                    self.push(self.getLocal(frame, self.readOperand(exec_chunk, frame, true)));
                 },
                 .op_set_local => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -674,10 +675,7 @@ pub const VM = struct {
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
                 .op_set_local_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
+                    self.setLocal(frame, self.readOperand(exec_chunk, frame, true), self.stack[self.stack_top - 1]);
                 },
                 .op_add, .op_subtract, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right => if (ended(self.executeBinaryArithmetic(op))) |res| return res,
                 .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => if (ended(self.executeNumericBinary(op))) |res| return res,
@@ -753,6 +751,14 @@ pub const VM = struct {
                     const count = exec_chunk.code.items[frame.ip];
                     frame.ip += 1;
                     if (ended(self.executeInterpolate(count))) |res| return res;
+                },
+                .op_to_symbol => {
+                    // The String stays on the stack, rooted, while the Symbol is made
+                    const sym = self.allocateSymbol(self.stack[self.stack_top - 1].asString().chars) catch |err| {
+                        if (ended(self.allocationFailed(err))) |res| return res;
+                        continue;
+                    };
+                    self.stack[self.stack_top - 1] = sym;
                 },
                 .op_array_push => {
                     // Peek instead of Pop to keep `val` rooted during potential reallocation
@@ -1131,7 +1137,7 @@ pub const VM = struct {
         for (0..func_obj.upvalue_count) |i| {
             const is_local = exec_chunk.code.items[frame.ip];
             // 16-bit upvalue index
-            const index = (@as(u16, exec_chunk.code.items[frame.ip + 1]) << 8) | exec_chunk.code.items[frame.ip + 2];
+            const index = chunk.readU16(exec_chunk.code.items, frame.ip + 1);
             frame.ip += 3;
             closure.upvalues[i] = if (is_local == 1)
                 // Capture directly from the parent's stack slot
@@ -1594,6 +1600,27 @@ pub const VM = struct {
         return self.dag_builder.settings(self.config_stack.items[self.config_stack.items.len - 1]);
     }
 
+    /// The settings the Solid or Sketch `shape` was made under, which it is measured under
+    /// too (a tolerance set after it doesn't change how it measures); the active ones for
+    /// a shape with no node of its own.
+    pub fn settingsOf(self: *const VM, shape: value.Value) EngineConfig {
+        const node = if (shape.isCrossSection()) shape.asCrossSection().dag_idx else shape.asGeometry().dag_idx;
+        if (node >= self.dag_builder.nodes.items.len) return self.config();
+        return self.dag_builder.settings(self.dag_builder.nodes.items[node].settings);
+    }
+
+    /// Where the script is running, as a person counts it (1-based line and column); null
+    /// before it runs, or without the line index of its source.
+    pub fn currentPosition(self: *const VM) ?LinePosition {
+        if (self.frames.items.len == 0) return null;
+        const offset = self.frames.items[self.frames.items.len - 1].sourceOffset() orelse return null;
+        const li = self.line_index orelse return null;
+        const at = li.humanPosition(offset);
+        return .{ .line = at.line, .column = at.column };
+    }
+
+    pub const LinePosition = struct { line: u32, column: u32 };
+
     /// Replaces the settings in force (CAD.config): geometry made from now on uses them.
     pub fn setConfig(self: *VM, settings: EngineConfig) !void {
         const id = try self.dag_builder.internSettings(settings);
@@ -1941,6 +1968,15 @@ pub const VM = struct {
         return value.Value.initCrossSection(cs_obj);
     }
 
+    /// A Path of a copy of `segments` from `start`, with `name` (rooted by the caller) and
+    /// `material_id`.
+    pub fn allocatePath(self: *VM, start: [2]f64, segments: []const path_mod.Segment, name: ?*value.ObjString, material_id: ?u32) !value.Value {
+        const owned = try self.gc.trackingAllocator().dupe(path_mod.Segment, segments);
+        errdefer self.gc.trackingAllocator().free(owned);
+        const obj = try self.gc.allocatePath(self, start, owned, name, material_id);
+        return value.Value.initObj(&obj.obj);
+    }
+
     // --- Shared Execution Helpers ---
     /// `==`, also behind `contains?` and `case`/`when`: Numbers by value, Arrays, Maps and
     /// Ranges by content (a Map's order doesn't matter), everything else by identity
@@ -1948,6 +1984,13 @@ pub const VM = struct {
     /// compared by identity before, so `[1] == [1]` was false.
     pub fn valuesEqual(self: *VM, a: value.Value, b: value.Value) bool {
         return self.valuesEqualWithin(a, b, MAX_EQUALITY_DEPTH);
+    }
+
+    /// Whether `valuesEqual` compares `v` by content (an Array, a Map, a JsonObject, a
+    /// Range); any other value equals only itself (its bits), so a hash of the bits finds
+    /// its equals, as a Map's keys are found.
+    pub fn comparesByContent(v: value.Value) bool {
+        return v.isArray() or v.isMap() or v.isJsonObject() or v.isRange();
     }
 
     fn valuesEqualWithin(self: *VM, a: value.Value, b: value.Value, depth: usize) bool {
@@ -2088,24 +2131,31 @@ pub const VM = struct {
             _ = self.pop(); // Pop a_val
             self.push(new_val);
             return .ok;
-        } else if (self.host.binary_handler) |handler| {
-            const result = handler(self, op, a_val, b_val) catch |err| {
-                if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
-                return self.nativeFailed(operatorSymbol(op), err);
-            };
-
-            self.stack.ptr[self.stack_top] = result;
-            self.stack_top += 1;
-            return .ok;
-        } else {
-            return self.operandError(op, a_val, b_val);
         }
+        return self.binaryOnHost(op, a_val, b_val);
+    }
+
+    /// `a op b` (both off the stack) by the host's binary handler (Host.binary_handler:
+    /// booleans of shapes, a Path join, a String's `%`), its result pushed; operands it
+    /// doesn't combine, or no handler, are the operator's TypeError.
+    fn binaryOnHost(self: *VM, op: chunk.OpCode, a_val: value.Value, b_val: value.Value) InterpretResult {
+        const handler = self.host.binary_handler orelse return self.operandError(op, a_val, b_val);
+        // A handler may raise an error of its own (a join of paths that don't meet),
+        // which has been thrown by the time it fails
+        const depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        const result = handler(self, op, a_val, b_val) catch |err| {
+            if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
+            return self.alreadyThrown(throw_seq, depth) orelse self.nativeFailed(operatorSymbol(op), err);
+        };
+        self.push(result);
+        return .ok;
     }
 
     inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
         const b = self.pop();
         const a = self.pop();
-        if (!a.isNumber() or !b.isNumber()) return self.operandError(op, a, b);
+        if (!a.isNumber() or !b.isNumber()) return self.binaryOnHost(op, a, b);
         const nums = .{ a.asNumber(), b.asNumber() };
         switch (op) {
             .op_multiply => {
@@ -2546,7 +2596,10 @@ pub const VM = struct {
 
         // Nothing answers it. The host's invoke handler only ever said this, and without one
         // the VM said "No invoke handler registered".
-        return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method_name_str, self.typeName(receiver) });
+        const type_name = self.typeName(receiver);
+        const hint: ?[]const u8 = if (self.host.missing_method_hint) |why| why(type_name, method_name_str) else null;
+        if (hint) |h| return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}: {s}", .{ method_name_str, type_name, h });
+        return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method_name_str, type_name });
     }
 
     inline fn executeUnpackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
@@ -2880,8 +2933,10 @@ pub const VM = struct {
                 .class => return self.class_class,
                 .module => return self.module_class,
                 .assembly => return self.assembly_class,
+                .path => return self.path_class,
                 .workplane => return self.workplane_class,
                 .font => return self.font_class,
+                .random => return self.random_class,
                 else => return null,
             }
         } else if (receiver.isNumber()) {
@@ -2921,10 +2976,8 @@ pub const VM = struct {
         _ = self;
         if (is_wide) {
             std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-            const high: u16 = exec_chunk.code.items[frame.ip];
-            const low: u16 = exec_chunk.code.items[frame.ip + 1];
-            frame.ip += 2;
-            return (high << 8) | low;
+            defer frame.ip += 2;
+            return chunk.readU16(exec_chunk.code.items, frame.ip);
         } else {
             std.debug.assert(frame.ip + 1 <= exec_chunk.code.items.len); // Hardened check
             const idx = exec_chunk.code.items[frame.ip];
@@ -2936,12 +2989,8 @@ pub const VM = struct {
     inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
         _ = self;
         std.debug.assert(frame.ip + 4 <= exec_chunk.code.items.len); // Hardened check
-        const b3: usize = exec_chunk.code.items[frame.ip];
-        const b2: usize = exec_chunk.code.items[frame.ip + 1];
-        const b1: usize = exec_chunk.code.items[frame.ip + 2];
-        const b0: usize = exec_chunk.code.items[frame.ip + 3];
-        frame.ip += 4;
-        return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
+        defer frame.ip += 4;
+        return chunk.readU32(exec_chunk.code.items, frame.ip);
     }
 
     inline fn executeCall(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
@@ -3204,16 +3253,44 @@ pub const VM = struct {
     /// else as stringify prints it. The method was ignored: an instance showed as "#<P>".
     pub fn writeDisplay(self: *VM, val: value.Value, writer: *std.Io.Writer) !void {
         if (val.isInstance()) {
-            const name = try self.allocateString("to_s");
-            if (self.findMethod(val.asInstance().class, name)) |method| if (method.isClosure()) {
-                const shown = try self.callMethodSync(val, method.asClosure(), &.{});
-                if (!shown.isString()) {
-                    return self.fail(.TypeError, "{s}#to_s must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
-                }
-                return writer.writeAll(shown.asString().chars);
+            if (self.findMethod(val.asInstance().class, try self.staticString("to_s"))) |method| if (method.isClosure()) {
+                return self.writeShown(val, method, "to_s", writer);
             };
         }
         try val.stringify(false, writer);
+    }
+
+    /// What `inspect(val)` shows: an instance's `inspect`, found as a call finds it (its
+    /// class's or an ancestor's, a script's or a built-in class's such as a BoundingBox's),
+    /// or, where that is only Object's default, its `to_s`; either must answer a String.
+    /// Anything else as written, a String quoted.
+    pub fn writeInspect(self: *VM, val: value.Value, writer: *std.Io.Writer) !void {
+        if (val.isInstance()) {
+            const class = val.asInstance().class;
+            const inspect_name = try self.staticString("inspect");
+            const default = if (self.object_class) |object| self.findMethod(object, inspect_name) else null;
+            if (self.findMethod(class, inspect_name)) |method| {
+                if (default == null or method.asObj() != default.?.asObj()) return self.writeShown(val, method, "inspect", writer);
+            }
+            if (self.findMethod(class, try self.staticString("to_s"))) |method| return self.writeShown(val, method, "to_s", writer);
+        }
+        try val.stringify(true, writer);
+    }
+
+    /// Writes what the instance `val`'s method `name` (`method`, a script's or a built-in
+    /// one) answers when called with no arguments, which must be a String.
+    fn writeShown(self: *VM, val: value.Value, method: value.Value, comptime name: []const u8, writer: *std.Io.Writer) !void {
+        const shown = if (method.isClosure()) try self.callMethodSync(val, method.asClosure(), &.{}) else shown: {
+            // A built-in method reads its receiver just below its arguments
+            const native = method.asNative();
+            self.push(val);
+            defer _ = self.pop();
+            break :shown try native.function(self, .{ .ptr = self.stack.ptr + self.stack_top, .count = 0, .name = native.name });
+        };
+        if (!shown.isString()) {
+            return self.fail(.TypeError, "{s}#" ++ name ++ " must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
+        }
+        try writer.writeAll(shown.asString().chars);
     }
 
     /// Leaves the top frame: its upvalues are closed, its slots dropped, and the handlers
@@ -3438,6 +3515,7 @@ pub const VM = struct {
                     .symbol => return c == self.symbol_class,
                     .range => return c == self.range_class,
                     .font => return c == self.font_class,
+                    .random => return c == self.random_class,
                     else => return false,
                 }
             } else if (test_val.isNumber()) {
@@ -3524,25 +3602,27 @@ pub const VM = struct {
         return self.raiseError(.TypeError, "'{s}' can't combine {s} and {s}", .{ operatorSymbol(op), self.typeName(a), self.typeName(b) });
     }
 
+    /// How the operator `op` runs is written (ast.BinaryOp.symbol), for an error naming it.
     fn operatorSymbol(op: chunk.OpCode) []const u8 {
-        return switch (op) {
-            .op_add => "+",
-            .op_subtract => "-",
-            .op_multiply => "*",
-            .op_divide => "/",
-            .op_modulo => "%",
-            .op_exponent => "**",
-            .op_less => "<",
-            .op_greater => ">",
-            .op_less_equal => "<=",
-            .op_greater_equal => ">=",
-            .op_bitwise_and => "&",
-            .op_bitwise_or => "|",
-            .op_bitwise_xor => "^",
-            .op_shift_left => "<<",
-            .op_shift_right => ">>",
-            else => @tagName(op),
+        const binary: ast.BinaryOp = switch (op) {
+            .op_add => .add,
+            .op_subtract => .subtract,
+            .op_multiply => .multiply,
+            .op_divide => .divide,
+            .op_modulo => .modulo,
+            .op_exponent => .exponent,
+            .op_less => .less,
+            .op_greater => .greater,
+            .op_less_equal => .less_equal,
+            .op_greater_equal => .greater_equal,
+            .op_bitwise_and => .bitwise_and,
+            .op_bitwise_or => .bitwise_or,
+            .op_bitwise_xor => .bitwise_xor,
+            .op_shift_left => .shift_left,
+            .op_shift_right => .shift_right,
+            else => return @tagName(op),
         };
+        return binary.symbol();
     }
 
     /// The script-facing name of a value's type, for error messages.
@@ -3556,6 +3636,8 @@ pub const VM = struct {
             .workplane => "Workplane",
             .assembly => "Assembly",
             .font => "Font",
+            .random => "Random",
+            .path => "Path",
             else => "Object",
         };
         return "Object";
@@ -3692,10 +3774,7 @@ pub const VM = struct {
             const mid = low + (high - low) / 2;
             const idx = table_start + (mid * 6);
 
-            const const_high: u16 = exec_chunk.code.items[idx];
-            const const_low: u16 = exec_chunk.code.items[idx + 1];
-            const const_idx = (const_high << 8) | const_low;
-            const case_val = exec_chunk.constants.items[const_idx];
+            const case_val = exec_chunk.constants.items[chunk.readU16(exec_chunk.code.items, idx)];
 
             const case_type: u8 = if (case_val.isNumber()) 0 else 1;
 
@@ -3711,12 +3790,11 @@ pub const VM = struct {
                         high = mid;
                     } else if (tn > cn) {
                         low = mid + 1;
+                    } else if (tn != cn) {
+                        // NaN equals no case (it is neither below nor above one either)
+                        return .{ .matched = false, .jump_offset = 0 };
                     } else {
-                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
-                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
-                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
-                            @as(usize, exec_chunk.code.items[idx + 5]);
-                        return .{ .matched = true, .jump_offset = offset };
+                        return .{ .matched = true, .jump_offset = chunk.readU32(exec_chunk.code.items, idx + 2) };
                     }
                 } else {
                     const ts = test_val.asString().chars;
@@ -3727,11 +3805,7 @@ pub const VM = struct {
                     } else if (order == .gt) {
                         low = mid + 1;
                     } else {
-                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
-                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
-                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
-                            @as(usize, exec_chunk.code.items[idx + 5]);
-                        return .{ .matched = true, .jump_offset = offset };
+                        return .{ .matched = true, .jump_offset = chunk.readU32(exec_chunk.code.items, idx + 2) };
                     }
                 }
             }
@@ -3879,13 +3953,12 @@ pub const VM = struct {
             self.remaining -= 1;
             self.listed += 1;
             const frame = &self.vm.frames.items[self.remaining];
-            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
-            const source_offset = exec_chunk.getOffset(if (frame.ip > 0) frame.ip - 1 else 0);
+            const source_offset = frame.sourceOffset().?;
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
-            const line = if (self.vm.line_index) |li|
-                std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ li.getLine(source_offset) + 1, li.getUtf8Column(source_offset) + 1, func_name })
-            else
-                std.mem.print(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+            const line = if (self.vm.line_index) |li| at: {
+                const at = li.humanPosition(source_offset);
+                break :at std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ at.line, at.column, func_name });
+            } else std.mem.print(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
             return line catch "    from unknown";
         }
     };
@@ -3929,35 +4002,18 @@ pub const VM = struct {
         return arr_obj;
     }
 
-    // --- Safe FFI Pointer Extraction ---
-    pub inline fn getReceiver(self: *VM, args: [*]value.Value) value.Value {
-        const stack_start = @intFromPtr(self.stack.ptr);
-        const args_ptr = @intFromPtr(args);
-
-        // Ensure `args` points strictly inside our allocated VM stack,
-        // and is at least 1 slot above the bottom so `args - 1` can never underflow.
-        std.debug.assert(args_ptr > stack_start);
-        std.debug.assert(args_ptr <= @intFromPtr(self.stack.ptr + self.stack.len));
-
-        return (args - 1)[0];
-    }
-
     // --- Inline Caching Helpers ---
 
     inline fn readGlobalCache(exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.GlobalCache {
-        const idx = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-        frame.ip += 2;
-        return &exec_chunk.global_caches.items[idx];
+        defer frame.ip += 2;
+        return &exec_chunk.global_caches.items[chunk.readU16(exec_chunk.code.items, frame.ip)];
     }
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;
         std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-        const ic_high: u16 = exec_chunk.code.items[frame.ip];
-        const ic_low: u16 = exec_chunk.code.items[frame.ip + 1];
-        frame.ip += 2;
-        const ic_idx = (ic_high << 8) | ic_low;
-        return &exec_chunk.inline_caches.items[ic_idx];
+        defer frame.ip += 2;
+        return &exec_chunk.inline_caches.items[chunk.readU16(exec_chunk.code.items, frame.ip)];
     }
 
     /// Empties `ic` if a method table changed since it was filled.
@@ -3985,7 +4041,7 @@ pub const VM = struct {
         var list: std.ArrayList(u8) = .empty;
         const arena = self.scratch_arena.allocator();
         for (names[0..@min(names.len, MAX_NAMES_LISTED)], 0..) |name, i| {
-            const chars = if (name.isString()) name.asString().chars else if (name.isSymbol()) name.asSymbol().chars else "?";
+            const chars = name.nameChars() orelse "?";
             list.print(arena, "{s}{s}", .{ if (i > 0) ", " else "", chars }) catch return "";
         }
         if (names.len > MAX_NAMES_LISTED) list.appendSlice(arena, ", ...") catch return "";

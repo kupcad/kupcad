@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const api = @import("api.zig");
+const support = @import("test_support.zig");
 
 test "Formatter: formats raw KupCAD code to expected layout" {
     const input_code = @embedFile("fixtures/format_in.kup");
@@ -158,10 +159,56 @@ test "API: buildModel with a diagnostic sets no message when nothing was reporte
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
-        error.NoGeometry,
+        error.RuntimeError,
         api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
-    try testing.expect(diag.message == null);
+    // The export's own report, not the rescued one
+    try testing.expectEqualStrings("TypeError: the script's last value (Number) is not a model: end it with a Solid, a Sketch, a Path, an Assembly or an Array of them", diag.message.?);
+}
+
+test "API: a model a format can't hold is refused with a message, never cut down to fit" {
+    // A Sketch beside Solids was dropped from the file, a Number or nil in the Array too,
+    // an Array inside the Array with everything in it, and a Sketch alone or a script
+    // ending in a Number failed with a bare NoGeometry.
+    const refused = [_]struct { source: []const u8, format: api.ExportFormat = .stl, message: []const u8 }{
+        .{ .source = "circle(r: 5)", .message = "TypeError: the model is a Sketch, which stl (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid" },
+        .{ .source = "[cube(1), circle(r: 1)]", .format = .glb, .message = "TypeError: the model holds a Sketch, which glb (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid" },
+        .{ .source = "[cube(1), 1]", .message = "TypeError: the model's item 2 (Number) is not a shape: a model holds Solids, Sketches, Paths and Arrays of them" },
+        .{ .source = "[cube(1), [cube(2), nil]]", .message = "TypeError: the model's item 2.2 (nil) is not a shape: a model holds Solids, Sketches, Paths and Arrays of them" },
+        .{ .source = "\"model\"", .message = "TypeError: the script's last value (String) is not a model: end it with a Solid, a Sketch, a Path, an Assembly or an Array of them" },
+        .{ .source = "[]", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
+        .{ .source = "line([0, 0], [1, 0])", .message = "TypeError: the model holds only open paths: stl (a 3D format) needs Solids; a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first, then extrude it" },
+        .{ .source = "[cube(1), line([0, 0], [1, 0])]", .format = .obj, .message = "TypeError: the model holds a Path, which obj (a 3D format) can't hold: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first, then extrude it" },
+        .{ .source = "cube(1).ghost\nnil", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
+        .{ .source = "cube(1).ghost\nnil", .format = .@"3mf", .message = "GeometryError: the model holds no Solid: nothing to write as 3mf" },
+    };
+    for (refused) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format, .diagnostic = &diag }));
+        try testing.expectEqualStrings(case.message, diag.message.?);
+    }
+    // Nested Arrays are the model too, and the viewer's formats take ghosts alone
+    const accepted = [_]struct { source: []const u8, format: api.ExportFormat = .stl }{
+        .{ .source = "[[cube(1), [cube(2)]], cube(3)]" },
+        .{ .source = "assemble(name: \"a\", parts: [cube(1)])" },
+        .{ .source = "cube(1).ghost\nnil", .format = .glb },
+    };
+    for (accepted) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        const bytes = try api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format });
+        defer testing.allocator.free(bytes);
+        try testing.expect(bytes.len > 0);
+    }
+}
+
+test "API: the parts list of a model with no Solid is refused with a message" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm, "circle(r: 1)"));
+    try testing.expectError(error.RuntimeError, api.billOfMaterials(testing.allocator, &vm));
+    try testing.expectEqualStrings("GeometryError: the model holds no Solid: nothing for the parts list", vm.last_error.?);
 }
 
 test "API: buildModel with a diagnostic reports an error raised while exporting" {
@@ -187,7 +234,7 @@ test "API: buildModel with a diagnostic reports an error raised while exporting"
 
 test "API: a model the engine can't mesh says so, for every mesh format" {
     // The API, wasm and the CLI got only error.EngineCannotTessellate, with no message.
-    const expected = "NotImplementedError: the brep engine can't tessellate solids for STL, glTF or the viewport (STEP export works) yet; build this part with engine: :manifold";
+    const expected = "NotImplementedError: the brep engine can't tessellate solids for STL, glTF, 3MF, OBJ or the viewport (STEP export works) yet; build this part with engine: :manifold";
     inline for (.{ "stl", "glb", "gltf" }) |format| {
         var diag: api.BuildDiagnostic = .{};
         defer diag.deinit(testing.allocator);
@@ -259,6 +306,24 @@ test "API: a lint fix is kept only when it builds the same model" {
     }
     // Nothing to compare when the original itself fails: the error count still guards.
     try testing.expect(try keepsModel("cube(10).undefined_thing\n", "cube(11)\n"));
+}
+
+test "API: buildModel reads and writes no files unless the caller gives it a file system" {
+    // Given none, it ran on the disk at the working directory, where build.zig is: a
+    // script given to the API could read and write there
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "import_stl(\"build.zig\")", .message = "ImportError: could not read STL file 'build.zig': FileNotFound" },
+        .{ .source = "import_json(\"build.zig.zon\")", .message = "ImportError: could not read JSON file 'build.zig.zon': FileNotFound" },
+        .{ .source = "cube(1).export_stl(\"api_no_files.stl\")", .message = "RuntimeError: export_stl: could not write 'api_no_files.stl': AccessDenied" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.source, .{ .format = .stl, .diagnostic = &diag }));
+        try testing.expectEqualStrings(case.message, diag.message.?);
+    }
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "api_no_files.stl", .{}));
 }
 
 test "API: telling a model runs it with every write discarded" {

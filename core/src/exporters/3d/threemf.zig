@@ -1,17 +1,15 @@
 //! 3MF export: a model as a 3D Manufacturing Format package, a zip (exporters/zip.zig) of a
-//! content types file, a relationship and the model's XML. Each part of the parts list
-//! (stdlib/bom.zig) is one mesh, and each copy of it one build item placed by the copy's
-//! transform, so a slicer gets a part once with all its copies (an STL holds them merged).
-//! Units are millimetres; the materials' colours are base materials, by triangle.
+//! content types file, a relationship and the model's XML. Each part (export.zig makes them
+//! from the parts list, exporters/parts.zig) is one object's mesh, and each copy of it one
+//! build item placed by the copy's transform, so a slicer gets a part once with all its
+//! copies (an STL holds them merged). Units are millimetres; the materials' colours are
+//! base materials, by triangle.
 
 const std = @import("std");
-const value = @import("../../core/value.zig");
-const VM = @import("../../vm/vm.zig").VM;
-const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const kernel = @import("../../kernel/kernel.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 const Placement = @import("../../core/placement.zig").Placement;
-const bom = @import("../../stdlib/bom.zig");
+const MeshPart = @import("mesh_part.zig").MeshPart;
 const zip = @import("../zip.zig");
 
 pub const MODEL_PATH = "3D/3dmodel.model";
@@ -32,13 +30,16 @@ const MATERIALS_ID = 1;
 /// The colour of a triangle with no material, as the glTF export's default.
 const DEFAULT_COLOR = [4]u8{ 0xCC, 0xCC, 0xCC, 0xFF };
 
-/// `solids` (rooted by the caller) as a 3MF package, owned by `allocator`; `title` names the
-/// model (an assembly's name). error.NoGeometry when no part has a triangle.
-pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8) ![]u8 {
-    const grouping = try bom.group(vm, allocator, solids);
-    defer grouping.deinit(allocator);
+/// A copy of a part: the index of its part among `build`'s `parts`, and where it is placed.
+pub const Item = struct { part: u32, placement: Placement };
+
+/// `parts` (each as made: its material, no placement; an engine that tessellates, which the
+/// caller checks) placed by `items` as a 3MF package, owned by `allocator`; `materials` are
+/// what the meshes' material slots index (kernel.materialSlot), the VM's, and `title`
+/// names the model (an assembly's name). error.NoGeometry when no part has a triangle.
+pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, items: []const Item, materials: []const MaterialDef, title: ?[]const u8) ![]u8 {
     // A part with no triangles has no object, nor items
-    const object_ids = try allocator.alloc(?u32, grouping.parts.len);
+    const object_ids = try allocator.alloc(?u32, parts.len);
     defer allocator.free(object_ids);
 
     var model: std.Io.Writer.Allocating = .init(allocator);
@@ -51,22 +52,22 @@ pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value,
         try w.writeAll("</metadata>\n");
     }
     try w.writeAll(" <resources>\n");
-    try writeMaterials(w, vm.materials.items);
+    try writeMaterials(w, materials);
     var next_id: u32 = MATERIALS_ID + 1;
-    for (grouping.parts, object_ids) |part, *id| {
-        id.* = if (try writeObject(allocator, vm, w, part, next_id)) next_id else null;
+    for (parts, object_ids) |part, *id| {
+        id.* = if (try writeObject(allocator, w, part, next_id, materials.len)) next_id else null;
         if (id.* != null) next_id += 1;
     }
     try w.writeAll(" </resources>\n <build>\n");
-    var items: usize = 0;
-    for (grouping.copies) |copy| {
-        const id = object_ids[copy.part] orelse continue;
+    var written: usize = 0;
+    for (items) |item| {
+        const id = object_ids[item.part] orelse continue;
         try w.print("  <item objectid=\"{d}\" transform=\"", .{id});
-        try writeTransform(w, copy.placement);
+        try writeTransform(w, item.placement);
         try w.writeAll("\"/>\n");
-        items += 1;
+        written += 1;
     }
-    if (items == 0) return error.NoGeometry;
+    if (written == 0) return error.NoGeometry;
     try w.writeAll(" </build>\n</model>\n");
 
     return zip.write(allocator, &.{
@@ -94,17 +95,10 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
     try w.print("   <base name=\"{s}\" displaycolor=\"#{X:0>2}{X:0>2}{X:0>2}{X:0>2}\"/>\n", .{ name, color[0], color[1], color[2], color[3] });
 }
 
-/// `part`'s shape as the object `id`, its triangles in the materials they have; false (and
-/// nothing written) when the mesh has none.
-fn writeObject(allocator: std.mem.Allocator, vm: *VM, w: *std.Io.Writer, part: bom.Part, id: u32) !bool {
-    var scope = HandleScope.init(vm);
-    defer scope.deinit();
-    // With its material: the part's mesh has the colour the viewport shows
-    const shape = try bom.madeOf(vm, part);
-    vm.push(shape);
-    const solid = try vm.ensureConcrete(shape);
-    try vm.requireFeature(solid.engine, .mesh);
-    const mesh = kernel.getMesh(allocator, solid) orelse return error.MeshExtractionFailed;
+/// `part`'s mesh as the object `id`, its triangles in the materials they have (of
+/// `material_count`); false (and nothing written) when the mesh has none.
+fn writeObject(allocator: std.mem.Allocator, w: *std.Io.Writer, part: MeshPart, id: u32, material_count: usize) !bool {
+    const mesh = kernel.getMesh(allocator, part.handle) orelse return error.MeshExtractionFailed;
     defer allocator.free(mesh.vert_props);
     defer allocator.free(mesh.tri_verts);
     if (mesh.tri_verts.len == 0) return false;
@@ -127,7 +121,7 @@ fn writeObject(allocator: std.mem.Allocator, vm: *VM, w: *std.Io.Writer, part: b
         const tri = mesh.tri_verts[t..][0..3];
         try w.print("     <triangle v1=\"{d}\" v2=\"{d}\" v3=\"{d}\"", .{ tri[0], tri[1], tri[2] });
         const slot: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[tri[0] * mesh.num_prop + 3]) else kernel.DEFAULT_MATERIAL_SLOT;
-        if (slot != kernel.DEFAULT_MATERIAL_SLOT and slot <= vm.materials.items.len) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, slot });
+        if (slot != kernel.DEFAULT_MATERIAL_SLOT and slot <= material_count) try w.print(" pid=\"{d}\" p1=\"{d}\"", .{ MATERIALS_ID, slot });
         try w.writeAll("/>\n");
     }
     try w.writeAll("    </triangles>\n   </mesh>\n  </object>\n");

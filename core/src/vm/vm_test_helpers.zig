@@ -2,21 +2,13 @@
 //! checked, and compiling and running a script (under GC stress too) and reading a global.
 
 const std = @import("std");
-const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const testing = std.testing;
-const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
-const registry = @import("../stdlib/registry.zig");
-const resolver = @import("../core/resolver.zig");
 const value = @import("../core/value.zig");
-const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
-const Profiler = @import("profiler.zig").Profiler;
-const geom = @import("../kernel/geometry_handle.zig");
+const Document = @import("../frontend/document.zig").Document;
 const VM = @import("vm.zig").VM;
 const InterpretResult = @import("vm.zig").InterpretResult;
-const ErrorKind = @import("error_kind.zig").ErrorKind;
 
 /// Runs a chunk and enforces strict stack equilibrium checks
 pub fn executeAndAssertStack(vm: *VM, chunk_ptr: *chunk.Chunk, expected_stack_top: usize) !value.Value {

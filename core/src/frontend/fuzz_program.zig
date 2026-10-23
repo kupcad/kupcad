@@ -19,7 +19,6 @@ const array_class = @import("../stdlib/classes/array.zig");
 const string_class = @import("../stdlib/classes/string.zig");
 const number_class = @import("../stdlib/classes/number.zig");
 const map_class = @import("../stdlib/classes/map.zig");
-const range_class = @import("../stdlib/classes/range.zig");
 const math_class = @import("../stdlib/classes/math.zig");
 
 pub const Error = error{OutOfMemory};
@@ -511,7 +510,7 @@ const Generator = struct {
             },
             .boolean => try g.emit(if (g.pick(2) == 0) "true" else "false"),
             .symbol => {
-                const symbols = [_][]const u8{ ":a", ":xy", ":\"with space\"", ":inch" };
+                const symbols = [_][]const u8{ ":a", ":xy", ":\"with space\"", ":inch", ":\"tab\\t#{1 + 1}\"", ":'a\\'b'" };
                 try g.emit(symbols[g.pick(symbols.len)]);
             },
             .array => {

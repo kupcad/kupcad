@@ -6,7 +6,7 @@ const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const resolver = @import("../core/resolver.zig");
 const VM = @import("../vm/vm.zig").VM;
 const support = @import("../test_support.zig");
@@ -200,7 +200,7 @@ test "Compiler: compiles string interpolation" {
     const num = try b.number("42", 0);
     const span = try b.addNodes(&.{ str1, num });
 
-    const interp_node = try b.interpolatedString(span, 0);
+    const interp_node = try b.interpolated(.interpolated_string, span, 0);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(testing.allocator);
