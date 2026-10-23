@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const common_token = @import("../core/token.zig");
-const utils = @import("utils.zig");
+const utils = @import("lexer_utils.zig");
 const identifier = @import("../core/identifier.zig");
 const string_escape = @import("../core/string_escape.zig");
 
