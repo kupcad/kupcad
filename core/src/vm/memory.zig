@@ -56,6 +56,7 @@ pub const GC = struct {
     assemblies: std.ArrayList(*value.ObjAssembly) = .empty,
     workplanes: std.ArrayList(*value.ObjWorkplane) = .empty,
     fonts: std.ArrayList(*value.ObjFont) = .empty,
+    randoms: std.ArrayList(*value.ObjRandom) = .empty,
 
     // GC triggering metrics
     bytes_allocated: usize,
@@ -115,6 +116,7 @@ pub const GC = struct {
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
         self.fonts.deinit(self.allocator);
+        self.randoms.deinit(self.allocator);
         self.builtins.deinit();
     }
 
@@ -209,7 +211,8 @@ pub const GC = struct {
                 self.closures.items.len + self.upvalues.items.len + self.bound_methods.items.len +
                 self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
-                self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len;
+                self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len +
+                self.randoms.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
                 vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
@@ -499,6 +502,14 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// A Random seeded with `seed` (a whole number), its state `state`.
+    pub fn allocateRandom(self: *GC, vm: *VM, seed: f64, state: u64) !*value.ObjRandom {
+        const ptr = try self.allocateObject(vm, value.ObjRandom, &self.randoms, .random);
+        ptr.seed = seed;
+        ptr.state = state;
+        return ptr;
+    }
+
     pub fn allocateWorkplane(self: *GC, vm: *VM, parent: *value.ObjGeometry, origin: [3]f64, normal: [3]f64) !*value.ObjWorkplane {
         const ptr = try self.allocateObject(vm, value.ObjWorkplane, &self.workplanes, .workplane);
         ptr.parent = parent;
@@ -753,6 +764,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
         self.sweepList(vm, value.ObjFont, &self.fonts);
+        self.sweepList(vm, value.ObjRandom, &self.randoms);
 
         // --- CACHE EVICTION ---
         // Results no live solid or sketch refers to. Without room to work it out, nothing
@@ -813,6 +825,7 @@ pub const GC = struct {
                 self.trackingAllocator().free(font.bytes);
                 self.destroyObject(value.ObjFont, font);
             },
+            .random => self.destroyObject(value.ObjRandom, obj.as(value.ObjRandom)),
             .cross_section => {
                 self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));
             },

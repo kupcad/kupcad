@@ -221,6 +221,7 @@ pub const VM = struct {
     module_class: ?*value.ObjClass = null,
     assembly_class: ?*value.ObjClass = null,
     font_class: ?*value.ObjClass = null,
+    random_class: ?*value.ObjClass = null,
     workplane_class: ?*value.ObjClass = null,
 
     // DOD Memory Fields
@@ -2932,6 +2933,7 @@ pub const VM = struct {
                 .path => return self.path_class,
                 .workplane => return self.workplane_class,
                 .font => return self.font_class,
+                .random => return self.random_class,
                 else => return null,
             }
         } else if (receiver.isNumber()) {
@@ -3510,6 +3512,7 @@ pub const VM = struct {
                     .symbol => return c == self.symbol_class,
                     .range => return c == self.range_class,
                     .font => return c == self.font_class,
+                    .random => return c == self.random_class,
                     else => return false,
                 }
             } else if (test_val.isNumber()) {
@@ -3630,6 +3633,7 @@ pub const VM = struct {
             .workplane => "Workplane",
             .assembly => "Assembly",
             .font => "Font",
+            .random => "Random",
             .path => "Path",
             else => "Object",
         };

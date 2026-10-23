@@ -14,6 +14,7 @@ const object_mod = @import("classes/object.zig");
 const array_class_mod = @import("classes/array.zig");
 const string_class_mod = @import("classes/string.zig");
 const map_class_mod = @import("classes/map.zig");
+const random_class_mod = @import("classes/random.zig");
 const kernel = @import("../kernel/kernel.zig");
 const module_compiler = @import("../compiler/module_compiler.zig");
 
@@ -80,6 +81,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.map_class = try defineValueClass(vm, "Map");
     vm.json_object_class = try defineValueClass(vm, "JsonObject");
     vm.font_class = try defineValueClass(vm, "Font");
+    vm.random_class = try defineValueClass(vm, "Random");
     vm.number_class = try defineValueClass(vm, "Number");
     // Ruby's Float::INFINITY and Float::NAN. Arithmetic never produces them (it raises
     // RangeError or MathError), so a script reaching for one has to say so.
@@ -108,6 +110,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try bindNew(vm, vm.array_class.?, "Array.new", common.wrapMethod(array_class_mod.arrayNew));
     try bindNew(vm, vm.string_class.?, "String.new", common.wrapMethod(string_class_mod.stringNew));
     try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
+    try bindNew(vm, vm.random_class.?, "Random.new", common.wrapMethod(random_class_mod.randomNew));
 
     // --- Formalize Kernel, Solid and Sketch2D Classes ---
     const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);

@@ -63,6 +63,8 @@ pub const ObjType = enum(u8) {
     assembly,
     workplane,
     font,
+    /// A seeded random number generator (class Random).
+    random,
 };
 
 /// The Base Header for ALL heap-allocated objects.
@@ -351,6 +353,14 @@ pub const ObjFont = struct {
     name: *ObjString,
 };
 
+/// A random number generator a script made (`Random.new(seed)`, class Random): SplitMix64's
+/// state, and the seed it started from (stdlib/classes/random.zig).
+pub const ObjRandom = struct {
+    obj: Obj,
+    seed: f64,
+    state: u64,
+};
+
 /// Signature for all Native CAD Built-ins. Takes an opaque VM pointer to avoid circular
 /// imports. Most natives are typed Zig functions turned into this by stdlib/classes/common.zig.
 pub const NativeFn = *const fn (vm: *anyopaque, args: NativeArgs) anyerror!Value;
@@ -509,6 +519,9 @@ pub const Value = packed struct {
     pub inline fn isFont(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .font;
     }
+    pub inline fn isRandom(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .random;
+    }
     pub inline fn isBoundMethod(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .bound_method;
     }
@@ -605,6 +618,11 @@ pub const Value = packed struct {
 
     pub inline fn asFont(self: Value) *ObjFont {
         std.debug.assert(self.isFont());
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+
+    pub inline fn asRandom(self: Value) *ObjRandom {
+        std.debug.assert(self.isRandom());
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
 
@@ -713,6 +731,7 @@ pub const Value = packed struct {
                     const name = obj.as(ObjFont).name.chars;
                     if (is_inspect) try writer.print("#<Font {s}>", .{name}) else try writer.writeAll(name);
                 },
+                .random => try writer.print("#<Random seed: {f}>", .{fmtNumber(obj.as(ObjRandom).seed)}),
                 .bbox => {
                     const bx: *ObjBBox = @alignCast(@fieldParentPtr("obj", obj));
                     const f = fmtNumber;

@@ -68,6 +68,7 @@ test {
     _ = @import("stdlib/params_test.zig");
     _ = @import("stdlib/collections_test.zig");
     _ = @import("stdlib/format_test.zig");
+    _ = @import("stdlib/random_test.zig");
     _ = @import("stdlib/json_test.zig");
     _ = @import("stdlib/json_fuzz_test.zig");
     _ = @import("stdlib/bom_test.zig");

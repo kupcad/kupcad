@@ -33,6 +33,7 @@ pub inline fn unboxValue(comptime T: type, val: value.Value, vm: *VM) !T {
     if (T == *value.ObjClass) return if (val.isClass()) val.asClass() else error.WrongType;
     if (T == *value.ObjBBox) return if (val.isBBox()) val.asBBox() else error.WrongType;
     if (T == *value.ObjFont) return if (val.isFont()) val.asFont() else error.WrongType;
+    if (T == *value.ObjRandom) return if (val.isRandom()) val.asRandom() else error.WrongType;
 
     // --- Strongly Typed Geometry Pointers for DAG Continuity ---
     if (T == *value.ObjGeometry) return if (val.isGeometry()) val.asGeometry() else error.WrongType;
@@ -74,6 +75,7 @@ fn expectedName(comptime T: type) []const u8 {
         *value.ObjClass => "a Class",
         *value.ObjBBox => "a BoundingBox",
         *value.ObjFont => "a Font",
+        *value.ObjRandom => "a Random",
         *value.ObjGeometry, geom.GeometryHandle => "a Solid",
         *value.ObjCrossSection, geom.CrossSectionHandle => "a Sketch",
         else => @compileError("No expectedName for " ++ @typeName(T)),

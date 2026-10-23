@@ -122,7 +122,7 @@ pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
     "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
-    "Font",     "Path",
+    "Font",     "Path",         "Random",
     // "Workplane": hidden with on_face (see the method table)
 };
 
