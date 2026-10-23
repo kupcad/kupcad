@@ -97,7 +97,7 @@ fn exportDrawingTo(vm: *VM, receiver: value.Value, filepath: []const u8, format:
     const sketches: []const value.Value = if (receiver.isCrossSection()) &.{receiver} else &.{};
     const paths: []const value.Value = if (receiver.isPath()) &.{receiver} else &.{};
     if (!receiver.isCrossSection() and !receiver.isPath()) _ = try receiverSolids(vm, receiver, method, &solids);
-    const bytes = try api.exportDrawing(vm.allocator, vm, format, sketches, solids.items, paths);
+    const bytes = try api.exportDrawing(vm.allocator, vm, format, .{}, sketches, solids.items, paths);
     defer vm.allocator.free(bytes);
     try vm.vfs.writeFile(filepath, bytes);
     return receiver;
@@ -182,7 +182,8 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
     var parts = try api.gltfParts(vm.allocator, vm, solids.items, &.{});
     defer parts.deinit();
     for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
-    const bytes = try gltf.buildGltfBuffer(vm.allocator, vm, parts.items, draco_opt orelse false, gltf.Container.forPath(filepath));
+    const draco_bits: ?u8 = if (draco_opt orelse false) gltf.DEFAULT_DRACO_POSITION_BITS else null;
+    const bytes = try gltf.buildGltfBuffer(vm.allocator, vm, parts.items, draco_bits, gltf.Container.forPath(filepath));
     defer vm.allocator.free(bytes);
 
     try vm.vfs.writeFile(filepath, bytes);

@@ -35,6 +35,9 @@ pub const USAGE =
 ++ Format.NAMES ++ " (glb when there is no -o)\n" ++
     param_flags.USAGE ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
+    \\      --draco-bits <n>      Quantize Draco's positions to n bits, 1 to 30 (14: an
+    \\                            error of a part's size / 16384); finer files are larger
+    \\      --stroke-width <mm>   An svg's outline width (0.1), e.g. a laser's hairline
     \\      --mtl                 Also write the materials of an obj as a library beside it
     \\                            (<output>.mtl; materials.mtl with --split)
     \\      --bom <file.json>     Also write the model's parts list: each part, how many
@@ -76,12 +79,13 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
 
 /// The material library the parts of a `--split` share.
 const SPLIT_MTL_NAME = "materials.mtl";
+const MAX_DRACO_BITS = @import("../exporters/3d/gltf.zig").MAX_DRACO_POSITION_BITS;
 
 /// Writes each part of the model to its own file in `dir` (`--split`), named by
 /// PartFileNames, and with `--mtl` the one library they share; false, the failure
 /// reported, when the model can't be written.
 fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, options: *const Options, reporter: Reporter) !bool {
-    const exporting: api.ExportOptions = .{ .draco = options.use_draco, .mtl_name = if (options.use_mtl) SPLIT_MTL_NAME else null };
+    const exporting = options.exportOptions(if (options.use_mtl) SPLIT_MTL_NAME else null);
     const files = api.exportPartsFromVm(allocator, vm, options.format, exporting) catch |err| {
         reporter.err("Export failed: {}\n", .{err});
         return false;
@@ -184,6 +188,10 @@ const Options = struct {
     output_path: ?[]const u8 = null,
     format: Format = DEFAULT_FORMAT,
     use_draco: bool = false,
+    /// `--draco-bits`, when given.
+    draco_bits: ?u8 = null,
+    /// `--stroke-width`, when given.
+    stroke_width: ?f64 = null,
     /// `--mtl`: an OBJ names its materials, written to a library beside it.
     use_mtl: bool = false,
     /// `--bom`: where the parts list goes, besides the model.
@@ -195,6 +203,14 @@ const Options = struct {
 
     fn deinit(self: *Options, allocator: std.mem.Allocator) void {
         self.params.deinit(allocator);
+    }
+
+    /// How the export is written, the OBJ naming `mtl_name` as its library.
+    fn exportOptions(self: *const Options, mtl_name: ?[]const u8) api.ExportOptions {
+        var out: api.ExportOptions = .{ .draco = self.use_draco, .mtl_name = mtl_name };
+        if (self.draco_bits) |bits| out.draco_bits = bits;
+        if (self.stroke_width) |width| out.stroke_width = width;
+        return out;
     }
 };
 
@@ -238,6 +254,21 @@ fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter)
             options.output_path = flagValue(args, arg, "output path", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
             options.use_draco = true;
+        } else if (std.mem.eql(u8, arg, "--draco-bits")) {
+            const text = flagValue(args, arg, "bit count", reporter) orelse return refuse(allocator, &options);
+            options.draco_bits = std.fmt.parseInt(u8, text, 10) catch null;
+            if (options.draco_bits == null or options.draco_bits.? == 0 or options.draco_bits.? > MAX_DRACO_BITS) {
+                reporter.err("Error: --draco-bits must be a whole number from 1 to {d}, got '{s}'\n", .{ MAX_DRACO_BITS, text });
+                return refuse(allocator, &options);
+            }
+        } else if (std.mem.eql(u8, arg, "--stroke-width")) {
+            const text = flagValue(args, arg, "width", reporter) orelse return refuse(allocator, &options);
+            const width = std.fmt.parseFloat(f64, text) catch std.math.nan(f64);
+            if (!(width > 0) or !std.math.isFinite(width)) {
+                reporter.err("Error: --stroke-width must be a positive number of millimetres, got '{s}'\n", .{text});
+                return refuse(allocator, &options);
+            }
+            options.stroke_width = width;
         } else if (std.mem.eql(u8, arg, "--mtl")) {
             options.use_mtl = true;
         } else if (std.mem.eql(u8, arg, "--split")) {
@@ -297,6 +328,14 @@ fn settleFormat(options: *Options, explicit: ?Format, reporter: Reporter) bool {
     // the request, so refuse it rather than pretend it was applied.
     if (options.use_draco and !options.format.supportsDraco()) {
         reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{@tagName(options.format)});
+        return false;
+    }
+    if (options.draco_bits != null and !options.use_draco) {
+        reporter.err("Error: --draco-bits sets Draco's precision; add --draco to compress\n", .{});
+        return false;
+    }
+    if (options.stroke_width != null and !options.format.supportsStrokeWidth()) {
+        reporter.err("Error: --stroke-width only applies to svg output, not {s}\n", .{@tagName(options.format)});
         return false;
     }
     if (options.use_mtl and !options.format.supportsMaterialLibrary()) {
@@ -366,7 +405,7 @@ fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, re
     const mtl_path = if (options.use_mtl) try api.materialLibraryPath(allocator, path) else null;
     defer if (mtl_path) |p| allocator.free(p);
 
-    const exporting: api.ExportOptions = .{ .draco = options.use_draco, .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null };
+    const exporting = options.exportOptions(if (mtl_path) |p| std.fs.path.basename(p) else null);
     const bytes = api.exportModelFromVm(allocator, vm, options.format, exporting) catch |err| {
         reporter.err("Export failed: {}\n", .{err});
         return false;

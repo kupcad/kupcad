@@ -17,7 +17,11 @@ const GLTF_COMPONENT_TYPE_FLOAT = 5126;
 const GLTF_COMPONENT_TYPE_UNSIGNED_INT = 5125;
 const GLTF_TARGET_ARRAY_BUFFER = 34962;
 const GLTF_TARGET_ELEMENT_ARRAY_BUFFER = 34963;
-const DRACO_POSITION_QUANTIZATION_BITS = 14;
+/// The bits Draco quantizes positions to by default: an error of a part's extent / 2^14
+/// (about 0.012 mm on a 200 mm part), the usual balance of size and precision.
+pub const DEFAULT_DRACO_POSITION_BITS: u8 = 14;
+/// The finest Draco quantizes positions to.
+pub const MAX_DRACO_POSITION_BITS: u8 = 30;
 /// Material slot 0: parts without a `material(...)` (neutral grey, half rough).
 const DEFAULT_BASE_COLOR = [4]f64{ 0.8, 0.8, 0.8, 1.0 };
 const DEFAULT_ROUGHNESS = 0.5;
@@ -120,11 +124,13 @@ pub const Container = enum {
 /// A part of the file: its mesh, and the name its node gets (null for a ghost's).
 pub const Part = struct { handle: geom.GeometryHandle, name: ?[]const u8 = null };
 
+/// The parts as glTF in `container`, their meshes compressed with Draco, positions
+/// quantized to `draco_bits` bits, unless that is null.
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     vm: *VM,
     model: []const Part,
-    use_draco: bool,
+    draco_bits: ?u8,
     container: Container,
 ) ![]const u8 {
     var parts: Parts = .{};
@@ -134,7 +140,7 @@ pub fn buildGltfBuffer(
 
     var doc: Gltf = .{};
     defer doc.deinit(allocator);
-    if (use_draco) try doc.addDracoPrimitives(allocator, &parts) else try doc.addPrimitives(allocator, &parts);
+    if (draco_bits) |bits| try doc.addDracoPrimitives(allocator, &parts, bits) else try doc.addPrimitives(allocator, &parts);
     try doc.addMaterials(allocator, vm.materials.items);
     return doc.write(allocator, container, parts.meshes.items);
 }
@@ -284,7 +290,7 @@ const Gltf = struct {
 
     /// Draco: each primitive compressed on its own into a buffer view, with accessors that
     /// only count (Draco decodes the data).
-    fn addDracoPrimitives(self: *Gltf, allocator: std.mem.Allocator, parts: *const Parts) !void {
+    fn addDracoPrimitives(self: *Gltf, allocator: std.mem.Allocator, parts: *const Parts, position_bits: u8) !void {
         try self.extensions_used.append(allocator, "KHR_draco_mesh_compression");
         try self.extensions_required.append(allocator, "KHR_draco_mesh_compression");
 
@@ -295,7 +301,7 @@ const Gltf = struct {
             // file for any multi-part model.)
             var compact = try compactPrimitive(allocator, parts.positions.items, prim.indices.items);
             defer compact.deinit(allocator);
-            const draco_bytes = try draco.encodeMesh(allocator, compact.positions.items, compact.indices, DRACO_POSITION_QUANTIZATION_BITS);
+            const draco_bytes = try draco.encodeMesh(allocator, compact.positions.items, compact.indices, position_bits);
             defer allocator.free(draco_bytes);
 
             const draco_offset: u32 = @intCast(self.bin.items.len);

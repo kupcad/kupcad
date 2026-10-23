@@ -406,6 +406,8 @@ const FormatCase = struct {
     /// `-f` value; null omits `-f`.
     format: ?[]const u8 = null,
     draco: bool = false,
+    /// Further flags, as given.
+    extra: []const []const u8 = &.{},
     expect: union(enum) {
         /// File name expected in the fixture dir and the format of its bytes.
         written: struct { name: []const u8, kind: FileKind },
@@ -446,6 +448,17 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.glb", .draco = true, .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
         .{ .output = "part.stl", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not stl\n" } },
         .{ .output = null, .format = "step", .draco = true, .expect = .{ .rejected = "Error: --draco only applies to glb and gltf output, not step\n" } },
+        // Draco's precision, with Draco only, from 1 to 30 bits
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "20" }, .expect = .{ .written = .{ .name = "part.glb", .kind = .glb } } },
+        .{ .output = "part.glb", .extra = &.{ "--draco-bits", "20" }, .expect = .{ .rejected = "Error: --draco-bits sets Draco's precision; add --draco to compress\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "31" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got '31'\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "0" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got '0'\n" } },
+        .{ .output = "part.glb", .draco = true, .extra = &.{ "--draco-bits", "fine" }, .expect = .{ .rejected = "Error: --draco-bits must be a whole number from 1 to 30, got 'fine'\n" } },
+        // An svg's outline width, a positive number, for svg only
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "0.01" }, .expect = .{ .written = .{ .name = "part.svg", .kind = .svg } } },
+        .{ .output = "part.dxf", .extra = &.{ "--stroke-width", "0.01" }, .expect = .{ .rejected = "Error: --stroke-width only applies to svg output, not dxf\n" } },
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "-1" }, .expect = .{ .rejected = "Error: --stroke-width must be a positive number of millimetres, got '-1'\n" } },
+        .{ .output = "part.svg", .extra = &.{ "--stroke-width", "inf" }, .expect = .{ .rejected = "Error: --stroke-width must be a positive number of millimetres, got 'inf'\n" } },
     };
 
     for (cases) |case| {
@@ -463,6 +476,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         if (output_path) |p| try args.appendSlice(testing.allocator, &.{ "-o", p });
         if (case.format) |f| try args.appendSlice(testing.allocator, &.{ "-f", f });
         if (case.draco) try args.append(testing.allocator, "--draco");
+        try args.appendSlice(testing.allocator, case.extra);
 
         var res = try runBuild(args.items);
         defer res.deinit();

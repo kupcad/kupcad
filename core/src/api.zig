@@ -534,6 +534,14 @@ pub const ExportFormat = enum {
         };
     }
 
+    /// Whether it draws outlines with a stroke of a width (`ExportOptions.stroke_width`).
+    pub fn supportsStrokeWidth(self: ExportFormat) bool {
+        return switch (self) {
+            .svg => true,
+            .stl, .glb, .gltf, .step, .@"3mf", .obj, .dxf => false,
+        };
+    }
+
     /// Whether it holds the ghosts the script showed beside the model: the viewer's
     /// formats do, a file for a slicer or a CAD package doesn't.
     pub fn showsGhosts(self: ExportFormat) bool {
@@ -557,6 +565,11 @@ pub const ExportFormat = enum {
 pub const ExportOptions = struct {
     /// Compress glb and gltf meshes with Draco.
     draco: bool = false,
+    /// The bits Draco quantizes positions to (1 to MAX_DRACO_POSITION_BITS): finer files
+    /// are larger.
+    draco_bits: u8 = gltf_exporter.DEFAULT_DRACO_POSITION_BITS,
+    /// An SVG's outline width, in mm.
+    stroke_width: f64 = svg_exporter.DEFAULT_STROKE_WIDTH,
     /// The material library an OBJ names (`mtllib`), written by `exportMaterialLibrary`;
     /// null for an OBJ without materials.
     mtl_name: ?[]const u8 = null,
@@ -589,18 +602,18 @@ pub fn exportModelFromVm(
     try requireExportable(vm, &model, format);
     return switch (format.dimension()) {
         .@"3d" => exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title),
-        .@"2d" => exportDrawing(allocator, vm, format, model.sketches.items, model.solids.items, model.paths.items),
+        .@"2d" => exportDrawing(allocator, vm, format, options, model.sketches.items, model.solids.items, model.paths.items),
     };
 }
 
 /// `sketches`, `solids` and `paths` (rooted by the caller) as a drawing in `format`
-/// (drawingOf).
-pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) ![]const u8 {
+/// (drawingOf), written as `options` say.
+pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) ![]const u8 {
     var drawing = try drawingOf(allocator, vm, sketches, solids, paths);
     defer drawing.deinit(allocator);
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
     return switch (format) {
-        .svg => svg_exporter.build(allocator, &drawing),
+        .svg => svg_exporter.build(allocator, &drawing, options.stroke_width),
         .dxf => dxf_exporter.build(allocator, &drawing),
         .stl, .glb, .gltf, .step, .@"3mf", .obj => unreachable, // 3D: exportSolids
     };
@@ -709,7 +722,7 @@ fn exportSolids(
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-            return gltf_exporter.buildGltfBuffer(allocator, vm, parts.items, options.draco, container);
+            return gltf_exporter.buildGltfBuffer(allocator, vm, parts.items, if (options.draco) options.draco_bits else null, container);
         },
     }
 }
@@ -787,19 +800,19 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
         vm.push(made);
         const bytes = switch (format.dimension()) {
             .@"3d" => try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name),
-            .@"2d" => try exportDrawing(allocator, vm, format, &.{}, &.{made}, &.{}),
+            .@"2d" => try exportDrawing(allocator, vm, format, options, &.{}, &.{made}, &.{}),
         };
         errdefer allocator.free(bytes);
         try files.append(allocator, .{ .name = part.name, .kind = .part, .count = part.count, .bytes = bytes });
     }
     if (format.dimension() == .@"2d") {
         for (model.sketches.items) |sketch| {
-            const bytes = try exportDrawing(allocator, vm, format, &.{sketch}, &.{}, &.{});
+            const bytes = try exportDrawing(allocator, vm, format, options, &.{sketch}, &.{}, &.{});
             errdefer allocator.free(bytes);
             try files.append(allocator, .{ .name = bom.sketchLabel(vm, sketch).name, .kind = .part, .count = 1, .bytes = bytes });
         }
         for (model.paths.items) |path_val| {
-            const bytes = try exportDrawing(allocator, vm, format, &.{}, &.{}, &.{path_val});
+            const bytes = try exportDrawing(allocator, vm, format, options, &.{}, &.{}, &.{path_val});
             errdefer allocator.free(bytes);
             const name: ?[]const u8 = if (path_val.asPath().name) |n| n.chars else null;
             try files.append(allocator, .{ .name = name, .kind = .path, .count = 1, .bytes = bytes });

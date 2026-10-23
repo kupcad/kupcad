@@ -11,11 +11,12 @@ const drawing_mod = @import("drawing.zig");
 
 const DEFAULT_FILL = "#CCCCCC";
 const STROKE = "#000000";
-/// mm
-const STROKE_WIDTH = 0.1;
+/// The outline's width by default, in mm: thin, and still drawn on screen.
+pub const DEFAULT_STROKE_WIDTH = 0.1;
 
-/// `drawing` as SVG text, owned by `allocator`. error.NoGeometry for a drawing with no point.
-pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) ![]u8 {
+/// `drawing` as SVG text, its outlines `stroke_width` mm wide (a laser cutter's hairline,
+/// say), owned by `allocator`. error.NoGeometry for a drawing with no point.
+pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing, stroke_width: f64) ![]u8 {
     const bounds = drawing.bounds orelse return error.NoGeometry;
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -41,7 +42,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
         const color: []const u8 = if (shape.rgb) |rgb| try std.fmt.bufPrint(&color_buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ rgb[0], rgb[1], rgb[2] }) else DEFAULT_FILL;
         try w.print(" fill=\"{s}\"", .{fill orelse color});
         if (shape.alpha < 1) try w.print(" fill-opacity=\"{d}\"", .{shape.alpha});
-        try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ if (open and shape.rgb != null) color else STROKE, STROKE_WIDTH });
+        try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ if (open and shape.rgb != null) color else STROKE, stroke_width });
         for (shape.outlines, 0..) |outline, i| {
             if (i > 0) try w.writeByte(' ');
             try w.print("M {d} {d}", .{ outline.start[0], flipped(outline.start[1]) });

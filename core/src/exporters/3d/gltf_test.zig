@@ -24,7 +24,7 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
     const parts = [_]gltf.Part{.{ .handle = handle }};
-    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, false, .glb);
+    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, null, .glb);
     defer std.testing.allocator.free(glb_bytes);
 
     // 1. Check GLB Magic Bytes "glTF"
@@ -339,7 +339,7 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
     const parts = [_]gltf.Part{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
-    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, false, .glb));
+    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, null, .glb));
 }
 
 /// The bytes of buffer view `index`.
@@ -368,6 +368,34 @@ test "GLTF: the primitives of an export close every part" {
     const triangles = try mesh_check.weld(std.testing.allocator, @alignCast(positions), indices.items);
     defer std.testing.allocator.free(triangles);
     try mesh_check.expectClosed(std.testing.allocator, triangles);
+}
+
+test "GLTF: Draco quantizes positions to the bits the export asks for" {
+    // The bits were fixed at 14 whatever the part or the use
+    const support = @import("../../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, "sphere(r: 10, segments: 96)"));
+    for ([_]u8{ 6, 20 }) |bits| {
+        errdefer std.debug.print("bits: {d}\n", .{bits});
+        const bytes = try api.exportModelFromVm(std.testing.allocator, &vm, .glb, .{ .draco = true, .draco_bits = bits });
+        defer std.testing.allocator.free(bytes);
+        var glb = try parseGlb(bytes);
+        defer glb.deinit();
+        const prims = try allPrimitives(&glb);
+        defer std.testing.allocator.free(prims);
+        const ext = prims[0].object.get("extensions").?.object.get("KHR_draco_mesh_compression").?.object;
+        const mesh = try draco.decodeMesh(std.testing.allocator, viewBytes(&glb, int(ext.get("bufferView").?)));
+        defer mesh.deinit(std.testing.allocator);
+        // The distinct x positions: on a grid of 2^bits steps at most
+        const xs = try std.testing.allocator.alloc(f32, mesh.positions.len / 3);
+        defer std.testing.allocator.free(xs);
+        for (xs, 0..) |*x, v| x.* = mesh.positions[3 * v];
+        std.mem.sort(f32, xs, {}, std.sort.asc(f32));
+        var distinct: usize = 1;
+        for (xs[1..], xs[0 .. xs.len - 1]) |x, before| distinct += @intFromBool(x != before);
+        if (bits == 6) try std.testing.expect(distinct <= 64) else try std.testing.expect(distinct > 64);
+    }
 }
 
 test "GLTF: each Draco primitive decodes to the mesh its accessors describe" {

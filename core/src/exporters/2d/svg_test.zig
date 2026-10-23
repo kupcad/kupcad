@@ -6,6 +6,18 @@ fn exportSvg(source: []const u8) ![]const u8 {
     return api.buildModel(testing.allocator, testing.io, source, .{ .format = .svg });
 }
 
+test "SVG: the outline is 0.1 mm wide unless the export asks for another width" {
+    var vm = try @import("../../test_support.zig").initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try @import("../../test_support.zig").runOn(&vm, "square(10)"));
+    const plain = try api.exportModelFromVm(testing.allocator, &vm, .svg, .{});
+    defer testing.allocator.free(plain);
+    try testing.expect(std.mem.find(u8, plain, "stroke-width=\"0.1\"") != null);
+    const hairline = try api.exportModelFromVm(testing.allocator, &vm, .svg, .{ .stroke_width = 0.01 });
+    defer testing.allocator.free(hairline);
+    try testing.expect(std.mem.find(u8, hairline, "stroke-width=\"0.01\"") != null);
+}
+
 /// Checks the `n`th path is one closed contour through `points`, in some order and
 /// starting anywhere (the kernel's choice).
 fn expectClosedThrough(svg: []const u8, n: usize, points: []const [2]f64) !void {

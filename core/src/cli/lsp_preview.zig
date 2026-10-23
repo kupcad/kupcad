@@ -275,7 +275,7 @@ pub const SessionPreview = struct {
             return .nothing;
         }
         const parts = [_]gltf.Part{.{ .handle = handle }};
-        const glb = gltf.buildGltfBuffer(allocator, &self.session.vm, &parts, false, .glb) catch |err| {
+        const glb = gltf.buildGltfBuffer(allocator, &self.session.vm, &parts, null, .glb) catch |err| {
             logger.warn("Failed to build the preview's GLB: {}", .{err});
             return .nothing;
         };
