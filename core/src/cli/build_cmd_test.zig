@@ -397,6 +397,58 @@ fn detectFileKind(bytes: []const u8) ?FileKind {
     return null;
 }
 
+test "build_cmd: several -o write the one run to each, each in its own extension's format" {
+    var fx = try Fixture.init("red = cube(1).material(color: \"#FF0000\")\nassemble(name: \"kit\", parts: [red, cube(2).translate(x: 5)])\n");
+    defer fx.deinit();
+    const names = [_][]const u8{ "kit.stl", "kit.glb", "kit.obj", "kit.svg" };
+    var paths: [names.len][]u8 = undefined;
+    for (names, &paths) |name, *p| p.* = try fx.path(name);
+    defer for (paths) |p| testing.allocator.free(p);
+    // --draco is glb's and --mtl obj's: each applies to the outputs it fits
+    var res = try runBuild(&.{ fx.input, "-o", paths[0], "-o", paths[1], "-o", paths[2], "-o", paths[3], "--draco", "--mtl" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expectEqual(@as(usize, 4), std.mem.count(u8, res.text(), "Successfully built "));
+    try testing.expectEqual(@as(usize, 6), try fx.entryCount()); // model.kup, the four, kit.mtl
+    const kinds = [_]?FileKind{ .stl, .glb, null, null };
+    for (names, kinds) |name, kind| {
+        const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 22));
+        defer testing.allocator.free(bytes);
+        if (kind) |k| try testing.expectEqual(@as(?FileKind, k), detectFileKind(bytes));
+        if (std.mem.eql(u8, name, "kit.glb")) try testing.expect(std.mem.find(u8, bytes, "KHR_draco_mesh_compression") != null);
+        if (std.mem.eql(u8, name, "kit.obj")) try testing.expect(std.mem.find(u8, bytes, "\nmtllib kit.mtl\n") != null);
+        if (std.mem.eql(u8, name, "kit.svg")) try testing.expect(std.mem.startsWith(u8, bytes, "<?xml") or std.mem.startsWith(u8, bytes, "<svg"));
+    }
+}
+
+test "build_cmd: several -o refuse a --format, a .step beside a mesh, and an option none of them takes" {
+    var fx = try Fixture.init("cube(1)\n");
+    defer fx.deinit();
+    const cases = [_]struct { args: []const []const u8, message: []const u8 }{
+        .{ .args = &.{ "a.stl", "a.glb", "-f", "stl" }, .message = "Error: --format picks the format of one -o; with several, each one's extension picks its own\n" },
+        .{ .args = &.{ "a.stl", "a.step" }, .message = "Error: 'a.step' is built on the exact B-Rep engine, which can't write the other outputs yet: build it on its own\n" },
+        .{ .args = &.{ "a.step", "a.obj" }, .message = "Error: 'a.step' is built on the exact B-Rep engine, which can't write the other outputs yet: build it on its own\n" },
+        .{ .args = &.{ "a.stl", "a.obj", "--draco" }, .message = "Error: --draco only applies to glb and gltf output, not stl or obj\n" },
+        .{ .args = &.{ "a.stl", "a.stl", "--stroke-width", "0.2" }, .message = "Error: --stroke-width only applies to svg output, not stl\n" },
+    };
+    for (cases) |case| {
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(testing.allocator);
+        try args.append(testing.allocator, fx.input);
+        for (case.args) |arg| {
+            const is_path = std.mem.findScalar(u8, arg, '.') != null and arg[0] != '-' and !std.mem.eql(u8, arg, "0.2");
+            if (is_path) try args.append(testing.allocator, "-o");
+            try args.append(testing.allocator, arg);
+        }
+        var res = try runBuild(args.items);
+        defer res.deinit();
+        errdefer std.debug.print("{s}\n", .{res.text()});
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expectEqualStrings(case.message, res.text());
+    }
+    try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // nothing was written
+}
+
 test "build_cmd: detectFileKind recognises each export by content" {
     var stl_bytes: [STL_HEADER_LEN + STL_COUNT_LEN + STL_TRIANGLE_LEN]u8 = @splat(0);
     std.mem.writeInt(u32, stl_bytes[STL_HEADER_LEN..][0..STL_COUNT_LEN], 1, .little);

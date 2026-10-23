@@ -1,8 +1,9 @@
-//! The export options `kupcad build` takes (`-o`, `--format`, `--draco`, `--draco-bits`,
-//! `--stroke-width`, `--mtl`, `--bom`, `--split`) and the files they ask for once the
-//! script has run: `ExportFlags.take` reads one, `settle` checks they fit together,
-//! `requiredEngine` is the engine a format needs the script built on, and `write` writes
-//! the model (or a file per part, PartFileNames naming them) and the parts list.
+//! The export options `kupcad build` takes (`-o`, repeatable, `--format`, `--draco`,
+//! `--draco-bits`, `--stroke-width`, `--mtl`, `--bom`, `--split`) and the files they ask
+//! for once the script has run: `ExportFlags.take` reads one, `settle` checks they fit
+//! together and picks each output's format, `requiredEngine` is the engine a format needs
+//! the script built on, and `write` writes the model to each output (or a file per part,
+//! PartFileNames naming them) and the parts list.
 
 const std = @import("std");
 const api = @import("../api.zig");
@@ -28,7 +29,7 @@ const MAX_DRACO_BITS = @import("../exporters/3d/gltf.zig").MAX_DRACO_POSITION_BI
 pub const USAGE =
     \\  -o, --output <file>       Output path; its extension picks the format
     \\                            (
-++ Format.EXTENSIONS ++ ")\n" ++
+++ Format.EXTENSIONS ++ "); repeatable, the one run written to each\n" ++
     \\  -f, --format <name>
 ++ Format.NAMES ++ " (glb when there is no -o)\n" ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
@@ -44,12 +45,21 @@ pub const USAGE =
     \\
 ;
 
+/// A file the model is written to, and as what.
+pub const Output = struct {
+    /// `-o`'s, or null for the input's name with the format's extension, beside it.
+    path: ?[]const u8,
+    format: Format,
+};
+
 /// What an export was asked for.
 pub const ExportFlags = struct {
-    /// `-o`; without it the model goes next to the input, named after it.
-    output_path: ?[]const u8 = null,
-    /// What the model is written as, once `settle` has picked it.
-    format: Format = DEFAULT_FORMAT,
+    /// Each `-o`, in order; without one the model goes next to the input, named after it.
+    output_paths: std.ArrayList([]const u8) = .empty,
+    /// The files the model is written to, one per `-o`, once `settle` has made them.
+    outputs: std.ArrayList(Output) = .empty,
+    /// What `--split` writes its parts as, once `settle` has picked it.
+    split_format: Format = DEFAULT_SPLIT_FORMAT,
     /// `--format`, when given.
     explicit_format: ?Format = null,
     use_draco: bool = false,
@@ -64,11 +74,16 @@ pub const ExportFlags = struct {
     /// `--split`: the directory a file per part goes in, instead of one model file.
     split_dir: ?[]const u8 = null,
 
+    pub fn deinit(self: *ExportFlags, allocator: std.mem.Allocator) void {
+        self.output_paths.deinit(allocator);
+        self.outputs.deinit(allocator);
+    }
+
     /// Takes `arg`, and the value after it from `args` (`next() ?[]const u8`), when it is
     /// one of the export options.
-    pub fn take(self: *ExportFlags, arg: []const u8, args: anytype, reporter: Reporter) Taken {
+    pub fn take(self: *ExportFlags, allocator: std.mem.Allocator, arg: []const u8, args: anytype, reporter: Reporter) !Taken {
         if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            self.output_path = flagValue(args, arg, "output path", reporter) orelse return .refused;
+            try self.output_paths.append(allocator, flagValue(args, arg, "output path", reporter) orelse return .refused);
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
             self.use_draco = true;
         } else if (std.mem.eql(u8, arg, "--draco-bits")) {
@@ -102,81 +117,117 @@ pub const ExportFlags = struct {
         return .taken;
     }
 
-    /// Sets the format the model is written in, from `--format` and the `-o` extension;
-    /// false, the refusal reported, when they don't make one or the other options don't
-    /// fit it.
-    pub fn settle(self: *ExportFlags, reporter: Reporter) bool {
-        if (self.split_dir != null and self.output_path != null) {
-            reporter.err("Error: --split writes a file per part into its directory; leave out -o\n", .{});
+    /// Picks the format of each output (or of `--split`'s files) from `--format` and the
+    /// `-o` extensions; false, the refusal reported, when they don't make one or the other
+    /// options fit none of them.
+    pub fn settle(self: *ExportFlags, allocator: std.mem.Allocator, reporter: Reporter) !bool {
+        if (self.split_dir != null) {
+            if (self.output_paths.items.len > 0) {
+                reporter.err("Error: --split writes a file per part into its directory; leave out -o\n", .{});
+                return false;
+            }
+            self.split_format = self.explicit_format orelse DEFAULT_SPLIT_FORMAT;
+            return self.fitsFormats(&.{self.split_format}, reporter);
+        }
+        const paths = self.output_paths.items;
+        if (paths.len > 1 and self.explicit_format != null) {
+            reporter.err("Error: --format picks the format of one -o; with several, each one's extension picks its own\n", .{});
             return false;
         }
-        self.format = if (self.split_dir != null)
-            self.explicit_format orelse DEFAULT_SPLIT_FORMAT
-        else
-            resolveFormat(self.explicit_format, self.output_path, reporter) orelse return false;
-        // Draco is a glTF mesh-compression extension; the other exporters would silently drop
-        // the request, so refuse it rather than pretend it was applied.
-        if (self.use_draco and !self.format.supportsDraco()) {
-            reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{@tagName(self.format)});
+        if (paths.len == 0) {
+            try self.outputs.append(allocator, .{ .path = null, .format = self.explicit_format orelse DEFAULT_FORMAT });
+        }
+        for (paths) |path| {
+            const format = resolveFormat(self.explicit_format, path, reporter) orelse return false;
+            try self.outputs.append(allocator, .{ .path = path, .format = format });
+        }
+        // One run feeds every output, on one engine: STEP's exact one can't make the others yet
+        const outputs = self.outputs.items;
+        for (outputs[1..]) |output| {
+            if (output.format.requiredEngine() != outputs[0].format.requiredEngine()) {
+                const exact = if (outputs[0].format.requiredEngine() != null) outputs[0] else output;
+                reporter.err("Error: '{s}' is built on the exact B-Rep engine, which can't write the other outputs yet: build it on its own\n", .{exact.path.?});
+                return false;
+            }
+        }
+        var formats: [@typeInfo(Format).@"enum".field_names.len]Format = undefined;
+        var count: usize = 0;
+        for (outputs) |output| {
+            if (std.mem.findScalar(Format, formats[0..count], output.format) != null) continue;
+            formats[count] = output.format;
+            count += 1;
+        }
+        return self.fitsFormats(formats[0..count], reporter);
+    }
+
+    /// Whether the format options each fit one of `formats` at least (and apply to those
+    /// they fit); false, the refusal reported, for one that fits none. Draco is a glTF
+    /// mesh-compression extension: the other exporters would drop it without a word.
+    fn fitsFormats(self: *const ExportFlags, formats: []const Format, reporter: Reporter) bool {
+        if (self.use_draco and !anyFormat(formats, Format.supportsDraco)) {
+            reporter.err("Error: --draco only applies to glb and gltf output, not {f}\n", .{FormatList{ .formats = formats }});
             return false;
         }
         if (self.draco_bits != null and !self.use_draco) {
             reporter.err("Error: --draco-bits sets Draco's precision; add --draco to compress\n", .{});
             return false;
         }
-        if (self.stroke_width != null and !self.format.supportsStrokeWidth()) {
-            reporter.err("Error: --stroke-width only applies to svg output, not {s}\n", .{@tagName(self.format)});
+        if (self.stroke_width != null and !anyFormat(formats, Format.supportsStrokeWidth)) {
+            reporter.err("Error: --stroke-width only applies to svg output, not {f}\n", .{FormatList{ .formats = formats }});
             return false;
         }
-        if (self.use_mtl and !self.format.supportsMaterialLibrary()) {
-            reporter.err("Error: --mtl only applies to obj output, not {s}\n", .{@tagName(self.format)});
+        if (self.use_mtl and !anyFormat(formats, Format.supportsMaterialLibrary)) {
+            reporter.err("Error: --mtl only applies to obj output, not {f}\n", .{FormatList{ .formats = formats }});
             return false;
         }
         return true;
     }
 
-    /// The engine the script must be built on for the format (STEP's exact B-Rep), if any.
+    /// The engine the script must be built on for the outputs (STEP's exact B-Rep), if any;
+    /// after `settle`, the outputs agree on it.
     pub fn requiredEngine(self: *const ExportFlags) ?geom.EngineType {
-        return self.format.requiredEngine();
+        if (self.split_dir != null) return self.split_format.requiredEngine();
+        return self.outputs.items[0].format.requiredEngine();
     }
 
     /// Writes what was asked for, the model of `vm` (run from `input_path`) or a file per
     /// part, then the parts list; false, the failure reported, when one can't be written.
     pub fn write(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, input_path: []const u8, reporter: Reporter) !bool {
-        const written = if (self.split_dir) |dir|
-            try self.writeSplit(allocator, vm, dir, reporter)
-        else
-            try self.writeModel(allocator, vm, input_path, reporter);
-        if (!written) return false;
+        if (self.split_dir) |dir| {
+            if (!try self.writeSplit(allocator, vm, dir, reporter)) return false;
+        } else for (self.outputs.items) |output| {
+            if (!try self.writeModel(allocator, vm, output, input_path, reporter)) return false;
+        }
         if (self.bom_path) |path| return writeBom(allocator, vm, path, reporter);
         return true;
     }
 
-    /// How the export is written, the OBJ naming `mtl_name` as its library.
-    fn exportOptions(self: *const ExportFlags, mtl_name: ?[]const u8) api.ExportOptions {
-        var out: api.ExportOptions = .{ .draco = self.use_draco, .mtl_name = mtl_name };
+    /// How a file in `format` is written, the options that fit it applied, an OBJ naming
+    /// `mtl_name` as its library.
+    fn exportOptions(self: *const ExportFlags, format: Format, mtl_name: ?[]const u8) api.ExportOptions {
+        var out: api.ExportOptions = .{ .draco = self.use_draco and format.supportsDraco(), .mtl_name = mtl_name };
         if (self.draco_bits) |bits| out.draco_bits = bits;
         if (self.stroke_width) |width| out.stroke_width = width;
         return out;
     }
 
-    /// Writes the model to `-o`, or next to the input named after it; false, the failure
-    /// reported, when it can't be exported. A failure the script can read about was raised
-    /// (and reported) by the VM.
-    fn writeModel(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, input_path: []const u8, reporter: Reporter) !bool {
-        const extension = self.format.extension();
-        const generated = if (self.output_path == null) blk: {
+    /// Writes the model to `output`, or next to the input named after it; false, the
+    /// failure reported, when it can't be exported. A failure the script can read about was
+    /// raised (and reported) by the VM.
+    fn writeModel(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, output: Output, input_path: []const u8, reporter: Reporter) !bool {
+        const extension = output.format.extension();
+        const generated = if (output.path == null) blk: {
             const stem = std.fs.path.stem(input_path);
             const dir = std.fs.path.dirname(input_path) orelse break :blk try allocator.print("{s}{s}", .{ stem, extension });
             break :blk try allocator.print("{s}{c}{s}{s}", .{ dir, std.fs.path.sep, stem, extension });
         } else null;
         defer if (generated) |path| allocator.free(path);
-        const path = self.output_path orelse generated.?;
-        const mtl_path = if (self.use_mtl) try api.materialLibraryPath(allocator, path) else null;
+        const path = output.path orelse generated.?;
+        const mtl_path = if (self.use_mtl and output.format.supportsMaterialLibrary()) try api.materialLibraryPath(allocator, path) else null;
         defer if (mtl_path) |p| allocator.free(p);
 
-        const exporting = self.exportOptions(if (mtl_path) |p| std.fs.path.basename(p) else null);
-        const bytes = api.exportModelFromVm(allocator, vm, self.format, exporting) catch |err| {
+        const exporting = self.exportOptions(output.format, if (mtl_path) |p| std.fs.path.basename(p) else null);
+        const bytes = api.exportModelFromVm(allocator, vm, output.format, exporting) catch |err| {
             reportExportFailure(reporter, err, path);
             return false;
         };
@@ -191,8 +242,8 @@ pub const ExportFlags = struct {
     /// PartFileNames, and with `--mtl` the one library they share; false, the failure
     /// reported, when the model can't be written.
     fn writeSplit(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, dir: []const u8, reporter: Reporter) !bool {
-        const exporting = self.exportOptions(if (self.use_mtl) SPLIT_MTL_NAME else null);
-        const files = api.exportPartsFromVm(allocator, vm, self.format, exporting) catch |err| {
+        const exporting = self.exportOptions(self.split_format, if (self.use_mtl) SPLIT_MTL_NAME else null);
+        const files = api.exportPartsFromVm(allocator, vm, self.split_format, exporting) catch |err| {
             reportExportFailure(reporter, err, dir);
             return false;
         };
@@ -214,7 +265,7 @@ pub const ExportFlags = struct {
         for (files) |file| {
             const number = unnamed.getPtr(file.kind);
             if (file.name == null) number.* += 1;
-            const name = try names.next(allocator, file.name, file.kind, number.*, self.format.extension()[1..]);
+            const name = try names.next(allocator, file.name, file.kind, number.*, self.split_format.extension()[1..]);
             defer allocator.free(name);
             const path = try std.fs.path.join(allocator, &.{ dir, name });
             defer allocator.free(path);
@@ -222,6 +273,23 @@ pub const ExportFlags = struct {
             reporter.out("Wrote {s} ({d} {s})\n", .{ path, file.count, if (file.count == 1) "copy" else "copies" });
         }
         return true;
+    }
+};
+
+fn anyFormat(formats: []const Format, comptime fits: fn (Format) bool) bool {
+    for (formats) |format| if (fits(format)) return true;
+    return false;
+}
+
+/// "stl", "stl or obj": formats as an error names them.
+const FormatList = struct {
+    formats: []const Format,
+
+    pub fn format(self: FormatList, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (self.formats, 0..) |f, i| {
+            if (i > 0) try w.writeAll(" or ");
+            try w.writeAll(@tagName(f));
+        }
     }
 };
 

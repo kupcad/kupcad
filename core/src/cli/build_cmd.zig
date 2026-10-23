@@ -55,6 +55,7 @@ const Options = struct {
     params: api.ParamValues = .{},
 
     fn deinit(self: *Options, allocator: std.mem.Allocator) void {
+        self.exports.deinit(allocator);
         self.params.deinit(allocator);
     }
 };
@@ -86,7 +87,7 @@ fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter)
             .refused => return refuse(allocator, &options),
             .other => {},
         }
-        switch (options.exports.take(arg, args, reporter)) {
+        switch (try options.exports.take(allocator, arg, args, reporter)) {
             .taken => continue,
             .refused => return refuse(allocator, &options),
             .other => {},
@@ -106,7 +107,7 @@ fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter)
         reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
         return refuse(allocator, &options);
     }
-    if (!options.exports.settle(reporter)) return refuse(allocator, &options);
+    if (!try options.exports.settle(allocator, reporter)) return refuse(allocator, &options);
     return options;
 }
 
