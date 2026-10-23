@@ -1,10 +1,11 @@
 //! Splits KupCAD source into tokens: `Lexer.next` returns one `Token` at a time (tags in
-//! `Tag`, reserved words in `keywords`), tracking string interpolation on a stack of
+//! `Tag`, reserved words in `keywords`, names as `core/identifier.zig` reads them), tracking string interpolation on a stack of
 //! `InterpState`s, and `lexAll` collects the whole buffer into a token list for the parser.
 
 const std = @import("std");
 const common_token = @import("../core/token.zig");
 const utils = @import("utils.zig");
+const identifier = @import("../core/identifier.zig");
 const string_escape = @import("../core/string_escape.zig");
 
 pub const Tag = enum {
@@ -146,77 +147,18 @@ pub const Tag = enum {
 
 pub const Token = common_token.Token(Tag);
 
-pub const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "do", .keyword_do },
-    .{ "end", .keyword_end },
-    .{ "if", .keyword_if },
-    .{ "import", .keyword_import },
-    .{ "from", .keyword_from },
-    .{ "class", .keyword_class },
-    .{ "def", .keyword_def },
-    .{ "true", .keyword_true },
-    .{ "false", .keyword_false },
-    .{ "nil", .keyword_nil },
-    .{ "else", .keyword_else },
-    .{ "elsif", .keyword_elsif },
-    .{ "module", .keyword_module },
-    .{ "yield", .keyword_yield },
-    .{ "return", .keyword_return },
-    .{ "then", .keyword_then },
-    .{ "unless", .keyword_unless },
-    .{ "while", .keyword_while },
-    .{ "until", .keyword_until },
-    .{ "for", .keyword_for },
-    .{ "break", .keyword_break },
-    .{ "next", .keyword_next },
-    .{ "case", .keyword_case },
-    .{ "when", .keyword_when },
-    .{ "self", .keyword_self },
-    .{ "super", .keyword_super },
-    .{ "and", .keyword_and },
-    .{ "or", .keyword_or },
-    .{ "not", .keyword_not },
-    .{ "begin", .keyword_begin },
-    .{ "rescue", .keyword_rescue },
-    .{ "ensure", .keyword_ensure },
-    .{ "export", .keyword_export },
-    .{ "as", .keyword_as },
-    .{ "with", .keyword_with },
-    .{ "private", .keyword_private },
-    .{ "public", .keyword_public },
+pub const keywords = std.StaticStringMap(Tag).initComptime(blk: {
+    var entries: [identifier.KEYWORDS.len]struct { []const u8, Tag } = undefined;
+    for (identifier.KEYWORDS, &entries) |word, *entry| entry.* = .{ word, @field(Tag, "keyword_" ++ word) };
+    break :blk entries;
 });
 
 inline fn isIdentStart(c: u8) bool {
-    return utils.LexerUtils.isIdentStart(c, true);
+    return identifier.isStart(c, true);
 }
 
 inline fn isIdentChar(c: u8) bool {
-    return utils.LexerUtils.isIdentChar(c);
-}
-
-/// Where the name of a bare symbol starting at `start` ends (`name`, `_internal`, `θ_angle`,
-/// `valid?`, `destroy!`, `x=`), or `start` when none starts there. A trailing `=` is part
-/// of it unless `>` follows, which makes it `=>`.
-fn bareSymbolEnd(buffer: []const u8, start: usize) usize {
-    if (start >= buffer.len or !isIdentStart(buffer[start])) return start;
-    var end = start;
-    while (end < buffer.len and isIdentChar(buffer[end])) end += 1;
-    if (end < buffer.len and buffer[end] == '=' and (end + 1 == buffer.len or buffer[end + 1] != '>')) end += 1;
-    return end;
-}
-
-/// Whether `name` reads back from `:name`; any other symbol (`%i[a-b]`) is written quoted
-/// or in `%i[]`.
-pub fn isBareSymbol(name: []const u8) bool {
-    return name.len > 0 and bareSymbolEnd(name, 0) == name.len;
-}
-
-/// Whether `name` lexes as one identifier or constant, as the name of a map key or named
-/// argument written `name:` must; a keyword (`if`) or any other name isn't one.
-pub fn isLabelName(name: []const u8) bool {
-    var lexer = Lexer.init(name, 0);
-    const tok = lexer.next();
-    return (tok.tag == .ident or tok.tag == .constant) and tok.lexeme.len == name.len;
+    return identifier.isChar(c);
 }
 
 pub const InterpState = struct {
@@ -292,9 +234,8 @@ pub const Lexer = struct {
             '#' => self.consumeCommentOrParam(start_loc),
             '=', '!', '<', '>', '&', '|', '*', '/', '?', '+', '-', '^', '~' => self.consumeOperator(start_loc),
             '%' => self.consumePercentOrModulo(start_loc),
-            '$' => self.consumeGlobal(start_loc),
             else => {
-                if (isIdentStart(c)) return self.consumeIdentOrKeyword(start_loc);
+                if (identifier.startsAt(self.buffer, self.index)) return self.consumeIdentOrKeyword(start_loc);
                 if (std.ascii.isDigit(c)) return self.consumeNumber(start_loc);
 
                 // Return an invalid token for unknown characters to trigger parser diagnostics
@@ -603,17 +544,11 @@ pub const Lexer = struct {
         return .{ .tag = .less_less, .loc = start_loc, .lexeme = self.buffer[start..self.index] };
     }
 
-    /// `$name`, a global. A `$` that starts no name is a character the language doesn't use
-    /// (it was a variable named `$`).
-    fn consumeGlobal(self: *Lexer, start_loc: common_token.Location) Token {
-        const next_c: u8 = if (self.index + 1 < self.buffer.len) self.buffer[self.index + 1] else 0;
-        if (next_c != '$' and utils.LexerUtils.isIdentStart(next_c, false)) return self.consumeIdentOrKeyword(start_loc);
-        return self.consumeChar(.invalid, start_loc);
-    }
-
     fn consumeIdentOrKeyword(self: *Lexer, start_loc: common_token.Location) Token {
         const is_constant = std.ascii.isUpper(self.peek());
-        const lexeme = utils.LexerUtils.consumeIdentLexeme(self.buffer, &self.index);
+        const start = self.index;
+        self.index = identifier.end(self.buffer, start);
+        const lexeme = self.buffer[start..self.index];
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             // `self` stays a keyword after `def`, for `def self.name`.
@@ -665,7 +600,7 @@ pub const Lexer = struct {
 
         // Standard Symbols (e.g. :name, :valid?, :x=)
         const start = self.index;
-        const end = bareSymbolEnd(self.buffer, start);
+        const end = identifier.bareSymbolEnd(self.buffer, start);
         if (is_symbol and end > start) {
             self.index = end;
             var content_loc = start_loc;

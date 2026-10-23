@@ -37,6 +37,7 @@ test {
     _ = @import("core/bezier_test.zig");
     _ = @import("core/path_test.zig");
     _ = @import("core/vec3_test.zig");
+    _ = @import("core/identifier_test.zig");
     _ = @import("core/affine2_test.zig");
     _ = @import("core/material_test.zig");
     _ = @import("exporters/2d/names_test.zig");

@@ -6,7 +6,7 @@ const std = @import("std");
 const geom = @import("geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
 const path_mod = @import("path.zig");
-const lexer = @import("../frontend/lexer.zig");
+const identifier = @import("identifier.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
 /// print in scientific notation instead (1e-7), as in JavaScript.
@@ -660,7 +660,7 @@ pub const Value = packed struct {
                     const sym: *ObjSymbol = @alignCast(@fieldParentPtr("obj", obj));
                     if (!is_inspect) return writer.writeAll(sym.chars);
                     try writer.writeAll(":");
-                    if (lexer.isBareSymbol(sym.chars)) try writer.writeAll(sym.chars) else try writeQuoted(writer, sym.chars);
+                    if (identifier.isBareSymbol(sym.chars)) try writer.writeAll(sym.chars) else try writeQuoted(writer, sym.chars);
                 },
                 .array => {
                     const arr: *ObjArray = @alignCast(@fieldParentPtr("obj", obj));
@@ -731,7 +731,7 @@ fn writeEntries(keys: []const Value, values: []const Value, writer: *std.Io.Writ
     for (keys, values, 0..) |key, v, i| {
         if (i > 0) try writer.writeAll(", ");
         // `k: 1` as a script writes it; a Symbol that isn't a name keeps `=>` (`:"a b" => 1`)
-        if (key.isSymbol() and lexer.isLabelName(key.asSymbol().chars)) {
+        if (key.isSymbol() and identifier.isLabelName(key.asSymbol().chars)) {
             try writer.print("{s}: ", .{key.asSymbol().chars});
         } else {
             try key.stringifyNested(true, writer, &here);

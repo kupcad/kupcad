@@ -13,6 +13,7 @@ const Precedence = parser.Precedence;
 const token_span = @import("../../core/token_span.zig");
 const string_escape = @import("../../core/string_escape.zig");
 const lexer = @import("../../frontend/lexer.zig");
+const identifier = @import("../../core/identifier.zig");
 const TokenTag = lexer.Tag;
 const FormatRule = @import("rules/rule.zig").FormatRule;
 const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
@@ -579,7 +580,7 @@ pub const Formatter = struct {
             else => {},
         };
         const name = tree.getString(@fromBackingInt(node.data));
-        if (lexer.isBareSymbol(name)) return self.out.appendSlice(self.allocator, name);
+        if (identifier.isBareSymbol(name)) return self.out.appendSlice(self.allocator, name);
         try self.appendEscapedInQuotes(name);
     }
 
@@ -823,7 +824,7 @@ pub const Formatter = struct {
                     try self.out.append(self.allocator, ':');
                 } else {
                     // `:"a b" => 1` and `:if => 1` stay as they are: `a b: 1` and `if: 1` aren't keys
-                    if (key_node.tag == .symbol and lexer.isLabelName(tree.getString(@fromBackingInt(key_node.data)))) {
+                    if (key_node.tag == .symbol and identifier.isLabelName(tree.getString(@fromBackingInt(key_node.data)))) {
                         try self.out.appendSlice(self.allocator, tree.getString(@fromBackingInt(key_node.data)));
                         try self.out.appendSlice(self.allocator, ": ");
                     } else {

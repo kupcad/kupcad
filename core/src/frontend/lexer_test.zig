@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const lexer_mod = @import("lexer.zig");
+const identifier = @import("../core/identifier.zig");
 const Lexer = lexer_mod.Lexer;
 
 const test_utils = @import("test_utils.zig");
@@ -745,24 +746,29 @@ test "Lexer: a setter symbol keeps its `=` up to the end of the source, but not 
     try expectTokens(":a=>1", &.{ t(.symbol, "a"), t(.arrow, "=>"), t(.number, "1"), t(.eof, "") });
 }
 
-test "Lexer: isBareSymbol is what `:name` reads back as, isLabelName what `name:` does" {
-    // The formatter writes a symbol that isn't either in another form (fmt's own tests)
-    for ([_][]const u8{ "a", "_x", "θ_angle", "valid?", "destroy!", "x=", "@a", "$a", "A", "if", "a?b" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(lexer_mod.isBareSymbol(name));
+test "Lexer: reads one identifier or constant exactly where core/identifier.zig says a label name is" {
+    // `Value.stringify` and the formatter write `name:` only for these, so the two must agree
+    for ([_][]const u8{ "a", "valid?", "A", "@a", "$a", "$_y", "θ", "", "if", "end", "a b", "a=", "a-b", "$", "$$a", "$1", " a", "1a", "a?b", "x!" }) |name| {
+        errdefer std.debug.print("name: '{s}'\n", .{name});
+        var lexer = lexer_mod.Lexer.init(name, 0);
+        const tok = lexer.next();
+        const one_name = (tok.tag == .ident or tok.tag == .constant) and tok.lexeme.len == name.len;
+        try testing.expectEqual(one_name, identifier.isLabelName(name));
     }
-    for ([_][]const u8{ "", "a:", "M:%i", "a-b", "1a", "a b", "a=b", "a\"b" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(!lexer_mod.isBareSymbol(name));
+}
+
+test "Lexer: every keyword tag is read from its word in core/identifier.zig's list, and only those" {
+    var tags: usize = 0;
+    inline for (comptime std.meta.fieldNames(lexer_mod.Tag)) |name| {
+        if (comptime std.mem.startsWith(u8, name, "keyword_")) {
+            const word = name["keyword_".len..];
+            errdefer std.debug.print("word: {s}\n", .{word});
+            try testing.expect(identifier.isKeyword(word));
+            try expectTokens(word, &.{ t(@field(lexer_mod.Tag, name), word), t(.eof, "") });
+            tags += 1;
+        }
     }
-    for ([_][]const u8{ "a", "valid?", "A", "@a", "$a", "θ" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(lexer_mod.isLabelName(name));
-    }
-    for ([_][]const u8{ "", "if", "a b", "a=", "a-b", "$$a", " a" }) |name| {
-        errdefer std.debug.print("name: {s}\n", .{name});
-        try testing.expect(!lexer_mod.isLabelName(name));
-    }
+    try testing.expectEqual(identifier.KEYWORDS.len, tags);
 }
 
 test "KupCAD Lexer: Range operators (inclusive and exclusive)" {

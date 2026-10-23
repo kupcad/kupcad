@@ -1,5 +1,5 @@
-//! `LexerUtils`, the scanning helpers lexer.zig reads its source with: whitespace, numbers,
-//! identifiers and quoted strings.
+//! `LexerUtils`, the scanning helpers lexer.zig reads its source with: whitespace, numbers
+//! and quoted strings (names are `core/identifier.zig`'s).
 
 const std = @import("std");
 
@@ -73,58 +73,6 @@ pub const LexerUtils = struct {
                     index.* += advance_count;
                 } else break;
             } else break;
-        }
-
-        return buffer[start..index.*];
-    }
-
-    pub inline fn isIdentStart(c: u8, comptime allow_at: bool) bool {
-        if (std.ascii.isAlphabetic(c)) return true;
-        if (c == '_' or c == '$') return true;
-        if (allow_at and c == '@') return true;
-        if (c >= 0xC0) return true; // Allow UTF-8 multi-byte start characters
-        return false;
-    }
-
-    pub inline fn isIdentChar(c: u8) bool {
-        if (std.ascii.isAlphanumeric(c)) return true;
-        if (c == '_' or c == '$') return true;
-        if (c == '?' or c == '!' or c == '@') return true;
-        if (c >= 0x80) return true; // Allow UTF-8 continuation bytes
-        return false;
-    }
-
-    pub fn consumeIdentLexeme(buffer: []const u8, index: *usize) []const u8 {
-        const start = index.*;
-        while (index.* < buffer.len) {
-            const c = buffer[index.*];
-            if (c < 0x80) {
-                // Standard ASCII parsing
-                if (isIdentChar(c)) {
-                    index.* += 1;
-                } else {
-                    break;
-                }
-            } else {
-                // UTF-8 Validation and Stepping
-                const seq_len = std.unicode.utf8ByteSequenceLength(c) catch break;
-                if (index.* + seq_len <= buffer.len) {
-                    const slice = buffer[index.* .. index.* + seq_len];
-                    // Validate it forms a legal Unicode codepoint
-                    if (!std.unicode.utf8ValidateSlice(slice)) break;
-                    index.* += seq_len;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Allow exactly one '?' or '!' strictly as a terminal identifier suffix
-        if (index.* < buffer.len) {
-            const c = buffer[index.*];
-            if (c == '?' or c == '!') {
-                index.* += 1;
-            }
         }
 
         return buffer[start..index.*];
