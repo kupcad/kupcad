@@ -36,8 +36,7 @@ pub fn nativeImportDxf(vm: *VM, args: []const value.Value) !value.Value {
     const file = try readDrawing(vm, file_path, "DXF");
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
-    const config = vm.config();
-    var drawing = dxf_read.read(vm.allocator, file, .{ .tolerance = tolerance, .layers = layers, .keep_open = parsed.opts.paths, .config = &config }, &diag) catch |err| {
+    var drawing = dxf_read.read(vm.allocator, file, .{ .tolerance = tolerance, .layers = layers, .keep_open = parsed.opts.paths }, &diag) catch |err| {
         return unreadable(vm, err, file_path, "DXF", &diag);
     };
     defer drawing.deinit();
@@ -60,8 +59,7 @@ pub fn nativeImportSvg(vm: *VM, args: []const value.Value) !value.Value {
     const file = try readDrawing(vm, file_path, "SVG");
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
-    const config = vm.config();
-    var drawing = svg_read.read(vm.allocator, file, .{ .tolerance = tolerance, .config = &config }, &diag) catch |err| {
+    var drawing = svg_read.read(vm.allocator, file, .{ .tolerance = tolerance }, &diag) catch |err| {
         return unreadable(vm, err, file_path, "SVG", &diag);
     };
     defer drawing.deinit();

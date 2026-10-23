@@ -12,6 +12,7 @@ const HandleScope = @import("../vm/scope.zig").HandleScope;
 const arguments = @import("arguments.zig");
 const path_mod = @import("../core/path.zig");
 const path_corners = @import("../core/path_corners.zig");
+const bezier = @import("../core/bezier.zig");
 const affine2 = @import("../core/affine2.zig");
 const transforms = @import("methods/transforms.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
@@ -286,11 +287,18 @@ pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 // --- Into a Sketch ---
 
-/// The chords each segment is drawn with (0 for a line): an arc gets its circle's share of
-/// `per_turn`, or, when that is 0, of the active resolution's count for its radius.
-fn chordsOf(vm: *VM, segments: []const path_mod.Segment, per_turn: i32) ![]u32 {
+/// The chords each segment from `start` is drawn with (0 for a line): an arc gets its
+/// circle's share of `per_turn`, or, when that is 0, of the active resolution's count for
+/// its radius; a cubic its `cubicChordsAt`.
+fn chordsOf(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn: i32) ![]u32 {
     const chords = try vm.allocator.alloc(u32, segments.len);
+    var from = start;
     for (segments, chords) |segment, *count| {
+        defer from = segment.to;
+        if (segment.cubic) |cubic| {
+            count.* = cubicChordsAt(vm, from, cubic, segment.to);
+            continue;
+        }
         const arc = segment.arc orelse {
             count.* = 0;
             continue;
@@ -299,6 +307,16 @@ fn chordsOf(vm: *VM, segments: []const path_mod.Segment, per_turn: i32) ![]u32 {
         count.* = turnShare(@intCast(full), segment.angle / (2 * std.math.pi));
     }
     return chords;
+}
+
+/// The chords the cubic from `from` to `to` is drawn with: as many as keep it within the
+/// active resolution's chord error for a circle of its size (its controls' box), as an
+/// import's curve is drawn.
+pub fn cubicChordsAt(vm: *VM, from: [2]f64, cubic: bezier.Cubic, to: [2]f64) u32 {
+    var box: ?path_mod.Bounds = null;
+    for ([_][2]f64{ from, cubic.c1, cubic.c2, to }) |p| path_mod.Bounds.include(&box, p);
+    const size = std.math.hypot(box.?.max[0] - box.?.min[0], box.?.max[1] - box.?.min[1]);
+    return path_mod.cubicChords(from, cubic, to, vm.config().chordError(size / 2));
 }
 
 /// `close`: the Sketch the path encloses, its end joined straight back to its start; its
@@ -317,7 +335,7 @@ pub fn closedSketch(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, 
 
 /// closedSketch's node of the geometry graph.
 pub fn closedPathNode(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn: i32) !u32 {
-    const chords = try chordsOf(vm, segments, per_turn);
+    const chords = try chordsOf(vm, start, segments, per_turn);
     defer vm.allocator.free(chords);
     return vm.dag_builder.addClosedPath(start, segments, chords);
 }
@@ -337,7 +355,7 @@ pub fn pathStroke(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const half = opts.width / 2.0;
 
     const p = receiver.asPath();
-    const chords = try chordsOf(vm, p.segments, 0);
+    const chords = try chordsOf(vm, p.start, p.segments, 0);
     defer vm.allocator.free(chords);
     var spine: std.ArrayList([2]f64) = .empty;
     defer spine.deinit(vm.allocator);

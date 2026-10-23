@@ -193,9 +193,6 @@ fn hasCurve(outline: drawing_mod.Outline) bool {
     return false;
 }
 
-/// A piece of a spline: a cubic to `to`.
-const SplinePiece = struct { c1: [2]f64, c2: [2]f64, to: [2]f64 };
-
 /// `outline` as a `SPLINE` of cubic pieces (a piecewise Bézier: degree 3, each piece's
 /// knot thrice, the ends' four times), its control points the start and each piece's.
 fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: []const u8, outline: drawing_mod.Outline, tolerance: f64) !void {
@@ -218,8 +215,8 @@ fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: []const u8, out
     }
     try file.point(outline.start);
     for (pieces) |piece| {
-        try file.point(piece.c1);
-        try file.point(piece.c2);
+        try file.point(piece.cubic.c1);
+        try file.point(piece.cubic.c2);
         try file.point(piece.to);
     }
 }
@@ -227,32 +224,24 @@ fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: []const u8, out
 /// `outline`'s edges as cubic pieces: a curve as it is, a line as the cubic with its
 /// controls a third of the way along, an arc as the usual cubics (their controls along the
 /// tangents, 4/3 tan(θ/4) of the radius out), as many as keep within `tolerance` of it.
-fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline, tolerance: f64) ![]SplinePiece {
-    var pieces: std.ArrayList(SplinePiece) = .empty;
+fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline, tolerance: f64) ![]bezier.Piece {
+    var pieces: std.ArrayList(bezier.Piece) = .empty;
     errdefer pieces.deinit(allocator);
     var from = outline.start;
     for (outline.edges) |edge| {
         if (edge.cubic) |cubic| {
-            try pieces.append(allocator, .{ .c1 = cubic.c1, .c2 = cubic.c2, .to = edge.to });
+            try pieces.append(allocator, .{ .cubic = cubic, .to = edge.to });
         } else if (edge.arc) |arc| {
-            const count = arcPieces(edge.angle, arc.radius, tolerance);
-            const step = (if (edge.ccw) edge.angle else -edge.angle) / @as(f64, @floatFromInt(count));
             const circle = bezier.Ellipse.circle(arc.center, arc.radius);
-            var a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
-            var p0 = circle.at(a0);
-            for (0..count) |k| {
-                const a1 = a0 + step;
-                // The last piece ends exactly where the edge does
-                const p3 = if (k + 1 == count) edge.to else circle.at(a1);
-                const piece = circle.cubic(a0, a1, p0, p3);
-                try pieces.append(allocator, .{ .c1 = piece.c1, .c2 = piece.c2, .to = p3 });
-                a0 = a1;
-                p0 = p3;
-            }
+            const a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+            var arc_pieces = circle.arc(a0, if (edge.ccw) edge.angle else -edge.angle, circle.at(a0), edge.to, arcPieces(edge.angle, arc.radius, tolerance));
+            while (arc_pieces.next()) |piece| try pieces.append(allocator, piece);
         } else {
             try pieces.append(allocator, .{
-                .c1 = .{ from[0] + (edge.to[0] - from[0]) / 3, from[1] + (edge.to[1] - from[1]) / 3 },
-                .c2 = .{ from[0] + 2 * (edge.to[0] - from[0]) / 3, from[1] + 2 * (edge.to[1] - from[1]) / 3 },
+                .cubic = .{
+                    .c1 = .{ from[0] + (edge.to[0] - from[0]) / 3, from[1] + (edge.to[1] - from[1]) / 3 },
+                    .c2 = .{ from[0] + 2 * (edge.to[0] - from[0]) / 3, from[1] + 2 * (edge.to[1] - from[1]) / 3 },
+                },
                 .to = edge.to,
             });
         }

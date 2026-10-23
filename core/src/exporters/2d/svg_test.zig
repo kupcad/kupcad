@@ -240,9 +240,8 @@ test "SVG: a drawing written and read back has its outlines where they were, arc
     const path = @import("../../core/path.zig");
     const svg = try exportSvg("square(20, round_r: 4, segments: 16) - circle(r: 3, segments: 16).translate(x: 10, y: 10)");
     defer testing.allocator.free(svg);
-    const config = @import("../../core/engine_config.zig").EngineConfig{};
     var diag: svg_read.Diagnostic = .{};
-    var drawing = svg_read.read(testing.allocator, svg, .{ .tolerance = 1e-6, .config = &config }, &diag) catch |err| {
+    var drawing = svg_read.read(testing.allocator, svg, .{ .tolerance = 1e-6 }, &diag) catch |err| {
         std.debug.print("svg: {s}\n", .{diag.message()});
         return err;
     };

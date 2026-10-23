@@ -1,7 +1,13 @@
 //! import_dxf and import_svg: a drawing's outlines as a Sketch, holes by nesting.
 
 const std = @import("std");
+const testing = std.testing;
 const support = @import("../test_support.zig");
+const path = @import("../core/path.zig");
+const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const dxf_read = @import("../exporters/2d/dxf_read.zig");
+const svg_read = @import("../exporters/2d/svg_read.zig");
+const Diagnostic = @import("../exporters/2d/diagnostic.zig").Diagnostic;
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;
 
@@ -133,5 +139,79 @@ test "import_dxf and import_svg: a DXF's blocks and an SVG's clones are drawn wh
         // Three 2 mm holes, the block copied along a row, inside the 20 mm plate
         .{ .src = "r = import_dxf(\"plate.dxf\").area", .expected = .{ .num = 400 - 3 * 4 }, .files = files },
         .{ .src = "r = import_svg(\"tabs.svg\").area", .expected = .{ .num = 8 }, .files = files },
+    });
+}
+
+/// The drawing `source`'s model is written as in `format`, with `files` in its file system;
+/// owned by testing.allocator.
+fn exported(source: []const u8, files: []const support.ScriptFile, format: @import("../exporters/format.zig").ExportFormat) ![]const u8 {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    var vfs = MemoryVfs.init(testing.allocator);
+    defer vfs.deinit();
+    for (files) |f| try vfs.vfs().writeFile(f.path, f.data);
+    vm.vfs = vfs.vfs();
+    try testing.expectEqual(.ok, try support.runOn(&vm, source));
+    return @import("../exporters/export.zig").exportModelFromVm(testing.allocator, &vm, format, .{});
+}
+
+/// The one cubic of `outline`, its ends and controls in order.
+fn cubicOf(outline: path.Run) ![4][2]f64 {
+    var from = outline.start;
+    for (outline.segments) |segment| {
+        if (segment.cubic) |c| return .{ from, c.c1, c.c2, segment.to };
+        from = segment.to;
+    }
+    return error.NoCubic;
+}
+
+/// `got`'s cubic is `want`'s, either way round (the kernel starts an outline where it will).
+fn expectSameCubic(want: path.Run, got: path.Run) !void {
+    const w = try cubicOf(want);
+    var g = try cubicOf(got);
+    if (std.math.hypot(w[0][0] - g[0][0], w[0][1] - g[0][1]) > 1e-6) std.mem.reverse([2]f64, &g);
+    for (w, g) |a, b| {
+        try testing.expectApproxEqAbs(a[0], b[0], 1e-6);
+        try testing.expectApproxEqAbs(a[1], b[1], 1e-6);
+    }
+}
+
+test "import_dxf and import_svg: a curve read is written back as the same curve" {
+    // A bump of one cubic over a line, as an SVG path and as a DXF spline
+    const svg = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\"><path d=\"M0 50C0 40 10 40 10 50Z\"/></svg>";
+    const dxf = file("0\nSPLINE\n71\n3\n40\n0\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n10\n0\n20\n10\n10\n10\n20\n10\n10\n10\n20\n0\n" ++
+        "0\nLINE\n10\n10\n20\n0\n11\n0\n21\n0\n");
+    const files = &.{ support.ScriptFile{ .path = "bump.svg", .data = svg }, support.ScriptFile{ .path = "bump.dxf", .data = dxf } };
+
+    var diag: Diagnostic = .{};
+    var svg_in = try svg_read.read(testing.allocator, svg, .{ .tolerance = 1e-6 }, &diag);
+    defer svg_in.deinit();
+    const svg_out = try exported("import_svg(\"bump.svg\")", files, .svg);
+    defer testing.allocator.free(svg_out);
+    var svg_back = try svg_read.read(testing.allocator, svg_out, .{ .tolerance = 1e-6 }, &diag);
+    defer svg_back.deinit();
+    try expectSameCubic(svg_in.outlines[0], svg_back.outlines[0]);
+
+    var dxf_in = try dxf_read.read(testing.allocator, dxf, .{ .tolerance = 1e-6 }, &diag);
+    defer dxf_in.deinit();
+    const dxf_out = try exported("import_dxf(\"bump.dxf\")", files, .dxf);
+    defer testing.allocator.free(dxf_out);
+    var dxf_back = try dxf_read.read(testing.allocator, dxf_out, .{ .tolerance = 1e-6 }, &diag);
+    defer dxf_back.deinit();
+    try expectSameCubic(dxf_in.outlines[0], dxf_back.outlines[0]);
+}
+
+test "import_svg: an open path's curve is a Path's cubic, which its methods follow" {
+    // A cubic of 10 across bulging 7.5 down the page (up in the drawing), then 10 on
+    const svg = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\"><path d=\"M0 50C0 40 10 40 10 50L20 50\" fill=\"none\"/></svg>";
+    const files = &.{support.ScriptFile{ .path = "curve.svg", .data = svg }};
+    try expectScripts(&.{
+        // Longer than its chord, shorter than its control polygon
+        .{ .src = "p = import_svg(\"curve.svg\", paths: true)[0]\nr = p.length > 20 && p.length < 40", .expected = .{ .boolean = true }, .files = files },
+        .{ .src = "r = import_svg(\"curve.svg\", paths: true)[0].bbox.max[1]", .expected = .{ .num = -42.5 }, .files = files },
+        // Closed, the cubic's area over its chord (6/10 of 10 by 10, the line back along it adding none)
+        .{ .src = "CAD.config(resolution: {segments: 1024})\nr = (import_svg(\"curve.svg\", paths: true)[0].close.area - 60).abs < 1e-3", .expected = .{ .boolean = true }, .files = files },
+        .{ .src = "r = import_svg(\"curve.svg\", paths: true)[0].stroke(1).area > 20", .expected = .{ .boolean = true }, .files = files },
+        .{ .src = "r = import_svg(\"curve.svg\", paths: true)[0].scale(x: 2, y: 1).bbox.size[0]", .expected = .{ .num = 40 }, .files = files },
     });
 }

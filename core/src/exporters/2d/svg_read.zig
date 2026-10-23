@@ -2,8 +2,8 @@
 //! millimetres: `path`, `rect`, `circle`, `ellipse`, `polygon` and `polyline`, through
 //! their own and their groups' `transform`s. A circle's arcs (a `circle`, a round `rect`'s
 //! corners, a path's `A` of equal radii) stay arcs while the transforms keep circles
-//! circles; curves (`C`, `S`, `Q`, `T`, an ellipse's arcs) become the lines that keep
-//! within the resolution's chord error of them. A subpath is an outline when it closes
+//! circles (else cubics); curves (`C`, `S`, `Q` and `T` raised to cubics, an ellipse's arcs
+//! as cubic pieces of an eighth of a turn) stay cubics. A subpath is an outline when it closes
 //! (`Z`, or its ends meet within the tolerance), or when its shape is filled (SVG closes
 //! it for the fill); an open one that isn't filled is a stroke alone, with no area: an
 //! open path of its own (a laser's score line). A `line` is one too. Text, images and what
@@ -17,7 +17,6 @@ const std = @import("std");
 const path = @import("../../core/path.zig");
 const affine2 = @import("../../core/affine2.zig");
 const bezier = @import("../../core/bezier.zig");
-const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
 const limits = @import("../../core/limits.zig");
 pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
 
@@ -37,9 +36,6 @@ const LENGTH_UNITS = [_]struct { suffix: []const u8, px: f64 }{
 const UNDRAWN = std.StaticStringMap(void).initComptime(.{ .{"defs"}, .{"clipPath"}, .{"mask"}, .{"symbol"}, .{"marker"}, .{"pattern"}, .{"metadata"}, .{"title"}, .{"desc"}, .{"style"}, .{"script"}, .{"linearGradient"}, .{"radialGradient"}, .{"filter"}, .{"foreignObject"}, .{"text"}, .{"image"} });
 /// Elements that only group what is in them.
 const GROUPS = std.StaticStringMap(void).initComptime(.{ .{"g"}, .{"a"}, .{"switch"} });
-/// The most an elliptical arc's cubic piece sweeps: a cubic keeps within about 4e-6 of
-/// its radius of an eighth of a turn.
-const ELLIPSE_PIECE = std.math.pi / 4.0;
 /// How deep elements nest at most.
 const MAX_NESTING = 256;
 /// Radii this close (relatively) are one circle's.
@@ -48,8 +44,6 @@ const ROUND_SLACK = 1e-12;
 pub const Options = struct {
     /// How far apart a subpath's ends can be and still close it.
     tolerance: f64,
-    /// How finely curves are drawn.
-    config: *const EngineConfig,
     /// How many elements `use`s may draw: nested, they multiply.
     max_cloned: usize = limits.MAX_DRAWING_PIECES,
 };
@@ -525,7 +519,7 @@ const Shape = struct {
 
     fn cubicTo(self: *Shape, c1: [2]f64, c2: [2]f64, p: [2]f64) !void {
         self.begin();
-        try self.segments.append(self.reader.arena, .{ .to = p, .cubic = .{ .c1 = c1, .c2 = c2 } });
+        try self.segments.append(self.reader.arena, path.curve(self.at, .{ .c1 = c1, .c2 = c2 }, p));
         self.at = p;
     }
 
@@ -566,16 +560,10 @@ const Shape = struct {
             self.at = p;
             return;
         }
-        // An ellipse's: cubic pieces of at most ELLIPSE_PIECE each
+        // An ellipse's: cubic pieces of at most an eighth of a turn each
         const ellipse = bezier.Ellipse{ .center = center, .rx = rx, .ry = ry, .axis = .{ cos_phi, sin_phi } };
-        const pieces: usize = @intFromFloat(@max(1, @ceil(@abs(delta) / ELLIPSE_PIECE)));
-        const step = delta / @as(f64, @floatFromInt(pieces));
-        for (0..pieces) |k| {
-            const t0 = theta1 + step * @as(f64, @floatFromInt(k));
-            const p3 = if (k + 1 == pieces) p else ellipse.at(t0 + step);
-            const piece = ellipse.cubic(t0, t0 + step, self.at, p3);
-            try self.cubicTo(piece.c1, piece.c2, p3);
-        }
+        var pieces = ellipse.arc(theta1, delta, self.at, p, bezier.arcPieceCount(delta));
+        while (pieces.next()) |piece| try self.cubicTo(piece.cubic.c1, piece.cubic.c2, piece.to);
     }
 
     fn close(self: *Shape) !void {
@@ -607,8 +595,7 @@ const Shape = struct {
     }
 
     /// The subpath in millimetres: its arcs kept when the matrix keeps a circle a circle
-    /// (and drawn as cubics otherwise), its cubics as the lines within the resolution's
-    /// chord error of them, for a circle of the subpath's size.
+    /// (and cubics otherwise), its cubics (any matrix keeps one a cubic) with it.
     fn placed(self: *Shape) !path.Run {
         const arena = self.reader.arena;
         const m = self.frame.matrix;
@@ -618,46 +605,12 @@ const Shape = struct {
         for (self.segments.items) |segment| {
             defer from = segment.to;
             if (segment.arc != null and !keeps_circles) {
-                for (try circleCubics(arena, from, segment)) |piece| try moved.append(arena, piece.transformed(m));
+                for (try path.arcCubics(arena, from, segment)) |piece| try moved.append(arena, piece.transformed(m));
             } else try moved.append(arena, segment.transformed(m));
         }
-        const start = affine2.apply(m, self.start);
-        const box = path.bounds(start, moved.items);
-        const chord_error = self.reader.options.config.chordError(std.math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1]) / 2);
-        var out: std.ArrayList(path.Segment) = .empty;
-        var at = start;
-        for (moved.items) |segment| {
-            defer at = segment.to;
-            const cubic = segment.cubic orelse {
-                try out.append(arena, segment);
-                continue;
-            };
-            var points: std.ArrayList([2]f64) = .empty;
-            try bezier.flattenCubic(arena, &points, at, cubic.c1, cubic.c2, segment.to, chord_error * chord_error);
-            for (points.items) |p| try out.append(arena, .{ .to = p });
-        }
-        return .{ .start = start, .segments = out.items };
+        return .{ .start = affine2.apply(m, self.start), .segments = moved.items };
     }
 };
-
-/// A circle's arc as cubic pieces of at most ELLIPSE_PIECE each, for a matrix that makes
-/// it an ellipse.
-fn circleCubics(arena: std.mem.Allocator, from: [2]f64, segment: path.Segment) ![]path.Segment {
-    const arc = segment.arc.?;
-    const circle = bezier.Ellipse.circle(arc.center, arc.radius);
-    const pieces: usize = @intFromFloat(@max(1, @ceil(segment.angle / ELLIPSE_PIECE)));
-    const step = (if (segment.ccw) segment.angle else -segment.angle) / @as(f64, @floatFromInt(pieces));
-    var t0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
-    var p0 = from;
-    const out = try arena.alloc(path.Segment, pieces);
-    for (out, 0..) |*piece, k| {
-        const p3 = if (k + 1 == pieces) segment.to else circle.at(t0 + step);
-        piece.* = .{ .to = p3, .cubic = circle.cubic(t0, t0 + step, p0, p3) };
-        t0 += step;
-        p0 = p3;
-    }
-    return out;
-}
 
 /// Numbers in SVG's notation, one after another: separated by whitespace or a comma, or by
 /// nothing where the next can't continue the last (`1-2`, `.5.5`).

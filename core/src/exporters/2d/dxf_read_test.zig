@@ -2,9 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const dxf_read = @import("dxf_read.zig");
 const path = @import("../../core/path.zig");
-const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
-
-const CONFIG = EngineConfig{};
 
 /// A DXF file of `entities` (group codes and values, a line each), in `header`'s units.
 fn file(comptime header: []const u8, comptime entities: []const u8) []const u8 {
@@ -13,7 +10,7 @@ fn file(comptime header: []const u8, comptime entities: []const u8) []const u8 {
 
 fn read(text: []const u8, layers: ?[]const []const u8) !dxf_read.Drawing {
     var diag: dxf_read.Diagnostic = .{};
-    return dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .layers = layers, .config = &CONFIG }, &diag) catch |err| {
+    return dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .layers = layers }, &diag) catch |err| {
         std.debug.print("dxf: {s}\n", .{diag.message()});
         return err;
     };
@@ -21,7 +18,7 @@ fn read(text: []const u8, layers: ?[]const []const u8) !dxf_read.Drawing {
 
 fn expectRefused(text: []const u8, message: []const u8) !void {
     var diag: dxf_read.Diagnostic = .{};
-    try testing.expectError(error.InvalidDrawing, dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .config = &CONFIG }, &diag));
+    try testing.expectError(error.InvalidDrawing, dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
 
@@ -111,13 +108,73 @@ test "DXF read: an old-style POLYLINE, a spline and an ellipse" {
     defer drawing.deinit();
     try testing.expectEqual(@as(usize, 3), drawing.outlines.len);
     try testing.expectEqual(@as(f64, 6), @abs(path.signedArea(drawing.outlines[0].start, drawing.outlines[0].segments)));
-    // The curve's area over its chord is 6/10 of its control polygon's height times its width
-    try testing.expectApproxEqAbs(@as(f64, 60), @abs(path.signedArea(drawing.outlines[1].start, drawing.outlines[1].segments)), 0.5);
-    try testing.expect(drawing.outlines[1].segments.len > 8);
-    // Every point of the ellipse on it
-    for (drawing.outlines[2].segments) |segment| {
+    // The spline is its one cubic, exact: its area over its chord 6/10 of its control
+    // polygon's height times its width
+    const bump = drawing.outlines[1];
+    try testing.expectEqual(@as(usize, 2), bump.segments.len);
+    try expectPoint(.{ 0, 10 }, bump.segments[0].cubic.?.c1);
+    try expectPoint(.{ 10, 10 }, bump.segments[0].cubic.?.c2);
+    try testing.expectApproxEqAbs(@as(f64, 60), @abs(path.signedArea(bump.start, bump.segments)), 1e-9);
+    // The ellipse: cubics of an eighth of a turn, ending on it, as near it as a circle's
+    const ellipse_outline = drawing.outlines[2];
+    try testing.expectEqual(@as(usize, 8), ellipse_outline.segments.len);
+    for (ellipse_outline.segments) |segment| {
+        try testing.expect(segment.cubic != null);
         try testing.expectApproxEqAbs(@as(f64, 1), (segment.to[0] * segment.to[0]) / 16 + (segment.to[1] * segment.to[1]) / 4, 1e-9);
     }
+    try testing.expectApproxEqAbs(8 * std.math.pi, @abs(path.signedArea(ellipse_outline.start, ellipse_outline.segments)), 1e-3);
+}
+
+test "DXF read: a spline of degree 3 at most is its Bézier pieces, any other cubics within the tolerance of it" {
+    // Each closed by a line back along y = 0
+    const back = "0\nLINE\n10\n0\n20\n0\n11\n20\n21\n0\n";
+    // Of degree 3, two spans: its pieces' controls the blossoms of the knots 0, 1, 2
+    const two = "0\nSPLINE\n71\n3\n40\n0\n40\n0\n40\n0\n40\n0\n40\n1\n40\n2\n40\n2\n40\n2\n40\n2\n" ++
+        "10\n0\n20\n0\n10\n0\n20\n10\n10\n10\n20\n10\n10\n20\n20\n10\n10\n20\n20\n0\n";
+    var cubic = try read(file("", two ++ back), null);
+    defer cubic.deinit();
+    const s = cubic.outlines[0].segments;
+    try testing.expectEqual(@as(usize, 3), s.len);
+    try expectPoint(.{ 0, 10 }, s[0].cubic.?.c1);
+    try expectPoint(.{ 5, 10 }, s[0].cubic.?.c2);
+    try expectPoint(.{ 10, 10 }, s[0].to);
+    try expectPoint(.{ 15, 10 }, s[1].cubic.?.c1);
+    try expectPoint(.{ 20, 10 }, s[1].cubic.?.c2);
+    try expectPoint(.{ 20, 0 }, s[1].to);
+    // Of degree 2, raised to a cubic; of degree 1, its lines; with weights all the same,
+    // as if it had none
+    const quadratic = "0\nSPLINE\n71\n2\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n10\n10\n20\n15\n10\n20\n20\n0\n41\n2\n41\n2\n41\n2\n";
+    const lines = "0\nSPLINE\n71\n1\n40\n0\n40\n0\n40\n1\n40\n2\n40\n2\n10\n0\n20\n0\n10\n10\n20\n5\n10\n20\n20\n0\n";
+    var raised = try read(file("", quadratic ++ back), null);
+    defer raised.deinit();
+    try testing.expectEqual(@as(usize, 2), raised.outlines[0].segments.len);
+    try expectPoint(.{ 20.0 / 3.0, 10 }, raised.outlines[0].segments[0].cubic.?.c1);
+    try expectPoint(.{ 40.0 / 3.0, 10 }, raised.outlines[0].segments[0].cubic.?.c2);
+    var straight = try read(file("", lines ++ back), null);
+    defer straight.deinit();
+    try testing.expectEqual(@as(usize, 3), straight.outlines[0].segments.len);
+    try testing.expect(straight.outlines[0].segments[0].isLine());
+    try expectPoint(.{ 10, 5 }, straight.outlines[0].segments[0].to);
+    // A rational quadratic, a quarter of a circle of radius 20 about (0, 0), closed by
+    // the radii: cubics on the circle within the tolerance, a hair inside it
+    const quarter = "0\nSPLINE\n71\n2\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n10\n20\n20\n0\n10\n20\n20\n20\n10\n0\n20\n20\n" ++
+        "41\n1\n41\n0.7071067811865476\n41\n1\n" ++ "0\nLINE\n10\n0\n20\n20\n11\n0\n21\n0\n" ++ "0\nLINE\n10\n0\n20\n0\n11\n20\n21\n0\n";
+    var circle = try read(file("", quarter), null);
+    defer circle.deinit();
+    const arc = circle.outlines[0];
+    var from = arc.start;
+    var fitted: usize = 0;
+    for (arc.segments) |segment| {
+        defer from = segment.to;
+        const c = segment.cubic orelse continue;
+        fitted += 1;
+        for (1..8) |k| {
+            const p = @import("../../core/bezier.zig").pointOn(from, c, segment.to, @as(f64, @floatFromInt(k)) / 8);
+            try testing.expectApproxEqAbs(@as(f64, 20), std.math.hypot(p[0], p[1]), 1e-6);
+        }
+    }
+    try testing.expect(fitted > 1);
+    try testing.expectApproxEqAbs(100 * std.math.pi, @abs(path.signedArea(arc.start, arc.segments)), 1e-4);
 }
 
 test "DXF read: only the layers asked for, every layer read named, and what isn't an outline left out" {
@@ -139,7 +196,7 @@ test "DXF read: pieces that join into no outline are open paths, when the reader
     const text = file("", "0\nLINE\n8\nscore\n10\n0\n20\n0\n11\n10\n21\n0\n" ++ "0\nARC\n8\nscore\n10\n10\n20\n5\n40\n5\n50\n270\n51\n0\n" ++
         "0\nLWPOLYLINE\n8\ncut\n70\n1\n10\n0\n20\n20\n10\n4\n20\n20\n10\n4\n20\n24\n10\n0\n20\n24\n");
     var diag: dxf_read.Diagnostic = .{};
-    var drawing = try dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .keep_open = true, .config = &CONFIG }, &diag);
+    var drawing = try dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .keep_open = true }, &diag);
     defer drawing.deinit();
     try testing.expectEqual(@as(usize, 1), drawing.outlines.len);
     try testing.expectEqual(@as(usize, 1), drawing.open_paths.len);
@@ -192,13 +249,16 @@ test "DXF read: blocks within blocks, uneven scales, mirrors, and a turned-over 
     defer nested.deinit();
     try testing.expectEqual(@as(usize, 4), nested.outlines.len);
     try expectPoint(.{ 10, 50 }, center(nested, 3));
-    // Scaled 3 in x and 1 in y, the circle is an ellipse: lines on it
+    // Scaled 3 in x and 1 in y, the circle is an ellipse: cubics of an eighth of a turn on it
     var stretched = try read(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n0\n20\n0\n41\n3\n"), null);
     defer stretched.deinit();
-    for (stretched.outlines[0].segments) |segment| {
-        try testing.expect(segment.isLine());
+    const stretched_outline = stretched.outlines[0];
+    try testing.expectEqual(@as(usize, 8), stretched_outline.segments.len);
+    for (stretched_outline.segments) |segment| {
+        try testing.expect(segment.cubic != null);
         try testing.expectApproxEqAbs(@as(f64, 1), segment.to[0] * segment.to[0] / 9 + segment.to[1] * segment.to[1], 1e-9);
     }
+    try testing.expectApproxEqAbs(3 * std.math.pi, @abs(path.signedArea(stretched_outline.start, stretched_outline.segments)), 1e-4);
     // Mirrored by a negative scale, and by a plane turned over: still arcs, about (-4, 0)
     inline for (.{ "41\n-1\n", "210\n0\n220\n0\n230\n-1\n" }) |mirror| {
         var mirrored = try read(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n4\n20\n0\n" ++ mirror), null);

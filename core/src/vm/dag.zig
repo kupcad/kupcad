@@ -19,10 +19,13 @@ pub const DAGNodeIndex = geom.DAGNodeIndex;
 /// that matters: Debug and test builds.
 const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
 
-/// A closed path's numbers: its start (x, y), then per segment its end (x, y), whether it
-/// is an arc, the arc's centre (x, y) and radius, its way round, its angle and its chords.
+/// A closed path's numbers: its start (x, y), then per segment its end (x, y), its kind
+/// (PathSegmentKind), an arc's centre (x, y) and radius, its way round and its angle, a
+/// cubic's two controls (x, y each), and its chords.
 pub const PATH_START_NUMBERS = 2;
-pub const PATH_SEGMENT_NUMBERS = 9;
+pub const PATH_SEGMENT_NUMBERS = 13;
+/// What a closed path's segment is, as its number says.
+const PathSegmentKind = enum(u8) { line = 0, arc = 1, cubic = 2 };
 /// A polygons node's curve's numbers: its two controls (x, y each).
 pub const CURVE_NUMBERS = 4;
 /// A polygons node's curve's words in extra_data: its contour, first point and point count.
@@ -826,7 +829,12 @@ pub const DAGBuilder = struct {
         try self.numbers.append(self.allocator(), start[1]);
         for (segments, chords) |segment, count| {
             const arc = segment.arc orelse path_mod.Arc{ .center = .{ 0, 0 }, .radius = 0 };
-            try self.numbers.appendSlice(self.allocator(), &.{ segment.to[0], segment.to[1], @floatFromInt(@intFromBool(segment.arc != null)), arc.center[0], arc.center[1], arc.radius, @floatFromInt(@intFromBool(segment.ccw)), segment.angle, @floatFromInt(count) });
+            const cubic = segment.cubic orelse path_mod.Cubic{ .c1 = .{ 0, 0 }, .c2 = .{ 0, 0 } };
+            const kind: PathSegmentKind = if (segment.arc != null) .arc else if (segment.cubic != null) .cubic else .line;
+            try self.numbers.appendSlice(self.allocator(), &.{
+                segment.to[0], segment.to[1], @floatFromInt(@backingInt(kind)), arc.center[0], arc.center[1],        arc.radius, @floatFromInt(@intFromBool(segment.ccw)), segment.angle,
+                cubic.c1[0],   cubic.c1[1],   cubic.c2[0],                      cubic.c2[1],   @floatFromInt(count),
+            });
         }
         const extra_idx = try self.appendExtraData(&.{ num_idx, @intCast(segments.len) });
         return try self.appendNodeWithRollback(.{ .tag = .closed_path, .flags = 0, .data = extra_idx }, snap);
@@ -842,8 +850,15 @@ pub const DAGBuilder = struct {
         const chords = try alloc.alloc(u32, count);
         for (segments, chords, 0..) |*segment, *chord, i| {
             const n = numbers[PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * i ..][0..PATH_SEGMENT_NUMBERS];
-            segment.* = .{ .to = .{ n[0], n[1] }, .arc = if (n[2] != 0) .{ .center = .{ n[3], n[4] }, .radius = n[5] } else null, .ccw = n[6] != 0, .angle = n[7] };
-            chord.* = @intFromFloat(n[8]);
+            const kind: PathSegmentKind = @fromBackingInt(@intCast(@as(u8, @intFromFloat(n[2]))));
+            segment.* = .{
+                .to = .{ n[0], n[1] },
+                .arc = if (kind == .arc) .{ .center = .{ n[3], n[4] }, .radius = n[5] } else null,
+                .ccw = n[6] != 0,
+                .angle = n[7],
+                .cubic = if (kind == .cubic) .{ .c1 = .{ n[8], n[9] }, .c2 = .{ n[10], n[11] } } else null,
+            };
+            chord.* = @intFromFloat(n[12]);
         }
         return .{ .start = .{ numbers[0], numbers[1] }, .segments = segments, .chords = chords };
     }

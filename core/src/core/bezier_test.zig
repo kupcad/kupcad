@@ -72,3 +72,14 @@ test "bezier: an ellipse's arc as a cubic, its controls along its tangents" {
     try testing.expectApproxEqAbs(@as(f64, -1), d[0], 1e-12);
     try testing.expectApproxEqAbs(@as(f64, 0), d[1], 1e-12);
 }
+
+test "bezier: a cubic is straight when its controls are on its chord, between its ends" {
+    const third = bezier.Cubic{ .c1 = .{ 10.0 / 3.0, 0 }, .c2 = .{ 20.0 / 3.0, 0 } };
+    try testing.expect(bezier.isStraight(.{ 0, 0 }, third, .{ 10, 0 }));
+    // Bunched at one end, or crossing over, it still runs along the chord
+    try testing.expect(bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 9, 9 }, .c2 = .{ 1, 1 } }, .{ 10, 10 }));
+    // Off it, past an end, or a loop back to where it started: a curve
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 1e-6 }, .c2 = .{ 7, 0 } }, .{ 10, 0 }));
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 0 }, .c2 = .{ 12, 0 } }, .{ 10, 0 }));
+    try testing.expect(!bezier.isStraight(.{ 0, 0 }, .{ .c1 = .{ 3, 0 }, .c2 = .{ 7, 0 } }, .{ 0, 0 }));
+}

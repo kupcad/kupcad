@@ -14,8 +14,10 @@ const affine2 = @import("affine2.zig");
 /// the VM's NoMethodError (an `extrude`) and the lint (`shape-mismatch`).
 pub const OPEN_PATH_HINT = "a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first";
 
-/// How many straight pieces a cubic's length is summed over.
+/// How many straight pieces a cubic's length is summed over, and `encloses` follows it by.
 const CUBIC_LENGTH_PIECES = 64;
+/// The most chords a cubic is drawn with (cubicChords), as a circle's segments are capped.
+const MAX_CUBIC_CHORDS = 2048;
 /// The least an arc piece of `encloses` turns (radians): an arc that starts a rounding
 /// error short of a quarter's end goes on past it, rather than by a piece of no length.
 const QUARTER_SLACK = 1e-12;
@@ -278,12 +280,20 @@ pub fn bounds(start: [2]f64, segments: []const Segment) Bounds {
 
 /// The area the closed path from `start` along `segments` encloses (its end joined
 /// straight back to its start), positive when it runs counter-clockwise: its chords'
-/// shoelace sum, with each arc's bulge past its chord on the side it bends to. A cubic
-/// counts as its chord.
+/// shoelace sum, with each arc's bulge past its chord on the side it bends to, and each
+/// cubic's own exact term.
 pub fn signedArea(start: [2]f64, segments: []const Segment) f64 {
     var twice: f64 = 0;
     var from = start;
     for (segments) |segment| {
+        if (segment.cubic) |cubic| {
+            // ∫ x dy - y dx over the Bernstein polynomials: a fixed form in the controls
+            const p = [4][2]f64{ from, cubic.c1, cubic.c2, segment.to };
+            const weights = [_]struct { usize, usize, f64 }{ .{ 0, 1, 0.6 }, .{ 0, 2, 0.3 }, .{ 0, 3, 0.1 }, .{ 1, 2, 0.3 }, .{ 1, 3, 0.3 }, .{ 2, 3, 0.6 } };
+            for (weights) |w| twice += w[2] * (p[w[0]][0] * p[w[1]][1] - p[w[1]][0] * p[w[0]][1]);
+            from = segment.to;
+            continue;
+        }
         twice += from[0] * segment.to[1] - segment.to[0] * from[1];
         if (segment.arc) |arc| {
             // Between an arc and its chord: r²(θ - sin θ) / 2
@@ -294,6 +304,40 @@ pub fn signedArea(start: [2]f64, segments: []const Segment) f64 {
     }
     twice += from[0] * start[1] - start[0] * from[1];
     return twice / 2;
+}
+
+/// How many chords, evenly along its parameter, keep the cubic from `from` to `to` within
+/// `chord_error` of it: n of them stray at most its second derivative's greatest (6 times
+/// its controls' greater second difference) over 8 n². At least 1, at most
+/// MAX_CUBIC_CHORDS.
+pub fn cubicChords(from: [2]f64, cubic: Cubic, to: [2]f64, chord_error: f64) u32 {
+    const d1 = std.math.hypot(from[0] - 2 * cubic.c1[0] + cubic.c2[0], from[1] - 2 * cubic.c1[1] + cubic.c2[1]);
+    const d2 = std.math.hypot(cubic.c1[0] - 2 * cubic.c2[0] + to[0], cubic.c1[1] - 2 * cubic.c2[1] + to[1]);
+    const n = @ceil(@sqrt(6 * @max(d1, d2) / (8 * chord_error)));
+    return @intFromFloat(std.math.clamp(n, 1, MAX_CUBIC_CHORDS));
+}
+
+/// The arc `segment` from `from` as cubic pieces of at most bezier.ARC_PIECE_TURN each,
+/// for a transform that would make its circle an ellipse (a cubic stays a cubic under
+/// any). Owned by `allocator`.
+pub fn arcCubics(allocator: std.mem.Allocator, from: [2]f64, segment: Segment) ![]Segment {
+    const arc = segment.arc.?;
+    const turn = if (segment.ccw) segment.angle else -segment.angle;
+    const out = try allocator.alloc(Segment, bezier.arcPieceCount(turn));
+    const t0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+    var pieces = bezier.Ellipse.circle(arc.center, arc.radius).arc(t0, turn, from, segment.to, out.len);
+    for (out) |*cubic| {
+        const piece = pieces.next().?;
+        cubic.* = .{ .to = piece.to, .cubic = piece.cubic };
+    }
+    return out;
+}
+
+/// The segment of the cubic from `from` to `to`: the line between them when it is one
+/// (bezier.isStraight), as a drawing writes a line among its curves.
+pub fn curve(from: [2]f64, cubic: bezier.Cubic, to: [2]f64) Segment {
+    if (bezier.isStraight(from, cubic, to)) return .{ .to = to };
+    return .{ .to = to, .cubic = cubic };
 }
 
 /// The area the closed polygon through `points` encloses (its last point joined back to
@@ -324,14 +368,24 @@ pub fn reversed(allocator: std.mem.Allocator, start: [2]f64, segments: []const S
 
 /// Whether `p` lies inside the closed path from `start` along `segments` (its end joined
 /// straight back to its start), by the even-odd rule: whether a ray from `p` along +x
-/// crosses it an odd number of times, exactly on arcs. A point on the path may count
-/// either way; a cubic counts as its chord.
+/// crosses it an odd number of times, exactly on arcs, along a cubic by short lines. A point
+/// on the path may count either way.
 pub fn encloses(start: [2]f64, segments: []const Segment, p: [2]f64) bool {
     var inside = false;
     var from = start;
     for (segments) |segment| {
-        const crosses = if (segment.arc) |arc| arcCrosses(from, segment, arc, p) else lineCrosses(from, segment.to, p);
-        if (crosses) inside = !inside;
+        if (segment.cubic) |cubic| {
+            // Along the curve by short lines (fine beside its sagitta, far from a point near it)
+            var at = from;
+            for (1..CUBIC_LENGTH_PIECES + 1) |k| {
+                const q = bezier.pointOn(from, cubic, segment.to, @as(f64, @floatFromInt(k)) / CUBIC_LENGTH_PIECES);
+                if (lineCrosses(at, q, p)) inside = !inside;
+                at = q;
+            }
+        } else {
+            const crosses = if (segment.arc) |arc| arcCrosses(from, segment, arc, p) else lineCrosses(from, segment.to, p);
+            if (crosses) inside = !inside;
+        }
         from = segment.to;
     }
     if (lineCrosses(from, start, p)) inside = !inside;

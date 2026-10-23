@@ -356,14 +356,13 @@ test "DXF: every handle is given out once" {
     try testing.expect(seen.count() >= 5); // two tables, two layers, two polylines
 }
 
-test "DXF: a drawing written and read back has its outlines, arcs as arcs, a glyph's curve as lines along it" {
+test "DXF: a drawing written and read back has its outlines, arcs as arcs, a glyph's curves as its cubics" {
     const dxf_read = @import("dxf_read.zig");
     const path = @import("../../core/path.zig");
     const dxf = try exportDxf("[square(20, round_r: 4, segments: 16) - circle(r: 3, segments: 16).translate(x: 10, y: 10), text(\"O\", 10).translate(x: 30)]");
     defer testing.allocator.free(dxf);
-    const config = @import("../../core/engine_config.zig").EngineConfig{};
     var diag: dxf_read.Diagnostic = .{};
-    var drawing = dxf_read.read(testing.allocator, dxf, .{ .tolerance = 1e-6, .config = &config }, &diag) catch |err| {
+    var drawing = dxf_read.read(testing.allocator, dxf, .{ .tolerance = 1e-6 }, &diag) catch |err| {
         std.debug.print("dxf: {s}\n", .{diag.message()});
         return err;
     };
@@ -382,6 +381,14 @@ test "DXF: a drawing written and read back has its outlines, arcs as arcs, a gly
     try testing.expectEqual(@as(usize, 2), hole.segments.len);
     try testing.expectApproxEqAbs(@as(f64, 3), hole.segments[0].arc.?.radius, 1e-9);
     try testing.expectApproxEqAbs(9 * std.math.pi, @abs(path.signedArea(hole.start, hole.segments)), 1e-9);
-    // The glyph's outlines: SPLINEs, read back as many lines
-    for (drawing.outlines[2..]) |outline| try testing.expect(outline.segments.len > 8);
+    // The glyph's outlines: SPLINEs, read back as their cubics, and the lines written
+    // among them (straight cubics) as lines
+    for (drawing.outlines[2..]) |outline| {
+        var cubics: usize = 0;
+        for (outline.segments) |segment| {
+            try testing.expect(segment.arc == null);
+            if (segment.cubic != null) cubics += 1;
+        }
+        try testing.expect(cubics >= 4);
+    }
 }

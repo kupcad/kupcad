@@ -1,9 +1,9 @@
 //! The curves a sketch's graph defines, with the points they were drawn with: the circles
 //! (every `circle`, each corner of a `rounded_square` and each arc of a `closed_path` below
 //! the sketch's node) and the cubic curves (a text's glyphs', the `polygons_even_odd` node
-//! keeps), carried through the sketch's transforms: a cubic through any, a circle as long
-//! as those keep a circle a circle (a similarity: a uniform scale, a turn, a mirror, a
-//! move); neither through an offset, which draws its own shape. A sketch that is a Solid's
+//! keeps, and a `closed_path`'s, an imported drawing's), carried through the sketch's
+//! transforms: a cubic through any, a circle as long as those keep a circle a circle (a
+//! similarity: a uniform scale, a turn, a mirror, a move); neither through an offset, which draws its own shape. A sketch that is a Solid's
 //! projection or slice (`project`, `slice`) has the Solid's: a cylinder's cap (a cone's
 //! larger one), and the sketches of its extrusions, through the Solid's moves that keep the
 //! XY plane (a move, a turn about z, a scale even in x and y, a mirror across a vertical
@@ -105,10 +105,18 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                 defer allocator.free(ranges);
                 try @import("../../core/path.zig").appendPoints(allocator, &pts, closed.start, closed.segments, closed.chords, ranges);
                 for (closed.segments, ranges, 0..) |segment, range, i| {
-                    const arc = segment.arc orelse continue;
-                    // An arc's points: its start (the segment before's end, or the path's start) and its own
+                    // A curve's points: its start (the segment before's end, or the path's start) and its own
                     const first = if (i == 0) 0 else ranges[i - 1].first + ranges[i - 1].count - 1;
-                    try addCircle(allocator, &circles, visit.matrix, arc.center, arc.radius, try allocator.dupe([2]f64, pts.items[first .. range.first + range.count]), false);
+                    if (segment.arc) |arc| {
+                        try addCircle(allocator, &circles, visit.matrix, arc.center, arc.radius, try allocator.dupe([2]f64, pts.items[first .. range.first + range.count]), false);
+                    } else if (segment.cubic) |cubic| {
+                        // Any transform keeps a cubic a cubic, its controls moved with it
+                        const points = try allocator.dupe([2]f64, pts.items[first .. range.first + range.count]);
+                        errdefer allocator.free(points);
+                        for (points) |*pt| pt.* = affine2.apply(visit.matrix, pt.*);
+                        const control = bezier.Cubic{ .c1 = affine2.apply(visit.matrix, cubic.c1), .c2 = affine2.apply(visit.matrix, cubic.c2) };
+                        try cubics.append(allocator, .{ .control = control, .points = points });
+                    }
                 }
             },
             .cs_transform => {

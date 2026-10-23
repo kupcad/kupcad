@@ -2,21 +2,12 @@ const std = @import("std");
 const testing = std.testing;
 const svg_read = @import("svg_read.zig");
 const path = @import("../../core/path.zig");
-const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
-
-const CONFIG = EngineConfig{};
-/// A resolution fine enough that a curve's lines measure as the curve.
-const FINE = EngineConfig{ .resolution = .{ .segments = 1024 } };
 /// A drawing in millimetres, a user unit each.
 const MM = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">";
 
 fn read(text: []const u8) !svg_read.Drawing {
-    return readAt(text, &CONFIG);
-}
-
-fn readAt(text: []const u8, config: *const EngineConfig) !svg_read.Drawing {
     var diag: svg_read.Diagnostic = .{};
-    return svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .config = config }, &diag) catch |err| {
+    return svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag) catch |err| {
         std.debug.print("svg: {s}\n", .{diag.message()});
         return err;
     };
@@ -24,7 +15,7 @@ fn readAt(text: []const u8, config: *const EngineConfig) !svg_read.Drawing {
 
 fn expectRefused(text: []const u8, message: []const u8) !void {
     var diag: svg_read.Diagnostic = .{};
-    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .config = &CONFIG }, &diag));
+    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
 
@@ -78,19 +69,27 @@ test "SVG read: a path's commands, absolute and relative, and its subpaths each 
     try testing.expectApproxEqAbs(std.math.pi, half.angle, 1e-9);
     try testing.expectApproxEqAbs(12.5 * std.math.pi, area(arc.outlines[0]), 1e-9);
 
-    // Curves become lines along them: C, S's reflection, Q and T's
+    // Curves stay cubics: C, S's reflection, Q and T's raised to cubics, then the line back
     var curves = try read(MM ++ "<path d=\"M0 0C0 10 10 10 10 0S20 -10 20 0Q25 10 30 0T40 0Z\"/></svg>");
     defer curves.deinit();
-    for (curves.outlines[0].segments) |segment| try testing.expect(segment.isLine());
-    try testing.expect(curves.outlines[0].segments.len > 20);
+    const c = curves.outlines[0].segments;
+    try testing.expectEqual(@as(usize, 5), c.len);
+    for (c[0..4]) |segment| try testing.expect(segment.cubic != null);
+    // S mirrors C's second control (10, 10) about (10, 0): (10, -10), y turned over
+    try expectPoint(.{ 10, 10 }, c[1].cubic.?.c1);
+    try testing.expect(c[4].isLine());
+    // A cubic whose controls are on its chord is the line it draws
+    var straight = try read(MM ++ "<path d=\"M0 0C5 0 10 0 15 0L15 5Z\"/></svg>");
+    defer straight.deinit();
+    try testing.expect(straight.outlines[0].segments[0].isLine());
     // S and T mirror the C and the Q below the line, so their areas cancel
     try testing.expectApproxEqAbs(@as(f64, 0), path.signedArea(curves.outlines[0].start, curves.outlines[0].segments), 0.05);
 }
 
 test "SVG read: shapes, transforms, and an ellipse's arcs as lines" {
-    var drawing = try readAt(MM ++ "<g transform=\"translate(10 5)\"><rect x=\"0\" y=\"0\" width=\"40\" height=\"20\" rx=\"5\"/>" ++
+    var drawing = try read(MM ++ "<g transform=\"translate(10 5)\"><rect x=\"0\" y=\"0\" width=\"40\" height=\"20\" rx=\"5\"/>" ++
         "<circle cx=\"20\" cy=\"10\" r=\"4\" transform=\"rotate(30 20 10)\"/><polygon points=\"60,0 80,0 70,10\"/></g>" ++
-        "<ellipse cx=\"0\" cy=\"50\" rx=\"10\" ry=\"5\"/><circle cx=\"50\" cy=\"50\" r=\"2\" transform=\"scale(2 1)\"/></svg>", &FINE);
+        "<ellipse cx=\"0\" cy=\"50\" rx=\"10\" ry=\"5\"/><circle cx=\"50\" cy=\"50\" r=\"2\" transform=\"scale(2 1)\"/></svg>");
     defer drawing.deinit();
     try testing.expectEqual(@as(usize, 5), drawing.outlines.len);
     // The rounded rect: four quarter arcs of radius 5, moved by the group
@@ -106,9 +105,10 @@ test "SVG read: shapes, transforms, and an ellipse's arcs as lines" {
     // Turned about its own centre, the circle stays where it was, exact
     try expectPoint(.{ 30, -15 }, drawing.outlines[1].segments[0].arc.?.center);
     try testing.expectApproxEqAbs(@as(f64, 100), area(drawing.outlines[2]), 1e-9);
-    // The ellipse and the circle scaled unevenly: lines on the ellipse
+    // The ellipse and the circle scaled unevenly: cubics of an eighth of a turn, ending on it
     for (drawing.outlines[3..]) |outline| {
-        for (outline.segments) |segment| try testing.expect(segment.isLine());
+        try testing.expectEqual(@as(usize, 8), outline.segments.len);
+        for (outline.segments) |segment| try testing.expect(segment.cubic != null);
     }
     for (drawing.outlines[3].segments) |segment| {
         try testing.expectApproxEqAbs(@as(f64, 1), (segment.to[0] * segment.to[0]) / 100 + ((segment.to[1] + 50) * (segment.to[1] + 50)) / 25, 1e-3);
@@ -181,7 +181,7 @@ test "SVG read: uses that draw themselves, or more than they may, are refused" {
     var diag: svg_read.Diagnostic = .{};
     const nested = MM ++ "<defs><g id=\"a\"><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/></g>" ++
         "<g id=\"b\"><use href=\"#a\"/><use href=\"#a\"/></g></defs><use href=\"#b\"/><use href=\"#b\"/><use href=\"#b\"/></svg>";
-    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .config = &CONFIG, .max_cloned = 10 }, &diag));
+    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .max_cloned = 10 }, &diag));
     try testing.expectEqualStrings("its <use>s would draw more than 10 elements; a script reads at most that", diag.message());
 }
 
