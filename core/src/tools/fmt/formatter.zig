@@ -497,9 +497,14 @@ pub const Formatter = struct {
 
             // A comment ends its line, so it forces a newline. Every comment trailing a line
             // of the statement belongs to it: one after `.translate(...)` on the second line
-            // of a chain used to move below it on each run.
+            // of a chain used to move below it on each run. One on a line the next statement
+            // starts on comes after that statement (a comment runs to the line's end), so it
+            // is that one's: `a; b # c` became `a # c` and `b` below it.
             prev_last_line = self.lastLine(tree, stmts[idx]);
-            try self.flushTrailingComments(stmt_line, prev_last_line);
+            const next_shares_line = idx + 1 < stmts.len and self.getNodeLine(tree.getNode(stmts[idx + 1]).?) == prev_last_line;
+            if (!next_shares_line) {
+                try self.flushTrailingComments(stmt_line, prev_last_line);
+            } else if (prev_last_line > stmt_line) try self.flushTrailingComments(stmt_line, prev_last_line - 1);
         }
 
         // Comments after the last statement belong to this block, not to whatever follows

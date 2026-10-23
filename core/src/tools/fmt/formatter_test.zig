@@ -609,6 +609,14 @@ test "Formatter: a comment trailing any line of a statement stays with it" {
     );
 }
 
+test "Formatter: a comment after statements sharing a line trails the last of them" {
+    // It was the first one's, which split the line: `a; b # c` became `a # c` and `b` below.
+    // A comment from inside the last statement, which one line now holds, joins them there
+    // (the nightly fuzzer: the second run moved it to the first statement).
+    try expectStableFormat("a = 1; b = 2 # both\nc = 3\n", "a = 1; b = 2 # both\nc = 3\n");
+    try expectStableFormat("x; y = - -\n# inside\n2\n", "x; y = --2 # inside\n");
+}
+
 test "Formatter: comments above end or else stay inside their block" {
     // They used to move below `end` and into the else branch.
     try expectStableFormat(

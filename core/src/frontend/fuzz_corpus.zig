@@ -41,6 +41,9 @@ pub const CORPUS = [_][]const u8{
     // nightly fuzzer: the second pass moved those before `)` out to the bracket's indent)
     "iable --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = param(:width)",
     "f(\n  x, # trailing\n  # own line\n)",
+    // A comment after two statements sharing a line, which went to the first one and split
+    // the line on the second run (the nightly fuzzer)
+    "D0r;z>e --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = par\n",
     // A map key that is a call, written with `:`, which formats to `=>`: a name before `=>` was
     // read as a call without parentheses, so the output didn't parse (the nightly fuzzer)
     "[1, *[2, 3], 4]\nm = { (1...5).k: 1, \"s\" => 2, **{ j: 3 } }\nr = (1..5).to_a + (1...5).to_",
