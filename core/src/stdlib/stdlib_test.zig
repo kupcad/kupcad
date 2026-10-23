@@ -2611,9 +2611,18 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
         // ... and booleans with it were wrong.
         .{ .src = tetra ++ "r = (cube(1) - polyhedron(pts, " ++ inward ++ ")).volume", .expected = .{ .num = 1.0 - 1.0 / 6.0 } },
         // A hull would fill a concave profile in: its loft is the ruled surface, a notch
-        // and all (a prism of the notched square), and one with holes isn't lofted yet
+        // and all (a prism of the notched square)
         .{ .src = "r = polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]), 5).volume", .expected = .{ .num = (100 - 35) * 5 } },
-        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft joins profiles of one outline each, without holes, for now; the top profile has 2 outlines" } },
+        // With holes: each hole lofted to the one at its place in the other's box, run
+        // through; a 16-gon of radius r has 8 r² sin(π/8) (the kernel's mesh keeps floats)
+        .{ .src = "p = square(10, center: true) - circle(r: 2, segments: 16)\nr = (p.loft(p, 5).volume - (100 - 32 * Math.sin(Math::PI / 8)) * 5).abs < 1e-4", .expected = .{ .boolean = true } },
+        // Two holes given the other way round: each frustum's volume is h/3 (A + a + √(Aa)),
+        // the square's 700 and the holes' 56 and 14 times sin(π/8)
+        .{ .src = "b = square(20, center: true) - circle(r: 2, segments: 16).translate(x: -5) - circle(r: 1, segments: 16).translate(x: 5)\n" ++
+            "t = square(10, center: true) - circle(r: 0.5, segments: 16).translate(x: 2.5) - circle(r: 1, segments: 16).translate(x: -2.5)\nr = (b.loft(t, 3).volume - (700 - 70 * Math.sin(Math::PI / 8))).abs < 1e-4", .expected = .{ .boolean = true } },
+        // Two outlines side by side, each lofted to its own
+        .{ .src = "p = square(2) + square(2).translate(x: 5)\nr = p.loft(p, 4).volume", .expected = .{ .num = 32 } },
+        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "ValueError: loft joins each outline and hole of one profile to one of the other, and the base has 0 holes where the top has 1" } },
         // A convex loft spans exactly [0, height]: square to equal square is a prism.
         .{ .src = "r = square(4).loft(square(4), 10).volume", .expected = .{ .num = 160 } },
         .{ .src = "r = square(4).loft(square(4), 10).bbox.max[2]", .expected = .{ .num = 10 } },

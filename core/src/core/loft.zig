@@ -4,7 +4,10 @@
 //! share of its length), so a square lofted to a circle keeps its corners; the top's start
 //! is the one of its points that turns it least against the base. Both outlines' own
 //! points are kept: each is sampled where either has a point. The evaluator lofts a
-//! concave profile with it (a convex pair is their hull, exact).
+//! concave profile with it (a convex pair is their hull, exact). Profiles of several
+//! outlines, or with holes, are lofted contour to contour (`match`): each pair's solid,
+//! folded by how deep it nests (the outlines united, less the holes, with islands in them
+//! back), so the holes run through.
 
 const std = @import("std");
 const triangulate = @import("triangulate.zig");
@@ -19,6 +22,16 @@ pub const Error = error{
     /// An outline has fewer than three points, or no length.
     Degenerate,
 } || triangulate.Error;
+
+/// A contour of the base matched to one of the top, by their indices, and how many of its
+/// profile's others enclose them (0 an outline, 1 a hole in one, 2 an island in a hole).
+pub const Pair = struct { base: usize, top: usize, depth: u32 };
+
+/// Where two profiles differ, so their contours can't be matched: the first depth at
+/// which they have different counts of contours, and those counts.
+pub const Mismatch = struct { depth: u32, base: usize, top: usize };
+
+pub const MatchError = error{Mismatch} || std.mem.Allocator.Error;
 
 /// The solid's points (the base's ring at z = 0, then the top's at the height) and its
 /// triangles, each counter-clockwise seen from outside. Owned by the allocator.
@@ -87,6 +100,108 @@ pub fn ruled(allocator: std.mem.Allocator, base: []const [2]f64, top: []const [2
     // Below the base, the solid is the one above mirrored: its triangles turn the other way
     if (height < 0) for (triangles.items) |*t| std.mem.swap(u32, &t[1], &t[2]);
     return .{ .points = points, .triangles = try triangles.toOwnedSlice(allocator) };
+}
+
+/// The contours of `base` (each a ring of points; they don't cross) matched to those of
+/// `top`, shallowest first: at each depth, each to the one of the other whose centre lies
+/// at the nearest place in its profile's box (as a share of the box each way), the nearest
+/// pair first. Owned by `allocator`; error.Mismatch, `mismatch` saying where, for profiles
+/// with different counts at a depth.
+pub fn match(allocator: std.mem.Allocator, base: []const []const [2]f64, top: []const []const [2]f64, mismatch: *Mismatch) MatchError![]Pair {
+    const base_at = try Placed.of(allocator, base);
+    defer base_at.deinit(allocator);
+    const top_at = try Placed.of(allocator, top);
+    defer top_at.deinit(allocator);
+    var pairs: std.ArrayList(Pair) = .empty;
+    errdefer pairs.deinit(allocator);
+    const Candidate = struct { base: usize, top: usize, distance: f64 };
+    var candidates: std.ArrayList(Candidate) = .empty;
+    defer candidates.deinit(allocator);
+    const base_used = try allocator.alloc(bool, base.len);
+    defer allocator.free(base_used);
+    const top_used = try allocator.alloc(bool, top.len);
+    defer allocator.free(top_used);
+    @memset(base_used, false);
+    @memset(top_used, false);
+    var depth: u32 = 0;
+    while (pairs.items.len < base.len or pairs.items.len < top.len) : (depth += 1) {
+        const base_count = std.mem.count(u32, base_at.depths, &.{depth});
+        const top_count = std.mem.count(u32, top_at.depths, &.{depth});
+        if (base_count != top_count) {
+            mismatch.* = .{ .depth = depth, .base = base_count, .top = top_count };
+            return error.Mismatch;
+        }
+        candidates.clearRetainingCapacity();
+        for (base_at.depths, 0..) |d, i| {
+            if (d != depth) continue;
+            for (top_at.depths, 0..) |e, j| {
+                if (e != depth) continue;
+                const dx = base_at.places[i][0] - top_at.places[j][0];
+                const dy = base_at.places[i][1] - top_at.places[j][1];
+                try candidates.append(allocator, .{ .base = i, .top = j, .distance = dx * dx + dy * dy });
+            }
+        }
+        std.mem.sort(Candidate, candidates.items, {}, struct {
+            fn less(_: void, a: Candidate, b: Candidate) bool {
+                return a.distance < b.distance;
+            }
+        }.less);
+        for (candidates.items) |c| {
+            if (base_used[c.base] or top_used[c.top]) continue;
+            base_used[c.base] = true;
+            top_used[c.top] = true;
+            try pairs.append(allocator, .{ .base = c.base, .top = c.top, .depth = depth });
+        }
+    }
+    return pairs.toOwnedSlice(allocator);
+}
+
+/// A profile's contours: how deep each nests, and where its centre (its points' mean) is
+/// in the profile's box, as a share of the box each way.
+const Placed = struct {
+    depths: []u32,
+    places: [][2]f64,
+
+    fn of(allocator: std.mem.Allocator, contours: []const []const [2]f64) !Placed {
+        const depths = try allocator.alloc(u32, contours.len);
+        errdefer allocator.free(depths);
+        const places = try allocator.alloc([2]f64, contours.len);
+        errdefer allocator.free(places);
+        var box: ?path.Bounds = null;
+        for (contours) |ring| for (ring) |p| path.Bounds.include(&box, p);
+        for (contours, depths, places, 0..) |ring, *depth, *place, i| {
+            depth.* = 0;
+            for (contours, 0..) |other, j| {
+                if (i != j and insideRing(other, ring[0])) depth.* += 1;
+            }
+            var sum = [2]f64{ 0, 0 };
+            for (ring) |p| sum = .{ sum[0] + p[0], sum[1] + p[1] };
+            const count: f64 = @floatFromInt(ring.len);
+            const b = box.?;
+            place.* = .{ shareOf(sum[0] / count, b.min[0], b.max[0]), shareOf(sum[1] / count, b.min[1], b.max[1]) };
+        }
+        return .{ .depths = depths, .places = places };
+    }
+
+    fn deinit(self: Placed, allocator: std.mem.Allocator) void {
+        allocator.free(self.depths);
+        allocator.free(self.places);
+    }
+};
+
+/// How far `v` is from `lo` towards `hi`, as a share; 0 when they are one.
+fn shareOf(v: f64, lo: f64, hi: f64) f64 {
+    return if (hi > lo) (v - lo) / (hi - lo) else 0;
+}
+
+/// Whether `p` is inside the ring of points `ring` (by the crossings of a ray along +x).
+fn insideRing(ring: []const [2]f64, p: [2]f64) bool {
+    var inside = false;
+    for (ring, 0..) |a, i| {
+        const b = ring[(i + 1) % ring.len];
+        if ((a[1] > p[1]) != (b[1] > p[1]) and p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])) inside = !inside;
+    }
+    return inside;
 }
 
 /// A closed outline, counter-clockwise, with how far along it each point lies.

@@ -65,3 +65,24 @@ test "loft: below the base for a negative height, and none for an outline of no 
     try testing.expectError(error.Degenerate, loft.ruled(testing.allocator, &ELL, &ELL, 0));
     try testing.expectError(error.Degenerate, loft.ruled(testing.allocator, &.{ .{ 0, 0 }, .{ 1, 0 } }, &ELL, 1));
 }
+
+test "loft: contours matched by depth and by their place in the profile's box, the nearest first" {
+    const square = [_][2]f64{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } };
+    const left = [_][2]f64{ .{ 1, 4 }, .{ 3, 4 }, .{ 3, 6 }, .{ 1, 6 } };
+    const right = [_][2]f64{ .{ 7, 4 }, .{ 9, 4 }, .{ 9, 6 }, .{ 7, 6 } };
+    // The top half the size, its holes listed the other way round
+    const small = [_][2]f64{ .{ 0, 0 }, .{ 5, 0 }, .{ 5, 5 }, .{ 0, 5 } };
+    const small_right = [_][2]f64{ .{ 3.5, 2 }, .{ 4.5, 2 }, .{ 4.5, 3 }, .{ 3.5, 3 } };
+    const small_left = [_][2]f64{ .{ 0.5, 2 }, .{ 1.5, 2 }, .{ 1.5, 3 }, .{ 0.5, 3 } };
+    var mismatch: loft.Mismatch = undefined;
+    const pairs = try loft.match(testing.allocator, &.{ &square, &left, &right }, &.{ &small_right, &small, &small_left }, &mismatch);
+    defer testing.allocator.free(pairs);
+    try testing.expectEqualSlices(loft.Pair, &.{
+        .{ .base = 0, .top = 1, .depth = 0 },
+        .{ .base = 1, .top = 2, .depth = 1 },
+        .{ .base = 2, .top = 0, .depth = 1 },
+    }, pairs);
+    // A hole the top hasn't
+    try testing.expectError(error.Mismatch, loft.match(testing.allocator, &.{ &square, &left }, &.{&small}, &mismatch));
+    try testing.expectEqual(loft.Mismatch{ .depth = 1, .base = 1, .top = 0 }, mismatch);
+}

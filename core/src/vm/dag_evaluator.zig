@@ -598,23 +598,62 @@ fn executeSweep(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config:
     }
 }
 
-/// The loft of profiles of which one is concave: core/loft.zig's ruled surface between
-/// their outlines, as a polyhedron. Each must be one outline, without holes, for now.
+/// The loft of profiles of which one is concave, or of several outlines or with holes:
+/// core/loft.zig's ruled surface between each pair of their contours (`loft.match`), as a
+/// polyhedron, folded by how deep the pair nests: the outlines united, less the holes, with
+/// the islands in them added back, so a hole runs through.
 fn ruledLoft(vm: *VM, config: EngineConfig, base: geom.CrossSectionHandle, top: geom.CrossSectionHandle, height: f64) !?geom.GeometryHandle {
     try vm.requireFeature(base.engine, .sketch_contours);
     const base_outlines = kernel.crossSectionContours(vm.allocator, base) orelse return kernelFailed(vm, .loft);
     defer base_outlines.deinit(vm.allocator);
     const top_outlines = kernel.crossSectionContours(vm.allocator, top) orelse return kernelFailed(vm, .loft);
     defer top_outlines.deinit(vm.allocator);
-    inline for (.{ .{ "base", base_outlines }, .{ "top", top_outlines } }) |profile| {
-        if (profile[1].count() != 1) return vm.fail(.NotImplementedError, "loft joins profiles of one outline each, without holes, for now; the " ++ profile[0] ++ " profile has {d} outlines", .{profile[1].count()});
-    }
-    const mesh = loft_mod.ruled(vm.allocator, base_outlines.contour(0), top_outlines.contour(0), height) catch |err| switch (err) {
+    const base_rings = try ringsOf(vm.allocator, base_outlines);
+    defer vm.allocator.free(base_rings);
+    const top_rings = try ringsOf(vm.allocator, top_outlines);
+    defer vm.allocator.free(top_rings);
+    var mismatch: loft_mod.Mismatch = undefined;
+    const pairs = loft_mod.match(vm.allocator, base_rings, top_rings, &mismatch) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
-        error.Degenerate, error.SelfIntersecting => return vm.fail(.GeometryError, "loft: the profiles' outlines can't be joined (one has no area, crosses itself, or the height is 0)", .{}),
+        error.Mismatch => return vm.fail(.ValueError, "loft joins each outline and hole of one profile to one of the other, and the base has {d} {s} where the top has {d}", .{ mismatch.base, depthName(mismatch.depth), mismatch.top }),
     };
-    defer mesh.deinit(vm.allocator);
-    return kernel.polyhedron(&config, vm.allocator, mesh.points, mesh.triangles);
+    defer vm.allocator.free(pairs);
+    if (pairs.len == 0) return vm.fail(.ValueError, "loft: an empty sketch has no outline to loft", .{});
+    var region: ?geom.GeometryHandle = null;
+    errdefer if (region) |r| kernel.destruct(r);
+    for (pairs) |pair| {
+        const mesh = loft_mod.ruled(vm.allocator, base_rings[pair.base], top_rings[pair.top], height) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Degenerate, error.SelfIntersecting => return vm.fail(.GeometryError, "loft: the profiles' outlines can't be joined (one has no area, crosses itself, or the height is 0)", .{}),
+        };
+        defer mesh.deinit(vm.allocator);
+        const solid = kernel.polyhedron(&config, vm.allocator, mesh.points, mesh.triangles) orelse return kernelFailed(vm, .loft);
+        const so_far = region orelse {
+            region = solid;
+            continue;
+        };
+        defer kernel.destruct(so_far);
+        defer kernel.destruct(solid);
+        region = null;
+        region = kernel.boolean(so_far, solid, if (pair.depth % 2 == 1) .difference_op else .union_op) orelse return kernelFailed(vm, .loft);
+    }
+    return region;
+}
+
+/// The points of each of `contours`, in their order; the slice is owned by `allocator`.
+fn ringsOf(allocator: std.mem.Allocator, contours: geom.Contours) ![]const []const [2]f64 {
+    const rings = try allocator.alloc([]const [2]f64, contours.count());
+    for (rings, 0..) |*ring, i| ring.* = contours.contour(i);
+    return rings;
+}
+
+/// What a profile's contours at `depth` are, many of them: outlines, holes in them, islands.
+fn depthName(depth: u32) []const u8 {
+    return switch (depth) {
+        0 => "outlines",
+        1 => "holes",
+        else => if (depth % 2 == 0) "islands in holes" else "holes in islands",
+    };
 }
 
 /// A sketch made from a solid (a slice, a projection) or from sketches.
