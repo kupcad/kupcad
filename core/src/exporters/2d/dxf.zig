@@ -11,7 +11,7 @@
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
-const UniqueNames = @import("names.zig").UniqueNames;
+const UniqueNames = @import("../names.zig").UniqueNames;
 const MAX_SEGMENTS = @import("../../core/limits.zig").MAX_SEGMENTS;
 
 /// AutoCAD 2004, the first with true colours (group 420).

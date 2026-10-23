@@ -20,6 +20,7 @@ const kernel = @import("../kernel/kernel.zig");
 const MaterialDef = @import("../core/material.zig").MaterialDef;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const Placement = @import("../core/placement.zig").Placement;
+const naming = @import("names.zig");
 
 /// mm³ in a cm³: volumes are in mm³, densities in g/cm³, masses in g.
 const MM3_PER_CM3 = 1000.0;
@@ -76,18 +77,10 @@ pub const ShapeKind = enum {
     }
 };
 
-/// What joins a name and its number.
-pub const NAME_NUMBER_SEPARATOR = "_";
-
 /// "part_3", "path_1": the name of the `number`th unnamed shape of its kind (the first is
 /// numbered too). Caller owns it.
 pub fn fallbackName(allocator: std.mem.Allocator, kind: ShapeKind, number: usize) ![]u8 {
-    return allocator.print("{s}" ++ NAME_NUMBER_SEPARATOR ++ "{d}", .{ kind.fallback(), number });
-}
-
-/// `name` with `number` after it ("lid_2"), or the name itself for the first. Caller owns it.
-pub fn numberedName(allocator: std.mem.Allocator, name: []const u8, number: usize) ![]u8 {
-    return if (number == 1) allocator.dupe(u8, name) else allocator.print("{s}" ++ NAME_NUMBER_SEPARATOR ++ "{d}", .{ name, number });
+    return allocator.print("{s}" ++ naming.NAME_NUMBER_SEPARATOR ++ "{d}", .{ kind.fallback(), number });
 }
 
 /// The names a file that keeps parts apart (an OBJ's objects, a glTF's nodes) gives the
@@ -120,14 +113,14 @@ pub const CopyNames = struct {
     pub fn next(self: *CopyNames, allocator: std.mem.Allocator, copy: Copy) ![]u8 {
         self.named[copy.part] += 1;
         const number = self.named[copy.part];
-        if (self.grouping.parts[copy.part].name) |name| return numberedName(allocator, name, number);
+        if (self.grouping.parts[copy.part].name) |name| return naming.numberedName(allocator, name, number);
         if (self.fallbacks[copy.part] == 0) {
             self.unnamed_so_far += 1;
             self.fallbacks[copy.part] = self.unnamed_so_far;
         }
         const first = try fallbackName(allocator, .part, self.fallbacks[copy.part]);
         defer allocator.free(first);
-        return numberedName(allocator, first, number);
+        return naming.numberedName(allocator, first, number);
     }
 };
 

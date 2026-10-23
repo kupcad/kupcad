@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
-const UniqueNames = @import("names.zig").UniqueNames;
+const UniqueNames = @import("../names.zig").UniqueNames;
 
 const DEFAULT_FILL = "#CCCCCC";
 const STROKE = "#000000";

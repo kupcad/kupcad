@@ -21,6 +21,7 @@ const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const VM = @import("../vm/vm.zig").VM;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const naming = @import("../exporters/names.zig");
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -141,7 +142,7 @@ pub const PartFileNames = struct {
         defer allocator.free(base);
         var copy: usize = 1;
         while (true) : (copy += 1) {
-            const stem = try parts_mod.numberedName(allocator, base, copy);
+            const stem = try naming.numberedName(allocator, base, copy);
             defer allocator.free(stem);
             const key = try std.ascii.allocLowerString(allocator, stem);
             const entry = self.taken.getOrPut(allocator, key) catch |err| {

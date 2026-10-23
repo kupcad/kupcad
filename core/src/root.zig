@@ -40,7 +40,7 @@ test {
     _ = @import("core/identifier_test.zig");
     _ = @import("core/affine2_test.zig");
     _ = @import("core/material_test.zig");
-    _ = @import("exporters/2d/names_test.zig");
+    _ = @import("exporters/names_test.zig");
     _ = @import("vm/sequence_test.zig");
     _ = @import("session/exports_fingerprint_test.zig");
     _ = @import("core/rounded_rect_test.zig");
