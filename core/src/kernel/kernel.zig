@@ -12,7 +12,7 @@
 //! std.debug.assert, which is compiled out in ReleaseFast.
 
 const std = @import("std");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const manifold_driver = @import("engines/manifold/driver.zig");
 const brep_driver = @import("engines/brep/driver.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;

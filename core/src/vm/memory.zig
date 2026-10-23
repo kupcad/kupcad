@@ -10,7 +10,7 @@ const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
 const VM = @import("vm.zig").VM;
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const CONCRETE_NODE_SENTINEL = @import("dag.zig").CONCRETE_NODE_SENTINEL;
 const build_info = @import("build_info");
 

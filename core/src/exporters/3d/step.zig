@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const VM = @import("../../vm/vm.zig").VM;
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const kernel = @import("../../kernel/kernel.zig");
 
 pub fn buildStepBuffer(allocator: std.mem.Allocator, handles: []const geom.GeometryHandle) ![]const u8 {

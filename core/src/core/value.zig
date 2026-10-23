@@ -3,8 +3,7 @@
 //! `ObjClass`, `ObjGeometry`, ...), with number formatting and `Value.stringify` printing.
 
 const std = @import("std");
-const dag = @import("../vm/dag.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
 const path_mod = @import("path.zig");
 const lexer = @import("../frontend/lexer.zig");
@@ -280,7 +279,7 @@ pub const ObjRange = struct {
 };
 
 pub const GeometryState = union(enum) {
-    symbolic: dag.DAGNodeIndex,
+    symbolic: geom.DAGNodeIndex,
     concrete: geom.GeometryHandle,
 };
 
@@ -306,7 +305,7 @@ pub const ObjGeometry = struct {
 
     // The DAG root index representing how this geometry was formed.
     // We retain this permanently so we can always append to it later.
-    dag_idx: dag.DAGNodeIndex,
+    dag_idx: geom.DAGNodeIndex,
 
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,

@@ -1,8 +1,12 @@
 //! The types shared by both geometry engines and the code above them: `EngineType`, the
-//! engine-tagged `GeometryHandle` and `CrossSectionHandle`, and plain results such as
-//! `BoundingBox`, `Mesh` and `RayHit`.
+//! engine-tagged `GeometryHandle` and `CrossSectionHandle`, `DAGNodeIndex`, and plain
+//! results such as `BoundingBox`, `Mesh` and `RayHit`.
 
 const std = @import("std");
+
+/// A node of the geometry graph (`vm/dag.zig`): what a Solid or a Sketch holds until it is
+/// evaluated.
+pub const DAGNodeIndex = u32;
 
 pub const EngineType = enum {
     manifold,

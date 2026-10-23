@@ -6,7 +6,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const util = @import("util.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 

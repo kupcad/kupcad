@@ -12,7 +12,7 @@ const ErrorKind = @import("../vm/error_kind.zig").ErrorKind;
 const engine_config = @import("../core/engine_config.zig");
 const test_support = @import("../test_support.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 const print = std.fmt.comptimePrint;
 const MAX_SEGS = limits.MAX_SEGMENTS;

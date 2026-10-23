@@ -5,7 +5,7 @@
 //! from its Solids projected onto the XY plane, so a 3D model exports as a 2D format too.
 
 const std = @import("std");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const path_mod = @import("../../core/path.zig");
 
 /// An outline's edge is a path segment, and an arc its circle (core/path.zig).

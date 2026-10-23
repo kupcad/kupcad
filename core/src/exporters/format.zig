@@ -3,7 +3,7 @@
 //! written beyond its format (`ExportOptions`: what build's flags ask for).
 
 const std = @import("std");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const gltf_exporter = @import("3d/gltf.zig");
 const svg_exporter = @import("2d/svg.zig");
 

@@ -3,7 +3,7 @@
 //! `repeat_polar`. Listed in `manifest.zig`.
 
 const std = @import("std");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const assembly = @import("../assembly.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;

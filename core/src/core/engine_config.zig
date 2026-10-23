@@ -3,7 +3,7 @@
 //! `brep` hold what only one kernel has.
 
 const std = @import("std");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("geometry_handle.zig");
 const limits = @import("limits.zig");
 
 const MAX_SEGMENTS: u32 = limits.MAX_SEGMENTS;

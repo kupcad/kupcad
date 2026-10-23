@@ -5,7 +5,7 @@
 const std = @import("std");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle

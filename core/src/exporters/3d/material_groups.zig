@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 
 /// The material slot of the triangle starting at `tri` in `mesh.tri_verts`: its first
 /// vertex's.

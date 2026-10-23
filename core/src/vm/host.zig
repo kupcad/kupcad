@@ -3,7 +3,7 @@
 
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
-const GeometryHandle = @import("../kernel/geometry_handle.zig").GeometryHandle;
+const GeometryHandle = @import("../core/geometry_handle.zig").GeometryHandle;
 
 // Forward reference to VM
 const VM = @import("vm.zig").VM;

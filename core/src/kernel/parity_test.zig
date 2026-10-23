@@ -7,7 +7,7 @@ const std = @import("std");
 const testing = std.testing;
 const api = @import("../api.zig");
 const kernel = @import("kernel.zig");
-const geom = @import("geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const support = @import("../test_support.zig");
 
 /// STEP writes coordinates with six decimals.

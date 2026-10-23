@@ -10,10 +10,10 @@ const bezier = @import("../core/bezier.zig");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
 const dag_verifier = @import("dag_verifier.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
-pub const DAGNodeIndex = u32;
+pub const DAGNodeIndex = geom.DAGNodeIndex;
 
 /// Every node is checked as it is added (dag_verifier.zig) where a check costs nothing
 /// that matters: Debug and test builds.

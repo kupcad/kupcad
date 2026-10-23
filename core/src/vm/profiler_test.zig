@@ -3,7 +3,7 @@ const testing = std.testing;
 const profiler = @import("profiler.zig");
 const registry = @import("../stdlib/registry.zig");
 const VM = @import("vm.zig").VM;
-const chunk = @import("../vm/chunk.zig");
+const chunk = @import("chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../core/document.zig").Document;
 

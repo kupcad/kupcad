@@ -3,7 +3,7 @@
 //! memory and take Zig slices and bools in place of C pointers and ints.
 
 const std = @import("std");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 pub const ManifoldObj = opaque {};
 pub const ManifoldBox = opaque {};

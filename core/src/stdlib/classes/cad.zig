@@ -9,7 +9,7 @@ const util = @import("../methods/util.zig");
 const iteration = @import("iteration.zig");
 const engine_config = @import("../../core/engine_config.zig");
 const EngineConfig = engine_config.EngineConfig;
-const EngineType = @import("../../kernel/geometry_handle.zig").EngineType;
+const EngineType = @import("../../core/geometry_handle.zig").EngineType;
 
 /// The top-level settings of CAD.config: EngineConfig's fields, with the engine given by
 /// name and each nested group as a Map (parsed into its own struct by `applyGroup`).

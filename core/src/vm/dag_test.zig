@@ -1,7 +1,7 @@
 const std = @import("std");
 const dag = @import("dag.zig");
 const bezier = @import("../core/bezier.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 
 test "DAG: addBalancedChain flattens Unions into Batch nodes" {
     // Setup

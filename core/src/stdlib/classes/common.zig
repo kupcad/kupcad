@@ -5,7 +5,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const util = @import("../methods/util.zig");
 const Signature = @import("../signature.zig").Signature;
 

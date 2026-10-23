@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const kernel = @import("../../kernel.zig");
-const geom = @import("../../geometry_handle.zig");
+const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
 
 // --- DoD Locus Native B-Rep Library Imports ---

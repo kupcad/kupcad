@@ -17,7 +17,7 @@ const chunk = @import("../vm/chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
 
 const Workspace = workspace.Workspace;

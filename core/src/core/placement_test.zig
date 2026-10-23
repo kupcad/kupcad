@@ -5,7 +5,7 @@ const std = @import("std");
 const testing = std.testing;
 const Placement = @import("placement.zig").Placement;
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("geometry_handle.zig");
 
 /// A mesh's vertex positions, sorted, so two meshes of one shape compare whatever order
 /// their vertices come in.

@@ -13,7 +13,7 @@
 
 const std = @import("std");
 const affine2 = @import("../../core/affine2.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
+const geom = @import("../../core/geometry_handle.zig");
 const drawing = @import("drawing.zig");
 const sketch_curves = @import("../../vm/sketch_curves.zig");
 const Curves = sketch_curves.Curves;

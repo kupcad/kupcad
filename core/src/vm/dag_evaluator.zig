@@ -8,7 +8,7 @@ const path_mod = @import("../core/path.zig");
 const dag = @import("dag.zig");
 const error_kind = @import("error_kind.zig");
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
+const geom = @import("../core/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
