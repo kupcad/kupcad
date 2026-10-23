@@ -565,7 +565,9 @@ const Reader = struct {
         var knots: std.ArrayList(f64) = .empty;
         var weights: std.ArrayList(f64) = .empty;
         var controls: std.ArrayList([2]f64) = .empty;
-        var fit_points: usize = 0;
+        var fits: std.ArrayList([2]f64) = .empty;
+        // The tangents at its start and its end, for its fit points
+        var tangents: [2]?[2]f64 = .{ null, null };
         for (entity.pairs) |pair| switch (pair.code) {
             40 => try knots.append(self.arena, try numberOf(pair, self.diag)),
             41 => try weights.append(self.arena, try numberOf(pair, self.diag)),
@@ -573,12 +575,19 @@ const Reader = struct {
             20 => if (controls.items.len > 0) {
                 controls.items[controls.items.len - 1][1] = try numberOf(pair, self.diag) * self.scale;
             },
-            11 => fit_points += 1,
+            11 => try fits.append(self.arena, .{ try numberOf(pair, self.diag) * self.scale, 0 }),
+            21 => if (fits.items.len > 0) {
+                fits.items[fits.items.len - 1][1] = try numberOf(pair, self.diag) * self.scale;
+            },
+            12, 13 => tangents[@intCast(pair.code - 12)] = .{ try numberOf(pair, self.diag), 0 },
+            22, 23 => if (tangents[@intCast(pair.code - 22)]) |*t| {
+                t[1] = try numberOf(pair, self.diag);
+            },
             else => {},
         };
         const n = controls.items.len;
         if (n == 0) {
-            if (fit_points > 0) return self.diag.fail("line {d}: the SPLINE on layer '{s}' is given by fit points alone, which aren't read yet: give it control points", .{ entity.line, layer });
+            if (fits.items.len > 0) return self.readFitSpline(entity, layer, fits.items, tangents);
             return self.diag.fail("line {d}: the SPLINE on layer '{s}' has no control points", .{ entity.line, layer });
         }
         if (n <= degree or knots.items.len != n + degree + 1) {
@@ -597,6 +606,35 @@ const Reader = struct {
         var segments: std.ArrayList(path.Segment) = .empty;
         const start = try spline.appendSegments(self.arena, &segments, self.options.tolerance) orelse return;
         try self.addPiece(layer, start, segments.items, false);
+    }
+
+    /// A SPLINE given by fit points alone: the cubic through them (bspline.through), along
+    /// the `tangents` at its ends the file gives; a closed one (flag 1) on back to its first
+    /// point, along one tangent there. A point on the one before it adds nothing.
+    fn readFitSpline(self: *Reader, entity: Entity, layer: []const u8, given: []const [2]f64, tangents: [2]?[2]f64) Error!void {
+        var fits: std.ArrayList([2]f64) = .empty;
+        for (given) |q| {
+            if (fits.items.len == 0 or !std.meta.eql(q, fits.items[fits.items.len - 1])) try fits.append(self.arena, q);
+        }
+        const flags: i64 = @intFromFloat(try entity.number(70, self.diag) orelse 0);
+        const closed = flags & 1 != 0 and fits.items.len > 2;
+        if (closed and !std.meta.eql(fits.items[0], fits.items[fits.items.len - 1])) try fits.append(self.arena, fits.items[0]);
+        if (fits.items.len < 2) return;
+        var start = tangentOf(tangents[0]);
+        var end = tangentOf(tangents[1]);
+        if (closed and start == null and end == null) {
+            // Through where it closes along the way from the point before to the one after
+            const q = fits.items;
+            start = tangentOf(.{ q[1][0] - q[q.len - 2][0], q[1][1] - q[q.len - 2][1] });
+            end = start;
+        }
+        const spline = bspline.through(self.arena, fits.items, start, end) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.Singular => return self.diag.fail("line {d}: the SPLINE on layer '{s}' has fit points no spline passes through", .{ entity.line, layer }),
+        };
+        var segments: std.ArrayList(path.Segment) = .empty;
+        const from = try spline.appendSegments(self.arena, &segments, self.options.tolerance) orelse return;
+        try self.addPiece(layer, from, segments.items, closed);
     }
 
     fn readEllipse(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -684,6 +722,13 @@ const Reader = struct {
         chain.start = start;
     }
 };
+
+/// A tangent a file gives, unless it has no length (or isn't a number's).
+fn tangentOf(given: ?[2]f64) ?[2]f64 {
+    const t = given orelse return null;
+    const length = std.math.hypot(t[0], t[1]);
+    return if (length > 0 and std.math.isFinite(length)) t else null;
+}
 
 fn near(a: [2]f64, b: [2]f64, tolerance: f64) bool {
     return std.math.hypot(a[0] - b[0], a[1] - b[1]) <= tolerance;

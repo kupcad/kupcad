@@ -177,6 +177,42 @@ test "DXF read: a spline of degree 3 at most is its Bézier pieces, any other cu
     try testing.expectApproxEqAbs(100 * std.math.pi, @abs(path.signedArea(arc.start, arc.segments)), 1e-4);
 }
 
+test "DXF read: a SPLINE of fit points alone is the cubic through them, along its end tangents" {
+    // Four points, 5, 6 and 5 apart: one Bézier, through each at its share of the 16
+    const four = "0\nSPLINE\n71\n3\n74\n4\n11\n0\n21\n0\n11\n3\n21\n4\n11\n9\n21\n4\n11\n12\n21\n0\n" ++ "0\nLINE\n10\n12\n20\n0\n11\n0\n21\n0\n";
+    var drawing = try read(file("", four), null);
+    defer drawing.deinit();
+    const outline = drawing.outlines[0];
+    try testing.expectEqual(@as(usize, 2), outline.segments.len);
+    const bump = outline.segments[0];
+    const bezier = @import("../../core/bezier.zig");
+    for ([_][2]f64{ .{ 0, 0 }, .{ 3, 4 }, .{ 9, 4 }, .{ 12, 0 } }, [_]f64{ 0, 5.0 / 16.0, 11.0 / 16.0, 1 }) |q, u| {
+        try expectPoint(q, bezier.pointOn(outline.start, bump.cubic.?, bump.to, u));
+    }
+    // Leaving straight up (12, 22) and arriving straight down (13, 23)
+    const arch = "0\nSPLINE\n71\n3\n12\n0\n22\n1\n13\n0\n23\n-1\n11\n0\n21\n0\n11\n5\n21\n5\n11\n10\n21\n0\n" ++ "0\nLINE\n10\n10\n20\n0\n11\n0\n21\n0\n";
+    var tangent = try read(file("", arch), null);
+    defer tangent.deinit();
+    const first = tangent.outlines[0].segments[0].cubic.?;
+    try testing.expectApproxEqAbs(@as(f64, 0), first.c1[0], 1e-12);
+    try testing.expect(first.c1[1] > 0);
+    // Closed (flag 1) through eight points of a circle, not given its first again: one
+    // outline, near the circle
+    const ring = comptime blk: {
+        @setEvalBranchQuota(100_000);
+        var text: []const u8 = "0\nSPLINE\n70\n9\n71\n3\n";
+        for (0..8) |k| {
+            const a = @as(f64, @floatFromInt(k)) * std.math.pi / 4;
+            text = text ++ std.fmt.comptimePrint("11\n{d}\n21\n{d}\n", .{ 10 * @cos(a), 10 * @sin(a) });
+        }
+        break :blk text;
+    };
+    var loop = try read(file("", ring), null);
+    defer loop.deinit();
+    try testing.expectEqual(@as(usize, 1), loop.outlines.len);
+    try testing.expectApproxEqRel(100 * std.math.pi, @abs(path.signedArea(loop.outlines[0].start, loop.outlines[0].segments)), 3e-3);
+}
+
 test "DXF read: only the layers asked for, every layer read named, and what isn't an outline left out" {
     // A text, a dimension, and a layout's frame (paper space) beside the slot and the hole
     const text = file("", SLOT ++ "0\nCIRCLE\n8\nholes\n10\n10\n20\n5\n40\n1\n" ++ "0\nTEXT\n8\nnotes\n10\n0\n20\n0\n40\n2\n1\nhello\n" ++ "0\nDIMENSION\n8\ndims\n" ++ "0\nLINE\n67\n1\n8\nframe\n10\n0\n20\n0\n11\n100\n21\n0\n");
@@ -283,5 +319,4 @@ test "DXF read: what can't be read says why and where" {
     try expectRefused(file("", "0\nARC\n10\n0\n20\n0\n40\n1\n50\n0\n"), "line 11: the ARC has no group 51");
     try expectRefused(file("9\n$INSUNITS\n70\n99\n", ""), "line 8: its units ($INSUNITS 99) aren't a unit DXF names");
     try expectRefused(file("", "0\nSPLINE\n71\n3\n72\n4\n10\n0\n20\n0\n10\n1\n20\n1\n10\n2\n20\n0\n10\n3\n20\n1\n40\n0\n40\n0\n40\n1\n40\n1\n"), "line 11: the SPLINE on layer '0' has 4 knots for 4 control points of degree 3: it needs 8");
-    try expectRefused(file("", "0\nSPLINE\n71\n3\n74\n2\n11\n0\n21\n0\n11\n1\n21\n1\n"), "line 11: the SPLINE on layer '0' is given by fit points alone, which aren't read yet: give it control points");
 }
