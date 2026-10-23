@@ -52,6 +52,8 @@ pub const Feature = enum {
     genus,
     bounding_box,
     sketch_measure,
+    /// A sketch's outlines as polylines (crossSectionContours), what a drawing is made of.
+    sketch_contours,
     contains_point,
     ray_cast,
     min_gap,
@@ -88,6 +90,7 @@ pub const Feature = enum {
             .genus => "count holes (genus)",
             .bounding_box => "measure bounding boxes (bbox, align, center, resize)",
             .sketch_measure => "measure sketches (bbox, align, center)",
+            .sketch_contours => "read a sketch's outlines (SVG and DXF export)",
             .contains_point => "test whether a point is inside (contains?)",
             .ray_cast => "cast rays",
             .min_gap => "measure gaps (min_gap)",
@@ -124,7 +127,7 @@ pub const Feature = enum {
             .min_gap => &.{"min_gap"},
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
-            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
+            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .sketch_contours, .materials, .empty => &.{},
         };
     }
 };
@@ -282,6 +285,12 @@ pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) ?geom.Rect2D {
 /// How many vertices a sketch's contours have.
 pub inline fn crossSectionNumVerts(handle: geom.CrossSectionHandle) usize {
     return dispatch("crossSectionNumVertsFn", handle, .{});
+}
+
+/// A sketch's outlines (geom.Contours; none for an empty sketch), owned by `allocator`;
+/// null when the engine can't give them (supports(engine, .sketch_contours)).
+pub inline fn crossSectionContours(allocator: std.mem.Allocator, handle: geom.CrossSectionHandle) ?geom.Contours {
+    return dispatch("crossSectionContoursFn", handle, .{allocator});
 }
 
 /// Whether `pt` lies in the sketch's region, boundary included (within `tolerance`).

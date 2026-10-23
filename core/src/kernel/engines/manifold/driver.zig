@@ -219,6 +219,30 @@ const Contours = struct {
     }
 };
 
+fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
+    var total: usize = 0;
+    var count: usize = 0;
+    const contours: ?Contours = if (@intFromPtr(handle.ptr) == 0) null else Contours.of(handle) orelse return null;
+    defer if (contours) |c| c.deinit();
+    if (contours) |c| {
+        count = c.count();
+        for (0..count) |ci| total += c.len(ci);
+    }
+    const points = allocator.alloc([2]f64, total) catch return null;
+    errdefer allocator.free(points);
+    const starts = allocator.alloc(u32, count + 1) catch return null;
+    var at: usize = 0;
+    for (0..count) |ci| {
+        starts[ci] = @intCast(at);
+        for (0..contours.?.len(ci)) |i| {
+            points[at] = contours.?.point(ci, i);
+            at += 1;
+        }
+    }
+    starts[count] = @intCast(at);
+    return .{ .points = points, .starts = starts };
+}
+
 fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
     if (@intFromPtr(handle.ptr) == 0) return false;
     const contours = Contours.of(handle) orelse return null;
@@ -766,6 +790,7 @@ pub const driver = struct {
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
+    pub const crossSectionContoursFn = crossSectionContoursImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;

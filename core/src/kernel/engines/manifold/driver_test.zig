@@ -510,6 +510,42 @@ test "Manifold Driver: a sketch's area counts its holes, and its bounds follow i
     try testing.expectEqual([2]f64{ 25, 2 }, b.max);
 }
 
+test "Manifold Driver: a sketch's contours are its outlines, outer ones counter-clockwise and holes clockwise" {
+    const outer = driver.driver.squareFn(&.{}, 10.0, 10.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(outer);
+    const hole = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(hole);
+    const ring = driver.driver.crossSectionBooleanFn(outer, hole, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(ring);
+
+    const contours = driver.driver.crossSectionContoursFn(ring, testing.allocator) orelse return error.Failed;
+    defer contours.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 2), contours.count());
+    try testing.expectEqual(@as(usize, 8), contours.points.len);
+    var outer_area: f64 = 0;
+    var hole_area: f64 = 0;
+    for (0..contours.count()) |ci| {
+        const contour = contours.contour(ci);
+        try testing.expectEqual(@as(usize, 4), contour.len);
+        // The shoelace formula: positive counter-clockwise
+        var twice: f64 = 0;
+        for (contour, 0..) |p, i| {
+            const q = contour[(i + 1) % contour.len];
+            twice += p[0] * q[1] - q[0] * p[1];
+        }
+        if (twice > 0) outer_area = twice / 2 else hole_area = twice / 2;
+    }
+    try testing.expectApproxEqAbs(@as(f64, 100), outer_area, 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, -16), hole_area, 1e-9);
+
+    // An empty sketch has none
+    const nothing = driver.driver.crossSectionBooleanFn(outer, outer, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(nothing);
+    const none = driver.driver.crossSectionContoursFn(nothing, testing.allocator) orelse return error.Failed;
+    defer none.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), none.count());
+}
+
 test "Manifold Driver: an empty cross-section has no bounds" {
     // Manifold's box of nothing is inverted and infinite, which was passed on as a bbox.
     const sq = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;

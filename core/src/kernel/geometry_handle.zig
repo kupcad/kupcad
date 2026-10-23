@@ -40,6 +40,27 @@ pub const Rect2D = struct {
     max: [2]f64,
 };
 
+/// A sketch's outlines as closed polylines: `points` holds every contour's vertices in turn
+/// and `starts` where each begins, with the end after the last (one more entry than
+/// contours). Outer contours run counter-clockwise, holes clockwise.
+pub const Contours = struct {
+    points: [][2]f64,
+    starts: []u32,
+
+    pub fn count(self: Contours) usize {
+        return self.starts.len - 1;
+    }
+
+    pub fn contour(self: Contours, i: usize) [][2]f64 {
+        return self.points[self.starts[i]..self.starts[i + 1]];
+    }
+
+    pub fn deinit(self: Contours, allocator: std.mem.Allocator) void {
+        allocator.free(self.points);
+        allocator.free(self.starts);
+    }
+};
+
 pub const SolidPair = struct {
     first: ?GeometryHandle,
     second: ?GeometryHandle,

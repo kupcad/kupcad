@@ -729,6 +729,13 @@ fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, to
     return null;
 }
 
+/// Locus does not expose sketch contours yet (supports(.sketch_contours) is false).
+fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
+    _ = handle;
+    _ = allocator;
+    return null;
+}
+
 /// Unknown for B-Rep sketches (no contour access yet); callers treat null as "can't tell".
 fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
     _ = handle;
@@ -898,6 +905,7 @@ pub fn supports(feature: kernel.Feature) bool {
         .genus,
         .bounding_box,
         .sketch_measure,
+        .sketch_contours,
         .contains_point,
         .ray_cast,
         .min_gap,
@@ -945,6 +953,7 @@ pub const driver = struct {
     pub const crossSectionAreaFn = crossSectionAreaImpl;
     pub const crossSectionBoundsFn = crossSectionBoundsImpl;
     pub const crossSectionNumVertsFn = crossSectionNumVertsImpl;
+    pub const crossSectionContoursFn = crossSectionContoursImpl;
     pub const crossSectionContainsPointFn = crossSectionContainsPointImpl;
     pub const crossSectionIsConvexFn = crossSectionIsConvexImpl;
     pub const queryFacesFn = queryFacesImpl;
