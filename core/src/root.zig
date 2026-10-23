@@ -73,7 +73,7 @@ test {
     _ = @import("core/import_kind_test.zig");
     _ = @import("core/placement_test.zig");
     _ = @import("core/text_test.zig");
-    _ = @import("core/semver_test.zig");
+    _ = @import("pkg/semver_test.zig");
     _ = @import("core/import_path_test.zig");
 
     // Daemon

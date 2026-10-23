@@ -4,7 +4,7 @@
 //! what downloaded packages may depend on to public git hosts.
 
 const std = @import("std");
-const semver = @import("../../core/semver.zig");
+const semver = @import("../semver.zig");
 const validate = @import("../validate.zig");
 const ArchiveLayout = @import("../cafs.zig").ArchiveLayout;
 const git_host = @import("git_host.zig");

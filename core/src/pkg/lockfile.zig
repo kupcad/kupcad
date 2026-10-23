@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
-const semver = @import("../core/semver.zig");
+const semver = @import("semver.zig");
 
 const log = std.log.scoped(.pkg);
 
