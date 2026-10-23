@@ -5,7 +5,6 @@
 //! in stdlib/files.zig.
 
 const std = @import("std");
-const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
@@ -125,10 +124,11 @@ pub const Container = enum {
 pub const Part = struct { handle: geom.GeometryHandle, name: ?[]const u8 = null };
 
 /// The parts as glTF in `container`, their meshes compressed with Draco, positions
-/// quantized to `draco_bits` bits, unless that is null.
+/// quantized to `draco_bits` bits, unless that is null; `materials` are what the meshes'
+/// material slots index (kernel.materialSlot), the VM's.
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
-    vm: *VM,
+    materials: []const MaterialDef,
     model: []const Part,
     draco_bits: ?u8,
     container: Container,
@@ -141,7 +141,7 @@ pub fn buildGltfBuffer(
     var doc: Gltf = .{};
     defer doc.deinit(allocator);
     if (draco_bits) |bits| try doc.addDracoPrimitives(allocator, &parts, bits) else try doc.addPrimitives(allocator, &parts);
-    try doc.addMaterials(allocator, vm.materials.items);
+    try doc.addMaterials(allocator, materials);
     return doc.write(allocator, container, parts.meshes.items);
 }
 

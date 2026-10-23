@@ -184,24 +184,46 @@ fn exportSolids(
         .step => {
             var handles = try model_mod.handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
-            try step_exporter.requireExactParts(vm, handles.items);
+            try requireExactParts(vm, handles.items);
             return step_exporter.buildStepBuffer(allocator, handles.items);
         },
         // STL holds one mesh: the model's parts are united, the ghosts left out.
         .stl => {
             var handles = try model_mod.handlesOf(allocator, vm, solids, &.{});
             defer handles.deinit(allocator);
-            // Refuse parts the engine can't tessellate before any work on them.
+            // Refuse parts the engine can't tessellate, or unite, before any work on them.
             for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-            return stl_exporter.buildStlOfParts(allocator, vm, handles.items);
+            if (handles.items.len > 1) try vm.requireFeature(handles.items[0].engine, .boolean);
+            return stl_exporter.buildStlOfParts(allocator, handles.items) catch |err| switch (err) {
+                error.UnionFailed => return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"}),
+                else => return err,
+            };
         },
         .glb, .gltf => {
             var parts = try gltfParts(allocator, vm, solids, ghosts);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-            return gltf_exporter.buildGltfBuffer(allocator, vm, parts.items, if (options.draco) options.draco_bits else null, container);
+            return gltf_exporter.buildGltfBuffer(allocator, vm.materials.items, parts.items, if (options.draco) options.draco_bits else null, container);
         },
+    }
+}
+
+/// Raises unless every part is exact (B-Rep) geometry, which is all STEP can hold. The
+/// writer skipped mesh parts: a model with a Manifold part was written without it, and an
+/// all-Manifold model failed with a bare NoGeometry.
+fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{RuntimeError}!void {
+    for (handles, 1..) |h, n| {
+        if (h.engine == .brep_native) continue;
+        const fmt = "STEP export needs exact geometry, and {s} was built by the {s} engine (a mesh); build it with engine: :brep";
+        if (handles.len == 1) {
+            _ = vm.raiseError(.NotImplementedError, fmt, .{ "the model", h.engine.scriptName() });
+        } else {
+            var buf: [48]u8 = undefined;
+            const which = std.mem.print(&buf, "part {d} of {d}", .{ n, handles.len }) catch "a part";
+            _ = vm.raiseError(.NotImplementedError, fmt, .{ which, h.engine.scriptName() });
+        }
+        return error.RuntimeError;
     }
 }
 

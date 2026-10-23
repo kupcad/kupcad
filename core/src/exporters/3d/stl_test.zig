@@ -56,6 +56,28 @@ test "STL: ASCII files are read too" {
     try testing.expectEqual([3]u32{ 0, 1, 2 }, mesh.faces[0]);
 }
 
+test "STL: several parts are written as their union, from the kernel's handles alone" {
+    // The writer took the VM, to check the engine's features and raise; its caller does
+    const kernel = @import("../../kernel/kernel.zig");
+    const small = kernel.cube(&.{}, 10, 10, 10, false) orelse return error.KernelFailed;
+    defer kernel.destruct(small);
+    const large = kernel.cube(&.{}, 20, 20, 20, false) orelse return error.KernelFailed;
+    defer kernel.destruct(large);
+
+    try testing.expectError(error.NoGeometry, stl.buildStlOfParts(testing.allocator, &.{}));
+    const bytes = try stl.buildStlOfParts(testing.allocator, &.{ small, large });
+    defer testing.allocator.free(bytes);
+    var mesh = try stl.parseStlBuffer(testing.allocator, bytes);
+    defer mesh.deinit(testing.allocator);
+    // The small cube is inside the large one: their union is the large cube
+    try testing.expectEqual(@as(usize, 12), mesh.faces.len);
+    var max: [3]f64 = @splat(0);
+    for (mesh.points) |p| {
+        for (&max, p) |*m, c| m.* = @max(m.*, c);
+    }
+    try testing.expectEqual([3]f64{ 20, 20, 20 }, max);
+}
+
 test "STL: an engine that can't tessellate yet is an error, not an empty file" {
     const kernel = @import("../../kernel/kernel.zig");
     const part = kernel.cube(&.{ .engine = .brep_native }, 10, 10, 10, false) orelse return error.KernelFailed;

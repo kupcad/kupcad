@@ -129,7 +129,7 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
 
     for (handles) |h| {
         // Never skipped: a part left out is a wrong file (callers refuse mesh parts first,
-        // exporters/3d/step.zig requireExactParts).
+        // exporters/export.zig requireExactParts).
         if (h.engine != .brep_native) return error.NotExactGeometry;
 
         const solid = solidOf(h.ptr);

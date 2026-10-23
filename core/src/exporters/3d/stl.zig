@@ -3,10 +3,8 @@
 //! repeated vertices merged. The script's `export_stl` and `import_stl` are in stdlib/files.zig.
 
 const std = @import("std");
-const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
-const error_kind = @import("../../vm/error_kind.zig");
 
 // Binary STL: an 80-byte header and a little-endian u32 triangle count, then per triangle
 // a 50-byte record: the normal and three vertices as f32, and a u16 attribute count.
@@ -169,17 +167,15 @@ pub fn buildStlBuffer(allocator: std.mem.Allocator, handle: geom.GeometryHandle)
     return out;
 }
 
-/// The STL of `parts`: STL holds one mesh, so several parts are written as their union.
-pub fn buildStlOfParts(allocator: std.mem.Allocator, vm: *VM, parts: []const geom.GeometryHandle) ![]const u8 {
-    for (parts) |h| try vm.requireFeature(h.engine, .mesh);
+/// The STL of `parts`: STL holds one mesh, so several parts are written as their union
+/// (error.UnionFailed when the kernel can't make it). Their engine must tessellate, and
+/// for several parts unite (kernel.supports), which the caller checks.
+pub fn buildStlOfParts(allocator: std.mem.Allocator, parts: []const geom.GeometryHandle) ![]const u8 {
     switch (parts.len) {
         0 => return error.NoGeometry,
         1 => return buildStlBuffer(allocator, parts[0]),
         else => {
-            try vm.requireFeature(parts[0].engine, .boolean);
-            const united = kernel.batchBoolean(allocator, parts, .union_op) orelse {
-                return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"union"});
-            };
+            const united = kernel.batchBoolean(allocator, parts, .union_op) orelse return error.UnionFailed;
             defer kernel.destruct(united);
             return buildStlBuffer(allocator, united);
         },

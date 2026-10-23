@@ -23,7 +23,7 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
     const parts = [_]gltf.Part{.{ .handle = handle }};
-    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, null, .glb);
+    const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb);
     defer std.testing.allocator.free(glb_bytes);
 
     // 1. Check GLB Magic Bytes "glTF"
@@ -338,7 +338,7 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
     const parts = [_]gltf.Part{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
-    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, &vm, &parts, null, .glb));
+    try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb));
 }
 
 /// The bytes of buffer view `index`.
