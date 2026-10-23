@@ -13,11 +13,10 @@ const std = @import("std");
 const path = @import("../../core/path.zig");
 const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
 const turnShare = @import("../../core/engine_config.zig").turnShare;
+pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
 
 /// The layer of an entity that names none.
 const DEFAULT_LAYER = "0";
-/// How long a message about the file can be.
-const MESSAGE_CAPACITY = 320;
 /// What a binary DXF file starts with.
 const BINARY_SENTINEL = "AutoCAD Binary DXF";
 /// The highest degree of spline read: AutoCAD draws up to 11; the evaluation takes as many
@@ -64,12 +63,10 @@ pub const Options = struct {
     config: *const EngineConfig,
 };
 
-pub const Outline = struct { start: [2]f64, segments: []path.Segment };
-
 /// The outlines read and every layer that holds an entity read, in the order the file
 /// gives them; all owned by `arena`.
 pub const Drawing = struct {
-    outlines: []Outline,
+    outlines: []path.Loop,
     layers: []const []const u8,
     arena: std.heap.ArenaAllocator,
 
@@ -78,23 +75,7 @@ pub const Drawing = struct {
     }
 };
 
-pub const Error = error{InvalidDxf} || std.mem.Allocator.Error;
-
-/// What is wrong with a file that can't be read.
-pub const Diagnostic = struct {
-    buffer: [MESSAGE_CAPACITY]u8 = undefined,
-    len: usize = 0,
-
-    pub fn message(self: *const Diagnostic) []const u8 {
-        return self.buffer[0..self.len];
-    }
-
-    fn fail(self: *Diagnostic, comptime fmt: []const u8, args: anytype) error{InvalidDxf} {
-        const written = std.fmt.bufPrint(&self.buffer, fmt, args) catch self.buffer[0..];
-        self.len = written.len;
-        return error.InvalidDxf;
-    }
-};
+pub const Error = error{InvalidDrawing} || std.mem.Allocator.Error;
 
 /// The outlines of the DXF `text`, as `options` says.
 pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
@@ -117,7 +98,7 @@ const Pairs = struct {
     line: usize = 0,
     peeked: ?Pair = null,
 
-    fn next(self: *Pairs, diag: *Diagnostic) error{InvalidDxf}!?Pair {
+    fn next(self: *Pairs, diag: *Diagnostic) error{InvalidDrawing}!?Pair {
         if (self.peeked) |pair| {
             self.peeked = null;
             return pair;
@@ -131,7 +112,7 @@ const Pairs = struct {
         return .{ .code = code, .value = value, .line = at };
     }
 
-    fn peek(self: *Pairs, diag: *Diagnostic) error{InvalidDxf}!?Pair {
+    fn peek(self: *Pairs, diag: *Diagnostic) error{InvalidDrawing}!?Pair {
         if (self.peeked == null) self.peeked = try self.next(diag);
         return self.peeked;
     }
@@ -173,18 +154,18 @@ const Entity = struct {
         return null;
     }
 
-    fn number(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDxf}!?f64 {
+    fn number(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDrawing}!?f64 {
         for (self.pairs) |pair| if (pair.code == code) return try numberOf(pair, diag);
         return null;
     }
 
-    fn required(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDxf}!f64 {
+    fn required(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDrawing}!f64 {
         return try self.number(code, diag) orelse diag.fail("line {d}: the {s} has no group {d}", .{ self.line, self.kind, code });
     }
 
     /// Its normal (210, 220, 230): whether it is the XY plane's turned over (-z), which
     /// mirrors the entity's own x; another plane is an error.
-    fn flipped(self: Entity, diag: *Diagnostic) error{InvalidDxf}!bool {
+    fn flipped(self: Entity, diag: *Diagnostic) error{InvalidDrawing}!bool {
         const x = try self.number(210, diag) orelse 0;
         const y = try self.number(220, diag) orelse 0;
         const z = try self.number(230, diag) orelse 1;
@@ -193,7 +174,7 @@ const Entity = struct {
     }
 };
 
-fn numberOf(pair: Pair, diag: *Diagnostic) error{InvalidDxf}!f64 {
+fn numberOf(pair: Pair, diag: *Diagnostic) error{InvalidDrawing}!f64 {
     const n = std.fmt.parseFloat(f64, std.mem.trim(u8, pair.value, " \t")) catch {
         return diag.fail("line {d}: group {d} should be a number, got '{s}'", .{ pair.line + 1, pair.code, pair.value[0..@min(pair.value.len, 40)] });
     };
@@ -501,12 +482,12 @@ const Reader = struct {
 
     /// Every piece joined into outlines: a closed one as it is, the others end to end (one
     /// turned around where it meets the outline by its end) until each closes.
-    fn joined(self: *Reader) Error![]Outline {
+    fn joined(self: *Reader) Error![]path.Loop {
         const tolerance = self.options.tolerance;
         var ends = try EndIndex.init(self.arena, self.pieces.items, tolerance);
         const used = try self.arena.alloc(bool, self.pieces.items.len);
         @memset(used, false);
-        var outlines: std.ArrayList(Outline) = .empty;
+        var outlines: std.ArrayList(path.Loop) = .empty;
         for (self.pieces.items, 0..) |*piece, i| {
             if (used[i]) continue;
             used[i] = true;

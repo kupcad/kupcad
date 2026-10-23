@@ -169,6 +169,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
     .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .sketch, .signature = &drawing_import.IMPORT_DXF },
+    .{ .name = "import_svg", .func = common.wrapGlobal(drawing_import.nativeImportSvg), .category = .file_io, .result = .sketch, .signature = &drawing_import.IMPORT_SVG },
 };
 
 pub const mesh_methods = [_]MeshMethod{

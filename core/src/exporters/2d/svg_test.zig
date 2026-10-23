@@ -234,3 +234,27 @@ test "SVG: what can't be drawn is refused with a message" {
         try testing.expectEqualStrings(case.message, diag.message.?);
     }
 }
+
+test "SVG: a drawing written and read back has its outlines where they were, arcs as arcs" {
+    const svg_read = @import("svg_read.zig");
+    const path = @import("../../core/path.zig");
+    const svg = try exportSvg("square(20, round_r: 4, segments: 16) - circle(r: 3, segments: 16).translate(x: 10, y: 10)");
+    defer testing.allocator.free(svg);
+    const config = @import("../../core/engine_config.zig").EngineConfig{};
+    var diag: svg_read.Diagnostic = .{};
+    var drawing = svg_read.read(testing.allocator, svg, .{ .tolerance = 1e-6, .config = &config }, &diag) catch |err| {
+        std.debug.print("svg: {s}\n", .{diag.message()});
+        return err;
+    };
+    defer drawing.deinit();
+    try testing.expectEqual(@as(usize, 2), drawing.outlines.len);
+    const plate = drawing.outlines[0];
+    const box = path.bounds(plate.start, plate.segments);
+    try testing.expectApproxEqAbs(@as(f64, 0), box.min[0], 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 20), box.max[1], 1e-9);
+    try testing.expectApproxEqAbs(400 - 16 * (4 - std.math.pi), @abs(path.signedArea(plate.start, plate.segments)), 1e-9);
+    const hole = drawing.outlines[1];
+    for (hole.segments) |segment| try testing.expectApproxEqAbs(@as(f64, 3), segment.arc.?.radius, 1e-9);
+    // Its arcs end at the kernel's points of the circle, written to the digits SVG keeps
+    try testing.expectApproxEqAbs(9 * std.math.pi, @abs(path.signedArea(hole.start, hole.segments)), 1e-6);
+}

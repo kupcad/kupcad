@@ -21,7 +21,7 @@ fn read(text: []const u8, layers: ?[]const []const u8) !dxf_read.Drawing {
 
 fn expectRefused(text: []const u8, message: []const u8) !void {
     var diag: dxf_read.Diagnostic = .{};
-    try testing.expectError(error.InvalidDxf, dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .config = &CONFIG }, &diag));
+    try testing.expectError(error.InvalidDrawing, dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .config = &CONFIG }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
 

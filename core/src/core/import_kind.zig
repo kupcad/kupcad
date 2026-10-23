@@ -14,6 +14,7 @@ const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
     .{ .extension = ".stp", .kind = .step },
     .{ .extension = ".json", .kind = .json },
     .{ .extension = ".dxf", .kind = .dxf },
+    .{ .extension = ".svg", .kind = .svg },
     .{ .extension = ".ttf", .kind = .font },
     .{ .extension = ".otf", .kind = .font },
 };
@@ -38,6 +39,7 @@ pub const Kind = enum {
     json,
     font,
     dxf,
+    svg,
 
     /// The built-in that reads a file of this kind, or null for a module, which the VM
     /// imports itself.
@@ -49,6 +51,7 @@ pub const Kind = enum {
             .json => "import_json",
             .font => "import_font",
             .dxf => "import_dxf",
+            .svg => "import_svg",
         };
     }
 
@@ -70,6 +73,7 @@ pub const Kind = enum {
             .json => "json",
             .font => "font",
             .dxf => "dxf",
+            .svg => "svg",
         };
     }
 
@@ -78,7 +82,7 @@ pub const Kind = enum {
     pub fn hasKeys(self: Kind) bool {
         return switch (self) {
             .module, .json => true,
-            .stl, .step, .font, .dxf => false,
+            .stl, .step, .font, .dxf, .svg => false,
         };
     }
 

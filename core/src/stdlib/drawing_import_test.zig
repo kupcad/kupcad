@@ -1,4 +1,4 @@
-//! import_dxf: a DXF file's outlines as a Sketch, holes by nesting.
+//! import_dxf and import_svg: a drawing's outlines as a Sketch, holes by nesting.
 
 const support = @import("../test_support.zig");
 const expectScripts = support.expectScripts;
@@ -60,5 +60,37 @@ test "import_dxf: what can't be read is an ImportError naming the file" {
         .{ .src = comptime rescued("import_dxf()"), .expected = .{ .str = "ArgumentError: import_dxf expects the path of a DXF file" } },
         .{ .src = comptime rescued("import_dxf(\"plate.dxf\", tolerance: 0)"), .expected = .{ .str = "ValueError: import_dxf expects tolerance to be a finite number greater than zero, got 0" }, .files = files },
         .{ .src = comptime rescued("import_dxf(\"plate.dxf\", layers: [1])"), .expected = .{ .str = "TypeError: import_dxf expects a String or Symbol for a layer of layers, got Number" }, .files = files },
+    });
+}
+
+/// A 20 mm plate with a 10 mm square hole, a rounded tab beside it, and an open stroke
+/// whose ends are 0.001 apart.
+const LOGO = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
+    "<path d=\"M0 0H20V20H0Z M5 5V15H15V5Z\"/><rect x=\"30\" y=\"0\" width=\"10\" height=\"10\" rx=\"2\"/>" ++
+    "<path d=\"M50 0L60 0L60 10L50.001 0\" fill=\"none\" stroke=\"black\"/></svg>";
+
+test "import_svg: the shapes fill by nesting, in millimetres, y turned over" {
+    const files = &.{ support.ScriptFile{ .path = "logo.svg", .data = LOGO }, support.ScriptFile{ .path = "logo.xml", .data = LOGO } };
+    try expectScripts(&.{
+        // Measured at a resolution that draws the tab's corners as their arcs
+        .{ .src = "CAD.config(resolution: {segments: 1024})\nr = (import_svg(\"logo.svg\").area - (300 + 100 - 4 * (4 - Math::PI))).abs < 1e-3", .expected = .{ .boolean = true }, .files = files },
+        .{ .src = "import logo from \"./logo.svg\"\nr = [logo.bbox.min[1], logo.bbox.max[0]]", .expected = .{ .nums = &.{ -20, 40 } }, .files = files },
+        .{ .src = "import logo from \"./logo.xml\" with { type: :svg }\nr = logo.area > 390", .expected = .{ .boolean = true }, .files = files },
+        // The stroke's ends meet within the tolerance asked for: a thin triangle of its own
+        .{ .src = "r = import_svg(\"logo.svg\", tolerance: 0.01).area > import_svg(\"logo.svg\").area", .expected = .{ .boolean = true }, .files = files },
+    });
+}
+
+test "import_svg: what can't be read is an ImportError naming the file" {
+    const files = &.{
+        support.ScriptFile{ .path = "empty.svg", .data = "<svg><text>hi</text></svg>" },
+        support.ScriptFile{ .path = "bad.svg", .data = "<svg><path d=\"M 0 0 L\"/></svg>" },
+    };
+    try expectScripts(&.{
+        .{ .src = comptime rescued("import_svg(\"empty.svg\")"), .expected = .{ .str = "ImportError: SVG file 'empty.svg' has no outline to read" }, .files = files },
+        .{ .src = comptime rescued("import_svg(\"bad.svg\")"), .expected = .{ .str = "ImportError: could not read SVG file 'bad.svg': line 1: the path data of a <path> isn't SVG's at character 8: \"\"" }, .files = files },
+        .{ .src = comptime rescued("import_svg()"), .expected = .{ .str = "ArgumentError: import_svg expects the path of an SVG file" } },
+        .{ .src = comptime rescued("import_svg(\"missing.svg\")"), .expected = .{ .str = "ImportError: could not read SVG file 'missing.svg': FileNotFound" }, .files = files },
+        .{ .src = comptime rescued("import_svg(\"empty.svg\", layers: \"a\")"), .expected = .{ .str = "ArgumentError: import_svg does not take a keyword 'layers' (it accepts: tolerance)" }, .files = files },
     });
 }
