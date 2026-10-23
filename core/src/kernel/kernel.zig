@@ -259,8 +259,10 @@ pub inline fn revolve(cs: geom.CrossSectionHandle, segments: i32, revolve_degree
     return dispatch("revolveFn", cs, .{ segments, revolve_degrees });
 }
 
-pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
-    return dispatch("offsetFn", cs, .{ delta, join_type });
+/// `segments`: how many a full circle of round joins gets (the kernel's own default was
+/// used, whatever the script's resolution).
+pub inline fn offset(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32) ?geom.CrossSectionHandle {
+    return dispatch("offsetFn", cs, .{ delta, join_type, segments });
 }
 
 pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {

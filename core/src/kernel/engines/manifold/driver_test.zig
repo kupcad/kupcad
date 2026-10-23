@@ -394,7 +394,7 @@ test "Manifold Driver: slice extracts 2D cross section from 3D geometry" {
     defer driver.driver.destructCrossSectionFn(cs);
 
     // Offset the 2D cross section inward by 1 unit
-    const offset_cs = driver.driver.offsetFn(cs, -1.0, 1) orelse return error.OffsetFailed;
+    const offset_cs = driver.driver.offsetFn(cs, -1.0, 1, 8) orelse return error.OffsetFailed;
     defer driver.driver.destructCrossSectionFn(offset_cs);
 
     // Extrude the offset slice back into 3D to check it

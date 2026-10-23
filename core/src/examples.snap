@@ -3,7 +3,7 @@ brep
   exports step
 drone_motor_arm
   part 1 manifold volume=62428.903045161045 area=8770.253102898321 min=-20,-20,-22 max=20,20,28 genus=0 vertices=64 triangles=124
-  part 2 manifold volume=17399.95285923718 area=8832.478122945637 min=-26,-26,-5 max=78,26,10 genus=6 vertices=2381 triangles=4782
+  part 2 manifold volume=17409.040823378193 area=8841.935294208057 min=-26,-26,-5 max=78,26,10 genus=6 vertices=2811 triangles=5642
   part 3 manifold volume=13.821367840160528 area=27.92986398270483 min=78,-1.5,-1.5 max=81,1.5,1.5 genus=0 vertices=258 triangles=512
   exports glb
 standoff

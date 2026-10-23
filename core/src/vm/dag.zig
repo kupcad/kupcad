@@ -137,7 +137,8 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .translate, .rotate, .scale, .mirror => .{ .target_numbers = 3 },
         .transform_matrix => .{ .target_numbers = 12 },
         .trim_by_plane => .{ .target_numbers = 4 },
-        .slice_op, .offset => .{ .target_numbers = 1 },
+        .slice_op => .{ .target_numbers = 1 },
+        .offset => .{ .target_numbers = 2 },
         .extrude => .{ .target_numbers = 5 },
         .revolve => .{ .target_numbers = 2 },
         .cs_transform => .{ .target_numbers = 6 },
@@ -163,7 +164,7 @@ pub const BinaryPayload = struct { left: DAGNodeIndex, right: DAGNodeIndex };
 pub const ExtrudePayload = struct { target: DAGNodeIndex, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64 };
 pub const RevolvePayload = struct { target: DAGNodeIndex, segments: i32, degrees: f64 };
 pub const PlanePayload = struct { target: DAGNodeIndex, nx: f64, ny: f64, nz: f64, offset: f64 };
-pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8 };
+pub const OffsetPayload = struct { target: DAGNodeIndex, delta: f64, join_type: u8, segments: i32 };
 pub const TranslatePayload = struct { target: DAGNodeIndex, x: f64, y: f64, z: f64 };
 pub const TransformPayload = struct { target: DAGNodeIndex, num_idx: u32 };
 pub const LoftPayload = struct { base: DAGNodeIndex, top: DAGNodeIndex, height: f64 };
@@ -637,9 +638,10 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .extrude, .flags = 0, .data = extra_idx }, snap);
     }
 
-    pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8) !DAGNodeIndex {
+    /// `segments`: how many a full circle of round joins gets.
+    pub fn addOffset(self: *DAGBuilder, target: DAGNodeIndex, delta: f64, join_type: u8, segments: i32) !DAGNodeIndex {
         const snap = self.snapshot();
-        const num_idx = try self.appendNumbers(&.{delta});
+        const num_idx = try self.appendNumbers(&.{ delta, @floatFromInt(segments) });
         const extra_idx = try self.appendExtraData(&.{ target, num_idx });
         return try self.appendNodeWithRollback(.{ .tag = .offset, .flags = join_type, .data = extra_idx }, snap);
     }
@@ -953,6 +955,7 @@ pub const DAGBuilder = struct {
             .target = self.extra_data.items[node.data],
             .delta = self.numbers.items[self.extra_data.items[node.data + 1]],
             .join_type = node.flags,
+            .segments = @intFromFloat(self.numbers.items[self.extra_data.items[node.data + 1] + 1]),
         };
     }
 

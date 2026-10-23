@@ -48,20 +48,24 @@ pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, n
 /// Offset corner styles; the values are the kernel's join_type codes.
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
 
-/// `offset(delta, join:)`. A Sketch grows by `delta` (shrinks, when it is negative), its
-/// corners joined as `join` says. A Solid grows by `delta` in every direction: a Minkowski
-/// sum with a sphere of that radius, the 3D form of a round join, so its edges and corners
-/// come out rounded. A Solid can't shrink (that is an erosion, which the kernel lacks) and
-/// has no other join.
+/// `offset(delta, join:, segments:)`. A Sketch grows by `delta` (shrinks, when it is
+/// negative), its corners joined as `join` says. A Solid grows by `delta` in every
+/// direction: a Minkowski sum with a sphere of that radius, the 3D form of a round join, so
+/// its edges and corners come out rounded. A Solid can't shrink (that is an erosion, which
+/// the kernel lacks) and has no other join. The rounding, a join's or the sphere's, is as
+/// fine as the resolution makes a circle of radius `delta`, or `segments:` says (a sketch's
+/// took the kernel's own default, whatever the script's resolution).
 pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round };
+    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round, segments: i32 = 0 };
     const pos = util.positionalArgs(args);
     var base = OffsetOpts{};
     if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
     const opts = (try util.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
+    try util.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else util.autoSegments(vm, @abs(opts.delta));
 
     if (receiver.isCrossSection()) {
-        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join));
+        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join), segments);
         return try vm.allocateCrossSection(new_idx);
     }
     if (receiver.isGeometry()) {
@@ -71,7 +75,7 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         if (opts.join != .round) {
             return vm.fail(.ValueError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :{s}", .{@tagName(opts.join)});
         }
-        const sphere_idx = try vm.dag_builder.addSphere(opts.delta, util.autoSegments(vm, opts.delta));
+        const sphere_idx = try vm.dag_builder.addSphere(opts.delta, segments);
         const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     }

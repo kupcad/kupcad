@@ -186,6 +186,13 @@ fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
 
 // --- Filleting Math Helpers ---
 
+/// How many chords a quarter arc gets when a full circle gets `total`: its share, rounded
+/// up. It was rounded down, so a corner the resolution gave 5 to 7 segments a turn (any
+/// radius up to about 2.2 mm by default) was one chord, a chamfer.
+fn quarterArcSegments(total: i32) usize {
+    return @max(1, (@as(usize, @intCast(total)) + 3) / 4);
+}
+
 /// Generates points along a circular arc and pushes them to the polygon list
 fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayList([2]f64), cx: f64, cy: f64, r: f64, start_ang: f64, end_ang: f64, segments: usize) !void {
     const step = (end_ang - start_ang) / @as(f64, @floatFromInt(segments));
@@ -209,9 +216,8 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 
     if (round_r) |r| {
         const safe_r = @min(r, @min(hw, hh));
-        // Calculate segments per 90-degree arc (minimum 4, or inherited from user's global segments)
         const total_segs: i32 = if (segs > 0) segs else util.autoSegments(vm, safe_r);
-        const arc_segs = @max(1, @as(usize, @intCast(total_segs)) / 4);
+        const arc_segs = quarterArcSegments(total_segs);
         // Build corners Counter-Clockwise
         try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
         try pushArc(alloc, &pts, cx + hw - safe_r, cy + hh - safe_r, safe_r, 0.0, std.math.pi / 2.0, arc_segs); // Top-Right
@@ -319,6 +325,9 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
         return try vm.allocateGeometry(.{ .symbolic = prism });
     }
 
+    // The corners' arcs follow `segments:` too (they took the resolution's count whatever
+    // it said), else the resolution for their own radius
+    const given_segments = opts.segments;
     if (opts.segments == 0) opts.segments = util.autoSegments(vm, @max(r1, r2));
 
     var dag_idx: u32 = 0;
@@ -338,8 +347,8 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
             const safe_r1 = @min(rr, @min(r1, opts.h / 2.0));
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
 
-            const corner_segs: i32 = util.autoSegments(vm, @max(safe_r1, safe_r2));
-            const arc_segs = @max(1, @as(usize, @intCast(corner_segs)) / 4);
+            const corner_segs: i32 = if (given_segments > 0) given_segments else util.autoSegments(vm, @max(safe_r1, safe_r2));
+            const arc_segs = quarterArcSegments(corner_segs);
             // Bottom Right Corner (sweep from -90 deg to 0)
             try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
             // Top Right Corner (sweep from 0 to 90 deg)

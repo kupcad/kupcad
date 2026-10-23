@@ -646,7 +646,7 @@ fn executeSketchOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !voi
             const p = b.getOffsetPayload(node);
             const sketch = try crossSectionOf(target);
             try vm.requireFeature(sketch.engine, .offset);
-            try pushSketch(vm, v_stack, node.tag, kernel.offset(sketch, p.delta, p.join_type));
+            try pushSketch(vm, v_stack, node.tag, kernel.offset(sketch, p.delta, p.join_type, p.segments));
         },
         .cs_transform => {
             const target = v_stack.pop();

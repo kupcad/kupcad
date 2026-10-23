@@ -411,6 +411,7 @@ test "Stdlib: a count that no integer holds says what is wrong, not the integer 
         .{ .src = comptime rescued("circle(r: 1, segments: Number::NAN)"), .expected = .{ .str = "ValueError: 'segments' must be a finite number, got NaN" } },
         // Within the type, the real range is checked and named.
         .{ .src = comptime rescued("cylinder(r: 1, h: 1, segments: 5000)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 5000" } },
+        .{ .src = comptime rescued("square(1).offset(1, segments: 5000)"), .expected = .{ .str = "ValueError: 'segments' must be between 0 and 2048, got 5000" } },
     });
 }
 
@@ -1042,6 +1043,26 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
         .{ .src = comptime rescued("Math.remap(1, 2, 2, 0, 1)"), .expected = .{ .str = "ValueError: Math.remap needs a range of two different numbers, got 2 and 2" } },
         .{ .src = comptime rescued("Math.close?(1, 2, -1)"), .expected = .{ .str = "ValueError: Math.close? tolerance must be zero or more, got -1" } },
         .{ .src = comptime rescued("Math.gcd(2.5, 5)"), .expected = .{ .str = "ValueError: Math.gcd requires an integer, got 2.5" } },
+    });
+}
+
+test "Stdlib: a rounded corner is never one chord, and an offset's rounding follows the resolution" {
+    // A quarter arc got its circle's count divided by 4 and rounded down, so every radius
+    // up to about 2.2 mm (5 to 7 segments a turn by default) was one chord: `round_r: 2`
+    // and `chamfer: 2` gave the same solid. A sketch's offset took the kernel's own default
+    // count, whatever the script's resolution or `segments:` said.
+    try expectScripts(&.{
+        .{ .src = "r = cube(10, round_r: 2).volume > cube(10, chamfer: 2).volume && cube(10, round_r: 2).volume < 1000", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(10, round_r: 2).extrude(1).volume > square(10, chamfer: 2).extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = cylinder(r: 5, h: 10, round_r: 1).volume > cylinder(r: 5, h: 10, chamfer: 1).volume", .expected = .{ .boolean = true } },
+        // The corner follows segments: too; it ignored it
+        .{ .src = "r = cylinder(r: 5, h: 10, round_r: 1, segments: 64).volume > cylinder(r: 5, h: 10, round_r: 1, segments: 8).volume", .expected = .{ .boolean = true } },
+        // Round joins of a 10 mm square's offset by 2: 8 segments a turn make its corners
+        // an octagon's quarters (area 100 + 80 + 11.31), 64 nearly a circle's (+ 12.57)
+        .{ .src = "r = square(10).offset(2, segments: 8).extrude(1).volume", .expected = .{ .num = 100 + 80 + 8 * 0.5 * 4 * @sin(std.math.pi / 4.0) } },
+        .{ .src = "v = square(10).offset(2, segments: 64).extrude(1).volume\nr = v > 192.5 && v < 100 + 80 + Math::PI * 4", .expected = .{ .boolean = true } },
+        .{ .src = "s = nil\nCAD.with_config(resolution: { segments: 8 }) do\n  s = square(10).offset(2)\nend\nr = s.extrude(1).volume == square(10).offset(2, segments: 8).extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(5).offset(1, segments: 64).volume > cube(5).offset(1, segments: 8).volume", .expected = .{ .boolean = true } },
     });
 }
 
@@ -2149,9 +2170,9 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
         .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, segments" },
         .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
-        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
+        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, segments" },
         .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
-        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join" },
+        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, segments" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission, density" },
     };

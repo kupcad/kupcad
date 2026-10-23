@@ -472,9 +472,10 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
 }
 
-fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8) ?geom.CrossSectionHandle {
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32) ?geom.CrossSectionHandle {
     _ = join_type;
     _ = delta;
+    _ = segments;
     // Not implemented for B-Rep yet. Report failure instead of returning the unchanged
     // sketch, which would be silently wrong geometry.
     _ = cs;
