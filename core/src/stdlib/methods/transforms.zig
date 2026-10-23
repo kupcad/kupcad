@@ -344,7 +344,7 @@ fn checkedCount(vm: *VM, raw: f64, what: []const u8) !usize {
 }
 
 pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "repeat_linear", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "repeat_linear", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         return vm.fail(.ArgumentError, "repeat_linear requires a 'count' number", .{});
     }
@@ -364,28 +364,54 @@ pub fn meshRepeatLinear(vm: *VM, receiver: value.Value, args: []const value.Valu
         try arguments.parseNumberArray(3, vm, args[1], .{ .method = "repeat_linear", .name = "the step" }, 1, 0.0)
     else
         try arguments.parseVec3(vm, args[1..], 0.0, "repeat_linear");
-    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
     const tx, const ty, const tz = step;
+    if (receiver.isCrossSection() and tz != 0) return vm.fail(.ArgumentError, "repeat_linear: a Sketch repeats in x and y, not z (got a z step of {f})", .{value.fmtNumber(tz)});
+    if (count <= 1) return Copies.same(vm, receiver);
 
     // One batch union of the copies: a chain of N − 1 unions took 60× the time.
-    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    var copies = try Copies.init(vm, receiver, count);
     defer copies.deinit(vm);
     for (1..count) |i| {
         const factor: f64 = @floatFromInt(i);
-        copies.add(try vm.dag_builder.addTranslate(copies.base, tx * factor, ty * factor, tz * factor));
+        copies.add(try copies.translated(vm, tx * factor, ty * factor, tz * factor));
     }
     return copies.unionOf(vm);
 }
 
-/// The copies a repeat pattern makes of its base shape, unioned in one batch.
+/// The copies a repeat pattern makes of its base shape, a Solid or a Sketch, moved as the
+/// shape moves and unioned in one batch.
 const Copies = struct {
     base: u32,
+    sketch: bool,
     indices: std.ArrayList(u32),
 
-    fn init(vm: *VM, base: u32, count: usize) !Copies {
+    fn init(vm: *VM, shape: value.Value, count: usize) !Copies {
+        const base = nodeOf(shape);
         var indices = try std.ArrayList(u32).initCapacity(vm.allocator, count);
         indices.appendAssumeCapacity(base);
-        return .{ .base = base, .indices = indices };
+        return .{ .base = base, .sketch = shape.isCrossSection(), .indices = indices };
+    }
+
+    fn nodeOf(shape: value.Value) u32 {
+        return if (shape.isCrossSection()) shape.asCrossSection().dag_idx else shape.asGeometry().dag_idx;
+    }
+
+    /// A pattern of one copy: the shape itself, as a new value.
+    fn same(vm: *VM, shape: value.Value) !value.Value {
+        if (shape.isCrossSection()) return vm.allocateCrossSection(nodeOf(shape));
+        return vm.allocateGeometry(.{ .symbolic = nodeOf(shape) });
+    }
+
+    /// The base moved by (x, y, z); a sketch's z is 0.
+    fn translated(self: *const Copies, vm: *VM, x: f64, y: f64, z: f64) !u32 {
+        if (self.sketch) return vm.dag_builder.addCrossSectionTransform(self.base, affine2.translation(x, y));
+        return vm.dag_builder.addTranslate(self.base, x, y, z);
+    }
+
+    /// The base turned `degrees` about z.
+    fn turned(self: *const Copies, vm: *VM, degrees: f64) !u32 {
+        if (self.sketch) return vm.dag_builder.addCrossSectionTransform(self.base, affine2.rotation(degrees));
+        return vm.dag_builder.addRotate(self.base, 0, 0, degrees);
     }
 
     fn deinit(self: *Copies, vm: *VM) void {
@@ -397,12 +423,13 @@ const Copies = struct {
     }
 
     fn unionOf(self: *const Copies, vm: *VM) !value.Value {
+        if (self.sketch) return vm.allocateCrossSection(try vm.dag_builder.addBalancedChain(.cs_union_op, self.indices.items));
         return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, self.indices.items) });
     }
 };
 
 pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "repeat_polar", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "repeat_polar", receiver);
     if (args.len < 1 or !args[0].isNumber()) {
         return vm.fail(.ArgumentError, "repeat_polar requires a 'count' number", .{});
     }
@@ -413,18 +440,17 @@ pub fn meshRepeatPolar(vm: *VM, receiver: value.Value, args: []const value.Value
     var total_angle: f64 = 360.0;
     if (parsed.positional.len > 0) total_angle = try arguments.requireNumber(vm, parsed.positional[0], "repeat_polar", "angle");
     if (parsed.opts.angle) |angle| total_angle = angle;
-    if (count <= 1) return try vm.allocateGeometry(.{ .symbolic = receiver.asGeometry().dag_idx });
+    if (count <= 1) return Copies.same(vm, receiver);
 
     const step_angle = if (@abs(total_angle - 360.0) < 0.001)
         total_angle / @as(f64, @floatFromInt(count))
     else
         total_angle / @as(f64, @floatFromInt(count - 1));
 
-    var copies = try Copies.init(vm, receiver.asGeometry().dag_idx, count);
+    var copies = try Copies.init(vm, receiver, count);
     defer copies.deinit(vm);
     for (1..count) |i| {
-        const rot_z = step_angle * @as(f64, @floatFromInt(i));
-        copies.add(try vm.dag_builder.addRotate(copies.base, 0, 0, rot_z));
+        copies.add(try copies.turned(vm, step_angle * @as(f64, @floatFromInt(i))));
     }
     return copies.unionOf(vm);
 }

@@ -1067,6 +1067,20 @@ test "Stdlib: cube and square take their sizes as an Array, regular_polygon its 
     });
 }
 
+test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
+    try expectScripts(&.{
+        .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
+        .{ .src = "r = square(1).repeat_linear(3, x: 2).bbox.size", .expected = .{ .nums = &.{ 5, 1, 0 } } },
+        .{ .src = "p = square(1).translate(5, 0).repeat_polar(4)\nr = [p.area] + p.bbox.size", .expected = .{ .nums = &.{ 4, 12, 12, 0 } } },
+        // Over 90 degrees, three copies 45 apart
+        .{ .src = "r = square(1).translate(5, 0).repeat_polar(3, 90).bbox.max.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 6, 6, 0 } } },
+        .{ .src = "r = \"#{square(1).repeat_linear(1, [2, 0]).class} #{square(1).repeat_polar(1).class}\"", .expected = .{ .str = "CrossSection CrossSection" } },
+        // Then swept like any sketch
+        .{ .src = "r = circle(r: 1, segments: 4).translate(5, 0).repeat_polar(6).extrude(2).volume.round(9)", .expected = .{ .num = 24 } },
+        .{ .src = comptime rescued("square(1).repeat_linear(2, [0, 0, 1])"), .expected = .{ .str = "ArgumentError: repeat_linear: a Sketch repeats in x and y, not z (got a z step of 1)" } },
+    });
+}
+
 test "Stdlib: a sketch's area, its holes left out" {
     try expectScripts(&.{
         .{ .src = "r = square(10).area", .expected = .{ .num = 100 } },
