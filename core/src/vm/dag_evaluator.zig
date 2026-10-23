@@ -11,6 +11,7 @@ const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../core/geometry_handle.zig");
 const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
+const loft_mod = @import("../core/loft.zig");
 
 /// Tagged handle to safely track unconsumed 2D/3D resources during evaluation
 pub const ValueHandle = union(enum) {
@@ -586,18 +587,34 @@ fn executeSweep(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config:
             const base_cs = try crossSectionOf(base);
             try vm.requireSameEngine(base_cs.engine, top_cs.engine);
             try vm.requireFeature(base_cs.engine, .loft);
-            // loft is a hull of the two profiles, which is only the true loft for convex
-            // ones; a concave profile would be filled in silently.
-            inline for (.{ .{ "base", base_cs }, .{ "top", top_cs } }) |profile| {
-                if (kernel.crossSectionIsConvex(profile[1]) == false) {
-                    return vm.fail(.NotImplementedError, "loft supports convex profiles only for now; the " ++ profile[0] ++ " profile is concave or has holes", .{});
-                }
-            }
             const p = b.getLoftPayload(node);
-            try pushSolid(vm, v_stack, node.tag, kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height));
+            // Two convex profiles' loft is their hull, exact; a hull would fill a concave
+            // one in, so it is the ruled surface between them
+            const convex = kernel.crossSectionIsConvex(base_cs) != false and kernel.crossSectionIsConvex(top_cs) != false;
+            const solid = if (convex) kernel.loft(config.engine, vm.allocator, base_cs, top_cs, p.height) else try ruledLoft(vm, config, base_cs, top_cs, p.height);
+            try pushSolid(vm, v_stack, node.tag, solid);
         },
         else => unreachable,
     }
+}
+
+/// The loft of profiles of which one is concave: core/loft.zig's ruled surface between
+/// their outlines, as a polyhedron. Each must be one outline, without holes, for now.
+fn ruledLoft(vm: *VM, config: EngineConfig, base: geom.CrossSectionHandle, top: geom.CrossSectionHandle, height: f64) !?geom.GeometryHandle {
+    try vm.requireFeature(base.engine, .sketch_contours);
+    const base_outlines = kernel.crossSectionContours(vm.allocator, base) orelse return kernelFailed(vm, .loft);
+    defer base_outlines.deinit(vm.allocator);
+    const top_outlines = kernel.crossSectionContours(vm.allocator, top) orelse return kernelFailed(vm, .loft);
+    defer top_outlines.deinit(vm.allocator);
+    inline for (.{ .{ "base", base_outlines }, .{ "top", top_outlines } }) |profile| {
+        if (profile[1].count() != 1) return vm.fail(.NotImplementedError, "loft joins profiles of one outline each, without holes, for now; the " ++ profile[0] ++ " profile has {d} outlines", .{profile[1].count()});
+    }
+    const mesh = loft_mod.ruled(vm.allocator, base_outlines.contour(0), top_outlines.contour(0), height) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.Degenerate, error.SelfIntersecting => return vm.fail(.GeometryError, "loft: the profiles' outlines can't be joined (one has no area, crosses itself, or the height is 0)", .{}),
+    };
+    defer mesh.deinit(vm.allocator);
+    return kernel.polyhedron(&config, vm.allocator, mesh.points, mesh.triangles);
 }
 
 /// A sketch made from a solid (a slice, a projection) or from sketches.

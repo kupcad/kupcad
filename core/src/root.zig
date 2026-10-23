@@ -40,6 +40,7 @@ test {
     _ = @import("core/vec3_test.zig");
     _ = @import("core/identifier_test.zig");
     _ = @import("core/triangulate_test.zig");
+    _ = @import("core/loft_test.zig");
     _ = @import("core/affine2_test.zig");
     _ = @import("core/material_test.zig");
     _ = @import("exporters/names_test.zig");

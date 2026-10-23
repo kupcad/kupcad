@@ -251,11 +251,17 @@ fn perTurnAbout(vm: *VM, receiver: value.Value, axis: Axis, ops: []const kernel.
     return arguments.autoSegments(vm, radius);
 }
 
+/// `profile.loft(target, height)`: the Solid from the profile at z = 0 to `target` at
+/// `height`; `profile.loft([s1, s2, ...], [h1, h2, ...])` through each section at its
+/// height above the base (rising), a loft from each to the next. Convex profiles' loft is
+/// their hull; a concave one's the ruled surface between them (core/loft.zig).
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "loft", receiver);
     if (args.len < 2) {
         return vm.fail(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
     }
+    const base = receiver.asCrossSection().dag_idx;
+    if (args[0].isArray()) return loftThrough(vm, base, args[0].asArray().items.items, args[1]);
     if (!args[0].isCrossSection()) {
         return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{arguments.typeName(vm, args[0])});
     }
@@ -263,6 +269,31 @@ pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !valu
     const cs_top = args[0].asCrossSection();
     const height = try arguments.requireNumber(vm, args[1], "loft", "height");
 
-    const dag_idx = try vm.dag_builder.addLoft(receiver.asCrossSection().dag_idx, cs_top.dag_idx, height);
+    const dag_idx = try vm.dag_builder.addLoft(base, cs_top.dag_idx, height);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
+}
+
+/// The loft from `base` through `sections`, each at its height of `heights_val` (an
+/// Array of as many, rising from the base): the lofts from each section to the next,
+/// united.
+fn loftThrough(vm: *VM, base: u32, sections: []const value.Value, heights_val: value.Value) !value.Value {
+    const heights = try arguments.requireArray(vm, heights_val, "loft", "heights");
+    if (sections.len == 0 or heights.len != sections.len) {
+        return vm.fail(.ArgumentError, "loft takes its sections as an Array and their heights as an Array of as many, got {d} section{s} and {d} height{s}", .{ sections.len, if (sections.len == 1) "" else "s", heights.len, if (heights.len == 1) "" else "s" });
+    }
+    const dag = &vm.dag_builder;
+    var pieces: std.ArrayList(u32) = .empty;
+    defer pieces.deinit(vm.allocator);
+    var from = base;
+    var z: f64 = 0;
+    for (sections, heights, 0..) |section, height_val, i| {
+        if (!section.isCrossSection()) return vm.fail(.TypeError, "loft expects a CrossSection at index {d} of the sections, got {s}", .{ i, arguments.typeName(vm, section) });
+        const height = try arguments.requireNumber(vm, height_val, "loft", "a height");
+        if (!(height > z)) return vm.fail(.ValueError, "loft's heights rise from the base: height {d} is {f}, not above {f}", .{ i, value.fmtNumber(height), value.fmtNumber(z) });
+        const step = try dag.addLoft(from, section.asCrossSection().dag_idx, height - z);
+        try pieces.append(vm.allocator, if (z == 0) step else try dag.addTranslate(step, 0, 0, z));
+        from = section.asCrossSection().dag_idx;
+        z = height;
+    }
+    return try vm.allocateGeometry(.{ .symbolic = try dag.addBalancedChain(.union_op, pieces.items) });
 }

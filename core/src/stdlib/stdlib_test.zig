@@ -1202,6 +1202,22 @@ test "Stdlib: a negative offset shrinks a Solid, and shell hollows a shape to wa
     });
 }
 
+test "Stdlib: loft joins concave profiles, and runs through several sections at their heights" {
+    const ELL = "ell = polygon([[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]])\n";
+    try expectScripts(&.{
+        // An L to itself half the size: a frustum, h/3 (A + a + √(A a))
+        .{ .src = ELL ++ "r = ell.loft(ell.scale(0.5), 10).volume", .expected = .{ .num = 10.0 / 3.0 * (175 + 43.75 + 87.5) } },
+        .{ .src = ELL ++ "r = ell.loft(ell, -10).bbox.min", .expected = .{ .nums = &.{ 0, 0, -10 } } },
+        // Through a section at 10 and one at 20: two prisms, stacked
+        .{ .src = ELL ++ "r = square(4).loft([square(4), ell], [10, 20]).bbox.max", .expected = .{ .nums = &.{ 20, 20, 20 } } },
+        .{ .src = "r = square(4).loft([square(4), square(4)], [10, 25]).volume", .expected = .{ .num = 16 * 25 } },
+        .{ .src = comptime rescued("square(4).loft([square(4)], [10, 20])"), .expected = .{ .str = "ArgumentError: loft takes its sections as an Array and their heights as an Array of as many, got 1 section and 2 heights" } },
+        .{ .src = comptime rescued("square(4).loft([square(4), square(2)], [10, 5])"), .expected = .{ .str = "ValueError: loft's heights rise from the base: height 1 is 5, not above 10" } },
+        .{ .src = comptime rescued("square(4).loft([cube(1)], [10])"), .expected = .{ .str = "TypeError: loft expects a CrossSection at index 0 of the sections, got Geometry" } },
+        .{ .src = comptime rescued("square(4).loft([square(4)], 10)"), .expected = .{ .str = "TypeError: loft expects an Array for heights, got Number" } },
+    });
+}
+
 test "Stdlib: a Sketch sweeps along a Path, standing on it, its corners filled round outside" {
     // A 2 by 2 profile across the path and up from it
     const PROFILE = "prof = square(2, center: true).translate(y: 1)\n";
@@ -2543,9 +2559,10 @@ test "Stdlib: degenerate solids are rejected or repaired instead of exported wro
         .{ .src = tetra ++ "r = polyhedron(pts, " ++ outward ++ ").volume", .expected = .{ .num = 1.0 / 6.0 } },
         // ... and booleans with it were wrong.
         .{ .src = tetra ++ "r = (cube(1) - polyhedron(pts, " ++ inward ++ ")).volume", .expected = .{ .num = 1.0 - 1.0 / 6.0 } },
-        // loft hulls its profiles, which only matches a true loft for convex ones.
-        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the base profile is concave or has holes" } },
-        .{ .src = comptime rescued("square(4).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft supports convex profiles only for now; the top profile is concave or has holes" } },
+        // A hull would fill a concave profile in: its loft is the ruled surface, a notch
+        // and all (a prism of the notched square), and one with holes isn't lofted yet
+        .{ .src = "r = polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]), 5).volume", .expected = .{ .num = (100 - 35) * 5 } },
+        .{ .src = comptime rescued("polygon([[0,0],[10,0],[10,10],[5,3],[0,10]]).loft(square(10, center: true) - circle(r: 2), 5).volume"), .expected = .{ .str = "NotImplementedError: loft joins profiles of one outline each, without holes, for now; the top profile has 2 outlines" } },
         // A convex loft spans exactly [0, height]: square to equal square is a prism.
         .{ .src = "r = square(4).loft(square(4), 10).volume", .expected = .{ .num = 160 } },
         .{ .src = "r = square(4).loft(square(4), 10).bbox.max[2]", .expected = .{ .num = 10 } },
