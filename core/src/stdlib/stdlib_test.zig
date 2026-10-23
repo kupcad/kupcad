@@ -1604,6 +1604,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = brepLacks(.mesh) },
         .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
         .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("square(10).export_svg(\"s.svg\")"), .expected = brepLacks(.sketch_contours) },
+        .{ .src = comptime rescued("cube(10).export_dxf(\"c.dxf\")"), .expected = brepLacks(.project) },
         // What it has keeps working.
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
         .{ .src = comptime rescued("batch_hull([cube(10), cube(4, 4, 30)]).simplify"), .expected = "no error" },
@@ -2380,7 +2382,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
     };
     // They write files; each returns its receiver.
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
     @setEvalBranchQuota(20_000); // matching each method to its sample call at comptime
     var checked: usize = 0;
     inline for (manifest.mesh_methods) |m| {
@@ -2456,7 +2458,7 @@ test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
     });
 }
 
-test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ" {
+test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ, and a drawing of them to SVG and DXF" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     const kit = "a = assemble(name: \"kit\", parts: [cube(1), cube(1).translate(3, 0, 0)])\n";
@@ -2466,6 +2468,8 @@ test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ" {
         .{ .src = kit ++ "r = \"#{a.export_3mf(\"kit.3mf\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", true).class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Geometry" } },
+        .{ .src = kit ++ "r = \"#{a.export_svg(\"kit.svg\").class} #{a.export_dxf(\"kit.dxf\").class}\"", .expected = .{ .str = "Assembly Assembly" } },
+        .{ .src = "r = \"#{square(2).named(\"g\").export_svg(\"g.svg\").class} #{cube(1).export_dxf(\"c.dxf\").class}\"", .expected = .{ .str = "CrossSection Geometry" } },
         .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
         .{ .src = "CAD.config(engine: :brep)\na = assemble(name: \"b\", parts: [cube(1), cylinder(r: 1, h: 2)])\nr = \"#{a.export_step(\"b.step\").class}\"", .expected = .{ .str = "Assembly" } },
     };
@@ -2505,6 +2509,16 @@ test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ" {
     defer testing.allocator.free(plain);
     try testing.expect(std.mem.find(u8, plain, "mtllib") == null);
     try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "cube.mtl"));
+    // The drawings: the assembly's two cubes projected, the sketch as itself, named
+    const svg = try mem_vfs.vfs().readFile(testing.allocator, "kit.svg");
+    defer testing.allocator.free(svg);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, svg, "<path "));
+    const dxf = try mem_vfs.vfs().readFile(testing.allocator, "kit.dxf");
+    defer testing.allocator.free(dxf);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, dxf, "LWPOLYLINE"));
+    const gasket = try mem_vfs.vfs().readFile(testing.allocator, "g.svg");
+    defer testing.allocator.free(gasket);
+    try testing.expect(std.mem.find(u8, gasket, "<path id=\"g\" ") != null);
 }
 
 test "Stdlib: ghost shows a copy and gives the shape back to use" {
@@ -2533,7 +2547,7 @@ test "Stdlib: every export refuses a Sketch the same way" {
 
 test "Stdlib: each Assembly method gives back what the manifest says it does" {
     const manifest = @import("manifest.zig");
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
     inline for (manifest.assembly_methods) |m| {
         if (comptime isOneOf(m.name, &writes_files)) {
             try testing.expectEqual(manifest.Result.receiver, m.result);

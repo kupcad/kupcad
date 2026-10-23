@@ -127,7 +127,8 @@ pub const Feature = enum {
             .min_gap => &.{"min_gap"},
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
-            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .sketch_contours, .materials, .empty => &.{},
+            .sketch_contours => &.{ "export_svg", "export_dxf" },
+            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };

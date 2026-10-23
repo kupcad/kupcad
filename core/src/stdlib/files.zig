@@ -80,6 +80,30 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_o
     return receiver;
 }
 
+/// `shape.export_svg(path)` and `shape.export_dxf(path)`: a Sketch as its drawing, a Solid
+/// as its projection onto XY, an Assembly as its parts', as `kupcad build -o part.svg`
+/// writes them.
+pub fn meshExportSvg(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    return exportDrawingTo(vm, receiver, filepath, .svg, "export_svg");
+}
+
+pub fn meshExportDxf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    return exportDrawingTo(vm, receiver, filepath, .dxf, "export_dxf");
+}
+
+fn exportDrawingTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: api.ExportFormat, comptime method: []const u8) !value.Value {
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    const sketches: []const value.Value = if (receiver.isCrossSection()) &.{receiver} else blk: {
+        _ = try receiverSolids(vm, receiver, method, &solids);
+        break :blk &.{};
+    };
+    const bytes = try api.exportDrawing(vm.allocator, vm, format, sketches, solids.items);
+    defer vm.allocator.free(bytes);
+    try vm.vfs.writeFile(filepath, bytes);
+    return receiver;
+}
+
 /// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
 pub fn meshExportStl(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     var parts: std.ArrayList(geom.GeometryHandle) = .empty;

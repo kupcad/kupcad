@@ -569,7 +569,7 @@ pub fn exportModelFromVm(
 }
 
 /// `sketches` and `solids` (rooted by the caller) as a drawing in `format` (drawingOf).
-fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value) ![]const u8 {
+pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value) ![]const u8 {
     var drawing = try drawingOf(allocator, vm, sketches, solids);
     defer drawing.deinit(allocator);
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
