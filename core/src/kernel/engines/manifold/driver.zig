@@ -155,7 +155,6 @@ fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandl
 /// Read from the sketch itself. Both this and the bounds used to extrude a throwaway
 /// solid on every call and measure that.
 fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
-    if (@intFromPtr(handle.ptr) == 0) return 0.0;
     return manifold.crossSectionArea(@ptrCast(@alignCast(handle.ptr)));
 }
 
@@ -187,22 +186,19 @@ const Contours = struct {
 };
 
 fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.Allocator) ?geom.Contours {
+    const contours = Contours.of(handle) orelse return null;
+    defer contours.deinit();
+    const count = contours.count();
     var total: usize = 0;
-    var count: usize = 0;
-    const contours: ?Contours = if (@intFromPtr(handle.ptr) == 0) null else Contours.of(handle) orelse return null;
-    defer if (contours) |c| c.deinit();
-    if (contours) |c| {
-        count = c.count();
-        for (0..count) |ci| total += c.len(ci);
-    }
+    for (0..count) |ci| total += contours.len(ci);
     const points = allocator.alloc([2]f64, total) catch return null;
     errdefer allocator.free(points);
     const starts = allocator.alloc(u32, count + 1) catch return null;
     var at: usize = 0;
     for (0..count) |ci| {
         starts[ci] = @intCast(at);
-        for (0..contours.?.len(ci)) |i| {
-            points[at] = contours.?.point(ci, i);
+        for (0..contours.len(ci)) |i| {
+            points[at] = contours.point(ci, i);
             at += 1;
         }
     }
@@ -211,7 +207,6 @@ fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.
 }
 
 fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, tolerance: f64) ?bool {
-    if (@intFromPtr(handle.ptr) == 0) return false;
     const contours = Contours.of(handle) orelse return null;
     defer contours.deinit();
 
@@ -230,7 +225,6 @@ fn crossSectionContainsPointImpl(handle: geom.CrossSectionHandle, pt: [2]f64, to
 }
 
 fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
-    if (@intFromPtr(handle.ptr) == 0) return null;
     const contours = Contours.of(handle) orelse return null;
     defer contours.deinit();
     if (contours.count() != 1) return false; // holes or several outlines
@@ -250,12 +244,10 @@ const ContourRing = struct {
 };
 
 fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
-    if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.crossSectionNumVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
-    if (@intFromPtr(handle.ptr) == 0) return null;
     if (manifold.crossSectionNumVert(@ptrCast(@alignCast(handle.ptr))) == 0) return null;
     const b = manifold.crossSectionBounds(@ptrCast(@alignCast(handle.ptr)));
     return .{ .min = .{ b.min.x, b.min.y }, .max = .{ b.max.x, b.max.y } };
@@ -263,7 +255,6 @@ fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;
-    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
     const ptr = manifold.minkowskiSum(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr))) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -272,7 +263,6 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
 
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const ptr = manifold.translate(obj, x, y, z) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
@@ -280,7 +270,6 @@ fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryH
 
 fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const ptr = manifold.rotate(obj, x, y, z) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
@@ -288,7 +277,6 @@ fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHand
 
 fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
     const ptr = manifold.scale(obj, x, y, z) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
@@ -296,14 +284,12 @@ fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandl
 
 fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.mirror(@ptrCast(@alignCast(a.ptr)), nx, ny, nz) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.hull(@ptrCast(@alignCast(a.ptr))) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -327,7 +313,6 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
 /// extruded sheets, which bulged by their thickness wherever the profiles differ.)
 fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
     if (a.engine != .manifold or b.engine != .manifold) return null;
-    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return null;
 
     var pts = std.ArrayList(manifold.ManifoldVec3).empty;
     defer pts.deinit(allocator);
@@ -346,8 +331,6 @@ fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.Cr
 }
 
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
-    if (@intFromPtr(handle.ptr) == 0) return null;
-
     const vec = manifold.decompose(@ptrCast(@alignCast(handle.ptr))) orelse return null;
     defer manifold.destructManifoldVec(vec);
 
@@ -368,7 +351,6 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
 
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
 
     // Fast Path 1: Pure Translation
     if (mat[0] == 1.0 and mat[1] == 0.0 and mat[2] == 0.0 and
@@ -396,7 +378,6 @@ fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandl
 /// Returns null on failure; kernel.simplify then falls back to a copy of the input.
 fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
 
     const ptr = manifold.simplify(@ptrCast(@alignCast(a.ptr)), tolerance) orelse return null;
 
@@ -407,7 +388,6 @@ fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
 
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
-    if (@intFromPtr(cs.ptr) == 0) return null;
     const jt: manifold.JoinType = switch (join_type) {
         0 => .square,
         2 => .miter,
@@ -451,7 +431,6 @@ fn polyhedronImpl(config: *const EngineConfig, allocator: std.mem.Allocator, poi
 
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
-    if (@intFromPtr(cs.ptr) == 0) return null;
 
     // Safe: 6 floats comfortably fit inside xmm0-xmm5 CPU registers, avoiding the bug.
     const ptr = manifold.crossSectionTransform(@ptrCast(@alignCast(cs.ptr)), mat[0], mat[1], mat[2], mat[3], mat[4], mat[5]) orelse return null;
@@ -461,7 +440,6 @@ fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.Cro
 
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
-    if (@intFromPtr(cs.ptr) == 0) return null;
     // Sweeping the empty Sketch gives the empty Solid (Manifold rejects empty polygons).
     if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl(&.{});
     const ptr = manifold.extrude(@ptrCast(@alignCast(cs.ptr)), height, slices, twist_degrees, scale_x, scale_y) orelse return null;
@@ -470,7 +448,6 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
 
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
-    if (@intFromPtr(cs.ptr) == 0) return null;
     if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl(&.{});
     const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), segments, revolve_degrees) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
@@ -480,21 +457,18 @@ fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64)
 
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset_dist: f64) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.trimByPlane(@ptrCast(@alignCast(a.ptr)), nx, ny, nz, offset_dist) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.slice(@ptrCast(@alignCast(a.ptr)), height) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.project(@ptrCast(@alignCast(a.ptr))) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -503,7 +477,6 @@ fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
 
 fn genusImpl(handle: geom.GeometryHandle) i32 {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.genus(@ptrCast(@alignCast(handle.ptr)));
 }
 
@@ -583,7 +556,6 @@ const Mesh64 = struct {
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return null;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
     const box = manifold.boundingBox(obj);
     return geom.BoundingBox{ .min = box.min, .max = box.max };
@@ -591,14 +563,12 @@ fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
 
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0.0;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
     return manifold.volume(obj);
 }
 
 fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0.0;
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
     return manifold.surfaceArea(obj);
 }
@@ -626,19 +596,16 @@ fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, confi
 
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {
     if (a.engine != .manifold or b.engine != .manifold) return 0.0;
-    if (@intFromPtr(a.ptr) == 0 or @intFromPtr(b.ptr) == 0) return 0.0;
     return manifold.minGap(@ptrCast(@alignCast(a.ptr)), @ptrCast(@alignCast(b.ptr)), search_length);
 }
 
 fn rayCastImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, origin: [3]f64, end: [3]f64) ?[]geom.RayHit {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     return manifold.rayCast(allocator, @ptrCast(@alignCast(a.ptr)), origin[0], origin[1], origin[2], end[0], end[1], end[2]);
 }
 
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return null;
     return copyMesh(allocator, @ptrCast(@alignCast(handle.ptr))) catch null;
 }
 
@@ -661,13 +628,11 @@ fn copyMesh(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !geom.Mesh
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.numVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
 fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return 0;
     return manifold.numTri(@ptrCast(@alignCast(handle.ptr)));
 }
 
@@ -675,14 +640,12 @@ fn numTrisImpl(handle: geom.GeometryHandle) ?usize {
 
 fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.copy(@ptrCast(@alignCast(a.ptr))) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
 fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
     const ptr = manifold.crossSectionCopy(@ptrCast(@alignCast(a.ptr))) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
@@ -707,7 +670,6 @@ fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
 
 fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandle {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return null;
 
     // Pass the material slot through the C-FFI opaque pointer (0 would mean "default").
     const ctx: ?*anyopaque = @ptrFromInt(@as(usize, kernel.materialSlot(material_id)));
@@ -720,7 +682,6 @@ fn setMaterialImpl(a: geom.GeometryHandle, material_id: u32) ?geom.GeometryHandl
 /// Why Manifold flagged `a` as invalid (non-manifold input, non-finite vertices, ...),
 /// or null if it is a valid solid.
 fn problemImpl(a: geom.GeometryHandle) ?[]const u8 {
-    if (@intFromPtr(a.ptr) == 0) return "the kernel returned no solid";
     return switch (manifold.status(@ptrCast(@alignCast(a.ptr)))) {
         .no_error => null,
         .non_finite_vertex => "a vertex has a NaN or infinite coordinate",
