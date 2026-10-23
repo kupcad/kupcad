@@ -469,7 +469,8 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
     return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
 }
 
-fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32) ?geom.CrossSectionHandle {
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
+    _ = miter_limit;
     _ = join_type;
     _ = delta;
     _ = segments;

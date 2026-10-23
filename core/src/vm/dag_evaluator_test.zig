@@ -347,7 +347,7 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
 
     // 2. Add a 2D Offset operation
-    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8, 2);
 
     // 3. Evaluate explicitly requesting a 2D CrossSectionHandle (borrowed from vm.cs_cache)
     const handle = try dag_evaluator.evaluateCrossSectionDAG(&vm, offset_idx);
@@ -631,7 +631,7 @@ test "DAG Evaluator: a sketch is evaluated once, whatever uses it, until nothing
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
     const sq_idx = try vm.dag_builder.addSquare(10.0, 10.0, true);
-    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8);
+    const offset_idx = try vm.dag_builder.addOffset(sq_idx, 2.0, 0, 8, 2);
     // The sketch object comes first, as in a script: made after the evaluation, its
     // allocation collected (under -Dgc-stress) while nothing referred to the node, and
     // evicted the result the test then looks for.

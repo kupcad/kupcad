@@ -405,7 +405,7 @@ fn simplifyImpl(a: geom.GeometryHandle, tolerance: f64) ?geom.GeometryHandle {
 
 // --- 2D Profile & Sweeps ---
 
-fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32) ?geom.CrossSectionHandle {
+fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
     std.debug.assert(cs.engine == .manifold);
     if (@intFromPtr(cs.ptr) == 0) return null;
     const jt: manifold.JoinType = switch (join_type) {
@@ -414,7 +414,7 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: 
         3 => .bevel,
         else => .round,
     };
-    const ptr = manifold.offset(@ptrCast(@alignCast(cs.ptr)), delta, jt, 2.0, segments) orelse return null;
+    const ptr = manifold.offset(@ptrCast(@alignCast(cs.ptr)), delta, jt, miter_limit, segments) orelse return null;
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

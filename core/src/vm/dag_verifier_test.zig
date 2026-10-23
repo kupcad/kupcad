@@ -26,7 +26,7 @@ test "DAG verifier: what every builder makes is sound" {
     const ext = try b.addExtrude(sq, 2, 1, 0, 1, 1);
     _ = try b.addRevolve(try b.addCrossSectionTransform(circ, .{ 1, 0, 0, 1, 5, 0 }), 16, 360);
     _ = try b.addLoft(sq, poly, 3);
-    _ = try b.addOffset(sq, 0.5, 0, 8);
+    _ = try b.addOffset(sq, 0.5, 0, 8, 2);
     _ = try b.addBinary(.cs_union_op, sq, circ);
     _ = try b.addSlice(try b.addBinary(.union_op, cube, ext), 0.5);
     _ = try b.addProject(cube);

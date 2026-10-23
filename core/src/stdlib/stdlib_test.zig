@@ -1396,6 +1396,23 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: a miter join reaches as far as its miter_limit lets it" {
+    // The limit was fixed at the kernel's 2, its least: the 11° tip of this triangle
+    // mitres out about 10 times the offset, so it is squared off under 2 or 5 and kept
+    // under 20
+    const tip = "t = polygon([[0, 0], [10, 0], [0, 2]])\n";
+    const area = ".extrude(1).volume";
+    try expectScripts(&.{
+        .{ .src = tip ++ "r = t.offset(1, join: :miter)" ++ area ++ " == t.offset(1, join: :miter, miter_limit: 5)" ++ area, .expected = .{ .boolean = true } },
+        .{ .src = tip ++ "r = t.offset(1, join: :miter, miter_limit: 20)" ++ area ++ " > t.offset(1, join: :miter)" ++ area ++ " + 5", .expected = .{ .boolean = true } },
+        // A right angle mitres out √2 times: within the least limit
+        .{ .src = "r = square(10, center: true).offset(1, join: :miter)" ++ area, .expected = .{ .num = 144 } },
+        .{ .src = comptime rescued("square(1).offset(1, miter_limit: 3)"), .expected = .{ .str = "ArgumentError: offset's miter_limit applies to join: :miter only, not join: :round" } },
+        .{ .src = comptime rescued("square(1).offset(1, join: :miter, miter_limit: 1.5)"), .expected = .{ .str = "ValueError: offset miter_limit must be a number of at least 2 (a multiple of delta), got 1.5" } },
+        .{ .src = comptime rescued("cube(1).offset(1, miter_limit: 3)"), .expected = .{ .str = "ArgumentError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit" } },
+    });
+}
+
 test "Stdlib: min_gap finds a gap however wide, unless a search length caps it" {
     // Without a search length it looked 100 mm only: a 149 mm gap answered 100, and so
     // did an empty Solid
@@ -2245,9 +2262,9 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
         .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, segments" },
         .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
-        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, segments" },
+        .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
         .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
-        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, segments" },
+        .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission, density" },
     };

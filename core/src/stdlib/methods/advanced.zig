@@ -47,16 +47,20 @@ pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, n
 
 /// Offset corner styles; the values are the kernel's join_type codes.
 const JoinType = enum(u8) { square = 0, round = 1, miter = 2, bevel = 3 };
+/// How far a miter join's corner may reach, in multiples of the offset, before it is
+/// squared off: without `miter_limit:`, and at least (the kernel raises a lower one to it).
+const MIN_MITER_LIMIT = 2.0;
 
-/// `offset(delta, join:, segments:)`. A Sketch grows by `delta` (shrinks, when it is
-/// negative), its corners joined as `join` says. A Solid grows by `delta` in every
+/// `offset(delta, join:, miter_limit:, segments:)`. A Sketch grows by `delta` (shrinks,
+/// when it is negative), its corners joined as `join` says, a miter's reaching at most
+/// `miter_limit` times `delta` before it is squared off. A Solid grows by `delta` in every
 /// direction: a Minkowski sum with a sphere of that radius, the 3D form of a round join, so
 /// its edges and corners come out rounded. A Solid can't shrink (that is an erosion, which
 /// the kernel lacks) and has no other join. The rounding, a join's or the sphere's, is as
 /// fine as the resolution makes a circle of radius `delta`, or `segments:` says (a sketch's
 /// took the kernel's own default, whatever the script's resolution).
 pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round, segments: i32 = 0 };
+    const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round, miter_limit: ?f64 = null, segments: i32 = 0 };
     const pos = util.positionalArgs(args);
     var base = OffsetOpts{};
     if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
@@ -65,7 +69,14 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const segments = if (opts.segments > 0) opts.segments else util.autoSegments(vm, @abs(opts.delta));
 
     if (receiver.isCrossSection()) {
-        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join), segments);
+        if (opts.miter_limit) |limit| {
+            // A limit that limits nothing would be silently ignored
+            if (opts.join != .miter) return vm.fail(.ArgumentError, "offset's miter_limit applies to join: :miter only, not join: :{s}", .{@tagName(opts.join)});
+            if (!(limit >= MIN_MITER_LIMIT) or !std.math.isFinite(limit)) {
+                return vm.fail(.ValueError, "offset miter_limit must be a number of at least {d} (a multiple of delta), got {f}", .{ MIN_MITER_LIMIT, value.fmtNumber(limit) });
+            }
+        }
+        const new_idx = try vm.dag_builder.addOffset(receiver.asCrossSection().dag_idx, opts.delta, @backingInt(opts.join), segments, opts.miter_limit orelse MIN_MITER_LIMIT);
         return try vm.allocateCrossSection(new_idx);
     }
     if (receiver.isGeometry()) {
@@ -74,6 +85,9 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         }
         if (opts.join != .round) {
             return vm.fail(.ValueError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :{s}", .{@tagName(opts.join)});
+        }
+        if (opts.miter_limit != null) {
+            return vm.fail(.ArgumentError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit", .{});
         }
         const sphere_idx = try vm.dag_builder.addSphere(opts.delta, segments);
         const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
