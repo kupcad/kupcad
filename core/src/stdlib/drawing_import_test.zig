@@ -1,5 +1,6 @@
 //! import_dxf and import_svg: a drawing's outlines as a Sketch, holes by nesting.
 
+const std = @import("std");
 const support = @import("../test_support.zig");
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;
@@ -41,7 +42,7 @@ test "import_dxf: the outlines fill by nesting, a hole's island filled again, ei
 test "import_dxf: ends further apart than the tolerance don't meet, closer ones do" {
     const files = &.{support.ScriptFile{ .path = "gapped.dxf", .data = GAPPED }};
     try expectScripts(&.{
-        .{ .src = comptime rescued("import_dxf(\"gapped.dxf\")"), .expected = .{ .str = "ImportError: could not read DXF file 'gapped.dxf': an outline on layer '0' doesn't close: it runs from [10.001, 10] to [10.000000000000002, 10], 0.0009999999999976694 apart (import_dxf(path, tolerance:) joins ends that far apart)" }, .files = files },
+        .{ .src = comptime rescued("import_dxf(\"gapped.dxf\")"), .expected = .{ .str = "ImportError: could not read DXF file 'gapped.dxf': an outline on layer '0' doesn't close: it runs from [10.001, 10] to [10.000000000000002, 10], 0.0009999999999976694 apart (import_dxf(path, tolerance:) joins ends that far apart, and paths: true reads open lines as Paths)" }, .files = files },
         .{ .src = "v = import_dxf(\"gapped.dxf\", tolerance: 0.01).area\nr = v > 100 && v < 100 + 12.5 * Math::PI", .expected = .{ .boolean = true }, .files = files },
     });
 }
@@ -91,6 +92,30 @@ test "import_svg: what can't be read is an ImportError naming the file" {
         .{ .src = comptime rescued("import_svg(\"bad.svg\")"), .expected = .{ .str = "ImportError: could not read SVG file 'bad.svg': line 1: the path data of a <path> isn't SVG's at character 8: \"\"" }, .files = files },
         .{ .src = comptime rescued("import_svg()"), .expected = .{ .str = "ArgumentError: import_svg expects the path of an SVG file" } },
         .{ .src = comptime rescued("import_svg(\"missing.svg\")"), .expected = .{ .str = "ImportError: could not read SVG file 'missing.svg': FileNotFound" }, .files = files },
-        .{ .src = comptime rescued("import_svg(\"empty.svg\", layers: \"a\")"), .expected = .{ .str = "ArgumentError: import_svg does not take a keyword 'layers' (it accepts: tolerance)" }, .files = files },
+        .{ .src = comptime rescued("import_svg(\"empty.svg\", layers: \"a\")"), .expected = .{ .str = "ArgumentError: import_svg does not take a keyword 'layers' (it accepts: tolerance, paths)" }, .files = files },
+    });
+}
+
+/// A plate to cut out with a score line across it and an arc of one beside it.
+const TEMPLATE = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\">" ++
+    "<rect width=\"40\" height=\"20\" style=\"fill:none;stroke:red\"/>" ++
+    "<path d=\"M 20 0 V 20\" fill=\"none\" stroke=\"blue\"/><path d=\"M 5 5 A 5 5 0 0 1 15 5\" fill=\"none\"/></svg>";
+
+test "import_dxf and import_svg: paths: true reads the open lines a Sketch can't hold as Paths" {
+    const files = &.{
+        support.ScriptFile{ .path = "template.svg", .data = TEMPLATE },
+        support.ScriptFile{ .path = "gapped.dxf", .data = GAPPED },
+        support.ScriptFile{ .path = "plate.dxf", .data = PLATE },
+        support.ScriptFile{ .path = "plate.svg", .data = "<svg><rect width=\"10\" height=\"10\"/></svg>" },
+    };
+    try expectScripts(&.{
+        // The plate's region, and its two score lines beside it, the arc's length exact
+        .{ .src = "r = import_svg(\"template.svg\").area", .expected = .{ .num = 800 }, .files = files },
+        .{ .src = "s = import_svg(\"template.svg\", paths: true)\nr = s.map { |p| p.length }", .expected = .{ .nums = &.{ 20, 5 * std.math.pi } }, .files = files },
+        .{ .src = "r = import_svg(\"template.svg\", paths: true).map { |p| \"#{p.class}\" }.uniq.inspect", .expected = .{ .str = "[\"Path\"]" }, .files = files },
+        // The DXF's three lines and half a circle that don't quite meet: one open line
+        .{ .src = "s = import_dxf(\"gapped.dxf\", paths: true)\nr = [s.length, s[0].start[0]]", .expected = .{ .nums = &.{ 1, 10.001 } }, .files = files },
+        .{ .src = comptime rescued("import_dxf(\"plate.dxf\", paths: true)"), .expected = .{ .str = "ImportError: DXF file 'plate.dxf' has no open path to read" }, .files = files },
+        .{ .src = comptime rescued("import_svg(\"plate.svg\", paths: true)"), .expected = .{ .str = "ImportError: SVG file 'plate.svg' has no open path to read" }, .files = files },
     });
 }

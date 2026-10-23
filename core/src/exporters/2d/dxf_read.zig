@@ -4,7 +4,8 @@
 //! `LWPOLYLINE` and a `POLYLINE` with their bulges as arcs, a `SPLINE` and an `ELLIPSE` as
 //! the lines that keep within the resolution's chord error of them. Pieces whose ends meet
 //! (within the tolerance) are joined, either way round, into outlines; one that can't be
-//! closed is an error naming where its ends are, and so is a block reference (`INSERT`)
+//! closed is an open path when the reader keeps them (a laser's score line), else an error
+//! naming where its ends are, and so is a block reference (`INSERT`)
 //! and an entity off the XY plane. What isn't an outline (text, dimensions, hatches,
 //! points, 3D faces and meshes) is left out, and so is what a layout draws (paper space).
 //! The writer is dxf.zig.
@@ -59,14 +60,17 @@ pub const Options = struct {
     tolerance: f64,
     /// The layers read; null for every one.
     layers: ?[]const []const u8 = null,
+    /// Whether pieces that join into no outline are open paths, not an error.
+    keep_open: bool = false,
     /// How finely a spline and an ellipse are drawn.
     config: *const EngineConfig,
 };
 
-/// The outlines read and every layer that holds an entity read, in the order the file
-/// gives them; all owned by `arena`.
+/// The outlines read, the open paths (kept, Options.keep_open) and every layer that holds
+/// an entity read, in the order the file gives them; all owned by `arena`.
 pub const Drawing = struct {
-    outlines: []path.Loop,
+    outlines: []path.Run,
+    open_paths: []path.Run,
     layers: []const []const u8,
     arena: std.heap.ArenaAllocator,
 
@@ -79,12 +83,13 @@ pub const Error = error{InvalidDrawing} || std.mem.Allocator.Error;
 
 /// The outlines of the DXF `text`, as `options` says.
 pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
-    var drawing = Drawing{ .outlines = &.{}, .layers = &.{}, .arena = .init(allocator) };
+    var drawing = Drawing{ .outlines = &.{}, .open_paths = &.{}, .layers = &.{}, .arena = .init(allocator) };
     errdefer drawing.deinit();
     if (std.mem.startsWith(u8, text, BINARY_SENTINEL)) return diag.fail("it is a binary DXF file: save it as an ASCII DXF", .{});
     var reader = Reader{ .arena = drawing.arena.allocator(), .pairs = .{ .text = text }, .options = options, .diag = diag };
     try reader.readSections();
     drawing.outlines = try reader.joined();
+    drawing.open_paths = reader.open_paths.items;
     drawing.layers = reader.layers.items;
     return drawing;
 }
@@ -190,6 +195,7 @@ const Reader = struct {
     /// Millimetres per unit of the file
     scale: f64 = 1,
     pieces: std.ArrayList(Piece) = .empty,
+    open_paths: std.ArrayList(path.Run) = .empty,
     layers: std.ArrayList([]const u8) = .empty,
     /// The POLYLINE whose VERTEX entities are being read, until its SEQEND
     polyline: ?Polyline = null,
@@ -481,13 +487,14 @@ const Reader = struct {
     }
 
     /// Every piece joined into outlines: a closed one as it is, the others end to end (one
-    /// turned around where it meets the outline by its end) until each closes.
-    fn joined(self: *Reader) Error![]path.Loop {
+    /// turned around where it meets the outline by its end) until each closes; one that
+    /// can't is an open path when they are kept.
+    fn joined(self: *Reader) Error![]path.Run {
         const tolerance = self.options.tolerance;
         var ends = try EndIndex.init(self.arena, self.pieces.items, tolerance);
         const used = try self.arena.alloc(bool, self.pieces.items.len);
         @memset(used, false);
-        var outlines: std.ArrayList(path.Loop) = .empty;
+        var outlines: std.ArrayList(path.Run) = .empty;
         for (self.pieces.items, 0..) |*piece, i| {
             if (used[i]) continue;
             used[i] = true;
@@ -505,10 +512,16 @@ const Reader = struct {
                 } else if (ends.meeting(chain.start, used)) |found| {
                     used[found.piece] = true;
                     try self.prepend(&chain, &self.pieces.items[found.piece], found.at_start);
+                } else if (self.options.keep_open) {
+                    break;
                 } else {
                     const end = chain.end();
-                    return self.diag.fail("an outline on layer '{s}' doesn't close: it runs from [{d}, {d}] to [{d}, {d}], {d} apart (import_dxf(path, tolerance:) joins ends that far apart)", .{ chain.layer, chain.start[0], chain.start[1], end[0], end[1], std.math.hypot(end[0] - chain.start[0], end[1] - chain.start[1]) });
+                    return self.diag.fail("an outline on layer '{s}' doesn't close: it runs from [{d}, {d}] to [{d}, {d}], {d} apart (import_dxf(path, tolerance:) joins ends that far apart, and paths: true reads open lines as Paths)", .{ chain.layer, chain.start[0], chain.start[1], end[0], end[1], std.math.hypot(end[0] - chain.start[0], end[1] - chain.start[1]) });
                 }
+            }
+            if (!near(chain.end(), chain.start, tolerance)) {
+                try self.open_paths.append(self.arena, .{ .start = chain.start, .segments = chain.segments.items });
+                continue;
             }
             // Its last end on its start, exactly
             chain.segments.items[chain.segments.items.len - 1].to = chain.start;

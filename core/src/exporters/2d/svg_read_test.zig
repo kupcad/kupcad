@@ -33,7 +33,7 @@ fn expectPoint(expected: [2]f64, actual: [2]f64) !void {
     try testing.expectApproxEqAbs(expected[1], actual[1], 1e-9);
 }
 
-fn area(outline: path.Loop) f64 {
+fn area(outline: path.Run) f64 {
     return @abs(path.signedArea(outline.start, outline.segments));
 }
 
@@ -116,17 +116,29 @@ test "SVG read: shapes, transforms, and an ellipse's arcs as lines" {
     try testing.expectApproxEqAbs(@as(f64, 8) * std.math.pi, area(drawing.outlines[4]), 1e-3);
 }
 
-test "SVG read: a filled open subpath is closed for its fill, an unfilled one is a stroke and left out" {
+test "SVG read: a filled open subpath is closed for its fill, an unfilled one is a stroke, an open path" {
     var drawing = try read(MM ++ "<path d=\"M0 0L10 0L10 10\"/><path d=\"M20 0L30 0L30 10\" fill=\"none\"/>" ++
-        "<g style=\"fill:none\"><path d=\"M40 0L50 0L50 10Z\"/><polyline points=\"60,0 70,0 70,10\"/></g></svg>");
+        "<g style=\"fill:none\"><path d=\"M40 0L50 0L50 10Z\"/><polyline points=\"60,0 70,0 70,10\"/></g>" ++
+        "<line x1=\"0\" y1=\"20\" x2=\"10\" y2=\"20\" fill=\"red\"/><path d=\"M0 30A5 5 0 0 1 10 30\" fill=\"none\"/></svg>");
     defer drawing.deinit();
     // The filled triangle, and the closed one in the unfilled group
     try testing.expectEqual(@as(usize, 2), drawing.outlines.len);
     try testing.expectApproxEqAbs(@as(f64, 50), area(drawing.outlines[0]), 1e-9);
     try expectPoint(.{ 40, 0 }, drawing.outlines[1].start);
+    // The strokes alone, open as they were drawn: two corners, a line (filled or not, it
+    // encloses nothing) and an arc, exact
+    const open = drawing.open_paths;
+    try testing.expectEqual(@as(usize, 4), open.len);
+    try expectPoint(.{ 20, 0 }, open[0].start);
+    try testing.expectEqual(@as(usize, 2), open[0].segments.len);
+    try expectPoint(.{ 30, -10 }, open[0].segments[1].to);
+    try expectPoint(.{ 60, 0 }, open[1].start);
+    try expectPoint(.{ 10, -20 }, open[2].segments[0].to);
+    try expectPoint(.{ 5, -30 }, open[3].segments[0].arc.?.center);
+    try expectPoint(.{ 10, -30 }, open[3].segments[0].to);
 }
 
-test "SVG read: what isn't drawn is left out" {
+test "SVG read: what isn't drawn is left out, and a line is an open path" {
     var drawing = try read("<?xml version=\"1.0\"?>\n<!DOCTYPE svg [ <!ENTITY a \"b\"> ]>\n<!-- a <rect> in a comment -->\n" ++ MM ++
         "<sodipodi:namedview/><defs><rect width=\"5\" height=\"5\"/></defs><title>t</title><text x=\"0\">hi</text><line x1=\"0\" y1=\"0\" x2=\"5\" y2=\"5\"/>" ++
         "<rect width=\"5\" height=\"5\" display=\"none\"/><g style=\"display: none\"><rect width=\"5\" height=\"5\"/></g><![CDATA[<rect/>]]>" ++
@@ -134,6 +146,8 @@ test "SVG read: what isn't drawn is left out" {
     defer drawing.deinit();
     try testing.expectEqual(@as(usize, 1), drawing.outlines.len);
     try testing.expectApproxEqAbs(@as(f64, 49), area(drawing.outlines[0]), 1e-9);
+    // The line is a stroke: an open path, nothing else
+    try testing.expectEqual(@as(usize, 1), drawing.open_paths.len);
 }
 
 test "SVG read: what can't be read says why and where" {

@@ -134,12 +134,28 @@ test "DXF read: only the layers asked for, every layer read named, and what isn'
     try testing.expectEqual(@as(usize, 2), all.outlines.len);
 }
 
+test "DXF read: pieces that join into no outline are open paths, when the reader keeps them" {
+    // A score line of two pieces drawn apart, beside a closed square
+    const text = file("", "0\nLINE\n8\nscore\n10\n0\n20\n0\n11\n10\n21\n0\n" ++ "0\nARC\n8\nscore\n10\n10\n20\n5\n40\n5\n50\n270\n51\n0\n" ++
+        "0\nLWPOLYLINE\n8\ncut\n70\n1\n10\n0\n20\n20\n10\n4\n20\n20\n10\n4\n20\n24\n10\n0\n20\n24\n");
+    var diag: dxf_read.Diagnostic = .{};
+    var drawing = try dxf_read.read(testing.allocator, text, .{ .tolerance = 1e-6, .keep_open = true, .config = &CONFIG }, &diag);
+    defer drawing.deinit();
+    try testing.expectEqual(@as(usize, 1), drawing.outlines.len);
+    try testing.expectEqual(@as(usize, 1), drawing.open_paths.len);
+    const score = drawing.open_paths[0];
+    try expectPoint(.{ 0, 0 }, score.start);
+    try testing.expectEqual(@as(usize, 2), score.segments.len);
+    try expectPoint(.{ 15, 5 }, score.segments[1].to);
+    try expectPoint(.{ 10, 5 }, score.segments[1].arc.?.center);
+}
+
 test "DXF read: what can't be read says why and where" {
     try expectRefused("AutoCAD Binary DXF\r\n\x1a\x00", "it is a binary DXF file: save it as an ASCII DXF");
     try expectRefused("0\nSECTION\nx\n", "line 3: 'x' isn't a group code (an ASCII DXF file alternates codes and values)");
     try expectRefused("0\nSECTION\n2\n", "line 3: group code 2 has no value");
     try expectRefused(file("", "0\nINSERT\n8\nparts\n2\nbolt\n10\n0\n20\n0\n"), "line 11: a block reference (INSERT) on layer 'parts' isn't read yet: explode the blocks into their entities first");
-    try expectRefused(file("", "0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n0\nLINE\n10\n10\n20\n0\n11\n10\n21\n5\n"), "an outline on layer '0' doesn't close: it runs from [0, 0] to [10, 5], 11.180339887498949 apart (import_dxf(path, tolerance:) joins ends that far apart)");
+    try expectRefused(file("", "0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n0\nLINE\n10\n10\n20\n0\n11\n10\n21\n5\n"), "an outline on layer '0' doesn't close: it runs from [0, 0] to [10, 5], 11.180339887498949 apart (import_dxf(path, tolerance:) joins ends that far apart, and paths: true reads open lines as Paths)");
     try expectRefused(file("", "0\nCIRCLE\n10\n0\n20\n0\n40\n1\n210\n1\n220\n0\n230\n0\n"), "line 11: the CIRCLE on layer '0' isn't in the XY plane (its normal is [1, 0, 0])");
     try expectRefused(file("", "0\nCIRCLE\n10\n0\n20\n0\n40\n0\n"), "line 11: the CIRCLE on layer '0' has a radius of 0");
     try expectRefused(file("", "0\nCIRCLE\n10\nx\n20\n0\n40\n1\n"), "line 14: group 10 should be a number, got 'x'");

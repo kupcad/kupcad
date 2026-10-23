@@ -5,9 +5,10 @@
 //! circles; curves (`C`, `S`, `Q`, `T`, an ellipse's arcs) become the lines that keep
 //! within the resolution's chord error of them. A subpath is an outline when it closes
 //! (`Z`, or its ends meet within the tolerance), or when its shape is filled (SVG closes
-//! it for the fill); an open one that isn't filled is a stroke alone, with no area, and
-//! is left out, as are a `line`, text, images and what isn't drawn (`defs`, `clipPath`,
-//! `display: none`). A `use` is refused for now. The file's units become millimetres by
+//! it for the fill); an open one that isn't filled is a stroke alone, with no area: an
+//! open path of its own (a laser's score line). A `line` is one too. Text, images and what
+//! isn't drawn (`defs`, `clipPath`, `display: none`) are left out, and a `use` is refused
+//! for now. The file's units become millimetres by
 //! its `width` and `viewBox` (a user unit is a CSS pixel, 1/96 inch, without them), and
 //! its y, which runs down the page, is turned over about its origin. The writer is svg.zig.
 
@@ -31,7 +32,7 @@ const LENGTH_UNITS = [_]struct { suffix: []const u8, px: f64 }{
     .{ .suffix = "Q", .px = 96.0 / 25.4 / 4.0 },
 };
 /// Elements whose content isn't drawn as it stands (definitions, text, images, styles).
-const UNDRAWN = [_][]const u8{ "defs", "clipPath", "mask", "symbol", "marker", "pattern", "metadata", "title", "desc", "style", "script", "linearGradient", "radialGradient", "filter", "foreignObject", "text", "image", "line" };
+const UNDRAWN = [_][]const u8{ "defs", "clipPath", "mask", "symbol", "marker", "pattern", "metadata", "title", "desc", "style", "script", "linearGradient", "radialGradient", "filter", "foreignObject", "text", "image" };
 /// Elements that only group what is in them.
 const GROUPS = [_][]const u8{ "g", "a", "switch" };
 /// The most an elliptical arc's cubic piece sweeps: a cubic keeps within about 4e-6 of
@@ -49,9 +50,11 @@ pub const Options = struct {
     config: *const EngineConfig,
 };
 
-/// The outlines read, owned by `arena`.
+/// The outlines read (closed) and the open paths (strokes alone), each in the file's
+/// order, owned by `arena`.
 pub const Drawing = struct {
-    outlines: []path.Loop,
+    outlines: []path.Run,
+    open_paths: []path.Run,
     arena: std.heap.ArenaAllocator,
 
     pub fn deinit(self: *Drawing) void {
@@ -63,11 +66,12 @@ pub const Error = error{InvalidDrawing} || std.mem.Allocator.Error;
 
 /// The outlines of the SVG `text`, as `options` says.
 pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
-    var drawing = Drawing{ .outlines = &.{}, .arena = .init(allocator) };
+    var drawing = Drawing{ .outlines = &.{}, .open_paths = &.{}, .arena = .init(allocator) };
     errdefer drawing.deinit();
     var reader = Reader{ .arena = drawing.arena.allocator(), .text = text, .options = options, .diag = diag };
     try reader.readElements();
     drawing.outlines = reader.outlines.items;
+    drawing.open_paths = reader.open_paths.items;
     return drawing;
 }
 
@@ -181,7 +185,8 @@ const Reader = struct {
     text: []const u8,
     options: Options,
     diag: *Diagnostic,
-    outlines: std.ArrayList(path.Loop) = .empty,
+    outlines: std.ArrayList(path.Run) = .empty,
+    open_paths: std.ArrayList(path.Run) = .empty,
     frames: std.ArrayList(Frame) = .empty,
     seen_root: bool = false,
 
@@ -232,6 +237,8 @@ const Reader = struct {
             try self.readEllipse(tag, frame, "rx", "ry");
         } else if (std.mem.eql(u8, name, "polygon") or std.mem.eql(u8, name, "polyline")) {
             try self.readPoints(tag, frame, std.mem.eql(u8, name, "polygon"));
+        } else if (std.mem.eql(u8, name, "line")) {
+            try self.readLine(tag, frame);
         } else if (!std.mem.eql(u8, name, "svg") and !isOneOf(name, &GROUPS)) {
             // An element the drawing has no shape for (an animation, a filter's part)
             frame.skipped = true;
@@ -401,6 +408,16 @@ const Reader = struct {
         try shape.finish(true);
     }
 
+    /// A `line`: filled or not, it encloses nothing, so it is an open path.
+    fn readLine(self: *Reader, tag: Tag, frame: Frame) Error!void {
+        var stroke = frame;
+        stroke.filled = false;
+        var shape = Shape{ .reader = self, .frame = stroke };
+        try shape.moveTo(.{ try self.length(tag, "x1") orelse 0, try self.length(tag, "y1") orelse 0 });
+        try shape.lineTo(.{ try self.length(tag, "x2") orelse 0, try self.length(tag, "y2") orelse 0 });
+        try shape.finish(false);
+    }
+
     fn readPoints(self: *Reader, tag: Tag, frame: Frame, closed: bool) Error!void {
         const text = tag.attribute("points") orelse return;
         var numbers = Numbers{ .text = text };
@@ -516,7 +533,7 @@ const Shape = struct {
     }
 
     /// Ends the subpath being drawn: an outline when `closed`, when its ends meet, or when
-    /// it is filled; otherwise a stroke alone, left out.
+    /// it is filled; otherwise a stroke alone, an open path.
     fn finish(self: *Shape, closed: bool) !void {
         if (!self.open) return;
         try self.finishOpen(closed);
@@ -530,17 +547,17 @@ const Shape = struct {
         if (self.segments.items.len == 0) return;
         const end = self.at;
         const meets = std.math.hypot(end[0] - self.start[0], end[1] - self.start[1]) <= self.reader.options.tolerance;
-        if (!closed and !meets and !self.frame.filled) return;
+        if (!closed and !meets and !self.frame.filled) return self.reader.open_paths.append(self.reader.arena, try self.placed());
         if (meets) {
             self.segments.items[self.segments.items.len - 1].to = self.start;
         } else try self.segments.append(self.reader.arena, .{ .to = self.start });
         try self.reader.outlines.append(self.reader.arena, try self.placed());
     }
 
-    /// The closed subpath in millimetres: its arcs kept when the matrix keeps a circle a
-    /// circle (and drawn as cubics otherwise), its cubics as the lines within the
-    /// resolution's chord error of them, for a circle of the subpath's size.
-    fn placed(self: *Shape) !path.Loop {
+    /// The subpath in millimetres: its arcs kept when the matrix keeps a circle a circle
+    /// (and drawn as cubics otherwise), its cubics as the lines within the resolution's
+    /// chord error of them, for a circle of the subpath's size.
+    fn placed(self: *Shape) !path.Run {
         const arena = self.reader.arena;
         const m = self.frame.matrix;
         const keeps_circles = affine2.similarityScale(m) != null;

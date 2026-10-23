@@ -187,9 +187,9 @@ pub fn tangentArc(from: [2]f64, tangent: [2]f64, to: [2]f64, tolerance: f64) ?Se
     return .{ .to = to, .arc = .{ .center = center, .radius = @abs(s) }, .ccw = ccw, .angle = sweep(center, from, to, ccw) };
 }
 
-/// A closed path: its last segment ends back at its start. What a drawing's reader gives
-/// for each outline.
-pub const Loop = struct { start: [2]f64, segments: []Segment };
+/// A path's start and segments, as plain data: what a drawing's reader gives for each line
+/// it reads, an outline's closed (its last segment ending at its start).
+pub const Run = struct { start: [2]f64, segments: []Segment };
 
 /// Which of a path's points a segment drew: `count` from `first` (its end last; the start
 /// of the first segment is the path's start, point 0).
