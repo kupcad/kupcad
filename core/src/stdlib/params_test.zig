@@ -86,3 +86,20 @@ test "param: a value the parameter can't take is an error naming it and what was
         try testing.expectEqualStrings(case.message, vm.last_error orelse "");
     }
 }
+
+test "param: step, unit and group are a host's hints, checked but not applied to the value" {
+    try support.expectScripts(&.{
+        .{ .src = "r = param(:w, default: 10, step: 0.5, unit: \"mm\", group: \"Size\")", .expected = .{ .num = 10 } },
+        .{ .src = "r = param(:label, default: \"A\", group: :Text)", .expected = .{ .str = "A" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, step: 0)"), .expected = .{ .str = "ValueError: parameter :w step must be a number greater than 0, got 0" } },
+        .{ .src = comptime support.rescued("param(:label, default: \"A\", step: 1)"), .expected = .{ .str = "ArgumentError: parameter :label is a string by its default, and step: is for a number" } },
+        .{ .src = comptime support.rescued("param(:on, default: true, unit: \"mm\")"), .expected = .{ .str = "ArgumentError: parameter :on is a boolean by its default, and unit: is for a number" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, step: \"x\")"), .expected = .{ .str = "TypeError: param expects a number for step, got String" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, colour: \"x\")"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'colour' (it accepts: default, validate, step, unit, group)" } },
+    });
+    // A value off the step is the host's to give: -p 10.3 with step: 0.5 stays 10.3
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try runWith("w", .{ .text = "10.3" }, "r = param(:w, default: 10, step: 0.5)", &vm));
+    try support.expectValue(.{ .num = 10.3 }, vm.globals.get("r").?);
+}

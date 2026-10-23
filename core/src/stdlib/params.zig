@@ -14,7 +14,14 @@ const arguments = @import("arguments.zig");
 /// and reading it as the default's type: text from `-p` becomes a number, a boolean, a
 /// String or a Symbol as the parameter is one.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    const parsed = try arguments.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
+    const parsed = try arguments.parseKwargs(struct {
+        default: ?value.Value = null,
+        validate: ?value.Value = null,
+        // For a host's controls (`kupcad doc`): checked here, not applied to the value
+        step: ?f64 = null,
+        unit: ?[]const u8 = null,
+        group: ?[]const u8 = null,
+    }, vm, args, "param");
     if (parsed.positional.len != 1) {
         return vm.fail(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});
     }
@@ -40,6 +47,13 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     if (default_val.isString()) p_type = .string;
     if (default_val.isBool()) p_type = .boolean;
     if (default_val.isSymbol()) p_type = .symbol;
+
+    if (parsed.opts.step) |step| {
+        if (!(step > 0) or !std.math.isFinite(step)) return vm.fail(.ValueError, "parameter :{s} step must be a number greater than 0, got {f}", .{ sym_chars, value.fmtNumber(step) });
+    }
+    if (p_type != .number and (parsed.opts.step != null or parsed.opts.unit != null)) {
+        return vm.fail(.ArgumentError, "parameter :{s} is a {s} by its default, and {s} is for a number", .{ sym_chars, @tagName(p_type), if (parsed.opts.step != null) "step:" else "unit:" });
+    }
 
     var min_val: f64 = std.math.nan(f64);
     var max_val: f64 = std.math.nan(f64);

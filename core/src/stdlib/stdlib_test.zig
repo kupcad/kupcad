@@ -1194,7 +1194,7 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         .{ .src = comptime rescued("-\"a\""), .expected = .{ .str = "TypeError: unary '-' expects a number, got String" } },
         .{ .src = comptime rescued("(1..nil)"), .expected = .{ .str = "TypeError: a range needs numbers or single characters, got Number..nil" } },
         // param checks its keywords, and its failures are typed.
-        .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, validate)" } },
+        .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, validate, step, unit, group)" } },
         .{ .src = comptime rescued("param(:w, default: 5, validate: { minimum: 1 })"), .expected = .{ .str = "ArgumentError: param validate does not take a keyword 'minimum' (it accepts: min, max, in)" } },
         .{ .src = comptime rescued("param(:w, default: 5, validate: { max: 3 })"), .expected = .{ .str = "ValueError: parameter :w value 5 is above its maximum 3" } },
         .{ .src = comptime rescued("param(:missing)"), .expected = .{ .str = "NameError: parameter :missing is used before it is defined" } },
