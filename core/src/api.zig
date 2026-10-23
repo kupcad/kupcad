@@ -23,8 +23,13 @@ const gltf_exporter = @import("exporters/3d/gltf.zig");
 const step_exporter = @import("exporters/3d/step.zig");
 const threemf_exporter = @import("exporters/3d/threemf.zig");
 const obj_exporter = @import("exporters/3d/obj.zig");
+const svg_exporter = @import("exporters/2d/svg.zig");
+const drawing_mod = @import("exporters/2d/drawing.zig");
+const log = std.log.scoped(.@"export");
 const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
+const error_kind = @import("vm/error_kind.zig");
+const MaterialDef = @import("core/material.zig").MaterialDef;
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -374,13 +379,15 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
 
 /// Whether `format` can hold `model`; raises in the VM (and fails with error.RuntimeError)
 /// when it can't: a 3D format refuses a Sketch (extrude it) and a model with no Solid,
-/// unless the format shows ghosts and there are some.
+/// unless the format shows ghosts and there are some; a 2D format draws Sketches and
+/// Solids alike (the Solids projected onto XY) and refuses only a model with neither.
 pub fn requireExportable(vm: *VM, model: *const Model, format: ExportFormat) !void {
-    comptime for (std.enums.values(ExportFormat)) |f| {
-        if (f.dimension() == .@"2d") @compileError("requireExportable has no rules for a 2D format yet");
-    };
     switch (format.dimension()) {
-        .@"2d" => unreachable,
+        .@"2d" => {
+            if (model.solids.items.len + model.sketches.items.len == 0) {
+                return vm.fail(.GeometryError, "the model holds no shape: nothing to draw as {s}", .{@tagName(format)});
+            }
+        },
         .@"3d" => {
             if (model.sketches.items.len > 0) {
                 const which = if (model.solids.items.len == 0 and model.sketches.items.len == 1) "is" else "holds";
@@ -420,6 +427,8 @@ pub const ExportFormat = enum {
     @"3mf",
     /// Wavefront OBJ: an object per Solid, in millimetres and Z up (exporters/3d/obj.zig).
     obj,
+    /// A drawing of the model's Sketches, and its Solids projected onto XY (exporters/2d/svg.zig).
+    svg,
 
     /// What a format holds: a 3D format the model's Solids, a 2D one its Sketches.
     pub const Dimension = enum { @"2d", @"3d" };
@@ -458,6 +467,7 @@ pub const ExportFormat = enum {
     pub fn dimension(self: ExportFormat) Dimension {
         return switch (self) {
             .stl, .glb, .gltf, .step, .@"3mf", .obj => .@"3d",
+            .svg => .@"2d",
         };
     }
 
@@ -470,6 +480,7 @@ pub const ExportFormat = enum {
             .step => &.{ ".step", ".stp" },
             .@"3mf" => &.{".3mf"},
             .obj => &.{".obj"},
+            .svg => &.{".svg"},
         };
     }
 
@@ -482,7 +493,7 @@ pub const ExportFormat = enum {
     pub fn supportsMaterialLibrary(self: ExportFormat) bool {
         return switch (self) {
             .obj => true,
-            .stl, .glb, .gltf, .step, .@"3mf" => false,
+            .stl, .glb, .gltf, .step, .@"3mf", .svg => false,
         };
     }
 
@@ -490,7 +501,7 @@ pub const ExportFormat = enum {
     pub fn supportsDraco(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf", .obj => false,
+            .stl, .step, .@"3mf", .obj, .svg => false,
         };
     }
 
@@ -499,7 +510,7 @@ pub const ExportFormat = enum {
     pub fn showsGhosts(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf", .obj => false,
+            .stl, .step, .@"3mf", .obj, .svg => false,
         };
     }
 
@@ -508,7 +519,7 @@ pub const ExportFormat = enum {
     pub fn requiredEngine(self: ExportFormat) ?geom.EngineType {
         return switch (self) {
             .step => .brep_native,
-            .stl, .glb, .gltf, .@"3mf", .obj => null,
+            .stl, .glb, .gltf, .@"3mf", .obj, .svg => null,
         };
     }
 };
@@ -547,7 +558,70 @@ pub fn exportModelFromVm(
     var model = try collectModel(allocator, vm);
     defer model.deinit(allocator);
     try requireExportable(vm, &model, format);
-    return exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title);
+    return switch (format.dimension()) {
+        .@"3d" => exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title),
+        .@"2d" => exportDrawing(allocator, vm, format, model.sketches.items, model.solids.items),
+    };
+}
+
+/// `sketches` and `solids` (rooted by the caller) as a drawing in `format` (drawingOf).
+fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value) ![]const u8 {
+    var drawing = try drawingOf(allocator, vm, sketches, solids);
+    defer drawing.deinit(allocator);
+    if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
+    return switch (format) {
+        .svg => svg_exporter.build(allocator, &drawing),
+        .stl, .glb, .gltf, .step, .@"3mf", .obj => unreachable, // 3D: exportSolids
+    };
+}
+
+/// The drawing of `sketches`, each with its name and colour (bom.sketchLabel), then of
+/// `solids` projected onto the XY plane (their silhouettes, as `project` gives them), each
+/// with its part's name and colour. The outlines come from the kernel (feature
+/// `sketch_contours`), so a B-Rep sketch raises what it can't do.
+pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.Value, solids: []const value.Value) !drawing_mod.Drawing {
+    var shapes: std.ArrayList(drawing_mod.Shape) = .empty;
+    errdefer {
+        for (shapes.items) |shape| {
+            shape.contours.deinit(allocator);
+            if (shape.name) |name| allocator.free(name);
+        }
+        shapes.deinit(allocator);
+    }
+    try shapes.ensureTotalCapacity(allocator, sketches.len + solids.len);
+    for (sketches) |sketch| {
+        const label = bom.sketchLabel(vm, sketch);
+        const name: ?[]u8 = if (label.name) |n| try allocator.dupe(u8, n) else null;
+        shapes.appendAssumeCapacity(try shapeOf(allocator, vm, sketch, name, label.material));
+    }
+    if (solids.len > 0) {
+        const grouping = try bom.group(vm, allocator, solids);
+        defer grouping.deinit(allocator);
+        var names = try bom.CopyNames.init(allocator, &grouping);
+        defer names.deinit(allocator);
+        for (solids, grouping.copies) |solid, copy| {
+            // The projection, rooted while its outlines are read; a scope, as an error
+            // raised in it unwinds the stack
+            var scope = HandleScope.init(vm);
+            defer scope.deinit();
+            const projected = try vm.allocateCrossSection(try vm.dag_builder.addProject(solid.asGeometry().dag_idx));
+            vm.push(projected);
+            shapes.appendAssumeCapacity(try shapeOf(allocator, vm, projected, try names.next(allocator, copy), grouping.parts[copy.part].material));
+        }
+        log.info("projected {d} Solid{s} onto the XY plane for the drawing", .{ solids.len, if (solids.len == 1) "" else "s" });
+    }
+    const bounds = drawing_mod.Drawing.boundsOf(shapes.items);
+    return .{ .shapes = try shapes.toOwnedSlice(allocator), .projected = solids.len, .bounds = bounds };
+}
+
+/// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
+/// the shape's from here on, freed on failure) and `material`.
+fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]const u8, material: ?MaterialDef) !drawing_mod.Shape {
+    errdefer if (name) |n| allocator.free(n);
+    const handle = try vm.ensureConcreteCrossSection(sketch);
+    try vm.requireFeature(handle.engine, .sketch_contours);
+    const contours = kernel.crossSectionContours(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
+    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .contours = contours };
 }
 
 /// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
@@ -566,6 +640,7 @@ fn exportSolids(
         // ghosts are the viewer's, as in an STL.
         .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
         .obj => return obj_exporter.build(allocator, vm, solids, title, options.mtl_name),
+        .svg => unreachable, // 2D: exportDrawing
         .step => {
             var handles = try handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);

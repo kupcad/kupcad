@@ -25,6 +25,7 @@ test "determinism: a build gives the same bytes every time, on one thread or man
     defer cases.deinit(testing.allocator);
     try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .format = .glb });
     try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .format = .obj });
+    try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .format = .svg });
     inline for (examples.names) |name| {
         const source = @embedFile("example/" ++ name);
         // An exact model exports STEP, as `kupcad build` would; the rest glb.

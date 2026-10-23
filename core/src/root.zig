@@ -80,6 +80,7 @@ test {
     _ = @import("exporters/zip_test.zig");
     _ = @import("exporters/3d/threemf_test.zig");
     _ = @import("exporters/3d/obj_test.zig");
+    _ = @import("exporters/2d/svg_test.zig");
 
     // Frontends
     _ = @import("frontend/docstring_test.zig");
