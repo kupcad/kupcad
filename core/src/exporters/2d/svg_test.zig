@@ -127,6 +127,15 @@ test "SVG: a circle is two arcs of its exact radius, a rounded corner an arc, a 
     try testing.expect(std.mem.find(u8, hd, " A 3 3 0 0 0 ") == null);
 }
 
+test "SVG: a cylinder's projection and slice are its circle, a tilted one's a polyline" {
+    const svg = try exportSvg("c = cylinder(r: 5, h: 10, segments: 8)\n[c.project, c.slice(5).translate(x: 20), c.rotate(x: 90).translate(x: 40).project]");
+    defer testing.allocator.free(svg);
+    errdefer std.debug.print("svg:\n{s}\n", .{svg});
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, pathData(svg, 0).?, " A 5 5 "));
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, pathData(svg, 1).?, " A 5 5 "));
+    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, pathData(svg, 2).?, " A "));
+}
+
 test "SVG: a Path is an open, unfilled path with its arcs exact, a closed one's arcs too" {
     // `end` and `from` are keywords, hence `sweep:` and `start:`/`to:`
     const source = "p = (line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])).named(\"bracket\").material(color: \"#FF0000\")\n[p, p.close.translate(y: 20)]";

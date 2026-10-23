@@ -98,14 +98,15 @@ test "DXF: a hole is a polyline of its own, a name a layer in the shape's colour
     defer testing.allocator.free(dxf);
     var pairs = try readPairs(dxf);
     defer pairs.deinit(testing.allocator);
+    // The plate and the lid; the plate's hole is a CIRCLE
     var lines = try polylines(pairs.items);
     defer freePolylines(&lines);
-    try testing.expectEqual(@as(usize, 3), lines.items.len);
+    try testing.expectEqual(@as(usize, 2), lines.items.len);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, dxf, "\nCIRCLE\n"));
     // The forbidden `/` becomes `_`
     try testing.expectEqualStrings("plate_1", lines.items[0].layer);
-    try testing.expectEqualStrings("plate_1", lines.items[1].layer);
-    try testing.expectEqualStrings("lid", lines.items[2].layer);
-    try testing.expectEqual(@as(usize, 4), lines.items[2].points.items.len);
+    try testing.expectEqualStrings("lid", lines.items[1].layer);
+    try testing.expectEqual(@as(usize, 4), lines.items[1].points.items.len);
     // The layer table: `0`, then each name once, the plate's with its true colour and the
     // nearest index colour (red)
     var layers: usize = 0;
@@ -128,8 +129,8 @@ test "DXF: a hole is a polyline of its own, a name a layer in the shape's colour
     try testing.expectEqualStrings("16719872", plate_true.?); // 0xFF2000
 }
 
-test "DXF: a circle is two bulged vertices, a rounded corner a bulge of its angle, a line none" {
-    const dxf = try exportDxf("[circle(r: 5, segments: 8), square(20, round_r: 4, segments: 16).translate(x: 20)]");
+test "DXF: a half circle is a bulge of 1, a rounded corner a bulge of its angle, a line none" {
+    const dxf = try exportDxf("[circle(r: 5, segments: 8) & square(10, 5).translate(x: -5), square(20, round_r: 4, segments: 16).translate(x: 20)]");
     defer testing.allocator.free(dxf);
     var pairs = try readPairs(dxf);
     defer pairs.deinit(testing.allocator);
@@ -138,19 +139,18 @@ test "DXF: a circle is two bulged vertices, a rounded corner a bulge of its angl
     for (pairs.items) |p| {
         if (p.code == 42) try bulges.append(testing.allocator, p.value);
     }
-    // The circle's two half turns, then the plate's four quarter turns (tan 22.5°)
-    try testing.expectEqual(@as(usize, 6), bulges.items.len);
+    // The half disc's half turn, then the plate's four quarter turns (tan 22.5°)
+    try testing.expectEqual(@as(usize, 5), bulges.items.len);
     try testing.expectEqualStrings("1", bulges.items[0]);
-    try testing.expectEqualStrings("1", bulges.items[1]);
-    for (bulges.items[2..]) |b| try testing.expectApproxEqAbs(@tan(std.math.pi / 8.0), try std.fmt.parseFloat(f64, b), 1e-12);
+    for (bulges.items[1..]) |b| try testing.expectApproxEqAbs(@tan(std.math.pi / 8.0), try std.fmt.parseFloat(f64, b), 1e-12);
     var lines = try polylines(pairs.items);
     defer freePolylines(&lines);
-    try testing.expectEqual(@as(usize, 2), lines.items[0].points.items.len);
+    try testing.expectEqual(@as(usize, 2), lines.items[0].points.items.len); // the arc and the chord
     try testing.expectEqual(@as(usize, 8), lines.items[1].points.items.len);
     // A hole's bulges are negative: it runs clockwise
-    const holed = try exportDxf("square(20, center: true) - circle(r: 3, segments: 8)");
+    const holed = try exportDxf("square(20, center: true) - square(6, round_r: 2, center: true)");
     defer testing.allocator.free(holed);
-    try testing.expect(std.mem.find(u8, holed, "\n42\n-1\n") != null);
+    try testing.expect(std.mem.find(u8, holed, "\n42\n-") != null);
 }
 
 test "DXF: a Path is an open polyline with its end as a vertex, its arcs as bulges" {
@@ -173,6 +173,31 @@ test "DXF: a Path is an open polyline with its end as a vertex, its arcs as bulg
     try testing.expect(open);
     try testing.expectEqualStrings("4", count.?);
     try testing.expect(std.mem.find(u8, dxf, "\n42\n1\n") != null); // the half turn
+}
+
+test "DXF: an outline that is one circle is a CIRCLE entity" {
+    const dxf = try exportDxf("[circle(r: 5, segments: 8).named(\"hole\"), square(20, center: true).translate(x: 30) - circle(r: 3).translate(x: 30)]");
+    defer testing.allocator.free(dxf);
+    var pairs = try readPairs(dxf);
+    defer pairs.deinit(testing.allocator);
+    var circles: usize = 0;
+    var radius: ?[]const u8 = null;
+    var layer: ?[]const u8 = null;
+    for (pairs.items, 0..) |p, i| {
+        if (p.code == 0 and std.mem.eql(u8, p.value, "CIRCLE")) {
+            circles += 1;
+            var j = i + 1;
+            while (pairs.items[j].code != 0) : (j += 1) {
+                if (circles == 1 and pairs.items[j].code == 40) radius = pairs.items[j].value;
+                if (circles == 1 and pairs.items[j].code == 8) layer = pairs.items[j].value;
+            }
+        }
+    }
+    // The named circle, and the plate's hole; the plate itself is a polyline
+    try testing.expectEqual(@as(usize, 2), circles);
+    try testing.expectEqualStrings("5", radius.?);
+    try testing.expectEqualStrings("hole", layer.?);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, dxf, "\nLWPOLYLINE\n"));
 }
 
 test "DXF: every handle is given out once" {

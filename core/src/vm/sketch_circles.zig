@@ -1,9 +1,13 @@
 //! The circles a sketch's graph defines, with the points they were drawn with: every
-//! `circle` and each corner of a `rounded_square` below the sketch's node, carried through
-//! the sketch's transforms as long as those keep a circle a circle (a similarity: a uniform
-//! scale, a turn, a mirror, a move), and not through an offset or a boolean's other side,
-//! which draw their own shapes. The 2D exporters match the kernel's outlines against them
-//! to write the arcs the chords came from (exporters/2d/arcs.zig).
+//! `circle`, each corner of a `rounded_square` and each arc of a `closed_path` below the
+//! sketch's node, carried through the sketch's transforms as long as those keep a circle a
+//! circle (a similarity: a uniform scale, a turn, a mirror, a move), and not through an
+//! offset, which draws its own shape. A sketch that is a Solid's projection or slice
+//! (`project`, `slice`) has the Solid's: a cylinder's cap (a cone's larger one), and the
+//! sketches of its extrusions, through the Solid's moves that keep the XY plane (a move, a
+//! turn about z, a scale even in x and y, a mirror across a vertical plane). The 2D
+//! exporters match the kernel's outlines against them to write the arcs the chords came
+//! from (exporters/2d/arcs.zig).
 
 const std = @import("std");
 const dag = @import("dag.zig");
@@ -122,14 +126,41 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                 const p = b.getTransformPayload(node);
                 try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix.then(b.numbers.items[p.num_idx..][0..6].*) });
             },
-            .cs_set_name, .cs_set_material => try pending.append(allocator, .{ .node = b.extra_data.items[node.data], .matrix = visit.matrix }),
-            .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+            .cs_set_name, .cs_set_material, .set_name, .set_material, .project_op, .slice_op => try pending.append(allocator, .{ .node = b.extra_data.items[node.data], .matrix = visit.matrix }),
+            .cs_union_op, .cs_difference_op, .cs_intersection_op, .union_op, .difference_op, .intersection_op => {
                 const p = b.getBinaryPayload(node);
                 try pending.append(allocator, .{ .node = p.left, .matrix = visit.matrix });
                 try pending.append(allocator, .{ .node = p.right, .matrix = visit.matrix });
             },
-            // An offset draws its own outline; a slice or projection is a solid's; the
-            // rest have no circle
+            .batch_union_op => for (b.getBatchUnionPayload(node)) |operand| try pending.append(allocator, .{ .node = operand, .matrix = visit.matrix }),
+            // A cylinder seen from above is its larger cap (the points of the smaller
+            // one lie inside), drawn as the kernel draws it, from the +x axis
+            .cylinder => {
+                const p = b.getCylinderPayload(node);
+                const radius = @max(p.r1, p.r2);
+                try addCircle(allocator, &circles, visit.matrix, .{ 0, 0 }, radius, try circlePoints(allocator, radius, p.segments), true);
+            },
+            // A straight extrusion seen from above is its sketch
+            .extrude => {
+                const p = b.getExtrudePayload(node);
+                if (p.twist_degrees == 0 and p.scale_x == 1 and p.scale_y == 1) try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix });
+            },
+            // A Solid's moves that keep the XY plane are the sketch's
+            .translate, .rotate, .scale, .mirror => {
+                const p = b.getTranslatePayload(node);
+                const flat: ?[6]f64 = switch (node.tag) {
+                    .translate => .{ 1, 0, 0, 1, p.x, p.y },
+                    .rotate => if (p.x == 0 and p.y == 0) turn(p.z) else null,
+                    .scale => .{ p.x, 0, 0, p.y, 0, 0 },
+                    // Across a vertical plane: its normal lies in XY; across a horizontal
+                    // one nothing moves in XY
+                    .mirror => if (p.z == 0) mirror(p.x, p.y) else if (p.x == 0 and p.y == 0) Matrix.identity.m else null,
+                    else => unreachable,
+                };
+                if (flat) |m| try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix.then(m) });
+            },
+            // An offset draws its own outline; a revolve, hull, Minkowski sum, trim or
+            // concrete leaf gives a shape of its own; the rest have no circle
             else => {},
         }
     }
@@ -148,8 +179,22 @@ fn addCircle(allocator: std.mem.Allocator, circles: *std.ArrayList(Circle), matr
     try circles.append(allocator, .{ .center = matrix.apply(center), .radius = radius * scale, .points = points, .closed = closed });
 }
 
+/// A turn of `degrees` about z, as the kernel turns a Solid about z.
+fn turn(degrees: f64) [6]f64 {
+    const rad = degrees * std.math.pi / 180.0;
+    return .{ @cos(rad), @sin(rad), -@sin(rad), @cos(rad), 0, 0 };
+}
+
+/// A mirror across the vertical plane whose normal is (`nx`, `ny`) in XY.
+fn mirror(nx: f64, ny: f64) [6]f64 {
+    const len = std.math.hypot(nx, ny);
+    const x = nx / len;
+    const y = ny / len;
+    return .{ 1 - 2 * x * x, -2 * x * y, -2 * x * y, 1 - 2 * y * y, 0, 0 };
+}
+
 /// The points the kernel draws a circle of `radius` with: `segments` of them from the +x
-/// axis, counter-clockwise (Manifold's CrossSection::Circle).
+/// axis, counter-clockwise (Manifold's CrossSection::Circle, and a cylinder's cap).
 fn circlePoints(allocator: std.mem.Allocator, radius: f64, segments: i32) ![][2]f64 {
     const n: usize = @intCast(@max(segments, 3));
     const points = try allocator.alloc([2]f64, n);

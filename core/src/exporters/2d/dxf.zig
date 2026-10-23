@@ -1,9 +1,9 @@
 //! DXF export: `build` writes a drawing (drawing.zig) as ASCII DXF (AutoCAD 2004, AC1018),
 //! in millimetres (`$INSUNITS`), Y up as a sketch's is. Each outline is a closed
 //! `LWPOLYLINE` on the layer named after its shape (`named`; the layer `0` for one without a
-//! name), its arcs as bulges (the exact circle, not the chords the kernel drew; a circle is
-//! two half turns), the layer coloured as the shape's material (true colour, and the
-//! nearest of the basic index colours for readers without it). The file holds the header, the layer and
+//! name), its arcs as bulges (the exact circle, not the chords the kernel drew), and an
+//! outline that is one circle a `CIRCLE`, the layer coloured as the shape's material (true
+//! colour, and the nearest of the basic index colours for readers without it). The file holds the header, the layer and
 //! line type tables and the entities: what CAD, CAM and laser tools read.
 
 const std = @import("std");
@@ -100,6 +100,17 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
     for (drawing.shapes) |shape| {
         for (shape.outlines) |outline| {
             if (outline.edges.len == 0) continue;
+            if (wholeCircle(outline)) |arc| {
+                try file.pair(0, "CIRCLE");
+                try file.handle();
+                try file.pair(100, "AcDbEntity");
+                try file.layerOf(8, shape.name);
+                try file.pair(100, "AcDbCircle");
+                try file.number(10, arc.center[0]);
+                try file.number(20, arc.center[1]);
+                try file.number(40, arc.radius);
+                continue;
+            }
             try file.pair(0, "LWPOLYLINE");
             try file.handle();
             try file.pair(100, "AcDbEntity");
@@ -125,6 +136,17 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
     try file.endSection();
     try file.pair(0, "EOF");
     return out.toOwnedSlice();
+}
+
+/// The circle a closed outline is, if it is one: two half turns of one circle (what the
+/// arc matcher makes of a contour that is all one circle's chords).
+fn wholeCircle(outline: drawing_mod.Outline) ?drawing_mod.Arc {
+    if (!outline.closed or outline.edges.len != 2) return null;
+    const first = outline.edges[0].arc orelse return null;
+    const second = outline.edges[1].arc orelse return null;
+    if (first.radius != second.radius or first.center[0] != second.center[0] or first.center[1] != second.center[1]) return null;
+    if (outline.edges[0].angle != std.math.pi or outline.edges[1].angle != std.math.pi) return null;
+    return first;
 }
 
 /// A vertex's bulge (`42`): the tangent of a quarter of the angle the arc to the next

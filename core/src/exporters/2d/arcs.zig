@@ -4,7 +4,9 @@
 //! is a chord of that circle, and a run of them one arc. `outlinesOf` turns the kernel's
 //! contours into outlines of lines and arcs, each arc exact (the circle's centre and radius),
 //! for the 2D exporters to write as such. An edge with a point no circle has (where a
-//! boolean cut a chord) stays a line.
+//! boolean cut a chord) stays a line. A point on the line between its neighbours (a slice
+//! crosses a cylinder's side triangles mid-chord; a boolean leaves one where edges met) is
+//! dropped first: it is no corner, and would cut a chord in two.
 
 const std = @import("std");
 const geom = @import("../../kernel/geometry_handle.zig");
@@ -30,7 +32,8 @@ pub fn outlinesOf(allocator: std.mem.Allocator, contours: geom.Contours, circles
     }
     try outlines.ensureTotalCapacity(allocator, contours.count());
     for (0..contours.count()) |ci| {
-        const points = contours.contour(ci);
+        const points = try withoutCollinear(allocator, contours.contour(ci), tolerance);
+        defer allocator.free(points);
         if (points.len == 0) continue;
         const chords = try allocator.alloc(?Chord, points.len);
         defer allocator.free(chords);
@@ -38,6 +41,31 @@ pub fn outlinesOf(allocator: std.mem.Allocator, contours: geom.Contours, circles
         outlines.appendAssumeCapacity(try outlineOf(allocator, points, chords, circles));
     }
     return outlines.toOwnedSlice(allocator);
+}
+
+/// `contour` without the points that lie on the line between their neighbours (within
+/// `tolerance` of it, and between them), as a closed polygon. Owned by `allocator`.
+fn withoutCollinear(allocator: std.mem.Allocator, contour: []const [2]f64, tolerance: f64) ![][2]f64 {
+    var kept: std.ArrayList([2]f64) = .empty;
+    errdefer kept.deinit(allocator);
+    const n = contour.len;
+    for (contour, 0..) |p, i| {
+        if (n >= 3 and onSegment(p, contour[(i + n - 1) % n], contour[(i + 1) % n], tolerance)) continue;
+        try kept.append(allocator, p);
+    }
+    return kept.toOwnedSlice(allocator);
+}
+
+/// Whether `p` lies on the segment from `a` to `b`, within `tolerance` of the line and
+/// between the ends.
+fn onSegment(p: [2]f64, a: [2]f64, b: [2]f64, tolerance: f64) bool {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = std.math.hypot(dx, dy);
+    if (len == 0) return false;
+    const cross = @abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / len;
+    const along = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len;
+    return cross <= tolerance and along >= -tolerance and along <= len + tolerance;
 }
 
 /// `points` as an outline, the edges whose chords lie on one circle in a row merged into

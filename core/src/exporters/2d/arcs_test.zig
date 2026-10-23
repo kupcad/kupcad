@@ -109,6 +109,25 @@ test "arcs: a corner's quarter circle doesn't join its last point to its first" 
     try testing.expect(outlines[0].edges[1].arc == null and outlines[0].edges[2].arc == null);
 }
 
+test "arcs: a point on the line between its neighbours is dropped, so a slice's chords match" {
+    // A slice crosses a cylinder's side triangles mid-chord, leaving a point on each chord
+    const full = try circlePoints(.{ 0, 0 }, 2, 8);
+    defer testing.allocator.free(full);
+    var with_midpoints: [16][2]f64 = undefined;
+    for (0..8) |i| {
+        const next = full[(i + 1) % 8];
+        with_midpoints[2 * i] = full[i];
+        with_midpoints[2 * i + 1] = .{ (full[i][0] + next[0]) / 2, (full[i][1] + next[1]) / 2 };
+    }
+    const circles = [_]Circle{.{ .center = .{ 0, 0 }, .radius = 2, .points = full, .closed = true }};
+    const contours = try contoursOf(&.{&with_midpoints});
+    defer contours.deinit(testing.allocator);
+    const outlines = try arcs.outlinesOf(testing.allocator, contours, &circles, 1e-6);
+    defer freeOutlines(outlines);
+    try testing.expectEqual(@as(usize, 2), outlines[0].edges.len); // the circle, as two half turns
+    try testing.expect(outlines[0].edges[0].arc != null);
+}
+
 test "arcs: with no circle to match, every edge is a line" {
     const square = [_][2]f64{ .{ 0, 0 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 } };
     const contours = try contoursOf(&.{&square});

@@ -33,6 +33,8 @@ MODELS = {
         3,
         4,
     ),
+    # Each a circle, through what projects or slices it
+    "cylinders": ("[cylinder(r: 5, h: 10).project, cylinder(r1: 5, r2: 2, h: 10).translate(x: 20).project, cylinder(r: 4, h: 10).rotate(z: 30).translate(x: 40).slice(3)]", 3, 3),
     "paths": (
         """hook = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])
 [hook.named("outline").material(color: "#00AA00"), hook.close.translate(y: 20), hook.stroke(1).translate(y: 40)]""",
@@ -41,9 +43,9 @@ MODELS = {
     ),
     "mixed": (
         """lid = cube(4).named("lid").material(color: "#0000FF")
-[square(5).translate(x: 20), lid, lid.translate(z: 10), cylinder(r: 3, h: 2).translate(x: 10)]""",
-        4,
-        4,
+[square(5).translate(x: 20), lid, lid.translate(z: 10), cylinder(r: 3, h: 2).translate(x: 10), cylinder(r: 2, h: 4).slice(2).translate(y: 10)]""",
+        5,
+        5,
     ),
 }
 
@@ -97,8 +99,12 @@ def dxf_problems(path, shapes, contours):
     if len(entities) != contours:
         found.append(f"{len(entities)} entities, not {contours}")
     for e in entities:
+        if e.dxftype() == "CIRCLE":
+            if e.dxf.radius <= 0:
+                found.append("a circle of no radius")
+            continue
         if e.dxftype() != "LWPOLYLINE":
-            found.append(f"a {e.dxftype()}, not an LWPOLYLINE")
+            found.append(f"a {e.dxftype()}, not an LWPOLYLINE or a CIRCLE")
         elif not e.closed and e.dxf.layer == "0":
             found.append("an open polyline that isn't a Path's (a Path is named here)")
         elif e.dxf.layer not in doc.layers:
