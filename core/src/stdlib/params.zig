@@ -1,18 +1,13 @@
 //! The `param` built-in (`nativeParam`): `param(:name)` reads a parameter, and with
 //! `default:` and `validate:` declares it, taking the host's injected value over the default,
-//! checking its type, range and choices with `core/params/`, and recording it in the VM's
-//! parameter registry.
+//! reading it as its default's type (`readNumber`, `readBoolean`), checking its range and
+//! choices, and recording it in the VM's parameter registry.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const parameters = @import("../core/parameters.zig");
 const util = @import("methods/util.zig");
-
-const number_param = @import("../core/params/number.zig");
-const boolean_param = @import("../core/params/boolean.zig");
-const string_param = @import("../core/params/string.zig");
-const choice_param = @import("../core/params/choice.zig");
 
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
 /// declares it, taking the host's value (`-p name=text`, `-P file.json`) over the default
@@ -76,38 +71,33 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     // --- MODULAR NORMALIZATION & VALIDATION ---
     switch (p_type) {
         .number => {
-            const num = number_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a number", injected_val);
+            const num = readNumber(injected_val) orelse return typeMismatch(vm, sym_chars, "a number", injected_val);
             injected_val = value.Value.initNumber(num);
-
-            number_param.validate(num, min_val, max_val) catch |err| {
-                switch (err) {
-                    error.BelowMin => return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) }),
-                    error.AboveMax => return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) }),
-                    else => unreachable,
-                }
-            };
+            // An unset bound is NaN, which no comparison passes
+            if (num < min_val) return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) });
+            if (num > max_val) return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) });
         },
         .boolean => {
-            const b = boolean_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "true or false", injected_val);
+            const b = readBoolean(injected_val) orelse return typeMismatch(vm, sym_chars, "true or false", injected_val);
             injected_val = value.Value.initBool(b);
         },
         // A symbol parameter's value is a Symbol: a String compared unequal to the symbols in
         // its `in:` choices, so `param(:size, default: :m3, validate: { in: [:m3, :m4] })`
         // refused even its own default.
         .string => {
-            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a String", injected_val);
+            const str = injected_val.nameChars() orelse return typeMismatch(vm, sym_chars, "a String", injected_val);
             injected_val = try vm.allocateString(str);
         },
         .symbol => {
-            const str = string_param.normalize(injected_val) catch return typeMismatch(vm, sym_chars, "a Symbol", injected_val);
+            const str = injected_val.nameChars() orelse return typeMismatch(vm, sym_chars, "a Symbol", injected_val);
             injected_val = try vm.allocateSymbol(str);
         },
     }
 
     if (choices_array) |arr| {
-        choice_param.validate(vm, injected_val, arr) catch {
-            return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
-        };
+        for (arr.items.items) |choice| {
+            if (vm.valuesEqual(injected_val, choice)) break;
+        } else return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
     }
 
     // --- DOD REGISTRY UPSERT ---
@@ -131,6 +121,31 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     }
 
     return injected_val;
+}
+
+/// A number parameter's value: a number, or text from the host (`-p width=10.5`) that reads
+/// as a finite one, as a script's numbers are (parseFloat reads "inf" and "nan" too).
+fn readNumber(val: value.Value) ?f64 {
+    if (val.isNumber()) return val.asNumber();
+    if (!val.isString()) return null;
+    const num = std.fmt.parseFloat(f64, val.asString().chars) catch return null;
+    return if (std.math.isFinite(num)) num else null;
+}
+
+/// A boolean parameter's value: true or false, the numbers 1 and 0, or the text "true",
+/// "false", "1" and "0".
+fn readBoolean(val: value.Value) ?bool {
+    if (val.isBool()) return val.asBool();
+    if (val.isNumber()) {
+        if (val.asNumber() == 1) return true;
+        if (val.asNumber() == 0) return false;
+    }
+    if (val.isString()) {
+        const text = val.asString().chars;
+        if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "1")) return true;
+        if (std.mem.eql(u8, text, "false") or std.mem.eql(u8, text, "0")) return false;
+    }
+    return null;
 }
 
 /// The TypeError for a value parameter `name` can't take: "parameter :w expects a number,

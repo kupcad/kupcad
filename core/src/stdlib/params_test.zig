@@ -26,6 +26,11 @@ test "param: text from the host is read as the type the parameter's default has"
         .{ .name = "label", .text = "Gear A", .source = "r = param(:label, default: \"x\")", .expected = .{ .str = "Gear A" } },
         .{ .name = "label", .text = "", .source = "r = param(:label, default: \"x\")", .expected = .{ .str = "" } },
         .{ .name = "size", .text = "m4", .source = "s = param(:size, default: :m3, validate: { in: [:m3, :m4] })\nr = s == :m4 && s.class == Symbol", .expected = .{ .boolean = true } },
+        .{ .name = "on", .text = "1", .source = "r = param(:on, default: false)", .expected = .{ .boolean = true } },
+        .{ .name = "on", .text = "false", .source = "r = param(:on, default: true)", .expected = .{ .boolean = false } },
+        .{ .name = "w", .text = "-1000", .source = "r = param(:w, default: 1)", .expected = .{ .num = -1000 } },
+        .{ .name = "w", .text = "10", .source = "r = param(:w, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 10 } },
+        .{ .name = "w", .text = "20", .source = "r = param(:w, default: 15, validate: { min: 10, max: 20 })", .expected = .{ .num = 20 } },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}={s}: {s}\n", .{ case.name, case.text, case.source });
@@ -69,6 +74,9 @@ test "param: a value the parameter can't take is an error naming it and what was
         .{ .name = "label", .v = .{ .number = 5 }, .source = "param(:label, default: \"x\")", .message = "TypeError: parameter :label expects a String, got Number" },
         .{ .name = "size", .v = .{ .text = "m5" }, .source = "param(:size, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :size value is not one of its allowed choices" },
         .{ .name = "w", .v = .{ .text = "200" }, .source = "param(:w, default: 1, validate: { max: 100 })", .message = "ValueError: parameter :w value 200 is above its maximum 100" },
+        .{ .name = "w", .v = .{ .number = 5 }, .source = "param(:w, default: 15, validate: { min: 10, max: 20 })", .message = "ValueError: parameter :w value 5 is below its minimum 10" },
+        .{ .name = "on", .v = .{ .number = 42 }, .source = "param(:on, default: false)", .message = "TypeError: parameter :on expects true or false, got Number" },
+        .{ .name = "size", .v = .{ .text = "M3" }, .source = "param(:size, default: :m3, validate: { in: [:m3, :m4] })", .message = "ValueError: parameter :size value is not one of its allowed choices" },
     };
     for (cases) |case| {
         errdefer std.debug.print("{s}: {s}\n", .{ case.name, case.source });

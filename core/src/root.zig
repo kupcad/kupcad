@@ -63,7 +63,6 @@ test {
     _ = @import("core/parent_map_test.zig");
     _ = @import("frontend/workspace_test.zig");
     _ = @import("core/value_test.zig");
-    _ = @import("core/params/params_test.zig");
     _ = @import("core/param_values_test.zig");
     _ = @import("stdlib/params_test.zig");
     _ = @import("stdlib/json_test.zig");
