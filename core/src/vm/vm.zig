@@ -1982,6 +1982,13 @@ pub const VM = struct {
         return self.valuesEqualWithin(a, b, MAX_EQUALITY_DEPTH);
     }
 
+    /// Whether `valuesEqual` compares `v` by content (an Array, a Map, a JsonObject, a
+    /// Range); any other value equals only itself (its bits), so a hash of the bits finds
+    /// its equals, as a Map's keys are found.
+    pub fn comparesByContent(v: value.Value) bool {
+        return v.isArray() or v.isMap() or v.isJsonObject() or v.isRange();
+    }
+
     fn valuesEqualWithin(self: *VM, a: value.Value, b: value.Value, depth: usize) bool {
         if (a.isEqual(b)) return true;
         if (!a.isObject() or !b.isObject()) return false;
