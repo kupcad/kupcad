@@ -7,19 +7,19 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const parameters = @import("../core/parameters.zig");
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
 
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
 /// declares it, taking the host's value (`-p name=text`, `-P file.json`) over the default
 /// and reading it as the default's type: text from `-p` becomes a number, a boolean, a
 /// String or a Symbol as the parameter is one.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
-    const parsed = try util.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
+    const parsed = try arguments.parseKwargs(struct { default: ?value.Value = null, validate: ?value.Value = null }, vm, args, "param");
     if (parsed.positional.len != 1) {
         return vm.fail(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});
     }
 
-    const name = try util.requireName(vm, parsed.positional[0], "param", "the parameter name");
+    const name = try arguments.requireName(vm, parsed.positional[0], "param", "the parameter name");
     const sym_key = try vm.allocateSymbol(name);
     vm.push(sym_key);
     defer _ = vm.pop();
@@ -46,13 +46,13 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     var choices_array: ?*value.ObjArray = null;
     if (parsed.opts.validate) |rules| {
         if (!rules.isMap()) {
-            return vm.fail(.TypeError, "param expects a Map for validate, got {s}", .{util.typeName(vm, rules)});
+            return vm.fail(.TypeError, "param expects a Map for validate, got {s}", .{arguments.typeName(vm, rules)});
         }
-        const checks = try util.parseKwargs(struct { min: ?f64 = null, max: ?f64 = null, in: ?value.Value = null }, vm, &.{rules}, "param validate");
+        const checks = try arguments.parseKwargs(struct { min: ?f64 = null, max: ?f64 = null, in: ?value.Value = null }, vm, &.{rules}, "param validate");
         if (checks.opts.min) |n| min_val = n;
         if (checks.opts.max) |n| max_val = n;
         if (checks.opts.in) |choices| {
-            _ = try util.requireArray(vm, choices, "param validate", "in");
+            _ = try arguments.requireArray(vm, choices, "param validate", "in");
             choices_array = choices.asArray();
         }
     }
@@ -152,5 +152,5 @@ fn readBoolean(val: value.Value) ?bool {
 /// got "abc"", the text quoted as `-p` gave it.
 fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{RuntimeError} {
     if (got.isString()) return vm.fail(.TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
-    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, util.typeName(vm, got) });
+    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, arguments.typeName(vm, got) });
 }

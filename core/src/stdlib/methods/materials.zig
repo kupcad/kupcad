@@ -7,7 +7,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const material = @import("../../core/material.zig");
 const MaterialDef = material.MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const paths = @import("../paths.zig");
 const sig = @import("../method_signatures.zig");
 const error_kind = @import("../../vm/error_kind.zig");
@@ -15,9 +15,9 @@ const error_kind = @import("../../vm/error_kind.zig");
 /// `solid.material(...)` and `sketch.material(...)`: how a Solid is shaded and what it is
 /// made of; a Sketch's colour is its drawing's (SVG, DXF), the rest kept with it.
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry() and !receiver.isCrossSection() and !receiver.isPath()) return util.notDefinedFor(vm, "material", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection() and !receiver.isPath()) return arguments.notDefinedFor(vm, "material", receiver);
 
-    const parsed = try util.parseKwargsSubset(struct {
+    const parsed = try arguments.parseKwargsSubset(struct {
         color: ?[]const u8 = null,
         alpha: ?f64 = null,
         roughness: ?f64 = null,
@@ -40,7 +40,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
         .metallic = try unitInterval(vm, "metallic", opts.metallic orelse defaults.metallic),
         .transmission = try unitInterval(vm, "transmission", opts.transmission orelse defaults.transmission),
         .density = if (opts.density) |d| blk: {
-            try util.requirePositive(vm, d, "material", "density (g/cm³)");
+            try arguments.requirePositive(vm, d, "material", "density (g/cm³)");
             break :blk d;
         } else null,
     };
@@ -78,7 +78,7 @@ fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
 // --- Chained Methods ---
 
 pub fn meshHighlight(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "highlight", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "highlight", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging. Let the viewer handle the visuals.
@@ -89,7 +89,7 @@ pub fn meshHighlight(vm: *VM, receiver: value.Value) !value.Value {
 }
 
 pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "ghost", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "ghost", receiver);
 
     const material_id: u32 = @intCast(vm.materials.items.len);
     // Pure semantic tagging
@@ -110,7 +110,7 @@ pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
 
 /// highlight { ... } -> the block's Solid, tagged for the viewer to show in high contrast
 pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
-    const result = try vm.callClosureSync(try util.requireBlock(vm, block, "highlight"), &.{});
+    const result = try vm.callClosureSync(try arguments.requireBlock(vm, block, "highlight"), &.{});
     try requireSolidResult(vm, result, "highlight");
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -124,12 +124,12 @@ pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
 /// used to be passed through (or dropped) without being shown.
 fn requireSolidResult(vm: *VM, result: value.Value, method: []const u8) !void {
     if (result.isGeometry()) return;
-    return vm.fail(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, util.typeName(vm, result) });
+    return vm.fail(.TypeError, "{s}'s block must give a Solid, got {s}", .{ method, arguments.typeName(vm, result) });
 }
 
 /// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model
 pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
-    const result = try vm.callClosureSync(try util.requireBlock(vm, block, "ghost"), &.{});
+    const result = try vm.callClosureSync(try arguments.requireBlock(vm, block, "ghost"), &.{});
     try requireSolidResult(vm, result, "ghost");
 
     const material_id: u32 = @intCast(vm.materials.items.len);

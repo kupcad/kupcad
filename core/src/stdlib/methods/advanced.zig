@@ -5,7 +5,7 @@
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const error_kind = @import("../../vm/error_kind.zig");
@@ -35,12 +35,12 @@ pub fn meshMinkowski(vm: *VM, receiver: *value.ObjGeometry, other: *value.ObjGeo
 // Arguments arrive as raw Values (not f64) so a wrong type gets a TypeError naming it.
 pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, ny: value.Value, nz: value.Value, offset: ?value.Value) !value.Value {
     const normal = [3]f64{
-        try util.requireNumber(vm, nx, "trim_by_plane", "nx"),
-        try util.requireNumber(vm, ny, "trim_by_plane", "ny"),
-        try util.requireNumber(vm, nz, "trim_by_plane", "nz"),
+        try arguments.requireNumber(vm, nx, "trim_by_plane", "nx"),
+        try arguments.requireNumber(vm, ny, "trim_by_plane", "ny"),
+        try arguments.requireNumber(vm, nz, "trim_by_plane", "nz"),
     };
-    try util.requireNonZeroVector(vm, normal, "trim_by_plane", "plane normal");
-    const off = if (offset) |o| try util.requireNumber(vm, o, "trim_by_plane", "offset") else 0.0;
+    try arguments.requireNonZeroVector(vm, normal, "trim_by_plane", "plane normal");
+    const off = if (offset) |o| try arguments.requireNumber(vm, o, "trim_by_plane", "offset") else 0.0;
     const new_idx = try vm.dag_builder.addTrimByPlane(receiver.dag_idx, normal[0], normal[1], normal[2], off);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
@@ -61,12 +61,12 @@ const MIN_MITER_LIMIT = 2.0;
 /// took the kernel's own default, whatever the script's resolution).
 pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const OffsetOpts = struct { delta: f64 = 1.0, join: JoinType = .round, miter_limit: ?f64 = null, segments: i32 = 0 };
-    const pos = util.positionalArgs(args);
+    const pos = arguments.positionalArgs(args);
     var base = OffsetOpts{};
-    if (pos.len > 0) base.delta = try util.requireNumber(vm, pos[0], "offset", "delta");
-    const opts = (try util.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
-    try util.requireSegmentCount(vm, opts.segments, "segments");
-    const segments = if (opts.segments > 0) opts.segments else util.autoSegments(vm, @abs(opts.delta));
+    if (pos.len > 0) base.delta = try arguments.requireNumber(vm, pos[0], "offset", "delta");
+    const opts = (try arguments.parseKwargsOver(OffsetOpts, base, sig.OFFSET.keywords, vm, args, "offset")).opts;
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, @abs(opts.delta));
 
     if (receiver.isCrossSection()) {
         if (opts.miter_limit) |limit| {
@@ -93,17 +93,17 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     }
-    return util.notDefinedFor(vm, "offset", receiver);
+    return arguments.notDefinedFor(vm, "offset", receiver);
 }
 
 pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !value.Value {
-    const z = if (height) |h| try util.requireNumber(vm, h, "slice", "height") else 0.0;
+    const z = if (height) |h| try arguments.requireNumber(vm, h, "slice", "height") else 0.0;
     const new_idx = try vm.dag_builder.addSlice(receiver.dag_idx, z);
     return try vm.allocateCrossSection(new_idx);
 }
 
 pub fn meshProject(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
-    const parsed = try util.parseKwargsSubset(struct { cut: bool = false }, sig.PROJECT.keywords, vm, args, "project");
+    const parsed = try arguments.parseKwargsSubset(struct { cut: bool = false }, sig.PROJECT.keywords, vm, args, "project");
 
     if (parsed.opts.cut) {
         // project(cut: true) is a 2D slice exactly at Z=0
@@ -123,8 +123,8 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
     var direction = [3]f64{ 0, 0, 1 };
 
     if (dir_arg.isArray()) {
-        direction = try util.parseNumberArray(3, vm, dir_arg, .{ .method = "on_face", .name = "the direction" }, 3, 0.0);
-        try util.requireNonZeroVector(vm, direction, "on_face", "direction");
+        direction = try arguments.parseNumberArray(3, vm, dir_arg, .{ .method = "on_face", .name = "the direction" }, 3, 0.0);
+        try arguments.requireNonZeroVector(vm, direction, "on_face", "direction");
     } else if (dir_arg.nameChars()) |dir_str| {
         if (std.mem.eql(u8, dir_str, "top")) {
             direction = .{ 0, 0, 1 };
@@ -142,7 +142,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
             return vm.fail(.ValueError, "Unknown face direction '{s}' (use top, bottom, front, back, left or right)", .{dir_str});
         }
     } else {
-        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
+        return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{arguments.typeName(vm, dir_arg)});
     }
 
     const tolerance = vm.settingsOf(receiver).tolerance;
@@ -159,9 +159,9 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 }
 
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "split_by_plane", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "split_by_plane", receiver);
 
-    const parsed = try util.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
+    const parsed = try arguments.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
     const positional = parsed.positional;
     if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
         return vm.fail(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
@@ -171,7 +171,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     // means the XY plane (it used to keep the default nx = 1, a diagonal plane).
     var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
     var normal_given = positional.len > 0;
-    for (positional, 0..) |arg, i| plane[i] = try util.requireNumber(vm, arg, "split_by_plane", PLANE_ARGS[i]);
+    for (positional, 0..) |arg, i| plane[i] = try arguments.requireNumber(vm, arg, "split_by_plane", PLANE_ARGS[i]);
     inline for (PLANE_ARGS, 0..) |name, i| {
         if (@field(parsed.opts, name)) |n| {
             plane[i] = n;
@@ -180,7 +180,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
     }
     if (!normal_given) plane[0] = 1.0; // Default: split at the YZ plane.
     const nx, const ny, const nz, const offset = plane;
-    try util.requireNonZeroVector(vm, .{ nx, ny, nz }, "split_by_plane", "plane normal");
+    try arguments.requireNonZeroVector(vm, .{ nx, ny, nz }, "split_by_plane", "plane normal");
 
     const target_idx = receiver.asGeometry().dag_idx;
 
@@ -209,7 +209,7 @@ pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Valu
 }
 
 pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "decompose", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "decompose", receiver);
     const handle = try vm.ensureConcrete(receiver); // Eager!
     try vm.requireFeature(handle.engine, .decompose);
     // `handle` is borrowed from the DAG cache; `parts` are new handles we own.
@@ -247,7 +247,7 @@ pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.V
 
     // Optional positional argument: part.simplify(0.01); nil keeps the tolerance the part
     // was made under.
-    if (args.len > 0 and !args[0].isNil()) tolerance = try util.requireNumber(vm, args[0], "simplify", "tolerance");
+    if (args.len > 0 and !args[0].isNil()) tolerance = try arguments.requireNumber(vm, args[0], "simplify", "tolerance");
 
     const tol = tolerance orelse vm.settingsOf(value.Value.initGeometry(receiver)).tolerance;
 

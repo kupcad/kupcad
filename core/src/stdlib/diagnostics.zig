@@ -6,7 +6,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
 
 /// assert(condition, message = "Assertion failed.", error_class = AssertionError) { message }
 /// -> raises when the condition is false or nil; the block, if given, builds the message
@@ -47,7 +47,7 @@ pub fn nativeAssert(vm: *VM, condition: value.Value, message: ?value.Value, erro
 
 fn requireMessage(vm: *VM, msg: value.Value, comptime expected: []const u8) !value.Value {
     if (msg.isString()) return msg;
-    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{util.typeName(vm, msg)});
+    return vm.fail(.TypeError, "assert expects " ++ expected ++ ", got {s}", .{arguments.typeName(vm, msg)});
 }
 
 pub fn nativeWarn(vm: *VM, args: []const value.Value) anyerror!value.Value {

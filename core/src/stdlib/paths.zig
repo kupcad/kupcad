@@ -8,7 +8,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
 const path_mod = @import("../core/path.zig");
 const affine2 = @import("../core/affine2.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
@@ -28,26 +28,26 @@ const Cap = enum { round, butt, square };
 
 /// `line(from, to)`: a straight path.
 pub fn nativeLine(vm: *VM, args: []const value.Value) !value.Value {
-    const pos = (try util.parseKwargsSubset(struct {}, LINE.keywords, vm, args, "line")).positional;
+    const pos = (try arguments.parseKwargsSubset(struct {}, LINE.keywords, vm, args, "line")).positional;
     if (pos.len != 2) return vm.fail(.ArgumentError, "line expects two points, [x, y] each, got {d} argument{s}", .{ pos.len, if (pos.len == 1) "" else "s" });
-    const from = try util.parsePoint(2, vm, pos[0], "line", 0);
-    const to = try util.parsePoint(2, vm, pos[1], "line", 1);
+    const from = try arguments.parsePoint(2, vm, pos[0], "line", 0);
+    const to = try arguments.parsePoint(2, vm, pos[1], "line", 1);
     if (from[0] == to[0] and from[1] == to[1]) return vm.fail(.ValueError, "line expects two different points, got [{f}, {f}] twice", .{ value.fmtNumber(from[0]), value.fmtNumber(from[1]) });
     return vm.allocatePath(from, &.{.{ .to = to }}, null, null);
 }
 
 /// `polyline(points)`: straight segments through the points, in order.
 pub fn nativePolyline(vm: *VM, args: []const value.Value) !value.Value {
-    const pos = (try util.parseKwargsSubset(struct {}, POLYLINE.keywords, vm, args, "polyline")).positional;
+    const pos = (try arguments.parseKwargsSubset(struct {}, POLYLINE.keywords, vm, args, "polyline")).positional;
     if (pos.len != 1) return vm.fail(.ArgumentError, "polyline expects an Array of [x, y] points", .{});
-    const items = try util.requireArray(vm, pos[0], "polyline", "points");
+    const items = try arguments.requireArray(vm, pos[0], "polyline", "points");
     if (items.len < MIN_POLYLINE_POINTS) return vm.fail(.ValueError, "polyline needs at least {d} points, got {d}", .{ MIN_POLYLINE_POINTS, items.len });
     const segments = try vm.allocator.alloc(path_mod.Segment, items.len - 1);
     defer vm.allocator.free(segments);
-    var from = try util.parsePoint(2, vm, items[0], "polyline", 0);
+    var from = try arguments.parsePoint(2, vm, items[0], "polyline", 0);
     const start = from;
     for (items[1..], segments, 1..) |item, *segment, i| {
-        const to = try util.parsePoint(2, vm, item, "polyline", i);
+        const to = try arguments.parsePoint(2, vm, item, "polyline", i);
         if (to[0] == from[0] and to[1] == from[1]) return vm.fail(.ValueError, "polyline point {d} repeats the one before it, [{f}, {f}]", .{ i, value.fmtNumber(to[0]), value.fmtNumber(to[1]) });
         segment.* = .{ .to = to };
         from = to;
@@ -71,19 +71,19 @@ pub fn nativeArc(vm: *VM, args: []const value.Value) !value.Value {
         ccw: bool = true,
         large: bool = false,
     };
-    try util.requireOneOf(vm, args, &.{ "r", "radius" }, "arc");
+    try arguments.requireOneOf(vm, args, &.{ "r", "radius" }, "arc");
     // ARC has no positional names, so the parse refuses a positional argument
-    const opts = (try util.parseKwargsSubset(Opts, ARC.keywords, vm, args, "arc")).opts;
+    const opts = (try arguments.parseKwargsSubset(Opts, ARC.keywords, vm, args, "arc")).opts;
     const radius = opts.r orelse opts.radius orelse return vm.fail(.ArgumentError, "arc needs a radius (r:)", .{});
-    try util.requirePositive(vm, radius, "arc", "r");
+    try arguments.requirePositive(vm, radius, "arc", "r");
     const start_val = opts.start orelse return vm.fail(.ArgumentError, "arc needs start:, an angle in degrees with center: and sweep:, or a point with to:", .{});
 
     if (opts.center) |center_val| {
         if (opts.to != null) return vm.fail(.ArgumentError, "arc takes center: with start: and sweep:, or start: and to:, not both", .{});
-        const center = try util.parsePoint(2, vm, center_val, "arc", 0);
-        const start = try util.requireNumber(vm, start_val, "arc", "start (degrees)");
+        const center = try arguments.parsePoint(2, vm, center_val, "arc", 0);
+        const start = try arguments.requireNumber(vm, start_val, "arc", "start (degrees)");
         const sweep = opts.sweep orelse return vm.fail(.ArgumentError, "arc with center: needs sweep: (degrees, counter-clockwise when positive)", .{});
-        try util.requireFinite(vm, sweep, "arc", "sweep");
+        try arguments.requireFinite(vm, sweep, "arc", "sweep");
         if (sweep == 0) return vm.fail(.ValueError, "arc expects a sweep other than 0", .{});
         if (@abs(sweep) > 360) return vm.fail(.ValueError, "arc sweeps at most a full turn, got {f} degrees", .{value.fmtNumber(@abs(sweep))});
         const segment = path_mod.arcByAngles(center, radius, start, start + sweep);
@@ -91,8 +91,8 @@ pub fn nativeArc(vm: *VM, args: []const value.Value) !value.Value {
     }
     const to_val = opts.to orelse return vm.fail(.ArgumentError, "arc needs center: with start: and sweep:, or start: and to:", .{});
     if (opts.sweep != null) return vm.fail(.ArgumentError, "arc takes center: with start: and sweep:, or start: and to:, not both", .{});
-    const from = try util.parsePoint(2, vm, start_val, "arc", 0);
-    const to = try util.parsePoint(2, vm, to_val, "arc", 1);
+    const from = try arguments.parsePoint(2, vm, start_val, "arc", 0);
+    const to = try arguments.parsePoint(2, vm, to_val, "arc", 1);
     const segment = path_mod.arcThrough(from, to, radius, opts.ccw, opts.large) orelse {
         return vm.fail(.ValueError, "arc of radius {f} can't reach from [{f}, {f}] to [{f}, {f}]: the points are {f} apart, more than twice the radius, or the same point", .{ value.fmtNumber(radius), value.fmtNumber(from[0]), value.fmtNumber(from[1]), value.fmtNumber(to[0]), value.fmtNumber(to[1]), value.fmtNumber(std.math.hypot(to[0] - from[0], to[1] - from[1])) });
     };
@@ -135,15 +135,15 @@ fn transformed(vm: *VM, receiver: value.Value, matrix: [6]f64, comptime method: 
 }
 
 pub fn pathTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 0.0, "translate");
+    const vec = try arguments.parseVec3(vm, args, 0.0, "translate");
     if (vec[2] != 0.0) return vm.fail(.ValueError, "a Path can only translate in x and y (it lies in the XY plane), got z {f}", .{value.fmtNumber(vec[2])});
     return transformed(vm, receiver, affine2.translation(vec[0], vec[1]), "translate");
 }
 
 /// `rotate(a)` in degrees about z, as a Sketch's.
 pub fn pathRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try util.parseVec3(vm, args, 0.0, "rotate");
-    if (util.singleNumber(args)) {
+    var vec = try arguments.parseVec3(vm, args, 0.0, "rotate");
+    if (arguments.singleNumber(args)) {
         const angle = vec[0]; // (written straight into `vec`, the aggregate read a cleared x)
         vec = .{ 0.0, 0.0, angle };
     }
@@ -152,8 +152,8 @@ pub fn pathRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 }
 
 pub fn pathScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try util.parseVec3(vm, args, 1.0, "scale");
-    if (util.singleNumber(args)) vec = @splat(vec[0]);
+    var vec = try arguments.parseVec3(vm, args, 1.0, "scale");
+    if (arguments.singleNumber(args)) vec = @splat(vec[0]);
     for (vec[0..2]) |f| {
         if (!(@abs(f) >= std.math.floatMin(f64))) return vm.fail(.ValueError, "scale factors must be non-zero, got [{f}, {f}]", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
     }
@@ -162,8 +162,8 @@ pub fn pathScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
 /// `mirror(nx, ny)`: across the line through the origin with that normal, as a Sketch's.
 pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    const vec = try util.parseVec3(vm, args, 0.0, "mirror");
-    try util.requireNonZeroVector(vm, vec, "mirror", "plane normal");
+    const vec = try arguments.parseVec3(vm, args, 0.0, "mirror");
+    try arguments.requireNonZeroVector(vm, vec, "mirror", "plane normal");
     if (vec[2] != 0.0) return vm.fail(.ValueError, "a Path can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
     return transformed(vm, receiver, affine2.reflection(vec[0], vec[1]), "mirror");
 }
@@ -175,7 +175,7 @@ pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 fn chordsOf(vm: *VM, segments: []const path_mod.Segment) ![]u32 {
     const chords = try vm.allocator.alloc(u32, segments.len);
     for (segments, chords) |segment, *count| {
-        count.* = if (segment.arc) |arc| turnShare(@intCast(util.autoSegments(vm, arc.radius)), segment.angle / (2 * std.math.pi)) else 0;
+        count.* = if (segment.arc) |arc| turnShare(@intCast(arguments.autoSegments(vm, arc.radius)), segment.angle / (2 * std.math.pi)) else 0;
     }
     return chords;
 }
@@ -196,12 +196,12 @@ pub fn pathClose(vm: *VM, receiver: value.Value) !value.Value {
 /// has: a rectangle per chord and a circle per joint, united.
 pub fn pathStroke(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const Opts = struct { width: f64 = 1.0, cap: Cap = .round, segments: i32 = 0 };
-    const pos = util.positionalArgs(args);
+    const pos = arguments.positionalArgs(args);
     var base = Opts{};
-    if (pos.len > 0) base.width = try util.requireNumber(vm, pos[0], "stroke", "width");
-    const opts = (try util.parseKwargsOver(Opts, base, STROKE.keywords, vm, args, "stroke")).opts;
-    try util.requirePositive(vm, opts.width, "stroke", "width");
-    try util.requireSegmentCount(vm, opts.segments, "segments");
+    if (pos.len > 0) base.width = try arguments.requireNumber(vm, pos[0], "stroke", "width");
+    const opts = (try arguments.parseKwargsOver(Opts, base, STROKE.keywords, vm, args, "stroke")).opts;
+    try arguments.requirePositive(vm, opts.width, "stroke", "width");
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
     const half = opts.width / 2.0;
 
     const p = receiver.asPath();
@@ -214,7 +214,7 @@ pub fn pathStroke(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     var pieces: std.ArrayList(u32) = .empty;
     defer pieces.deinit(vm.allocator);
     const b = &vm.dag_builder;
-    const cap_segments = if (opts.segments > 0) opts.segments else util.autoSegments(vm, half);
+    const cap_segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, half);
     for (spine.items[0 .. spine.items.len - 1], spine.items[1..], 0..) |a, c, i| {
         // The rectangle around the chord, extended past a square-capped end
         var from = a;
@@ -247,7 +247,7 @@ fn circleAt(b: *@import("../vm/dag.zig").DAGBuilder, center: [2]f64, radius: f64
 
 /// `named(name)`: the name a drawing gives it.
 pub fn pathNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
-    _ = try util.requireNonBlankName(vm, name, "named");
+    _ = try arguments.requireNonBlankName(vm, name, "named");
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     const name_obj = try vm.gc.allocateString(vm, name);

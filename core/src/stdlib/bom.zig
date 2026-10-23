@@ -5,7 +5,7 @@
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
-const util = @import("methods/util.zig");
+const arguments = @import("arguments.zig");
 const parts_mod = @import("../exporters/parts.zig");
 const Part = parts_mod.Part;
 
@@ -16,7 +16,7 @@ pub fn solidsOf(vm: *VM, receiver: value.Value, method: []const u8, single: *[1]
         return single;
     }
     if (receiver.isAssembly()) return receiver.asAssembly().parts.items.items;
-    return util.notDefinedFor(vm, method, receiver);
+    return arguments.notDefinedFor(vm, method, receiver);
 }
 
 /// solid.bom / assembly.bom -> its parts list: an Array of a Map per part, {name:, count:,
@@ -65,8 +65,8 @@ fn rowOf(vm: *VM, part: Part) !value.Value {
 /// `solid.named(name)` and `sketch.named(name)`: the part's name in the parts list, or the
 /// sketch's in a drawing.
 pub fn meshNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
-    if (!receiver.isGeometry() and !receiver.isCrossSection()) return util.notDefinedFor(vm, "named", receiver);
-    const id = try vm.dag_builder.internPartName(try util.requireNonBlankName(vm, name, "named"));
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return arguments.notDefinedFor(vm, "named", receiver);
+    const id = try vm.dag_builder.internPartName(try arguments.requireNonBlankName(vm, name, "named"));
     if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchName(receiver.asCrossSection().dag_idx, id));
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addSetName(receiver.asGeometry().dag_idx, id) });
 }

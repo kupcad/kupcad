@@ -8,7 +8,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 const callBlock = @import("iteration.zig").callBlock;
-const util = @import("../methods/util.zig");
+const arguments = @import("../arguments.zig");
 
 /// Array#length / Array#size
 pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
@@ -142,7 +142,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 
 /// Array#reduce(initial_val, block) / Array#reduce(block)
 pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, block: ?*value.ObjClosure) !value.Value {
-    const body = try util.requireBlock(vm, block, "reduce");
+    const body = try arguments.requireBlock(vm, block, "reduce");
 
     // SAFETY: acc_val is conditionally initialized below based on `initial_val` presence or array length.
     var acc_val: value.Value = undefined;

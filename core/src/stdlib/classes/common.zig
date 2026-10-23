@@ -6,7 +6,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const geom = @import("../../core/geometry_handle.zig");
-const util = @import("../methods/util.zig");
+const arguments = @import("../arguments.zig");
 const Signature = @import("../signature.zig").Signature;
 
 /// Defines a native class method mapping
@@ -118,7 +118,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             if (has_receiver) {
                 const receiver = args.receiver();
                 call_args[1] = unboxValue(param_types[1].?, receiver, vm) catch |err| {
-                    if (err == error.WrongType) return vm.fail(.TypeError, "{s} can't be called on {s}", .{ args.name, util.typeName(vm, receiver) });
+                    if (err == error.WrongType) return vm.fail(.TypeError, "{s} can't be called on {s}", .{ args.name, arguments.typeName(vm, receiver) });
                     return err;
                 };
             }
@@ -138,7 +138,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
                     call_args[slot] = null;
                 } else {
                     call_args[slot] = unboxValue(T.?, given[next], vm) catch |err| {
-                        if (err == error.WrongType) return vm.fail(.TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, util.typeName(vm, given[next]) });
+                        if (err == error.WrongType) return vm.fail(.TypeError, "{s} expects {s} for argument {d}, got {s}", .{ args.name, expectedName(T.?), next + 1, arguments.typeName(vm, given[next]) });
                         return err;
                     };
                     next += 1;
@@ -146,7 +146,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             }
             if (has_block_param) {
                 if (last_type == *value.ObjClosure) {
-                    call_args[param_types.len - 1] = try util.requireBlock(vm, args.block(), args.name);
+                    call_args[param_types.len - 1] = try arguments.requireBlock(vm, args.block(), args.name);
                 } else {
                     call_args[param_types.len - 1] = args.block();
                 }
@@ -182,7 +182,7 @@ pub fn wrapGlobalWith(comptime func: anytype, comptime sig: Signature) value.Nat
 /// by hand used to drop the rest (`extrude(10, 5)` was `extrude(10)`). The keywords
 /// themselves are checked by the native, which parses `sig.keywords`.
 fn checkArguments(vm: *VM, name: []const u8, comptime sig: Signature, given: []const value.Value) error{RuntimeError}!void {
-    const has_keywords = util.trailingKwargs(given) != null;
+    const has_keywords = arguments.trailingKwargs(given) != null;
     const positional = given.len - @intFromBool(has_keywords);
     if (sig.rest == null and positional > sig.positional.len) {
         if (sig.positional.len == 0) return vm.fail(.ArgumentError, "{s} takes no positional arguments, got {d}", .{ name, positional });

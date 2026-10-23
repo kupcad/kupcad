@@ -432,7 +432,7 @@ KupCAD evaluates untrusted scripts in three places — the CLI, the LSP (just by
 
 `core/limits_test.zig` meets every public limit in `core/limits.zig` with the script that crosses it and checks the error its author sees (or, for a limit with a fallback such as a large `case`, the right answer); a limit added without a case there fails to compile.
 
-Every integer keyword argument goes through `util.checkedInt` (rejects NaN, ±inf and out-of-range), dimensions through `requirePositive` (rejects non-finite), and polyhedron/polygon indices are bounds-checked before any kernel call.
+Every integer keyword argument goes through `arguments.checkedInt` (`stdlib/arguments.zig`) (rejects NaN, ±inf and out-of-range), dimensions through `requirePositive` (rejects non-finite), and polyhedron/polygon indices are bounds-checked before any kernel call.
 
 **Sandboxing**
 

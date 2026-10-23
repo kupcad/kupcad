@@ -5,7 +5,7 @@
 //! and linear_extrude do (`segments:` is per full turn; `slices:` the count itself).
 
 const std = @import("std");
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const value = @import("../../core/value.zig");
@@ -17,7 +17,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const Axis = enum { y, z };
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "extrude", receiver);
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "extrude", receiver);
 
     const ExtrudeOpts = struct {
         h: f64 = 1.0,
@@ -31,16 +31,16 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 
     // NaN/inf sweep parameters propagate into every generated vertex: requireNumber
     // and parseKwargs reject them along with non-numbers.
-    const pos = util.positionalArgs(args);
+    const pos = arguments.positionalArgs(args);
     var base = ExtrudeOpts{};
-    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "extrude", "h");
-    var opts = (try util.parseKwargsOver(ExtrudeOpts, base, sig.EXTRUDE.keywords, vm, args, "extrude")).opts;
+    if (pos.len > 0) base.h = try arguments.requireNumber(vm, pos[0], "extrude", "h");
+    var opts = (try arguments.parseKwargsOver(ExtrudeOpts, base, sig.EXTRUDE.keywords, vm, args, "extrude")).opts;
     if (opts.scale) |s| {
         opts.scale_x = s;
         opts.scale_y = s;
     }
 
-    try util.requireSegmentCount(vm, opts.slices, "slices");
+    try arguments.requireSegmentCount(vm, opts.slices, "slices");
     const slices = try twistSlices(vm, receiver, opts.slices, opts.twist);
 
     var new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, opts.h, slices, opts.twist, opts.scale_x, opts.scale_y);
@@ -52,13 +52,13 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "revolve", receiver);
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "revolve", receiver);
     const RevolveOpts = struct { deg: f64 = 360.0, segments: i32 = 0 };
-    const pos = util.positionalArgs(args);
+    const pos = arguments.positionalArgs(args);
     var base = RevolveOpts{};
-    if (pos.len > 0) base.deg = try util.requireNumber(vm, pos[0], "revolve", "deg");
-    const opts = (try util.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
-    try util.requireSegmentCount(vm, opts.segments, "segments");
+    if (pos.len > 0) base.deg = try arguments.requireNumber(vm, pos[0], "revolve", "deg");
+    const opts = (try arguments.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
 
     // A full turn's segments, the script's or the resolution's at the profile's farthest
     // x (it used to be assumed 10 mm, whatever the profile's size), and the sweep its
@@ -73,17 +73,17 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "helix", receiver);
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "helix", receiver);
 
     const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 0 };
-    const pos = util.positionalArgs(args);
+    const pos = arguments.positionalArgs(args);
     var base = HelixOpts{};
-    if (pos.len > 0) base.h = try util.requireNumber(vm, pos[0], "helix", "h");
-    if (pos.len > 1) base.twist = try util.requireNumber(vm, pos[1], "helix", "twist");
-    if (pos.len > 2) base.slices = try util.checkedInt(i32, vm, try util.requireNumber(vm, pos[2], "helix", "slices"), "slices");
-    const opts = (try util.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
+    if (pos.len > 0) base.h = try arguments.requireNumber(vm, pos[0], "helix", "h");
+    if (pos.len > 1) base.twist = try arguments.requireNumber(vm, pos[1], "helix", "twist");
+    if (pos.len > 2) base.slices = try arguments.checkedInt(i32, vm, try arguments.requireNumber(vm, pos[2], "helix", "slices"), "slices");
+    const opts = (try arguments.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
 
-    try util.requireSegmentCount(vm, opts.slices, "slices");
+    try arguments.requireSegmentCount(vm, opts.slices, "slices");
     const slices = try twistSlices(vm, receiver, opts.slices, opts.twist);
 
     // Re-use DAG's extrude with twist applied natively
@@ -117,20 +117,20 @@ fn perTurnAbout(vm: *VM, receiver: value.Value, axis: Axis, ops: []const kernel.
         .y => @abs(p[0]),
         .z => std.math.hypot(p[0], p[1]),
     });
-    return util.autoSegments(vm, radius);
+    return arguments.autoSegments(vm, radius);
 }
 
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isCrossSection()) return util.notDefinedFor(vm, "loft", receiver);
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "loft", receiver);
     if (args.len < 2) {
         return vm.fail(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
     }
     if (!args[0].isCrossSection()) {
-        return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{util.typeName(vm, args[0])});
+        return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{arguments.typeName(vm, args[0])});
     }
 
     const cs_top = args[0].asCrossSection();
-    const height = try util.requireNumber(vm, args[1], "loft", "height");
+    const height = try arguments.requireNumber(vm, args[1], "loft", "height");
 
     const dag_idx = try vm.dag_builder.addLoft(receiver.asCrossSection().dag_idx, cs_top.dag_idx, height);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });

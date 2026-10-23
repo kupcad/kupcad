@@ -7,7 +7,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
-const util = @import("util.zig");
+const arguments = @import("../arguments.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
 /// min_gap without a search length first looks this fraction of the way across the box
@@ -17,7 +17,7 @@ const FIRST_GAP_SEARCH_FRACTION: f64 = 1.0 / 64.0;
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isAssembly()) {
-        const box = try util.boundsOf(vm, receiver, "bbox");
+        const box = try arguments.boundsOf(vm, receiver, "bbox");
         const bbox_inst = try vm.gc.allocateBBox(vm, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2]);
         return value.Value.initObj(&bbox_inst.obj);
     }
@@ -59,30 +59,30 @@ pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
         return value.Value.initObj(&bbox_inst.obj);
     }
 
-    return util.notDefinedFor(vm, "bbox", receiver);
+    return arguments.notDefinedFor(vm, "bbox", receiver);
 }
 
 pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "volume", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "volume", receiver);
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .volume);
     return value.Value.initNumber(kernel.volume(handle));
 }
 
 pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "surface_area", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "surface_area", receiver);
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .surface_area);
     return value.Value.initNumber(kernel.surfaceArea(handle));
 }
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "min_gap", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "min_gap", receiver);
     if (args.len < 1 or !args[0].isGeometry()) {
-        return vm.fail(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
+        return vm.fail(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else arguments.typeName(vm, args[0])});
     }
-    const search_length: ?f64 = if (args.len > 1) try util.requireNumber(vm, args[1], "min_gap", "search_length") else null;
-    if (search_length) |length| try util.requirePositive(vm, length, "min_gap", "search_length");
+    const search_length: ?f64 = if (args.len > 1) try arguments.requireNumber(vm, args[1], "min_gap", "search_length") else null;
+    if (search_length) |length| try arguments.requirePositive(vm, length, "min_gap", "search_length");
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
     try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0
@@ -124,11 +124,11 @@ fn isEmpty(box: geom.BoundingBox) bool {
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (receiver.isCrossSection()) return sketchContains(vm, receiver, args);
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "contains?", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "contains?", receiver);
     if (args.len < 1) {
         return vm.fail(.ArgumentError, "contains? expects a point [x, y, z]", .{});
     }
-    const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 3, 0.0);
+    const pt = try arguments.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 3, 0.0);
 
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .contains_point);
@@ -147,7 +147,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (args.len < 1) {
         return vm.fail(.ArgumentError, "contains? on a sketch expects a point [x, y]", .{});
     }
-    const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 2, 0.0);
+    const pt = try arguments.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 2, 0.0);
     const tolerance = vm.settingsOf(receiver).tolerance;
     if (@abs(pt[2]) > tolerance) return value.Value.initBool(false);
 
@@ -160,14 +160,14 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 }
 
 pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "ray_cast", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "ray_cast", receiver);
     if (args.len < 2) {
         return vm.fail(.ArgumentError, "ray_cast expects an origin [x, y, z] and an end point [x, y, z]", .{});
     }
-    const origin = try util.parseNumberArray(3, vm, args[0], .{ .method = "ray_cast", .name = "the origin" }, 3, 0.0);
-    const end = try util.parseNumberArray(3, vm, args[1], .{ .method = "ray_cast", .name = "the end point" }, 3, 0.0);
+    const origin = try arguments.parseNumberArray(3, vm, args[0], .{ .method = "ray_cast", .name = "the origin" }, 3, 0.0);
+    const end = try arguments.parseNumberArray(3, vm, args[1], .{ .method = "ray_cast", .name = "the end point" }, 3, 0.0);
     // A zero-length ray has no direction.
-    try util.requireNonZeroVector(vm, .{ end[0] - origin[0], end[1] - origin[1], end[2] - origin[2] }, "ray_cast", "ray (end - origin)");
+    try arguments.requireNonZeroVector(vm, .{ end[0] - origin[0], end[1] - origin[1], end[2] - origin[2] }, "ray_cast", "ray (end - origin)");
 
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .ray_cast);
@@ -205,7 +205,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 }
 
 pub fn meshGenus(vm: *VM, receiver: value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "genus", receiver);
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "genus", receiver);
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .genus);
     return value.Value.initNumber(@floatFromInt(kernel.genus(handle)));
