@@ -43,6 +43,7 @@ const CASES = .{
     .MAX_SOURCE_BYTES = sourceBytes,
     .MAX_JSON_BYTES = jsonBytes,
     .MAX_DRAWING_BYTES = drawingBytes,
+    .MAX_DRAWING_PIECES = drawingPieces,
     .MAX_FONT_BYTES = fontBytes,
     .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
@@ -182,6 +183,15 @@ fn drawingBytes() !void {
     @memset(data, ' ');
     const expected = std.fmt.comptimePrint("ImportError: DXF file 'big.dxf' is {d} bytes; a script reads at most {d}", .{ limits.MAX_DRAWING_BYTES + 1, limits.MAX_DRAWING_BYTES });
     try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.dxf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.dxf", .data = data }} }});
+}
+
+fn drawingPieces() !void {
+    // A block of a line, a block of a thousand of those, and a thousand and one of that:
+    // counted before any is placed
+    const blocks = "0\nBLOCK\n2\na\n0\nLINE\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDBLK\n0\nBLOCK\n2\nb\n0\nINSERT\n2\na\n10\n0\n20\n0\n70\n1000\n44\n2\n0\nENDBLK\n";
+    const dxf = "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nb\n10\n0\n20\n0\n70\n1001\n44\n3000\n0\nENDSEC\n0\nEOF\n";
+    const expected = std.fmt.comptimePrint("ImportError: could not read DXF file 'big.dxf': its blocks would place 1001000 pieces; a script reads at most {d}", .{limits.MAX_DRAWING_PIECES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.dxf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.dxf", .data = dxf }} }});
 }
 
 fn fontBytes() !void {

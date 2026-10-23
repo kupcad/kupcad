@@ -150,10 +150,45 @@ test "SVG read: what isn't drawn is left out, and a line is an open path" {
     try testing.expectEqual(@as(usize, 1), drawing.open_paths.len);
 }
 
+test "SVG read: a use draws the element it names where it is, through its move and style" {
+    // A square defined once and drawn twice, by x and y and by a transform
+    var squares = try read(MM ++ "<defs><rect id=\"sq\" width=\"10\" height=\"10\"/></defs><use href=\"#sq\" x=\"20\"/><use xlink:href=\"#sq\" transform=\"translate(0 30)\"/></svg>");
+    defer squares.deinit();
+    try testing.expectEqual(@as(usize, 2), squares.outlines.len);
+    try expectPoint(.{ 20, 0 }, squares.outlines[0].start);
+    try expectPoint(.{ 0, -30 }, squares.outlines[1].start);
+    // A pair of them in a group, drawn twice: uses within uses; and one drawn where it is too
+    var pairs = try read(MM ++ "<defs><rect id=\"sq\" width=\"1\" height=\"1\"/><g id=\"pair\"><use href=\"#sq\"/><use href=\"#sq\" x=\"5\"/></g></defs>" ++
+        "<use href=\"#pair\"/><use href=\"#pair\" y=\"10\"/><circle id=\"dot\" cx=\"50\" r=\"1\"/><use href=\"#dot\" x=\"10\"/></svg>");
+    defer pairs.deinit();
+    try testing.expectEqual(@as(usize, 6), pairs.outlines.len);
+    try expectPoint(.{ 5, -10 }, pairs.outlines[3].start);
+    try expectPoint(.{ 60, 0 }, pairs.outlines[5].segments[0].arc.?.center);
+    // The style comes from the use: unfilled, the open path is a stroke; a symbol is a group
+    var styled = try read(MM ++ "<defs><path id=\"l\" d=\"M0 0L10 0L10 10\"/></defs><use href=\"#l\" fill=\"none\"/><use href=\"#l\"/>" ++
+        "<symbol id=\"s\"><circle r=\"2\"/></symbol><use href=\"#s\" x=\"5\" y=\"5\"/></svg>");
+    defer styled.deinit();
+    try testing.expectEqual(@as(usize, 1), styled.open_paths.len);
+    try testing.expectEqual(@as(usize, 2), styled.outlines.len);
+    try expectPoint(.{ 5, -5 }, styled.outlines[1].segments[0].arc.?.center);
+}
+
+test "SVG read: uses that draw themselves, or more than they may, are refused" {
+    try expectRefused(MM ++ "<g id=\"a\"><use href=\"#a\"/></g></svg>", "line 1: a <use> of \"#a\" within that element, which would draw itself forever");
+    try expectRefused(MM ++ "<use href=\"parts.svg#bolt\"/></svg>", "line 1: a <use> of \"parts.svg#bolt\": only an element of the same file (\"#id\") is read");
+    try expectRefused(MM ++ "<symbol id=\"s\" viewBox=\"0 0 1 1\"/><use href=\"#s\"/></svg>", "line 1: a <symbol> with a viewBox isn't read yet");
+    // Three uses of two of three squares each: 18 elements drawn, of a cap of 10
+    var diag: svg_read.Diagnostic = .{};
+    const nested = MM ++ "<defs><g id=\"a\"><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/></g>" ++
+        "<g id=\"b\"><use href=\"#a\"/><use href=\"#a\"/></g></defs><use href=\"#b\"/><use href=\"#b\"/><use href=\"#b\"/></svg>";
+    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .config = &CONFIG, .max_cloned = 10 }, &diag));
+    try testing.expectEqualStrings("its <use>s would draw more than 10 elements; a script reads at most that", diag.message());
+}
+
 test "SVG read: what can't be read says why and where" {
     try expectRefused("<html></html>", "line 1: a <html> comes before the <svg> element");
     try expectRefused("", "it has no <svg> element");
-    try expectRefused(MM ++ "<use href=\"#a\"/></svg>", "line 1: a <use> isn't read yet: unlink the clone (Inkscape's Edit > Clone > Unlink) first");
+    try expectRefused(MM ++ "<use href=\"#a\"/></svg>", "line 1: a <use> of \"#a\", which no element of the file is");
     try expectRefused(MM ++ "\n<path d=\"M0 0 L 10 X\"/></svg>", "line 2: the path data of a <path> isn't SVG's at character 11: \"X\"");
     try expectRefused(MM ++ "<path d=\"10 10\"/></svg>", "line 1: the path data of a <path> isn't SVG's at character 1: \"10 10\"");
     try expectRefused(MM ++ "<g transform=\"spin(4)\"></g></svg>", "line 1: the transform \"spin(4)\" of a <g> isn't one SVG has");

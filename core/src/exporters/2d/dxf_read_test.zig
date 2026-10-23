@@ -150,11 +150,72 @@ test "DXF read: pieces that join into no outline are open paths, when the reader
     try expectPoint(.{ 10, 5 }, score.segments[1].arc.?.center);
 }
 
+/// A file whose BLOCKS section defines `blocks` (BLOCK ... ENDBLK each) and whose
+/// ENTITIES are `entities`.
+fn withBlocks(comptime blocks: []const u8, comptime entities: []const u8) []const u8 {
+    return "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nENDSEC\n0\nEOF\n";
+}
+
+/// A block of one circle of radius 1 about (0, 0), on layer 0.
+const BOLT = "0\nBLOCK\n8\n0\n2\nbolt\n10\n0\n20\n0\n0\nCIRCLE\n8\n0\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n";
+
+fn center(drawing: dxf_read.Drawing, i: usize) [2]f64 {
+    return drawing.outlines[i].segments[0].arc.?.center;
+}
+
+test "DXF read: an INSERT places its block's entities: moved, scaled, turned, copied" {
+    // At (10, 5), twice the size, turned a quarter, on the layer "parts" (its circle is
+    // on layer 0, so it takes the INSERT's)
+    var one = try read(withBlocks(BOLT, "0\nINSERT\n8\nparts\n2\nbolt\n10\n10\n20\n5\n41\n2\n42\n2\n50\n90\n"), &.{"parts"});
+    defer one.deinit();
+    try testing.expectEqual(@as(usize, 1), one.outlines.len);
+    try expectPoint(.{ 10, 5 }, center(one, 0));
+    try testing.expectApproxEqAbs(@as(f64, 2), one.outlines[0].segments[0].arc.?.radius, 1e-9);
+    try testing.expectEqualStrings("parts", one.layers[0]);
+    // Three columns 20 apart along its turned x (up), two rows 10 apart (to the left)
+    var array = try read(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n0\n20\n0\n50\n90\n70\n3\n71\n2\n44\n20\n45\n10\n"), null);
+    defer array.deinit();
+    try testing.expectEqual(@as(usize, 6), array.outlines.len);
+    try expectPoint(.{ 0, 40 }, center(array, 2));
+    try expectPoint(.{ -10, 0 }, center(array, 3));
+    // A block's base point goes to the insertion point: a square of 10 from (5, 5)
+    const square = "0\nBLOCK\n2\nplate\n10\n5\n20\n5\n0\nLWPOLYLINE\n70\n1\n10\n5\n20\n5\n10\n15\n20\n5\n10\n15\n20\n15\n10\n5\n20\n15\n0\nENDBLK\n";
+    var placed = try read(withBlocks(square, "0\nINSERT\n2\nplate\n10\n100\n20\n0\n"), null);
+    defer placed.deinit();
+    try expectPoint(.{ 100, 0 }, placed.outlines[0].start);
+}
+
+test "DXF read: blocks within blocks, uneven scales, mirrors, and a turned-over plane" {
+    // A pair of bolts 10 apart, placed twice
+    const pair = BOLT ++ "0\nBLOCK\n2\npair\n10\n0\n20\n0\n0\nINSERT\n2\nbolt\n10\n0\n20\n0\n0\nINSERT\n2\nbolt\n10\n10\n20\n0\n0\nENDBLK\n";
+    var nested = try read(withBlocks(pair, "0\nINSERT\n2\npair\n10\n0\n20\n0\n0\nINSERT\n2\npair\n10\n0\n20\n50\n"), null);
+    defer nested.deinit();
+    try testing.expectEqual(@as(usize, 4), nested.outlines.len);
+    try expectPoint(.{ 10, 50 }, center(nested, 3));
+    // Scaled 3 in x and 1 in y, the circle is an ellipse: lines on it
+    var stretched = try read(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n0\n20\n0\n41\n3\n"), null);
+    defer stretched.deinit();
+    for (stretched.outlines[0].segments) |segment| {
+        try testing.expect(segment.isLine());
+        try testing.expectApproxEqAbs(@as(f64, 1), segment.to[0] * segment.to[0] / 9 + segment.to[1] * segment.to[1], 1e-9);
+    }
+    // Mirrored by a negative scale, and by a plane turned over: still arcs, about (-4, 0)
+    inline for (.{ "41\n-1\n", "210\n0\n220\n0\n230\n-1\n" }) |mirror| {
+        var mirrored = try read(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n4\n20\n0\n" ++ mirror), null);
+        defer mirrored.deinit();
+        try testing.expect(mirrored.outlines[0].segments[0].arc != null);
+        try expectPoint(.{ if (std.mem.startsWith(u8, mirror, "41")) 4 else -4, 0 }, center(mirrored, 0));
+    }
+}
+
 test "DXF read: what can't be read says why and where" {
     try expectRefused("AutoCAD Binary DXF\r\n\x1a\x00", "it is a binary DXF file: save it as an ASCII DXF");
+    // A block that inserts itself, and an INSERT that scales its block to nothing
+    try expectRefused(withBlocks("0\nBLOCK\n2\nloop\n0\nINSERT\n2\nloop\n10\n1\n20\n0\n0\nENDBLK\n", "0\nINSERT\n2\nloop\n10\n0\n20\n0\n"), "line 9: blocks nest deeper than 64 in the block 'loop', which may insert itself");
+    try expectRefused(withBlocks(BOLT, "0\nINSERT\n2\nbolt\n10\n0\n20\n0\n41\n0\n"), "line 33: the INSERT of the block 'bolt' scales it to nothing");
     try expectRefused("0\nSECTION\nx\n", "line 3: 'x' isn't a group code (an ASCII DXF file alternates codes and values)");
     try expectRefused("0\nSECTION\n2\n", "line 3: group code 2 has no value");
-    try expectRefused(file("", "0\nINSERT\n8\nparts\n2\nbolt\n10\n0\n20\n0\n"), "line 11: a block reference (INSERT) on layer 'parts' isn't read yet: explode the blocks into their entities first");
+    try expectRefused(file("", "0\nINSERT\n8\nparts\n2\nbolt\n10\n0\n20\n0\n"), "line 11: an INSERT of the block 'bolt', which the file doesn't define");
     try expectRefused(file("", "0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n0\nLINE\n10\n10\n20\n0\n11\n10\n21\n5\n"), "an outline on layer '0' doesn't close: it runs from [0, 0] to [10, 5], 11.180339887498949 apart (import_dxf(path, tolerance:) joins ends that far apart, and paths: true reads open lines as Paths)");
     try expectRefused(file("", "0\nCIRCLE\n10\n0\n20\n0\n40\n1\n210\n1\n220\n0\n230\n0\n"), "line 11: the CIRCLE on layer '0' isn't in the XY plane (its normal is [1, 0, 0])");
     try expectRefused(file("", "0\nCIRCLE\n10\n0\n20\n0\n40\n0\n"), "line 11: the CIRCLE on layer '0' has a radius of 0");

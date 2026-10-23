@@ -119,3 +119,17 @@ test "import_dxf and import_svg: paths: true reads the open lines a Sketch can't
         .{ .src = comptime rescued("import_svg(\"plate.svg\", paths: true)"), .expected = .{ .str = "ImportError: SVG file 'plate.svg' has no open path to read" }, .files = files },
     });
 }
+
+test "import_dxf and import_svg: a DXF's blocks and an SVG's clones are drawn where they are placed" {
+    const bolt = "0\nBLOCK\n2\nhole\n10\n0\n20\n0\n0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n10\n2\n20\n0\n10\n2\n20\n2\n10\n0\n20\n2\n0\nENDBLK\n";
+    const dxf = comptime "0\nSECTION\n2\nBLOCKS\n" ++ bolt ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n" ++ square("cut", "0", "20", false) ++
+        "0\nINSERT\n2\nhole\n10\n4\n20\n4\n70\n3\n44\n5\n0\nENDSEC\n0\nEOF\n";
+    const svg = "<svg width=\"100mm\" height=\"100mm\" viewBox=\"0 0 100 100\"><defs><rect id=\"tab\" width=\"2\" height=\"2\"/></defs>" ++
+        "<use href=\"#tab\"/><use href=\"#tab\" x=\"10\"/></svg>";
+    const files = &.{ support.ScriptFile{ .path = "plate.dxf", .data = dxf }, support.ScriptFile{ .path = "tabs.svg", .data = svg } };
+    try expectScripts(&.{
+        // Three 2 mm holes, the block copied along a row, inside the 20 mm plate
+        .{ .src = "r = import_dxf(\"plate.dxf\").area", .expected = .{ .num = 400 - 3 * 4 }, .files = files },
+        .{ .src = "r = import_svg(\"tabs.svg\").area", .expected = .{ .num = 8 }, .files = files },
+    });
+}

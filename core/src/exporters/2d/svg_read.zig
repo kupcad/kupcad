@@ -7,8 +7,9 @@
 //! (`Z`, or its ends meet within the tolerance), or when its shape is filled (SVG closes
 //! it for the fill); an open one that isn't filled is a stroke alone, with no area: an
 //! open path of its own (a laser's score line). A `line` is one too. Text, images and what
-//! isn't drawn (`defs`, `clipPath`, `display: none`) are left out, and a `use` is refused
-//! for now. The file's units become millimetres by
+//! isn't drawn (`defs`, `clipPath`, `display: none`) are left out. A `use` draws the
+//! element it names (`href="#id"`, in `defs` or anywhere, a `symbol` as a group) where it
+//! is, through its own transform and `x`, `y`, with the style it gives. The file's units become millimetres by
 //! its `width` and `viewBox` (a user unit is a CSS pixel, 1/96 inch, without them), and
 //! its y, which runs down the page, is turned over about its origin. The writer is svg.zig.
 
@@ -17,6 +18,7 @@ const path = @import("../../core/path.zig");
 const affine2 = @import("../../core/affine2.zig");
 const bezier = @import("../../core/bezier.zig");
 const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
+const limits = @import("../../core/limits.zig");
 pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
@@ -48,6 +50,8 @@ pub const Options = struct {
     tolerance: f64,
     /// How finely curves are drawn.
     config: *const EngineConfig,
+    /// How many elements `use`s may draw: nested, they multiply.
+    max_cloned: usize = limits.MAX_DRAWING_PIECES,
 };
 
 /// The outlines read (closed) and the open paths (strokes alone), each in the file's
@@ -189,22 +193,67 @@ const Reader = struct {
     open_paths: std.ArrayList(path.Run) = .empty,
     frames: std.ArrayList(Frame) = .empty,
     seen_root: bool = false,
+    /// Where each element with an `id` starts, for a `use` of it
+    ids: std.StringHashMapUnmanaged(usize) = .empty,
+    /// The ids the `use`s being drawn name, innermost last
+    using: std.ArrayList([]const u8) = .empty,
+    /// The element about to be drawn is a `use`'s: a `symbol` is drawn as a group
+    use_root: bool = false,
+    /// How many elements `use`s have drawn
+    cloned: usize = 0,
 
     fn readElements(self: *Reader) Error!void {
+        var index = Scanner{ .text = self.text };
+        while (try index.next(self.diag)) |tag| {
+            if (tag.closing) continue;
+            const id = tag.attribute("id") orelse continue;
+            const entry = try self.ids.getOrPut(self.arena, id);
+            if (!entry.found_existing) entry.value_ptr.* = tag.offset;
+        }
         var scanner = Scanner{ .text = self.text };
+        try self.readTags(&scanner, false);
+        if (!self.seen_root) return self.diag.fail("it has no <svg> element", .{});
+    }
+
+    /// The elements `scanner` reads, into the open frames: all of them, or with `one`,
+    /// the element its next tag starts and what it holds.
+    fn readTags(self: *Reader, scanner: *Scanner, comptime one: bool) Error!void {
+        const depth = self.frames.items.len;
         while (try scanner.next(self.diag)) |tag| {
             if (tag.closing) {
-                const open = self.frames.pop() orelse return self.diag.fail("line {d}: </{s}> closes no element", .{ lineOf(self.text, tag.offset), tag.name });
+                if (self.frames.items.len == depth) return self.diag.fail("line {d}: </{s}> closes no element", .{ lineOf(self.text, tag.offset), tag.name });
+                const open = self.frames.pop().?;
                 if (!std.mem.eql(u8, open.name, tag.name)) return self.diag.fail("line {d}: </{s}> closes a <{s}>", .{ lineOf(self.text, tag.offset), tag.name, open.name });
+                if (one and self.frames.items.len == depth) return;
                 continue;
             }
             const frame = try self.frameOf(tag);
             if (!tag.self_closing) {
                 if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ lineOf(self.text, tag.offset), MAX_NESTING });
                 try self.frames.append(self.arena, frame);
-            }
+            } else if (one and self.frames.items.len == depth) return;
         }
-        if (!self.seen_root) return self.diag.fail("it has no <svg> element", .{});
+    }
+
+    /// The element a `use` names, drawn in `frame` (the use's, its x and y the last move).
+    fn readUse(self: *Reader, tag: Tag, frame: Frame) Error!void {
+        const line = lineOf(self.text, tag.offset);
+        const href = tag.attribute("href") orelse tag.attribute("xlink:href") orelse return;
+        if (href.len < 2 or href[0] != '#') return self.diag.fail("line {d}: a <use> of \"{s}\": only an element of the same file (\"#id\") is read", .{ line, href[0..@min(href.len, 60)] });
+        const id = href[1..];
+        const at = self.ids.get(id) orelse return self.diag.fail("line {d}: a <use> of \"#{s}\", which no element of the file is", .{ line, id });
+        for (self.using.items) |outer| {
+            if (std.mem.eql(u8, outer, id)) return self.diag.fail("line {d}: a <use> of \"#{s}\" within that element, which would draw itself forever", .{ line, id });
+        }
+        var placed = frame;
+        placed.matrix = affine2.compose(frame.matrix, affine2.translation(try self.length(tag, "x") orelse 0, try self.length(tag, "y") orelse 0));
+        try self.frames.append(self.arena, placed);
+        defer _ = self.frames.pop();
+        try self.using.append(self.arena, id);
+        defer _ = self.using.pop();
+        self.use_root = true;
+        var scanner = Scanner{ .text = self.text, .pos = at };
+        try self.readTags(&scanner, true);
     }
 
     /// The frame `tag` opens, its shape (if it is one) read on the way.
@@ -212,22 +261,33 @@ const Reader = struct {
         const parent: Frame = if (self.frames.items.len > 0) self.frames.items[self.frames.items.len - 1] else .{ .name = "", .matrix = affine2.identity, .filled = true, .skipped = false };
         var frame = parent;
         frame.name = tag.name;
+        // A symbol a use draws is a group; anywhere else it is a definition
+        const symbol_drawn = self.use_root and std.mem.eql(u8, tag.name, "symbol");
+        self.use_root = false;
         if (parent.skipped) return frame;
+        if (self.using.items.len > 0) {
+            self.cloned += 1;
+            if (self.cloned > self.options.max_cloned) return self.diag.fail("its <use>s would draw more than {d} elements; a script reads at most that", .{self.options.max_cloned});
+        }
         // Another vocabulary's (Inkscape's sodipodi:namedview) isn't drawn
         const name = if (std.mem.startsWith(u8, tag.name, "svg:")) tag.name[4..] else tag.name;
         frame.skipped = true;
-        if (std.mem.findScalar(u8, name, ':') != null or isOneOf(name, &UNDRAWN)) return frame;
+        if (std.mem.findScalar(u8, name, ':') != null or (isOneOf(name, &UNDRAWN) and !symbol_drawn)) return frame;
         if (tag.property("display")) |display| {
             if (std.mem.eql(u8, display, "none")) return frame;
         }
         frame.skipped = false;
-        if (std.mem.eql(u8, name, "use")) return self.diag.fail("line {d}: a <use> isn't read yet: unlink the clone (Inkscape's Edit > Clone > Unlink) first", .{lineOf(self.text, tag.offset)});
+        if (symbol_drawn and tag.attribute("viewBox") != null) return self.diag.fail("line {d}: a <symbol> with a viewBox isn't read yet", .{lineOf(self.text, tag.offset)});
         if (std.mem.eql(u8, name, "svg")) frame.matrix = try self.viewport(tag, parent);
         if (tag.attribute("transform")) |transform| frame.matrix = affine2.compose(frame.matrix, try self.transformOf(tag, transform));
         if (tag.property("fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
         if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ lineOf(self.text, tag.offset), name });
 
-        if (std.mem.eql(u8, name, "path")) {
+        if (std.mem.eql(u8, name, "use")) {
+            try self.readUse(tag, frame);
+            // What a use holds (a title) isn't drawn
+            frame.skipped = true;
+        } else if (std.mem.eql(u8, name, "path")) {
             try self.readPath(tag, frame);
         } else if (std.mem.eql(u8, name, "rect")) {
             try self.readRect(tag, frame);
@@ -239,7 +299,7 @@ const Reader = struct {
             try self.readPoints(tag, frame, std.mem.eql(u8, name, "polygon"));
         } else if (std.mem.eql(u8, name, "line")) {
             try self.readLine(tag, frame);
-        } else if (!std.mem.eql(u8, name, "svg") and !isOneOf(name, &GROUPS)) {
+        } else if (!std.mem.eql(u8, name, "svg") and !isOneOf(name, &GROUPS) and !symbol_drawn) {
             // An element the drawing has no shape for (an animation, a filter's part)
             frame.skipped = true;
         }

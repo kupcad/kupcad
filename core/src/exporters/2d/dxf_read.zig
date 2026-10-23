@@ -5,8 +5,10 @@
 //! the lines that keep within the resolution's chord error of them. Pieces whose ends meet
 //! (within the tolerance) are joined, either way round, into outlines; one that can't be
 //! closed is an open path when the reader keeps them (a laser's score line), else an error
-//! naming where its ends are, and so is a block reference (`INSERT`)
-//! and an entity off the XY plane. What isn't an outline (text, dimensions, hatches,
+//! naming where its ends are, and so is an entity off the XY plane. A block reference
+//! (`INSERT`) places the entities its block (the BLOCKS section) defines, through its
+//! insertion point, scale, rotation and array of copies, blocks within blocks too; an
+//! entity on layer 0 in a block takes the INSERT's layer, as AutoCAD draws it. What isn't an outline (text, dimensions, hatches,
 //! points, 3D faces and meshes) is left out, and so is what a layout draws (paper space).
 //! The writer is dxf.zig.
 
@@ -14,6 +16,8 @@ const std = @import("std");
 const path = @import("../../core/path.zig");
 const EngineConfig = @import("../../core/engine_config.zig").EngineConfig;
 const turnShare = @import("../../core/engine_config.zig").turnShare;
+const affine2 = @import("../../core/affine2.zig");
+const limits = @import("../../core/limits.zig");
 pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
 
 /// The layer of an entity that names none.
@@ -28,6 +32,10 @@ const MAX_SPLINE_DEPTH = 16;
 /// A normal this close to ±z (per component) is the XY plane's, as AutoCAD's arbitrary
 /// axis algorithm has it (1/64).
 const PLANE_SLACK = 1.0 / 64.0;
+/// How deep blocks nest in blocks at most: deeper is a block that inserts itself.
+const MAX_BLOCK_NESTING = 64;
+/// The entities that draw outlines.
+const DRAWN = [_][]const u8{ "LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "SPLINE", "ELLIPSE" };
 
 /// Millimetres in each `$INSUNITS` unit, by its code; 0 (unitless) is read as millimetres.
 const UNIT_MM = [_]f64{
@@ -88,6 +96,7 @@ pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, di
     if (std.mem.startsWith(u8, text, BINARY_SENTINEL)) return diag.fail("it is a binary DXF file: save it as an ASCII DXF", .{});
     var reader = Reader{ .arena = drawing.arena.allocator(), .pairs = .{ .text = text }, .options = options, .diag = diag };
     try reader.readSections();
+    try reader.drawModel();
     drawing.outlines = try reader.joined();
     drawing.open_paths = reader.open_paths.items;
     drawing.layers = reader.layers.items;
@@ -199,7 +208,25 @@ const Reader = struct {
     layers: std.ArrayList([]const u8) = .empty,
     /// The POLYLINE whose VERTEX entities are being read, until its SEQEND
     polyline: ?Polyline = null,
-    scratch: std.ArrayList(Pair) = .empty,
+    /// The ENTITIES section's entities, and each block's, by its name
+    model: std.ArrayList(Entity) = .empty,
+    blocks: std.StringHashMapUnmanaged(Block) = .empty,
+    /// How many pieces each block places, once counted
+    block_pieces: std.StringHashMapUnmanaged(usize) = .empty,
+    /// Where the entities being drawn go: the INSERTs they are in
+    place: Placement = .{},
+
+    /// A block's entities and the point of them its INSERTs place.
+    const Block = struct { base: [2]f64, entities: []const Entity };
+
+    /// What the INSERTs around an entity do to it: their matrix (millimetres to
+    /// millimetres), whether it keeps circles circles (else an arc is drawn as its chords
+    /// first), and the layer an entity on layer 0 takes.
+    const Placement = struct {
+        matrix: affine2.Matrix = affine2.identity,
+        similar: bool = true,
+        layer: ?[]const u8 = null,
+    };
 
     const Polyline = struct {
         entity_line: usize,
@@ -222,9 +249,131 @@ const Reader = struct {
             if (name.code != 2) continue;
             if (std.mem.eql(u8, name.value, "HEADER")) {
                 try self.readHeader();
+            } else if (std.mem.eql(u8, name.value, "BLOCKS")) {
+                try self.readBlocks();
             } else if (std.mem.eql(u8, name.value, "ENTITIES")) {
-                try self.readEntities();
+                _ = try self.collectEntities(&self.model, "ENDSEC");
             } else try self.skipSection();
+        }
+    }
+
+    /// Every entity the model's INSERTs place, counted before any is: a block within a
+    /// block within a block can place more than a drawing holds.
+    fn drawModel(self: *Reader) Error!void {
+        const count = try self.piecesOf(self.model.items, 0);
+        if (count > limits.MAX_DRAWING_PIECES) return self.diag.fail("its blocks would place {d} pieces; a script reads at most {d}", .{ count, limits.MAX_DRAWING_PIECES });
+        try self.draw(self.model.items);
+    }
+
+    fn draw(self: *Reader, entities: []const Entity) Error!void {
+        for (entities) |entity| {
+            if (std.mem.eql(u8, entity.kind, "INSERT")) try self.drawInsert(entity) else try self.readEntity(entity);
+        }
+    }
+
+    /// The entities of `entity`'s block, placed at its insertion point: the block's base
+    /// there, scaled, turned, and copied along its array's columns and rows (in its own
+    /// turned axes, unscaled), mirrored in x when its plane is turned over.
+    fn drawInsert(self: *Reader, entity: Entity) Error!void {
+        if (try entity.number(67, self.diag) == 1) return;
+        const name, const block = try self.blockOf(entity);
+        const flip = try entity.flipped(self.diag);
+        const at = try self.point(entity, 10, false);
+        const sx = try entity.number(41, self.diag) orelse 1;
+        const sy = try entity.number(42, self.diag) orelse 1;
+        if (sx == 0 or sy == 0) return self.diag.fail("line {d}: the INSERT of the block '{s}' scales it to nothing", .{ entity.line, name });
+        const turn = try entity.number(50, self.diag) orelse 0;
+        const columns, const rows = try self.copiesOf(entity);
+        const column_step = (try entity.number(44, self.diag) orelse 0) * self.scale;
+        const row_step = (try entity.number(45, self.diag) orelse 0) * self.scale;
+        const outer = self.place;
+        defer self.place = outer;
+        const layer = self.layerOf(entity);
+        for (0..rows) |r| for (0..columns) |c| {
+            var m = affine2.compose(affine2.scaling(sx, sy), affine2.translation(-block.base[0], -block.base[1]));
+            m = affine2.compose(affine2.translation(@as(f64, @floatFromInt(c)) * column_step, @as(f64, @floatFromInt(r)) * row_step), m);
+            m = affine2.compose(affine2.translation(at[0], at[1]), affine2.compose(affine2.rotation(turn), m));
+            if (flip) m = affine2.compose(affine2.scaling(-1, 1), m);
+            const matrix = affine2.compose(outer.matrix, m);
+            self.place = .{ .matrix = matrix, .similar = affine2.similarityScale(matrix) != null, .layer = layer };
+            try self.draw(block.entities);
+        };
+    }
+
+    /// The block an INSERT names, and the name.
+    fn blockOf(self: *Reader, entity: Entity) Error!struct { []const u8, Block } {
+        const name = entity.string(2) orelse return self.diag.fail("line {d}: an INSERT names no block (group 2)", .{entity.line});
+        const block = self.blocks.get(name) orelse return self.diag.fail("line {d}: an INSERT of the block '{s}', which the file doesn't define", .{ entity.line, name });
+        return .{ name, block };
+    }
+
+    /// An INSERT's columns and rows (an array of copies, MINSERT's), at least one each.
+    fn copiesOf(self: *Reader, entity: Entity) Error!struct { usize, usize } {
+        var counts: [2]usize = undefined;
+        for ([_]i32{ 70, 71 }, &counts) |code, *count| {
+            const n = try entity.number(code, self.diag) orelse 1;
+            if (!(n >= 0 and n <= limits.MAX_PATTERN_COUNT)) return self.diag.fail("line {d}: an INSERT copies its block {d} times across, at most {d}", .{ entity.line, n, limits.MAX_PATTERN_COUNT });
+            count.* = @max(1, @as(usize, @intFromFloat(n)));
+        }
+        return .{ counts[0], counts[1] };
+    }
+
+    /// How many pieces `entities` place, their INSERTs' blocks counted once each.
+    fn piecesOf(self: *Reader, entities: []const Entity, depth: usize) Error!usize {
+        var total: usize = 0;
+        for (entities) |entity| {
+            if (isOneOf(entity.kind, &DRAWN)) {
+                total +|= 1;
+                continue;
+            }
+            if (!std.mem.eql(u8, entity.kind, "INSERT")) continue;
+            const name, const block = try self.blockOf(entity);
+            if (depth >= MAX_BLOCK_NESTING) return self.diag.fail("line {d}: blocks nest deeper than {d} in the block '{s}', which may insert itself", .{ entity.line, MAX_BLOCK_NESTING, name });
+            const each = self.block_pieces.get(name) orelse blk: {
+                const n = try self.piecesOf(block.entities, depth + 1);
+                try self.block_pieces.put(self.arena, name, n);
+                break :blk n;
+            };
+            const columns, const rows = try self.copiesOf(entity);
+            total +|= each *| columns *| rows;
+        }
+        return total;
+    }
+
+    /// The entities up to `end` (or the section's end, which says so: true), kept.
+    fn collectEntities(self: *Reader, list: *std.ArrayList(Entity), end: []const u8) Error!bool {
+        while (try self.pairs.next(self.diag)) |pair| {
+            if (pair.code != 0) continue;
+            if (std.mem.eql(u8, pair.value, "ENDSEC")) return true;
+            if (std.mem.eql(u8, pair.value, end)) return false;
+            try list.append(self.arena, try self.entityAt(pair));
+        }
+        return true;
+    }
+
+    /// The entity whose type is `pair`: its groups, up to the next entity, kept.
+    fn entityAt(self: *Reader, pair: Pair) Error!Entity {
+        var groups: std.ArrayList(Pair) = .empty;
+        while (try self.pairs.peek(self.diag)) |group| {
+            if (group.code == 0) break;
+            try groups.append(self.arena, (try self.pairs.next(self.diag)).?);
+        }
+        return .{ .kind = pair.value, .pairs = groups.items, .line = pair.line };
+    }
+
+    /// Each BLOCK's entities, by its name, with its base point.
+    fn readBlocks(self: *Reader) Error!void {
+        while (try self.pairs.next(self.diag)) |pair| {
+            if (pair.code != 0) continue;
+            if (std.mem.eql(u8, pair.value, "ENDSEC")) return;
+            if (!std.mem.eql(u8, pair.value, "BLOCK")) continue;
+            const header = try self.entityAt(pair);
+            const name = header.string(2) orelse return self.diag.fail("line {d}: a BLOCK has no name (group 2)", .{pair.line});
+            const base = [2]f64{ (try header.number(10, self.diag) orelse 0) * self.scale, (try header.number(20, self.diag) orelse 0) * self.scale };
+            var entities: std.ArrayList(Entity) = .empty;
+            const section_ended = try self.collectEntities(&entities, "ENDBLK");
+            try self.blocks.put(self.arena, name, .{ .base = base, .entities = entities.items });
+            if (section_ended) return;
         }
     }
 
@@ -245,34 +394,14 @@ const Reader = struct {
         }
     }
 
-    fn readEntities(self: *Reader) Error!void {
-        while (try self.pairs.next(self.diag)) |pair| {
-            if (pair.code != 0) continue;
-            if (std.mem.eql(u8, pair.value, "ENDSEC")) return;
-            // The entity's groups, up to the next entity
-            self.scratch.clearRetainingCapacity();
-            while (try self.pairs.peek(self.diag)) |group| {
-                if (group.code == 0) break;
-                try self.scratch.append(self.arena, (try self.pairs.next(self.diag)).?);
-            }
-            try self.readEntity(.{ .kind = pair.value, .pairs = self.scratch.items, .line = pair.line });
-        }
-    }
-
     fn readEntity(self: *Reader, entity: Entity) Error!void {
         const kind = entity.kind;
         if (std.mem.eql(u8, kind, "VERTEX")) return self.readVertex(entity);
         if (std.mem.eql(u8, kind, "SEQEND")) return self.endPolyline();
         // A layout's (paper space: a title block, a viewport's frame), not the model's
         if (try entity.number(67, self.diag) == 1) return;
-        if (std.mem.eql(u8, kind, "INSERT")) {
-            return self.diag.fail("line {d}: a block reference (INSERT) on layer '{s}' isn't read yet: explode the blocks into their entities first", .{ entity.line, entity.layer() });
-        }
-        const drawn = for ([_][]const u8{ "LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "SPLINE", "ELLIPSE" }) |name| {
-            if (std.mem.eql(u8, kind, name)) break true;
-        } else false;
-        if (!drawn) return;
-        const layer = try self.noteLayer(entity.layer());
+        if (!isOneOf(kind, &DRAWN)) return;
+        const layer = try self.noteLayer(self.layerOf(entity));
         if (!self.selected(layer)) return;
         if (std.mem.eql(u8, kind, "LINE")) return self.readLine(entity, layer);
         if (std.mem.eql(u8, kind, "ARC")) return self.readArc(entity, layer);
@@ -281,6 +410,14 @@ const Reader = struct {
         if (std.mem.eql(u8, kind, "POLYLINE")) return self.startPolyline(entity, layer);
         if (std.mem.eql(u8, kind, "SPLINE")) return self.readSpline(entity, layer);
         return self.readEllipse(entity, layer);
+    }
+
+    /// The layer `entity` is drawn on: its own, or for one on layer 0 in a block, its
+    /// INSERT's.
+    fn layerOf(self: *const Reader, entity: Entity) []const u8 {
+        const own = entity.layer();
+        if (std.mem.eql(u8, own, DEFAULT_LAYER)) if (self.place.layer) |layer| return layer;
+        return own;
     }
 
     /// The layer's name as the drawing keeps it, the first time it is seen.
@@ -305,11 +442,34 @@ const Reader = struct {
         return .{ (if (flip) -px else px) * self.scale, py * self.scale };
     }
 
+    /// The piece of `segments` from `start`, placed where the INSERTs around it put it: an
+    /// arc an arc unless they scale it unevenly, which draws it as its chords first.
     fn addPiece(self: *Reader, layer: []const u8, start: [2]f64, segments: []const path.Segment, closed: bool) !void {
         if (segments.len == 0) return;
         var list: std.ArrayList(path.Segment) = .empty;
-        try list.appendSlice(self.arena, segments);
-        try self.pieces.append(self.arena, .{ .start = start, .segments = list, .closed = closed, .layer = layer });
+        const m = self.place.matrix;
+        if (std.meta.eql(m, affine2.identity)) {
+            try list.appendSlice(self.arena, segments);
+            try self.pieces.append(self.arena, .{ .start = start, .segments = list, .closed = closed, .layer = layer });
+            return;
+        }
+        var from = start;
+        for (segments) |segment| {
+            defer from = segment.to;
+            const arc = segment.arc orelse {
+                try list.append(self.arena, segment.transformed(m));
+                continue;
+            };
+            if (self.place.similar) {
+                try list.append(self.arena, segment.transformed(m));
+                continue;
+            }
+            var points: std.ArrayList([2]f64) = .empty;
+            const chords = turnShare(self.options.config.segmentsFor(arc.radius), segment.angle / (2 * std.math.pi));
+            try path.appendPoints(self.arena, &points, from, &.{segment}, &.{chords}, null);
+            for (points.items[1..]) |p| try list.append(self.arena, .{ .to = affine2.apply(m, p) });
+        }
+        try self.pieces.append(self.arena, .{ .start = affine2.apply(m, start), .segments = list, .closed = closed, .layer = layer });
     }
 
     fn readLine(self: *Reader, entity: Entity, layer: []const u8) Error!void {
@@ -548,6 +708,11 @@ const Reader = struct {
         chain.start = start;
     }
 };
+
+fn isOneOf(name: []const u8, names: []const []const u8) bool {
+    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
 
 fn near(a: [2]f64, b: [2]f64, tolerance: f64) bool {
     return std.math.hypot(a[0] - b[0], a[1] - b[1]) <= tolerance;
