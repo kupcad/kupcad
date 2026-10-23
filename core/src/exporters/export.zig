@@ -180,7 +180,7 @@ fn exportSolids(
     switch (format) {
         // The parts once each, placed per copy: the Solids themselves, not their meshes. The
         // ghosts are the viewer's, as in an STL.
-        .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
+        .@"3mf" => return threemfOf(allocator, vm, solids, title),
         .obj => {
             var parts = try namedParts(allocator, vm, solids, &.{});
             defer parts.deinit();
@@ -232,6 +232,33 @@ fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{Runtim
         }
         return error.RuntimeError;
     }
+}
+
+/// `solids` (rooted by the caller) as a 3MF package: each part of the parts list once, as
+/// made (with its material, so its mesh has the colour the viewport shows), and a build
+/// item per copy.
+fn threemfOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8) ![]u8 {
+    const grouping = try parts_mod.group(vm, allocator, solids);
+    defer grouping.deinit(allocator);
+    // The parts as made are new Solids: rooted, in one Array, until the package is written,
+    // so their nodes (and the kernel's shapes the writer reads) outlive any collection
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    const made = try scope.array();
+    try made.items.ensureTotalCapacity(vm.gc.trackingAllocator(), grouping.parts.len);
+    const parts = try allocator.alloc(MeshPart, grouping.parts.len);
+    defer allocator.free(parts);
+    for (grouping.parts, parts) |part, *mesh_part| {
+        const shape = try parts_mod.madeOf(vm, part);
+        made.items.appendAssumeCapacity(shape);
+        const handle = try vm.ensureConcrete(shape);
+        try vm.requireFeature(handle.engine, .mesh);
+        mesh_part.* = .{ .handle = handle, .name = part.name };
+    }
+    const items = try allocator.alloc(threemf_exporter.Item, grouping.copies.len);
+    defer allocator.free(items);
+    for (grouping.copies, items) |copy, *item| item.* = .{ .part = copy.part, .placement = copy.placement };
+    return threemf_exporter.build(allocator, parts, items, vm.materials.items, title);
 }
 
 /// The parts of a glTF or an OBJ: `ghosts`, unnamed, then `solids`, evaluated and named as

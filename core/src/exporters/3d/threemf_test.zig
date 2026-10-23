@@ -173,6 +173,33 @@ test "3mf: a Solid on its own is placed too, and its colour is its triangles' ma
     try testing.expectEqual(@as(usize, 12), got.model.colored_triangles);
 }
 
+test "3mf: every part is written whole with a collection at every allocation" {
+    // export.zig makes and evaluates every part (new Solids, with their materials) before
+    // the package is written, holding them rooted; each still comes out whole and coloured
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm,
+        \\a = cube(1).material(color: "#ff0000").named("a")
+        \\b = cube(2).material(color: "#00ff00").named("b")
+        \\c = cube(3).named("c")
+        \\assemble(name: "kit", parts: [a, b, c, a.translate(5, 0, 0)])
+    ));
+    vm.gc.stress = true;
+    const archive = try api.exportModelFromVm(testing.allocator, &vm, .@"3mf", .{});
+    defer testing.allocator.free(archive);
+    var package = try Package.open(archive);
+    defer package.close();
+    const xml = try package.read(threemf.MODEL_PATH);
+    defer testing.allocator.free(xml);
+    var model = try Model.parse(xml);
+    defer model.deinit();
+    try testing.expectEqual(@as(u32, 3), model.vertices.count());
+    var meshes = model.vertices.valueIterator();
+    while (meshes.next()) |list| try testing.expectEqual(@as(usize, 8), list.items.len);
+    try testing.expectEqual(@as(usize, 4), model.items.items.len);
+    try testing.expectEqual(@as(usize, 24), model.colored_triangles);
+}
+
 test "3mf: a model with no Solid is no file" {
     var vm = try support.initVm();
     defer vm.deinit();
