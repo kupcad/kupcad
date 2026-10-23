@@ -10,7 +10,7 @@ const STL_TRIANGLE_LEN = 50;
 const GLB_MAGIC = "glTF";
 const STEP_MAGIC = "ISO-10303-21";
 
-const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf, .obj, .svg) or pass --format.\n";
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf, .obj, .svg, .dxf) or pass --format.\n";
 
 const Result = struct {
     outcome: build_cmd.Outcome,
@@ -95,7 +95,7 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{ "model.kup", "--split" }, .message = "Error: Missing directory after --split\n" },
         .{ .args = &.{ "model.kup", "--split", "parts", "-o", "x.stl" }, .message = "Error: --split writes a file per part into its directory; leave out -o\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
-        .{ .args = &.{ "model.kup", "--format", "wrl" }, .message = "Error: Unsupported format 'wrl'. Allowed: stl, glb, gltf, step, 3mf, obj, svg\n" },
+        .{ .args = &.{ "model.kup", "--format", "wrl" }, .message = "Error: Unsupported format 'wrl'. Allowed: stl, glb, gltf, step, 3mf, obj, svg, dxf\n" },
     };
     for (cases) |case| {
         var res = try runBuild(case.args);
@@ -354,11 +354,12 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
 }
 
 /// What an exporter actually wrote, judged by content rather than by file name.
-const FileKind = enum { stl, glb, gltf, step, obj, svg };
+const FileKind = enum { stl, glb, gltf, step, obj, svg, dxf };
 
 fn detectFileKind(bytes: []const u8) ?FileKind {
     if (std.mem.startsWith(u8, bytes, GLB_MAGIC)) return .glb;
     if (std.mem.startsWith(u8, bytes, "<?xml") and std.mem.find(u8, bytes, "<svg ") != null) return .svg;
+    if (std.mem.startsWith(u8, bytes, "0\nSECTION\n2\nHEADER\n")) return .dxf;
     if (std.mem.startsWith(u8, bytes, "# KupCAD Export\n# millimetres")) return .obj;
     if (std.mem.startsWith(u8, bytes, "{\"asset\":")) return .gltf;
     if (std.mem.startsWith(u8, bytes, STEP_MAGIC)) return .step;
@@ -406,6 +407,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.obj", .expect = .{ .written = .{ .name = "part.obj", .kind = .obj } } },
         // A 2D format draws a Solid's projection
         .{ .output = "part.svg", .expect = .{ .written = .{ .name = "part.svg", .kind = .svg } } },
+        .{ .output = "part.dxf", .expect = .{ .written = .{ .name = "part.dxf", .kind = .dxf } } },
         // An agreeing --format is accepted.
         .{ .output = "part.stl", .format = "stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
         .{ .output = "part.Stp", .format = "step", .expect = .{ .written = .{ .name = "part.Stp", .kind = .step } } },

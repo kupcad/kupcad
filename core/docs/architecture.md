@@ -283,6 +283,10 @@ Every file a run reads as data goes through `VM.readScriptFile`, which notes its
 
 An `.svg` export (`exporters/2d/svg.zig`) writes a `Drawing` in millimetres: `width` and `height` in mm, the `viewBox` the drawing's bounds, and every y negated, since SVG's Y runs down the page and a sketch's up. Each shape is one `<path>` holding all its contours (`M`, `L`, `Z`), filled by the even-odd rule so its holes stay holes, in its material colour or a neutral grey, with a thin black outline, and a named shape's name made an XML id (letters, digits, `_` and `-`; the rest `_`). The outlines are polylines as the kernel has them: the curves a script defines exactly are written as arcs in a later step.
 
+### DXF
+
+A `.dxf` export (`exporters/2d/dxf.zig`) writes the same `Drawing` as ASCII DXF of AutoCAD 2004 (AC1018, the first with true colours): a header (`$INSUNITS` millimetres, the extents, the handle seed), the line type and layer tables, and the entities, every table entry and entity with a handle of its own. Each contour is a closed `LWPOLYLINE` on the layer named after its shape (the layer `0` for one without a name), the layer in the shape's material colour as true colour (`420`) and the nearest of the seven basic index colours (`62`) for readers without it. Y stays up, as a sketch's is.
+
 ### glTF
 
 A glTF export (`exporters/3d/gltf.zig`) is a mesh per part, each of one primitive per material (`material_groups.zig`), on a node of its own named after the part (`bom.CopyNames`, the names an OBJ's objects get), the nodes children of a root node that turns the scene Y-up and scales it to metres. The parts were one mesh on that node, unnamed, so a viewer or Blender couldn't tell them apart. Ghosts are nodes without a name. `api.gltfParts` makes the parts list of a glTF (the ghosts, then the model's Solids with their names) for `kupcad build` and `export_gltf` alike.

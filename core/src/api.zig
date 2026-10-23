@@ -24,6 +24,7 @@ const step_exporter = @import("exporters/3d/step.zig");
 const threemf_exporter = @import("exporters/3d/threemf.zig");
 const obj_exporter = @import("exporters/3d/obj.zig");
 const svg_exporter = @import("exporters/2d/svg.zig");
+const dxf_exporter = @import("exporters/2d/dxf.zig");
 const drawing_mod = @import("exporters/2d/drawing.zig");
 const log = std.log.scoped(.@"export");
 const HandleScope = @import("vm/scope.zig").HandleScope;
@@ -429,6 +430,8 @@ pub const ExportFormat = enum {
     obj,
     /// A drawing of the model's Sketches, and its Solids projected onto XY (exporters/2d/svg.zig).
     svg,
+    /// The same drawing as DXF, a closed polyline per contour on a layer per name (exporters/2d/dxf.zig).
+    dxf,
 
     /// What a format holds: a 3D format the model's Solids, a 2D one its Sketches.
     pub const Dimension = enum { @"2d", @"3d" };
@@ -467,7 +470,7 @@ pub const ExportFormat = enum {
     pub fn dimension(self: ExportFormat) Dimension {
         return switch (self) {
             .stl, .glb, .gltf, .step, .@"3mf", .obj => .@"3d",
-            .svg => .@"2d",
+            .svg, .dxf => .@"2d",
         };
     }
 
@@ -481,6 +484,7 @@ pub const ExportFormat = enum {
             .@"3mf" => &.{".3mf"},
             .obj => &.{".obj"},
             .svg => &.{".svg"},
+            .dxf => &.{".dxf"},
         };
     }
 
@@ -493,7 +497,7 @@ pub const ExportFormat = enum {
     pub fn supportsMaterialLibrary(self: ExportFormat) bool {
         return switch (self) {
             .obj => true,
-            .stl, .glb, .gltf, .step, .@"3mf", .svg => false,
+            .stl, .glb, .gltf, .step, .@"3mf", .svg, .dxf => false,
         };
     }
 
@@ -501,7 +505,7 @@ pub const ExportFormat = enum {
     pub fn supportsDraco(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf", .obj, .svg => false,
+            .stl, .step, .@"3mf", .obj, .svg, .dxf => false,
         };
     }
 
@@ -510,7 +514,7 @@ pub const ExportFormat = enum {
     pub fn showsGhosts(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf", .obj, .svg => false,
+            .stl, .step, .@"3mf", .obj, .svg, .dxf => false,
         };
     }
 
@@ -519,7 +523,7 @@ pub const ExportFormat = enum {
     pub fn requiredEngine(self: ExportFormat) ?geom.EngineType {
         return switch (self) {
             .step => .brep_native,
-            .stl, .glb, .gltf, .@"3mf", .obj, .svg => null,
+            .stl, .glb, .gltf, .@"3mf", .obj, .svg, .dxf => null,
         };
     }
 };
@@ -571,6 +575,7 @@ fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sk
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
     return switch (format) {
         .svg => svg_exporter.build(allocator, &drawing),
+        .dxf => dxf_exporter.build(allocator, &drawing),
         .stl, .glb, .gltf, .step, .@"3mf", .obj => unreachable, // 3D: exportSolids
     };
 }
@@ -640,7 +645,7 @@ fn exportSolids(
         // ghosts are the viewer's, as in an STL.
         .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
         .obj => return obj_exporter.build(allocator, vm, solids, title, options.mtl_name),
-        .svg => unreachable, // 2D: exportDrawing
+        .svg, .dxf => unreachable, // 2D: exportDrawing
         .step => {
             var handles = try handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
