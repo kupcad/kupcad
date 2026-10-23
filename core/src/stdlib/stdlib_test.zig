@@ -890,7 +890,7 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 15), checked);
+    try std.testing.expectEqual(@as(usize, 18), checked);
 }
 
 test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
@@ -2567,7 +2567,7 @@ test "Stdlib: a VM its host gave no file system reads no file and writes none" {
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "vm_no_files.stl", .{}));
 }
 
-test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes GeometryErrors" {
+test "Stdlib: import_stl errors are rescuable ImportErrors, a mesh that encloses nothing too" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     // A single triangle: valid STL, but not a closed solid.
@@ -2575,7 +2575,8 @@ test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes Geome
     try mem_vfs.vfs().writeFile("junk.stl", "not an stl at all");
     const cases = [_]ScriptCase{
         .{ .src = rescued("import_stl(\"missing.stl\")"), .expected = .{ .str = "ImportError: could not read STL file 'missing.stl': FileNotFound" } },
-        .{ .src = rescued("import_stl(\"tri.stl\").volume"), .expected = .{ .str = "GeometryError: polyhedron produced invalid geometry: the mesh is not a closed manifold (every edge must join exactly two faces, with consistent winding)" } },
+        .{ .src = rescued("import_stl(\"tri.stl\").volume"), .expected = .{ .str = "ImportError: could not read STL file 'tri.stl': its mesh encloses no volume (triangles of a sheet, open all round, back to back with the patches that would close it)" } },
+        .{ .src = rescued("import_stl(\"tri.stl\", repair: false)"), .expected = .{ .str = "ImportError: could not read STL file 'tri.stl': its mesh isn't closed: 3 edges are on one triangle only; the first from [0, 0, 0] to [0, 1, 0]; import_stl(path) mends what it can" } },
     };
     for (cases) |case| {
         errdefer std.debug.print("script: {s}\n", .{case.src});

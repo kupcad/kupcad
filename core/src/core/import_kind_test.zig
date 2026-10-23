@@ -8,18 +8,13 @@ const Kind = import_kind.Kind;
 const Document = @import("../frontend/document.zig").Document;
 const support = @import("../test_support.zig");
 
-const ASCII_STL =
-    \\solid part
-    \\  facet normal 0 0 1
-    \\    outer loop
-    \\      vertex 0 0 0
-    \\      vertex 10 0 0
-    \\      vertex 0 10 0
-    \\    endloop
-    \\  endfacet
-    \\endsolid part
-    \\
-;
+/// A tetrahedron of corners (0, 0, 0), (10, 0, 0), (0, 10, 0), (0, 0, 10), its faces out.
+const ASCII_STL = "solid part\n" ++ facet("0 0 0", "0 10 0", "10 0 0") ++ facet("0 0 0", "10 0 0", "0 0 10") ++
+    facet("0 0 0", "0 0 10", "0 10 0") ++ facet("10 0 0", "0 10 0", "0 0 10") ++ "endsolid part\n";
+
+fn facet(comptime a: []const u8, comptime b: []const u8, comptime c: []const u8) []const u8 {
+    return "facet normal 0 0 0\nouter loop\nvertex " ++ a ++ "\nvertex " ++ b ++ "\nvertex " ++ c ++ "\nendloop\nendfacet\n";
+}
 
 test "import kind: a path's extension, in any case, makes it a file's; any other is a module" {
     const cases = [_]struct { []const u8, Kind }{

@@ -3,7 +3,7 @@
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
 //! and keep what it promises of what it accepts: an STL mesh's faces point at its vertices
-//! and every vertex is finite, a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
+//! and every vertex is finite (mended too, core/mesh_repair.zig), a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
 //! hex digest. A plain test run replays the seeds; `zig build fuzz -Dfuzz-target=importers
 //! --fuzz=<runs>` searches from them.
 
@@ -11,6 +11,7 @@ const std = @import("std");
 const testing = std.testing;
 const support = @import("test_support.zig");
 const stl = @import("exporters/3d/stl.zig");
+const mesh_repair = @import("core/mesh_repair.zig");
 const obj_read = @import("exporters/3d/obj_read.zig");
 const threemf_read = @import("exporters/3d/threemf_read.zig");
 const zip = @import("exporters/zip.zig");
@@ -82,6 +83,10 @@ fn checkStl(data: []const u8) !void {
     // The mesh goes to the kernel, which indexes the points by the faces and computes on them
     for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
     for (mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+    // Mended first, as the import does: whatever it makes still indexes its own points
+    const fixed = try mesh_repair.repair(testing.allocator, .{ .points = mesh.points, .faces = mesh.faces }, 1e-5);
+    defer fixed.deinit(testing.allocator);
+    for (fixed.faces) |face| for (face) |index| try testing.expect(index < fixed.points.len);
 }
 
 // --- OBJ ---

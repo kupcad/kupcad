@@ -56,3 +56,46 @@ test "import_3mf: what a 3MF package's build places is a Solid, each copy where 
         .{ .src = comptime rescued("import_3mf(\"junk.3mf\")"), .expected = .{ .str = "ImportError: could not read 3MF file 'junk.3mf': it isn't a zip archive, which a 3MF package is" }, .files = files },
     });
 }
+
+/// An ASCII STL of the triangles `faces` of `points`, each corner scaled by `scale`.
+fn stlOf(comptime points: []const [3]f64, comptime faces: []const [3]u32, comptime scale: f64) []const u8 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        var text: []const u8 = "solid part\n";
+        for (faces) |f| {
+            text = text ++ "facet normal 0 0 0\nouter loop\n";
+            for (f) |corner| {
+                const p = points[corner];
+                text = text ++ std.fmt.comptimePrint("vertex {d} {d} {d}\n", .{ p[0] * scale, p[1] * scale, p[2] * scale });
+            }
+            text = text ++ "endloop\nendfacet\n";
+        }
+        return text ++ "endsolid part\n";
+    }
+}
+
+const CORNERS = [_][3]f64{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 1, 1, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 }, .{ 1, 0, 1 }, .{ 1, 1, 1 }, .{ 0, 1, 1 } };
+/// A unit cube's triangles but its top's, so the top is a hole.
+const OPEN_BOX = [_][3]u32{ .{ 0, 3, 2 }, .{ 0, 2, 1 }, .{ 0, 1, 5 }, .{ 0, 5, 4 }, .{ 2, 3, 7 }, .{ 2, 7, 6 }, .{ 3, 0, 4 }, .{ 3, 4, 7 }, .{ 1, 2, 6 }, .{ 1, 6, 5 } };
+
+test "import_stl and import_obj: a mesh that isn't closed is mended, or with repair: false refused, saying where" {
+    const warnings = support.expectWarnings();
+    defer warnings.restore();
+    const fin = comptime CORNERS ++ [_][3]f64{.{ 0.5, -1, 0 }};
+    const closed_box = OPEN_BOX ++ [_][3]u32{ .{ 4, 5, 6 }, .{ 4, 6, 7 } };
+    const files = &.{
+        support.ScriptFile{ .path = "open.stl", .data = comptime stlOf(&CORNERS, &OPEN_BOX, 10) },
+        support.ScriptFile{ .path = "fin.stl", .data = comptime stlOf(&fin, &(closed_box ++ [_][3]u32{.{ 0, 1, 8 }}), 10) },
+        support.ScriptFile{ .path = "open.obj", .data = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\nf 1 4 3 2\nf 1 2 6 5\nf 3 4 8 7\nf 4 1 5 8\nf 2 3 7 6\n" },
+    };
+    try expectScripts(&.{
+        // The open top filled: the whole cube's volume
+        .{ .src = "r = import_stl(\"open.stl\").volume", .expected = .{ .num = 1000 }, .files = files },
+        .{ .src = "import box from \"./open.stl\"\nr = (box - cube(5)).volume", .expected = .{ .num = 875 }, .files = files },
+        .{ .src = "r = import_obj(\"open.obj\").volume", .expected = .{ .num = 1 }, .files = files },
+        .{ .src = comptime rescued("import_stl(\"open.stl\", repair: false)"), .expected = .{ .str = "ImportError: could not read STL file 'open.stl': its mesh isn't closed: 4 edges are on one triangle only; the first from [0, 0, 10] to [0, 10, 10]; import_stl(path) mends what it can" }, .files = files },
+        // A fin on an edge: three triangles there, and its own two edges run into it
+        .{ .src = comptime rescued("import_stl(\"fin.stl\")"), .expected = .{ .str = "ImportError: could not read STL file 'fin.stl': its mesh isn't closed, even mended: 2 edges are on one triangle only, 1 edge is on more than two triangles; the first from [0, 0, 0] to [5, -10, 0]" }, .files = files },
+        .{ .src = comptime rescued("import_stl(\"open.stl\", fix: true)"), .expected = .{ .str = "ArgumentError: import_stl does not take a keyword 'fix' (it accepts: repair)" }, .files = files },
+    });
+}

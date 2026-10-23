@@ -43,6 +43,7 @@ test {
     _ = @import("core/loft_test.zig");
     _ = @import("core/frames_test.zig");
     _ = @import("core/bspline_test.zig");
+    _ = @import("core/mesh_repair_test.zig");
     _ = @import("core/affine2_test.zig");
     _ = @import("core/material_test.zig");
     _ = @import("exporters/names_test.zig");
