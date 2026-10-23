@@ -2127,28 +2127,31 @@ pub const VM = struct {
             _ = self.pop(); // Pop a_val
             self.push(new_val);
             return .ok;
-        } else if (self.host.binary_handler) |handler| {
-            // A handler may raise an error of its own (a join of paths that don't meet),
-            // which has been thrown by the time it fails
-            const depth = self.frames.items.len;
-            const throw_seq = self.throw_seq;
-            const result = handler(self, op, a_val, b_val) catch |err| {
-                if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
-                return self.alreadyThrown(throw_seq, depth) orelse self.nativeFailed(operatorSymbol(op), err);
-            };
-
-            self.stack.ptr[self.stack_top] = result;
-            self.stack_top += 1;
-            return .ok;
-        } else {
-            return self.operandError(op, a_val, b_val);
         }
+        return self.binaryOnHost(op, a_val, b_val);
+    }
+
+    /// `a op b` (both off the stack) by the host's binary handler (Host.binary_handler:
+    /// booleans of shapes, a Path join, a String's `%`), its result pushed; operands it
+    /// doesn't combine, or no handler, are the operator's TypeError.
+    fn binaryOnHost(self: *VM, op: chunk.OpCode, a_val: value.Value, b_val: value.Value) InterpretResult {
+        const handler = self.host.binary_handler orelse return self.operandError(op, a_val, b_val);
+        // A handler may raise an error of its own (a join of paths that don't meet),
+        // which has been thrown by the time it fails
+        const depth = self.frames.items.len;
+        const throw_seq = self.throw_seq;
+        const result = handler(self, op, a_val, b_val) catch |err| {
+            if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
+            return self.alreadyThrown(throw_seq, depth) orelse self.nativeFailed(operatorSymbol(op), err);
+        };
+        self.push(result);
+        return .ok;
     }
 
     inline fn executeNumericBinary(self: *VM, op: chunk.OpCode) InterpretResult {
         const b = self.pop();
         const a = self.pop();
-        if (!a.isNumber() or !b.isNumber()) return self.operandError(op, a, b);
+        if (!a.isNumber() or !b.isNumber()) return self.binaryOnHost(op, a, b);
         const nums = .{ a.asNumber(), b.asNumber() };
         switch (op) {
             .op_multiply => {

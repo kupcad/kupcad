@@ -3,8 +3,8 @@
 //! its category, signature, result kind and the shapes it is bound for, from which the
 //! compiler's intrinsics, the LSP's completions and the lint's lookups are derived
 //! (`methodAllows`); why a Path lacks a method (`missingMethodHint`, core/path.zig's OPEN_PATH_HINT);
-//! and `cadBinaryHandler`, which turns `+ - &` into booleans, and `+` of two Paths into a
-//! join.
+//! and `cadBinaryHandler`, which turns `+ - &` into booleans, `+` of two Paths into a
+//! join and a String's `%` into a format.
 
 const std = @import("std");
 const common = @import("classes/common.zig");
@@ -25,6 +25,7 @@ const bom = @import("bom.zig");
 const path_mod = @import("../core/path.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
+const format = @import("format.zig");
 
 pub const Category = enum {
     primitive_3d,
@@ -392,11 +393,13 @@ fn buildLspCompletions() [core_namespaces.len + global_functions.len][]const u8 
 
 pub const lsp_completions = buildLspCompletions();
 
-/// The host fallback for a method no class defines: every built-in method is bound on a
-/// class, so this only reports it.
+/// The host's operators on what the VM doesn't combine itself: `+ - &` of two Solids or two
+/// Sketches as their boolean, `+` of two Paths as their join, and a String `%` arguments as
+/// a format (stdlib/format.zig); error.UnsupportedOperands for anything else.
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
     // Two paths join where one ends and the next starts
     if (op == .op_add and a.isPath() and b.isPath()) return paths.join(vm, a, b);
+    if (op == .op_modulo and a.isString()) return format.format(vm, a, b);
     const is_3d = a.isGeometry() and b.isGeometry();
     const is_2d = a.isCrossSection() and b.isCrossSection();
 
