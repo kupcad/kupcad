@@ -584,7 +584,8 @@ const Mesh64 = struct {
     /// Triangle `t`'s corners.
     fn triangle(self: Mesh64, t: usize) [3][3]f64 {
         var corners: [3][3]f64 = undefined;
-        for (&corners, self.tri_verts[3 * t ..][0..3]) |*corner, vertex| corner.* = self.vert_props[vertex * self.num_prop ..][0..3].*;
+        // A vertex of a mesh in memory is an index into it, whatever usize's width
+        for (&corners, self.tri_verts[3 * t ..][0..3]) |*corner, vertex| corner.* = self.vert_props[@as(usize, @intCast(vertex)) * self.num_prop ..][0..3].*;
         return corners;
     }
 };

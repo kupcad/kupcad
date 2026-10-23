@@ -42,6 +42,11 @@ fn below(r: *value.ObjRandom, n: u64) u64 {
     }
 }
 
+/// An index into `len` items, each equally likely: below's, which fits a usize since `len` does.
+fn indexBelow(r: *value.ObjRandom, len: usize) usize {
+    return @intCast(below(r, len));
+}
+
 fn isWhole(n: f64) bool {
     return @trunc(n) == n and @abs(n) <= MAX_EXACT_INT;
 }
@@ -92,7 +97,7 @@ pub fn randomShuffle(vm: *VM, r: *value.ObjRandom, arr: *value.ObjArray) !value.
     const items = shuffled.items.items;
     var i = items.len;
     while (i > 1) : (i -= 1) {
-        const j = below(r, i);
+        const j = indexBelow(r, i);
         std.mem.swap(value.Value, &items[i - 1], &items[j]);
     }
     return value.Value.initObj(&shuffled.obj);
@@ -103,7 +108,7 @@ pub fn randomSample(vm: *VM, r: *value.ObjRandom, arr: *value.ObjArray) !value.V
     _ = vm;
     const items = arr.items.items;
     if (items.len == 0) return value.Value.initNil();
-    return items[below(r, items.len)];
+    return items[indexBelow(r, items.len)];
 }
 
 /// Random#seed -> the seed it was made with.

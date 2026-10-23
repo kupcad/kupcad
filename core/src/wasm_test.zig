@@ -525,7 +525,7 @@ test "WASM Interop: check_code_wasm's JSON gives a syntax error its code, as a f
 test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" {
     const src =
         \\# @title Plate
-        \\w = param(:width, default: 10, validate: { min: 1, max: 50 })
+        \\w = param(:width, default: 10, validate: { min: 1, max: 50 }, step: 0.5, unit: "mm", group: "Size")
         \\m = param(:material, default: "PLA", validate: { in: ["PLA", "PETG"] })
         \\cube(w)
     ;
@@ -539,6 +539,9 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
             type: []const u8,
             default_value: std.json.Value,
             validate: struct { min: ?f64, max: ?f64, in: ?[]const std.json.Value },
+            step: ?f64,
+            unit: ?[]const u8,
+            group: ?[]const u8,
         },
     };
     const parsed = try std.json.parseFromSlice(Schema, testing.allocator, res[0..len], .{});
@@ -549,6 +552,10 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
     try testing.expectEqualStrings("width", s.parameters[0].name);
     try testing.expectEqual(@as(?f64, 1), s.parameters[0].validate.min);
     try testing.expectEqual(@as(?f64, 50), s.parameters[0].validate.max);
+    try testing.expectEqual(@as(?f64, 0.5), s.parameters[0].step);
+    try testing.expectEqualStrings("mm", s.parameters[0].unit.?);
+    try testing.expectEqualStrings("Size", s.parameters[0].group.?);
+    try testing.expectEqual(@as(?[]const u8, null), s.parameters[1].unit);
     try testing.expectEqualStrings("material", s.parameters[1].name);
     try testing.expectEqualStrings("PLA", s.parameters[1].default_value.string);
     try testing.expectEqual(@as(usize, 2), s.parameters[1].validate.in.?.len);
