@@ -3240,16 +3240,44 @@ pub const VM = struct {
     /// else as stringify prints it. The method was ignored: an instance showed as "#<P>".
     pub fn writeDisplay(self: *VM, val: value.Value, writer: *std.Io.Writer) !void {
         if (val.isInstance()) {
-            const name = try self.allocateString("to_s");
-            if (self.findMethod(val.asInstance().class, name)) |method| if (method.isClosure()) {
-                const shown = try self.callMethodSync(val, method.asClosure(), &.{});
-                if (!shown.isString()) {
-                    return self.fail(.TypeError, "{s}#to_s must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
-                }
-                return writer.writeAll(shown.asString().chars);
+            if (self.findMethod(val.asInstance().class, try self.staticString("to_s"))) |method| if (method.isClosure()) {
+                return self.writeShown(val, method, "to_s", writer);
             };
         }
         try val.stringify(false, writer);
+    }
+
+    /// What `inspect(val)` shows: an instance's `inspect`, found as a call finds it (its
+    /// class's or an ancestor's, a script's or a built-in class's such as a BoundingBox's),
+    /// or, where that is only Object's default, its `to_s`; either must answer a String.
+    /// Anything else as written, a String quoted.
+    pub fn writeInspect(self: *VM, val: value.Value, writer: *std.Io.Writer) !void {
+        if (val.isInstance()) {
+            const class = val.asInstance().class;
+            const inspect_name = try self.staticString("inspect");
+            const default = if (self.object_class) |object| self.findMethod(object, inspect_name) else null;
+            if (self.findMethod(class, inspect_name)) |method| {
+                if (default == null or method.asObj() != default.?.asObj()) return self.writeShown(val, method, "inspect", writer);
+            }
+            if (self.findMethod(class, try self.staticString("to_s"))) |method| return self.writeShown(val, method, "to_s", writer);
+        }
+        try val.stringify(true, writer);
+    }
+
+    /// Writes what the instance `val`'s method `name` (`method`, a script's or a built-in
+    /// one) answers when called with no arguments, which must be a String.
+    fn writeShown(self: *VM, val: value.Value, method: value.Value, comptime name: []const u8, writer: *std.Io.Writer) !void {
+        const shown = if (method.isClosure()) try self.callMethodSync(val, method.asClosure(), &.{}) else shown: {
+            // A built-in method reads its receiver just below its arguments
+            const native = method.asNative();
+            self.push(val);
+            defer _ = self.pop();
+            break :shown try native.function(self, .{ .ptr = self.stack.ptr + self.stack_top, .count = 0, .name = native.name });
+        };
+        if (!shown.isString()) {
+            return self.fail(.TypeError, "{s}#" ++ name ++ " must return a String, got {s}", .{ val.asInstance().class.name.chars, self.typeName(shown) });
+        }
+        try writer.writeAll(shown.asString().chars);
     }
 
     /// Leaves the top frame: its upvalues are closed, its slots dropped, and the handlers

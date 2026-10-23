@@ -55,35 +55,7 @@ pub fn nativeInspect(vm: *VM, args: []const value.Value) !value.Value {
             var out: std.Io.Writer.Allocating = .init(vm.allocator);
             defer out.deinit();
             try out.writer.writeAll(loc_prefix);
-
-            var printed = false;
-            if (arg.isInstance()) {
-                const inst = arg.asInstance();
-
-                const inspect_key = try vm.allocateString("inspect");
-                const tos_key = try vm.allocateString("to_s");
-
-                if (inst.class.methods.get(inspect_key) orelse inst.class.methods.get(tos_key)) |m_val| {
-                    if (m_val.isNative()) {
-                        const native_obj = m_val.asNative();
-
-                        // Push `arg` onto the VM stack so `vm.getReceiver(args_ptr)` safely resolves `arg`!
-                        vm.push(arg);
-                        defer _ = vm.pop();
-                        const args_ptr = vm.stack.ptr + vm.stack_top;
-
-                        if (native_obj.function(vm, .{ .ptr = args_ptr, .count = 0, .name = native_obj.name })) |res_str| {
-                            try res_str.stringify(false, &out.writer);
-                            printed = true;
-                        } else |_| {}
-                    }
-                }
-            }
-
-            if (!printed) {
-                try arg.stringify(true, &out.writer);
-            }
-
+            try vm.writeInspect(arg, &out.writer);
             try out.writer.writeAll("\n");
             print_handler(vm, out.written());
         }

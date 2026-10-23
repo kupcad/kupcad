@@ -393,6 +393,39 @@ test "Language: puts and interpolation show an instance by its own to_s" {
     try testing.expectEqualStrings("P(3)\nP(4)", captured_output.items);
 }
 
+test "Language: inspect shows an instance by its inspect, inherited too, or else its to_s" {
+    // inspect() looked in the instance's own class only, called only built-in methods and
+    // swallowed their errors: a script's inspect or to_s was never shown
+    const classes = "class A\n  def inspect\n    \"A!\"\n  end\nend\nclass B < A\nend\nclass C\n  def to_s\n    \"C()\"\n  end\nend\nclass D\nend\n";
+    var vm = try support.initVm();
+    defer vm.deinit();
+    captured_output.clearRetainingCapacity();
+    defer captured_output.clearAndFree(testing.allocator);
+    vm.host.print_handler = capturePrint;
+    try testing.expectEqual(.ok, try support.runOn(&vm, classes ++ "inspect(A.new)\ninspect(B.new)\ninspect(C.new)\ninspect(D.new)\ninspect(cube(1).bbox)\ninspect(\"s\")"));
+    var shown: std.ArrayList([]const u8) = .empty;
+    defer shown.deinit(testing.allocator);
+    var lines = std.mem.tokenizeScalar(u8, captured_output.items, '\n');
+    // Each line after its "[line, col] " prefix, when the run has a line index
+    while (lines.next()) |line| try shown.append(testing.allocator, if (std.mem.find(u8, line, "] ")) |at| line[at + 2 ..] else line);
+    const expected = [_][]const u8{ "A!", "A!", "C()", "#<D>", "BoundingBox(min: [0, 0, 0], max: [1, 1, 1])", "\"s\"" };
+    try testing.expectEqual(expected.len, shown.items.len);
+    for (expected, shown.items) |want, got| try testing.expectEqualStrings(want, got);
+
+    // An error in the method is the script's (a host that prints nothing runs none of it)
+    const failing = [_]struct { src: []const u8, expected: []const u8 }{
+        .{ .src = rescued("class Q\n  def inspect\n    5\n  end\nend\ninspect(Q.new)"), .expected = "TypeError: Q#inspect must return a String, got Number" },
+        .{ .src = rescued("class Q\n  def inspect\n    raise \"boom\"\n  end\nend\ninspect(Q.new)"), .expected = "RuntimeError: boom" },
+    };
+    for (failing) |case| {
+        var printing = try support.initVm();
+        defer printing.deinit();
+        printing.host.print_handler = capturePrint;
+        try testing.expectEqual(.ok, try support.runOn(&printing, case.src));
+        try testing.expectEqualStrings(case.expected, printing.globals.get("r").?.asString().chars);
+    }
+}
+
 var captured_output: std.ArrayList(u8) = .empty;
 
 fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {
