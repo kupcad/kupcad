@@ -1,10 +1,9 @@
 //! `import_dxf` and `import_svg`: a drawing's outlines as a Sketch, or with `paths: true`
 //! its open lines (a laser's score lines, which enclose nothing) as Paths. The readers
 //! (exporters/2d/dxf_read.zig, svg_read.zig) give both; each outline becomes a closed path
-//! of the geometry graph, its arcs known to a drawing, turned counter-clockwise (the kernel
-//! fills a clockwise one with nothing), and they nest by the even-odd rule, as a laser
-//! cutter reads a drawing: an outline inside one other is a hole, inside two an island in
-//! the hole, and so on.
+//! of the geometry graph, its arcs known to a drawing, and they nest by the even-odd rule,
+//! as a laser cutter reads a drawing: an outline inside one other is a hole, inside two an
+//! island in the hole, and so on.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
@@ -172,19 +171,11 @@ fn evenOddNode(vm: *VM, outlines: []const path_mod.Run) !u32 {
     for (0..deepest + 1) |level| {
         nodes.clearRetainingCapacity();
         for (outlines, depths) |outline, depth| {
-            if (depth == level) try nodes.append(alloc, try counterClockwiseNode(vm, outline));
+            if (depth == level) try nodes.append(alloc, try paths.closedPathNode(vm, outline.start, outline.segments, 0));
         }
         if (nodes.items.len == 0) continue;
         const layer = try vm.dag_builder.addBalancedChain(.cs_union_op, nodes.items);
         region = if (region) |r| try vm.dag_builder.addBinary(if (level % 2 == 1) .cs_difference_op else .cs_union_op, r, layer) else layer;
     }
     return region.?;
-}
-
-/// The closed path node of `outline`, run counter-clockwise.
-fn counterClockwiseNode(vm: *VM, outline: path_mod.Run) !u32 {
-    if (path_mod.signedArea(outline.start, outline.segments) >= 0) return paths.closedPathNode(vm, outline.start, outline.segments, 0);
-    const turned = try path_mod.reversed(vm.allocator, outline.start, outline.segments);
-    defer vm.allocator.free(turned);
-    return paths.closedPathNode(vm, outline.start, turned, 0);
 }

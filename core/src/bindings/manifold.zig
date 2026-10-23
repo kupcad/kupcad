@@ -157,7 +157,6 @@ extern fn manifold_simple_polygon(mem: ?*ManifoldSimplePolygon, ps: [*]const Man
 extern fn manifold_polygons(mem: ?*ManifoldPolygons, ps: [*]?*ManifoldSimplePolygon, length: usize) ?*ManifoldPolygons;
 extern fn manifold_alloc_simple_polygon() ?*ManifoldSimplePolygon;
 extern fn manifold_delete_simple_polygon(p: ?*ManifoldSimplePolygon) void;
-extern fn manifold_cross_section_of_simple_polygon(mem: ?*ManifoldCrossSection, p: ?*ManifoldSimplePolygon) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_even_odd_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
 extern fn manifold_simplify(mem: ?*ManifoldObj, manifold: *ManifoldObj, tolerance: f64) ?*ManifoldObj;
 
@@ -561,12 +560,6 @@ pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64,
         };
     }
     return hits;
-}
-
-pub fn polygon(points: []const ManifoldVec2) ?*ManifoldCrossSection {
-    const p = manifold_simple_polygon(manifold_alloc_simple_polygon(), points.ptr, points.len);
-    defer manifold_delete_simple_polygon(p);
-    return manifold_cross_section_of_simple_polygon(manifold_alloc_cross_section(), p);
 }
 
 // manifoldc returns size_t; these were declared c_int, which read past 2^31 as negative

@@ -66,13 +66,11 @@ fn circleImpl(config: *const EngineConfig, radius: f64, segments: i32) ?geom.Cro
     return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+/// The region an outline encloses, whichever way it runs: by the even-odd rule, as
+/// `polygon(paths:)` fills its outlines (Manifold's positive rule left a clockwise one
+/// empty, and filled one lobe of a figure eight).
 fn polygonImpl(config: *const EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
-    _ = config; // Manifold builds what it is given; B-Rep reads its resolution from it
-    const m_pts = allocator.alloc(manifold.ManifoldVec2, pts.len) catch return null;
-    defer allocator.free(m_pts);
-    for (pts, 0..) |p, i| m_pts[i] = .{ .x = p[0], .y = p[1] };
-    const ptr = manifold.polygon(m_pts) orelse return null;
-    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+    return polygonsEvenOddImpl(config, allocator, &.{pts});
 }
 
 fn polygonsEvenOddImpl(config: *const EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {

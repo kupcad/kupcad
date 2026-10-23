@@ -1147,6 +1147,18 @@ test "Stdlib: a solid's center of mass, its mass from its density, and whether t
     });
 }
 
+test "Stdlib: an outline fills whichever way it runs, a figure eight in both its lobes" {
+    // Clockwise, a polygon and a closed path were empty: the kernel's positive fill rule
+    const SQUARE = "sq = [[0, 0], [10, 0], [10, 10], [0, 10]]\n";
+    try expectScripts(&.{
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse).area", .expected = .{ .num = 100 } },
+        .{ .src = SQUARE ++ "r = polyline(sq.reverse).close.area", .expected = .{ .num = 100 } },
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse).extrude(2).volume", .expected = .{ .num = 200 } },
+        // By the even-odd rule, as polygon(paths:) fills its outlines: both triangles of a bow tie
+        .{ .src = "r = polygon([[0, 0], [10, 10], [10, 0], [0, 10]]).area", .expected = .{ .num = 50 } },
+    });
+}
+
 test "Stdlib: polygon rounds or cuts each of its corners, a concave one too" {
     const SQUARE = "sq = [[0, 0], [10, 0], [10, 10], [0, 10]]\n";
     const ELL = "ell = [[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]]\n";
@@ -1154,6 +1166,8 @@ test "Stdlib: polygon rounds or cuts each of its corners, a concave one too" {
         // Each corner loses 4 - π to its quarter arc, drawn here in fine chords
         .{ .src = SQUARE ++ "r = (polygon(sq, round_r: 2, segments: 1024).area - (84 + 4 * Math::PI)).abs < 1e-3", .expected = .{ .boolean = true } },
         .{ .src = SQUARE ++ "r = polygon(sq, chamfer: 2).area", .expected = .{ .num = 92 } },
+        // Either way round
+        .{ .src = SQUARE ++ "r = polygon(sq.reverse, chamfer: 2).area", .expected = .{ .num = 92 } },
         // Five outer corners lose 4 - π each, the inner one gains it
         .{ .src = ELL ++ "r = (polygon(ell, round_r: 2, segments: 1024).area - (175 - 4 * (4 - Math::PI))).abs < 1e-3", .expected = .{ .boolean = true } },
         .{ .src = ELL ++ "r = polygon(ell, chamfer: 1).area", .expected = .{ .num = 175 - 2.5 + 0.5 } },
