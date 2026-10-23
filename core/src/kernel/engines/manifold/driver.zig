@@ -11,6 +11,10 @@ const engine_config = @import("../../../core/engine_config.zig");
 const EngineConfig = engine_config.EngineConfig;
 const vec3 = @import("../../../core/vec3.zig");
 
+/// The fewest divisions Manifold revolves through: it reads 1 or 2 as 0, "choose your
+/// own", which for a small sweep at a small radius rounds down to none (an empty solid).
+const MIN_REVOLVE_DIVISIONS = 3;
+
 fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]const f64, ctx: ?*anyopaque) callconv(.c) void {
     _ = pos;
     _ = old_prop;
@@ -484,7 +488,9 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
     std.debug.assert(cs.engine == .manifold);
     if (manifold.crossSectionNumVert(@ptrCast(@alignCast(cs.ptr))) == 0) return emptyImpl(&.{});
-    const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), segments, revolve_degrees) orelse return null;
+    // 0 asks for Manifold's own count; a count it can't take is the least it can
+    const divisions = if (segments > 0) @max(segments, MIN_REVOLVE_DIVISIONS) else segments;
+    const ptr = manifold.revolve(@ptrCast(@alignCast(cs.ptr)), divisions, revolve_degrees) orelse return null;
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 

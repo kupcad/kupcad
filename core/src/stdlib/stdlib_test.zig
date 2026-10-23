@@ -1218,6 +1218,15 @@ test "Stdlib: loft joins concave profiles, and runs through several sections at 
     });
 }
 
+test "Stdlib: a revolve through a small angle near its axis keeps its divisions" {
+    // A share of a turn of 1 or 2 segments was read by Manifold as its own default, which
+    // at a small radius is no division at all: an empty or broken solid
+    try expectScripts(&.{
+        .{ .src = "v = square(1).translate(x: 1).revolve(10, segments: 3).volume\nr = (v - 1.5 * 10 * Math::PI / 180).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(0.5).translate(x: 0.1).revolve(15).volume > 0", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: a Sketch sweeps along a Path, standing on it, its corners filled round outside" {
     // A 2 by 2 profile across the path and up from it
     const PROFILE = "prof = square(2, center: true).translate(y: 1)\n";
