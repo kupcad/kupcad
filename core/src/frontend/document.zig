@@ -27,6 +27,8 @@ pub const Document = struct {
     diagnostics: []const common_errors.Diagnostic,
     line_index: LineIndex,
     symbols: []resolver.ResolvedSymbol,
+    /// Per node: the node that declared a local's or an upvalue's name (the resolver's).
+    declarations: []ast.NodeIndex,
     parents: []ast.NodeIndex,
     closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture),
 
@@ -62,6 +64,7 @@ pub const Document = struct {
         const line_index = try LineIndex.init(arena_alloc, source);
 
         var symbols: []resolver.ResolvedSymbol = &[_]resolver.ResolvedSymbol{};
+        var declarations: []ast.NodeIndex = &.{};
         var closure_captures: std.AutoHashMapUnmanaged(ast.NodeIndex, []const resolver.UpvalueCapture) = .empty;
         var parents: []ast.NodeIndex = &[_]ast.NodeIndex{};
 
@@ -69,6 +72,7 @@ pub const Document = struct {
             var res = try resolver.Resolver.init(arena_alloc, &tree, tokens.starts, tokens.lengths, &parser.diagnostics);
             try res.resolve(root_index);
             symbols = res.symbols;
+            declarations = res.declarations;
             closure_captures = res.closure_captures;
 
             var pmap = try parent_map.ParentMap.init(arena_alloc, &tree);
@@ -87,6 +91,7 @@ pub const Document = struct {
             .diagnostics = parser.diagnostics.list.items,
             .line_index = line_index,
             .symbols = symbols,
+            .declarations = declarations,
             .closure_captures = closure_captures,
             .parents = parents,
         };

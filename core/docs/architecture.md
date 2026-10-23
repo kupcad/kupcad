@@ -90,6 +90,7 @@ The AST uses a **Data-Oriented Cache-Dense Layout**. Nodes avoid heap pointers a
 * **Index-Based References:** Nodes refer to child nodes, spans, or interned strings using 32-bit integer indices (`NodeIndex`, `StringId`) instead of pointers.
 * **Side-Table Metadata:** Extended payloads (such as function parameters or multi-branch `case/when` lists) are appended to a contiguous `extra_data: ArrayListUnmanaged(u32)` buffer.
 * **String Interning:** Identifier and string literal characters are stored in a dedicated String Pool. Duplicate strings map to the exact same `StringId`, turning name comparisons into $O(1)$ integer equality checks.
+* **Resolution:** the resolver (`core/resolver.zig`) gives every name node its kind and slot (`Document.symbols`) and, for a local or an upvalue, the node that declared it (`Document.declarations`: its first assignment, the `def`, lambda or block it is a parameter of, the `for`; an assignment gets its name's first one). Go-to-definition (`cli/lsp_definition.zig`) reads them, so it scopes names exactly as the compiler does; what the resolver doesn't record (a method's `def`, a class, an import's names and file) it finds in the tree. The parser leaves nodes out of the tree behind (a name read as a variable before `=` made it an assignment), sharing a main token with the node that replaced them: `nodeOfToken`, which hover uses too, takes only a node the parent map reaches.
 
 ```mermaid
 flowchart LR

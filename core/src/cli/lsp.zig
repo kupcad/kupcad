@@ -12,6 +12,8 @@ const api = @import("../api.zig");
 const lsp_actions = @import("lsp_actions.zig");
 const lsp_inbox = @import("lsp_inbox.zig");
 const lsp_hints = @import("lsp_hints.zig");
+const lsp_definition = @import("lsp_definition.zig");
+const import_path = @import("../core/import_path.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
 const value = @import("../core/value.zig");
@@ -415,6 +417,7 @@ pub const Handler = struct {
             },
             .documentFormattingProvider = .{ .bool = true },
             .hoverProvider = .{ .bool = true },
+            .definitionProvider = .{ .bool = true },
             // The hints are complete when sent: nothing to resolve later.
             .inlayHintProvider = .{ .inlay_hint_options = .{ .resolveProvider = false } },
             .completionProvider = .{
@@ -583,16 +586,8 @@ pub const Handler = struct {
         const doc = buf.doc orelse return null;
 
         const target_offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
-        const tok_idx = tokenAt(&doc, target_offset) orelse return null;
-
-        var found_node_idx: ast.NodeIndex = .none;
-        for (doc.tree.nodes.items, 0..) |node, i| {
-            if (node.main_token == tok_idx) {
-                found_node_idx = @fromBackingInt(@as(u32, @intCast(i)));
-                break;
-            }
-        }
-
+        const tok_idx = lsp_definition.tokenAt(&doc, target_offset) orelse return null;
+        const found_node_idx = lsp_definition.nodeOfToken(&doc, tok_idx);
         if (found_node_idx == .none) return null;
         const target_node = doc.tree.getNode(found_node_idx).?;
         const scope = findEnclosingScope(&doc, found_node_idx);
@@ -601,8 +596,8 @@ pub const Handler = struct {
         defer out.deinit();
 
         // AST Base Formatting
-        if (target_node.tag == .identifier) {
-            const name = doc.tree.nodeString(target_node);
+        if (target_node.tag == .identifier or target_node.tag == .assignment) {
+            const name = if (target_node.tag == .assignment) doc.tree.getString(doc.tree.assignment(target_node).name) else doc.tree.nodeString(target_node);
             const sym = doc.symbols[@backingInt(found_node_idx)];
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
             out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
@@ -648,19 +643,44 @@ pub const Handler = struct {
         };
     }
 
-    /// The token `offset` is in, found by binary search (token starts are in order;
-    /// a scan from the first token made a hover near the end of a long file cost its length).
-    fn tokenAt(doc: *const api.Document, offset: usize) ?u24 {
-        const starts = doc.tokens.starts;
-        var lo: usize = 0;
-        var hi: usize = starts.len;
-        while (lo < hi) {
-            const mid = lo + (hi - lo) / 2;
-            if (starts[mid] <= offset) lo = mid + 1 else hi = mid;
+    /// Where the name under the cursor is defined (lsp_definition.zig): in the document,
+    /// or the module an `import` reads, which opens at its start.
+    pub fn @"textDocument/definition"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.Definition.Params,
+    ) !?lsp.types.Definition.Result {
+        const buf = self.files.get(params.textDocument.uri) orelse return null;
+        const doc = buf.doc orelse return null;
+        const offset = lsp.offsets.positionToIndex(buf.source, params.position, self.offset_encoding);
+        const target = lsp_definition.definitionAt(&doc, offset) orelse return null;
+        const location: lsp.types.Location = switch (target) {
+            .here => |span| .{ .uri = params.textDocument.uri, .range = .{
+                .start = self.lspPosition(&doc.line_index, span.offset),
+                .end = self.lspPosition(&doc.line_index, span.offset + span.length),
+            } },
+            .module => |spec| .{ .uri = try self.moduleUri(arena, buf.module_path, spec) orelse return null, .range = .{
+                .start = .{ .line = 0, .character = 0 },
+                .end = .{ .line = 0, .character = 0 },
+            } },
+        };
+        return .{ .definition = .{ .location = location } };
+    }
+
+    /// The `file:` URI of the module the document at `module_path` imports as `spec`, as
+    /// the session resolves it (core/import_path.zig): under the workspace folder, or where
+    /// it says for a document outside one; null for a relative one with no folder open.
+    fn moduleUri(self: *const Handler, arena: std.mem.Allocator, module_path: []const u8, spec: []const u8) !?[]const u8 {
+        const resolved = try import_path.resolve(arena, module_path, spec);
+        var out: std.Io.Writer.Allocating = .init(arena);
+        if (std.fs.path.isAbsolutePosix(resolved)) {
+            try out.writer.writeAll("file://");
+        } else {
+            const root_uri = self.root_uri orelse return null;
+            try out.writer.print("{s}/", .{std.mem.trimEnd(u8, root_uri, "/")});
         }
-        if (lo == 0) return null;
-        const i = lo - 1;
-        return if (offset < starts[i] + doc.tokens.lengths[i]) @intCast(i) else null;
+        try (std.Uri.Component{ .raw = resolved }).formatPath(&out.writer);
+        return out.written();
     }
 
     pub fn @"textDocument/inlayHint"(

@@ -503,6 +503,28 @@ test "LSP: an editor that can't watch files by relative path isn't asked to" {
     try testing.expectEqual(@as(usize, 0), server.sent("registerCapability"));
 }
 
+test "LSP: go to definition finds a name in the document, and an import's file under the workspace" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    const root_uri = "file:///work/my%20project";
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = root_uri });
+    const uri = root_uri ++ "/parts/main.kup";
+    try server.open(uri, "import { bolt } from \"../lib/hw parts.kup\"\nwidth = 4\ncube(width)\n");
+    const arena = server.arena.allocator();
+
+    const local = (try server.handler.@"textDocument/definition"(arena, .{ .textDocument = .{ .uri = uri }, .position = .{ .line = 2, .character = 6 } })) orelse return error.NoDefinition;
+    try testing.expectEqualStrings(uri, local.definition.location.uri);
+    try testing.expectEqual(lsp.types.Range{ .start = .{ .line = 1, .character = 0 }, .end = .{ .line = 1, .character = 5 } }, local.definition.location.range);
+
+    // The path, resolved from the document's folder and percent-encoded
+    const module = (try server.handler.@"textDocument/definition"(arena, .{ .textDocument = .{ .uri = uri }, .position = .{ .line = 0, .character = 25 } })) orelse return error.NoDefinition;
+    try testing.expectEqualStrings(root_uri ++ "/lib/hw%20parts.kup", module.definition.location.uri);
+
+    // A built-in is nothing the document defines
+    try testing.expect(try server.handler.@"textDocument/definition"(arena, .{ .textDocument = .{ .uri = uri }, .position = .{ .line = 2, .character = 1 } }) == null);
+}
+
 test "LSP: a watched file's glob pattern matches only its path" {
     const pattern = try @import("lsp.zig").globEscaped(testing.allocator, "data/[a]*{b}?.json");
     defer testing.allocator.free(pattern);
