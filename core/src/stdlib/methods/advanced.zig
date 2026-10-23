@@ -16,13 +16,17 @@ const booleans = @import("booleans.zig");
 /// split_by_plane's arguments, positionally or as kwargs.
 const PLANE_ARGS = sig.SPLIT_BY_PLANE.positional;
 
-pub fn meshHull(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+/// `hull(others...)`: the convex hull of the shape and any others of its kind, Solids or
+/// Sketches.
+pub fn meshHull(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     var scratch = std.ArrayList(u32).empty;
     const alloc = vm.scratch_arena.allocator();
 
-    try scratch.append(alloc, receiver.dag_idx);
-    try booleans.appendOperands(vm, alloc, &scratch, args, true, "hull");
+    const is_3d = receiver.isGeometry();
+    try scratch.append(alloc, if (is_3d) receiver.asGeometry().dag_idx else receiver.asCrossSection().dag_idx);
+    try booleans.appendOperands(vm, alloc, &scratch, args, is_3d, "hull");
 
+    if (!is_3d) return try vm.allocateCrossSection(try vm.dag_builder.addSketchHull(scratch.items));
     const hull_idx = try vm.dag_builder.addBalancedChain(.hull, scratch.items);
     return try vm.allocateGeometry(.{ .symbolic = hull_idx });
 }

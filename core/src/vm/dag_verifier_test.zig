@@ -32,6 +32,7 @@ test "DAG verifier: what every builder makes is sound" {
     _ = try b.addProject(cube);
     _ = try b.addBatchUnion(&.{ cube, ext });
     _ = try b.addBatchHull(&.{ cube, ext });
+    _ = try b.addSketchHull(&.{ sq, circ });
     _ = try b.addTrimByPlane(try b.addHull(cube), 0, 0, 1, 0);
     _ = try b.addTransformMatrix(try b.addMirror(cube, 1, 0, 0), .{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
     _ = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 0, 3, 2 }, .{ 1, 2, 3 } });
@@ -51,6 +52,7 @@ test "DAG verifier: names what is wrong with a malformed node" {
     try expectProblem("an operand is a solid where a sketch belongs", &b, try nodeWith(&b, .extrude, &.{ cube, nums }));
     try expectProblem("an operand is a sketch where a solid belongs", &b, try nodeWith(&b, .translate, &.{ sq, nums }));
     try expectProblem("an operand is a sketch where a solid belongs", &b, try nodeWith(&b, .union_op, &.{ cube, sq }));
+    try expectProblem("an operand is a solid where a sketch belongs", &b, try nodeWith(&b, .cs_hull_op, &.{ 2, sq, cube }));
     try expectProblem("an operand isn't a node built before it", &b, try nodeWith(&b, .hull, &.{99}));
     try expectProblem("it has no operands", &b, try nodeWith(&b, .batch_union_op, &.{0}));
     try expectProblem("its numbers are outside the numbers table", &b, try nodeWith(&b, .translate, &.{ cube, 1000 }));
@@ -88,6 +90,7 @@ test "DAG verifier: every tag is a solid or a sketch, as the evaluator reads it"
     try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_set_name));
     try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.rounded_square));
     try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.closed_path));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_hull_op));
     try testing.expectEqual(verifier.Kind.sketch, verifier.operandKind(.cs_set_material));
     try testing.expectEqual(verifier.Kind.solid, verifier.operandKind(.set_material));
 }

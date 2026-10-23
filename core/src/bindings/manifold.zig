@@ -13,6 +13,7 @@ pub const ManifoldCrossSection = opaque {};
 pub const ManifoldPolygons = opaque {};
 pub const ManifoldSimplePolygon = opaque {};
 pub const ManifoldVecObj = opaque {};
+pub const ManifoldCrossSectionVec = opaque {};
 
 pub const OpType = enum(c_int) {
     add = 0,
@@ -98,6 +99,12 @@ extern fn manifold_cross_section_square(mem: ?*ManifoldCrossSection, x: f64, y: 
 extern fn manifold_cross_section_circle(mem: ?*ManifoldCrossSection, radius: f64, circular_segments: c_int) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_to_polygons(mem: ?*ManifoldPolygons, cs: ?*ManifoldCrossSection) ?*ManifoldPolygons;
 extern fn manifold_cross_section_of_polygons(mem: ?*ManifoldCrossSection, p: ?*ManifoldPolygons) ?*ManifoldCrossSection;
+extern fn manifold_alloc_cross_section_vec() ?*ManifoldCrossSectionVec;
+extern fn manifold_cross_section_empty_vec(mem: ?*ManifoldCrossSectionVec) ?*ManifoldCrossSectionVec;
+// Runs ~vector() and frees the memory manifold_alloc_cross_section_vec gave
+extern fn manifold_delete_cross_section_vec(csv: ?*ManifoldCrossSectionVec) void;
+extern fn manifold_cross_section_vec_push_back(csv: ?*ManifoldCrossSectionVec, cs: ?*ManifoldCrossSection) void;
+extern fn manifold_cross_section_batch_hull(mem: ?*ManifoldCrossSection, css: ?*ManifoldCrossSectionVec) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
 extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
 extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
@@ -317,6 +324,15 @@ pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f
 
 pub fn crossSectionBoolean(a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
     return manifold_cross_section_boolean(manifold_alloc_cross_section(), a, b, op);
+}
+
+/// The convex hull of the sketches together. The vector holds copies (a CrossSection
+/// shares its outlines), freed with it.
+pub fn crossSectionBatchHull(sketches: []const *ManifoldCrossSection) ?*ManifoldCrossSection {
+    const vec = manifold_cross_section_empty_vec(manifold_alloc_cross_section_vec() orelse return null);
+    defer manifold_delete_cross_section_vec(vec);
+    for (sketches) |cs| manifold_cross_section_vec_push_back(vec, cs);
+    return manifold_cross_section_batch_hull(manifold_alloc_cross_section(), vec);
 }
 
 pub fn square(x: f64, y: f64, center: bool) ?*ManifoldCrossSection {

@@ -121,7 +121,10 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                 try pending.append(allocator, .{ .node = p.left, .matrix = visit.matrix });
                 try pending.append(allocator, .{ .node = p.right, .matrix = visit.matrix });
             },
-            .batch_union_op => for (b.getBatchUnionPayload(node)) |operand| try pending.append(allocator, .{ .node = operand, .matrix = visit.matrix }),
+            // A hull keeps the points of its operands' outlines it reaches: where it runs
+            // along a circle it joins neighbouring points (an arc), and across a gap two
+            // points that aren't (a line)
+            .batch_union_op, .cs_hull_op => for (b.getBatchUnionPayload(node)) |operand| try pending.append(allocator, .{ .node = operand, .matrix = visit.matrix }),
             // A cylinder seen from above is its larger cap (the points of the smaller
             // one lie inside), drawn as the kernel draws it, from the +x axis
             .cylinder => {

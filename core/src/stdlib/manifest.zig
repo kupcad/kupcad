@@ -199,7 +199,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("mass", .inspection_method, bom.meshMass, &sig.NONE, .number, .solids),
     method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid, .sketches),
     method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid, .sketches),
-    method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid, .solids),
+    method("hull", .transform, methods.meshHull, &sig.SHAPES, .receiver, .both),
     method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid, .sketches),
     method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid, .sketches),
     method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver, .solids),

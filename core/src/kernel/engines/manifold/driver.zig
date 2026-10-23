@@ -308,6 +308,17 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    const m_sketches = allocator.alloc(*manifold.ManifoldCrossSection, sketches.len) catch return null;
+    defer allocator.free(m_sketches);
+    for (sketches, m_sketches) |cs, *m| {
+        if (cs.engine != .manifold) return null;
+        m.* = @ptrCast(@alignCast(cs.ptr));
+    }
+    const ptr = manifold.crossSectionBatchHull(m_sketches) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 /// The loft of two convex profiles (the evaluator rejects others) is the hull of their
 /// outlines placed at z = 0 and z = height: exact, with nothing to tune. (It hulled two thin
 /// extruded sheets, which bulged by their thickness wherever the profiles differ.)
@@ -727,6 +738,7 @@ pub const driver = struct {
     pub const loftFn = loftImpl;
     pub const trimByPlaneFn = trimByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
+    pub const crossSectionHullFn = crossSectionHullImpl;
     pub const genusFn = genusImpl;
     pub const minkowskiFn = minkowskiImpl;
     pub const offsetFn = offsetImpl;

@@ -24,7 +24,7 @@ test "Lint: unknown-keyword suggests the nearest keyword, when one is clearly ne
 test "Lint: shape-mismatch names the kind a method or operator belongs to" {
     const cases = [_]struct { source: []const u8, message: ?[]const u8 }{
         .{ .source = "p = line([0, 0], [1, 0])\np.extrude(1)", .message = "extrude isn't a Path's method: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" },
-        .{ .source = "s = square(1)\ns.hull", .message = "hull isn't a Sketch's method (a Solid's), so this fails when the script runs" },
+        .{ .source = "s = square(1)\ns.genus", .message = "genus isn't a Sketch's method (a Solid's), so this fails when the script runs" },
         .{ .source = "c = cube(1)\nc.extrude(1)", .message = "extrude isn't a Solid's method (a Sketch's), so this fails when the script runs" },
         .{ .source = "c = cube(1)\nc.close", .message = "close isn't a Solid's method (a Path's), so this fails when the script runs" },
         .{ .source = "p = line([0, 0], [1, 0])\nsquare(1) - p", .message = "'-' can't combine a Path and a Sketch: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" },

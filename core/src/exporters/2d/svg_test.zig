@@ -210,6 +210,16 @@ test "SVG: a polygon's rounded corners and a Path's fillets are arcs, a concave 
     try testing.expect(std.mem.find(u8, svg, "<path id=\"hook\"") != null);
 }
 
+test "SVG: a sketch hull's run along a circle is an arc, its run across a gap a line" {
+    // A slot: the hull of two circles, half of each and the two lines between them
+    const svg = try exportSvg("circle(r: 5, segments: 16).hull(circle(r: 5, segments: 16).translate(x: 20))");
+    defer testing.allocator.free(svg);
+    errdefer std.debug.print("svg:\n{s}\n", .{svg});
+    const d = pathData(svg, 0).?;
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, d, " A 5 5 0 0 0 "));
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, d, " L "));
+}
+
 test "SVG: what can't be drawn is refused with a message" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "[]", .message = "GeometryError: the model holds no shape: nothing to draw as svg" },

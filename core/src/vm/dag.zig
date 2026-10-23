@@ -81,6 +81,8 @@ pub const DAGTag = enum(u8) {
     cs_union_op,
     cs_difference_op,
     cs_intersection_op,
+    /// The convex hull of one or more sketches (`hull`), an operand list as batch_hull_op's.
+    cs_hull_op,
     offset,
     cs_transform,
     /// `square(round_r:)`: a rectangle with rounded corners (core/rounded_rect.zig), kept
@@ -113,7 +115,7 @@ pub fn scriptName(tag: DAGTag) []const u8 {
         .difference_op, .cs_difference_op => "difference",
         .intersection_op, .cs_intersection_op => "intersection",
         .polyhedron_op => "polyhedron",
-        .batch_hull_op => "hull",
+        .batch_hull_op, .cs_hull_op => "hull",
         .slice_op => "slice",
         .project_op => "project",
         .transform_matrix, .cs_transform => "transform",
@@ -176,7 +178,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .closed_path => .path,
         .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => .{ .operands = 2 },
         .hull, .project_op => .{ .operands = 1 },
-        .batch_union_op, .batch_hull_op => .operand_list,
+        .batch_union_op, .batch_hull_op, .cs_hull_op => .operand_list,
         .translate, .rotate, .scale, .mirror => .{ .target_numbers = 3 },
         .transform_matrix => .{ .target_numbers = 12 },
         .trim_by_plane => .{ .target_numbers = 4 },
@@ -488,6 +490,12 @@ pub const DAGBuilder = struct {
     }
 
     pub fn addBatchUnion(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        return self.addOperandList(.batch_union_op, targets);
+    }
+
+    /// A node of `tag` over `targets`: their count, then the targets (layout operand_list).
+    fn addOperandList(self: *DAGBuilder, tag: DAGTag, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        std.debug.assert(layoutOf(tag) == .operand_list);
         const snap = self.snapshot();
         const alloc = self.allocator();
         const extra_idx: u32 = @intCast(self.extra_data.items.len);
@@ -495,7 +503,7 @@ pub const DAGBuilder = struct {
         try self.extra_data.append(alloc, @intCast(targets.len));
         try self.extra_data.appendSlice(alloc, targets);
 
-        return try self.appendNodeWithRollback(.{ .tag = .batch_union_op, .flags = 0, .data = extra_idx }, snap);
+        return try self.appendNodeWithRollback(.{ .tag = tag, .flags = 0, .data = extra_idx }, snap);
     }
 
     /// The empty Solid (`is_3d`) or Sketch.
@@ -718,14 +726,12 @@ pub const DAGBuilder = struct {
     }
 
     pub fn addBatchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
-        const snap = self.snapshot();
-        const alloc = self.allocator();
-        const extra_idx: u32 = @intCast(self.extra_data.items.len);
+        return self.addOperandList(.batch_hull_op, targets);
+    }
 
-        try self.extra_data.append(alloc, @intCast(targets.len));
-        try self.extra_data.appendSlice(alloc, targets);
-
-        return try self.appendNodeWithRollback(.{ .tag = .batch_hull_op, .flags = 0, .data = extra_idx }, snap);
+    /// The hull of one sketch or of several together.
+    pub fn addSketchHull(self: *DAGBuilder, targets: []const DAGNodeIndex) !DAGNodeIndex {
+        return self.addOperandList(.cs_hull_op, targets);
     }
 
     pub fn addLoft(self: *DAGBuilder, base: DAGNodeIndex, top: DAGNodeIndex, height: f64) !DAGNodeIndex {

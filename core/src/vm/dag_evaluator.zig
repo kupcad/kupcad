@@ -325,7 +325,7 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
             const p = b.getLoftPayload(node);
             try pushAll(f_stack, &.{ p.base, p.top });
         },
-        .batch_union_op, .batch_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
+        .batch_union_op, .batch_hull_op, .cs_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
         .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => {},
     }
 }
@@ -350,6 +350,7 @@ fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: 
         .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
         .extrude, .revolve, .loft => try executeSweep(vm, v_stack, node, config),
         .slice_op, .project_op, .offset, .cs_transform, .cs_union_op, .cs_difference_op, .cs_intersection_op => try executeSketchOp(vm, v_stack, node),
+        .cs_hull_op => try executeSketchHull(vm, v_stack, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
     }
 }
 
@@ -645,6 +646,28 @@ fn executeSketchOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !voi
         },
         else => unreachable,
     }
+}
+
+/// The hull of the `count` sketches on top of `v_stack` (popped and released here).
+fn executeSketchHull(vm: *VM, v_stack: *IntermediateStack, tag: dag.DAGTag, count: usize) !void {
+    const entries = try vm.allocator.alloc(StackEntry, count);
+    defer vm.allocator.free(entries);
+    // Popped last first, so they keep their order
+    var i: usize = count;
+    while (i > 0) {
+        i -= 1;
+        entries[i] = v_stack.pop();
+    }
+    defer for (entries) |e| v_stack.release(e);
+
+    const sketches = try vm.allocator.alloc(geom.CrossSectionHandle, count);
+    defer vm.allocator.free(sketches);
+    for (entries, sketches) |e, *cs| {
+        cs.* = try crossSectionOf(e);
+        try vm.requireSameEngine(sketches[0].engine, cs.engine);
+    }
+    try vm.requireFeature(sketches[0].engine, .sketch_hull);
+    try pushSketch(vm, v_stack, tag, kernel.crossSectionHull(vm.allocator, sketches));
 }
 
 /// Moves the fresh result on top of `v_stack` into its cache, once checked. A borrowed

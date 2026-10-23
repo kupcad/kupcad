@@ -5,6 +5,6 @@
 9:1 W [self-subtraction] 'hook - hook' subtracts a shape from itself, which leaves nothing
 9:1 E [shape-mismatch] '-' can't combine two Paths: '+' joins them where one ends and the next starts
 10:1 E [shape-mismatch] '&' can't combine a Path and a Sketch: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first
-11:1 E [shape-mismatch] hull isn't a Sketch's method (a Solid's), so this fails when the script runs
+11:1 E [shape-mismatch] genus isn't a Sketch's method (a Solid's), so this fails when the script runs
 12:1 E [shape-mismatch] volume isn't a Sketch's method (a Solid's), so this fails when the script runs
 13:1 E [shape-mismatch] extrude isn't a Solid's method (a Sketch's), so this fails when the script runs

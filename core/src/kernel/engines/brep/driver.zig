@@ -345,6 +345,13 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
     return derive(geom.GeometryHandle, a.ptr, locus_trans.mirrorSolid, .{ nx, ny, nz });
 }
 
+/// Not implemented for B-Rep yet (supports(.sketch_hull) is false).
+fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    _ = allocator;
+    _ = sketches;
+    return null;
+}
+
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
     _ = miter_limit;
     _ = join_type;
@@ -709,6 +716,7 @@ pub fn supports(feature: kernel.Feature) bool {
         .revolve,
         .loft,
         .sketch_boolean,
+        .sketch_hull,
         .curved_hull,
         .sphere, // Locus builds a fixed 16-sided faceted one, whatever the resolution
         .cone,
@@ -764,6 +772,7 @@ pub const driver = struct {
     pub const decomposeFn = decomposeImpl;
     pub const trimByPlaneFn = trimByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
+    pub const crossSectionHullFn = crossSectionHullImpl;
     pub const genusFn = genusImpl;
     pub const transformMatrixFn = transformMatrixImpl;
     pub const minkowskiFn = minkowskiImpl;

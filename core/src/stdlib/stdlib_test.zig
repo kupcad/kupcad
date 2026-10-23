@@ -1170,6 +1170,19 @@ test "Stdlib: polygon rounds or cuts each of its corners, a concave one too" {
     });
 }
 
+test "Stdlib: a Sketch's hull is a Sketch, of the sketch alone or with others" {
+    const ELL = "ell = [[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]]\n";
+    try expectScripts(&.{
+        // The L's inner corner filled in: the 20 by 20 square less the triangle beyond the diagonal
+        .{ .src = ELL ++ "r = polygon(ell).hull.area", .expected = .{ .num = 400 - 112.5 } },
+        .{ .src = "r = square(1).hull(square(1).translate(3, 0)).area", .expected = .{ .num = 4 } },
+        .{ .src = "r = square(1).hull([square(1).translate(3, 0), square(1).translate(0, 3)]).area", .expected = .{ .num = 16 - 4.5 } },
+        .{ .src = "r = \"#{square(1).hull.class} #{cube(1).hull.class}\"", .expected = .{ .str = "CrossSection Geometry" } },
+        .{ .src = comptime rescued("square(1).hull(cube(1))"), .expected = .{ .str = "TypeError: hull expects a Sketch or an Array of them for argument 1, got Geometry" } },
+        .{ .src = comptime rescued("cube(1).hull(square(1))"), .expected = .{ .str = "TypeError: hull expects a Solid or an Array of them for argument 1, got CrossSection" } },
+    });
+}
+
 test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
     try expectScripts(&.{
         .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
@@ -1237,9 +1250,9 @@ test "Stdlib: a rounded corner is never one chord, and an offset's rounding foll
 
 test "Stdlib: a shape responds to the methods of its kind only" {
     // Every shape method was bound to Solids and Sketches alike, so a sketch said it
-    // responded to `hull` and raised when called.
+    // responded to a Solid's methods and raised when called.
     try expectScripts(&.{
-        .{ .src = "r = \"#{square(1).respond_to?(:hull)} #{cube(1).respond_to?(:hull)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)}\"", .expected = .{ .str = "false true true false true" } },
+        .{ .src = "r = \"#{square(1).respond_to?(:genus)} #{cube(1).respond_to?(:genus)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)} #{square(1).respond_to?(:hull)}\"", .expected = .{ .str = "false true true false true true" } },
         // A Sketch takes a name and a material too, for a drawing
         .{ .src = "r = \"#{square(1).respond_to?(:named)} #{square(1).named(\"a\").material(color: \"#FF0000\").class}\"", .expected = .{ .str = "true CrossSection" } },
     });
@@ -1342,7 +1355,6 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         .{ .src = comptime rescued("square(1).genus"), .expected = .{ .str = "NoMethodError: undefined method 'genus' for CrossSection" } },
         .{ .src = comptime rescued("square(1).decompose"), .expected = .{ .str = "NoMethodError: undefined method 'decompose' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_stl(\"a.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).hull"), .expected = .{ .str = "NoMethodError: undefined method 'hull' for CrossSection" } }, // was a TypeError
         .{ .src = comptime rescued("cube(1).align(5, \"x\", \"min\")"), .expected = .{ .str = "TypeError: align expects a Geometry or CrossSection to align to, got Number" } },
         .{ .src = comptime rescued("import_step(\"a.step\")"), .expected = .{ .str = "NotImplementedError: import_step is not supported yet" } },
         // Operators name themselves and both operands.
@@ -1917,6 +1929,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).hull.simplify"), .expected = brepLacks(.curved_hull) }, // hulled only its few vertices
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(10).hull.extrude(1).simplify"), .expected = brepLacks(.sketch_hull) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },

@@ -20,7 +20,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
         .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
         .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => .sketch,
-        .cs_union_op, .cs_difference_op, .cs_intersection_op, .offset, .cs_transform, .cs_set_material, .cs_set_name => .sketch,
+        .cs_union_op, .cs_difference_op, .cs_intersection_op, .cs_hull_op, .offset, .cs_transform, .cs_set_material, .cs_set_name => .sketch,
         .slice_op, .project_op => .sketch,
     };
 }
@@ -28,7 +28,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
 /// The kind of shape `tag` takes for its operands.
 pub fn operandKind(tag: dag.DAGTag) Kind {
     return switch (tag) {
-        .cs_union_op, .cs_difference_op, .cs_intersection_op, .extrude, .revolve, .offset, .cs_transform, .cs_set_material, .cs_set_name, .loft => .sketch,
+        .cs_union_op, .cs_difference_op, .cs_intersection_op, .cs_hull_op, .extrude, .revolve, .offset, .cs_transform, .cs_set_material, .cs_set_name, .loft => .sketch,
         else => .solid,
     };
 }

@@ -36,6 +36,7 @@ pub const Feature = enum {
     revolve,
     loft,
     sketch_boolean,
+    sketch_hull,
     curved_hull,
     sphere,
     cone,
@@ -74,6 +75,7 @@ pub const Feature = enum {
             .revolve => "revolve sketches",
             .loft => "loft sketches",
             .sketch_boolean => "combine sketches (union, difference, intersection)",
+            .sketch_hull => "take the hull of sketches",
             .curved_hull => "take the hull of a curved solid (a sphere's, a cylinder's)",
             .sphere => "make exact spheres",
             .cone => "make cones (a cylinder with r1 different from r2)",
@@ -128,7 +130,7 @@ pub const Feature = enum {
             .faces => &.{"on_face"},
             .mesh => &.{ "export_stl", "export_gltf", "export_3mf", "export_obj" },
             .sketch_contours => &.{ "export_svg", "export_dxf" },
-            .sketch_boolean, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
+            .sketch_boolean, .sketch_hull, .curved_hull, .cone, .extrude_twist, .extrude_scale, .sketch_measure, .materials, .empty => &.{},
         };
     }
 };
@@ -418,6 +420,13 @@ pub inline fn batchHull(allocator: std.mem.Allocator, objs: []const geom.Geometr
     if (!allSameEngine(objs[0].engine, objs)) return null;
 
     return dispatchOn("batchHullFn", objs[0].engine, .{ allocator, objs });
+}
+
+/// The convex hull of the sketches together (one or more, all of one engine).
+pub inline fn crossSectionHull(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    if (sketches.len == 0) return null;
+    for (sketches) |cs| if (cs.engine != sketches[0].engine) return null;
+    return dispatchOn("crossSectionHullFn", sketches[0].engine, .{ allocator, sketches });
 }
 
 pub inline fn loft(engine: geom.EngineType, allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, height: f64) ?geom.GeometryHandle {
