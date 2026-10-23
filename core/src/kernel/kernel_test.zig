@@ -62,6 +62,7 @@ test "Kernel Dispatcher: rejects mixed-engine operands at runtime" {
     try testing.expect(kernel.boolean(b, m, .difference_op) == null);
     try testing.expect(kernel.boolean(m, b, .union_op) == null);
     try testing.expect(kernel.minkowski(m, b) == null);
+    try testing.expect(kernel.erode(b, 1, 8) == null);
     try testing.expect(kernel.batchBoolean(testing.allocator, &.{ m, b }, .union_op) == null);
     try testing.expect(kernel.batchHull(testing.allocator, &.{ b, m }) == null);
     try testing.expectEqual(@as(f64, 0.0), kernel.minGap(m, b, 1.0));

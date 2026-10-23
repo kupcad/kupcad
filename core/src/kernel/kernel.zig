@@ -82,7 +82,7 @@ pub const Feature = enum {
             .extrude_twist => "twist an extrusion (extrude twist:, helix)",
             .extrude_scale => "taper an extrusion (extrude scale:)",
             .offset => "offset sketches",
-            .minkowski => "take Minkowski sums (minkowski, a solid's offset)",
+            .minkowski => "take Minkowski sums (minkowski, a solid's offset, shell)",
             .trim_by_plane => "cut solids by a plane (trim_by_plane, split_by_plane)",
             .slice => "slice solids",
             .project => "project solids",
@@ -114,7 +114,7 @@ pub const Feature = enum {
             .revolve => &.{ "revolve", "torus" },
             .loft => &.{"loft"},
             .sphere => &.{"sphere"},
-            .offset => &.{"offset"},
+            .offset => &.{ "offset", "shell" },
             .minkowski => &.{"minkowski"},
             .trim_by_plane => &.{ "trim_by_plane", "split_by_plane" },
             .slice => &.{"slice"},
@@ -319,6 +319,12 @@ pub inline fn crossSectionTransform(cs: geom.CrossSectionHandle, mat: [6]f64) ?g
 
 pub inline fn hull(handle: geom.GeometryHandle) ?geom.GeometryHandle {
     return dispatch("hullFn", handle, .{});
+}
+
+/// The solid shrunk by `radius` on every side (an erosion: a Solid's offset inward), its
+/// rounding sphere drawn with `segments`.
+pub inline fn erode(handle: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
+    return dispatch("erodeFn", handle, .{ radius, segments });
 }
 
 pub inline fn minkowski(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {

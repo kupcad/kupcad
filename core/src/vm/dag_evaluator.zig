@@ -318,7 +318,7 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
             try pushAll(f_stack, &.{ p.left, p.right });
         },
         // Each stores its operand ('target') first in its extra_data payload
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
+        .translate, .rotate, .scale, .mirror, .hull, .erode, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
             try f_stack.push(b.extra_data.items[node.data]);
         },
         .loft => {
@@ -345,7 +345,7 @@ fn pushAll(f_stack: *EvaluationFrameStack, nodes: []const dag.DAGNodeIndex) !voi
 fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
     switch (node.tag) {
         .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
-        .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull => try executeSolidOp(vm, v_stack, node, config),
+        .union_op, .difference_op, .intersection_op, .minkowski, .erode, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull => try executeSolidOp(vm, v_stack, node, config),
         .set_material, .set_name, .cs_set_material, .cs_set_name => try executeLabel(vm, v_stack, node),
         .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
         .extrude, .revolve, .loft => try executeSweep(vm, v_stack, node, config),
@@ -509,6 +509,14 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             const solid = try geometryOf(target);
             try vm.requireFeature(solid.engine, .trim_by_plane);
             try pushSolid(vm, v_stack, node.tag, kernel.trimByPlane(solid, p.nx, p.ny, p.nz, p.offset));
+        },
+        .erode => {
+            const target = v_stack.pop();
+            defer v_stack.release(target);
+            const p = b.getErodePayload(node);
+            const solid = try geometryOf(target);
+            try vm.requireFeature(solid.engine, .minkowski);
+            try pushSolid(vm, v_stack, node.tag, kernel.erode(solid, p.radius, p.segments));
         },
         .hull => {
             const target = v_stack.pop();

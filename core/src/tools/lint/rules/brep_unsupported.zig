@@ -133,8 +133,9 @@ pub const BrepUnsupportedRule = struct {
         const name = tree.getString(call.method_name);
         if (literals.isCall(tree, node, null, "cylinder") and isCone(tree, call)) return .{ .feature = .cone, .what = "cylinder(r1:, r2:)" };
         const shape = if (call.receiver == .none) null else self.shapes.of(tree, call.receiver);
-        // A solid's offset is a Minkowski sum with a sphere; a sketch's is the kernel's offset.
-        if (shape == .solid and std.mem.eql(u8, name, "offset")) return .{ .feature = .minkowski, .what = "offset" };
+        // A solid's offset (and shell) is a Minkowski sum with a sphere; a sketch's is the
+        // kernel's offset.
+        if (shape == .solid and (std.mem.eql(u8, name, "offset") or std.mem.eql(u8, name, "shell"))) return .{ .feature = .minkowski, .what = name };
         const on_shape = call.receiver == .none or shape != null;
         if (on_shape) {
             inline for (comptime std.enums.values(kernel.Feature)) |feature| {

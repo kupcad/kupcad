@@ -259,6 +259,30 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+/// What is left of the solid once the space around it, grown by a sphere of `radius` (a
+/// Minkowski sum), is cut away: the solid shrunk by `radius` on every side. The space is a
+/// box past the solid by twice the radius on each side, less the solid, so it reaches
+/// every point within the radius of the solid's surface.
+fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
+    if (a.engine != .manifold) return null;
+    const solid: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
+    const bounds = manifold.boundingBox(solid);
+    const margin = 2 * radius;
+    const size = [3]f64{ bounds.max[0] - bounds.min[0] + 2 * margin, bounds.max[1] - bounds.min[1] + 2 * margin, bounds.max[2] - bounds.min[2] + 2 * margin };
+    const block = manifold.cube(size[0], size[1], size[2], false) orelse return null;
+    defer manifold.destruct(block);
+    const box = manifold.translate(block, bounds.min[0] - margin, bounds.min[1] - margin, bounds.min[2] - margin) orelse return null;
+    defer manifold.destruct(box);
+    const around = manifold.boolean(box, solid, .subtract) orelse return null;
+    defer manifold.destruct(around);
+    const ball = manifold.sphere(radius, segments) orelse return null;
+    defer manifold.destruct(ball);
+    const grown = manifold.minkowskiSum(around, ball) orelse return null;
+    defer manifold.destruct(grown);
+    const ptr = manifold.boolean(solid, grown, .subtract) orelse return null;
+    return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 // --- 3D Rigid Transformations ---
 
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
@@ -741,6 +765,7 @@ pub const driver = struct {
     pub const crossSectionHullFn = crossSectionHullImpl;
     pub const genusFn = genusImpl;
     pub const minkowskiFn = minkowskiImpl;
+    pub const erodeFn = erodeImpl;
     pub const offsetFn = offsetImpl;
     pub const transformMatrixFn = transformMatrixImpl;
     pub const crossSectionTransformFn = crossSectionTransformImpl;

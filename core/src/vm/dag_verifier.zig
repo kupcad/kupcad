@@ -16,7 +16,7 @@ pub const Kind = enum { solid, sketch };
 pub fn kindOf(tag: dag.DAGTag) Kind {
     return switch (tag) {
         .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete => .solid,
-        .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .batch_hull_op, .hull => .solid,
+        .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .erode, .batch_hull_op, .hull => .solid,
         .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
         .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => .sketch,

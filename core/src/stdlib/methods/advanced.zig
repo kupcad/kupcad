@@ -126,8 +126,8 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         return try vm.allocateCrossSection(new_idx);
     }
     if (receiver.isGeometry()) {
-        if (!std.math.isFinite(opts.delta) or opts.delta <= 0.0) {
-            return vm.fail(.ValueError, "a Solid's offset only grows it: delta must be a finite number greater than zero, got {f}", .{value.fmtNumber(opts.delta)});
+        if (!std.math.isFinite(opts.delta) or opts.delta == 0.0) {
+            return vm.fail(.ValueError, "a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got {f}", .{value.fmtNumber(opts.delta)});
         }
         if (opts.join != .round) {
             return vm.fail(.ValueError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :{s}", .{@tagName(opts.join)});
@@ -135,11 +135,37 @@ pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         if (opts.miter_limit != null) {
             return vm.fail(.ArgumentError, "a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no miter_limit", .{});
         }
+        const solid = receiver.asGeometry().dag_idx;
+        if (opts.delta < 0) return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addErode(solid, -opts.delta, segments) });
         const sphere_idx = try vm.dag_builder.addSphere(opts.delta, segments);
-        const new_idx = try vm.dag_builder.addBinary(.minkowski, receiver.asGeometry().dag_idx, sphere_idx);
+        const new_idx = try vm.dag_builder.addBinary(.minkowski, solid, sphere_idx);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     }
     return arguments.notDefinedFor(vm, "offset", receiver);
+}
+
+/// `shell(thickness, segments:)`: the shape hollowed out to walls `thickness` thick, its
+/// outside kept: itself less its offset inward by `thickness`. A Sketch's is the band
+/// along its outlines; a Solid's is closed all round (a difference cuts it open), its
+/// inner edges rounded as the offset rounds them, by a sphere of `segments:`.
+pub fn meshShell(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const Opts = struct { thickness: ?f64 = null, segments: i32 = 0 };
+    const pos = arguments.positionalArgs(args);
+    var base = Opts{};
+    if (pos.len > 0) base.thickness = try arguments.requireNumber(vm, pos[0], "shell", "thickness");
+    const opts = (try arguments.parseKwargsOver(Opts, base, sig.SHELL.keywords, vm, args, "shell")).opts;
+    const thickness = opts.thickness orelse return vm.fail(.ArgumentError, "shell needs its walls' thickness: shell(thickness)", .{});
+    try arguments.requirePositive(vm, thickness, "shell", "thickness");
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, thickness);
+    const b = &vm.dag_builder;
+    if (receiver.isCrossSection()) {
+        const sketch = receiver.asCrossSection().dag_idx;
+        const inner = try b.addOffset(sketch, -thickness, @backingInt(JoinType.round), segments, MIN_MITER_LIMIT);
+        return try vm.allocateCrossSection(try b.addBinary(.cs_difference_op, sketch, inner));
+    }
+    const solid = receiver.asGeometry().dag_idx;
+    return try vm.allocateGeometry(.{ .symbolic = try b.addBinary(.difference_op, solid, try b.addErode(solid, thickness, segments)) });
 }
 
 pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !value.Value {

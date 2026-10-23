@@ -345,6 +345,14 @@ fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryH
     return derive(geom.GeometryHandle, a.ptr, locus_trans.mirrorSolid, .{ nx, ny, nz });
 }
 
+/// Not implemented for B-Rep yet (supports(.minkowski) is false).
+fn erodeImpl(a: geom.GeometryHandle, radius: f64, segments: i32) ?geom.GeometryHandle {
+    _ = a;
+    _ = radius;
+    _ = segments;
+    return null;
+}
+
 /// Not implemented for B-Rep yet (supports(.sketch_hull) is false).
 fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
     _ = allocator;
@@ -773,6 +781,7 @@ pub const driver = struct {
     pub const trimByPlaneFn = trimByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const crossSectionHullFn = crossSectionHullImpl;
+    pub const erodeFn = erodeImpl;
     pub const genusFn = genusImpl;
     pub const transformMatrixFn = transformMatrixImpl;
     pub const minkowskiFn = minkowskiImpl;

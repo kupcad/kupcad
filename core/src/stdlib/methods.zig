@@ -33,6 +33,7 @@ pub const meshHull = advanced.meshHull;
 pub const meshMinkowski = advanced.meshMinkowski;
 pub const meshTrimByPlane = advanced.meshTrimByPlane;
 pub const meshOffset = advanced.meshOffset;
+pub const meshShell = advanced.meshShell;
 pub const meshSlice = advanced.meshSlice;
 pub const meshProject = advanced.meshProject;
 pub const meshOnFace = advanced.meshOnFace;

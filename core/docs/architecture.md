@@ -360,7 +360,7 @@ pub const GeometryHandle = struct {
 
 ### Backend Engine Drivers
 
-* **Manifold Driver (`kernel/engines/manifold/driver.zig`):** Translates calls into C FFI bindings (`bindings/manifold.zig`), communicating with the C++ Manifold mesh library.
+* **Manifold Driver (`kernel/engines/manifold/driver.zig`):** Translates calls into C FFI bindings (`bindings/manifold.zig`), communicating with the C++ Manifold mesh library. What Manifold lacks it composes from what it has: an erosion (`erode`, the `erode` node a negative `offset` and `shell` add) is the solid less the Minkowski sum of a sphere with the space around it (a box past the solid by twice the radius, less the solid), which reaches every point within the radius of its surface.
 * **Native B-Rep Driver (`kernel/engines/brep/driver.zig`):** Executes exact boundary representation operations using topological structures (`Vertex`, `Edge`, `Face`, `Solid`). Locus is unfinished: most of its operations are still stubs, so the driver's `supports` lists what is real (cubes, cylinders, polyhedra, sketches, hulls of flat-faced solids, STEP export) and everything else is refused before it runs (see *Engine features* below). A copy (`BrepSolid.clone`) duplicates the solid's arenas, NURBS data included (an identity transform would keep only points, lines and planes).
 
 ### Ownership & Engine Rules

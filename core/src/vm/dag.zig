@@ -76,6 +76,9 @@ pub const DAGTag = enum(u8) {
     hull,
     loft,
     minkowski,
+    /// A Solid shrunk on every side (an inward `offset`, `shell`): its radius and the
+    /// rounding sphere's segments.
+    erode,
     trim_by_plane,
     transform_matrix,
     cs_union_op,
@@ -119,6 +122,7 @@ pub fn scriptName(tag: DAGTag) []const u8 {
         .slice_op => "slice",
         .project_op => "project",
         .transform_matrix, .cs_transform => "transform",
+        .erode => "offset",
         .polygons_even_odd => "polygon",
         .set_material, .cs_set_material => "material",
         .set_name, .cs_set_name => "named",
@@ -185,7 +189,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .slice_op => .{ .target_numbers = 1 },
         .offset => .{ .target_numbers = 3 },
         .extrude => .{ .target_numbers = 5 },
-        .revolve => .{ .target_numbers = 2 },
+        .revolve, .erode => .{ .target_numbers = 2 },
         .cs_transform => .{ .target_numbers = 6 },
         .set_material, .set_name, .cs_set_material, .cs_set_name => .target_value,
         .loft => .loft,
@@ -785,6 +789,13 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .offset, .flags = join_type, .data = extra_idx }, snap);
     }
 
+    pub fn addErode(self: *DAGBuilder, target: DAGNodeIndex, radius: f64, segments: i32) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx = try self.appendNumbers(&.{ radius, @floatFromInt(segments) });
+        const extra_idx = try self.appendExtraData(&.{ target, num_idx });
+        return try self.appendNodeWithRollback(.{ .tag = .erode, .flags = 0, .data = extra_idx }, snap);
+    }
+
     pub fn addRevolve(self: *DAGBuilder, target: DAGNodeIndex, segments: i32, degrees: f64) !DAGNodeIndex {
         const snap = self.snapshot();
         const num_idx = try self.appendNumbers(&.{ @floatFromInt(segments), degrees });
@@ -1137,6 +1148,11 @@ pub const DAGBuilder = struct {
             .segments = @intFromFloat(self.numbers.items[self.extra_data.items[node.data + 1] + 1]),
             .miter_limit = self.numbers.items[self.extra_data.items[node.data + 1] + 2],
         };
+    }
+
+    pub inline fn getErodePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, radius: f64, segments: i32 } {
+        const at = self.extra_data.items[node.data + 1];
+        return .{ .target = self.extra_data.items[node.data], .radius = self.numbers.items[at], .segments = @intFromFloat(self.numbers.items[at + 1]) };
     }
 
     pub inline fn getSlicePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, height: f64 } {

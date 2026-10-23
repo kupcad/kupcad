@@ -912,7 +912,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 15), checked);
+    try std.testing.expectEqual(@as(usize, 16), checked);
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -1180,6 +1180,25 @@ test "Stdlib: a Sketch's hull is a Sketch, of the sketch alone or with others" {
         .{ .src = "r = \"#{square(1).hull.class} #{cube(1).hull.class}\"", .expected = .{ .str = "CrossSection Geometry" } },
         .{ .src = comptime rescued("square(1).hull(cube(1))"), .expected = .{ .str = "TypeError: hull expects a Sketch or an Array of them for argument 1, got Geometry" } },
         .{ .src = comptime rescued("cube(1).hull(square(1))"), .expected = .{ .str = "TypeError: hull expects a Solid or an Array of them for argument 1, got CrossSection" } },
+    });
+}
+
+test "Stdlib: a negative offset shrinks a Solid, and shell hollows a shape to walls of a thickness" {
+    try expectScripts(&.{
+        // Every side in by 1: a cube of 8, its edges sharp (the rounding is the concave edges')
+        .{ .src = "r = cube(10).offset(-1).volume", .expected = .{ .num = 512 } },
+        .{ .src = "r = cube(10).offset(delta: -1).bbox.min", .expected = .{ .nums = &.{ 1, 1, 1 } } },
+        // An inner corner rounds by the sphere: a notched block shrunk keeps less than its sharp-cornered shrinking
+        .{ .src = "n = cube(10) - cube(5).translate(5, 5, -1)\nr = n.offset(-1).volume < 8 * 8 * 8 - 3 * 3 * 8", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(10).shell(1).volume", .expected = .{ .num = 1000 - 512 } },
+        .{ .src = "r = cube(10).shell(thickness: 1, segments: 8).bbox.size", .expected = .{ .nums = &.{ 10, 10, 10 } } },
+        // Walls thicker than half the part leave it whole
+        .{ .src = "r = cube(10).shell(6).volume", .expected = .{ .num = 1000 } },
+        .{ .src = "r = square(10).shell(1).area", .expected = .{ .num = 100 - 64 } },
+        .{ .src = comptime rescued("cube(10).shell"), .expected = .{ .str = "ArgumentError: shell needs its walls' thickness: shell(thickness)" } },
+        .{ .src = comptime rescued("cube(10).shell(0)"), .expected = .{ .str = "ValueError: shell expects thickness to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued("cube(10).shell(1, join: :miter)"), .expected = .{ .str = "ArgumentError: shell does not take a keyword 'join' (it accepts: thickness, segments)" } },
+        .{ .src = comptime rescued("line([0, 0], [1, 0]).shell(1)"), .expected = .{ .str = "NoMethodError: undefined method 'shell' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
     });
 }
 
@@ -1631,7 +1650,7 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         // Sweeps, offsets, materials and parameters
         .{ .src = comptime rescued("square(1).loft"), .expected = .{ .str = "ArgumentError: loft requires a target CrossSection and a z-height" } },
         .{ .src = comptime rescued("square(1).loft(cube(1), 5)"), .expected = .{ .str = "TypeError: loft expects a CrossSection for the target, got Geometry" } },
-        .{ .src = comptime rescued("cube(1).offset(-1)"), .expected = .{ .str = "ValueError: a Solid's offset only grows it: delta must be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("cube(1).offset(0)"), .expected = .{ .str = "ValueError: a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got 0" } },
         .{ .src = comptime rescued("cube(1).offset(1, join: :miter)"), .expected = .{ .str = "ValueError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :miter" } },
         .{ .src = comptime rescued("cube(1).material"), .expected = .{ .str = "ArgumentError: material requires keyword arguments (e.g. color: \"#FF0000\")" } },
         .{ .src = comptime rescued("param(:x, default: 1, validate: 5)"), .expected = .{ .str = "TypeError: param expects a Map for validate, got Number" } },
@@ -1930,6 +1949,9 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("batch_hull([cube(10), cylinder(r: 5, h: 20)]).simplify"), .expected = brepLacks(.curved_hull) },
         .{ .src = comptime rescued("square(10).offset(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("square(10).hull.extrude(1).simplify"), .expected = brepLacks(.sketch_hull) },
+        .{ .src = comptime rescued("cube(10).offset(-1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
@@ -2161,9 +2183,8 @@ test "Stdlib: degenerate vectors and matrices are rejected" {
         "cube(1).split_by_plane(nx: 0)",
         "cube(1).ray_cast([1, 2, 3], [1, 2, 3])",
         "cube(1).min_gap(cube(1), 0)",
-        // A Solid's offset only grows it, and only with round edges.
+        // A Solid's offset is never by nothing, and only with round edges.
         "cube(1).offset(0)",
-        "cube(1).offset(delta: -1)",
         "cube(1).offset(1, join: :miter)",
         "cube(1).offset(1, join: :square)",
         "cube(1).offset(1, join: :bevel)",
@@ -2745,6 +2766,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
         .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
         .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
+        .{ "shell", "c.shell(0.1)" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };

@@ -62,11 +62,11 @@ test "Linter Rule: NegativeDimRule marks the whole size, sign and all" {
 }
 
 test "Linter Rule: NegativeDimRule flags a method's size on a shape the script holds" {
-    // Only primitives were checked: `cube(1).offset(-1)` was found when the script ran.
+    // Only primitives were checked: `cube(1).shell(-1)` was found when the script ran.
     const cases = [_]struct { src: []const u8, message: []const u8 }{
-        .{ .src = "cube(1).offset(-1)", .message = "a Solid's offset expects delta to be greater than zero, got -1" },
-        .{ .src = "cube(1).offset(delta: 0)", .message = "a Solid's offset expects delta to be greater than zero, got 0" },
-        .{ .src = "s = square(2).extrude(1)\ns.offset(-0.5)", .message = "a Solid's offset expects delta to be greater than zero, got -0.5" },
+        .{ .src = "cube(1).shell(-1)", .message = "shell expects thickness to be greater than zero, got -1" },
+        .{ .src = "cube(1).shell(thickness: 0)", .message = "shell expects thickness to be greater than zero, got 0" },
+        .{ .src = "s = square(2).extrude(1)\ns.shell(-0.5)", .message = "shell expects thickness to be greater than zero, got -0.5" },
         .{ .src = "a = cube(2)\na.min_gap(cube(1), 0)", .message = "min_gap expects search_length to be greater than zero, got 0" },
     };
     for (cases) |case| {
@@ -78,11 +78,12 @@ test "Linter Rule: NegativeDimRule flags a method's size on a shape the script h
     }
 }
 
-test "Linter Rule: NegativeDimRule leaves a sketch's offset and unknown receivers alone" {
+test "Linter Rule: NegativeDimRule leaves a shrinking offset and unknown receivers alone" {
     const sources = [_][]const u8{
-        // A sketch's offset may shrink it.
+        // An offset may shrink a sketch, and a Solid too.
         "square(2).offset(-1)",
         "s = circle(r: 3)\ns.offset(delta: -0.5)",
+        "cube(1).offset(-1)",
         // Nothing says what these hold, or they are the script's own classes.
         "part.offset(-1)",
         "class Pad\n  def offset(d)\n    d\n  end\nend\nPad.new.offset(-1)",
