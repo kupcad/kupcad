@@ -35,17 +35,17 @@ pub const MaterialDef = struct {
 };
 
 /// The sRGB bytes of "#RRGGBB" or "#RGB" (each digit doubled), or null for anything else.
+/// Each digit is read as one (a number parse took "#+10000", its sign, as red).
 pub fn parseHexColor(text: []const u8) ?[3]u8 {
     if (text.len == 0 or text[0] != '#') return null;
     const digits = text[1..];
     var rgb: [3]u8 = undefined;
     switch (digits.len) {
         6 => for (&rgb, 0..) |*c, i| {
-            c.* = std.fmt.parseInt(u8, digits[i * 2 ..][0..2], 16) catch return null;
+            c.* = @as(u8, std.fmt.charToDigit(digits[2 * i], 16) catch return null) * 16 + (std.fmt.charToDigit(digits[2 * i + 1], 16) catch return null);
         },
         3 => for (&rgb, digits) |*c, d| {
-            const nibble = std.fmt.charToDigit(d, 16) catch return null;
-            c.* = nibble * 0x11;
+            c.* = @as(u8, std.fmt.charToDigit(d, 16) catch return null) * 0x11;
         },
         else => return null,
     }
