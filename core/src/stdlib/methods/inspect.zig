@@ -41,7 +41,7 @@ pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
     } else if (receiver.isCrossSection()) {
         const handle = try vm.ensureConcreteCrossSection(receiver);
         try vm.requireFeature(handle.engine, .sketch_measure);
-        const rect = kernel.crossSectionBounds(handle);
+        const rect = kernel.crossSectionBounds(handle) orelse return value.Value.initNil(); // empty, as a Solid's
 
         const bbox_inst = try vm.gc.allocateBBox(
             vm,

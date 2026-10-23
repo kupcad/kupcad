@@ -897,12 +897,11 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
     // The editor's hints and `kupcad check` read the Signature, so it must be what the
     // method parses. Sketch methods are called on a square, the rest on a cube.
     const manifest = @import("manifest.zig");
-    const sketch_methods = [_][]const u8{ "extrude", "revolve", "helix", "offset" };
     const counted = [_][]const u8{ "repeat_linear", "repeat_polar" }; // a count comes first
     var checked: usize = 0;
     inline for (manifest.mesh_methods) |m| {
         if (m.signature.keywords.len > 0) {
-            const receiver = comptime if (isOneOf(m.name, &sketch_methods)) "square(1)" else "cube(1)";
+            const receiver = comptime if (m.on == .sketches) "square(1)" else "cube(1)";
             const leading = comptime if (isOneOf(m.name, &counted)) "2, " else "";
             comptime var accepted: []const u8 = "";
             inline for (m.signature.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
@@ -1046,6 +1045,27 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
     });
 }
 
+test "Stdlib: a shape responds to the methods of its kind only" {
+    // Every shape method was bound to Solids and Sketches alike, so a sketch said it
+    // responded to `hull` and raised when called.
+    try expectScripts(&.{
+        .{ .src = "r = \"#{square(1).respond_to?(:hull)} #{cube(1).respond_to?(:hull)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)}\"", .expected = .{ .str = "false true true false true" } },
+    });
+}
+
+test "Stdlib: a sketch is empty? when it has no area, and an empty one has no bbox" {
+    // `empty?` was false for every sketch and the bbox of an empty one was ±infinity.
+    const empty = "e = circle(r: 1).intersection(circle(r: 1).translate(x: 5))\n";
+    try expectScripts(&.{
+        .{ .src = empty ++ "r = e.empty?", .expected = .{ .boolean = true } },
+        .{ .src = "r = square(1).empty?", .expected = .{ .boolean = false } },
+        .{ .src = empty ++ "r = e.bbox", .expected = .nil },
+        .{ .src = "r = square(2).bbox.max", .expected = .{ .nums = &.{ 2, 2, 0 } } },
+        .{ .src = comptime rescued(empty ++ "e.center"), .expected = .{ .str = "ValueError: center: an empty sketch has no bounds" } },
+        .{ .src = comptime rescued(empty ++ "e.revolve(360)"), .expected = .{ .str = "ValueError: revolve: an empty sketch has no profile" } },
+    });
+}
+
 test "Stdlib: respond_to? has Ruby's name" {
     // It was spelled `responds_to?`.
     try expectScripts(&.{
@@ -1130,6 +1150,7 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         .{ .src = comptime rescued("square(1).genus"), .expected = .{ .str = "NoMethodError: undefined method 'genus' for CrossSection" } },
         .{ .src = comptime rescued("square(1).decompose"), .expected = .{ .str = "NoMethodError: undefined method 'decompose' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_stl(\"a.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).hull"), .expected = .{ .str = "NoMethodError: undefined method 'hull' for CrossSection" } }, // was a TypeError
         .{ .src = comptime rescued("cube(1).align(5, \"x\", \"min\")"), .expected = .{ .str = "TypeError: align expects a Geometry or CrossSection to align to, got Number" } },
         .{ .src = comptime rescued("import_step(\"a.step\")"), .expected = .{ .str = "NotImplementedError: import_step is not supported yet" } },
         // Operators name themselves and both operands.
@@ -1483,6 +1504,10 @@ test "Stdlib: sides: is a faceted shape, segments: only how smooth a round one i
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 2)"), .expected = .{ .str = "ValueError: 'sides' must be between 3 and 2048, got 2" } },
         .{ .src = comptime rescued("circle(r: 5, sides: 6, segments: 32)"), .expected = .{ .str = "ArgumentError: circle takes sides: (a faceted shape) or segments: (how smooth a round one is), not both" } },
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6, round_r: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes sides: or round_r:/chamfer:, not both yet" } },
+        // A corner is rounded or cut: `round_r` silently won over `chamfer`
+        .{ .src = comptime rescued("square(10, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: square takes round_r or chamfer, not both" } },
+        .{ .src = comptime rescued("cube(10, chamfer: 1, round_r: 1)"), .expected = .{ .str = "ArgumentError: cube takes chamfer or round_r, not both" } },
+        .{ .src = comptime rescued("cylinder(r: 5, h: 10, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: cylinder takes round_r or chamfer, not both" } },
         // A sphere has no flat sides to count.
         .{ .src = comptime rescued("sphere(r: 5, sides: 6)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'sides' (it accepts: r, d, radius, segments)" } },
     });
@@ -1542,6 +1567,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
         .{ .src = comptime rescued("cube(10).volume"), .expected = brepLacks(.volume) }, // was 0
         .{ .src = comptime rescued("cube(10).empty?"), .expected = brepLacks(.volume) }, // was true
+        .{ .src = comptime rescued("square(10).empty?"), .expected = brepLacks(.sketch_measure) }, // was false
         .{ .src = comptime rescued("cube(10).surface_area"), .expected = brepLacks(.surface_area) },
         .{ .src = comptime rescued("cube(10).genus"), .expected = brepLacks(.genus) },
         .{ .src = comptime rescued("cube(10).bbox"), .expected = brepLacks(.bounding_box) }, // was all zeros

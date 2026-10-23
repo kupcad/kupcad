@@ -20,6 +20,8 @@ const ALIAS_GROUPS = [_][]const []const u8{
     &.{ "size", "x" },
     &.{ "size", "y" },
     &.{ "size", "z" },
+    // A corner is rounded or cut, not both (`round_r` silently won)
+    &.{ "round_r", "chamfer" },
 };
 
 /// Smallest allowed text() flattening tolerance relative to the glyph size.

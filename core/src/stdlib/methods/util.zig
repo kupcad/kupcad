@@ -59,7 +59,7 @@ pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.Boundi
     if (receiver.isCrossSection()) {
         const sketch = try vm.ensureConcreteCrossSection(receiver);
         try vm.requireFeature(sketch.engine, .sketch_measure);
-        const rect = kernel.crossSectionBounds(sketch);
+        const rect = kernel.crossSectionBounds(sketch) orelse return vm.fail(.ValueError, "{s}: an empty sketch has no bounds", .{method});
         return .{ .min = .{ rect.min[0], rect.min[1], 0.0 }, .max = .{ rect.max[0], rect.max[1], 0.0 } };
     }
     if (!receiver.isGeometry()) return notDefinedFor(vm, method, receiver);

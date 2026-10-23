@@ -263,8 +263,9 @@ fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
     return manifold.crossSectionNumVert(@ptrCast(@alignCast(handle.ptr)));
 }
 
-fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
-    if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0.0, 0.0 }, .max = .{ 0.0, 0.0 } };
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
+    if (@intFromPtr(handle.ptr) == 0) return null;
+    if (manifold.crossSectionNumVert(@ptrCast(@alignCast(handle.ptr))) == 0) return null;
     const b = manifold.crossSectionBounds(@ptrCast(@alignCast(handle.ptr)));
     return .{ .min = .{ b.min.x, b.min.y }, .max = .{ b.max.x, b.max.y } };
 }

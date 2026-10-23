@@ -454,12 +454,13 @@ pub const HoverRun = struct {
             if (self.vm.ensureConcreteCrossSection(val)) |cs_handle| {
                 if (kernel.supports(cs_handle.engine, .sketch_measure)) {
                     const area = kernel.crossSectionArea(cs_handle);
-                    const rect = kernel.crossSectionBounds(cs_handle);
-
-                    const w = rect.max[0] - rect.min[0];
-                    const l = rect.max[1] - rect.min[1];
-
-                    try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    if (kernel.crossSectionBounds(cs_handle)) |rect| {
+                        const w = rect.max[0] - rect.min[0];
+                        const l = rect.max[1] - rect.min[1];
+                        try writer.print("- **Bounds:** W: `{d:.2}` L: `{d:.2}` mm\n", .{ w, l });
+                    } else {
+                        try writer.print("- **Bounds:** empty\n", .{});
+                    }
                     try writer.print("- **Area:** `{d:.2}` mm²\n", .{area});
                 }
             } else |_| {}

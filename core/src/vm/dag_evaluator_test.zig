@@ -355,7 +355,7 @@ test "DAG Evaluator: correctly evaluates 2D primitive via evaluateCrossSectionDA
     try testing.expectEqual(.manifold, handle.engine);
 
     // Base area 10x10 = 100. Expanding by 2 on all sides makes it 14x14 = 196
-    const bounds = kernel.crossSectionBounds(handle);
+    const bounds = kernel.crossSectionBounds(handle).?;
     try testing.expectApproxEqAbs(@as(f64, -7.0), bounds.min[0], 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 7.0), bounds.max[0], 1e-5);
 }

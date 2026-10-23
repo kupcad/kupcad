@@ -12,7 +12,7 @@ KupCAD (`.kup`) is a high-level, expression-based parametric CAD language execut
 
 ### 3D Primitives & Assemblies
 
-Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored. A keyword overrides the same option given positionally: `cube(5, z: 3)` is 5 × 5 × 3. Two keywords for one option are an `ArgumentError`, not one silently ignored: `r:`, `d:` and `radius:` (`cylinder takes r or d, not both`), `r1:` and `d1:`, `r2:` and `d2:`, and `size:` with `x:`, `y:` or `z:`.
+Primitives accept intelligent keyword arguments, including native support for rounded corners and chamfers directly during instantiation. Every built-in shape and geometry method checks its keywords: a misspelt or unsupported one is an `ArgumentError` naming the keywords it accepts, never silently ignored. A keyword overrides the same option given positionally: `cube(5, z: 3)` is 5 × 5 × 3. Two keywords for one option are an `ArgumentError`, not one silently ignored: `r:`, `d:` and `radius:` (`cylinder takes r or d, not both`), `r1:` and `d1:`, `r2:` and `d2:`, `size:` with `x:`, `y:` or `z:`, and `round_r:` with `chamfer:` (a corner is rounded or cut).
 
 ```ruby
 # Native 3D primitives with built-in filleting
@@ -338,7 +338,7 @@ An uncaught error stops the script and is printed once with its class, e.g. `Val
 
 ### Base Object Introspection
 
-* All objects and geometry nodes support introspection methods like `.is_a?`, `.respond_to?`, and `.nil?`.
+* All objects and geometry nodes support introspection methods like `.is_a?`, `.respond_to?`, and `.nil?`. A shape responds to the methods of its kind: `square(1).respond_to?(:hull)` is false and `cube(1).respond_to?(:extrude)` is false, and calling either is a `NoMethodError`. A Sketch is `empty?` when it has no area, as a Solid is with no volume, and an empty shape's `bbox` is `nil`.
 * Every value answers `.class` (its class, such as `Number`, `NilClass`, `Proc` for a lambda, `Method` for a bound method, `Class`, or a class you defined) and `.inspect` (how it would be written in a script: `"a".inspect` is `"\"a\""`, with `"`, `\` and control characters escaped as the lexer reads them; `{ x: 1 }.inspect` is `{x: 1}`; a container that holds itself prints as `[...]` or `{...}`, as in Ruby). Define `inspect` in a class to customise it. Built-in values come from literals and methods, not `.new`: `Array.new(3, 0)`, `String.new` and `Map.new` exist as in Ruby, while `Number.new` or `Proc.new` is a `NoMethodError`.
 * A constant assigned in a class or module body is read from outside with `::`: `Gear::TEETH`, `Parts::Bolt::LENGTH` (inside the class, plain `TEETH`).
 * `puts`, `print` and `"#{...}"` show an instance by its own `to_s` when its class defines one; it must return a String.

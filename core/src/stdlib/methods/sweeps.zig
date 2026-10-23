@@ -57,7 +57,7 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         if (!kernel.supports(profile.engine, .sketch_measure)) {
             return vm.fail(.NotImplementedError, "the {s} engine can't measure the profile to choose revolve's segments yet; pass segments:", .{profile.engine.scriptName()});
         }
-        const bounds = kernel.crossSectionBounds(profile);
+        const bounds = kernel.crossSectionBounds(profile) orelse return vm.fail(.ValueError, "revolve: an empty sketch has no profile", .{});
         break :blk util.autoSegments(vm, @max(@abs(bounds.min[0]), @abs(bounds.max[0])));
     };
 

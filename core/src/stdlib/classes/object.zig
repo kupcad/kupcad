@@ -49,7 +49,8 @@ fn objectNilQ(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initBool(receiver.isNil());
 }
 
-/// Object#empty? -> nil, an empty String/Array/Map/JsonObject, or a Solid with no volume
+/// Object#empty? -> nil, an empty String/Array/Map/JsonObject, a Solid with no volume or a
+/// Sketch with no area (a sketch answered false whatever it held)
 fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isNil()) return value.Value.initBool(true);
     if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
@@ -60,6 +61,11 @@ fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
         const solid = try vm.ensureConcrete(receiver);
         try vm.requireFeature(solid.engine, .volume);
         return value.Value.initBool(kernel.volume(solid) == 0.0);
+    }
+    if (receiver.isCrossSection()) {
+        const sketch = try vm.ensureConcreteCrossSection(receiver);
+        try vm.requireFeature(sketch.engine, .sketch_measure);
+        return value.Value.initBool(kernel.crossSectionArea(sketch) == 0.0);
     }
     return value.Value.initBool(false);
 }

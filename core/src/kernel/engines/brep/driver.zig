@@ -734,8 +734,8 @@ fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
     return null;
 }
 
-fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) geom.Rect2D {
-    if (@intFromPtr(handle.ptr) == 0) return .{ .min = .{ 0, 0 }, .max = .{ 0, 0 } };
+fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
+    if (@intFromPtr(handle.ptr) == 0) return null;
     const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
     const bb = locus_prop.crossSectionBounds(&solid.t_arena, &solid.g_arena, solid.solid_id);
     return .{ .min = .{ bb.min[0], bb.min[1] }, .max = .{ bb.max[0], bb.max[1] } };

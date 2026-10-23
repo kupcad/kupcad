@@ -272,7 +272,8 @@ pub inline fn crossSectionArea(handle: geom.CrossSectionHandle) f64 {
     return dispatch("crossSectionAreaFn", handle, .{});
 }
 
-pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) geom.Rect2D {
+/// The box around a sketch, or null for an empty one (it was ±infinity).
+pub inline fn crossSectionBounds(handle: geom.CrossSectionHandle) ?geom.Rect2D {
     return dispatch("crossSectionBoundsFn", handle, .{});
 }
 

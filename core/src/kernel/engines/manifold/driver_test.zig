@@ -444,7 +444,7 @@ test "Manifold Driver: crossSectionArea and crossSectionBounds evaluate 2D profi
     defer driver.driver.destructCrossSectionFn(sq);
 
     const area = driver.driver.crossSectionAreaFn(sq);
-    const bounds = driver.driver.crossSectionBoundsFn(sq);
+    const bounds = driver.driver.crossSectionBoundsFn(sq).?;
 
     // Area = 10 * 20 = 200
     try testing.expectApproxEqAbs(@as(f64, 200.0), area, 1e-4);
@@ -505,9 +505,18 @@ test "Manifold Driver: a sketch's area counts its holes, and its bounds follow i
 
     const moved = driver.driver.crossSectionTransformFn(ring, .{ 1, 0, 0, 1, 20, -3 }) orelse return error.Failed;
     defer driver.driver.destructCrossSectionFn(moved);
-    const b = driver.driver.crossSectionBoundsFn(moved);
+    const b = driver.driver.crossSectionBoundsFn(moved).?;
     try testing.expectEqual([2]f64{ 15, -8 }, b.min);
     try testing.expectEqual([2]f64{ 25, 2 }, b.max);
+}
+
+test "Manifold Driver: an empty cross-section has no bounds" {
+    // Manifold's box of nothing is inverted and infinite, which was passed on as a bbox.
+    const sq = driver.driver.squareFn(&.{}, 4.0, 4.0, true) orelse return error.SqFailed;
+    defer driver.driver.destructCrossSectionFn(sq);
+    const nothing = driver.driver.crossSectionBooleanFn(sq, sq, .difference_op) orelse return error.Failed;
+    defer driver.driver.destructCrossSectionFn(nothing);
+    try testing.expect(driver.driver.crossSectionBoundsFn(nothing) == null);
 }
 
 test "Manifold Driver: the C++ keeps its asserts only in Debug builds" {

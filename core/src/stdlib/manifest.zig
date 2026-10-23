@@ -91,6 +91,11 @@ pub const GlobalFunction = struct {
     signature: ?*const Signature = null,
 };
 
+/// Which shapes a method is defined on: `respond_to?` and a call on the other kind answer
+/// as for any missing method (every method used to be bound to both, so a sketch said it
+/// responded to `hull` and then raised a TypeError).
+pub const On = enum { solids, sketches, both };
+
 pub const MeshMethod = struct {
     name: []const u8,
     category: Category,
@@ -98,6 +103,11 @@ pub const MeshMethod = struct {
     /// What it takes (stdlib/method_signatures.zig), for its parameter hints and lint.
     signature: *const Signature,
     result: Result,
+    on: On,
+
+    pub fn isOn(self: MeshMethod, on: On) bool {
+        return self.on == .both or self.on == on;
+    }
 };
 
 pub const core_namespaces = [_][]const u8{
@@ -149,67 +159,67 @@ pub const global_functions = [_]GlobalFunction{
 };
 
 pub const mesh_methods = [_]MeshMethod{
-    method("union", .csg_operator, methods.meshUnion, &sig.SHAPES, .receiver),
-    method("difference", .csg_operator, methods.meshDifference, &sig.SHAPES, .receiver),
-    method("intersection", .csg_operator, methods.meshIntersection, &sig.SHAPES, .receiver),
-    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
-    method("rotate", .transform, methods.meshRotate, &sig.ROTATE, .receiver),
-    method("scale", .transform, methods.meshScale, &sig.SCALE, .receiver),
-    method("resize", .transform, methods.meshResize, &sig.RESIZE, .receiver),
-    method("project", .transform, methods.meshProject, &sig.PROJECT, .sketch),
-    method("slice", .transform, methods.meshSlice, &sig.SLICE, .sketch),
-    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
-    method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver),
-    method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver),
+    method("union", .csg_operator, methods.meshUnion, &sig.SHAPES, .receiver, .both),
+    method("difference", .csg_operator, methods.meshDifference, &sig.SHAPES, .receiver, .both),
+    method("intersection", .csg_operator, methods.meshIntersection, &sig.SHAPES, .receiver, .both),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver, .both),
+    method("rotate", .transform, methods.meshRotate, &sig.ROTATE, .receiver, .both),
+    method("scale", .transform, methods.meshScale, &sig.SCALE, .receiver, .both),
+    method("resize", .transform, methods.meshResize, &sig.RESIZE, .receiver, .solids),
+    method("project", .transform, methods.meshProject, &sig.PROJECT, .sketch, .solids),
+    method("slice", .transform, methods.meshSlice, &sig.SLICE, .sketch, .solids),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
+    method("align", .transform, methods.meshAlign, &sig.ALIGN, .receiver, .both),
+    method("mirror", .transform, methods.meshMirror, &sig.MIRROR, .receiver, .both),
     // `on_face` returns a Workplane, a value with no methods yet: hidden until the fluent
     // sketching API it belongs to exists (CadQuery's Workplane does the local-coordinate
     // sketching and extrusion; a bare one misleads). The implementation stays.
-    // method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane),
-    method("split_by_plane", .transform, methods.meshSplitByPlane, &sig.SPLIT_BY_PLANE, .array),
-    method("decompose", .transform, methods.meshDecompose, &sig.NONE, .array),
-    method("genus", .inspection_method, methods.meshGenus, &sig.NONE, .number),
-    method("simplify", .transform, methods.meshSimplify, &sig.SIMPLIFY, .receiver),
-    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
-    method("volume", .inspection_method, methods.meshVolume, &sig.NONE, .number),
-    method("surface_area", .inspection_method, methods.meshSurfaceArea, &sig.NONE, .number),
-    method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid),
-    method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid),
-    method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid),
-    method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid),
-    method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid),
-    method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver),
-    method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver),
-    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver),
-    method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver),
-    method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number),
-    method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean),
-    method("ray_cast", .inspection_method, methods.meshRayCast, &sig.RAY_CAST, .array),
-    method("repeat_linear", .transform, methods.meshRepeatLinear, &sig.REPEAT_LINEAR, .receiver),
-    method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver),
-    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver),
-    method("named", .transform, bom.meshNamed, &sig.NAMED, .receiver),
-    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
-    method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver),
-    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver),
-    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    // method("on_face", .workplane_method, methods.meshOnFace, &sig.ON_FACE, .workplane, .solids),
+    method("split_by_plane", .transform, methods.meshSplitByPlane, &sig.SPLIT_BY_PLANE, .array, .solids),
+    method("decompose", .transform, methods.meshDecompose, &sig.NONE, .array, .solids),
+    method("genus", .inspection_method, methods.meshGenus, &sig.NONE, .number, .solids),
+    method("simplify", .transform, methods.meshSimplify, &sig.SIMPLIFY, .receiver, .solids),
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
+    method("volume", .inspection_method, methods.meshVolume, &sig.NONE, .number, .solids),
+    method("surface_area", .inspection_method, methods.meshSurfaceArea, &sig.NONE, .number, .solids),
+    method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid, .sketches),
+    method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid, .sketches),
+    method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid, .solids),
+    method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid, .sketches),
+    method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid, .sketches),
+    method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver, .solids),
+    method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver, .solids),
+    method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver, .both),
+    method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver, .both),
+    method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number, .solids),
+    method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean, .both),
+    method("ray_cast", .inspection_method, methods.meshRayCast, &sig.RAY_CAST, .array, .solids),
+    method("repeat_linear", .transform, methods.meshRepeatLinear, &sig.REPEAT_LINEAR, .receiver, .solids),
+    method("repeat_polar", .transform, methods.meshRepeatPolar, &sig.REPEAT_POLAR, .receiver, .solids),
+    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver, .solids),
+    method("named", .transform, bom.meshNamed, &sig.NAMED, .receiver, .solids),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array, .solids),
+    method("highlight", .transform, methods.meshHighlight, &sig.NONE, .receiver, .solids),
+    method("ghost", .transform, methods.meshGhost, &sig.NONE, .receiver, .solids),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
 };
 
 /// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
 /// for export, so it answers what it holds and writes its parts as one file. It had no
 /// methods at all: `assemble(...).export_step(...)` was a NoMethodError.
 pub const assembly_methods = [_]MeshMethod{
-    method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string),
-    method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array),
-    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array),
+    method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string, .solids),
+    method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array, .solids),
+    method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array, .solids),
     // Placing a whole subassembly: its bounds, and every part moved alike.
-    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box),
-    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver),
-    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver),
-    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver),
-    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver),
-    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver),
+    method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
+    method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),
+    method("translate", .transform, methods.meshTranslate, &sig.TRANSLATE, .receiver, .both),
+    method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
+    method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
+    method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
 };
 
 /// A primitive whose calls are checked against `signature` (common.checkArguments).
@@ -222,9 +232,10 @@ fn primitive(comptime name: []const u8, comptime category: Category, comptime fu
     return .{ .name = name, .func = common.wrapGlobalWith(func, signature.*), .category = category, .result = result, .signature = signature };
 }
 
-/// A method whose calls are checked against `signature` (common.checkArguments).
-fn method(comptime name: []const u8, comptime category: Category, comptime func: anytype, comptime signature: *const Signature, comptime result: Result) MeshMethod {
-    return .{ .name = name, .category = category, .func = common.wrapMethodWith(func, signature.*), .signature = signature, .result = result };
+/// A method whose calls are checked against `signature` (common.checkArguments), defined
+/// on the shapes `on` (an assembly's methods are bound to Assembly whatever it says).
+fn method(comptime name: []const u8, comptime category: Category, comptime func: anytype, comptime signature: *const Signature, comptime result: Result, comptime on: On) MeshMethod {
+    return .{ .name = name, .category = category, .func = common.wrapMethodWith(func, signature.*), .signature = signature, .result = result, .on = on };
 }
 
 /// The signature of the global function `name`, if it is a primitive that declares one.
