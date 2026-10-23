@@ -67,7 +67,7 @@ test "Workspace: correctly populates Module Export Tables" {
 }
 
 test "Workspace: failed add/update leave the workspace unchanged" {
-    const limits = @import("limits.zig");
+    const limits = @import("../core/limits.zig");
     var ws = workspace.Workspace.init(testing.allocator);
     defer ws.deinit();
 

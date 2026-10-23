@@ -6,7 +6,7 @@ const geom = @import("../core/geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
 const chunk = @import("../vm/chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 

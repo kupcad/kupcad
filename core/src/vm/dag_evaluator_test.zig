@@ -8,7 +8,7 @@ const dag_evaluator = @import("dag_evaluator.zig");
 const registry = @import("../stdlib/registry.zig");
 const InterpretResult = @import("vm.zig").InterpretResult;
 const chunk = @import("chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 
 fn initVm() !VM {

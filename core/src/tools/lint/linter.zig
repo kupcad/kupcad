@@ -11,7 +11,7 @@ const config_mod = @import("config.zig");
 const Config = config_mod.Config;
 const LintRule = @import("rules/rule.zig").LintRule;
 const visitor = @import("../../core/visitor.zig");
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 
 const NegativeDimRule = @import("rules/negative_dim.zig").NegativeDimRule;
 const UnusedVarsRule = @import("rules/unused_vars.zig").UnusedVarsRule;

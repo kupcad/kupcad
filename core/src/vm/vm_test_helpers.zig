@@ -6,7 +6,7 @@ const testing = std.testing;
 const chunk = @import("chunk.zig");
 const value = @import("../core/value.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const VM = @import("vm.zig").VM;
 const InterpretResult = @import("vm.zig").InterpretResult;
 

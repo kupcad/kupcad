@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const extractor = @import("extractor.zig");
 
 test "Extractor: Parses Presentation Data and Param Config into Schema" {

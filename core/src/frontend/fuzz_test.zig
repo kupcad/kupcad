@@ -7,7 +7,7 @@
 const std = @import("std");
 const testing = std.testing;
 const api = @import("../api.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("document.zig").Document;
 const corpus = @import("fuzz_corpus.zig");
 const program = @import("fuzz_program.zig");
 

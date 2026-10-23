@@ -5,7 +5,7 @@ const std = @import("std");
 const testing = std.testing;
 const import_kind = @import("import_kind.zig");
 const Kind = import_kind.Kind;
-const Document = @import("document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const support = @import("../test_support.zig");
 
 const ASCII_STL =

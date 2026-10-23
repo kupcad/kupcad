@@ -5,7 +5,7 @@
 //! watch` and `kupcad build`.
 
 const std = @import("std");
-const workspace = @import("../core/workspace.zig");
+const workspace = @import("../frontend/workspace.zig");
 const api = @import("../api.zig");
 const ParamValues = api.ParamValues;
 const common_errors = @import("../core/errors.zig");

@@ -7,7 +7,7 @@ const dag_evaluator = @import("dag_evaluator.zig");
 const VM = @import("vm.zig").VM;
 const GC = @import("memory.zig").GC;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 
 fn countObjects(gc: *GC) usize {
     var count: usize = 0;

@@ -4,10 +4,10 @@
 //! cycle.
 
 const std = @import("std");
-const ast = @import("ast.zig");
+const ast = @import("../core/ast.zig");
 const Document = @import("document.zig").Document;
-const import_path = @import("import_path.zig");
-const import_kind = @import("import_kind.zig");
+const import_path = @import("../core/import_path.zig");
+const import_kind = @import("../core/import_kind.zig");
 
 pub const ModuleId = enum(u32) { _ };
 

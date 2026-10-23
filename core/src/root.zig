@@ -44,7 +44,7 @@ test {
     _ = @import("vm/sequence_test.zig");
     _ = @import("daemon/exports_fingerprint_test.zig");
     _ = @import("core/rounded_rect_test.zig");
-    _ = @import("core/document_test.zig");
+    _ = @import("frontend/document_test.zig");
     _ = @import("core/error_codes_test.zig");
     _ = @import("core/visitor_test.zig");
     _ = @import("registration_test.zig");
@@ -61,7 +61,7 @@ test {
     _ = @import("core/limits_test.zig");
     _ = @import("core/resolver_test.zig");
     _ = @import("core/parent_map_test.zig");
-    _ = @import("core/workspace_test.zig");
+    _ = @import("frontend/workspace_test.zig");
     _ = @import("core/value_test.zig");
     _ = @import("core/params/params_test.zig");
     _ = @import("core/param_values_test.zig");

@@ -3,7 +3,7 @@ const testing = std.testing;
 const chunk = @import("../../vm/chunk.zig");
 const registry = @import("../../stdlib/registry.zig");
 const Compiler = @import("../../compiler/compiler.zig").Compiler;
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const VM = @import("../../vm/vm.zig").VM;
 const disassembler = @import("disassembler.zig");
 

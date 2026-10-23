@@ -10,7 +10,7 @@ const std = @import("std");
 const testing = std.testing;
 const chunk = @import("../vm/chunk.zig");
 const disassembler = @import("../tools/dev/disassembler.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("compiler.zig").Compiler;
 const support = @import("../test_support.zig");
 

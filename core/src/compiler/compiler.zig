@@ -18,7 +18,7 @@ const VM = @import("../vm/vm.zig").VM;
 const manifest = @import("../stdlib/manifest.zig");
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;

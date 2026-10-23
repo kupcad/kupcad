@@ -5,7 +5,7 @@
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("compiler.zig").Compiler;
 
 /// The bytecode of the module at `path` (its text is `source`), compiled into `namespace`,

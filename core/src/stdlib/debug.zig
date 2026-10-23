@@ -7,7 +7,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const VM = @import("../vm/vm.zig").VM;
 

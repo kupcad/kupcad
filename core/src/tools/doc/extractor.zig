@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const visitor = @import("../../core/visitor.zig");
 
 pub const PresentationMeta = struct {

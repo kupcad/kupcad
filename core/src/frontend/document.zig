@@ -3,16 +3,16 @@
 //! `parseRaw` stops after the parser.
 
 const std = @import("std");
-const lexer_mod = @import("../frontend/lexer.zig");
-const parser_mod = @import("../frontend/parser.zig");
-const common_token = @import("token.zig");
-const common_errors = @import("errors.zig");
-const ast = @import("ast.zig");
-const resolver = @import("resolver.zig");
-const parent_map = @import("parent_map.zig");
-const limits = @import("limits.zig");
+const lexer_mod = @import("lexer.zig");
+const parser_mod = @import("parser.zig");
+const common_token = @import("../core/token.zig");
+const common_errors = @import("../core/errors.zig");
+const ast = @import("../core/ast.zig");
+const resolver = @import("../core/resolver.zig");
+const parent_map = @import("../core/parent_map.zig");
+const limits = @import("../core/limits.zig");
 
-pub const LineIndex = @import("line_index.zig").LineIndex;
+pub const LineIndex = @import("../core/line_index.zig").LineIndex;
 
 /// Represents a fully parsed KupCAD source file.
 /// Owns the ArenaAllocator that backs the AST, tokens, comments, and diagnostics.

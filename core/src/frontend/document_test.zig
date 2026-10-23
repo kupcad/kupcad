@@ -1,7 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const Document = @import("document.zig").Document;
-const limits = @import("limits.zig");
+const limits = @import("../core/limits.zig");
 
 test "Document: parse successfully resolves semantics and parents" {
     const source =
@@ -91,7 +91,7 @@ test "Document: running out of memory never hides a syntax error" {
 }
 
 test "Diagnostics: a diagnostic that can't be stored is flagged, not lost silently" {
-    const Diagnostics = @import("errors.zig").Diagnostics;
+    const Diagnostics = @import("../core/errors.zig").Diagnostics;
     for (0..2) |fail_index| { // the message, then the list entry
         var failing = std.testing.FailingAllocator.init(testing.allocator, .{ .fail_index = fail_index });
         var diags = Diagnostics.init(failing.allocator());

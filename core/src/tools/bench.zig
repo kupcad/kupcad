@@ -4,7 +4,7 @@
 //! script, and never evaluated the DAG, so the kernel's share stayed invisible).
 
 const std = @import("std");
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;

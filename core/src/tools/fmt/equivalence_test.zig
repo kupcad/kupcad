@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../../core/document.zig").Document;
+const Document = @import("../../frontend/document.zig").Document;
 const equivalence = @import("equivalence.zig");
 const api = @import("../../api.zig");
 

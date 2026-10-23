@@ -23,7 +23,7 @@ const export_mod = @import("exporters/export.zig");
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
-pub const Document = @import("core/document.zig").Document;
+pub const Document = @import("frontend/document.zig").Document;
 pub const LineIndex = @import("core/line_index.zig").LineIndex;
 pub const LinterConfig = @import("tools/lint/config.zig").Config;
 const suppressions = @import("tools/lint/suppressions.zig");

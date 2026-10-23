@@ -1,6 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
-const Document = @import("../core/document.zig").Document;
+const Document = @import("../frontend/document.zig").Document;
 const hints_mod = @import("lsp_hints.zig");
 
 /// The hints for `source`, as "name@offset" (a parameter) or ":Class@offset" (a variable's
