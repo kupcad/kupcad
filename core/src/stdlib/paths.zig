@@ -236,6 +236,10 @@ pub fn easeCorners(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, c
                 return vm.fail(.ValueError, "{s}: the sides double back at point {d}, [{f}, {f}], where no corner can be {s}", .{ method, i, value.fmtNumber(at[0]), value.fmtNumber(at[1]), if (how == .round) "rounded" else "cut" });
             },
             .too_short => |side| return vm.fail(.ValueError, "{s}: the side from point {d} is {f} long, too short for the corners at its ends, which take {f} of it ({s} = {f})", .{ method, side.from, value.fmtNumber(side.length), value.fmtNumber(side.needed), size_name, value.fmtNumber(how.size()) }),
+            .no_fit => |i| {
+                const at = if (i == 0) start else segments[i - 1].to;
+                return vm.fail(.ValueError, "{s}: no arc of {s} = {f} touches both sides at point {d}, [{f}, {f}]: an arc there turns that way more tightly, or the sides don't come that close", .{ method, size_name, value.fmtNumber(how.size()), i, value.fmtNumber(at[0]), value.fmtNumber(at[1]) });
+            },
         },
     };
 }

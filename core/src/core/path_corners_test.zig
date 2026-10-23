@@ -78,8 +78,59 @@ test "path corners: an open path keeps its ends, rounds left and right turns, an
     try testing.expectEqualSlices(path.Segment, &straight, same.segments);
 }
 
-test "path corners: a corner beside an arc stays, and a side the corners use up is left out" {
-    // A line, a half circle and a line: both joints are beside the arc
+fn distance(a: [2]f64, b: [2]f64) f64 {
+    return std.math.hypot(a[0] - b[0], a[1] - b[1]);
+}
+
+test "path corners: a corner beside an arc is rounded by the arc touching both, the arc giving up its sweep" {
+    // Along x to (10, 0), then a quarter of the circle of 5 about (15, 0) down to (15, -5):
+    // a right turn, away from the arc's centre
+    const hook = [_]path.Segment{ .{ .to = .{ 10, 0 } }, .{ .to = .{ 15, -5 }, .arc = .{ .center = .{ 15, 0 }, .radius = 5 }, .ccw = true, .angle = std.math.pi / 2.0 } };
+    const round = try eased(.{ 0, 0 }, &hook, false, .{ .round = 1 });
+    defer round.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), round.segments.len);
+    // The fillet's centre is 1 below the line and 5 + 1 from the arc's
+    const x = 15 - @sqrt(35.0);
+    try expectPoint(.{ x, 0 }, round.segments[0].to);
+    const fillet = round.segments[1];
+    try expectPoint(.{ x, -1 }, fillet.arc.?.center);
+    try testing.expect(!fillet.ccw);
+    try testing.expectApproxEqAbs(@as(f64, 5), distance(fillet.to, .{ 15, 0 }), 1e-12);
+    // The rest of the arc, from where the fillet leaves it to where it ended
+    const rest = round.segments[2];
+    try expectPoint(.{ 15, -5 }, rest.to);
+    try testing.expectApproxEqAbs(path.sweep(.{ 15, 0 }, fillet.to, rest.to, true), rest.angle, 1e-12);
+    try testing.expectApproxEqAbs(path.sweep(fillet.arc.?.center, round.segments[0].to, fillet.to, false), fillet.angle, 1e-12);
+
+    // Cut instead, 1 back along the line and 1 round the arc
+    const cut = try eased(.{ 0, 0 }, &hook, false, .{ .chamfer = 1 });
+    defer cut.deinit(testing.allocator);
+    try expectPoint(.{ 9, 0 }, cut.segments[0].to);
+    try expectPoint(.{ 15 - 5 * @cos(0.2), -5 * @sin(0.2) }, cut.segments[1].to);
+    try testing.expectApproxEqAbs(std.math.pi / 2.0 - 0.2, cut.segments[2].angle, 1e-12);
+
+    // A pointed arch: two arcs of 10 turning right meet at its top; rounded, the fillet's
+    // centre is where their circles shrunk by 1 meet, and the arch stays symmetric
+    const top = [2]f64{ 0, @sqrt(75.0) };
+    const arch = [_]path.Segment{
+        .{ .to = top, .arc = .{ .center = .{ 5, 0 }, .radius = 10 }, .ccw = false, .angle = path.sweep(.{ 5, 0 }, .{ -5, 0 }, top, false) },
+        .{ .to = .{ 5, 0 }, .arc = .{ .center = .{ -5, 0 }, .radius = 10 }, .ccw = false, .angle = path.sweep(.{ -5, 0 }, top, .{ 5, 0 }, false) },
+    };
+    const pointed = try eased(.{ -5, 0 }, &arch, false, .{ .round = 1 });
+    defer pointed.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), pointed.segments.len);
+    try expectPoint(.{ 0, @sqrt(56.0) }, pointed.segments[1].arc.?.center);
+    try testing.expectApproxEqAbs(-pointed.segments[0].to[0], pointed.segments[1].to[0], 1e-12);
+    try testing.expectApproxEqAbs(pointed.segments[0].angle, pointed.segments[2].angle, 1e-12);
+
+    // A fillet wider than the arcs that turn its way can't touch them
+    var failure: path_corners.Failure = undefined;
+    try testing.expectError(error.CornerFailed, path_corners.ease(testing.allocator, .{ -5, 0 }, &arch, false, .{ .round = 12 }, TOLERANCE, &failure));
+    try testing.expectEqual(path_corners.Failure{ .no_fit = 1 }, failure);
+}
+
+test "path corners: a joint where an arc goes on smoothly stays, and a side the corners use up is left out" {
+    // A line, a half circle and a line: each joint goes on along the same tangent
     const hook = [_]path.Segment{ .{ .to = .{ 10, 0 } }, path.arcByAngles(.{ 10, 5 }, 5, -90, 90), .{ .to = .{ 0, 10 } } };
     const same = try eased(.{ 0, 0 }, &hook, false, .{ .round = 1 });
     defer same.deinit(testing.allocator);

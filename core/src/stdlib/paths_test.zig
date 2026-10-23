@@ -105,7 +105,10 @@ test "paths: fillet and chamfer round or cut each corner where two lines meet" {
         .{ .src = ELL ++ "r = p.chamfer(size: 3).bbox.size", .expected = .{ .nums = &.{ 10, 10, 0 } } },
         // Turning right, the arc turns right too; a keyword wins over the same size given positionally
         .{ .src = "r = polyline([[0, 0], [10, 0], [10, -10]]).fillet(1, r: 3).length", .expected = .{ .num = 14 + 1.5 * std.math.pi } },
-        // No corner where the path goes on straight, nor beside an arc
+        // Beside an arc: the line, the fillet and what is left of the arc
+        .{ .src = "r = line([0, 0], [10, 0]).arc_to([15, -5], r: 5).fillet(1).inspect", .expected = .{ .str = "<Path 3 segments from [0, 0] to [15, -5]>" } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).arc_to([7, 3], r: 3).fillet(4)"), .expected = .{ .str = "ValueError: fillet: no arc of r = 4 touches both sides at point 1, [10, 0]: an arc there turns that way more tightly, or the sides don't come that close" } },
+        // No corner where the path goes on straight, nor where an arc goes on smoothly
         .{ .src = "r = polyline([[0, 0], [5, 0], [10, 0]]).fillet(1).inspect", .expected = .{ .str = "<Path 2 segments from [0, 0] to [10, 0]>" } },
         .{ .src = BRACKET ++ "r = p.fillet(1).length == p.length", .expected = .{ .boolean = true } },
         // Closed, the ends meet at a sharp corner: two rounded corners and two sharp ones
