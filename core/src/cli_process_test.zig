@@ -138,6 +138,7 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "check", "missing.kup" }, .code = 1, .absent = "Success" },
         .{ .args = &.{"pkg"}, .code = 1, .contains = "Usage: kupcad pkg <init|add|install|prune|doctor>" },
         .{ .args = &.{ "pkg", "frobnicate" }, .code = 1, .contains = "Unknown pkg command 'frobnicate'", .absent = "ManifestNotFound" },
+        .{ .args = &.{ "pkg", "prune", "--forse" }, .code = 1, .contains = "Unexpected argument '--forse' for kupcad pkg prune" },
         .{ .args = &.{"watch"}, .code = 1, .contains = "Missing input file path" },
         .{ .args = &.{"dev"}, .code = 1 },
         .{ .args = &.{ "dev", "frobnicate" }, .code = 1, .contains = "Unknown dev subcommand" },

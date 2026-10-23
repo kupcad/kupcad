@@ -42,6 +42,76 @@ pub const USAGE = blk: {
 
 const Subcommand = enum { init, add, install, prune, doctor };
 
+/// What `kupcad pkg` was asked to do: the subcommand and its arguments, read whole before
+/// anything is opened, so a typo is a usage error rather than another action (`prune
+/// --forse` pruned without --force).
+pub const Request = union(Subcommand) {
+    init,
+    add: Dependency,
+    install,
+    prune: struct { force: bool },
+    doctor,
+};
+
+/// The request `args` make, or null once what is wrong with them is reported.
+pub fn parseRequest(args: *Args, reporter: Reporter) ?Request {
+    const name = args.next() orelse {
+        reporter.err(USAGE, .{});
+        return null;
+    };
+    const command = std.meta.stringToEnum(Subcommand, name) orelse {
+        reporter.err("Error: Unknown pkg command '{s}'\n" ++ USAGE, .{name});
+        return null;
+    };
+    const request: Request = switch (command) {
+        .init => .init,
+        .install => .install,
+        .doctor => .doctor,
+        .add => .{ .add = parseDependency(args.next() orelse {
+            reporter.err(ADD_USAGE, .{});
+            return null;
+        }, reporter) orelse return null },
+        .prune => .{ .prune = .{ .force = if (args.next()) |flag| force: {
+            if (!std.mem.eql(u8, flag, "--force")) return unexpected(reporter, name, flag);
+            break :force true;
+        } else false } },
+    };
+    if (args.next()) |extra| return unexpected(reporter, name, extra);
+    return request;
+}
+
+/// A dependency `add` records: its alias, its URL as written and what the URL names.
+pub const Dependency = struct {
+    alias: []const u8,
+    url: []const u8,
+    package: ParsedPackage,
+};
+
+/// The dependency `<alias>=<url>` names, or null once what is wrong with it is reported.
+fn parseDependency(arg: []const u8, reporter: Reporter) ?Dependency {
+    var split_iter = std.mem.splitScalar(u8, arg, '=');
+    const alias = split_iter.next() orelse "";
+    const url = split_iter.rest();
+    if (alias.len == 0 or url.len == 0) {
+        reporter.err("Error: Expected <alias>=<url>, got '{s}'\n" ++ ADD_USAGE, .{arg});
+        return null;
+    }
+    validate.validateAlias(alias) catch {
+        reporter.err("Error: Invalid alias '{s}' (allowed: [A-Za-z0-9_.-], max {d} chars, no leading '.' or '-')\n", .{ alias, limits.MAX_ALIAS_LEN });
+        return null;
+    };
+    const package = ParsedPackage.parse(url) catch |err| {
+        reporter.err("Error: Invalid package URL '{s}': {s}\n", .{ url, provider.describeParseError(err) });
+        return null;
+    };
+    return .{ .alias = alias, .url = url, .package = package };
+}
+
+fn unexpected(reporter: Reporter, command: []const u8, arg: []const u8) ?Request {
+    reporter.err("Error: Unexpected argument '{s}' for kupcad pkg {s}\n" ++ USAGE, .{ arg, command });
+    return null;
+}
+
 /// `kupcad pkg init`: a fresh kupcad.json, unless the project has one (it was overwritten,
 /// dependencies and all, with exit status 0).
 pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !Outcome {
@@ -58,21 +128,14 @@ pub fn initManifest(allocator: std.mem.Allocator, fs: Vfs, reporter: Reporter) !
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
-    // Validate the subcommand before touching the manifest or the global store, so a typo
-    // gets a usage message rather than a manifest error.
-    const name = args_iter.next() orelse {
-        log_helpers.printStderr(init.io, USAGE, .{});
-        return .failure;
-    };
-    const command = std.meta.stringToEnum(Subcommand, name) orelse {
-        log_helpers.printStderr(init.io, "Error: Unknown pkg command '{s}'\n" ++ USAGE, .{name});
-        return .failure;
-    };
+    // Read the request before touching the manifest or the global store, so a typo gets a
+    // usage message rather than a manifest error or another action.
+    const request = parseRequest(args_iter, .forProcess(init)) orelse return .failure;
 
     var native_vfs = NativeVfs.init(init.io, std.Io.Dir.cwd());
     const fs = native_vfs.vfs();
 
-    if (command == .init) return initManifest(allocator, fs, .forProcess(init));
+    if (request == .init) return initManifest(allocator, fs, .forProcess(init));
 
     const global_dir = try paths.getGlobalDir(allocator, init.environ_map);
     defer allocator.free(global_dir);
@@ -85,12 +148,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     var store = try Store.init(init.io, db_path);
     defer store.deinit();
 
-    switch (command) {
+    switch (request) {
         .init => unreachable, // handled above: needs neither the store nor a manifest
-        .prune => {
+        .prune => |prune| {
             var gc = GC.init(allocator, init.io, &cafs, &store, .{ .io = init.io });
-            const force = if (args_iter.next()) |f| std.mem.eql(u8, f, "--force") else false;
-            try gc.prune(force);
+            try gc.prune(prune.force);
             return .success;
         },
         .doctor => {
@@ -98,12 +160,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
             try doc.run();
             return .success;
         },
-        .add, .install => return addOrInstall(init, allocator, args_iter, command, fs, &cafs, &store),
+        .add => |dependency| return addOrInstall(init, allocator, dependency, fs, &cafs, &store),
+        .install => return addOrInstall(init, allocator, null, fs, &cafs, &store),
     }
 }
 
-/// `add` records a dependency in kupcad.json and then installs, exactly like `install`.
-fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args, command: Subcommand, fs: Vfs, cafs: *Cafs, store: *Store) !Outcome {
+/// `add` records `added` in kupcad.json and then installs, exactly like `install` (no
+/// `added`).
+fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?Dependency, fs: Vfs, cafs: *Cafs, store: *Store) !Outcome {
     var manifest = Manifest.load(allocator, fs) catch |err| {
         log_helpers.printStderr(init.io, "Error: could not read kupcad.json: {s} (run `kupcad pkg init` to create one)\n", .{@errorName(err)});
         return .failure;
@@ -118,38 +182,14 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     };
     defer lockfile.deinit();
 
-    if (command == .add) {
-        const pkg_arg = args_iter.next() orelse {
-            log_helpers.printStderr(init.io, ADD_USAGE, .{});
-            return .failure;
-        };
-
-        var split_iter = std.mem.splitScalar(u8, pkg_arg, '=');
-        const alias = split_iter.next() orelse "";
-        const url = split_iter.rest();
-        if (alias.len == 0 or url.len == 0) {
-            log_helpers.printStderr(init.io, "Error: Expected <alias>=<url>, got '{s}'\n" ++ ADD_USAGE, .{pkg_arg});
-            return .failure;
-        }
-
-        validate.validateAlias(alias) catch {
-            log_helpers.printStderr(init.io, "Error: Invalid alias '{s}' (allowed: [A-Za-z0-9_.-], max {d} chars, no leading '.' or '-')\n", .{ alias, limits.MAX_ALIAS_LEN });
-            return .failure;
-        };
-
-        // Eagerly validate the URL and print the detected SemVer constraint
-        const parsed = ParsedPackage.parse(url) catch |err| {
-            log_helpers.printStderr(init.io, "Error: Invalid package URL '{s}': {s}\n", .{ url, provider.describeParseError(err) });
-            return .failure;
-        };
-
+    if (added) |dependency| {
         // Saved only once the install succeeds, so a failed `add` leaves kupcad.json as it was.
-        try manifest.setDependency(alias, url);
+        try manifest.setDependency(dependency.alias, dependency.url);
 
-        if (parsed.constraint != null) {
-            log_helpers.printStdout(init.io, "Added {s} at the highest tag matching {s}. Running concurrent install...\n", .{ alias, parsed.ref });
+        if (dependency.package.constraint != null) {
+            log_helpers.printStdout(init.io, "Added {s} at the highest tag matching {s}. Running concurrent install...\n", .{ dependency.alias, dependency.package.ref });
         } else {
-            log_helpers.printStdout(init.io, "Added {s} at reference '{s}'. Running concurrent install...\n", .{ alias, parsed.ref });
+            log_helpers.printStdout(init.io, "Added {s} at reference '{s}'. Running concurrent install...\n", .{ dependency.alias, dependency.package.ref });
         }
     }
 
@@ -166,7 +206,7 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
         return .failure;
     };
 
-    if (command == .add) try manifest.save(fs);
+    if (added != null) try manifest.save(fs);
     try lockfile.save(fs);
     log_helpers.printStdout(init.io, "Workspace linked successfully.\n", .{});
 
