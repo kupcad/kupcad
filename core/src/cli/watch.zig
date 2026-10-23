@@ -17,6 +17,7 @@ const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 
 pub const USAGE =
     \\Usage: kupcad watch <file.kup> [options]
@@ -82,8 +83,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer options.deinit(allocator);
     const file_path = options.file_path;
 
-    // Spin up the cache controller
-    var manager = SessionManager.init(allocator, init.io, 1);
+    // Spin up the cache controller; the script reads and writes the disk
+    var disk = NativeVfs.init(init.io, std.Io.Dir.cwd());
+    var manager = SessionManager.init(allocator, init.io, 1, disk.vfs());
     defer manager.deinit();
 
     // Pin the session: the watcher holds this pointer for the life of the process.

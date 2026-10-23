@@ -20,6 +20,7 @@ const debugger = @import("debugger.zig");
 const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const VM = @import("../vm/vm.zig").VM;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -221,8 +222,9 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var options = try parseOptions(allocator, args_iter, reporter) orelse return .failure;
     defer options.deinit(allocator);
 
-    // A one-shot command: one session is all it needs
-    var manager = SessionManager.init(allocator, reporter.io, 1);
+    // A one-shot command: one session is all it needs, reading and writing the disk
+    var disk = NativeVfs.init(reporter.io, std.Io.Dir.cwd());
+    var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
     defer manager.deinit();
     const session = try openSession(allocator, &manager, &options, reporter) orelse return .failure;
     if (!try evaluate(allocator, session, options.input_path, reporter)) return .failure;

@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const ScriptSession = @import("session.zig").ScriptSession;
+const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 const log = std.log.scoped(.session_manager);
 
@@ -28,13 +29,16 @@ pub const SessionManager = struct {
     /// Session id -> number of outstanding leases. Absent means unpinned.
     pins: std.AutoHashMapUnmanaged(u64, u32) = .empty,
     max_sessions: usize,
+    /// What every session's scripts read and write files through (ScriptSession.init).
+    files: Vfs,
     mutex: std.Io.Mutex = .init,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, max_sessions: usize) SessionManager {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, max_sessions: usize, files: Vfs) SessionManager {
         return .{
             .allocator = allocator,
             .io = io,
             .max_sessions = max_sessions,
+            .files = files,
         };
     }
 
@@ -116,7 +120,7 @@ pub const SessionManager = struct {
         // Heavy Allocation (Occurs OUTSIDE the critical section to prevent stalling other threads)
         const new_session = try self.allocator.create(ScriptSession);
         errdefer self.allocator.destroy(new_session);
-        new_session.* = try ScriptSession.init(self.allocator, self.io);
+        new_session.* = try ScriptSession.init(self.allocator, self.io, self.files);
         errdefer new_session.deinit();
 
         // 2nd Check: Acquire lock for mutation

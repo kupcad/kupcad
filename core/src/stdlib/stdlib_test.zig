@@ -2257,6 +2257,17 @@ test "Stdlib: kernel failures and invalid meshes raise GeometryError instead of 
     });
 }
 
+test "Stdlib: a VM its host gave no file system reads no file and writes none" {
+    // VM.init gave every VM the disk at the working directory, so a host that didn't give
+    // its own (the LSP's hover run sets a sandbox after init) let a script use the disk
+    try test_support.expectScripts(&.{
+        .{ .src = comptime rescued("import_stl(\"build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file 'build.zig': FileNotFound" } },
+        .{ .src = comptime rescued("cube(1).export_stl(\"vm_no_files.stl\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'vm_no_files.stl': AccessDenied" } },
+        .{ .src = comptime rescued("cube(1).export_obj(\"vm_no_files.obj\", true)"), .expected = .{ .str = "RuntimeError: export_obj: could not write 'vm_no_files.obj': AccessDenied" } },
+    });
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "vm_no_files.stl", .{}));
+}
+
 test "Stdlib: import_stl errors are rescuable ImportErrors, invalid meshes GeometryErrors" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();

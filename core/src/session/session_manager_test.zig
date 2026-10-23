@@ -5,7 +5,7 @@ const SessionManager = @import("session_manager.zig").SessionManager;
 const ScriptSession = @import("session.zig").ScriptSession;
 
 test "SessionManager: getOrInitializeSession creates and caches sessions" {
-    var manager = SessionManager.init(testing.allocator, testing.io, 2);
+    var manager = SessionManager.init(testing.allocator, testing.io, 2, .none);
     defer manager.deinit();
 
     // Create a dummy file so std.fs.cwd().realpath doesn't fail
@@ -34,7 +34,7 @@ test "SessionManager: getOrInitializeSession creates and caches sessions" {
 }
 
 test "SessionManager: LRU eviction removes oldest sessions when capacity is exceeded" {
-    var manager = SessionManager.init(testing.allocator, testing.io, 2);
+    var manager = SessionManager.init(testing.allocator, testing.io, 2, .none);
     defer manager.deinit();
 
     var tmp = testing.tmpDir(.{});
@@ -75,7 +75,7 @@ test "SessionManager: LRU eviction removes oldest sessions when capacity is exce
 
 test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its head" {
     const io = std.testing.io;
-    var sm = SessionManager.init(std.testing.allocator, io, 2);
+    var sm = SessionManager.init(std.testing.allocator, io, 2, .none);
     defer sm.deinit();
 
     // Simulate Lock Acquisition
@@ -83,12 +83,12 @@ test "SessionManager: markUsed reorders the LRU queue and evictLRU drops its hea
 
     // Create real dummy sessions instead of `undefined` to prevent deinit() segfaults upon eviction
     const s1 = try std.testing.allocator.create(ScriptSession);
-    s1.* = try ScriptSession.init(std.testing.allocator, io);
+    s1.* = try ScriptSession.init(std.testing.allocator, io, .none);
     try sm.sessions.put(std.testing.allocator, 111, s1);
     try sm.lru_queue.append(std.testing.allocator, 111);
 
     const s2 = try std.testing.allocator.create(ScriptSession);
-    s2.* = try ScriptSession.init(std.testing.allocator, io);
+    s2.* = try ScriptSession.init(std.testing.allocator, io, .none);
     try sm.sessions.put(std.testing.allocator, 222, s2);
     try sm.lru_queue.append(std.testing.allocator, 222);
 
@@ -123,7 +123,7 @@ test "SessionManager: evictLRU never frees a session that is still leased" {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = name, .data = "" });
     }
 
-    var manager = SessionManager.init(testing.allocator, testing.io, 1);
+    var manager = SessionManager.init(testing.allocator, testing.io, 1, .none);
     defer manager.deinit();
 
     const lease = try manager.acquireSession(paths[0]);
@@ -148,7 +148,7 @@ test "SessionManager: evictLRU never frees a session that is still leased" {
 
 /// Creates, evicts (capacity 1), leases and reuses sessions with `allocator`.
 fn churnSessions(allocator: std.mem.Allocator, a: []const u8, b: []const u8) !void {
-    var manager = SessionManager.init(allocator, testing.io, 1);
+    var manager = SessionManager.init(allocator, testing.io, 1, .none);
     defer manager.deinit();
     _ = try manager.getOrInitializeSession(a);
     _ = try manager.getOrInitializeSession(b); // evicts a
@@ -189,7 +189,7 @@ test "SessionManager: threads leasing and evicting the same sessions keep every 
         made += 1;
     }
 
-    var manager = SessionManager.init(testing.allocator, testing.io, 2);
+    var manager = SessionManager.init(testing.allocator, testing.io, 2, .none);
     defer manager.deinit();
     const Worker = struct {
         fn run(m: *SessionManager, all: []const []u8, seed: usize, failed: *std.atomic.Value(bool)) void {

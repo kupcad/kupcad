@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const testing = std.testing;
 const ast = @import("../core/ast.zig");
 const chunk = @import("chunk.zig");
@@ -1889,9 +1890,9 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     const test_stl = "vm_test_out.stl";
     const test_glb = "vm_test_out.glb";
 
-    const cwd = std.Io.Dir.cwd();
-    defer cwd.deleteFile(testing.io, test_stl) catch {};
-    defer cwd.deleteFile(testing.io, test_glb) catch {};
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const out_dir = tmp.dir;
 
     const source =
         \\part = Solid.cube(12.0)
@@ -1905,6 +1906,8 @@ test "VM: Instance export methods on Solid and Geometry objects" {
 
     var vm = try VM.init(alloc, testing.io);
     defer vm.deinit();
+    var disk = NativeVfs.init(testing.io, out_dir);
+    vm.vfs = disk.vfs();
     try registry.registerStandardLibrary(&vm);
 
     var exec_chunk = chunk.Chunk.init();
@@ -1922,7 +1925,7 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     try testing.expect(result_val.isGeometry());
 
     // --- Assert STL file was generated and has valid header ---
-    const stl_file = try cwd.openFile(vm.io, test_stl, .{});
+    const stl_file = try out_dir.openFile(vm.io, test_stl, .{});
     defer stl_file.close(vm.io);
 
     var stl_header: [84]u8 = undefined;
@@ -1930,7 +1933,7 @@ test "VM: Instance export methods on Solid and Geometry objects" {
     try testing.expect(stl_bytes_read >= 84);
 
     // --- Assert GLTF binary (.glb) file was generated with magic header ---
-    const glb_file = try cwd.openFile(vm.io, test_glb, .{});
+    const glb_file = try out_dir.openFile(vm.io, test_glb, .{});
     defer glb_file.close(vm.io);
 
     var glb_header: [12]u8 = undefined;

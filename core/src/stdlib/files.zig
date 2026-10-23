@@ -47,7 +47,16 @@ fn exportTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: Export
         else => return err,
     };
     defer vm.allocator.free(bytes);
-    try vm.vfs.writeFile(filepath, bytes);
+    try writeFile(vm, filepath, bytes, method);
+}
+
+/// Writes `bytes` to `path` through the VM's file system; a write it refuses (a host that
+/// gave the script no file system, a directory that isn't there) is an error naming the file.
+fn writeFile(vm: *VM, path: []const u8, bytes: []const u8, comptime method: []const u8) !void {
+    vm.vfs.writeFile(path, bytes) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return vm.fail(.RuntimeError, method ++ ": could not write '{s}': {s}", .{ path, @errorName(err) }),
+    };
 }
 
 /// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).
@@ -73,7 +82,7 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_o
     if (mtl_path) |p| {
         const library = try export_mod.exportMaterialLibrary(vm.allocator, vm);
         defer vm.allocator.free(library);
-        try vm.vfs.writeFile(p, library);
+        try writeFile(vm, p, library, "export_obj");
     }
     return receiver;
 }

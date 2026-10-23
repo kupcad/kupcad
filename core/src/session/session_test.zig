@@ -6,7 +6,7 @@ const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const api = @import("../api.zig");
 
 test "ScriptSession: init and deinit manage memory cleanly" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     try testing.expectEqual(@as(u64, 1), session.global_revision);
@@ -14,7 +14,7 @@ test "ScriptSession: init and deinit manage memory cleanly" {
 }
 
 test "ScriptSession: buildReverseGraph inverts workspace module dependency edges" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     // Use exact pathing to ensure dependency linker resolves correctly
@@ -36,7 +36,7 @@ test "ScriptSession: buildReverseGraph inverts workspace module dependency edges
 }
 
 test "ScriptSession: markFileEdited triggers reverse BFS invalidation" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     const child_path = "math.kup";
@@ -61,7 +61,7 @@ test "ScriptSession: markFileEdited triggers reverse BFS invalidation" {
 }
 
 test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applies Wyhash early cutoff" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     const file_path = "model.kup";
@@ -105,7 +105,7 @@ test "ScriptSession: evaluateModule compiles code, stores CAD handle, and applie
 }
 
 test "ScriptSession: stores its own copy of the module output" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit(); // the cache-owned handle used to be freed twice here
 
     const file_path = "model.kup";
@@ -137,7 +137,7 @@ test "ScriptSession: evaluateWorkspace processes multi-file dependencies and pro
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     session.vm.vfs = mem_vfs.vfs();
@@ -199,7 +199,7 @@ test "ScriptSession: deep dependency chain short-circuits propagation on identic
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     session.vm.vfs = mem_vfs.vfs();
 
@@ -248,7 +248,7 @@ test "ScriptSession: gracefully halts evaluation on syntax error and leaves down
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     session.vm.vfs = mem_vfs.vfs();
 
@@ -289,7 +289,7 @@ test "ScriptSession: keeps the failing parse, with resolver errors, until the ne
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     session.vm.vfs = mem_vfs.vfs();
 
@@ -319,7 +319,7 @@ test "ScriptSession: a compile error is kept as the failure, with its location" 
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
 
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     session.vm.vfs = mem_vfs.vfs();
 
@@ -338,7 +338,7 @@ test "ScriptSession: a compile error is kept as the failure, with its location" 
 }
 
 test "ScriptSession: params reach param() on every evaluation" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
 
     // Registering the standard library makes a new `params` map; values injected once,
@@ -365,7 +365,7 @@ test "ScriptSession: params reach param() on every evaluation" {
 }
 
 test "ScriptSession: a data file a module read runs it, and its importers, again when it changes" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
@@ -397,7 +397,7 @@ test "ScriptSession: a data file a module read runs it, and its importers, again
 }
 
 test "ScriptSession: removeModule drops its output and the modules after it keep theirs" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     _ = try session.workspace.addModule("closed.kup", "cube(1)");
     _ = try session.workspace.addModule("open.kup", "cube(2)");
@@ -416,7 +416,7 @@ test "ScriptSession: removeModule drops its output and the modules after it keep
 }
 
 test "ScriptSession: removing the module that failed clears the failure" {
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     _ = try session.workspace.addModule("ok.kup", "cube(1)");
     _ = try session.workspace.addModule("broken.kup", "cube(");
@@ -446,7 +446,7 @@ fn hashesOf(session: *ScriptSession, name: []const u8, source: []const u8, chang
 
 test "ScriptSession: the output fingerprint sees a colour change and a hole moved inside the part" {
     // It was the bounding box and volume alone, so neither reached the viewport.
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     const coloured = try hashesOf(&session, "colour.kup", "c = cube(10)", "c = cube(10).material(color: \"#FF0000\")");
     try testing.expect(coloured[0] != coloured[1]);
@@ -459,7 +459,7 @@ test "ScriptSession: the output fingerprint sees a colour change and a hole move
 test "ScriptSession: materials and ghosts don't accumulate across runs" {
     // The session's VM kept every material and ghost of every run, so each viewport
     // export carried all of them.
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     const src = "ghost { cube(1) }\nc = cube(10).material(color: \"#FF0000\")";
     const mod_id = try session.workspace.addModule("m.kup", src);
@@ -478,7 +478,7 @@ test "ScriptSession: materials and ghosts don't accumulate across runs" {
 
 test "ScriptSession: a long editing session keeps the geometry graph to what it uses" {
     // Every edit added its nodes to the graph for good: 200 edits of one part left 609.
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     // Compaction as the graph doubles, from the start rather than past 1 MiB
     session.vm.dag_builder.compaction_floor = 0;
@@ -508,7 +508,7 @@ const Chain = struct {
     fn initWith(self: *Chain, modules: []const [2][]const u8, data: []const [2][]const u8) !void {
         self.files = MemoryVfs.init(testing.allocator);
         errdefer self.files.deinit();
-        self.session = try ScriptSession.init(testing.allocator, testing.io);
+        self.session = try ScriptSession.init(testing.allocator, testing.io, .none);
         errdefer self.session.deinit();
         self.session.vm.vfs = self.files.vfs();
         for (data) |d| try self.files.vfs().writeFile(d[0], d[1]);

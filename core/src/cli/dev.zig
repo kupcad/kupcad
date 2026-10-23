@@ -122,7 +122,8 @@ fn renderBytecode(init: std.process.Init, allocator: std.mem.Allocator, file_pat
     };
     defer doc.deinit();
 
-    var session = try ScriptSession.init(allocator, init.io);
+    // Compiled, not run: it reads no files
+    var session = try ScriptSession.init(allocator, init.io, .none);
     defer session.deinit();
     session.vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&session.vm);

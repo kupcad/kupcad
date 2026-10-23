@@ -19,6 +19,7 @@ const registry = @import("../stdlib/registry.zig");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../core/geometry_handle.zig");
 const VM = @import("../vm/vm.zig").VM;
+const Vfs = @import("../vfs/vfs.zig").Vfs;
 
 const Workspace = workspace.Workspace;
 const ModuleId = workspace.ModuleId;
@@ -100,9 +101,12 @@ pub const ScriptSession = struct {
     /// (injecting once, before evaluating, used to be wiped by it).
     params: ParamValues = .{},
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io) !ScriptSession {
+    /// A session whose scripts read and write files through `files`: the disk for `kupcad
+    /// build` and `watch`, the LSP's read-only sandbox, `.none` for no files at all.
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, files: Vfs) !ScriptSession {
         var vm = try VM.init(allocator, io);
         vm.runs_many_scripts = true;
+        vm.vfs = files;
         return .{
             .allocator = allocator,
             .workspace = Workspace.init(allocator),

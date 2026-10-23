@@ -4,6 +4,7 @@ const ScriptSession = @import("session.zig").ScriptSession;
 const watcher_mod = @import("watcher.zig");
 const Watcher = watcher_mod.Watcher;
 const kernel = @import("../kernel/kernel.zig");
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 
 /// Pushes a file's mtime explicitly so change detection never depends on the
 /// filesystem's timestamp granularity (no sleeps needed).
@@ -33,6 +34,8 @@ const Recorder = struct {
 const Fixture = struct {
     tmp: testing.TmpDir,
     dir: []u8,
+    /// The disk, as `kupcad watch` gives it; on the heap, since the session points at it.
+    disk: *NativeVfs,
     session: ScriptSession,
 
     fn init() !Fixture {
@@ -42,11 +45,15 @@ const Fixture = struct {
         // does for a script given to `kupcad watch`.
         const dir = try std.fs.path.join(testing.allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
         errdefer testing.allocator.free(dir);
-        return .{ .tmp = tmp, .dir = dir, .session = try ScriptSession.init(testing.allocator, testing.io) };
+        const disk = try testing.allocator.create(NativeVfs);
+        errdefer testing.allocator.destroy(disk);
+        disk.* = NativeVfs.init(testing.io, std.Io.Dir.cwd());
+        return .{ .tmp = tmp, .dir = dir, .disk = disk, .session = try ScriptSession.init(testing.allocator, testing.io, disk.vfs()) };
     }
 
     fn deinit(self: *Fixture) void {
         self.session.deinit();
+        testing.allocator.destroy(self.disk);
         testing.allocator.free(self.dir);
         self.tmp.cleanup();
     }

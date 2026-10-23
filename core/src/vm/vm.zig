@@ -24,7 +24,6 @@ const profiler_mod = @import("profiler.zig");
 const material_mod = @import("../core/material.zig");
 const kernel = @import("../kernel/kernel.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
-const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const sequence = @import("sequence.zig");
@@ -133,8 +132,10 @@ pub const VM = struct {
     stack_top: usize,
     frames: std.ArrayList(CallFrame),
 
-    native_vfs_ptr: *NativeVfs,
-    vfs: Vfs,
+    /// What scripts read and write files through (`import`, `import_json`, `export_stl`):
+    /// `Vfs.none` until the host gives one (the CLI the disk, the LSP a read-only sandbox,
+    /// the browser memory), so no host reaches the disk by forgetting to set it.
+    vfs: Vfs = .none,
     gc: memory.GC,
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
@@ -304,19 +305,12 @@ pub const VM = struct {
             errdefer rescue_frames.deinit(allocator);
             try rescue_frames.ensureTotalCapacity(allocator, 256);
 
-            // Dynamically allocate the NativeVfs so its memory address stays valid
-            const native_vfs = try allocator.create(NativeVfs);
-            errdefer allocator.destroy(native_vfs);
-            native_vfs.* = NativeVfs.init(io, std.Io.Dir.cwd());
-
             break :vm VM{
                 .allocator = allocator,
                 .io = io,
                 .stack = initial_stack,
                 .stack_top = 0,
                 .frames = frames,
-                .native_vfs_ptr = native_vfs,
-                .vfs = native_vfs.vfs(),
                 .gc = memory.GC.init(allocator),
                 .globals = .empty,
                 .global_generation = next_global_generation.fetchAdd(1, .monotonic),
@@ -378,8 +372,6 @@ pub const VM = struct {
         self.clearDagCache();
         self.dag_cache.deinit(self.allocator);
         self.cs_cache.deinit(self.allocator);
-
-        self.allocator.destroy(self.native_vfs_ptr);
 
         self.allocator.free(self.stack);
         self.globals.deinit(self.allocator);

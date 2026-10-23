@@ -151,8 +151,7 @@ pub const SessionPreview = struct {
         };
         errdefer self.documents.deinit();
         self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), if (self.workspace) |*w| w.vfs() else null);
-        self.session = try ScriptSession.init(allocator, io);
-        self.session.vm.vfs = self.sandbox.vfs();
+        self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
     }
@@ -373,7 +372,6 @@ pub const HoverRun = struct {
         self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
         self.vm = try VM.init(allocator, io);
         errdefer self.vm.deinit();
-        // VM.init defaults to a NativeVfs rooted at cwd; replace it before any script code runs.
         self.vm.vfs = sandbox;
         self.vm.mute_errors = true; // its errors are the document's diagnostics
         self.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);

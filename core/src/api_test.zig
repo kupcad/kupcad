@@ -308,6 +308,24 @@ test "API: a lint fix is kept only when it builds the same model" {
     try testing.expect(try keepsModel("cube(10).undefined_thing\n", "cube(11)\n"));
 }
 
+test "API: buildModel reads and writes no files unless the caller gives it a file system" {
+    // Given none, it ran on the disk at the working directory, where build.zig is: a
+    // script given to the API could read and write there
+    const cases = [_]struct { source: []const u8, message: []const u8 }{
+        .{ .source = "import_stl(\"build.zig\")", .message = "ImportError: could not read STL file 'build.zig': FileNotFound" },
+        .{ .source = "import_json(\"build.zig.zon\")", .message = "ImportError: could not read JSON file 'build.zig.zon': FileNotFound" },
+        .{ .source = "cube(1).export_stl(\"api_no_files.stl\")", .message = "RuntimeError: export_stl: could not write 'api_no_files.stl': AccessDenied" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.source, .{ .format = .stl, .diagnostic = &diag }));
+        try testing.expectEqualStrings(case.message, diag.message.?);
+    }
+    try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "api_no_files.stl", .{}));
+}
+
 test "API: telling a model runs it with every write discarded" {
     const probe = "fingerprint_probe.stl";
     _ = try api.modelFingerprintForTest(testing.allocator, testing.io, "cube(1).export_stl(\"" ++ probe ++ "\")\n");

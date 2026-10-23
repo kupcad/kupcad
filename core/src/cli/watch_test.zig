@@ -52,7 +52,7 @@ test "kupcad watch: each watcher event is reported as build reports it" {
     const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
     var mem = MemoryVfs.init(testing.allocator);
     defer mem.deinit();
-    var session = try ScriptSession.init(testing.allocator, testing.io);
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();
     session.vm.vfs = mem.vfs();
     // A module that doesn't compile, for the failed event's diagnostics

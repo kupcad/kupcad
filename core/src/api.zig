@@ -13,6 +13,7 @@ const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("vfs/readonly.zig").ReadOnlyVfs;
+const NativeVfs = @import("vfs/native.zig").NativeVfs;
 const limits = @import("core/limits.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const equivalence = @import("tools/fmt/equivalence.zig");
@@ -199,7 +200,9 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
     vm.mute_errors = true;
-    var sandbox = ReadOnlyVfs.init(vm.vfs, null);
+    // Its imports are read from the disk, as `kupcad check` runs it
+    var disk = NativeVfs.init(io, std.Io.Dir.cwd());
+    var sandbox = ReadOnlyVfs.init(disk.vfs(), null);
     vm.vfs = sandbox.vfs();
     vm.line_index = &doc.line_index;
     vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
@@ -324,8 +327,9 @@ pub const BuildOptions = struct {
     draco: bool = false,
     /// Values for `param(:name, ...)`, as `-p` and `-P` give them.
     params: ?*const ParamValues = null,
-    /// The filesystem imports and exports go through (the native one when null).
-    vfs: ?Vfs = null,
+    /// The file system imports and exports go through: none by default, so a script given
+    /// to the API reads and writes no files unless the caller passes one.
+    vfs: Vfs = .none,
     /// When the build fails with a message, `diagnostic.message` is set to it. Pass a
     /// fresh `.{}`.
     diagnostic: ?*BuildDiagnostic = null,
@@ -350,7 +354,7 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
 
-    if (options.vfs) |vfs| vm.vfs = vfs;
+    vm.vfs = options.vfs;
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
 
