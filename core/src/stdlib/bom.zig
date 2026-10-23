@@ -157,12 +157,10 @@ fn copyOf(vm: *const VM, solid: value.Value) struct { part: Part, placement: Pla
             .set_name => if (part.name == null) {
                 part.name = b.partName(b.getNamePayload(node).name_id);
             },
-            // A material of an earlier run (a session's) is no longer known
             .set_material => if (part.material == null) {
-                const id = b.getMaterialPayload(node).material_id;
-                if (id < vm.materials.items.len) {
-                    part.material = vm.materials.items[id];
-                    part.material_id = id;
+                if (knownMaterial(vm, node)) |known| {
+                    part.material = known.def;
+                    part.material_id = known.id;
                 }
             },
             .mirror, .scale, .transform_matrix => if (placed) {
@@ -303,11 +301,50 @@ pub fn writeJson(allocator: std.mem.Allocator, writer: *std.Io.Writer, parts: []
 
 /// solid.named(name) -> the Solid, its part named `name` in the parts list. The shape is
 /// the same: a name changes nothing a viewport or an export shows.
+/// `solid.named(name)` and `sketch.named(name)`: the part's name in the parts list, or the
+/// sketch's in a drawing.
 pub fn meshNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "named", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return util.notDefinedFor(vm, "named", receiver);
     if (std.mem.trim(u8, name, &std.ascii.whitespace).len == 0) {
         return vm.fail(.ValueError, "named expects a name, got \"{s}\"", .{name});
     }
     const id = try vm.dag_builder.internPartName(name);
+    if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchName(receiver.asCrossSection().dag_idx, id));
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addSetName(receiver.asGeometry().dag_idx, id) });
+}
+
+/// What a Sketch carries for a drawing (SVG, DXF): the outermost `named` and `material`
+/// on it, through its transforms (as a Solid's part has them), none through an operation
+/// that makes another shape (an offset, a boolean).
+pub const Label = struct {
+    name: ?[]const u8 = null,
+    material: ?MaterialDef = null,
+};
+
+pub fn sketchLabel(vm: *const VM, sketch: value.Value) Label {
+    const b = &vm.dag_builder;
+    var label: Label = .{};
+    var at = sketch.asCrossSection().dag_idx;
+    while (at != dag.CONCRETE_NODE_SENTINEL) : (at = b.extra_data.items[b.nodes.items[at].data]) {
+        const node = b.nodes.items[at];
+        switch (node.tag) {
+            .cs_set_name => if (label.name == null) {
+                label.name = b.partName(b.getNamePayload(node).name_id);
+            },
+            .cs_set_material => if (label.material == null) {
+                if (knownMaterial(vm, node)) |known| label.material = known.def;
+            },
+            .cs_transform => {},
+            else => break,
+        }
+    }
+    return label;
+}
+
+/// The material a set_material node names, if the VM still has it (one of an earlier
+/// run, a session's, is no longer known).
+fn knownMaterial(vm: *const VM, node: dag.DAGNode) ?struct { def: MaterialDef, id: u32 } {
+    const id = vm.dag_builder.getMaterialPayload(node).material_id;
+    if (id >= vm.materials.items.len) return null;
+    return .{ .def = vm.materials.items[id], .id = id };
 }

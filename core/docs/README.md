@@ -73,7 +73,7 @@ part = cube(20).union([boss, rib].compact)
 
 ## 2. 2D Sketching, Profiles, & Text
 
-The `Sketch2D` class provides powerful 2D cross-section primitives that can be swept into 3D.
+The `Sketch2D` class provides powerful 2D cross-section primitives that can be swept into 3D. A Sketch takes `named(name)` and `material(color:, alpha:)` as a Solid does: its name and colour are its drawing's (what a 2D export writes it as), stay through its moves (`translate`, `rotate`, `scale`, `mirror`), and are not the Solid's that is extruded from it, nor an offset's.
 
 ```ruby
 # Advanced 2D Polygons with Hole support (Even-Odd winding rules)

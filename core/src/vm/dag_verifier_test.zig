@@ -77,4 +77,7 @@ test "DAG verifier: every tag is a solid or a sketch, as the evaluator reads it"
     try testing.expectEqual(verifier.Kind.solid, verifier.kindOf(.extrude));
     try testing.expectEqual(verifier.Kind.solid, verifier.kindOf(.concrete));
     try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_transform));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.kindOf(.cs_set_name));
+    try testing.expectEqual(verifier.Kind.sketch, verifier.operandKind(.cs_set_material));
+    try testing.expectEqual(verifier.Kind.solid, verifier.operandKind(.set_material));
 }

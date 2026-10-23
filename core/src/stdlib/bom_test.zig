@@ -41,6 +41,35 @@ test "bom: the outermost name and material are the part's, and a different one i
     });
 }
 
+test "bom: a sketch carries its name and material through its moves, for a drawing" {
+    // `named` and `material` were a Solid's alone, so a 2D export had nothing to call or
+    // colour a sketch by.
+    const source =
+        \\hole = circle(r: 1).material(color: "#FF0000", alpha: 0.5).named("hole").translate(x: 2).rotate(45)
+        \\renamed = hole.named("slot")
+        \\grown = hole.offset(1)
+        \\plain = square(1)
+        \\solid = hole.extrude(1)
+    ;
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
+    const bom = @import("bom.zig");
+    const hole = bom.sketchLabel(&vm, vm.globals.get("hole").?);
+    try testing.expectEqualStrings("hole", hole.name.?);
+    try testing.expectEqual([3]u8{ 0xFF, 0, 0 }, hole.material.?.rgb);
+    try testing.expectEqual(@as(f64, 0.5), hole.material.?.alpha);
+    // The outermost name wins; another shape (an offset) has no label; a plain sketch none
+    try testing.expectEqualStrings("slot", bom.sketchLabel(&vm, vm.globals.get("renamed").?).name.?);
+    try testing.expectEqual(@as(?[]const u8, null), bom.sketchLabel(&vm, vm.globals.get("grown").?).name);
+    try testing.expectEqual(@as(?[]const u8, null), bom.sketchLabel(&vm, vm.globals.get("plain").?).name);
+    // A sketch's label isn't the Solid extruded from it
+    try support.expectScripts(&.{
+        .{ .src = source ++ "\nr = solid.bom[0][:name]", .expected = .nil },
+        .{ .src = source ++ "\nr = \"#{hole.class} #{renamed.class} #{solid.volume > 2}\"", .expected = .{ .str = "CrossSection CrossSection true" } },
+    });
+}
+
 test "bom: a part's volume and size are its shape's, its mass the volume times its density" {
     try support.expectScripts(&.{
         .{ .src = "p = cube(x: 10, y: 20, z: 5).rotate(0, 0, 90).bom[0]\nr = p[:size] + [p[:volume]]", .expected = .{ .nums = &.{ 10, 20, 5, 1000 } } },
@@ -59,7 +88,7 @@ test "bom: every value it makes stays rooted while the parts are measured" {
 test "bom: what it can't take is an error saying why" {
     try support.expectScripts(&.{
         .{ .src = support.rescued("cube(1).named(\"  \")"), .expected = .{ .str = "ValueError: named expects a name, got \"  \"" } },
-        .{ .src = support.rescued("square(1).named(\"x\")"), .expected = .{ .str = "NoMethodError: undefined method 'named' for CrossSection" } },
+        .{ .src = support.rescued("square(1).bom"), .expected = .{ .str = "NoMethodError: undefined method 'bom' for CrossSection" } },
         .{ .src = support.rescued("cube(1).material(density: 0)"), .expected = .{ .str = "ValueError: material expects density (g/cm³) to be a finite number greater than zero, got 0" } },
         .{ .src = support.rescued("CAD.with_config(engine: :brep) { cube(1).bom }"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
     });

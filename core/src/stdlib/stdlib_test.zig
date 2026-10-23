@@ -1071,6 +1071,8 @@ test "Stdlib: a shape responds to the methods of its kind only" {
     // responded to `hull` and raised when called.
     try expectScripts(&.{
         .{ .src = "r = \"#{square(1).respond_to?(:hull)} #{cube(1).respond_to?(:hull)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)}\"", .expected = .{ .str = "false true true false true" } },
+        // A Sketch takes a name and a material too, for a drawing
+        .{ .src = "r = \"#{square(1).respond_to?(:named)} #{square(1).named(\"a\").material(color: \"#FF0000\").class}\"", .expected = .{ .str = "true CrossSection" } },
     });
 }
 

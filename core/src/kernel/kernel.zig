@@ -382,6 +382,11 @@ pub fn destruct(handle: geom.GeometryHandle) void {
     dispatch("destructFn", handle, .{});
 }
 
+/// Deep copy of a sketch; the caller owns the returned handle.
+pub inline fn cloneCrossSection(handle: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    return dispatch("cloneCrossSectionFn", handle, .{});
+}
+
 pub inline fn destructCrossSection(handle: geom.CrossSectionHandle) void {
     dispatch("destructCrossSectionFn", handle, .{});
 }

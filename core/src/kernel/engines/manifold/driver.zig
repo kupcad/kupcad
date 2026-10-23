@@ -671,6 +671,13 @@ fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    std.debug.assert(a.engine == .manifold);
+    if (@intFromPtr(a.ptr) == 0) return null;
+    const ptr = manifold.crossSectionCopy(@ptrCast(@alignCast(a.ptr))) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 // --- Destructors ---
 
 fn destructImpl(handle: geom.GeometryHandle) void {
@@ -774,6 +781,7 @@ pub const driver = struct {
     pub const simplifyFn = simplifyImpl;
     pub const setMaterialFn = setMaterialImpl;
     pub const cloneFn = cloneImpl;
+    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
 };

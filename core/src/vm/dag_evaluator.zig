@@ -261,7 +261,7 @@ fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
             dumpDAG(vm, p.left, depth + 1);
             dumpDAG(vm, p.right, depth + 1);
         },
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name => {
+        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name => {
             const p = vm.dag_builder.getTranslatePayload(node);
             log_helpers.printStdout("\n", .{});
             dumpDAG(vm, p.target, depth + 1);
@@ -371,7 +371,7 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
             try pushAll(f_stack, &.{ p.left, p.right });
         },
         // Each stores its operand ('target') first in its extra_data payload
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
+        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name, .transform_matrix, .project_op, .slice_op, .offset, .cs_transform, .extrude, .revolve => {
             try f_stack.push(b.extra_data.items[node.data]);
         },
         .loft => {
@@ -398,7 +398,8 @@ fn pushAll(f_stack: *EvaluationFrameStack, nodes: []const dag.DAGNodeIndex) !voi
 fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
     switch (node.tag) {
         .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
-        .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull, .set_material, .set_name => try executeSolidOp(vm, v_stack, node, config),
+        .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull => try executeSolidOp(vm, v_stack, node, config),
+        .set_material, .set_name, .cs_set_material, .cs_set_name => try executeLabel(vm, v_stack, node),
         .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
         .extrude, .revolve, .loft => try executeSweep(vm, v_stack, node, config),
         .slice_op, .project_op, .offset, .cs_transform, .cs_union_op, .cs_difference_op, .cs_intersection_op => try executeSketchOp(vm, v_stack, node),
@@ -553,22 +554,28 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
             const result = kernel.hull(solid) orelse return kernelFailed(vm, node.tag);
             try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
         },
-        .set_material => {
-            const target = v_stack.pop();
-            defer v_stack.release(target);
-            const p = b.getMaterialPayload(node);
-            const solid = try geometryOf(target);
-            vm.warnUnsupported(solid.engine, .materials);
-            try pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
-        },
-        // A name is the parts list's alone: the shape is its operand's, in a handle of its
-        // own (the result cache owns each node's)
-        .set_name => {
-            const target = v_stack.pop();
-            defer v_stack.release(target);
-            try pushSolid(vm, v_stack, node.tag, kernel.clone(try geometryOf(target)));
-        },
         else => unreachable,
+    }
+}
+
+/// A name or a material on a Solid or a Sketch. A Solid's material goes into its mesh (its
+/// triangles' slot); a name, and a Sketch's material, are the parts list's and a drawing's
+/// alone (stdlib/bom.zig reads them from the graph), so the shape is its operand's, in a
+/// handle of its own (the result cache owns each node's).
+fn executeLabel(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !void {
+    const target = v_stack.pop();
+    defer v_stack.release(target);
+    switch (target.value) {
+        .geometry => |solid| {
+            if (node.tag == .set_material) {
+                const p = vm.dag_builder.getMaterialPayload(node);
+                vm.warnUnsupported(solid.engine, .materials);
+                return pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
+            }
+            try pushSolid(vm, v_stack, node.tag, kernel.clone(solid));
+        },
+        .cross_section => |sketch| try pushSketch(vm, v_stack, node.tag, kernel.cloneCrossSection(sketch)),
+        else => return error.RuntimeError,
     }
 }
 

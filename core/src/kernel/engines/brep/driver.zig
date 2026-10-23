@@ -845,6 +845,12 @@ fn cloneImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
     return .{ .engine = .brep_native, .ptr = @ptrCast(copy) };
 }
 
+/// A B-Rep sketch is a BrepSolid too, so its copy is a solid's.
+fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
+    const copy = cloneImpl(.{ .engine = a.engine, .ptr = a.ptr }) orelse return null;
+    return .{ .engine = copy.engine, .ptr = copy.ptr };
+}
+
 fn solidOf(ptr: *anyopaque) *BrepSolid {
     return @ptrCast(@alignCast(ptr));
 }
@@ -953,6 +959,7 @@ pub const driver = struct {
     pub const numTrisFn = numTrisImpl;
     pub const simplifyFn = simplifyImpl;
     pub const cloneFn = cloneImpl;
+    pub const cloneCrossSectionFn = cloneCrossSectionImpl;
     pub const destructFn = destructImpl;
     pub const destructCrossSectionFn = destructCrossSectionImpl;
     pub const setMaterialFn = setMaterialImpl;

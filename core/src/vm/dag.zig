@@ -64,6 +64,10 @@ pub const DAGTag = enum(u8) {
     set_material,
     /// A part's name (`named`), for the parts list: the shape is its operand's.
     set_name,
+    /// A sketch's material and name (`material`, `named`), for a drawing: the shape is its
+    /// operand's (stdlib/bom.zig reads them). Tags of their own, as every sketch node has.
+    cs_set_material,
+    cs_set_name,
     /// Leaf wrapping an already-evaluated handle (decompose/simplify results).
     /// `data` indexes `concrete_leaves`, which owns the handle.
     concrete,
@@ -82,8 +86,8 @@ pub fn scriptName(tag: DAGTag) []const u8 {
         .project_op => "project",
         .transform_matrix, .cs_transform => "transform",
         .polygons_even_odd => "polygon",
-        .set_material => "material",
-        .set_name => "named",
+        .set_material, .cs_set_material => "material",
+        .set_name, .cs_set_name => "named",
         .empty_solid, .empty_sketch => "empty",
         .concrete => "geometry",
     };
@@ -142,7 +146,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .extrude => .{ .target_numbers = 5 },
         .revolve => .{ .target_numbers = 2 },
         .cs_transform => .{ .target_numbers = 6 },
-        .set_material, .set_name => .target_value,
+        .set_material, .set_name, .cs_set_material, .cs_set_name => .target_value,
         .loft => .loft,
         .polygon => .polygon,
         .polygons_even_odd => .polygons,
@@ -549,17 +553,31 @@ pub const DAGBuilder = struct {
         return idx;
     }
 
+    /// The solid `target` with material `material_id` (the VM's).
     pub fn addSetMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
-        const snap = self.snapshot();
-        const extra_idx = try self.appendExtraData(&.{ target, material_id });
-        return try self.appendNodeWithRollback(.{ .tag = .set_material, .flags = 0, .data = extra_idx }, snap);
+        return self.addLabel(.set_material, target, material_id);
     }
 
-    /// `target` named `name_id` (internPartName).
+    /// The solid `target` named `name_id` (internPartName).
     pub fn addSetName(self: *DAGBuilder, target: DAGNodeIndex, name_id: u32) !DAGNodeIndex {
+        return self.addLabel(.set_name, target, name_id);
+    }
+
+    /// The sketch `target` with material `material_id` (the VM's).
+    pub fn addSketchMaterial(self: *DAGBuilder, target: DAGNodeIndex, material_id: u32) !DAGNodeIndex {
+        return self.addLabel(.cs_set_material, target, material_id);
+    }
+
+    /// The sketch `target` named `name_id` (internPartName).
+    pub fn addSketchName(self: *DAGBuilder, target: DAGNodeIndex, name_id: u32) !DAGNodeIndex {
+        return self.addLabel(.cs_set_name, target, name_id);
+    }
+
+    /// A name or material node (`target_value` layout) of `tag` on `target`.
+    fn addLabel(self: *DAGBuilder, tag: DAGTag, target: DAGNodeIndex, id: u32) !DAGNodeIndex {
         const snap = self.snapshot();
-        const extra_idx = try self.appendExtraData(&.{ target, name_id });
-        return try self.appendNodeWithRollback(.{ .tag = .set_name, .flags = 0, .data = extra_idx }, snap);
+        const extra_idx = try self.appendExtraData(&.{ target, id });
+        return try self.appendNodeWithRollback(.{ .tag = tag, .flags = 0, .data = extra_idx }, snap);
     }
 
     /// The id of the part name `name`, the same for the same text.

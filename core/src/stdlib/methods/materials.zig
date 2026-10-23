@@ -12,8 +12,10 @@ const util = @import("util.zig");
 const sig = @import("../method_signatures.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
+/// `solid.material(...)` and `sketch.material(...)`: how a Solid is shaded and what it is
+/// made of; a Sketch's colour is its drawing's (SVG, DXF), the rest kept with it.
 pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    if (!receiver.isGeometry()) return util.notDefinedFor(vm, "material", receiver);
+    if (!receiver.isGeometry() and !receiver.isCrossSection()) return util.notDefinedFor(vm, "material", receiver);
 
     const parsed = try util.parseKwargsSubset(struct {
         color: ?[]const u8 = null,
@@ -47,6 +49,7 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
     const material_id: u32 = @intCast(vm.materials.items.len);
     try vm.materials.append(vm.allocator, mat_def);
 
+    if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchMaterial(receiver.asCrossSection().dag_idx, material_id));
     const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
