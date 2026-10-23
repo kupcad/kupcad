@@ -134,11 +134,7 @@ fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: 
         return null;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
-    if (options.exports.requiredEngine()) |engine| {
-        var settings = session.vm.config();
-        settings.engine = engine;
-        try session.vm.setConfig(settings);
-    }
+    try options.exports.prepare(&session.vm);
     return session;
 }
 

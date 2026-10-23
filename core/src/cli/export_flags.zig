@@ -1,9 +1,9 @@
 //! The export options `kupcad build` takes (`-o`, repeatable, `--format`, `--draco`,
 //! `--draco-bits`, `--stroke-width`, `--mtl`, `--bom`, `--split`) and the files they ask
 //! for once the script has run: `ExportFlags.take` reads one, `settle` checks they fit
-//! together and picks each output's format, `requiredEngine` is the engine a format needs
-//! the script built on, and `write` writes the model to each output (or a file per part,
-//! PartFileNames naming them) and the parts list.
+//! together and picks each output's format, `prepare` sets the VM to the engine a format
+//! needs the script built on, and `write` writes the model to each output (or a file per
+//! part, PartFileNames naming them) and the parts list. `kupcad watch` takes them too.
 
 const std = @import("std");
 const api = @import("../api.zig");
@@ -188,6 +188,14 @@ pub const ExportFlags = struct {
     pub fn requiredEngine(self: *const ExportFlags) ?geom.EngineType {
         if (self.split_dir != null) return self.split_format.requiredEngine();
         return self.outputs.items[0].format.requiredEngine();
+    }
+
+    /// Sets `vm` to build on the engine the outputs need, if they need one.
+    pub fn prepare(self: *const ExportFlags, vm: *VM) !void {
+        const engine = self.requiredEngine() orelse return;
+        var settings = vm.config();
+        settings.engine = engine;
+        try vm.setConfig(settings);
     }
 
     /// Writes what was asked for, the model of `vm` (run from `input_path`) or a file per

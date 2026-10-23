@@ -1,5 +1,6 @@
-//! `kupcad watch`'s options: the file, and `-p`/`-P` as `kupcad build` takes them (watching
-//! a script with parameters used to be impossible).
+//! `kupcad watch`'s options: the file, `-p`/`-P` and the export options as `kupcad build`
+//! takes them (watching a script with parameters, or writing what it builds, used to be
+//! impossible), and what each watcher event prints and writes.
 
 const std = @import("std");
 const testing = std.testing;
@@ -32,7 +33,9 @@ test "kupcad watch: takes the file and parameter values, as build does, the late
 test "kupcad watch: options it can't take are refused, saying why" {
     const cases = [_]struct { args: []const []const u8, says: []const u8 }{
         .{ .args = &.{}, .says = "Error: Missing input file path." },
-        .{ .args = &.{ "model.kup", "--output", "x.stl" }, .says = "Error: Unknown option '--output'" },
+        .{ .args = &.{ "model.kup", "--bogus" }, .says = "Error: Unknown option '--bogus'" },
+        .{ .args = &.{ "model.kup", "-o", "x.wrl" }, .says = "Error: Cannot infer the format from output path 'x.wrl'" },
+        .{ .args = &.{ "model.kup", "--split", "parts", "-o", "x.stl" }, .says = "Error: --split writes a file per part into its directory; leave out -o" },
         .{ .args = &.{ "a.kup", "b.kup" }, .says = "Error: Expected one input file, got 'a.kup' and 'b.kup'" },
         .{ .args = &.{ "model.kup", "-p", "width" }, .says = "Error: Invalid param format. Use --param key=value." },
         .{ .args = &.{ "model.kup", "-P", "missing.json" }, .says = "Error: Could not read parameter file 'missing.json'" },
@@ -83,4 +86,45 @@ test "kupcad watch: each watcher event is reported as build reports it" {
     // The failure names where it is
     listener.onEvent(listener.ptr, .{ .failed = &session.failure.? });
     try testing.expect(std.mem.find(u8, output.written(), "Cannot use 'break' outside of a loop") != null);
+}
+
+test "kupcad watch: with export options, each build that succeeds writes them; without, nothing" {
+    var tmp = testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(dir);
+    const stl = try std.fs.path.join(testing.allocator, &.{ dir, "model.stl" });
+    defer testing.allocator.free(stl);
+    const glb = try std.fs.path.join(testing.allocator, &.{ dir, "model.glb" });
+    defer testing.allocator.free(glb);
+
+    var reported: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer reported.deinit();
+    var options = (try parse(&.{ "model.kup", "-o", stl, "-o", glb }, &reported)) orelse return error.TestRefused;
+    defer options.deinit(testing.allocator);
+    try testing.expect(options.writes);
+    var plain = (try parse(&.{"model.kup"}, &reported)) orelse return error.TestRefused;
+    defer plain.deinit(testing.allocator);
+    try testing.expect(!plain.writes);
+
+    const ScriptSession = @import("../session/session.zig").ScriptSession;
+    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+    var mem = MemoryVfs.init(testing.allocator);
+    defer mem.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, mem.vfs());
+    defer session.deinit();
+    try mem.vfs().writeFile("model.kup", "cube(2)");
+    _ = try session.workspace.addModule("model.kup", "cube(2)");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root_path = "model.kup", .reporter = .{ .io = testing.io, .capture = &output.writer }, .exports = &options.exports };
+    const listener = printer.listener();
+    listener.onEvent(listener.ptr, .built);
+    try testing.expect(std.mem.startsWith(u8, output.written(), "Built model.kup\nSuccessfully built "));
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, output.written(), "Successfully built "));
+    for ([_][]const u8{ "model.stl", "model.glb" }) |name| try tmp.dir.access(testing.io, name, .{});
 }
