@@ -1396,6 +1396,28 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: the class methods no script had called answer as documented" {
+    try expectScripts(&.{
+        // Array: shift and unshift change the Array and answer the item or the Array
+        .{ .src = "a = [1, 2, 3]\nx = a.shift\nr = [x] + a", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = [].shift", .expected = .nil },
+        .{ .src = "b = [2]\nr = b.unshift(1)", .expected = .{ .nums = &.{ 1, 2 } } },
+        // Map: merge keeps the later key; keys between Strings and Symbols
+        .{ .src = "r = { a: 1, b: 2 }.merge({ b: 3, c: 4 }).inspect", .expected = .{ .str = "{a: 1, b: 3, c: 4}" } },
+        .{ .src = "r = { \"a\" => 1 }.symbolize_keys.inspect + \" \" + { a: 1 }.stringify_keys.inspect", .expected = .{ .str = "{a: 1} {\"a\" => 1}" } },
+        // String, Boolean, Number, Range, Object
+        .{ .src = "r = [\"hello\".starts_with?(\"he\"), \"hello\".starts_with?(\"lo\"), \"hello\".ends_with?(\"lo\"), \"hello\".ends_with?(\"\")].inspect", .expected = .{ .str = "[true, false, true, true]" } },
+        .{ .src = "r = true.invert == false && false.invert == true", .expected = .{ .boolean = true } },
+        .{ .src = "r = Number::INFINITY.infinite? && !1.infinite?", .expected = .{ .boolean = true } },
+        .{ .src = "r = (1..5).cover?(3) && !(1...5).cover?(5)", .expected = .{ .boolean = true } },
+        .{ .src = "r = 5.into { |x| x * 2 }", .expected = .{ .num = 10 } },
+        // Math
+        .{ .src = "r = [Math.cos(0), Math.acos(1), Math.atan2(0, -1), Math.floor(1.7), Math.ceil(1.2), Math.log2(8), Math.log10(1000)]", .expected = .{ .nums = &.{ 1, 0, std.math.pi, 1, 2, 3, 3 } } },
+        .{ .src = "r = [Math.atan2(1, 1), Math.lerp(0, 10, 0.25), Math.deg2rad(180), Math.rad2deg(Math::PI)]", .expected = .{ .nums = &.{ std.math.pi / 4.0, 2.5, std.math.pi, 180 } } },
+        .{ .src = "r = (Math.tan(Math::PI / 4) - 1).abs < 1e-12", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: a method's or primitive's argument error says what it needs" {
     // Each of these is how a script learns what it got wrong; none was asserted
     try expectScripts(&.{
