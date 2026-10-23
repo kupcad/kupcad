@@ -1396,6 +1396,19 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: min_gap finds a gap however wide, unless a search length caps it" {
+    // Without a search length it looked 100 mm only: a 149 mm gap answered 100, and so
+    // did an empty Solid
+    try expectScripts(&.{
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 150))", .expected = .{ .num = 149 } },
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 150), 50)", .expected = .{ .num = 50 } },
+        .{ .src = "r = cube(1).min_gap(cube(1).translate(x: 0.5))", .expected = .{ .num = 0 } },
+        // A pin inside a hollow box: their boxes overlap, the gap is the 3 mm to the wall
+        .{ .src = "shell = cube(10, center: true) - cube(8, center: true)\nr = shell.min_gap(cube(2, center: true))", .expected = .{ .num = 3 } },
+        .{ .src = "r = (cube(1) - cube(1)).min_gap(cube(1)) == Number::INFINITY", .expected = .{ .boolean = true } },
+    });
+}
+
 test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force, closed within it" {
     // contains? read the tolerance in force where it was called, so a later CAD.config
     // changed how an earlier shape measured, and one made inside with_config measured

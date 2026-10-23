@@ -2,14 +2,18 @@
 //! `min_gap`, `contains?`, `ray_cast` and `genus`. Each evaluates the shape first and checks
 //! that its engine supports the query.
 
+const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
+const geom = @import("../../kernel/geometry_handle.zig");
 const util = @import("util.zig");
 const error_kind = @import("../../vm/error_kind.zig");
 
-/// How far min_gap looks for the closest approach when no search length is given.
-const DEFAULT_MIN_GAP_SEARCH_LENGTH: f64 = 100.0;
+/// min_gap without a search length first looks this fraction of the way across the box
+/// around both shapes (when their own boxes overlap), then twice as far each time: the
+/// kernel tests more triangle pairs the further it looks.
+const FIRST_GAP_SEARCH_FRACTION: f64 = 1.0 / 64.0;
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isAssembly()) {
@@ -77,13 +81,45 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (args.len < 1 or !args[0].isGeometry()) {
         return vm.fail(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else util.typeName(vm, args[0])});
     }
-    const search_length = if (args.len > 1) try util.requireNumber(vm, args[1], "min_gap", "search_length") else DEFAULT_MIN_GAP_SEARCH_LENGTH;
-    try util.requirePositive(vm, search_length, "min_gap", "search_length");
+    const search_length: ?f64 = if (args.len > 1) try util.requireNumber(vm, args[1], "min_gap", "search_length") else null;
+    if (search_length) |length| try util.requirePositive(vm, length, "min_gap", "search_length");
     const handle = try vm.ensureConcrete(receiver);
     const other_handle = try vm.ensureConcrete(args[0]);
     try vm.requireSameEngine(handle.engine, other_handle.engine); // the kernel answered 0
     try vm.requireFeature(handle.engine, .min_gap);
-    return value.Value.initNumber(kernel.minGap(handle, other_handle, search_length));
+    if (search_length) |length| return value.Value.initNumber(kernel.minGap(handle, other_handle, length));
+    try vm.requireFeature(handle.engine, .bounding_box);
+    const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
+    const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
+    return value.Value.initNumber(fullGap(handle, other_handle, box_a, box_b));
+}
+
+/// The gap between two solids, however far apart (`min_gap` without a search length):
+/// searched from just past the gap between their boxes, doubling up to the diagonal of
+/// the box around both, which no gap between them is longer than. Infinity when either is
+/// empty: there is nothing in it to be near.
+fn fullGap(a: geom.GeometryHandle, b: geom.GeometryHandle, box_a: geom.BoundingBox, box_b: geom.BoundingBox) f64 {
+    if (isEmpty(box_a) or isEmpty(box_b)) return std.math.inf(f64);
+    var box_gap_sq: f64 = 0;
+    var diagonal_sq: f64 = 0;
+    for (0..3) |axis| {
+        const apart = @max(0, @max(box_a.min[axis] - box_b.max[axis], box_b.min[axis] - box_a.max[axis]));
+        const across = @max(box_a.max[axis], box_b.max[axis]) - @min(box_a.min[axis], box_b.min[axis]);
+        box_gap_sq += apart * apart;
+        diagonal_sq += across * across;
+    }
+    const diagonal = @sqrt(diagonal_sq);
+    if (diagonal == 0) return 0;
+    var search = @min(diagonal, @max(2 * @sqrt(box_gap_sq), diagonal * FIRST_GAP_SEARCH_FRACTION));
+    while (true) : (search = @min(2 * search, diagonal)) {
+        const gap = kernel.minGap(a, b, search);
+        if (gap < search or search == diagonal) return gap;
+    }
+}
+
+/// Whether the box is an empty solid's (its min above its max).
+fn isEmpty(box: geom.BoundingBox) bool {
+    return box.min[0] > box.max[0];
 }
 
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
