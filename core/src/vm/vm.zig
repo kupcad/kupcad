@@ -3796,6 +3796,9 @@ pub const VM = struct {
                         high = mid;
                     } else if (tn > cn) {
                         low = mid + 1;
+                    } else if (tn != cn) {
+                        // NaN equals no case (it is neither below nor above one either)
+                        return .{ .matched = false, .jump_offset = 0 };
                     } else {
                         const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
                             (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
