@@ -11,6 +11,7 @@ const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
+const vec3 = @import("../../core/vec3.zig");
 const bom = @import("../../stdlib/bom.zig");
 const material_groups = @import("material_groups.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
@@ -139,10 +140,5 @@ fn faceNormal(vert_props: []const f32, num_prop: usize, tri: [3]u32) [3]f64 {
     for (tri, &p) |vertex, *point| {
         for (vert_props[vertex * num_prop ..][0..3], point) |c, *out| out.* = c;
     }
-    const a = .{ p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2] };
-    const b = .{ p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2] };
-    var n = [3]f64{ a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
-    const len = @sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-    for (&n) |*c| c.* = if (len > 0) c.* / len + 0.0 else 0.0;
-    return n;
+    return vec3.triangleNormal(p[0], p[1], p[2]);
 }

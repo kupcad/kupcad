@@ -352,8 +352,10 @@ pub inline fn surfaceArea(handle: geom.GeometryHandle) f64 {
     return dispatch("surfaceAreaFn", handle, .{});
 }
 
-pub inline fn containsPoint(handle: geom.GeometryHandle, pt: [3]f64) bool {
-    return dispatch("containsPointFn", handle, .{pt});
+/// Whether `pt` lies in the solid, closed within `config`'s tolerance (the settings it is
+/// measured under); null when the kernel couldn't tell, its scratch in `allocator`.
+pub inline fn containsPoint(allocator: std.mem.Allocator, handle: geom.GeometryHandle, config: *const EngineConfig, pt: [3]f64) ?bool {
+    return dispatchOn("containsPointFn", handle.engine, .{ allocator, handle, config, pt });
 }
 
 pub inline fn minGap(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {

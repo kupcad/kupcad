@@ -8,6 +8,7 @@ const geom = @import("../kernel/geometry_handle.zig");
 pub const ManifoldObj = opaque {};
 pub const ManifoldBox = opaque {};
 pub const ManifoldMeshGL = opaque {};
+pub const ManifoldMeshGL64 = opaque {};
 pub const ManifoldCrossSection = opaque {};
 pub const ManifoldPolygons = opaque {};
 pub const ManifoldSimplePolygon = opaque {};
@@ -128,6 +129,14 @@ extern fn manifold_meshgl_tri_length(m: ?*ManifoldMeshGL) usize;
 extern fn manifold_meshgl_vert_properties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32;
 extern fn manifold_meshgl_tri_verts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32;
 extern fn manifold_of_meshgl(mem: ?*ManifoldObj, mesh: ?*ManifoldMeshGL) ?*ManifoldObj;
+extern fn manifold_alloc_meshgl64() ?*ManifoldMeshGL64;
+extern fn manifold_delete_meshgl64(m: ?*ManifoldMeshGL64) void;
+extern fn manifold_get_meshgl64(mem: ?*ManifoldMeshGL64, m: ?*ManifoldObj) ?*ManifoldMeshGL64;
+extern fn manifold_meshgl64_num_prop(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_vert_properties_length(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_tri_length(m: ?*ManifoldMeshGL64) usize;
+extern fn manifold_meshgl64_vert_properties(mem: [*]f64, m: ?*ManifoldMeshGL64) [*]f64;
+extern fn manifold_meshgl64_tri_verts(mem: [*]u64, m: ?*ManifoldMeshGL64) [*]u64;
 
 extern fn manifold_alloc_ray_hit_vec() ?*ManifoldRayHitVec;
 extern fn manifold_delete_ray_hit_vec(v: ?*ManifoldRayHitVec) void;
@@ -487,6 +496,31 @@ pub fn meshGLVertProperties(mem: [*]f32, m: ?*ManifoldMeshGL) [*]f32 {
 }
 pub fn meshGLTriVerts(mem: [*]u32, m: ?*ManifoldMeshGL) [*]u32 {
     return manifold_meshgl_tri_verts(mem, m);
+}
+
+pub fn allocMeshGL64() ?*ManifoldMeshGL64 {
+    return manifold_alloc_meshgl64();
+}
+pub fn deleteMeshGL64(m: ?*ManifoldMeshGL64) void {
+    manifold_delete_meshgl64(m);
+}
+pub fn getMeshGL64(mem: ?*ManifoldMeshGL64, m: ?*ManifoldObj) ?*ManifoldMeshGL64 {
+    return manifold_get_meshgl64(mem, m);
+}
+pub fn meshGL64NumProp(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_num_prop(m);
+}
+pub fn meshGL64VertPropertiesLength(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_vert_properties_length(m);
+}
+pub fn meshGL64TriLength(m: ?*ManifoldMeshGL64) usize {
+    return manifold_meshgl64_tri_length(m);
+}
+pub fn meshGL64VertProperties(mem: [*]f64, m: ?*ManifoldMeshGL64) [*]f64 {
+    return manifold_meshgl64_vert_properties(mem, m);
+}
+pub fn meshGL64TriVerts(mem: [*]u64, m: ?*ManifoldMeshGL64) [*]u64 {
+    return manifold_meshgl64_tri_verts(mem, m);
 }
 
 pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64, oz: f64, ex: f64, ey: f64, ez: f64) ?[]geom.RayHit {

@@ -2,59 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const driver = @import("driver.zig");
 
-test "Math3D: vecDot calculates correct scalar product" {
-    const a = [_]f64{ 1.0, 2.0, 3.0 };
-    const b = [_]f64{ 4.0, 5.0, 6.0 };
-
-    // 1*4 + 2*5 + 3*6 = 32
-    try testing.expectEqual(@as(f64, 32.0), driver.vecDot(a, b));
-
-    const orthogonal_a = [_]f64{ 1.0, 0.0, 0.0 };
-    const orthogonal_b = [_]f64{ 0.0, 1.0, 0.0 };
-    try testing.expectEqual(@as(f64, 0.0), driver.vecDot(orthogonal_a, orthogonal_b));
-}
-
-test "Math3D: vecNormalize scales vector to unit length safely" {
-    const v1 = [_]f64{ 0.0, 5.0, 0.0 };
-    const norm1 = driver.vecNormalize(v1);
-    try testing.expectEqual(@as(f64, 0.0), norm1[0]);
-    try testing.expectEqual(@as(f64, 1.0), norm1[1]);
-    try testing.expectEqual(@as(f64, 0.0), norm1[2]);
-
-    // Zero vector fallback
-    const v2 = [_]f64{ 0.0, 0.0, 0.0 };
-    const norm2 = driver.vecNormalize(v2);
-    try testing.expectEqual(@as(f64, 0.0), norm2[0]);
-    try testing.expectEqual(@as(f64, 0.0), norm2[1]);
-    try testing.expectEqual(@as(f64, 0.0), norm2[2]);
-}
-
-test "Math3D: computeNormal evaluates correct right-hand normal" {
-    // A triangle lying flat on the XY plane, drawn counter-clockwise
-    const v0 = [_]f64{ 0.0, 0.0, 0.0 };
-    const v1 = [_]f64{ 1.0, 0.0, 0.0 };
-    const v2 = [_]f64{ 0.0, 1.0, 0.0 };
-
-    const normal = driver.computeNormal(v0, v1, v2);
-
-    // Should point exactly +Z
-    try testing.expectEqual(@as(f64, 0.0), normal[0]);
-    try testing.expectEqual(@as(f64, 0.0), normal[1]);
-    try testing.expectEqual(@as(f64, 1.0), normal[2]);
-}
-
-test "Math3D: computeCentroid averages vertices exactly" {
-    const v0 = [_]f64{ -3.0, 0.0, 0.0 };
-    const v1 = [_]f64{ 3.0, 0.0, 0.0 };
-    const v2 = [_]f64{ 0.0, 6.0, 9.0 };
-
-    const centroid = driver.computeCentroid(v0, v1, v2);
-
-    try testing.expectEqual(@as(f64, 0.0), centroid[0]);
-    try testing.expectEqual(@as(f64, 2.0), centroid[1]);
-    try testing.expectEqual(@as(f64, 3.0), centroid[2]);
-}
-
 test "Manifold Driver: cube generates exact volume and surface area" {
     // 10x10x10 cube
     const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
@@ -217,19 +164,24 @@ test "Manifold Driver: boolean difference calculates correct subtracted volume" 
     try testing.expectApproxEqAbs(@as(f64, 500.0), vol, 1e-5);
 }
 
-test "Manifold Driver: containsPoint evaluates spatial inclusion correctly" {
+test "Manifold Driver: containsPoint counts a point within the tolerance of the surface, the solid closed" {
     const handle = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(handle);
-
-    // Origin is dead-center of the cube
-    try testing.expect(driver.driver.containsPointFn(handle, .{ 0.0, 0.0, 0.0 }));
-
-    // Edge/Inside
-    try testing.expect(driver.driver.containsPointFn(handle, .{ 4.9, 4.9, 4.9 }));
-
-    // Outside the 10x10x10 boundary
-    try testing.expect(!driver.driver.containsPointFn(handle, .{ 10.0, 10.0, 10.0 }));
-    try testing.expect(!driver.driver.containsPointFn(handle, .{ -6.0, 0.0, 0.0 }));
+    const config = @import("../../../core/engine_config.zig").EngineConfig{ .tolerance = 1e-3 };
+    const cases = [_]struct { pt: [3]f64, inside: bool }{
+        .{ .pt = .{ 0, 0, 0 }, .inside = true }, // dead centre
+        .{ .pt = .{ 4.9, 4.9, 4.9 }, .inside = true },
+        .{ .pt = .{ 5, 0, 0 }, .inside = true }, // on a face
+        .{ .pt = .{ 5, 5, 5 }, .inside = true }, // on a corner
+        .{ .pt = .{ 5.0005, 0, 0 }, .inside = true }, // within the tolerance outside it
+        .{ .pt = .{ 5.002, 0, 0 }, .inside = false },
+        .{ .pt = .{ 10, 10, 10 }, .inside = false },
+        .{ .pt = .{ -6, 0, 0 }, .inside = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("point {any}\n", .{case.pt});
+        try testing.expectEqual(@as(?bool, case.inside), driver.driver.containsPointFn(testing.allocator, handle, &config, case.pt));
+    }
 }
 
 test "Manifold Driver: scale modifies geometry and volume non-uniformly" {

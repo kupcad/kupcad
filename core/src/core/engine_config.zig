@@ -12,6 +12,11 @@ const MAX_SEGMENTS: u32 = limits.MAX_SEGMENTS;
 /// was rounded a bit above 8.
 const SHARE_SLACK = 1e-9;
 
+/// How far apart two unit directions may be and still be the same direction, as
+/// 1 - cos of the angle between them (about 0.8°): it compares directions, not lengths,
+/// so it doesn't scale with the model and is the same on both kernels.
+pub const ANGULAR_TOLERANCE: f64 = 1e-4;
+
 /// How finely curves are cut into straight edges. Defined in Locus, which can't import
 /// KupCAD, so that its tessellator and the mesh engine follow one rule.
 pub const Resolution = @import("../locus/src/math_env.zig").Resolution;

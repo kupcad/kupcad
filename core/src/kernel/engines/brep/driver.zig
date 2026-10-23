@@ -35,9 +35,6 @@ const locus_step = @import("../../../locus/src/operations/step_export.zig");
 /// std.heap.page_allocator, which gives every allocation, however small, its own pages.
 const backend_allocator = std.heap.c_allocator;
 
-/// Directions count as parallel when 1 - |cos θ| is at most this (θ ≈ 0.8°).
-const ANGULAR_TOLERANCE: f64 = 1e-4;
-
 pub const BrepSolid = struct {
     allocator: std.mem.Allocator,
     /// The settings the solid was built under (CAD.config); every solid made from it
@@ -119,7 +116,7 @@ pub fn mathEnv(config: *const engine_config.EngineConfig) locus_env.MathEnv {
         .vertex_tolerance = config.tolerance,
         .sewing_tolerance = config.tolerance,
         .parametric_tolerance = config.tolerance,
-        .angular_tolerance = ANGULAR_TOLERANCE,
+        .angular_tolerance = engine_config.ANGULAR_TOLERANCE,
         .max_newton_trials = config.brep.max_newton_trials,
         .max_marching_steps = config.brep.max_marching_steps,
         .resolution = config.resolution,
@@ -760,11 +757,11 @@ fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, dir
     return handles;
 }
 
-fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
-    if (@intFromPtr(a.ptr) == 0) return false;
+/// Whether `pt` lies in the solid, within `config`'s tolerance (Locus's point test, under
+/// the settings the shape is measured under).
+fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const engine_config.EngineConfig, pt: [3]f64) ?bool {
     const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = solid.env;
-    return locus_bool.isPointInsideSolid(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, pt, env);
+    return locus_bool.isPointInsideSolid(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, pt, mathEnv(config));
 }
 
 /// Capped at `sl`, the search length, as Manifold's is: beyond it the gap is not looked for.

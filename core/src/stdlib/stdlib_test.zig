@@ -1396,7 +1396,7 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
-test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force" {
+test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force, closed within it" {
     // contains? read the tolerance in force where it was called, so a later CAD.config
     // changed how an earlier shape measured, and one made inside with_config measured
     // under the outer settings
@@ -1406,6 +1406,11 @@ test "Stdlib: a shape is measured under the tolerance it was made under, not the
         .{ .src = made_coarse ++ "r = s.contains?([5, 5, 0.3])", .expected = .{ .boolean = true } },
         .{ .src = made_coarse ++ "r = square(10).contains?([10.3, 5])", .expected = .{ .boolean = false } },
         .{ .src = "s = square(10)\nCAD.config(tolerance: 0.5)\nr = s.contains?([10.3, 5])", .expected = .{ .boolean = false } },
+        // A Solid is closed too: a point on its surface is in it, one within its tolerance
+        // outside it as well (Manifold's winding number alone could go either way there)
+        .{ .src = "r = cube(10).contains?([10, 5, 5])", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(10).contains?([10.1, 5, 5])", .expected = .{ .boolean = false } },
+        .{ .src = "s = nil\nCAD.with_config(tolerance: 0.5) do\n  s = cube(10)\nend\nr = s.contains?([10.3, 5, 5])", .expected = .{ .boolean = true } },
     });
 }
 

@@ -7,42 +7,9 @@ const kernel = @import("../../kernel.zig");
 const geom = @import("../../geometry_handle.zig");
 const planar = @import("../../planar.zig");
 const manifold = @import("../../../bindings/manifold.zig");
-const EngineConfig = @import("../../../core/engine_config.zig").EngineConfig;
-
-pub fn vecDot(a: [3]f64, b: [3]f64) f64 {
-    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-pub fn vecNormalize(v: [3]f64) [3]f64 {
-    const len = @sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-    if (len == 0.0) return .{ 0.0, 0.0, 0.0 };
-    return .{ v[0] / len, v[1] / len, v[2] / len };
-}
-
-pub fn computeNormal(v0: [3]f64, v1: [3]f64, v2: [3]f64) [3]f64 {
-    const ax = v1[0] - v0[0];
-    const ay = v1[1] - v0[1];
-    const az = v1[2] - v0[2];
-
-    const bx = v2[0] - v0[0];
-    const by = v2[1] - v0[1];
-    const bz = v2[2] - v0[2];
-
-    const cross = [3]f64{
-        ay * bz - az * by,
-        az * bx - ax * bz,
-        ax * by - ay * bx,
-    };
-    return vecNormalize(cross);
-}
-
-pub fn computeCentroid(v0: [3]f64, v1: [3]f64, v2: [3]f64) [3]f64 {
-    return .{
-        (v0[0] + v1[0] + v2[0]) / 3.0,
-        (v0[1] + v1[1] + v2[1]) / 3.0,
-        (v0[2] + v1[2] + v2[2]) / 3.0,
-    };
-}
+const engine_config = @import("../../../core/engine_config.zig");
+const EngineConfig = engine_config.EngineConfig;
+const vec3 = @import("../../../core/vec3.zig");
 
 fn materialPropFunc(new_prop: [*]f64, pos: manifold.ManifoldVec3, old_prop: [*]const f64, ctx: ?*anyopaque) callconv(.c) void {
     _ = pos;
@@ -540,76 +507,79 @@ fn genusImpl(handle: geom.GeometryHandle) i32 {
     return manifold.genus(@ptrCast(@alignCast(handle.ptr)));
 }
 
+/// The face of the solid furthest along `direction` among those facing it (their normals
+/// within ANGULAR_TOLERANCE of it, as the B-Rep kernel compares directions), its triangles'
+/// centroid averaged over those within `tolerance` of its plane. Read from the mesh in f64,
+/// so the plane test means the same at any size.
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
     std.debug.assert(handle.engine == .manifold);
-    if (@intFromPtr(handle.ptr) == 0) return null;
+    var mesh = Mesh64.of(allocator, @ptrCast(@alignCast(handle.ptr))) catch return null;
+    defer mesh.deinit(allocator);
 
-    // Extract the raw mesh from Manifold.
-    const mesh = getMeshImpl(allocator, handle) orelse return null;
-    defer {
-        // Free the flat arrays after extraction since we only need them for this calculation.
-        allocator.free(mesh.vert_props);
-        allocator.free(mesh.tri_verts);
-    }
-
-    const norm_dir = vecNormalize(direction);
-
+    const norm_dir = vec3.normalize(direction);
     var max_depth: f64 = -std.math.inf(f64);
     var accum_centroid = [3]f64{ 0, 0, 0 };
     var match_count: usize = 0;
-
-    var i: usize = 0;
-    // Protection: Ensure we always have a complete set of 3 indices to read to avoid out-of-bounds panics.
-    while (i + 2 < mesh.tri_verts.len) : (i += 3) {
-        // Extract indices (using idx0 instead of i0 to avoid shadowing the Zig primitive type)
-        const idx0 = mesh.tri_verts[i] * mesh.num_prop;
-        const idx1 = mesh.tri_verts[i + 1] * mesh.num_prop;
-        const idx2 = mesh.tri_verts[i + 2] * mesh.num_prop;
-
-        // Extract vertices (f32 -> f64 cast implicitly handled by initialization)
-        const v0 = [3]f64{ mesh.vert_props[idx0], mesh.vert_props[idx0 + 1], mesh.vert_props[idx0 + 2] };
-        const v1 = [3]f64{ mesh.vert_props[idx1], mesh.vert_props[idx1 + 1], mesh.vert_props[idx1 + 2] };
-        const v2 = [3]f64{ mesh.vert_props[idx2], mesh.vert_props[idx2 + 1], mesh.vert_props[idx2 + 2] };
-
-        const normal = computeNormal(v0, v1, v2);
-        const alignment = vecDot(normal, norm_dir);
-
-        // Check if triangle points in the target direction (dot product close to 1)
-        if (1.0 - alignment <= tolerance) {
-            const depth = vecDot(v0, norm_dir); // Project vertex onto direction to find the "furthest" face
-
-            if (depth > max_depth + tolerance) {
-                // Found a significantly further face! Reset accumulator.
-                max_depth = depth;
-                accum_centroid = computeCentroid(v0, v1, v2);
-                match_count = 1;
-            } else if (@abs(depth - max_depth) <= tolerance) {
-                // Co-planar with current furthest face. Accumulate for the final average centroid.
-                const c = computeCentroid(v0, v1, v2);
-                accum_centroid[0] += c[0];
-                accum_centroid[1] += c[1];
-                accum_centroid[2] += c[2];
-                match_count += 1;
-            }
+    for (0..mesh.triangleCount()) |t| {
+        const tri = mesh.triangle(t);
+        if (1.0 - vec3.dot(vec3.triangleNormal(tri[0], tri[1], tri[2]), norm_dir) > engine_config.ANGULAR_TOLERANCE) continue;
+        // How far along the direction its plane lies: a further one starts the face over,
+        // one as far adds to it
+        const depth = vec3.dot(tri[0], norm_dir);
+        const c = vec3.centroid(tri[0], tri[1], tri[2]);
+        if (depth > max_depth + tolerance) {
+            max_depth = depth;
+            accum_centroid = c;
+            match_count = 1;
+        } else if (@abs(depth - max_depth) <= tolerance) {
+            accum_centroid = vec3.add(accum_centroid, c);
+            match_count += 1;
         }
     }
-
     if (match_count == 0) return null;
 
-    // Allocate and return standard Zig slice
-    var faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
-    faces[0] = .{
-        .index = 0,
-        .normal = norm_dir,
-        .centroid = .{
-            accum_centroid[0] / @as(f64, @floatFromInt(match_count)),
-            accum_centroid[1] / @as(f64, @floatFromInt(match_count)),
-            accum_centroid[2] / @as(f64, @floatFromInt(match_count)),
-        },
-    };
-
+    const faces = allocator.alloc(geom.FaceHandle, 1) catch return null;
+    faces[0] = .{ .index = 0, .normal = norm_dir, .centroid = vec3.scale(accum_centroid, 1.0 / @as(f64, @floatFromInt(match_count))) };
     return faces;
 }
+
+/// A solid's mesh as Manifold keeps it, in f64: what a measurement reads, where the f32
+/// mesh an export writes would round a large part's coordinates by more than a tolerance.
+const Mesh64 = struct {
+    vert_props: []f64,
+    tri_verts: []u64,
+    num_prop: usize,
+
+    /// On failure nothing stays allocated. An empty solid has nothing to copy (the C
+    /// binding memcpy's from a null data pointer then, see copyMesh).
+    fn of(allocator: std.mem.Allocator, obj: *manifold.ManifoldObj) !Mesh64 {
+        const mem = manifold.allocMeshGL64();
+        defer manifold.deleteMeshGL64(mem);
+        const mesh = manifold.getMeshGL64(mem, obj) orelse return error.MeshUnavailable;
+        const vert_props = try allocator.alloc(f64, manifold.meshGL64VertPropertiesLength(mesh));
+        errdefer allocator.free(vert_props);
+        if (vert_props.len > 0) _ = manifold.meshGL64VertProperties(vert_props.ptr, mesh);
+        const tri_verts = try allocator.alloc(u64, manifold.meshGL64TriLength(mesh));
+        if (tri_verts.len > 0) _ = manifold.meshGL64TriVerts(tri_verts.ptr, mesh);
+        return .{ .vert_props = vert_props, .tri_verts = tri_verts, .num_prop = manifold.meshGL64NumProp(mesh) };
+    }
+
+    fn deinit(self: *Mesh64, allocator: std.mem.Allocator) void {
+        allocator.free(self.vert_props);
+        allocator.free(self.tri_verts);
+    }
+
+    fn triangleCount(self: Mesh64) usize {
+        return self.tri_verts.len / 3;
+    }
+
+    /// Triangle `t`'s corners.
+    fn triangle(self: Mesh64, t: usize) [3][3]f64 {
+        var corners: [3][3]f64 = undefined;
+        for (&corners, self.tri_verts[3 * t ..][0..3]) |*corner, vertex| corner.* = self.vert_props[vertex * self.num_prop ..][0..3].*;
+        return corners;
+    }
+};
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     std.debug.assert(handle.engine == .manifold);
@@ -633,10 +603,25 @@ fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
     return manifold.surfaceArea(obj);
 }
 
-fn containsPointImpl(a: geom.GeometryHandle, pt: [3]f64) bool {
+/// Whether `pt` lies in the solid, the solid closed: inside by its winding number, or
+/// within `config`'s tolerance of its surface (where the winding number may go either way),
+/// as a sketch's region is closed. Null when its mesh can't be read into `allocator`.
+fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const EngineConfig, pt: [3]f64) ?bool {
     std.debug.assert(a.engine == .manifold);
-    if (@intFromPtr(a.ptr) == 0) return false;
-    return manifold.containsPoint(@ptrCast(@alignCast(a.ptr)), pt[0], pt[1], pt[2]);
+    const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(a.ptr));
+    if (manifold.containsPoint(obj, pt[0], pt[1], pt[2])) return true;
+    const tolerance = config.tolerance;
+    const box = manifold.boundingBox(obj);
+    for (0..3) |axis| {
+        if (pt[axis] < box.min[axis] - tolerance or pt[axis] > box.max[axis] + tolerance) return false;
+    }
+    var mesh = Mesh64.of(allocator, obj) catch return null;
+    defer mesh.deinit(allocator);
+    for (0..mesh.triangleCount()) |t| {
+        const tri = mesh.triangle(t);
+        if (vec3.pointTriangleDistanceSq(pt, tri[0], tri[1], tri[2]) <= tolerance * tolerance) return true;
+    }
+    return false;
 }
 
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, search_length: f64) f64 {

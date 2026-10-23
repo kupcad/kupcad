@@ -96,7 +96,10 @@ pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !
 
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .contains_point);
-    const inside = kernel.containsPoint(handle, pt);
+    const settings = vm.settingsOf(receiver);
+    const inside = kernel.containsPoint(vm.allocator, handle, &settings, pt) orelse {
+        return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"contains?"});
+    };
     return value.Value.initBool(inside);
 }
 
