@@ -110,6 +110,16 @@ fn mathHypot(vm: *VM, receiver: value.Value, nums: []const value.Value) !value.V
     return value.Value.initNumber(len);
 }
 
+/// Math.polar(r, deg): the point `[x, y]` at `r` from the origin, `deg` degrees counter-
+/// clockwise from +x, exact where `cosd` and `sind` are (`Math.polar(10, 90)` is `[0, 10]`):
+/// a bolt circle's centres are `(0...n).map { |i| Math.polar(r, i * 360 / n) }`.
+fn mathPolar(vm: *VM, receiver: value.Value, r: f64, deg: f64) !value.Value {
+    _ = receiver;
+    const x = try result(vm, "Math.polar", &.{ r, deg }, r * cosd(deg));
+    const y = try result(vm, "Math.polar", &.{ r, deg }, r * sind(deg));
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, &.{ x, y })).obj);
+}
+
 // --- Angles in degrees -----------------------------------------------------------------
 // CAD angles are degrees (`rotate(z: 30)`), so Math has degree versions of the trig
 // functions. Each is exact where the true value is a simple fraction: `Math.cosd(90)` is 0,
@@ -329,6 +339,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "clamp", .func = common.wrapMethod(mathClamp) },
     .{ .name = "lerp", .func = math3(lerp, "Math.lerp") },
     .{ .name = "hypot", .func = common.wrapMethod(mathHypot) },
+    .{ .name = "polar", .func = common.wrapMethod(mathPolar) },
     .{ .name = "sign", .func = math1(sign, "Math.sign") },
     .{ .name = "snap", .func = common.wrapMethod(mathSnap) },
     .{ .name = "remap", .func = common.wrapMethod(mathRemap) },

@@ -1045,6 +1045,18 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
     });
 }
 
+test "Stdlib: Math.polar places a point by radius and angle, and lengths convert to millimetres" {
+    try expectScripts(&.{
+        // Exact where cosd and sind are: no 6e-16 off the axes
+        .{ .src = "r = [Math.polar(10, 90), Math.polar(2, 0), Math.polar(4, 30), Math.polar(-2, 180)].inspect", .expected = .{ .str = "[[0, 10], [2, 0], [3.464101615137755, 2], [2, 0]]" } },
+        .{ .src = "r = (0...4).map { |i| Math.polar(5, i * 360 / 4) }.inspect", .expected = .{ .str = "[[5, 0], [0, 5], [-5, 0], [0, -5]]" }, .gc_stress = true },
+        .{ .src = comptime rescued("Math.polar(1, :a)"), .expected = .{ .str = "TypeError: Math.polar expects a number for argument 2, got Symbol" } },
+        .{ .src = "r = [5.mm, 2.cm, 1.inch, 0.5.m, -3.cm, 2.5.inch]", .expected = .{ .nums = &.{ 5, 20, 25.4, 500, -30, 63.5 } } },
+        .{ .src = "r = cube(1.cm).bbox.size", .expected = .{ .nums = &.{ 10, 10, 10 } } },
+        .{ .src = comptime rescued("1e308.m"), .expected = .{ .str = "RangeError: 1e308.m is past the Number range in millimetres" } },
+    });
+}
+
 test "Stdlib: a rounded corner is never one chord, and an offset's rounding follows the resolution" {
     // A quarter arc got its circle's count divided by 4 and rounded down, so every radius
     // up to about 2.2 mm (5 to 7 segments a turn by default) was one chord: `round_r: 2`

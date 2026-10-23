@@ -1,5 +1,5 @@
-//! The natives of Number (`round`, `times`, `upto`, `clamp`, `odd?`, ...) and their
-//! dispatch table, `methods`.
+//! The natives of Number (`round`, `times`, `upto`, `clamp`, `odd?`, the units `mm`, `cm`,
+//! `m` and `inch`, ...) and their dispatch table, `methods`.
 
 const std = @import("std");
 const value = @import("../../core/value.zig");
@@ -7,6 +7,11 @@ const VM = @import("../../vm/vm.zig").VM;
 const common = @import("common.zig");
 const iteration = @import("iteration.zig");
 const arguments = @import("../arguments.zig");
+
+/// Millimetres in a unit of each length a Number can be written in.
+const MM_PER_CM = 10.0;
+const MM_PER_M = 1000.0;
+const MM_PER_INCH = 25.4;
 
 pub fn numberRound(vm: *VM, receiver: value.Value, decimals_opt: ?f64) !value.Value {
     const num = receiver.asNumber();
@@ -147,6 +152,21 @@ pub fn requireOrdered(vm: *VM, comptime name: []const u8, lo: f64, hi: f64) !voi
     }
 }
 
+/// Number#mm, #cm, #m and #inch: the length the number is in that unit, in millimetres,
+/// the unit every length in a model is in (`2.cm` is 20, `1.inch` is 25.4; `mm` is the
+/// number itself, for a script that names its units). A length too large to hold is a
+/// RangeError, as arithmetic's.
+fn lengthIn(comptime mm_per_unit: f64, comptime name: []const u8) value.NativeFn {
+    return common.wrapMethod(struct {
+        fn call(vm: *VM, receiver: value.Value) !value.Value {
+            const n = receiver.asNumber();
+            const mm = n * mm_per_unit;
+            if (std.math.isFinite(n) and !std.math.isFinite(mm)) return vm.fail(.RangeError, "{f}." ++ name ++ " is past the Number range in millimetres", .{value.fmtNumber(n)});
+            return value.Value.initNumber(mm);
+        }
+    }.call);
+}
+
 pub const methods = [_]common.MethodDef{
     .{ .name = "times", .func = common.wrapMethod(numberTimes) },
     .{ .name = "upto", .func = common.wrapMethod(numberUpto) },
@@ -158,6 +178,10 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "ceil", .func = common.wrapMethod(numberCeil) },
     .{ .name = "floor", .func = common.wrapMethod(numberFloor) },
     .{ .name = "abs", .func = common.wrapMethod(numberAbs) },
+    .{ .name = "mm", .func = lengthIn(1, "mm") },
+    .{ .name = "cm", .func = lengthIn(MM_PER_CM, "cm") },
+    .{ .name = "m", .func = lengthIn(MM_PER_M, "m") },
+    .{ .name = "inch", .func = lengthIn(MM_PER_INCH, "inch") },
     .{ .name = "odd?", .func = parity(true, "odd?") },
     .{ .name = "even?", .func = parity(false, "even?") },
     .{ .name = "zero?", .func = predicate(isZero) },
