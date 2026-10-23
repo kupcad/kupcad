@@ -1,7 +1,7 @@
-//! The Path natives: `line`, `polyline` and `arc` make one, `+` joins two where one ends
-//! and the next starts, and a Path moves (translate, rotate, scale, mirror), closes into a
-//! Sketch (`close`), takes a width (`stroke`), and carries a name and a material for a
-//! drawing. A Path is open 2D geometry (core/path.zig) with no kernel form of its own: its
+//! The Path natives: `line`, `polyline` and `arc` make one, `line_to`, `arc_to` and
+//! `tangent_arc_to` go on from its end, `+` joins two where one ends and the next starts,
+//! and a Path moves (translate, rotate, scale, mirror), closes into a Sketch (`close`),
+//! takes a width (`stroke`), and carries a name and a material for a drawing. A Path is open 2D geometry (core/path.zig) with no kernel form of its own: its
 //! segments are exact, and only a closed or stroked one is drawn by the kernel.
 
 const std = @import("std");
@@ -17,6 +17,9 @@ const Signature = @import("signature.zig").Signature;
 pub const LINE = Signature{ .positional = &.{ "from", "to" } };
 pub const POLYLINE = Signature{ .positional = &.{"points"} };
 pub const ARC = Signature{ .keywords = &.{ "center", "r", "radius", "start", "sweep", "to", "ccw", "large" } };
+pub const LINE_TO = Signature{ .positional = &.{"to"} };
+pub const ARC_TO = Signature{ .positional = &.{"to"}, .keywords = &.{ "r", "radius", "ccw", "large" }, .sizes = &.{ "r", "radius" } };
+pub const TANGENT_ARC_TO = Signature{ .positional = &.{"to"} };
 pub const STROKE = Signature{ .positional = &.{"width"}, .keywords = &.{ "width", "cap", "segments" }, .solid_sizes = &.{"width"} };
 
 /// The fewest points a polyline takes: a line.
@@ -116,6 +119,64 @@ pub fn join(vm: *VM, a: value.Value, b: value.Value) !value.Value {
     // The second's segments start where the first ends, to the bit
     if (second.segments.len > 0 and first.segments.len > 0) segments[first.segments.len - 1].to = second.start;
     return vm.allocatePath(first.start, segments, first.name, first.material_id);
+}
+
+// --- Going on from the end ---
+
+/// `path.line_to(point)`: the path on along a straight line to `point`.
+pub fn pathLineTo(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const to = try onePoint(vm, args, LINE_TO, "line_to");
+    const end = receiver.asPath().end();
+    if (to[0] == end[0] and to[1] == end[1]) return vm.fail(.ValueError, "line_to: the path already ends at [{f}, {f}]", .{ value.fmtNumber(to[0]), value.fmtNumber(to[1]) });
+    return extended(vm, receiver, .{ .to = to });
+}
+
+/// `path.arc_to(point, r:, ccw: true, large: false)`: the path on along the arc of radius
+/// `r` to `point`, as `arc(r:, start:, to:)` draws one from its end.
+pub fn pathArcTo(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const Opts = struct { r: ?f64 = null, radius: ?f64 = null, ccw: bool = true, large: bool = false };
+    try arguments.requireOneOf(vm, args, &.{ "r", "radius" }, "arc_to");
+    const parsed = try arguments.parseKwargsSubset(Opts, ARC_TO.keywords, vm, args, "arc_to");
+    if (parsed.positional.len != 1) return vm.fail(.ArgumentError, "arc_to expects the point to go to, [x, y], and r:", .{});
+    const to = try arguments.parsePoint(2, vm, parsed.positional[0], "arc_to", 0);
+    const radius = parsed.opts.r orelse parsed.opts.radius orelse return vm.fail(.ArgumentError, "arc_to needs a radius (r:)", .{});
+    try arguments.requirePositive(vm, radius, "arc_to", "r");
+    const from = receiver.asPath().end();
+    const segment = path_mod.arcThrough(from, to, radius, parsed.opts.ccw, parsed.opts.large) orelse {
+        return vm.fail(.ValueError, "arc_to of radius {f} can't reach from [{f}, {f}] to [{f}, {f}]: the points are {f} apart, more than twice the radius, or the same point", .{ value.fmtNumber(radius), value.fmtNumber(from[0]), value.fmtNumber(from[1]), value.fmtNumber(to[0]), value.fmtNumber(to[1]), value.fmtNumber(std.math.hypot(to[0] - from[0], to[1] - from[1])) });
+    };
+    return extended(vm, receiver, segment);
+}
+
+/// `path.tangent_arc_to(point)`: the path on along the arc that leaves its end the way the
+/// path does (no corner) and reaches `point`; a point on the line it leaves along (within
+/// the tolerance) is a ValueError: line_to goes there.
+pub fn pathTangentArcTo(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const to = try onePoint(vm, args, TANGENT_ARC_TO, "tangent_arc_to");
+    const p = receiver.asPath();
+    const from = p.end();
+    const tangent = path_mod.endTangent(p.start, p.segments).?;
+    const segment = path_mod.tangentArc(from, tangent, to, vm.config().tolerance) orelse {
+        return vm.fail(.ValueError, "tangent_arc_to: [{f}, {f}] is on the line the path leaves [{f}, {f}] along, where no arc turns; line_to goes there", .{ value.fmtNumber(to[0]), value.fmtNumber(to[1]), value.fmtNumber(from[0]), value.fmtNumber(from[1]) });
+    };
+    return extended(vm, receiver, segment);
+}
+
+/// The one point `args` give a method of `signature`.
+fn onePoint(vm: *VM, args: []const value.Value, comptime signature: Signature, comptime method: []const u8) ![2]f64 {
+    const pos = (try arguments.parseKwargsSubset(struct {}, signature.keywords, vm, args, method)).positional;
+    if (pos.len != 1) return vm.fail(.ArgumentError, method ++ " expects the point to go to, [x, y], got {d} arguments", .{pos.len});
+    return arguments.parsePoint(2, vm, pos[0], method, 0);
+}
+
+/// `receiver` with `segment` after its last one, its name and material kept.
+fn extended(vm: *VM, receiver: value.Value, segment: path_mod.Segment) !value.Value {
+    const p = receiver.asPath();
+    const segments = try vm.allocator.alloc(path_mod.Segment, p.segments.len + 1);
+    defer vm.allocator.free(segments);
+    @memcpy(segments[0..p.segments.len], p.segments);
+    segments[p.segments.len] = segment;
+    return vm.allocatePath(p.start, segments, p.name, p.material_id);
 }
 
 // --- Moves ---

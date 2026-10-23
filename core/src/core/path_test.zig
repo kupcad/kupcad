@@ -36,3 +36,28 @@ test "path: a line's length is its chord's, an arc's its radius times its angle"
     const quarter = path.arcByAngles(.{ 0, 0 }, 2, 0, 90);
     try testing.expectApproxEqAbs(std.math.pi, quarter.length(.{ 2, 0 }), 1e-12);
 }
+
+test "path: a path leaves its end along its last segment, and a tangent arc turns from there" {
+    // A line's way, an arc's tangent either way round, a cubic's from its last control
+    try testing.expectEqual([2]f64{ 0, 1 }, path.endTangent(.{ 0, 0 }, &.{.{ .to = .{ 0, 5 } }}).?);
+    const quarter = path.arcByAngles(.{ 0, 0 }, 5, 0, 90); // ends at (0, 5) going -x
+    const left = path.endTangent(.{ 5, 0 }, &.{quarter}).?;
+    try testing.expectApproxEqAbs(@as(f64, -1), left[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0), left[1], 1e-12);
+    const back = path.arcByAngles(.{ 0, 0 }, 5, 90, 0); // ends at (5, 0) going -y
+    const down = path.endTangent(.{ 0, 5 }, &.{back}).?;
+    try testing.expectApproxEqAbs(@as(f64, 0), down[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, -1), down[1], 1e-12);
+    try testing.expectEqual([2]f64{ 1, 0 }, path.endTangent(.{ 0, 0 }, &.{.{ .to = .{ 3, 1 }, .cubic = .{ .c1 = .{ 0, 1 }, .c2 = .{ 2, 1 } } }}).?);
+    try testing.expectEqual(@as(?[2]f64, null), path.endTangent(.{ 0, 0 }, &.{}));
+
+    // Up from (10, 5), on to (5, 10): the quarter circle about (5, 5), turning left
+    const arc = path.tangentArc(.{ 10, 5 }, .{ 0, 1 }, .{ 5, 10 }, 1e-6).?;
+    try testing.expectEqual([2]f64{ 5, 5 }, arc.arc.?.center);
+    try testing.expectEqual(@as(f64, 5), arc.arc.?.radius);
+    try testing.expect(arc.ccw);
+    try testing.expectApproxEqAbs(std.math.pi / 2.0, arc.angle, 1e-12);
+    // To the right it turns clockwise; along the line, no circle touches it
+    try testing.expect(!path.tangentArc(.{ 10, 5 }, .{ 0, 1 }, .{ 15, 10 }, 1e-6).?.ccw);
+    try testing.expectEqual(@as(?path.Segment, null), path.tangentArc(.{ 0, 0 }, .{ 1, 0 }, .{ 7, 0 }, 1e-6));
+}

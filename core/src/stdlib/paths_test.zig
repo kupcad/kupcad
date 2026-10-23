@@ -71,3 +71,25 @@ test "paths: moves keep the arcs, a close encloses, a stroke gives a width" {
         .{ .src = "p = line([0, 0], [1, 0]).named(\"edge\").material(color: \"#00FF00\")\nr = \"#{p.translate(x: 1).inspect}\"", .expected = .{ .str = "<Path 1 segment from [1, 0] to [2, 0]>" } },
     });
 }
+
+test "paths: line_to, arc_to and tangent_arc_to go on from the end, a tangent arc with no corner" {
+    const SLOT = "p = line([0, 0], [10, 0]).line_to([10, 5]).tangent_arc_to([5, 10]).line_to([0, 10])\n";
+    try expectScripts(&.{
+        // 10 + 5 + a quarter of the circle of radius 5 + 5
+        .{ .src = SLOT ++ "r = p.length", .expected = .{ .num = 20 + 5 * std.math.pi / 2.0 } },
+        .{ .src = SLOT ++ "r = p.end", .expected = .{ .nums = &.{ 0, 10 } } },
+        // Closed, the arc drawn in chords: just under the exact 50 + 25 + 25π/4
+        .{ .src = SLOT ++ "v = p.close.extrude(1).volume\nr = v > 94 && v < 50 + 25 + 25 * Math::PI / 4", .expected = .{ .boolean = true } },
+        .{ .src = "r = line([0, 0], [10, 0]).arc_to([10, 10], r: 5).length", .expected = .{ .num = 10 + 5 * std.math.pi } },
+        .{ .src = "r = line([0, 0], [10, 0]).arc_to([10, 10], r: 5, ccw: false).end", .expected = .{ .nums = &.{ 10, 10 } } },
+        // From an arc's end, along its tangent: the second arc's centre is (0, -7.5)
+        .{ .src = "a = arc(center: [0, 0], r: 5, start: 0, sweep: 90).tangent_arc_to([-10, 0])\nr = (a.length - 5 * Math::PI / 2).round(9)", .expected = .{ .num = 11.591190225 } },
+        // The name and material stay
+        .{ .src = "r = line([0, 0], [1, 0]).named(\"rail\").line_to([1, 1]).close.bbox.size[0]", .expected = .{ .num = 1 } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).tangent_arc_to([20, 0])"), .expected = .{ .str = "ValueError: tangent_arc_to: [20, 0] is on the line the path leaves [10, 0] along, where no arc turns; line_to goes there" } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).line_to([10, 0])"), .expected = .{ .str = "ValueError: line_to: the path already ends at [10, 0]" } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).arc_to([100, 0], r: 5)"), .expected = .{ .str = "ValueError: arc_to of radius 5 can't reach from [10, 0] to [100, 0]: the points are 90 apart, more than twice the radius, or the same point" } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).arc_to([10, 5])"), .expected = .{ .str = "ArgumentError: arc_to needs a radius (r:)" } },
+        .{ .src = comptime rescued("line([0, 0], [10, 0]).line_to(5)"), .expected = .{ .str = "TypeError: line_to expects an Array for point 0, got Number" } },
+    });
+}

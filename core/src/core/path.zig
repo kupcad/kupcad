@@ -130,6 +130,42 @@ pub fn endOf(start: [2]f64, segments: []const Segment) [2]f64 {
     return if (segments.len == 0) start else segments[segments.len - 1].to;
 }
 
+/// The direction (a unit vector) a path of `segments` from `start` leaves its end in: a
+/// line's, an arc's tangent there going its way round, a cubic's from its last control;
+/// null for a path with no segments.
+pub fn endTangent(start: [2]f64, segments: []const Segment) ?[2]f64 {
+    if (segments.len == 0) return null;
+    const last = segments[segments.len - 1];
+    const from = if (segments.len >= 2) segments[segments.len - 2].to else start;
+    const d: [2]f64 = if (last.arc) |arc| blk: {
+        const r = [2]f64{ last.to[0] - arc.center[0], last.to[1] - arc.center[1] };
+        break :blk if (last.ccw) .{ -r[1], r[0] } else .{ r[1], -r[0] };
+    } else if (last.cubic) |cubic| blk: {
+        // A last control on the end point leaves along the first one's line
+        const c = if (cubic.c2[0] != last.to[0] or cubic.c2[1] != last.to[1]) cubic.c2 else cubic.c1;
+        break :blk .{ last.to[0] - c[0], last.to[1] - c[1] };
+    } else .{ last.to[0] - from[0], last.to[1] - from[1] };
+    const len = std.math.hypot(d[0], d[1]);
+    return .{ d[0] / len, d[1] / len };
+}
+
+/// The arc from `from` leaving in direction `tangent` (a unit vector) to `to`: its circle
+/// touches the line along `tangent` at `from`, so a path turns into it without a corner.
+/// Its centre is on the normal at `from`, as far from `to` as from `from`; it turns left
+/// (counter-clockwise) when `to` is left of the line. Null when `to` is within `tolerance`
+/// of that line, where no circle touches it (a straight line goes on along it).
+pub fn tangentArc(from: [2]f64, tangent: [2]f64, to: [2]f64, tolerance: f64) ?Segment {
+    const d = [2]f64{ to[0] - from[0], to[1] - from[1] };
+    const normal = [2]f64{ -tangent[1], tangent[0] };
+    const off_line = d[0] * normal[0] + d[1] * normal[1];
+    if (@abs(off_line) <= tolerance) return null;
+    // |from + s·n − to| = |s|: s = |d|² / 2(d·n)
+    const s = (d[0] * d[0] + d[1] * d[1]) / (2 * off_line);
+    const center = [2]f64{ from[0] + s * normal[0], from[1] + s * normal[1] };
+    const ccw = s > 0;
+    return .{ .to = to, .arc = .{ .center = center, .radius = @abs(s) }, .ccw = ccw, .angle = sweep(center, from, to, ccw) };
+}
+
 /// Which of a path's points a segment drew: `count` from `first` (its end last; the start
 /// of the first segment is the path's start, point 0).
 pub const Range = struct { first: u32, count: u32 };
