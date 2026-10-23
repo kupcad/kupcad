@@ -109,7 +109,7 @@ fn sketchContains(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         return vm.fail(.ArgumentError, "contains? on a sketch expects a point [x, y]", .{});
     }
     const pt = try util.parseNumberArray(3, vm, args[0], .{ .method = "contains?", .name = "the point" }, 2, 0.0);
-    const tolerance = vm.config().tolerance;
+    const tolerance = vm.settingsOf(receiver).tolerance;
     if (@abs(pt[2]) > tolerance) return value.Value.initBool(false);
 
     const handle = try vm.ensureConcreteCrossSection(receiver);

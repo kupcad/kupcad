@@ -58,6 +58,22 @@ test "DAG: addBalancedChain subtracts the union of the cutters" {
 
 // --- CSE hashing and child validation ---
 
+test "DAG: a projection as made is built under its target's settings, and the ones in force stay" {
+    var b = dag.DAGBuilder.init(std.testing.allocator);
+    defer b.deinit();
+    const fine = try b.internSettings(.{ .tolerance = 0.5 });
+    b.current_settings = fine;
+    const cube = try b.addCube(1, 1, 1, false);
+    b.current_settings = 0;
+    const as_made = try b.addProjectAsMade(cube);
+    try std.testing.expectEqual(fine, b.nodes.items[as_made].settings);
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), b.current_settings);
+    // A plain projection takes the settings in force, so the two are different nodes
+    const plain = try b.addProject(cube);
+    try std.testing.expectEqual(@as(dag.SettingsId, 0), b.nodes.items[plain].settings);
+    try std.testing.expect(plain != as_made);
+}
+
 test "DAG: polyhedron hash separates points and faces" {
     var b1 = dag.DAGBuilder.init(std.testing.allocator);
     defer b1.deinit();

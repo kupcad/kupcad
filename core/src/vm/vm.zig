@@ -1604,6 +1604,15 @@ pub const VM = struct {
         return self.dag_builder.settings(self.config_stack.items[self.config_stack.items.len - 1]);
     }
 
+    /// The settings the Solid or Sketch `shape` was made under, which it is measured under
+    /// too (a tolerance set after it doesn't change how it measures); the active ones for
+    /// a shape with no node of its own.
+    pub fn settingsOf(self: *const VM, shape: value.Value) EngineConfig {
+        const node = if (shape.isCrossSection()) shape.asCrossSection().dag_idx else shape.asGeometry().dag_idx;
+        if (node >= self.dag_builder.nodes.items.len) return self.config();
+        return self.dag_builder.settings(self.dag_builder.nodes.items[node].settings);
+    }
+
     /// Replaces the settings in force (CAD.config): geometry made from now on uses them.
     pub fn setConfig(self: *VM, settings: EngineConfig) !void {
         const id = try self.dag_builder.internSettings(settings);

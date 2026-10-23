@@ -634,7 +634,7 @@ pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.
             // raised in it unwinds the stack
             var scope = HandleScope.init(vm);
             defer scope.deinit();
-            const projected = try vm.allocateCrossSection(try vm.dag_builder.addProject(solid.asGeometry().dag_idx));
+            const projected = try vm.allocateCrossSection(try vm.dag_builder.addProjectAsMade(solid.asGeometry().dag_idx));
             vm.push(projected);
             shapes.appendAssumeCapacity(try shapeOf(allocator, vm, projected, try names.next(allocator, copy), grouping.parts[copy.part].material));
         }
@@ -668,8 +668,7 @@ fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]
     const node = sketch.asCrossSection().dag_idx;
     var curves = try sketch_curves.collect(allocator, &vm.dag_builder, node);
     defer curves.deinit(allocator);
-    const tolerance = vm.dag_builder.settings(vm.dag_builder.nodes.items[node].settings).tolerance;
-    const outlines = try curves_mod.outlinesOf(allocator, contours, &curves, tolerance);
+    const outlines = try curves_mod.outlinesOf(allocator, contours, &curves, vm.settingsOf(sketch).tolerance);
     return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
 }
 

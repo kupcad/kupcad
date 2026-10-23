@@ -743,6 +743,16 @@ pub const DAGBuilder = struct {
         return self.addSingleTargetNode(.project_op, target);
     }
 
+    /// `target` projected onto XY under the settings `target` was made under, not the
+    /// ones in force: a drawing of a Solid made under its own (CAD.with_config) measures
+    /// it as it was made.
+    pub fn addProjectAsMade(self: *DAGBuilder, target: DAGNodeIndex) !DAGNodeIndex {
+        const in_force = self.current_settings;
+        defer self.current_settings = in_force;
+        self.current_settings = self.nodes.items[target].settings;
+        return self.addProject(target);
+    }
+
     pub fn addSlice(self: *DAGBuilder, target: DAGNodeIndex, height: f64) !DAGNodeIndex {
         const snap = self.snapshot();
         const num_idx = try self.appendNumbers(&.{height});

@@ -133,7 +133,7 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
         return vm.fail(.TypeError, "on_face expects a direction Array or Symbol, got {s}", .{util.typeName(vm, dir_arg)});
     }
 
-    const tolerance = vm.config().tolerance;
+    const tolerance = vm.settingsOf(receiver).tolerance;
 
     const faces = kernel.queryFaces(vm.scratch_arena.allocator(), handle, direction, tolerance) orelse {
         return vm.fail(.RuntimeError, "Could not find a coplanar face matching the requested direction", .{});
@@ -233,10 +233,11 @@ pub fn meshDecompose(vm: *VM, receiver: value.Value) !value.Value {
 pub fn meshSimplify(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
     var tolerance: ?f64 = null;
 
-    // Optional positional argument: part.simplify(0.01); nil keeps the configured tolerance.
+    // Optional positional argument: part.simplify(0.01); nil keeps the tolerance the part
+    // was made under.
     if (args.len > 0 and !args[0].isNil()) tolerance = try util.requireNumber(vm, args[0], "simplify", "tolerance");
 
-    const tol = tolerance orelse vm.config().tolerance;
+    const tol = tolerance orelse vm.settingsOf(value.Value.initGeometry(receiver)).tolerance;
 
     // Force concrete DAG evaluation up to this point and run simplification
     const handle = try vm.ensureConcrete(value.Value.initGeometry(receiver));

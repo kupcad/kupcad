@@ -1396,6 +1396,19 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force" {
+    // contains? read the tolerance in force where it was called, so a later CAD.config
+    // changed how an earlier shape measured, and one made inside with_config measured
+    // under the outer settings
+    const made_coarse = "s = nil\nCAD.with_config(tolerance: 0.5) do\n  s = square(10)\nend\n";
+    try expectScripts(&.{
+        .{ .src = made_coarse ++ "r = s.contains?([10.3, 5])", .expected = .{ .boolean = true } },
+        .{ .src = made_coarse ++ "r = s.contains?([5, 5, 0.3])", .expected = .{ .boolean = true } },
+        .{ .src = made_coarse ++ "r = square(10).contains?([10.3, 5])", .expected = .{ .boolean = false } },
+        .{ .src = "s = square(10)\nCAD.config(tolerance: 0.5)\nr = s.contains?([10.3, 5])", .expected = .{ .boolean = false } },
+    });
+}
+
 test "Stdlib: a revolve, a twist and a helix take their share of a full turn's segments" {
     // A partial revolve got a full turn's segments, a helix 64 slices whatever its turns,
     // and a twist without slices: one step
