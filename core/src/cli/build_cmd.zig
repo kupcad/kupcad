@@ -12,7 +12,6 @@ const kernel = @import("../kernel/kernel.zig");
 const fs = @import("fs.zig");
 const param_flags = @import("param_flags.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const diagnostic_report = @import("diagnostic_report.zig");
@@ -384,7 +383,7 @@ fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: 
 /// Runs the script at `input_path` and the modules it imports, dependencies first; false,
 /// the errors reported, when one doesn't parse, compile or run.
 fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, input_path: []const u8, reporter: Reporter) !bool {
-    const source = try fs.readFileLimit(reporter.io, allocator, input_path, MAX_FILE_SIZE);
+    const source = try fs.readFile(reporter.io, allocator, input_path);
     defer allocator.free(source);
     _ = try session.workspace.addModule(input_path, source);
     try session.workspace.linkDependencies();

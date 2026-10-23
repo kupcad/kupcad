@@ -19,7 +19,6 @@ const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 
 const log = std.log.scoped(.dev);
 
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 /// The dump subcommands, each writing its file beside the script.
 const AST_DUMP = Dump{ .name = "ast-dump", .extension = "dump", .what = "AST", .render = renderAst };
 const DISASM = Dump{ .name = "disasm", .extension = "disasm", .what = "Bytecode", .render = renderBytecode };
@@ -87,7 +86,7 @@ fn runDump(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Arg
         log_helpers.printStderr(init.io, "Missing file path for '" ++ dump.name ++ "'. Usage: kupcad dev " ++ dump.name ++ " <file.kup>\n", .{});
         return .failure;
     };
-    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(init.io, allocator, file_path) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ file_path, err });
         return .failure;
     };
@@ -177,7 +176,7 @@ fn executeBench(init: std.process.Init, allocator: std.mem.Allocator, args_iter:
     }
     const path = file_path orelse return benchUsage(init.io, "missing file path");
 
-    const source = fs.readFileLimit(init.io, allocator, path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(init.io, allocator, path) catch |err| {
         log_helpers.printStderr(init.io, "Error reading file '{s}': {}\n", .{ path, err });
         return .failure;
     };

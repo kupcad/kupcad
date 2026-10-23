@@ -8,7 +8,6 @@ const ScriptSession = @import("../daemon/session.zig").ScriptSession;
 const Reporter = @import("reporter.zig").Reporter;
 const build_cmd = @import("build_cmd.zig");
 const fs = @import("fs.zig");
-const MAX_FILE_SIZE = @import("config.zig").MAX_FILE_SIZE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
@@ -102,7 +101,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     };
     session.vm.setMemoryLimit(config.vm_memory_limit orelse limits.INTERACTIVE_MEMORY_LIMIT);
 
-    const source = fs.readFileLimit(init.io, allocator, file_path, MAX_FILE_SIZE) catch |err| {
+    const source = fs.readFile(init.io, allocator, file_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ file_path, @errorName(err) });
         return .failure;
     };
