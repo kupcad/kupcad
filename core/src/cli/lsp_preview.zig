@@ -407,7 +407,7 @@ pub const HoverRun = struct {
         var val: value.Value = value.Value.initNil();
 
         if (node.tag == .identifier or node.tag == .assignment) {
-            const name = if (node.tag == .identifier) doc.tree.getString(@as(ast.StringId, @fromBackingInt(node.data))) else doc.tree.getString(doc.tree.assignment(node).name);
+            const name = if (node.tag == .identifier) doc.tree.nodeString(node) else doc.tree.getString(doc.tree.assignment(node).name);
             val = self.vm.globals.get(name) orelse return error.NoValue;
         } else if (node.tag == .method_call) {
             // The call alone, in the run's VM, so it sees the run's variables.

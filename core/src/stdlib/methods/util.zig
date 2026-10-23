@@ -101,11 +101,20 @@ pub fn requireBool(vm: *VM, val: value.Value, method: []const u8, what: []const 
     return val.asBool();
 }
 
+/// The block `method` was given, or an ArgumentError saying it needs one.
+pub fn requireBlock(vm: *VM, block: ?*value.ObjClosure, method: []const u8) !*value.ObjClosure {
+    return block orelse vm.fail(.ArgumentError, "{s} requires a block", .{method});
+}
+
+/// `name`, unless it is empty or only whitespace: what `method` (`named`) names a shape.
+pub fn requireNonBlankName(vm: *VM, name: []const u8, comptime method: []const u8) ![]const u8 {
+    if (std.mem.trim(u8, name, &std.ascii.whitespace).len == 0) return vm.fail(.ValueError, method ++ " expects a name, got \"{s}\"", .{name});
+    return name;
+}
+
 /// Reads a String or Symbol (scripts use both for names like `halign: :center`).
 pub fn requireName(vm: *VM, val: value.Value, method: []const u8, what: []const u8) ![]const u8 {
-    if (val.isString()) return val.asString().chars;
-    if (val.isSymbol()) return val.asSymbol().chars;
-    return typeError(vm, method, "a String or Symbol", what, val);
+    return val.nameChars() orelse typeError(vm, method, "a String or Symbol", what, val);
 }
 
 pub fn requireArray(vm: *VM, val: value.Value, method: []const u8, what: []const u8) ![]value.Value {
@@ -244,16 +253,6 @@ pub fn trailingKwargs(args: []const value.Value) ?*value.ObjMap {
     return null;
 }
 
-/// The string of a String or Symbol map key, or null for any other key type.
-fn keyName(k: value.Value) ?[]const u8 {
-    if (!k.isObject()) return null;
-    return switch (k.asObj().obj_type) {
-        .string => k.asString().chars,
-        .symbol => k.asSymbol().chars,
-        else => null,
-    };
-}
-
 /// Parses positional arguments and/or `x:`, `y:`, `z:` kwargs into [x, y, z].
 /// Unset components are `default_val`; kwargs override positionals.
 /// The x, y, z of a transform call: up to three numbers, one Array of two or three
@@ -332,7 +331,7 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
     var it = map.map.iterator();
     next_key: while (it.next()) |entry| {
         const key = entry.key_ptr.*;
-        const name = keyName(key) orelse {
+        const name = key.nameChars() orelse {
             return vm.fail(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
         };
         inline for (accepted) |field_name| {
@@ -353,7 +352,7 @@ pub fn requireOneOf(vm: *VM, args: []const value.Value, comptime names: []const 
     var first: ?[]const u8 = null;
     var it = map.map.iterator();
     while (it.next()) |entry| {
-        const name = keyName(entry.key_ptr.*) orelse continue;
+        const name = entry.key_ptr.nameChars() orelse continue;
         inline for (names) |alias| {
             if (std.mem.eql(u8, name, alias)) {
                 if (first) |earlier| return vm.fail(.ArgumentError, "{s} takes {s} or {s}, not both", .{ method, earlier, name });

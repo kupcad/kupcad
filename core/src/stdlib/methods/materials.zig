@@ -110,7 +110,7 @@ pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
 
 /// highlight { ... } -> the block's Solid, tagged for the viewer to show in high contrast
 pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
-    const result = try vm.callClosureSync(try requireBlock(vm, block, "highlight"), &.{});
+    const result = try vm.callClosureSync(try util.requireBlock(vm, block, "highlight"), &.{});
     try requireSolidResult(vm, result, "highlight");
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -129,7 +129,7 @@ fn requireSolidResult(vm: *VM, result: value.Value, method: []const u8) !void {
 
 /// ghost { ... } -> shows the block's Solid as a translucent reference, outside the model
 pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
-    const result = try vm.callClosureSync(try requireBlock(vm, block, "ghost"), &.{});
+    const result = try vm.callClosureSync(try util.requireBlock(vm, block, "ghost"), &.{});
     try requireSolidResult(vm, result, "ghost");
 
     const material_id: u32 = @intCast(vm.materials.items.len);
@@ -141,10 +141,4 @@ pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     try appendToDisplayList(vm, ghost_geom);
 
     return value.Value.initNil();
-}
-
-fn requireBlock(vm: *VM, block: ?*value.ObjClosure, comptime name: []const u8) !*value.ObjClosure {
-    return block orelse {
-        return vm.fail(.ArgumentError, name ++ " requires a block", .{});
-    };
 }

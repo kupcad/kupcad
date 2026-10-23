@@ -65,6 +65,6 @@ pub const SelfSubtractionRule = struct {
         const right = tree.getNode(b) orelse return null;
         if (left.tag != .identifier or right.tag != .identifier or left.data != right.data) return null;
         if (self.shapes.of(tree, a) == null) return null;
-        return tree.getString(tree.stringId(left));
+        return tree.nodeString(left);
     }
 };

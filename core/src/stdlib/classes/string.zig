@@ -45,8 +45,7 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const arr_obj = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&arr_obj.obj));
+    const arr_obj = try scope.array();
 
     if (delim_str.len == 0) {
         // Into its characters, as in Ruby (an empty delimiter tripped an assertion).

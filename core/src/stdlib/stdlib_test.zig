@@ -1453,7 +1453,7 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         .{ .src = comptime rescued("text(\"A\", 10, tolerance: 1e-9)"), .expected = .{ .str = "ValueError: 'tolerance' must be at least size * 0.0001 (0.001), got 1e-9" } },
         // Collections and settings
         .{ .src = comptime rescued("[1, 2, 3].slice(Number::NAN, 1)"), .expected = .{ .str = "ValueError: Array#slice arguments must be numbers, got NaN." } },
-        .{ .src = comptime rescued("[1, 2].reduce"), .expected = .{ .str = "ArgumentError: reduce requires a block." } },
+        .{ .src = comptime rescued("[1, 2].reduce"), .expected = .{ .str = "ArgumentError: reduce requires a block" } },
         .{ .src = comptime rescued("[[]].to_h"), .expected = .{ .str = "ArgumentError: empty array cannot be converted to key-value pair." } },
         .{ .src = comptime rescued("[1].to_h"), .expected = .{ .str = "ArgumentError: wrong element type (expected array)." } },
         .{ .src = comptime rescued("\"abc\".upcase(1)"), .expected = .{ .str = "ArgumentError: String#upcase expects 0 arguments, got 1" } },

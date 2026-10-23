@@ -401,6 +401,12 @@ pub const Tree = struct {
         return @as(StringId, @fromBackingInt(node.data));
     }
 
+    /// The text a node of a name or a literal holds (an identifier's, a String's, a
+    /// Symbol's): its `stringId`'s.
+    pub fn nodeString(self: *const Tree, node: *const Node) []const u8 {
+        return self.getString(self.stringId(node));
+    }
+
     // --- Accessor Helpers ---
     pub fn getNode(self: *const Tree, index: NodeIndex) ?*const Node {
         if (index == .none) return null;

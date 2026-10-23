@@ -96,6 +96,6 @@ const Walker = struct {
     fn isNamed(tree: *const ast.Tree, idx: ast.NodeIndex, name: []const u8) bool {
         const node = tree.getNode(idx) orelse return false;
         if (node.tag != .identifier) return false;
-        return std.mem.eql(u8, tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), name);
+        return std.mem.eql(u8, tree.nodeString(node), name);
     }
 };

@@ -146,7 +146,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
             }
             if (has_block_param) {
                 if (last_type == *value.ObjClosure) {
-                    call_args[param_types.len - 1] = args.block() orelse return vm.fail(.ArgumentError, "{s} requires a block", .{args.name});
+                    call_args[param_types.len - 1] = try util.requireBlock(vm, args.block(), args.name);
                 } else {
                     call_args[param_types.len - 1] = args.block();
                 }

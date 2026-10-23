@@ -4,14 +4,5 @@
 const value = @import("../value.zig");
 
 pub fn normalize(val: value.Value) ![]const u8 {
-    if (val.isString()) {
-        return val.asString().chars;
-    }
-
-    // Allow Symbol interpolation mappings
-    if (val.isSymbol()) {
-        return val.asSymbol().chars;
-    }
-
-    return error.InvalidType;
+    return val.nameChars() orelse error.InvalidType;
 }

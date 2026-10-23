@@ -2,7 +2,6 @@
 //! copies of (exporters/parts.zig groups and measures them), and `named` names a Solid's
 //! part, or a Sketch for a drawing.
 
-const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
@@ -29,8 +28,7 @@ pub fn meshBom(vm: *VM, receiver: value.Value) !value.Value {
 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const rows = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&rows.obj));
+    const rows = try scope.array();
     try rows.items.ensureTotalCapacity(vm.gc.trackingAllocator(), parts.len);
     for (parts) |part| rows.items.appendAssumeCapacity(try rowOf(vm, part));
     return value.Value.initObj(&rows.obj);
@@ -40,10 +38,8 @@ pub fn meshBom(vm: *VM, receiver: value.Value) !value.Value {
 fn rowOf(vm: *VM, part: Part) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const row = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&row.obj));
-    const size = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&size.obj));
+    const row = try scope.map();
+    const size = try scope.array();
     try size.items.ensureTotalCapacity(vm.gc.trackingAllocator(), part.size.len);
     for (part.size) |extent| size.items.appendAssumeCapacity(value.Value.initNumber(extent));
     const name = if (part.name) |text| try vm.allocateString(text) else value.Value.initNil();
@@ -70,10 +66,7 @@ fn rowOf(vm: *VM, part: Part) !value.Value {
 /// sketch's in a drawing.
 pub fn meshNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
     if (!receiver.isGeometry() and !receiver.isCrossSection()) return util.notDefinedFor(vm, "named", receiver);
-    if (std.mem.trim(u8, name, &std.ascii.whitespace).len == 0) {
-        return vm.fail(.ValueError, "named expects a name, got \"{s}\"", .{name});
-    }
-    const id = try vm.dag_builder.internPartName(name);
+    const id = try vm.dag_builder.internPartName(try util.requireNonBlankName(vm, name, "named"));
     if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchName(receiver.asCrossSection().dag_idx, id));
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addSetName(receiver.asGeometry().dag_idx, id) });
 }

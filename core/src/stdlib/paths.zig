@@ -247,7 +247,7 @@ fn circleAt(b: *@import("../vm/dag.zig").DAGBuilder, center: [2]f64, radius: f64
 
 /// `named(name)`: the name a drawing gives it.
 pub fn pathNamed(vm: *VM, receiver: value.Value, name: []const u8) !value.Value {
-    if (std.mem.trim(u8, name, &std.ascii.whitespace).len == 0) return vm.fail(.ValueError, "named expects a name, got \"{s}\"", .{name});
+    _ = try util.requireNonBlankName(vm, name, "named");
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     const name_obj = try vm.gc.allocateString(vm, name);

@@ -96,7 +96,7 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
                     const name_node = doc.tree.getNode(cs.name);
                     if (name_node) |nn| {
                         if (nn.tag == .identifier) {
-                            ctx.class_name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(nn.data)));
+                            ctx.class_name = doc.tree.nodeString(nn);
                         }
                     }
                 }
@@ -602,7 +602,7 @@ pub const Handler = struct {
 
         // AST Base Formatting
         if (target_node.tag == .identifier) {
-            const name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(target_node.data)));
+            const name = doc.tree.nodeString(target_node);
             const sym = doc.symbols[@backingInt(found_node_idx)];
             out.writer.print("```kupcad\n(variable) {s}\n```\n", .{name}) catch return null;
             out.writer.print("**Scope:** `{s}` (slot `{d}`)\n\n", .{ @tagName(sym.kind), sym.index }) catch return null;
@@ -784,7 +784,7 @@ pub const Handler = struct {
                     const cs = doc.tree.classStmt(node);
                     const name_node = doc.tree.getNode(cs.name);
                     if (name_node != null and name_node.?.tag == .identifier) {
-                        sym_name = doc.tree.getString(@as(ast.StringId, @fromBackingInt(name_node.?.data)));
+                        sym_name = doc.tree.nodeString(name_node.?);
                     }
                     sym_kind = .Class;
                 },

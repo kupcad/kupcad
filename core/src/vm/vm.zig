@@ -84,6 +84,14 @@ pub const CallFrame = struct {
     ip: usize,
     base_slot: usize,
     is_constructor: bool = false,
+
+    /// Where in the source the instruction the frame last ran came from; null for a frame
+    /// of no chunk.
+    pub fn sourceOffset(self: *const CallFrame) ?u32 {
+        const chunk_ptr = self.closure.function.chunk orelse return null;
+        const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
+        return exec_chunk.getOffset(if (self.ip > 0) self.ip - 1 else 0);
+    }
 };
 
 pub const RescueFrame = struct {
@@ -1612,6 +1620,18 @@ pub const VM = struct {
         if (node >= self.dag_builder.nodes.items.len) return self.config();
         return self.dag_builder.settings(self.dag_builder.nodes.items[node].settings);
     }
+
+    /// Where the script is running, as a person counts it (1-based line and column); null
+    /// before it runs, or without the line index of its source.
+    pub fn currentPosition(self: *const VM) ?LinePosition {
+        if (self.frames.items.len == 0) return null;
+        const offset = self.frames.items[self.frames.items.len - 1].sourceOffset() orelse return null;
+        const li = self.line_index orelse return null;
+        const at = li.humanPosition(offset);
+        return .{ .line = at.line, .column = at.column };
+    }
+
+    pub const LinePosition = struct { line: u32, column: u32 };
 
     /// Replaces the settings in force (CAD.config): geometry made from now on uses them.
     pub fn setConfig(self: *VM, settings: EngineConfig) !void {
@@ -3944,13 +3964,12 @@ pub const VM = struct {
             self.remaining -= 1;
             self.listed += 1;
             const frame = &self.vm.frames.items[self.remaining];
-            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(frame.closure.function.chunk.?));
-            const source_offset = exec_chunk.getOffset(if (frame.ip > 0) frame.ip - 1 else 0);
+            const source_offset = frame.sourceOffset().?;
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
-            const line = if (self.vm.line_index) |li|
-                std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ li.getLine(source_offset) + 1, li.getUtf8Column(source_offset) + 1, func_name })
-            else
-                std.mem.print(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
+            const line = if (self.vm.line_index) |li| at: {
+                const at = li.humanPosition(source_offset);
+                break :at std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ at.line, at.column, func_name });
+            } else std.mem.print(&self.buf, "    from script:offset {d}:in '{s}'", .{ source_offset, func_name });
             return line catch "    from unknown";
         }
     };
@@ -4037,7 +4056,7 @@ pub const VM = struct {
         var list: std.ArrayList(u8) = .empty;
         const arena = self.scratch_arena.allocator();
         for (names[0..@min(names.len, MAX_NAMES_LISTED)], 0..) |name, i| {
-            const chars = if (name.isString()) name.asString().chars else if (name.isSymbol()) name.asSymbol().chars else "?";
+            const chars = name.nameChars() orelse "?";
             list.print(arena, "{s}{s}", .{ if (i > 0) ", " else "", chars }) catch return "";
         }
         if (names.len > MAX_NAMES_LISTED) list.appendSlice(arena, ", ...") catch return "";

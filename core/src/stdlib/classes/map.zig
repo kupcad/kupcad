@@ -64,8 +64,7 @@ pub fn mapToA(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
 
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
 
@@ -73,8 +72,7 @@ pub fn mapToA(vm: *VM, map: *value.ObjMap) !value.Value {
     const values = map.map.values();
 
     for (keys, 0..) |k, i| {
-        const pair_arr = try vm.gc.allocateArray(vm);
-        vm.push(value.Value.initObj(&pair_arr.obj)); // Protect pair_arr from GC
+        const pair_arr = try scope.array();
 
         try pair_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), 2);
         pair_arr.items.appendAssumeCapacity(k);
@@ -98,8 +96,7 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
 
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
     const closure = block_opt.?;
@@ -132,8 +129,7 @@ pub fn mapGet(vm: *VM, map: *value.ObjMap, key: value.Value, default_val: value.
 pub fn mapMerge(vm: *VM, map: *value.ObjMap, other_map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const new_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&new_map.obj));
+    const new_map = try scope.map();
 
     // Fast O(1) hash map merging
     var it = map.map.iterator();
@@ -153,8 +149,7 @@ pub fn mapMerge(vm: *VM, map: *value.ObjMap, other_map: *value.ObjMap) !value.Va
 pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const new_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&new_map.obj));
+    const new_map = try scope.map();
 
     var it = map.map.iterator();
     while (it.next()) |entry| {
@@ -173,8 +168,7 @@ pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
 pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const new_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&new_map.obj));
+    const new_map = try scope.map();
 
     var it = map.map.iterator();
     while (it.next()) |entry| {

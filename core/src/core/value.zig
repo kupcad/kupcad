@@ -578,6 +578,13 @@ pub const Value = packed struct {
         std.debug.assert(self.isObject() and self.asObj().obj_type == .symbol);
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
+    /// The text of a String or a Symbol, which a script writes a name as either way
+    /// (`halign: :center` or `"center"`); null for any other value.
+    pub fn nameChars(self: Value) ?[]const u8 {
+        if (self.isString()) return self.asString().chars;
+        if (self.isSymbol()) return self.asSymbol().chars;
+        return null;
+    }
     pub inline fn asFunction(self: Value) *ObjFunction {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }

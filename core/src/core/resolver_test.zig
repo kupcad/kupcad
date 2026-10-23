@@ -16,7 +16,7 @@ fn expectResolved(res: *const resolver.Resolver, tree: *const ast.Tree, name: []
     var found_match = false;
     for (tree.nodes.items, 0..) |node, i| {
         if (node.tag == .identifier) {
-            const id_str = tree.getString(@as(ast.StringId, @fromBackingInt(node.data)));
+            const id_str = tree.nodeString(&node);
             if (std.mem.eql(u8, id_str, name)) {
                 const sym = res.symbols[i];
                 // Because Parsers often leave "dead" orphan nodes behind when transforming

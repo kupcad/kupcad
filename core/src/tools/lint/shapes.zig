@@ -52,7 +52,7 @@ pub const Shapes = struct {
     pub fn of(self: *const Shapes, tree: *const ast.Tree, idx: ast.NodeIndex) ?Shape {
         const node = tree.getNode(idx) orelse return null;
         return switch (node.tag) {
-            .identifier => self.vars.get(tree.getString(@as(ast.StringId, @fromBackingInt(node.data)))),
+            .identifier => self.vars.get(tree.nodeString(node)),
             .binary_op => blk: {
                 const b = tree.binaryExpr(node);
                 break :blk switch (b.op) {

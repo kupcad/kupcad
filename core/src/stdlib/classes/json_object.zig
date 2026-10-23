@@ -70,15 +70,10 @@ pub fn lookup(vm: *VM, object: *value.ObjJsonObject, key: value.Value) !?value.V
     return vm.jsonObjectGet(object, key) catch vm.fail(.TypeError, JSON_KEY_FMT, .{vm.typeName(key)});
 }
 
-/// The name of a key lookup accepted: a String's or a Symbol's.
-fn keyName(key: value.Value) []const u8 {
-    return if (key.isString()) key.asString().chars else key.asSymbol().chars;
-}
-
 /// The KeyError for `key`, which `object` at `where` doesn't have: it names the keys it has.
 pub fn missingKey(vm: *VM, object: *const value.ObjJsonObject, key: value.Value, where: Where) error{RuntimeError} {
     const names = vm.listNames(object.map.keys());
-    return vm.fail(.KeyError, "{f} has no key \"{s}\" ({s}{s})", .{ where, keyName(key), if (names.len > 0) "its keys: " else "it has none", names });
+    return vm.fail(.KeyError, "{f} has no key \"{s}\" ({s}{s})", .{ where, key.nameChars().?, if (names.len > 0) "its keys: " else "it has none", names });
 }
 
 /// JsonObject#fetch(key, default) -> the value under `key`; without one, `default` when it
@@ -111,7 +106,7 @@ fn digStep(vm: *VM, current: value.Value, step: value.Value, source: []const u8,
     if (current.isJsonObject()) {
         const object = current.asJsonObject();
         const held = try lookup(vm, object, step) orelse return missingKey(vm, object, step, here);
-        _ = try path.enterKey(vm.allocator, keyName(step));
+        _ = try path.enterKey(vm.allocator, step.nameChars().?);
         return held;
     }
     if (current.isArray()) {
@@ -179,15 +174,13 @@ fn plainCopy(vm: *VM, v: value.Value, depth: usize) !value.Value {
     defer scope.deinit();
     if (v.isArray()) {
         const items = v.asArray().items.items;
-        const copy = try vm.gc.allocateArray(vm);
-        vm.push(value.Value.initObj(&copy.obj));
+        const copy = try scope.array();
         try copy.items.ensureTotalCapacity(tracking, items.len);
         for (items) |item| copy.items.appendAssumeCapacity(try plainCopy(vm, item, depth - 1));
         return value.Value.initObj(&copy.obj);
     }
     const entries = &v.asJsonObject().map;
-    const copy = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&copy.obj));
+    const copy = try scope.map();
     try copy.map.ensureTotalCapacity(tracking, entries.count());
     for (entries.keys(), entries.values()) |k, item| copy.map.putAssumeCapacity(k, try plainCopy(vm, item, depth - 1));
     return value.Value.initObj(&copy.obj);

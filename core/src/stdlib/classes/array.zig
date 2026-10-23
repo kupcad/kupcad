@@ -8,6 +8,7 @@ const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 const callBlock = @import("iteration.zig").callBlock;
+const util = @import("../methods/util.zig");
 
 /// Array#length / Array#size
 pub fn arrayLength(vm: *VM, arr: *value.ObjArray) !value.Value {
@@ -84,8 +85,7 @@ pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
     try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items[start_idx..][0..count]);
     return value.Value.initObj(&new_arr.obj);
 }
@@ -127,8 +127,7 @@ pub fn arrayEach(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !val
 pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
@@ -143,9 +142,7 @@ pub fn arrayMap(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !valu
 
 /// Array#reduce(initial_val, block) / Array#reduce(block)
 pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, block: ?*value.ObjClosure) !value.Value {
-    if (block == null) {
-        return vm.fail(.ArgumentError, "reduce requires a block.", .{});
-    }
+    const body = try util.requireBlock(vm, block, "reduce");
 
     // SAFETY: acc_val is conditionally initialized below based on `initial_val` presence or array length.
     var acc_val: value.Value = undefined;
@@ -161,7 +158,7 @@ pub fn arrayReduce(vm: *VM, arr: *value.ObjArray, initial_val: ?value.Value, blo
 
     var i = start_idx;
     while (i < arr.items.items.len) : (i += 1) {
-        acc_val = switch (try callBlock(vm, block.?, &.{ acc_val, arr.items.items[i] })) {
+        acc_val = switch (try callBlock(vm, body, &.{ acc_val, arr.items.items[i] })) {
             .broke => |v| return v,
             .value => |v| v,
         };
@@ -184,8 +181,7 @@ fn keepWhere(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure, truthy: 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
 
     var i: usize = 0;
     while (i < arr.items.items.len) : (i += 1) {
@@ -206,8 +202,7 @@ pub fn arrayCompact(vm: *VM, arr: *value.ObjArray) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
 
     for (arr.items.items) |item| {
         if (!item.isNil()) try new_arr.items.append(vm.gc.trackingAllocator(), item);
@@ -247,8 +242,7 @@ pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj));
+    const new_arr = try scope.array();
 
     for (arr.items.items) |item| {
         if (item.isArray()) {
@@ -357,8 +351,7 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_arr = try vm.gc.allocateArray(vm);
-    vm.push(value.Value.initObj(&new_arr.obj)); // Rooted while the block runs
+    const new_arr = try scope.array();
     try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items);
 
     var order = SortOrder{ .vm = vm, .block = block };
@@ -374,8 +367,7 @@ pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
-    const new_map = try vm.gc.allocateMap(vm);
-    vm.push(value.Value.initObj(&new_map.obj));
+    const new_map = try scope.map();
 
     try new_map.map.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
 

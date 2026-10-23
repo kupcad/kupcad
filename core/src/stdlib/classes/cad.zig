@@ -86,9 +86,7 @@ fn cadConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap) !value.Val
 /// of the active config, then restores it
 fn cadWithConfig(vm: *VM, receiver: value.Value, settings: *value.ObjMap, block: ?*value.ObjClosure) !value.Value {
     _ = receiver;
-    const body = block orelse {
-        return vm.fail(.ArgumentError, "CAD.with_config requires a block", .{});
-    };
+    const body = try util.requireBlock(vm, block, "CAD.with_config");
 
     // Inherit the current config, then apply overrides
     const new_config = try applySettings(vm, settings, vm.config());

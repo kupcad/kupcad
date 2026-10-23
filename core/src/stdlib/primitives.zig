@@ -552,7 +552,7 @@ fn textFont(vm: *VM, font: value.Value) !TextFont {
         };
         return .{ .face = face, .name = imported.name.chars };
     }
-    const name = if (font.isNil()) text_mod.FontKey.sans.name() else if (font.isString()) font.asString().chars else if (font.isSymbol()) font.asSymbol().chars else {
+    const name = if (font.isNil()) text_mod.FontKey.sans.name() else font.nameChars() orelse {
         return vm.fail(.TypeError, "text: font is the name of a font ({s}) or a Font imported from a font file, got {s}", .{ text_mod.FONT_LIST, vm.typeName(font) });
     };
     // An unknown name used to draw in sans without a word, so a typo went unseen

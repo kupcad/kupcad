@@ -90,7 +90,7 @@ pub const UnusedVarsRule = struct {
                 if (node_idx == engine.root or engine.closure_blocks.contains(node_idx)) try markResultUsed(engine, tree, node_idx);
             },
             .identifier => {
-                try engine.markUsed(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))));
+                try engine.markUsed(tree.nodeString(node));
             },
             .method_call => {
                 const mc = tree.methodCall(node);
@@ -156,7 +156,7 @@ pub const UnusedVarsRule = struct {
 
         switch (node.tag) {
             .identifier => {
-                try engine.declareVar(tree.getString(@as(ast.StringId, @fromBackingInt(node.data))), engine.getLoc(node.main_token), true);
+                try engine.declareVar(tree.nodeString(node), engine.getLoc(node.main_token), true);
             },
             .array_literal => {
                 const span = tree.nodeSpan(node);

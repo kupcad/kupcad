@@ -369,21 +369,11 @@ pub fn debuggerLoop(vm: *VM) void {
     stderr.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch return;
     stderr.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
 
-    if (vm.frames.items.len > 0) {
-        const frame = &vm.frames.items[vm.frames.items.len - 1];
-        if (frame.closure.function.chunk) |chunk_ptr| {
-            const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
-            const instruction_ip = if (frame.ip > 0) frame.ip - 1 else 0;
-            const source_offset = exec_chunk.getOffset(instruction_ip);
-            if (vm.line_index) |li| {
-                const line = li.getLine(source_offset) + 1;
-                const col = li.getUtf8Column(source_offset) + 1;
-                var loc_buf: [64]u8 = undefined;
-                if (std.mem.print(&loc_buf, "Break at line {d}, col {d}\n", .{ line, col })) |msg| {
-                    stderr.writeStreamingAll(vm.io, msg) catch return;
-                } else |_| {}
-            }
-        }
+    if (vm.currentPosition()) |at| {
+        var loc_buf: [64]u8 = undefined;
+        if (std.mem.print(&loc_buf, "Break at line {d}, col {d}\n", .{ at.line, at.column })) |msg| {
+            stderr.writeStreamingAll(vm.io, msg) catch return;
+        } else |_| {}
     }
 
     var history = History{};

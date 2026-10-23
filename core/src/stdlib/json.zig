@@ -111,8 +111,7 @@ const Reader = struct {
         const vm = self.vm;
         var scope = HandleScope.init(vm);
         defer scope.deinit();
-        const arr = try vm.gc.allocateArray(vm);
-        vm.push(value.Value.initObj(&arr.obj));
+        const arr = try scope.array();
         try arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), items.len);
         for (items, 0..) |item, i| {
             const mark = try self.path.enterIndex(vm.allocator, i);

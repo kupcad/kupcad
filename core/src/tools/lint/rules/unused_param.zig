@@ -60,7 +60,7 @@ pub const UnusedParamRule = struct {
             .index_access => {
                 const access = tree.indexAccess(node);
                 const target = tree.getNode(access.target) orelse return;
-                if (target.tag != .identifier or !std.mem.eql(u8, tree.getString(@as(ast.StringId, @fromBackingInt(target.data))), "params")) return;
+                if (target.tag != .identifier or !std.mem.eql(u8, tree.nodeString(target), "params")) return;
                 if (literals.symbol(tree, access.index)) |name| try self.read.put(engine.allocator, name, {});
             },
             else => {},

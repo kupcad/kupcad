@@ -682,7 +682,7 @@ pub const Parser = struct {
         const left_node = self.b.tree.getNode(left) orelse return ParseError.InvalidExpression;
         switch (left_node.tag) {
             .identifier => {
-                return self.b.assignment(@as(ast.StringId, @fromBackingInt(left_node.data)), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
+                return self.b.assignment(self.b.tree.stringId(left_node), tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
             },
             .method_call => {
                 const mc = self.b.tree.methodCall(left_node);
