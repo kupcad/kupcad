@@ -1,6 +1,7 @@
 //! The Path natives: `line`, `polyline` and `arc` make one, `line_to`, `arc_to` and
 //! `tangent_arc_to` go on from its end, `+` joins two where one ends and the next starts,
-//! and a Path moves (translate, rotate, scale, mirror), closes into a Sketch (`close`),
+//! `fillet` and `chamfer` round or cut its corners, and a Path moves (translate, rotate,
+//! scale, mirror), closes into a Sketch (`close`),
 //! takes a width (`stroke`), and carries a name and a material for a drawing. A Path is open 2D geometry (core/path.zig) with no kernel form of its own: its
 //! segments are exact, and only a closed or stroked one is drawn by the kernel.
 
@@ -10,6 +11,7 @@ const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const arguments = @import("arguments.zig");
 const path_mod = @import("../core/path.zig");
+const path_corners = @import("../core/path_corners.zig");
 const affine2 = @import("../core/affine2.zig");
 const transforms = @import("methods/transforms.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
@@ -21,6 +23,8 @@ pub const ARC = Signature{ .keywords = &.{ "center", "r", "radius", "start", "sw
 pub const LINE_TO = Signature{ .positional = &.{"to"} };
 pub const ARC_TO = Signature{ .positional = &.{"to"}, .keywords = &.{ "r", "radius", "ccw", "large" }, .sizes = &.{ "r", "radius" } };
 pub const TANGENT_ARC_TO = Signature{ .positional = &.{"to"} };
+pub const FILLET = Signature{ .positional = &.{"r"}, .keywords = &.{"r"}, .sizes = &.{"r"} };
+pub const CHAMFER = Signature{ .positional = &.{"size"}, .keywords = &.{"size"}, .sizes = &.{"size"} };
 pub const STROKE = Signature{ .positional = &.{"width"}, .keywords = &.{ "width", "cap", "segments" }, .solid_sizes = &.{"width"} };
 
 /// The fewest points a polyline takes: a line.
@@ -180,6 +184,61 @@ fn extended(vm: *VM, receiver: value.Value, segment: path_mod.Segment) !value.Va
     return vm.allocatePath(p.start, segments, p.name, p.material_id);
 }
 
+// --- Corners ---
+
+/// `fillet(r)`: the path with each corner where two straight segments meet rounded off by
+/// the arc of radius `r` that touches both; its ends, and a joint beside an arc, stay.
+pub fn pathFillet(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    return withCornersEased(vm, receiver, .{ .round = try oneSize(vm, args, FILLET, "fillet") }, FILLET, "fillet");
+}
+
+/// `chamfer(size)`: the path with each corner where two straight segments meet cut off by
+/// the line between the points `size` back along each side.
+pub fn pathChamfer(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    return withCornersEased(vm, receiver, .{ .chamfer = try oneSize(vm, args, CHAMFER, "chamfer") }, CHAMFER, "chamfer");
+}
+
+/// The options of fillet and chamfer, each of which takes the one its Signature names.
+const SizeOpts = struct { r: ?f64 = null, size: ?f64 = null };
+
+/// The size, greater than zero, that `args` give a method of `signature`: its one
+/// parameter, by position or by keyword (which wins).
+fn oneSize(vm: *VM, args: []const value.Value, comptime signature: Signature, comptime method: []const u8) !f64 {
+    const name = comptime signature.positional[0];
+    const pos = arguments.positionalArgs(args);
+    var base = SizeOpts{};
+    // The call has no more positional arguments than the Signature names
+    if (pos.len == 1) @field(base, name) = try arguments.requireNumber(vm, pos[0], method, name);
+    const opts = (try arguments.parseKwargsOver(SizeOpts, base, signature.keywords, vm, args, method)).opts;
+    const size = @field(opts, name) orelse return vm.fail(.ArgumentError, method ++ " needs its " ++ name ++ ": " ++ method ++ "(" ++ name ++ ")", .{});
+    try arguments.requirePositive(vm, size, method, name);
+    return size;
+}
+
+fn withCornersEased(vm: *VM, receiver: value.Value, how: path_corners.Ease, comptime signature: Signature, comptime method: []const u8) !value.Value {
+    const p = receiver.asPath();
+    const eased = try easeCorners(vm, p.start, p.segments, false, how, method, signature.positional[0]);
+    defer eased.deinit(vm.allocator);
+    return vm.allocatePath(eased.start, eased.segments, p.name, p.material_id);
+}
+
+/// The path from `start` along `segments` with its corners eased as `how` says
+/// (path_corners.ease), or the ValueError of `method` saying which corner can't be;
+/// `size_name` is what the method calls the radius or the cut.
+pub fn easeCorners(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, closed: bool, how: path_corners.Ease, method: []const u8, size_name: []const u8) !path_corners.Eased {
+    var failure: path_corners.Failure = undefined;
+    return path_corners.ease(vm.allocator, start, segments, closed, how, vm.config().tolerance, &failure) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.CornerFailed => switch (failure) {
+            .doubles_back => |i| {
+                const at = if (i == 0) start else segments[i - 1].to;
+                return vm.fail(.ValueError, "{s}: the sides double back at point {d}, [{f}, {f}], where no corner can be {s}", .{ method, i, value.fmtNumber(at[0]), value.fmtNumber(at[1]), if (how == .round) "rounded" else "cut" });
+            },
+            .too_short => |side| return vm.fail(.ValueError, "{s}: the side from point {d} is {f} long, too short for the corners at its ends, which take {f} of it ({s} = {f})", .{ method, side.from, value.fmtNumber(side.length), value.fmtNumber(side.needed), size_name, value.fmtNumber(how.size()) }),
+        },
+    };
+}
+
 // --- Moves ---
 
 /// The path as `matrix` places it; an uneven scale can't keep an arc, so it is refused.
@@ -227,12 +286,17 @@ pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 // --- Into a Sketch ---
 
-/// The chords each segment is drawn with under the active resolution (0 for a line): an
-/// arc gets its circle's share.
-fn chordsOf(vm: *VM, segments: []const path_mod.Segment) ![]u32 {
+/// The chords each segment is drawn with (0 for a line): an arc gets its circle's share of
+/// `per_turn`, or, when that is 0, of the active resolution's count for its radius.
+fn chordsOf(vm: *VM, segments: []const path_mod.Segment, per_turn: i32) ![]u32 {
     const chords = try vm.allocator.alloc(u32, segments.len);
     for (segments, chords) |segment, *count| {
-        count.* = if (segment.arc) |arc| turnShare(@intCast(arguments.autoSegments(vm, arc.radius)), segment.angle / (2 * std.math.pi)) else 0;
+        const arc = segment.arc orelse {
+            count.* = 0;
+            continue;
+        };
+        const full = if (per_turn > 0) per_turn else arguments.autoSegments(vm, arc.radius);
+        count.* = turnShare(@intCast(full), segment.angle / (2 * std.math.pi));
     }
     return chords;
 }
@@ -242,9 +306,15 @@ fn chordsOf(vm: *VM, segments: []const path_mod.Segment) ![]u32 {
 pub fn pathClose(vm: *VM, receiver: value.Value) !value.Value {
     const p = receiver.asPath();
     if (p.segments.len < 2) return vm.fail(.ValueError, "close needs a Path of at least 2 segments to enclose anything, got {d}", .{p.segments.len});
-    const chords = try chordsOf(vm, p.segments);
+    return closedSketch(vm, p.start, p.segments, 0);
+}
+
+/// The Sketch the path from `start` along `segments` encloses, its end joined straight back
+/// to its start, its arcs drawn as chordsOf says for `per_turn` and known to a drawing.
+pub fn closedSketch(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn: i32) !value.Value {
+    const chords = try chordsOf(vm, segments, per_turn);
     defer vm.allocator.free(chords);
-    return vm.allocateCrossSection(try vm.dag_builder.addClosedPath(p.start, p.segments, chords));
+    return vm.allocateCrossSection(try vm.dag_builder.addClosedPath(start, segments, chords));
 }
 
 /// `stroke(width, cap:, segments:)`: the Sketch of the path given a width, `cap:` its
@@ -262,7 +332,7 @@ pub fn pathStroke(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const half = opts.width / 2.0;
 
     const p = receiver.asPath();
-    const chords = try chordsOf(vm, p.segments);
+    const chords = try chordsOf(vm, p.segments, 0);
     defer vm.allocator.free(chords);
     var spine: std.ArrayList([2]f64) = .empty;
     defer spine.deinit(vm.allocator);

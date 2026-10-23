@@ -1147,6 +1147,29 @@ test "Stdlib: a solid's center of mass, its mass from its density, and whether t
     });
 }
 
+test "Stdlib: polygon rounds or cuts each of its corners, a concave one too" {
+    const SQUARE = "sq = [[0, 0], [10, 0], [10, 10], [0, 10]]\n";
+    const ELL = "ell = [[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]]\n";
+    try expectScripts(&.{
+        // Each corner loses 4 - π to its quarter arc, drawn here in fine chords
+        .{ .src = SQUARE ++ "r = (polygon(sq, round_r: 2, segments: 1024).area - (84 + 4 * Math::PI)).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = SQUARE ++ "r = polygon(sq, chamfer: 2).area", .expected = .{ .num = 92 } },
+        // Five outer corners lose 4 - π each, the inner one gains it
+        .{ .src = ELL ++ "r = (polygon(ell, round_r: 2, segments: 1024).area - (175 - 4 * (4 - Math::PI))).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = ELL ++ "r = polygon(ell, chamfer: 1).area", .expected = .{ .num = 175 - 2.5 + 0.5 } },
+        // A square of 4 rounded by 2 is a circle: at 4 segments a turn, a diamond
+        .{ .src = "r = polygon([[0, 0], [4, 0], [4, 4], [0, 4]], round_r: 2, segments: 4).area", .expected = .{ .num = 8 } },
+        .{ .src = SQUARE ++ "r = polygon(sq, round_r: 2).bbox.size", .expected = .{ .nums = &.{ 10, 10, 0 } } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, round_r: 1, chamfer: 1)"), .expected = .{ .str = "ArgumentError: polygon takes round_r or chamfer, not both" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, [[0, 1, 2, 3]], round_r: 1)"), .expected = .{ .str = "ArgumentError: polygon takes paths: or round_r:/chamfer:, not both yet" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, chamfer: 0)"), .expected = .{ .str = "ValueError: polygon expects chamfer to be a finite number greater than zero, got 0" } },
+        .{ .src = comptime rescued(SQUARE ++ "polygon(sq, round_r: 6)"), .expected = .{ .str = "ValueError: polygon: the side from point 0 is 10 long, too short for the corners at its ends, which take 12 of it (round_r = 6)" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [1, 0], [2, 0]], round_r: 0.1)"), .expected = .{ .str = "ValueError: polygon: the sides double back at point 0, [0, 0], where no corner can be rounded" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [0, 0], [1, 0], [0, 1]], chamfer: 0.1)"), .expected = .{ .str = "ValueError: polygon point 1 repeats the one before it, [0, 0]: round_r: and chamfer: need each side to have a length" } },
+        .{ .src = comptime rescued("polygon([[0, 0], [1, 0], [0, 1], [0, 0]], chamfer: 0.1)"), .expected = .{ .str = "ValueError: polygon's last point repeats its first, [0, 0] (a polygon closes itself): round_r: and chamfer: need each side to have a length" } },
+    });
+}
+
 test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
     try expectScripts(&.{
         .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
@@ -2490,7 +2513,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments, sides" },
         .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius, across_flats" },
         .{ .src = "torus(bogus: 1)", .method = "torus", .accepted = "major_r, minor_r, segments" },
-        .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths" },
+        .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths, round_r, chamfer, segments" },
         .{ .src = "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ", bogus: 1)", .method = "polyhedron", .accepted = "points, faces" },
         .{ .src = "text(\"A\", bogus: 1)", .method = "text", .accepted = "size, tolerance, font, halign, valign" },
         .{ .src = "cube(1).translate(bogus: 1)", .method = "translate", .accepted = "x, y, z" },

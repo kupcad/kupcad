@@ -94,6 +94,33 @@ test "paths: line_to, arc_to and tangent_arc_to go on from the end, a tangent ar
     });
 }
 
+test "paths: fillet and chamfer round or cut each corner where two lines meet" {
+    const ELL = "p = polyline([[0, 0], [10, 0], [10, 10]])\n";
+    try expectScripts(&.{
+        // 7 along, a quarter of the circle of radius 3, 7 up
+        .{ .src = ELL ++ "r = p.fillet(3).length", .expected = .{ .num = 14 + 1.5 * std.math.pi } },
+        .{ .src = ELL ++ "r = p.fillet(r: 3).inspect", .expected = .{ .str = "<Path 3 segments from [0, 0] to [10, 10]>" } },
+        // 7 along, across a corner of 3 by 3, 7 up
+        .{ .src = ELL ++ "r = p.chamfer(3).length", .expected = .{ .num = 14 + 3 * std.math.sqrt2 } },
+        .{ .src = ELL ++ "r = p.chamfer(size: 3).bbox.size", .expected = .{ .nums = &.{ 10, 10, 0 } } },
+        // Turning right, the arc turns right too; a keyword wins over the same size given positionally
+        .{ .src = "r = polyline([[0, 0], [10, 0], [10, -10]]).fillet(1, r: 3).length", .expected = .{ .num = 14 + 1.5 * std.math.pi } },
+        // No corner where the path goes on straight, nor beside an arc
+        .{ .src = "r = polyline([[0, 0], [5, 0], [10, 0]]).fillet(1).inspect", .expected = .{ .str = "<Path 2 segments from [0, 0] to [10, 0]>" } },
+        .{ .src = BRACKET ++ "r = p.fillet(1).length == p.length", .expected = .{ .boolean = true } },
+        // Closed, the ends meet at a sharp corner: two rounded corners and two sharp ones
+        .{ .src = "r = polyline([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(5).close.extrude(1).volume < 100", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued(ELL ++ "p.fillet"), .expected = .{ .str = "ArgumentError: fillet needs its r: fillet(r)" } },
+        .{ .src = comptime rescued(ELL ++ "p.fillet(1, 2)"), .expected = .{ .str = "ArgumentError: fillet takes at most 1 positional argument (r), got 2" } },
+        .{ .src = comptime rescued(ELL ++ "p.fillet(radius: 1)"), .expected = .{ .str = "ArgumentError: fillet does not take a keyword 'radius' (it accepts: r)" } },
+        .{ .src = comptime rescued(ELL ++ "p.chamfer(-1)"), .expected = .{ .str = "ValueError: chamfer expects size to be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("polyline([[0, 0], [10, 0], [5, 0]]).fillet(1)"), .expected = .{ .str = "ValueError: fillet: the sides double back at point 1, [10, 0], where no corner can be rounded" } },
+        .{ .src = comptime rescued("polyline([[0, 0], [10, 0], [5, 0]]).chamfer(1)"), .expected = .{ .str = "ValueError: chamfer: the sides double back at point 1, [10, 0], where no corner can be cut" } },
+        .{ .src = comptime rescued("polyline([[0, 0], [2, 0], [2, 10]]).fillet(3)"), .expected = .{ .str = "ValueError: fillet: the side from point 0 is 2 long, too short for the corners at its ends, which take 3 of it (r = 3)" } },
+        .{ .src = comptime rescued("polyline([[0, 0], [10, 0], [10, 5], [0, 5]]).chamfer(3)"), .expected = .{ .str = "ValueError: chamfer: the side from point 1 is 5 long, too short for the corners at its ends, which take 6 of it (size = 3)" } },
+    });
+}
+
 test "paths: a path's bbox is its own, an arc's bend included" {
     try expectScripts(&.{
         .{ .src = "r = arc(center: [0, 0], r: 5, start: 0, sweep: 90).bbox.size", .expected = .{ .nums = &.{ 5, 5, 0 } } },

@@ -226,7 +226,8 @@ pub const mesh_methods = [_]MeshMethod{
 };
 
 /// The methods of a Path (line, polyline, arc): open 2D geometry, moved as a Sketch is,
-/// closed or stroked into one, labelled for a drawing, and drawn.
+/// gone on from its end, its corners rounded or cut, closed or stroked into one, labelled
+/// for a drawing, and drawn.
 pub const path_methods = [_]MeshMethod{
     method("translate", .transform, paths.pathTranslate, &sig.TRANSLATE, .receiver, .paths),
     method("rotate", .transform, paths.pathRotate, &sig.ROTATE, .receiver, .paths),
@@ -235,6 +236,8 @@ pub const path_methods = [_]MeshMethod{
     method("line_to", .transform, paths.pathLineTo, &paths.LINE_TO, .receiver, .paths),
     method("arc_to", .transform, paths.pathArcTo, &paths.ARC_TO, .receiver, .paths),
     method("tangent_arc_to", .transform, paths.pathTangentArcTo, &paths.TANGENT_ARC_TO, .receiver, .paths),
+    method("fillet", .transform, paths.pathFillet, &paths.FILLET, .receiver, .paths),
+    method("chamfer", .transform, paths.pathChamfer, &paths.CHAMFER, .receiver, .paths),
     method("close", .transform, paths.pathClose, &sig.NONE, .sketch, .paths),
     method("stroke", .transform, paths.pathStroke, &paths.STROKE, .sketch, .paths),
     method("named", .transform, paths.pathNamed, &sig.NAMED, .receiver, .paths),

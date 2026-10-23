@@ -195,6 +195,21 @@ test "SVG: a Path is an open, unfilled path with its arcs exact, a closed one's 
     try testing.expect(std.mem.find(u8, svg, "viewBox=\"0 -30 15 30\"") != null);
 }
 
+test "SVG: a polygon's rounded corners and a Path's fillets are arcs, a concave corner's the other way" {
+    const source = "[polygon([[0, 0], [20, 0], [20, 5], [5, 5], [5, 20], [0, 20]], round_r: 2), polyline([[0, 0], [10, 0], [10, 10]]).named(\"hook\").fillet(3).translate(x: 30)]";
+    const svg = try exportSvg(source);
+    defer testing.allocator.free(svg);
+    errdefer std.debug.print("svg:\n{s}\n", .{svg});
+    // Five outer corners turn left in the sketch (sweep 0 on the page, Y turned over), the
+    // inner one right
+    const outline = pathData(svg, 0).?;
+    try testing.expectEqual(@as(usize, 5), std.mem.count(u8, outline, " A 2 2 0 0 0 "));
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, outline, " A 2 2 0 0 1 "));
+    // The open path keeps its name: along, a quarter arc of radius 3, up
+    try testing.expectEqualStrings("M 30 0 L 37 0 A 3 3 0 0 0 40 -3 L 40 -10", pathData(svg, 1).?);
+    try testing.expect(std.mem.find(u8, svg, "<path id=\"hook\"") != null);
+}
+
 test "SVG: what can't be drawn is refused with a message" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "[]", .message = "GeometryError: the model holds no shape: nothing to draw as svg" },

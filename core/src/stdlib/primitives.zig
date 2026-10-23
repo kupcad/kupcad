@@ -12,6 +12,9 @@ const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 const triangulate = @import("../core/triangulate.zig");
 const affine2 = @import("../core/affine2.zig");
+const path_mod = @import("../core/path.zig");
+const path_corners = @import("../core/path_corners.zig");
+const path_natives = @import("paths.zig");
 
 /// The names of one option. Two of a group in one call are an error: `d:` silently beat
 /// `r:`, `radius:` both, `size:` an `x:`.
@@ -29,6 +32,9 @@ const ALIAS_GROUPS = [_][]const []const u8{
     &.{ "d", "across_flats" },
     &.{ "radius", "across_flats" },
 };
+
+/// Why a polygon whose corners are rounded or cut can't repeat a point.
+const EASED_SIDES = "round_r: and chamfer: need each side to have a length";
 
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
 const MIN_TEXT_TOLERANCE_RATIO: f64 = 1e-4;
@@ -76,7 +82,8 @@ pub const TORUS = Signature{
 };
 pub const POLYGON = Signature{
     .positional = &.{ "points", "paths" },
-    .keywords = &.{"paths"},
+    .keywords = &.{ "paths", "round_r", "chamfer", "segments" },
+    .sizes = &.{ "round_r", "chamfer" },
 };
 pub const POLYHEDRON = Signature{
     .positional = &.{ "points", "faces" },
@@ -423,10 +430,13 @@ pub fn nativeCircle(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
-    const parsed = try arguments.parseKwargsSubset(struct { paths: ?value.Value = null }, POLYGON.keywords, vm, args, "polygon");
+    const Opts = struct { paths: ?value.Value = null, round_r: ?f64 = null, chamfer: ?f64 = null, segments: i32 = 0 };
+    try arguments.requireOneOf(vm, args, &.{ "round_r", "chamfer" }, "polygon");
+    const parsed = try arguments.parseKwargsSubset(Opts, POLYGON.keywords, vm, args, "polygon");
     if (parsed.positional.len < 1) {
         return vm.fail(.ArgumentError, "polygon expects an Array of [x, y] points", .{});
     }
+    try arguments.requireSegmentCount(vm, parsed.opts.segments, "segments");
     const pt_arr = try arguments.requireArray(vm, args[0], "polygon", "points");
     try requireMinCount(vm, pt_arr.len, MIN_CONTOUR_POINTS, "polygon", "points");
 
@@ -441,6 +451,12 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     const pts = try alloc.alloc([2]f64, pt_arr.len);
     defer alloc.free(pts);
     for (pt_arr, pts, 0..) |pt_val, *pt, i| pt.* = try arguments.parsePoint(2, vm, pt_val, "polygon", i);
+
+    const ease: ?path_corners.Ease = if (parsed.opts.round_r) |r| .{ .round = r } else if (parsed.opts.chamfer) |c| .{ .chamfer = c } else null;
+    if (ease) |how| {
+        if (!paths_val.isNil()) return vm.fail(.ArgumentError, "polygon takes paths: or round_r:/chamfer:, not both yet", .{});
+        return easedPolygon(vm, pts, how, parsed.opts.segments);
+    }
 
     if (paths_val.isNil()) {
         // Standard Single-Contour Polygon
@@ -485,6 +501,27 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
     }
     const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours, &.{});
     return try vm.allocateCrossSection(dag_idx);
+}
+
+/// The polygon through `pts` with each corner rounded or cut as `how` says: the closed path
+/// of its sides eased (core/path_corners.zig), its arcs drawn with `per_turn` chords a turn
+/// (0: the resolution's) and known to a drawing.
+fn easedPolygon(vm: *VM, pts: []const [2]f64, how: path_corners.Ease, per_turn: i32) !value.Value {
+    const size_name = if (how == .round) "round_r" else "chamfer";
+    try arguments.requirePositive(vm, how.size(), "polygon", size_name);
+    const sides = try vm.allocator.alloc(path_mod.Segment, pts.len);
+    defer vm.allocator.free(sides);
+    for (sides, 0..) |*side, i| {
+        const to = pts[(i + 1) % pts.len];
+        if (to[0] == pts[i][0] and to[1] == pts[i][1]) {
+            if (i + 1 == pts.len) return vm.fail(.ValueError, "polygon's last point repeats its first, [{f}, {f}] (a polygon closes itself): " ++ EASED_SIDES, .{ value.fmtNumber(to[0]), value.fmtNumber(to[1]) });
+            return vm.fail(.ValueError, "polygon point {d} repeats the one before it, [{f}, {f}]: " ++ EASED_SIDES, .{ i + 1, value.fmtNumber(to[0]), value.fmtNumber(to[1]) });
+        }
+        side.* = .{ .to = to };
+    }
+    const eased = try path_natives.easeCorners(vm, pts[0], sides, true, how, "polygon", size_name);
+    defer eased.deinit(vm.allocator);
+    return path_natives.closedSketch(vm, eased.start, eased.segments, per_turn);
 }
 
 pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {

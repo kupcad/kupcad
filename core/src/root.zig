@@ -36,6 +36,7 @@ test {
     _ = @import("core/ast_test.zig");
     _ = @import("core/bezier_test.zig");
     _ = @import("core/path_test.zig");
+    _ = @import("core/path_corners_test.zig");
     _ = @import("core/vec3_test.zig");
     _ = @import("core/identifier_test.zig");
     _ = @import("core/triangulate_test.zig");
