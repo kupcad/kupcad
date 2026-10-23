@@ -2,16 +2,16 @@
 //! payload, for `kupcad dev ast-dump` (cli/dev.zig).
 
 const std = @import("std");
-const api = @import("../../api.zig");
+const Document = @import("../../frontend/document.zig").Document;
 const ast = @import("../../core/ast.zig");
 
-pub fn dump(allocator: std.mem.Allocator, doc: *const api.Document, out: *std.Io.Writer.Allocating) !void {
+pub fn dump(allocator: std.mem.Allocator, doc: *const Document, out: *std.Io.Writer.Allocating) !void {
     try dumpNode(allocator, doc, doc.tree.root, out, "", true);
 }
 
 fn dumpNode(
     allocator: std.mem.Allocator,
-    doc: *const api.Document,
+    doc: *const Document,
     node_idx: ast.NodeIndex,
     out: *std.Io.Writer.Allocating,
     prefix: []const u8,
