@@ -39,6 +39,8 @@ test {
     _ = @import("core/vec3_test.zig");
     _ = @import("core/affine2_test.zig");
     _ = @import("core/material_test.zig");
+    _ = @import("vm/sequence_test.zig");
+    _ = @import("daemon/exports_fingerprint_test.zig");
     _ = @import("core/rounded_rect_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/error_codes_test.zig");

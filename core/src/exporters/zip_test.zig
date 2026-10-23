@@ -33,6 +33,21 @@ fn expectExtracts(archive: []const u8) !void {
     }
 }
 
+test "zip: more entries or a longer name than a zip's 16-bit fields hold is refused" {
+    // 65535 files and a 65535-byte name are the most the format counts
+    const many = try testing.allocator.alloc(zip.File, 1 << 16);
+    defer testing.allocator.free(many);
+    @memset(many, .{ .name = "a", .data = "" });
+    try testing.expectError(error.ArchiveTooLarge, zip.write(testing.allocator, many));
+    const long_name = try testing.allocator.alloc(u8, 1 << 16);
+    defer testing.allocator.free(long_name);
+    @memset(long_name, 'n');
+    try testing.expectError(error.NameTooLong, zip.write(testing.allocator, &.{.{ .name = long_name, .data = "" }}));
+    // One fewer of each still fits
+    const fits = try zip.write(testing.allocator, many[0 .. (1 << 16) - 1]);
+    testing.allocator.free(fits);
+}
+
 test "zip: an archive extracts to the files written, the names as given" {
     const archive = try zip.write(testing.allocator, &FILES);
     defer testing.allocator.free(archive);
