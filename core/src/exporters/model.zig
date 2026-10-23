@@ -103,7 +103,10 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
     } else if (val.isPath()) {
         try model.paths.append(allocator, val);
     } else if (val.isAssembly()) {
-        for (val.asAssembly().parts.items.items) |part| try model.solids.append(allocator, part);
+        // Its Solids, and its assemblies' (assemble keeps them shallower than the limit)
+        for (val.asAssembly().parts.items.items) |part| {
+            if (part.isAssembly()) _ = try collectShapes(allocator, vm, model, part, path) else try model.solids.append(allocator, part);
+        }
     } else if (val.isArray()) {
         if (path.len >= MAX_MODEL_NESTING * (ItemPath.ITEM_PATH_DIGITS - 1)) {
             return vm.fail(.ValueError, "the model's Arrays nest deeper than {d} levels", .{MAX_MODEL_NESTING});

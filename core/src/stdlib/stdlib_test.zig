@@ -2777,14 +2777,44 @@ test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
     });
 }
 
-test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
+test "Stdlib: assemble takes Solids and assemblies, naming the first that is neither" {
     // Anything else was accepted and then left out of every export without a word.
     try expectScripts(&.{
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Number at index 1" } },
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got CrossSection at index 0" } },
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got nil at index 0; leave out the nils with .compact" } },
-        .{ .src = comptime rescued("s = assemble(name: \"s\", parts: [cube(1)])\nassemble(name: \"k\", parts: [s])"), .expected = .{ .str = "TypeError: assemble expects only Solids in parts, got Assembly at index 0; to nest an assembly, give its .parts" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got Number at index 1" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got CrossSection at index 0" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got nil at index 0; leave out the nils with .compact" } },
+        // As deep as a model's Arrays may nest, and no deeper
+        .{ .src = comptime rescued("a = assemble(name: \"0\", parts: [cube(1)])\n64.times { |i| a = assemble(name: i.to_s, parts: [a]) }"), .expected = .{ .str = "ValueError: assemble: assemblies nest at most 64 deep" } },
     });
+}
+
+test "Stdlib: an assembly of assemblies keeps them, and is measured, listed, moved and written as its Solids" {
+    const ROBOT =
+        \\bolt = cylinder(r: 1, h: 6).named("bolt").material(density: 8)
+        \\arm = assemble(name: "arm", parts: [cube([10, 2, 2]).named("bar").material(density: 1), bolt.translate(9, 1, 0)])
+        \\robot = assemble(name: "robot", parts: [arm, arm.translate(0, 10, 0), cube(3).named("base").material(density: 1)])
+        \\
+    ;
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try expectScripts(&.{
+        .{ .src = ROBOT ++ "r = robot.parts.map { |p| \"#{p.class}\" }.join(\" \")", .expected = .{ .str = "Assembly Assembly Geometry" } },
+        .{ .src = ROBOT ++ "r = robot.bbox.size", .expected = .{ .nums = &.{ 10, 12, 6 } } },
+        .{ .src = ROBOT ++ "r = robot.bom.map { |row| \"#{row[:name]} x#{row[:count]}\" }.join(\", \")", .expected = .{ .str = "bar x2, bolt x2, base x1" } },
+        .{ .src = ROBOT ++ "r = robot.translate(5, 0, 0).bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
+        // Two bars (40 mm³ each) and the base (27 mm³) at 1 g/cm³, and two bolts
+        .{ .src = ROBOT ++ "r = (robot.mass - 2 * bolt.mass).round(9)", .expected = .{ .num = 0.107 } },
+    });
+    // Written as its five Solids
+    var vm = try initVm();
+    defer vm.deinit();
+    vm.vfs = mem_vfs.vfs();
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, ROBOT ++ "robot.export_3mf(\"robot.3mf\")\nr = robot"));
+    const model = try @import("../exporters/model.zig").collectModel(testing.allocator, &vm);
+    var collected = model;
+    defer collected.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 5), collected.solids.items.len);
+    try testing.expectEqualStrings("robot", collected.title.?);
 }
 
 test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ, and a drawing of them to SVG and DXF" {

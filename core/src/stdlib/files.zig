@@ -8,6 +8,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const arguments = @import("arguments.zig");
+const assembly_mod = @import("assembly.zig");
 const stl = @import("../exporters/3d/stl.zig");
 const export_mod = @import("../exporters/export.zig");
 const format_mod = @import("../exporters/format.zig");
@@ -31,9 +32,9 @@ fn shapesOf(vm: *VM, receiver: value.Value, comptime method: []const u8, format:
         return .{ .solids = held.items };
     }
     if (!receiver.isAssembly()) return arguments.notDefinedFor(vm, method, receiver);
-    const assembly = receiver.asAssembly();
-    try held.appendSlice(vm.allocator, assembly.parts.items.items);
-    return .{ .solids = held.items, .title = assembly.name.chars };
+    // Its Solids, its assemblies' too
+    try assembly_mod.appendSolids(vm, held, receiver);
+    return .{ .solids = held.items, .title = receiver.asAssembly().name.chars };
 }
 
 /// Writes `receiver` to `filepath` in `format` as `options` say, as `kupcad build` writes

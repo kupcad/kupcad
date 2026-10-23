@@ -2,28 +2,29 @@
 //! copies of (exporters/parts.zig groups and measures them), and `named` names a Solid's
 //! part, or a Sketch for a drawing.
 
+const std = @import("std");
 const value = @import("../core/value.zig");
+const assembly_mod = @import("assembly.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const arguments = @import("arguments.zig");
 const parts_mod = @import("../exporters/parts.zig");
 const Part = parts_mod.Part;
 
-/// `receiver`'s Solids: itself, or an Assembly's parts.
-pub fn solidsOf(vm: *VM, receiver: value.Value, method: []const u8, single: *[1]value.Value) ![]const value.Value {
-    if (receiver.isGeometry()) {
-        single.* = .{receiver};
-        return single;
-    }
-    if (receiver.isAssembly()) return receiver.asAssembly().parts.items.items;
+/// Appends `receiver`'s Solids to `solids`: itself, or an Assembly's, its assemblies' too.
+pub fn solidsOf(vm: *VM, receiver: value.Value, method: []const u8, solids: *std.ArrayList(value.Value)) !void {
+    if (receiver.isGeometry()) return solids.append(vm.allocator, receiver);
+    if (receiver.isAssembly()) return assembly_mod.appendSolids(vm, solids, receiver);
     return arguments.notDefinedFor(vm, method, receiver);
 }
 
 /// solid.bom / assembly.bom -> its parts list: an Array of a Map per part, {name:, count:,
 /// volume:, size: [x, y, z], density:, mass:} (nil where it has none).
 pub fn meshBom(vm: *VM, receiver: value.Value) !value.Value {
-    var single: [1]value.Value = undefined;
-    const parts = try parts_mod.collect(vm, vm.allocator, try solidsOf(vm, receiver, "bom", &single));
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    try solidsOf(vm, receiver, "bom", &solids);
+    const parts = try parts_mod.collect(vm, vm.allocator, solids.items);
     defer vm.allocator.free(parts);
 
     var scope = HandleScope.init(vm);
@@ -38,8 +39,10 @@ pub fn meshBom(vm: *VM, receiver: value.Value) !value.Value {
 /// density (`material(density:)`, g/cm³), as the parts list counts it, copies and all. A
 /// part with no density is a ValueError naming it.
 pub fn meshMass(vm: *VM, receiver: value.Value) !value.Value {
-    var single: [1]value.Value = undefined;
-    const parts = try parts_mod.collect(vm, vm.allocator, try solidsOf(vm, receiver, "mass", &single));
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    try solidsOf(vm, receiver, "mass", &solids);
+    const parts = try parts_mod.collect(vm, vm.allocator, solids.items);
     defer vm.allocator.free(parts);
     var total: f64 = 0;
     for (parts) |part| {
