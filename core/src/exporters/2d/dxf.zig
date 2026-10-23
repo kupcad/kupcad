@@ -1,13 +1,17 @@
 //! DXF export: `build` writes a drawing (drawing.zig) as ASCII DXF (AutoCAD 2004, AC1018),
 //! in millimetres (`$INSUNITS`), Y up as a sketch's is. Each outline is a closed
 //! `LWPOLYLINE` on the layer named after its shape (`named`; the layer `0` for one without a
-//! name), its arcs as bulges (the exact circle, not the chords the kernel drew), and an
-//! outline that is one circle a `CIRCLE`, the layer coloured as the shape's material (true
-//! colour, and the nearest of the basic index colours for readers without it). The file holds the header, the layer and
-//! line type tables and the entities: what CAD, CAM and laser tools read.
+//! name), its arcs as bulges (the exact circle, not the chords the kernel drew), an
+//! outline that is one circle a `CIRCLE`, and one with a glyph's curve a cubic `SPLINE`
+//! (a polyline can't bend that way: the curves exact, a line a straight piece, and an arc
+//! pieces of a quarter turn at most, within 0.03% of its circle), the layer coloured as
+//! the shape's material (true colour, and the nearest of the basic index colours for
+//! readers without it). The file holds the header, the layer and line type tables and the
+//! entities: what CAD, CAM and laser tools read.
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
+const bezier = @import("../../core/bezier.zig");
 
 /// AutoCAD 2004, the first with true colours (group 420).
 const VERSION = "AC1018";
@@ -22,6 +26,13 @@ const FIRST_HANDLE = 0x20;
 /// `70` of an LWPOLYLINE: closed, or open (a Path's).
 const CLOSED = 1;
 const OPEN = 0;
+/// `70` of a SPLINE: planar (it lies in XY).
+const PLANAR = 8;
+/// A SPLINE of cubic pieces: its degree, and its knots beyond its control points.
+const SPLINE_DEGREE = 3;
+/// The most an arc's cubic piece sweeps: a quarter turn, where the usual cubic stays
+/// within 0.03% of the circle.
+const ARC_PIECE_MAX = std.math.pi / 2.0;
 
 /// The basic index colours (`62`) a true colour is matched to: AutoCAD's 1 to 7.
 const INDEX_COLORS = [_]struct { index: u8, rgb: [3]u8 }{
@@ -111,6 +122,10 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
                 try file.number(40, arc.radius);
                 continue;
             }
+            if (hasCurve(outline)) {
+                try writeSpline(allocator, &file, shape.name, outline);
+                continue;
+            }
             try file.pair(0, "LWPOLYLINE");
             try file.handle();
             try file.pair(100, "AcDbEntity");
@@ -147,6 +162,85 @@ fn wholeCircle(outline: drawing_mod.Outline) ?drawing_mod.Arc {
     if (first.radius != second.radius or first.center[0] != second.center[0] or first.center[1] != second.center[1]) return null;
     if (outline.edges[0].angle != std.math.pi or outline.edges[1].angle != std.math.pi) return null;
     return first;
+}
+
+/// Whether the outline has a glyph's curve, which only a spline can hold.
+fn hasCurve(outline: drawing_mod.Outline) bool {
+    for (outline.edges) |edge| {
+        if (edge.cubic != null) return true;
+    }
+    return false;
+}
+
+/// A piece of a spline: a cubic to `to`.
+const SplinePiece = struct { c1: [2]f64, c2: [2]f64, to: [2]f64 };
+
+/// `outline` as a `SPLINE` of cubic pieces (a piecewise Bézier: degree 3, each piece's
+/// knot thrice, the ends' four times), its control points the start and each piece's.
+fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: ?[]const u8, outline: drawing_mod.Outline) !void {
+    const pieces = try splinePieces(allocator, outline);
+    defer allocator.free(pieces);
+    const controls = 1 + SPLINE_DEGREE * pieces.len;
+    try file.pair(0, "SPLINE");
+    try file.handle();
+    try file.pair(100, "AcDbEntity");
+    try file.layerOf(8, layer);
+    try file.pair(100, "AcDbSpline");
+    try file.int(70, PLANAR);
+    try file.int(71, SPLINE_DEGREE);
+    try file.int(72, controls + SPLINE_DEGREE + 1);
+    try file.int(73, controls);
+    try file.int(74, 0);
+    for (0..pieces.len + 1) |knot| {
+        const repeats: usize = if (knot == 0 or knot == pieces.len) SPLINE_DEGREE + 1 else SPLINE_DEGREE;
+        for (0..repeats) |_| try file.number(40, @floatFromInt(knot));
+    }
+    try file.point(outline.start);
+    for (pieces) |piece| {
+        try file.point(piece.c1);
+        try file.point(piece.c2);
+        try file.point(piece.to);
+    }
+}
+
+/// `outline`'s edges as cubic pieces: a curve as it is, a line as the cubic with its
+/// controls a third of the way along, an arc as pieces of ARC_PIECE_MAX at most, each the
+/// usual cubic (its controls along the tangents, 4/3 tan(θ/4) of the radius out).
+fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline) ![]SplinePiece {
+    var pieces: std.ArrayList(SplinePiece) = .empty;
+    errdefer pieces.deinit(allocator);
+    var from = outline.start;
+    for (outline.edges) |edge| {
+        if (edge.cubic) |cubic| {
+            try pieces.append(allocator, .{ .c1 = cubic.c1, .c2 = cubic.c2, .to = edge.to });
+        } else if (edge.arc) |arc| {
+            const count: usize = @intFromFloat(@max(1, @ceil(edge.angle / ARC_PIECE_MAX)));
+            const theta = edge.angle / @as(f64, @floatFromInt(count));
+            const kappa = 4.0 / 3.0 * @tan(theta / 4) * arc.radius;
+            const way: f64 = if (edge.ccw) 1 else -1;
+            var a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+            for (0..count) |k| {
+                const a1 = a0 + way * theta;
+                const p0 = [2]f64{ arc.center[0] + arc.radius * @cos(a0), arc.center[1] + arc.radius * @sin(a0) };
+                // The last piece ends exactly where the edge does
+                const p3 = if (k + 1 == count) edge.to else [2]f64{ arc.center[0] + arc.radius * @cos(a1), arc.center[1] + arc.radius * @sin(a1) };
+                try pieces.append(allocator, .{
+                    .c1 = .{ p0[0] - way * kappa * @sin(a0), p0[1] + way * kappa * @cos(a0) },
+                    .c2 = .{ p3[0] + way * kappa * @sin(a1), p3[1] - way * kappa * @cos(a1) },
+                    .to = p3,
+                });
+                a0 = a1;
+            }
+        } else {
+            try pieces.append(allocator, .{
+                .c1 = .{ from[0] + (edge.to[0] - from[0]) / 3, from[1] + (edge.to[1] - from[1]) / 3 },
+                .c2 = .{ from[0] + 2 * (edge.to[0] - from[0]) / 3, from[1] + 2 * (edge.to[1] - from[1]) / 3 },
+                .to = edge.to,
+            });
+        }
+        from = edge.to;
+    }
+    return pieces.toOwnedSlice(allocator);
 }
 
 /// A vertex's bulge (`42`): the tangent of a quarter of the angle the arc to the next

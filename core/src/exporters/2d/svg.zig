@@ -1,8 +1,8 @@
 //! SVG export: `build` writes a drawing (drawing.zig) as SVG, in millimetres (`width` and
 //! `height` in mm, the `viewBox` the drawing's bounds), with Y turned over (SVG's Y runs
 //! down, a sketch's up) so the file shows the sketch as the script has it. Each shape is one
-//! `<path>` of all its outlines, lines as `L` and arcs as `A` (the exact circle, not the
-//! chords the kernel drew), filled by the even-odd rule so its holes are holes, in its
+//! `<path>` of all its outlines, lines as `L`, arcs as `A` (the exact circle, not the
+//! chords the kernel drew) and a glyph's curves as `C`, filled by the even-odd rule so its holes are holes, in its
 //! material colour (or a neutral grey), with a thin black outline; a Path, open, is not
 //! filled and is stroked in its colour; a named shape carries its name as the path's `id`.
 
@@ -47,8 +47,10 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
             try w.print("M {d} {d}", .{ outline.start[0], flipped(outline.start[1]) });
             for (outline.edges, 0..) |edge, e| {
                 // `Z` draws the last line back to the start itself
-                if (outline.closed and e == outline.edges.len - 1 and edge.arc == null) break;
-                if (edge.arc) |arc| {
+                if (outline.closed and e == outline.edges.len - 1 and edge.isLine()) break;
+                if (edge.cubic) |cubic| {
+                    try w.print(" C {d} {d} {d} {d} {d} {d}", .{ cubic.c1[0], flipped(cubic.c1[1]), cubic.c2[0], flipped(cubic.c2[1]), edge.to[0], flipped(edge.to[1]) });
+                } else if (edge.arc) |arc| {
                     // Turned over, a counter-clockwise arc runs the other way: SVG's sweep
                     // flag is 1 for the positive-angle direction of its downward Y
                     try w.print(" A {d} {d} 0 {d} {d} {d} {d}", .{ arc.radius, arc.radius, @intFromBool(edge.large()), @intFromBool(!edge.ccw), edge.to[0], flipped(edge.to[1]) });

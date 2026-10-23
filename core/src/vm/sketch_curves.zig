@@ -1,21 +1,23 @@
-//! The circles a sketch's graph defines, with the points they were drawn with: every
-//! `circle`, each corner of a `rounded_square` and each arc of a `closed_path` below the
-//! sketch's node, carried through the sketch's transforms as long as those keep a circle a
-//! circle (a similarity: a uniform scale, a turn, a mirror, a move), and not through an
-//! offset, which draws its own shape. A sketch that is a Solid's projection or slice
-//! (`project`, `slice`) has the Solid's: a cylinder's cap (a cone's larger one), and the
-//! sketches of its extrusions, through the Solid's moves that keep the XY plane (a move, a
-//! turn about z, a scale even in x and y, a mirror across a vertical plane). The 2D
-//! exporters match the kernel's outlines against them to write the arcs the chords came
-//! from (exporters/2d/arcs.zig).
+//! The curves a sketch's graph defines, with the points they were drawn with: the circles
+//! (every `circle`, each corner of a `rounded_square` and each arc of a `closed_path` below
+//! the sketch's node) and the cubic curves (a text's glyphs', the `polygons_even_odd` node
+//! keeps), carried through the sketch's transforms: a cubic through any, a circle as long
+//! as those keep a circle a circle (a similarity: a uniform scale, a turn, a mirror, a
+//! move); neither through an offset, which draws its own shape. A sketch that is a Solid's
+//! projection or slice (`project`, `slice`) has the Solid's: a cylinder's cap (a cone's
+//! larger one), and the sketches of its extrusions, through the Solid's moves that keep the
+//! XY plane (a move, a turn about z, a scale even in x and y, a mirror across a vertical
+//! plane). The 2D exporters match the kernel's outlines against them to write the curves
+//! the chords came from (exporters/2d/curves.zig).
 
 const std = @import("std");
 const dag = @import("dag.zig");
 const rounded_rect = @import("../core/rounded_rect.zig");
+const bezier = @import("../core/bezier.zig");
 
-/// The most circles collected for one sketch: a shared subgraph is visited once per path
+/// The most curves collected for one sketch: a shared subgraph is visited once per path
 /// to it, so a graph of many unions of many copies can name more than a drawing needs.
-const MAX_CIRCLES = 10_000;
+const MAX_CURVES = 10_000;
 /// How far from a similarity a transform's matrix may be (relative to its scale) and still
 /// keep a circle a circle.
 const SIMILARITY_TOLERANCE = 1e-9;
@@ -30,12 +32,24 @@ pub const Circle = struct {
     closed: bool,
 };
 
-pub const Circles = struct {
-    items: []Circle,
+/// A cubic curve as drawn: its controls after the sketch's transforms, and the points the
+/// kernel was given for it, from its start to its end.
+pub const Cubic = struct {
+    control: bezier.Cubic,
+    points: [][2]f64,
+};
 
-    pub fn deinit(self: *Circles, allocator: std.mem.Allocator) void {
-        for (self.items) |circle| allocator.free(circle.points);
-        allocator.free(self.items);
+pub const Curves = struct {
+    circles: []Circle,
+    cubics: []Cubic,
+
+    pub const empty = Curves{ .circles = &.{}, .cubics = &.{} };
+
+    pub fn deinit(self: *Curves, allocator: std.mem.Allocator) void {
+        for (self.circles) |circle| allocator.free(circle.points);
+        allocator.free(self.circles);
+        for (self.cubics) |cubic| allocator.free(cubic.points);
+        allocator.free(self.cubics);
     }
 };
 
@@ -78,12 +92,17 @@ const Matrix = struct {
     }
 };
 
-/// The circles below `root` (a sketch node of `b`). Owned by `allocator`.
-pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag.DAGNodeIndex) !Circles {
+/// The curves below `root` (a sketch node of `b`). Owned by `allocator`.
+pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag.DAGNodeIndex) !Curves {
     var circles: std.ArrayList(Circle) = .empty;
     errdefer {
         for (circles.items) |circle| allocator.free(circle.points);
         circles.deinit(allocator);
+    }
+    var cubics: std.ArrayList(Cubic) = .empty;
+    errdefer {
+        for (cubics.items) |cubic| allocator.free(cubic.points);
+        cubics.deinit(allocator);
     }
     const Visit = struct { node: dag.DAGNodeIndex, matrix: Matrix };
     var pending: std.ArrayList(Visit) = .empty;
@@ -91,9 +110,21 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
     try pending.append(allocator, .{ .node = root, .matrix = Matrix.identity });
     while (pending.pop()) |visit| {
         if (visit.node == dag.CONCRETE_NODE_SENTINEL) continue;
-        if (circles.items.len >= MAX_CIRCLES) break;
+        if (circles.items.len + cubics.items.len >= MAX_CURVES) break;
         const node = b.nodes.items[visit.node];
         switch (node.tag) {
+            // A glyph's curves, each with the run of its contour's points it became
+            .polygons_even_odd => {
+                const p = b.getPolygonsPayload(node);
+                for (0..p.curveCount()) |i| {
+                    const curve = p.curve(@intCast(i));
+                    const points = try allocator.dupe([2]f64, p.contour(curve.contour)[curve.first..][0..curve.count]);
+                    errdefer allocator.free(points);
+                    for (points) |*pt| pt.* = visit.matrix.apply(pt.*);
+                    const control = bezier.Cubic{ .c1 = visit.matrix.apply(curve.cubic.c1), .c2 = visit.matrix.apply(curve.cubic.c2) };
+                    try cubics.append(allocator, .{ .control = control, .points = points });
+                }
+            },
             .circle => {
                 const p = b.getCirclePayload(node);
                 try addCircle(allocator, &circles, visit.matrix, .{ 0, 0 }, p.radius, try circlePoints(allocator, p.radius, p.segments), true);
@@ -164,7 +195,12 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
             else => {},
         }
     }
-    return .{ .items = try circles.toOwnedSlice(allocator) };
+    const found = try circles.toOwnedSlice(allocator);
+    errdefer {
+        for (found) |circle| allocator.free(circle.points);
+        allocator.free(found);
+    }
+    return .{ .circles = found, .cubics = try cubics.toOwnedSlice(allocator) };
 }
 
 /// Adds the circle of `radius` at `center` drawn with `points` (owned from here on), as

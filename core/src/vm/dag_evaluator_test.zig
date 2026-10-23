@@ -270,12 +270,12 @@ test "DAG Builder: even-odd polygons with different contour splits are distinct"
     defer scratch_a.deinit();
     var scratch_b = dag.DAGBuilder.init(testing.allocator);
     defer scratch_b.deinit();
-    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] })];
-    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] })];
+    const ha = scratch_a.node_hashes.items[try scratch_a.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] }, &.{})];
+    const hb = scratch_b.node_hashes.items[try scratch_b.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] }, &.{})];
     try testing.expect(ha != hb);
 
-    const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] });
-    const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] });
+    const a_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..3], pts[3..8] }, &.{});
+    const b_idx = try vm.dag_builder.addPolygonsEvenOdd(&.{ pts[0..4], pts[4..8] }, &.{});
     try testing.expect(a_idx != b_idx);
 
     const a_ext = try vm.dag_builder.addExtrude(a_idx, 1, 1, 0, 1, 1);

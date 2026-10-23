@@ -76,6 +76,16 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
                 const at = node.data + 1 + 2 * i;
                 if (numbers(b, extra[at], 2 * @as(usize, extra[at + 1]))) |p| return p;
             }
+            const curves_at = b.polygonsCurvesAt(node.data);
+            if (!fits(curves_at, 2, extra.len)) return "its curve count is outside extra_data";
+            const curves = extra[curves_at];
+            if (!fits(curves_at + 2, dag.CURVE_WORDS * @as(usize, curves), extra.len)) return "its curves are outside extra_data";
+            if (numbers(b, extra[curves_at + 1], dag.CURVE_NUMBERS * @as(usize, curves))) |p| return p;
+            for (0..curves) |i| {
+                const words = extra[curves_at + 2 + dag.CURVE_WORDS * i ..][0..dag.CURVE_WORDS];
+                if (words[0] >= count) return "a curve names a contour the node doesn't have";
+                if (words[2] < 2 or !fits(words[1], words[2], extra[node.data + 2 + 2 * words[0]])) return "a curve names points its contour doesn't have";
+            }
             return null;
         },
         .polyhedron => polyhedron(b, node.data),

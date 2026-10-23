@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const tatfi = @import("tatfi");
 const text = @import("text.zig");
+const bezier = @import("bezier.zig");
 const Kerning = @import("kerning.zig").Kerning;
 
 test "Text Engine: Successfully parses all embedded font families allocation-free" {
@@ -92,6 +93,32 @@ test "Text Engine: halign and valign offsets contours correctly" {
     // Since it is aligned Right/Top, the maximum bounds must be exactly shifted to 0.0
     try testing.expectApproxEqAbs(0.0, rx_max, 0.001);
     try testing.expectApproxEqAbs(0.0, ry_max, 0.001);
+}
+
+test "Text Engine: each curve is kept with the run of points it became, and moves with the alignment" {
+    const face = try text.getFace(.sans);
+    var polygons = try text.extractText(testing.allocator, &face, "O", 10.0, 0.1, .center, .center);
+    defer polygons.deinit(testing.allocator);
+    try testing.expect(polygons.curves.items.len >= 4);
+    for (polygons.curves.items) |curve| {
+        try testing.expect(curve.contour < polygons.contours.items.len);
+        const contour = polygons.contours.items[curve.contour].items;
+        try testing.expect(curve.count >= 2 and curve.first + curve.count <= contour.len);
+        // Every point of the run lies on the cubic (the flattener halves it, so each is at
+        // a dyadic parameter a fine sampling hits)
+        const p0 = contour[curve.first];
+        const p3 = contour[curve.first + curve.count - 1];
+        for (contour[curve.first..][0..curve.count]) |p| {
+            var nearest: f64 = std.math.inf(f64);
+            for (0..1025) |k| {
+                const q = bezier.pointOn(p0, curve.cubic, p3, @as(f64, @floatFromInt(k)) / 1024);
+                nearest = @min(nearest, std.math.hypot(q[0] - p[0], q[1] - p[1]));
+            }
+            try testing.expect(nearest < 1e-9);
+        }
+        // Centred: the controls lie about the origin with the glyph, not off to its right
+        try testing.expect(@abs(curve.cubic.c1[0]) < 10 and @abs(curve.cubic.c1[1]) < 10);
+    }
 }
 
 fn pointCount(polygons: *const text.TextPolygons) usize {

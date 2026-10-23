@@ -1,7 +1,51 @@
-//! Flattens quadratic and cubic Bézier curves into line segments by De Casteljau
-//! subdivision (`flattenQuadratic`, `flattenCubic`); used by text.zig for glyph outlines.
+//! Cubic Bézier curves: flattens quadratic and cubic ones into line segments by De
+//! Casteljau subdivision (`flattenQuadratic`, `flattenCubic`), used by text.zig for glyph
+//! outlines, and keeps the curve a run of points was flattened from (`Flattened`), so a
+//! drawing can write it exactly again.
 
 const std = @import("std");
+
+/// A cubic Bézier curve's two control points; its ends are the points it runs between.
+pub const Cubic = struct {
+    c1: [2]f64,
+    c2: [2]f64,
+
+    /// The same curve run the other way.
+    pub fn reversed(self: Cubic) Cubic {
+        return .{ .c1 = self.c2, .c2 = self.c1 };
+    }
+};
+
+/// A curve a run of a polygon's points was flattened from: `count` points of contour
+/// `contour` from `first` (the first and the last its ends), and the cubic between them.
+pub const Flattened = struct {
+    contour: u32,
+    first: u32,
+    count: u32,
+    cubic: Cubic,
+};
+
+/// The quadratic from `p0` through the control `q` to `p2` as a cubic: the same curve (a
+/// degree elevation is exact).
+pub fn quadraticAsCubic(p0: [2]f64, q: [2]f64, p2: [2]f64) Cubic {
+    return .{
+        .c1 = .{ p0[0] + 2.0 / 3.0 * (q[0] - p0[0]), p0[1] + 2.0 / 3.0 * (q[1] - p0[1]) },
+        .c2 = .{ p2[0] + 2.0 / 3.0 * (q[0] - p2[0]), p2[1] + 2.0 / 3.0 * (q[1] - p2[1]) },
+    };
+}
+
+/// The point of the cubic from `p0` to `p3` at `t`, 0 at `p0` and 1 at `p3`.
+pub fn pointOn(p0: [2]f64, cubic: Cubic, p3: [2]f64, t: f64) [2]f64 {
+    const u = 1 - t;
+    const w0 = u * u * u;
+    const w1 = 3 * u * u * t;
+    const w2 = 3 * u * t * t;
+    const w3 = t * t * t;
+    return .{
+        w0 * p0[0] + w1 * cubic.c1[0] + w2 * cubic.c2[0] + w3 * p3[0],
+        w0 * p0[1] + w1 * cubic.c1[1] + w2 * cubic.c2[1] + w3 * p3[1],
+    };
+}
 
 inline fn midpoint(a: [2]f64, b: [2]f64) [2]f64 {
     return .{ (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 };

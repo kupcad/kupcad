@@ -26,8 +26,8 @@ const obj_exporter = @import("exporters/3d/obj.zig");
 const svg_exporter = @import("exporters/2d/svg.zig");
 const dxf_exporter = @import("exporters/2d/dxf.zig");
 const drawing_mod = @import("exporters/2d/drawing.zig");
-const arcs = @import("exporters/2d/arcs.zig");
-const sketch_circles = @import("vm/sketch_circles.zig");
+const curves_mod = @import("exporters/2d/curves.zig");
+const sketch_curves = @import("vm/sketch_curves.zig");
 const log = std.log.scoped(.@"export");
 const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
@@ -658,7 +658,7 @@ fn pathShapeOf(allocator: std.mem.Allocator, vm: *const VM, path_val: value.Valu
 
 /// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
 /// the shape's from here on, freed on failure) and `material`: the kernel's contours, with
-/// the chords of the circles the sketch's graph defines turned back into their arcs.
+/// the chords of the curves the sketch's graph defines turned back into them.
 fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]const u8, material: ?MaterialDef) !drawing_mod.Shape {
     errdefer if (name) |n| allocator.free(n);
     const handle = try vm.ensureConcreteCrossSection(sketch);
@@ -666,10 +666,10 @@ fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]
     const contours = kernel.crossSectionContours(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
     defer contours.deinit(allocator);
     const node = sketch.asCrossSection().dag_idx;
-    var circles = try sketch_circles.collect(allocator, &vm.dag_builder, node);
-    defer circles.deinit(allocator);
+    var curves = try sketch_curves.collect(allocator, &vm.dag_builder, node);
+    defer curves.deinit(allocator);
     const tolerance = vm.dag_builder.settings(vm.dag_builder.nodes.items[node].settings).tolerance;
-    const outlines = try arcs.outlinesOf(allocator, contours, circles.items, tolerance);
+    const outlines = try curves_mod.outlinesOf(allocator, contours, &curves, tolerance);
     return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
 }
 

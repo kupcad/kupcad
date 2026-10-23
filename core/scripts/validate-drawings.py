@@ -2,7 +2,7 @@
 colours, Solids projected beside sketches, copies, --split) with the kupcad binary, and reads
 each SVG back as XML (well-formed, in millimetres, a path per shape) and each DXF with ezdxf's
 recovering reader and auditor (any error or fix fails, and each contour must be a closed
-polyline on its layer). Run `pnpm check:drawings` from the repository root after `zig build`,
+polyline, a circle or a closed cubic spline on its layer). Run `pnpm check:drawings` from the repository root after `zig build`,
 with ezdxf installed (`pip install -r core/scripts/requirements.txt`).
 """
 
@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 
 import ezdxf
 from ezdxf import recover
+from ezdxf.math import Vec3
 
 KUPCAD = pathlib.Path(__file__).resolve().parent.parent / "zig-out" / "bin" / "kupcad"
 SVG_NS = "{http://www.w3.org/2000/svg}"
@@ -35,6 +36,8 @@ MODELS = {
     ),
     # Each a circle, through what projects or slices it
     "cylinders": ("[cylinder(r: 5, h: 10).project, cylinder(r1: 5, r2: 2, h: 10).translate(x: 20).project, cylinder(r: 4, h: 10).rotate(z: 30).translate(x: 40).slice(3)]", 3, 3),
+    # Glyphs: curves, and curves beside an arc in one outline
+    "text": ('[text("O", 10).named("o"), text("L", 10).translate(x: 12), text("O", 10) + circle(r: 2).translate(x: 1, y: 4)]', 3, 5),
     "paths": (
         """hook = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])
 [hook.named("outline").material(color: "#00AA00"), hook.close.translate(y: 20), hook.stroke(1).translate(y: 40)]""",
@@ -103,8 +106,17 @@ def dxf_problems(path, shapes, contours):
             if e.dxf.radius <= 0:
                 found.append("a circle of no radius")
             continue
+        if e.dxftype() == "SPLINE":
+            controls = list(e.control_points)
+            if e.dxf.degree != 3:
+                found.append(f"a spline of degree {e.dxf.degree}, not 3")
+            if len(e.knots) != len(controls) + 4 or (len(controls) - 1) % 3 != 0:
+                found.append("a spline whose knots and control points aren't cubic pieces")
+            if not controls or not Vec3(controls[0]).isclose(Vec3(controls[-1])):
+                found.append("a spline that doesn't end where it starts")
+            continue
         if e.dxftype() != "LWPOLYLINE":
-            found.append(f"a {e.dxftype()}, not an LWPOLYLINE or a CIRCLE")
+            found.append(f"a {e.dxftype()}, not an LWPOLYLINE, a CIRCLE or a SPLINE")
         elif not e.closed and e.dxf.layer == "0":
             found.append("an open polyline that isn't a Path's (a Path is named here)")
         elif e.dxf.layer not in doc.layers:

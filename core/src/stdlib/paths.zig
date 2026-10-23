@@ -293,7 +293,7 @@ pub fn pathLength(vm: *VM, receiver: value.Value) !value.Value {
     var total: f64 = 0;
     var from = p.start;
     for (p.segments) |segment| {
-        total += if (segment.arc) |arc| arc.radius * segment.angle else std.math.hypot(segment.to[0] - from[0], segment.to[1] - from[1]);
+        total += segment.length(from);
         from = segment.to;
     }
     return value.Value.initNumber(total);

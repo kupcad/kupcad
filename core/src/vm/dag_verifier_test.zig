@@ -35,7 +35,7 @@ test "DAG verifier: what every builder makes is sound" {
     _ = try b.addTrimByPlane(try b.addHull(cube), 0, 0, 1, 0);
     _ = try b.addTransformMatrix(try b.addMirror(cube, 1, 0, 0), .{ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 });
     _ = try b.addPolyhedron(&.{ .{ 0, 0, 0 }, .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } }, &.{ .{ 0, 2, 1 }, .{ 0, 1, 3 }, .{ 0, 3, 2 }, .{ 1, 2, 3 } });
-    _ = try b.addPolygonsEvenOdd(&.{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } });
+    _ = try b.addPolygonsEvenOdd(&.{ &.{ .{ 0, 0 }, .{ 4, 0 }, .{ 0, 4 } }, &.{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 } } }, &.{.{ .contour = 1, .first = 0, .count = 2, .cubic = .{ .c1 = .{ 1, 1 }, .c2 = .{ 2, 1 } } }});
     _ = try b.addSetMaterial(cube, 1);
     _ = try b.addEmpty(true);
 }
@@ -56,6 +56,14 @@ test "DAG verifier: names what is wrong with a malformed node" {
     try expectProblem("its numbers are outside the numbers table", &b, try nodeWith(&b, .translate, &.{ cube, 1000 }));
     try expectProblem("its operands are outside extra_data", &b, .{ .tag = .difference_op, .data = @intCast(b.extra_data.items.len) });
     try expectProblem("it names no concrete leaf", &b, .{ .tag = .concrete, .data = 0 });
+    // A polygons node of one triangle (its numbers at `nums`) with a curve that names a
+    // contour or points it doesn't have (the curve's numbers at `nums` too)
+    try b.numbers.appendSlice(testing.allocator, &.{ 0, 0, 0 });
+    try expectProblem("a curve names a contour the node doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 1, 0, 2 }));
+    try expectProblem("a curve names points its contour doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 2, 2 }));
+    try expectProblem("a curve names points its contour doesn't have", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 0, 1 }));
+    try expectProblem("its curves are outside extra_data", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 5, nums }));
+    try expectProblem("sound", &b, try nodeWith(&b, .polygons_even_odd, &.{ 1, nums, 3, 1, nums, 0, 0, 3 }));
     try expectProblem("its settings id names no settings", &b, .{ .tag = .empty_solid, .settings = 7 });
 
     // A NaN in the numbers: the evaluator skips checking a moved solid on the promise

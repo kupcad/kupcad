@@ -200,6 +200,73 @@ test "DXF: an outline that is one circle is a CIRCLE entity" {
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, dxf, "\nLWPOLYLINE\n"));
 }
 
+/// The splines of the file: each one's layer, degree, knots and control points.
+const Spline = struct { layer: []const u8, degree: usize, knots: usize, controls: std.ArrayList([2]f64) };
+
+fn splines(pairs: []const Pair) !std.ArrayList(Spline) {
+    var found: std.ArrayList(Spline) = .empty;
+    errdefer {
+        for (found.items) |*s| s.controls.deinit(testing.allocator);
+        found.deinit(testing.allocator);
+    }
+    var i: usize = 0;
+    while (i < pairs.len) : (i += 1) {
+        if (!(pairs[i].code == 0 and std.mem.eql(u8, pairs[i].value, "SPLINE"))) continue;
+        var spline: Spline = .{ .layer = "", .degree = 0, .knots = 0, .controls = .empty };
+        errdefer spline.controls.deinit(testing.allocator);
+        var declared_controls: usize = 0;
+        var declared_knots: usize = 0;
+        i += 1;
+        while (i < pairs.len and pairs[i].code != 0) : (i += 1) {
+            switch (pairs[i].code) {
+                8 => spline.layer = pairs[i].value,
+                71 => spline.degree = try std.fmt.parseInt(usize, pairs[i].value, 10),
+                72 => declared_knots = try std.fmt.parseInt(usize, pairs[i].value, 10),
+                73 => declared_controls = try std.fmt.parseInt(usize, pairs[i].value, 10),
+                40 => spline.knots += 1,
+                10 => {
+                    try testing.expectEqual(@as(u16, 20), pairs[i + 1].code);
+                    try spline.controls.append(testing.allocator, .{ try std.fmt.parseFloat(f64, pairs[i].value), try std.fmt.parseFloat(f64, pairs[i + 1].value) });
+                    i += 1;
+                },
+                else => {},
+            }
+        }
+        i -= 1;
+        try testing.expectEqual(declared_knots, spline.knots);
+        try testing.expectEqual(declared_controls, spline.controls.items.len);
+        try found.append(testing.allocator, spline);
+    }
+    return found;
+}
+
+fn freeSplines(found: *std.ArrayList(Spline)) void {
+    for (found.items) |*s| s.controls.deinit(testing.allocator);
+    found.deinit(testing.allocator);
+}
+
+test "DXF: an outline with a glyph's curve is a closed cubic SPLINE on its layer, an arc in it quarter-turn pieces" {
+    const dxf = try exportDxf("[text(\"O\", 10).named(\"o\"), text(\"O\", 10).translate(x: 20) + circle(r: 2).translate(x: 21, y: 4), square(5).translate(y: 20)]");
+    defer testing.allocator.free(dxf);
+    var pairs = try readPairs(dxf);
+    defer pairs.deinit(testing.allocator);
+    var found = try splines(pairs.items);
+    defer freeSplines(&found);
+    // The O's two contours and the union's two; the square stays a polyline
+    try testing.expectEqual(@as(usize, 4), found.items.len);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, dxf, "\nLWPOLYLINE\n"));
+    try testing.expectEqualStrings("o", found.items[0].layer);
+    try testing.expectEqualStrings("0", found.items[2].layer);
+    for (found.items) |spline| {
+        try testing.expectEqual(@as(usize, 3), spline.degree);
+        // Cubic pieces: 3 controls per piece after the start, a knot per control and 4 more
+        const controls = spline.controls.items;
+        try testing.expectEqual(@as(usize, 1), controls.len % 3);
+        try testing.expectEqual(controls.len + 4, spline.knots);
+        try testing.expectEqual(controls[0], controls[controls.len - 1]);
+    }
+}
+
 test "DXF: every handle is given out once" {
     const dxf = try exportDxf("[square(1), square(1).translate(x: 3).named(\"a\")]");
     defer testing.allocator.free(dxf);

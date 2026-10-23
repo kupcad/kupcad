@@ -1,7 +1,8 @@
 //! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
 //! fonts (`FontKey`, `getFace`), each pair kerned as the font says (kerning.zig), flattens
-//! their curves into closed contours scaled to the given size in mm, and aligns the result
-//! (`HAlign`, `VAlign`) into `TextPolygons`.
+//! their curves into closed contours scaled to the given size in mm, keeping each curve
+//! with the points it became (bezier.zig's `Flattened`, so a drawing writes it exactly),
+//! and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
 
 const std = @import("std");
 const tatfi = @import("tatfi");
@@ -72,10 +73,13 @@ pub const VAlign = enum { baseline, bottom, center, top };
 pub const TextPolygons = struct {
     // A list of closed contours. Each contour is an array of [2]f64 points.
     contours: std.ArrayList(std.ArrayList([2]f64)),
+    /// The curves the contours' points were flattened from, in the order drawn.
+    curves: std.ArrayList(bezier.Flattened),
 
     pub fn deinit(self: *TextPolygons, alloc: std.mem.Allocator) void {
         for (self.contours.items) |*c| c.deinit(alloc);
         self.contours.deinit(alloc);
+        self.curves.deinit(alloc);
     }
 };
 
@@ -133,13 +137,22 @@ const BuilderContext = struct {
         }
     }
 
-    fn lastPoint(self: *const BuilderContext) [2]f64 {
-        if (self.current_contour) |c| {
-            if (c.items.len > 0) {
-                return c.items[c.items.len - 1];
-            }
-        }
-        return .{ self.cursor_x, self.cursor_y };
+    /// The font's point (`x`, `y`) in mm, where the cursor has the glyph.
+    fn point(self: *const BuilderContext, x: f32, y: f32) [2]f64 {
+        return .{ self.cursor_x + @as(f64, x) * self.scale, self.cursor_y + @as(f64, y) * self.scale };
+    }
+
+    /// Keeps `cubic`, just flattened into the contour's points from `first` on (the
+    /// contour's index is the one it gets when flushed: it has its first point, so it
+    /// will be).
+    fn keepCurve(self: *BuilderContext, first: usize, cubic: bezier.Cubic) void {
+        if (self.failed) return;
+        self.record(self.polygons.curves.append(self.allocator, .{
+            .contour = @intCast(self.polygons.contours.items.len),
+            .first = @intCast(first),
+            .count = @intCast(self.current_contour.?.items.len - first),
+            .cubic = cubic,
+        }));
     }
 };
 
@@ -151,39 +164,37 @@ fn moveTo(ptr: *anyopaque, x: f32, y: f32) void {
     if (ctx.failed) return;
 
     ctx.current_contour = std.ArrayList([2]f64).empty;
-    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-    ctx.record(ctx.current_contour.?.append(ctx.allocator, pt));
+    ctx.record(ctx.current_contour.?.append(ctx.allocator, ctx.point(x, y)));
 }
 
 fn lineTo(ptr: *anyopaque, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
     if (ctx.failed or ctx.current_contour == null) return;
-
-    const pt = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-    ctx.record(ctx.current_contour.?.append(ctx.allocator, pt));
+    ctx.record(ctx.current_contour.?.append(ctx.allocator, ctx.point(x, y)));
 }
 
+/// A TrueType quadratic: flattened as one, kept as the cubic it is exactly, so every
+/// curve a drawing writes is one kind.
 fn quadTo(ptr: *anyopaque, x1: f32, y1: f32, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
     if (ctx.failed or ctx.current_contour == null) return;
-
-    const p0 = ctx.lastPoint();
-    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
-    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-
-    ctx.record(bezier.flattenQuadratic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, ctx.tolerance_sq));
+    const contour = &ctx.current_contour.?;
+    const first = contour.items.len - 1;
+    const p0 = contour.items[first];
+    const q = ctx.point(x1, y1);
+    const end = ctx.point(x, y);
+    ctx.record(bezier.flattenQuadratic(ctx.allocator, contour, p0, q, end, ctx.tolerance_sq));
+    ctx.keepCurve(first, bezier.quadraticAsCubic(p0, q, end));
 }
 
 fn curveTo(ptr: *anyopaque, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) void {
     var ctx: *BuilderContext = @ptrCast(@alignCast(ptr));
     if (ctx.failed or ctx.current_contour == null) return;
-
-    const p0 = ctx.lastPoint();
-    const p1 = [2]f64{ ctx.cursor_x + @as(f64, x1) * ctx.scale, ctx.cursor_y + @as(f64, y1) * ctx.scale };
-    const p2 = [2]f64{ ctx.cursor_x + @as(f64, x2) * ctx.scale, ctx.cursor_y + @as(f64, y2) * ctx.scale };
-    const p3 = [2]f64{ ctx.cursor_x + @as(f64, x) * ctx.scale, ctx.cursor_y + @as(f64, y) * ctx.scale };
-
-    ctx.record(bezier.flattenCubic(ctx.allocator, &ctx.current_contour.?, p0, p1, p2, p3, ctx.tolerance_sq));
+    const contour = &ctx.current_contour.?;
+    const first = contour.items.len - 1;
+    const cubic = bezier.Cubic{ .c1 = ctx.point(x1, y1), .c2 = ctx.point(x2, y2) };
+    ctx.record(bezier.flattenCubic(ctx.allocator, contour, contour.items[first], cubic.c1, cubic.c2, ctx.point(x, y), ctx.tolerance_sq));
+    ctx.keepCurve(first, cubic);
 }
 
 fn closePath(ptr: *anyopaque) void {
@@ -270,7 +281,7 @@ pub fn extractText(
     halign: HAlign,
     valign: VAlign,
 ) !TextPolygons {
-    var polygons = TextPolygons{ .contours = .empty };
+    var polygons = TextPolygons{ .contours = .empty, .curves = .empty };
     errdefer polygons.deinit(allocator);
 
     // Calculate scaling factor from font design units to physical CAD units (mm)
@@ -360,4 +371,10 @@ fn alignContours(polygons: *TextPolygons, halign: HAlign, valign: VAlign) void {
         pt[0] += dx;
         pt[1] += dy;
     };
+    for (polygons.curves.items) |*curve| {
+        for ([_]*[2]f64{ &curve.cubic.c1, &curve.cubic.c2 }) |control| {
+            control[0] += dx;
+            control[1] += dy;
+        }
+    }
 }

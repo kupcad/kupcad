@@ -6,6 +6,7 @@
 const std = @import("std");
 const rounded_rect = @import("../core/rounded_rect.zig");
 const path_mod = @import("../core/path.zig");
+const bezier = @import("../core/bezier.zig");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
 const dag_verifier = @import("dag_verifier.zig");
@@ -22,6 +23,10 @@ const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
 /// is an arc, the arc's centre (x, y) and radius, its way round, its angle and its chords.
 pub const PATH_START_NUMBERS = 2;
 pub const PATH_SEGMENT_NUMBERS = 9;
+/// A polygons node's curve's numbers: its two controls (x, y each).
+pub const CURVE_NUMBERS = 4;
+/// A polygons node's curve's words in extra_data: its contour, first point and point count.
+pub const CURVE_WORDS = 3;
 
 /// A closed path as read from its node (DAGBuilder.readClosedPath).
 pub const ClosedPath = struct {
@@ -142,7 +147,9 @@ pub const Layout = union(enum) {
     /// extra_data at `data`: the index of a closed path's numbers (PATH_START_NUMBERS, then
     /// PATH_SEGMENT_NUMBERS per segment), then its segment count.
     path,
-    /// extra_data at `data`: the contour count, then a polygon's two words per contour.
+    /// extra_data at `data`: the contour count, then a polygon's two words per contour,
+    /// then the count of the curves the contours' points were flattened from, the index
+    /// of their numbers (CURVE_NUMBERS each) and CURVE_WORDS per curve.
     polygons,
     /// extra_data at `data`: the points' start and count, the faces' start and count, and
     /// the two halves of the mesh's hash.
@@ -211,6 +218,8 @@ const PayloadPart = union(enum) {
     numbers: []const f64,
     /// A plain value: a count, a material id, a polyhedron's mesh hash.
     value: u64,
+    /// Plain words of extra_data: a polygons node's curves' places.
+    words: []const u32,
     points: []const [3]f64,
     faces: []const [3]u32,
     /// A concrete leaf's serial.
@@ -257,8 +266,12 @@ const PayloadParts = struct {
                 .{ .value = extra[at] }
             else if (step <= extra[at])
                 .{ .numbers = b.numbers.items[extra[at + 2 * step - 1]..][0 .. 2 * extra[at + 2 * step]] }
-            else
-                null,
+            else switch (step - extra[at]) {
+                1 => .{ .value = b.polygonsCurveCount(at) },
+                2 => .{ .numbers = b.numbers.items[extra[b.polygonsCurvesAt(at) + 1]..][0 .. CURVE_NUMBERS * b.polygonsCurveCount(at)] },
+                3 => .{ .words = extra[b.polygonsCurvesAt(at) + 2 ..][0 .. CURVE_WORDS * b.polygonsCurveCount(at)] },
+                else => null,
+            },
             .polyhedron => switch (step) {
                 0 => .{ .value = (@as(u64, extra[at + 4]) << 32) | extra[at + 5] },
                 1 => .{ .points = b.poly_points.items[extra[at]..][0..extra[at + 1]] },
@@ -562,7 +575,10 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .polyhedron_op, .flags = 0, .data = data_offset }, snap);
     }
 
-    pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64) !DAGNodeIndex {
+    /// The sketch of `contours` filled by the even-odd rule, with `curves` the curves runs
+    /// of their points were flattened from (a text's glyphs'), for a drawing to write
+    /// exactly; each must name points its contour has.
+    pub fn addPolygonsEvenOdd(self: *DAGBuilder, contours: []const []const [2]f64, curves: []const bezier.Flattened) !DAGNodeIndex {
         const snap = self.snapshot();
         const alloc = self.allocator();
         const data_offset: u32 = @intCast(self.extra_data.items.len);
@@ -578,7 +594,58 @@ pub const DAGBuilder = struct {
             try self.extra_data.appendSlice(alloc, &.{ pts_start, @intCast(contour.len) });
         }
 
+        try self.extra_data.appendSlice(alloc, &.{ @intCast(curves.len), @intCast(self.numbers.items.len) });
+        for (curves) |curve| {
+            std.debug.assert(curve.contour < contours.len and curve.count >= 2 and curve.first + curve.count <= contours[curve.contour].len);
+            try self.numbers.appendSlice(alloc, &.{ curve.cubic.c1[0], curve.cubic.c1[1], curve.cubic.c2[0], curve.cubic.c2[1] });
+            try self.extra_data.appendSlice(alloc, &.{ curve.contour, curve.first, curve.count });
+        }
+
         return try self.appendNodeWithRollback(.{ .tag = .polygons_even_odd, .flags = 0, .data = data_offset }, snap);
+    }
+
+    /// Where a polygons node's curves start in extra_data (their count), the node's
+    /// payload at `at`.
+    pub fn polygonsCurvesAt(self: *const DAGBuilder, at: u32) u32 {
+        return at + 1 + 2 * self.extra_data.items[at];
+    }
+
+    pub fn polygonsCurveCount(self: *const DAGBuilder, at: u32) u32 {
+        return self.extra_data.items[self.polygonsCurvesAt(at)];
+    }
+
+    /// A polygons node's contours and curves, read from its payload.
+    pub const PolygonsPayload = struct {
+        b: *const DAGBuilder,
+        at: u32,
+
+        pub fn contourCount(self: PolygonsPayload) u32 {
+            return self.b.extra_data.items[self.at];
+        }
+
+        /// Contour `i`'s points.
+        pub fn contour(self: PolygonsPayload, i: u32) []const [2]f64 {
+            const extra = self.b.extra_data.items;
+            const flat = self.b.numbers.items[extra[self.at + 1 + 2 * i]..][0 .. 2 * extra[self.at + 2 + 2 * i]];
+            return @as([*]const [2]f64, @ptrCast(flat.ptr))[0..extra[self.at + 2 + 2 * i]];
+        }
+
+        pub fn curveCount(self: PolygonsPayload) u32 {
+            return self.b.polygonsCurveCount(self.at);
+        }
+
+        /// Curve `i`: which of a contour's points it became, and its controls.
+        pub fn curve(self: PolygonsPayload, i: u32) bezier.Flattened {
+            const extra = self.b.extra_data.items;
+            const curves_at = self.b.polygonsCurvesAt(self.at);
+            const words = extra[curves_at + 2 + CURVE_WORDS * i ..][0..CURVE_WORDS];
+            const n = self.b.numbers.items[extra[curves_at + 1] + CURVE_NUMBERS * i ..][0..CURVE_NUMBERS];
+            return .{ .contour = words[0], .first = words[1], .count = words[2], .cubic = .{ .c1 = .{ n[0], n[1] }, .c2 = .{ n[2], n[3] } } };
+        }
+    };
+
+    pub fn getPolygonsPayload(self: *const DAGBuilder, node: DAGNode) PolygonsPayload {
+        return .{ .b = self, .at = node.data };
     }
 
     /// Registers an evaluated handle as a DAG leaf. On success the builder takes
@@ -936,6 +1003,11 @@ pub const DAGBuilder = struct {
                     const numbers_at = try fresh.appendNumbers(self.numbers.items[points..][0 .. 2 * len]);
                     _ = try fresh.appendExtraData(&.{ numbers_at, len });
                 }
+                const curves_at = self.polygonsCurvesAt(at);
+                const curves = extra[curves_at];
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[curves_at + 1]..][0 .. CURVE_NUMBERS * curves]);
+                _ = try fresh.appendExtraData(&.{ curves, numbers_at });
+                _ = try fresh.appendExtraData(extra[curves_at + 2 ..][0 .. CURVE_WORDS * curves]);
             },
             .polyhedron => {
                 const points_at: u32 = @intCast(fresh.poly_points.items.len);
@@ -1170,6 +1242,10 @@ pub const DAGBuilder = struct {
                 hasher.update(std.mem.sliceAsBytes(numbers));
             },
             .value => |v| hasher.update(std.mem.asBytes(&v)),
+            .words => |words| {
+                if (sized) hasher.update(std.mem.asBytes(&@as(u64, words.len)));
+                hasher.update(std.mem.sliceAsBytes(words));
+            },
             .serial => |v| hasher.update(std.mem.asBytes(&v)),
             // Covered by the mesh hash before them, computed once when the node was made:
             // a polyhedron can have millions of points.
@@ -1202,6 +1278,7 @@ pub const DAGBuilder = struct {
             .points => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.points)),
             .faces => |x| std.mem.eql(u8, std.mem.sliceAsBytes(x), std.mem.sliceAsBytes(b.faces)),
             .value => |x| x == b.value,
+            .words => |x| std.mem.eql(u32, x, b.words),
             .serial => |x| x == b.serial,
         };
     }

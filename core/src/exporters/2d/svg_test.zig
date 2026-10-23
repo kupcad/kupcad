@@ -127,6 +127,19 @@ test "SVG: a circle is two arcs of its exact radius, a rounded corner an arc, a 
     try testing.expect(std.mem.find(u8, hd, " A 3 3 0 0 0 ") == null);
 }
 
+test "SVG: a text's glyphs are cubic curves, through an uneven scale too, beside an arc" {
+    const svg = try exportSvg("[text(\"O\", 10).scale(2, 1), text(\"O\", 10).translate(x: 20) + circle(r: 2).translate(x: 21, y: 4)]");
+    defer testing.allocator.free(svg);
+    errdefer std.debug.print("svg:\n{s}\n", .{svg});
+    const stretched = pathData(svg, 0).?;
+    try testing.expect(std.mem.count(u8, stretched, " C ") >= 8);
+    try testing.expectEqual(@as(usize, 0), std.mem.count(u8, stretched, " A "));
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, stretched, " Z"));
+    const mixed = pathData(svg, 1).?;
+    try testing.expect(std.mem.count(u8, mixed, " C ") >= 4);
+    try testing.expect(std.mem.count(u8, mixed, " A 2 2 ") >= 1);
+}
+
 test "SVG: a cylinder's projection and slice are its circle, a tilted one's a polyline" {
     const svg = try exportSvg("c = cylinder(r: 5, h: 10, segments: 8)\n[c.project, c.slice(5).translate(x: 20), c.rotate(x: 90).translate(x: 40).project]");
     defer testing.allocator.free(svg);

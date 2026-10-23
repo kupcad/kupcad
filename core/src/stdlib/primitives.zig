@@ -444,7 +444,7 @@ pub fn nativePolygon(vm: *VM, args: []const value.Value) !value.Value {
             pt.* = pts[try checkedIndex(vm, raw, pts.len, "polygon path")];
         }
     }
-    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
+    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours, &.{});
     return try vm.allocateCrossSection(dag_idx);
 }
 
@@ -624,6 +624,6 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
         contours[i] = c.items;
     }
 
-    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours);
+    const dag_idx = try vm.dag_builder.addPolygonsEvenOdd(contours, polygons.curves.items);
     return try vm.allocateCrossSection(dag_idx);
 }

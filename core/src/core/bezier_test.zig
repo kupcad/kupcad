@@ -2,6 +2,23 @@ const std = @import("std");
 const testing = std.testing;
 const bezier = @import("bezier.zig");
 
+test "Bezier: a quadratic raised to a cubic is the same curve, run back by swapping its controls" {
+    const cubic = bezier.quadraticAsCubic(.{ 0, 0 }, .{ 1, 2 }, .{ 2, 0 });
+    try testing.expectApproxEqAbs(2.0 / 3.0, cubic.c1[0], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c1[1], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c2[0], 1e-12);
+    try testing.expectApproxEqAbs(4.0 / 3.0, cubic.c2[1], 1e-12);
+    // The quadratic's midpoint: a quarter of each end and half the control
+    const mid = bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 0.5);
+    try testing.expectApproxEqAbs(@as(f64, 1), mid[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1), mid[1], 1e-12);
+    try testing.expectEqual([2]f64{ 0, 0 }, bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 0));
+    try testing.expectEqual([2]f64{ 2, 0 }, bezier.pointOn(.{ 0, 0 }, cubic, .{ 2, 0 }, 1));
+    const back = cubic.reversed();
+    try testing.expectEqual(cubic.c1, back.c2);
+    try testing.expectEqual(cubic.c2, back.c1);
+}
+
 test "Bezier: Flattens a perfectly straight quadratic line to a single segment" {
     var points: std.ArrayList([2]f64) = .empty;
     defer points.deinit(testing.allocator);

@@ -1,11 +1,16 @@
-//! Open 2D geometry: a path is a start point and segments from it, each a straight line or
-//! an arc of a circle (its centre and radius, which way round and how far), what `line`,
-//! `polyline` and `arc` make and a drawing writes exactly. The geometry alone: how an arc is
-//! defined, how a path moves, how it is drawn as points for the kernel, and where its ends
-//! and bounds are. The script's Path value (core/value.zig) holds one; the 2D exporters write
-//! its segments as a drawing's edges.
+//! Open 2D geometry: a path is a start point and segments from it, each a straight line, an
+//! arc of a circle (its centre and radius, which way round and how far) or a cubic Bézier
+//! curve (a glyph's, bezier.zig), what `line`, `polyline` and `arc` make and a drawing
+//! writes exactly. The geometry alone: how an arc is defined, how a path moves, how it is
+//! drawn as points for the kernel, and where its ends and bounds are. The script's Path
+//! value (core/value.zig) holds one; the 2D exporters write its segments as a drawing's
+//! edges.
 
 const std = @import("std");
+const bezier = @import("bezier.zig");
+
+/// How many straight pieces a cubic's length is summed over.
+const CUBIC_LENGTH_PIECES = 64;
 
 /// The circle an arc lies on.
 pub const Arc = struct {
@@ -13,17 +18,41 @@ pub const Arc = struct {
     radius: f64,
 };
 
-/// One segment: a straight line to `to`, or the arc of `arc`'s circle to it,
-/// counter-clockwise about the centre when `ccw`, sweeping `angle` radians (more than π:
-/// the long way round).
+pub const Cubic = bezier.Cubic;
+
+/// One segment: a straight line to `to`, the arc of `arc`'s circle to it, counter-clockwise
+/// about the centre when `ccw`, sweeping `angle` radians (more than π: the long way round),
+/// or the cubic curve of `cubic`'s controls to it; never both an arc and a curve.
 pub const Segment = struct {
     to: [2]f64,
     arc: ?Arc = null,
     ccw: bool = true,
     angle: f64 = 0,
+    cubic: ?Cubic = null,
+
+    pub fn isLine(self: Segment) bool {
+        return self.arc == null and self.cubic == null;
+    }
 
     pub fn large(self: Segment) bool {
         return self.angle > std.math.pi;
+    }
+
+    /// How long the segment is from `from`: a line's, an arc's, or a cubic's summed over
+    /// CUBIC_LENGTH_PIECES straight pieces.
+    pub fn length(self: Segment, from: [2]f64) f64 {
+        if (self.arc) |arc| return arc.radius * self.angle;
+        if (self.cubic) |cubic| {
+            var total: f64 = 0;
+            var last = from;
+            for (1..CUBIC_LENGTH_PIECES + 1) |k| {
+                const p = bezier.pointOn(from, cubic, self.to, @as(f64, @floatFromInt(k)) / CUBIC_LENGTH_PIECES);
+                total += std.math.hypot(p[0] - last[0], p[1] - last[1]);
+                last = p;
+            }
+            return total;
+        }
+        return std.math.hypot(self.to[0] - from[0], self.to[1] - from[1]);
     }
 
     /// Whether the arc from `from` passes `p`, a point of its circle: `p`'s angle lies
@@ -35,7 +64,8 @@ pub const Segment = struct {
 
     /// The segment as `matrix` (column-major, x' = a x + c y + tx) places it: a similarity
     /// keeps an arc an arc, turned over by a mirror; anything else (an uneven scale) can't
-    /// keep it one, and the caller draws the arc as lines first.
+    /// keep it one, and the caller draws the arc as lines first. Any affine keeps a cubic
+    /// a cubic, its controls moved with it.
     pub fn transformed(self: Segment, matrix: [6]f64) Segment {
         var out = self;
         out.to = apply(matrix, self.to);
@@ -44,6 +74,7 @@ pub const Segment = struct {
             out.arc = .{ .center = apply(matrix, arc.center), .radius = arc.radius * std.math.hypot(matrix[0], matrix[1]) };
             if (det < 0) out.ccw = !self.ccw;
         }
+        if (self.cubic) |cubic| out.cubic = .{ .c1 = apply(matrix, cubic.c1), .c2 = apply(matrix, cubic.c2) };
         return out;
     }
 };
@@ -123,22 +154,25 @@ pub fn chordsFor(angle: f64, per_turn: u32) u32 {
 /// of the first segment is the path's start, point 0).
 pub const Range = struct { first: u32, count: u32 };
 
-/// The points a path is drawn with: the start, then each segment's, an arc as `chords[i]`
-/// chords and a line as its end: the kernel's polygon of a closed path, a stroke's spine.
-/// `ranges`, when given (one per segment), gets which points each segment drew.
+/// The points a path is drawn with: the start, then each segment's, an arc or a cubic as
+/// `chords[i]` chords (a cubic's at even steps of its parameter) and a line as its end:
+/// the kernel's polygon of a closed path, a stroke's spine. `ranges`, when given (one per
+/// segment), gets which points each segment drew.
 pub fn appendPoints(allocator: std.mem.Allocator, pts: *std.ArrayList([2]f64), start: [2]f64, segments: []const Segment, chords: []const u32, ranges: ?[]Range) !void {
     try pts.append(allocator, start);
     var from = start;
     for (segments, chords, 0..) |segment, chord_count, i| {
         const first = pts.items.len;
+        const n: usize = @max(1, chord_count);
         if (segment.arc) |arc| {
-            const n: usize = @max(1, chord_count);
             const a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
             const step = (if (segment.ccw) segment.angle else -segment.angle) / @as(f64, @floatFromInt(n));
             for (1..n) |k| {
                 const a = a0 + step * @as(f64, @floatFromInt(k));
                 try pts.append(allocator, .{ arc.center[0] + arc.radius * @cos(a), arc.center[1] + arc.radius * @sin(a) });
             }
+        } else if (segment.cubic) |cubic| {
+            for (1..n) |k| try pts.append(allocator, bezier.pointOn(from, cubic, segment.to, @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(n))));
         }
         try pts.append(allocator, segment.to);
         if (ranges) |r| r[i] = .{ .first = @intCast(first), .count = @intCast(pts.items.len - first) };
@@ -159,13 +193,30 @@ pub const Bounds = struct {
     }
 };
 
-/// The box around a path, its arcs' bulges included; null for no segment and no start.
+/// The box around a path, its arcs' bulges and its curves' bends included.
 pub fn bounds(start: [2]f64, segments: []const Segment) Bounds {
     var box: ?Bounds = null;
     Bounds.include(&box, start);
     var from = start;
     for (segments) |segment| {
         Bounds.include(&box, segment.to);
+        if (segment.cubic) |cubic| {
+            // A cubic is furthest out where it turns back along an axis: where the
+            // derivative of that coordinate, a quadratic in t, is zero
+            for (0..2) |axis| {
+                const p0 = from[axis];
+                const p1 = cubic.c1[axis];
+                const p2 = cubic.c2[axis];
+                const p3 = segment.to[axis];
+                const a = -p0 + 3 * p1 - 3 * p2 + p3;
+                const b = 2 * (p0 - 2 * p1 + p2);
+                const c = p1 - p0;
+                for (quadraticRoots(a, b, c)) |maybe| {
+                    const t = maybe orelse continue;
+                    if (t > 0 and t < 1) Bounds.include(&box, bezier.pointOn(from, cubic, segment.to, t));
+                }
+            }
+        }
         if (segment.arc) |arc| {
             // Wherever the arc crosses an axis through the centre, it reaches the circle's
             // extreme on that side
@@ -182,4 +233,14 @@ pub fn bounds(start: [2]f64, segments: []const Segment) Bounds {
         from = segment.to;
     }
     return box.?;
+}
+
+/// The real roots of a t² + b t + c (a line's one root when `a` is 0), each null when
+/// there is none.
+fn quadraticRoots(a: f64, b: f64, c: f64) [2]?f64 {
+    if (a == 0) return .{ if (b == 0) null else -c / b, null };
+    const discriminant = b * b - 4 * a * c;
+    if (discriminant < 0) return .{ null, null };
+    const root = @sqrt(discriminant);
+    return .{ (-b - root) / (2 * a), (-b + root) / (2 * a) };
 }

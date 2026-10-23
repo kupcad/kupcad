@@ -35,6 +35,7 @@ test {
     // Core
     _ = @import("core/ast_test.zig");
     _ = @import("core/bezier_test.zig");
+    _ = @import("core/path_test.zig");
     _ = @import("core/rounded_rect_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/error_codes_test.zig");
@@ -83,8 +84,8 @@ test {
     _ = @import("exporters/3d/obj_test.zig");
     _ = @import("exporters/2d/svg_test.zig");
     _ = @import("exporters/2d/dxf_test.zig");
-    _ = @import("exporters/2d/arcs_test.zig");
-    _ = @import("vm/sketch_circles_test.zig");
+    _ = @import("exporters/2d/curves_test.zig");
+    _ = @import("vm/sketch_curves_test.zig");
     _ = @import("stdlib/paths_test.zig");
 
     // Frontends
