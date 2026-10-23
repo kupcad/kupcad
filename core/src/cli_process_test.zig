@@ -306,6 +306,33 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     try testing.expect(std.mem.find(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
+test "kupcad: dev ast-dump, disasm and lex-dump write their file beside the script" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "heredoc.kup", .data = "x = <<~EOS\n  hi\nEOS\ncube(1)\n" });
+    const dumps = [_]struct { name: []const u8, script: []const u8, file: []const u8, starts: []const u8 }{
+        .{ .name = "ast-dump", .script = "valid.kup", .file = "valid.kup.dump", .starts = "└── block" },
+        .{ .name = "disasm", .script = "valid.kup", .file = "valid.kup.disasm", .starts = "== main ==" },
+        .{ .name = "lex-dump", .script = "valid.kup", .file = "valid.kup.lex", .starts = "== Lexer Token Dump ==" },
+        // A heredoc's tokens: their bodies were leaked
+        .{ .name = "lex-dump", .script = "heredoc.kup", .file = "heredoc.kup.lex", .starts = "== Lexer Token Dump ==" },
+    };
+    for (dumps) |dump| {
+        errdefer std.debug.print("kupcad dev {s} {s}\n", .{ dump.name, dump.script });
+        const run = try kupcad(sb.path, &.{ "dev", dump.name, dump.script });
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        try testing.expect(std.mem.find(u8, run.stderr, "leaked") == null);
+        const written = try sb.tmp.dir.readFileAlloc(testing.io, dump.file, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(written);
+        try testing.expect(std.mem.startsWith(u8, written, dump.starts));
+    }
+    const missing = try kupcad(sb.path, &.{ "dev", "disasm" });
+    defer missing.deinit();
+    try testing.expectEqual(@as(u8, 1), missing.code);
+    try testing.expect(std.mem.find(u8, missing.stderr, "Missing file path for 'disasm'. Usage: kupcad dev disasm <file.kup>") != null);
+}
+
 test "kupcad: build of a script in a subfolder imports its neighbours" {
     var sb = try Sandbox.init();
     defer sb.deinit();
