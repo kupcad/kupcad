@@ -132,7 +132,7 @@ pub fn exportStep(allocator: std.mem.Allocator, handles: []const geom.GeometryHa
         // exporters/3d/step.zig requireExactParts).
         if (h.engine != .brep_native) return error.NotExactGeometry;
 
-        const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
+        const solid = solidOf(h.ptr);
         try step_solids.append(allocator, .{
             .t_arena = &solid.t_arena,
             .g_arena = &solid.g_arena,
@@ -150,7 +150,7 @@ fn extractAllVertices(allocator: std.mem.Allocator, handles: []const geom.Geomet
     defer seen.deinit();
 
     for (handles) |h| {
-        const solid: *BrepSolid = @ptrCast(@alignCast(h.ptr));
+        const solid = solidOf(h.ptr);
         const s = solid.t_arena.solids.items[@backingInt(solid.solid_id)];
         // Point indices are per solid: carried over, the second solid's points looked seen.
         seen.clearRetainingCapacity();
@@ -240,7 +240,7 @@ fn hullOf(handles: []const geom.GeometryHandle) !*BrepSolid {
 fn destructImpl(handle: geom.GeometryHandle) void {
     std.debug.assert(handle.engine == .brep_native);
     if (@intFromPtr(handle.ptr) != 0) {
-        const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+        const solid = solidOf(handle.ptr);
         solid.destroy();
     }
 }
@@ -248,7 +248,7 @@ fn destructImpl(handle: geom.GeometryHandle) void {
 fn destructCrossSectionImpl(handle: geom.CrossSectionHandle) void {
     std.debug.assert(handle.engine == .brep_native);
     if (@intFromPtr(handle.ptr) != 0) {
-        const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+        const solid = solidOf(handle.ptr);
         solid.destroy();
     }
 }
@@ -265,81 +265,41 @@ fn emptySketchImpl(config: *const engine_config.EngineConfig) ?geom.CrossSection
 }
 
 fn cubeImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, z: f64, center: bool) ?geom.GeometryHandle {
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generateCube(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, z, center) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateCube, .{ x, y, z, center });
 }
 
 fn cylinderImpl(config: *const engine_config.EngineConfig, r1: f64, r2: f64, height: f64, center: bool, segments: i32) ?geom.GeometryHandle {
     _ = r2;
     _ = segments;
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generateCylinder(backend_allocator, &solid.t_arena, &solid.g_arena, r1, height, center) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateCylinder, .{ r1, height, center });
 }
 
 fn sphereImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.GeometryHandle {
     _ = segments;
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generateSphere(backend_allocator, &solid.t_arena, &solid.g_arena, radius) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.GeometryHandle, mathEnv(config), locus_gen.generateSphere, .{radius});
 }
 
 fn squareImpl(config: *const engine_config.EngineConfig, x: f64, y: f64, center: bool) ?geom.CrossSectionHandle {
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generateSquare(backend_allocator, &solid.t_arena, &solid.g_arena, x, y, center) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generateSquare, .{ x, y, center });
 }
 
 fn circleImpl(config: *const engine_config.EngineConfig, radius: f64, segments: i32) ?geom.CrossSectionHandle {
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generateCircle(backend_allocator, &solid.t_arena, &solid.g_arena, radius, segments) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generateCircle, .{ radius, segments });
 }
 
 fn polygonImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generatePolygon(backend_allocator, &solid.t_arena, &solid.g_arena, pts) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygon, .{pts});
 }
 
 fn polyhedronImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [3]f64, faces: []const [3]u32) ?geom.GeometryHandle {
     _ = allocator;
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.buildPolyhedron(backend_allocator, &solid.t_arena, &solid.g_arena, pts, faces) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.GeometryHandle, mathEnv(config), locus_gen.buildPolyhedron, .{ pts, faces });
 }
 
 fn polygonsEvenOddImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, contours: []const []const [2]f64) ?geom.CrossSectionHandle {
     _ = allocator;
-    const solid = BrepSolid.create(backend_allocator, mathEnv(config)) catch return null;
-    solid.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &solid.t_arena, &solid.g_arena, contours) catch {
-        solid.destroy();
-        return null;
-    };
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+    return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygonsEvenOdd, .{contours});
 }
 
 fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degrees: f64, scale_x: f64, scale_y: f64) ?geom.GeometryHandle {
@@ -347,114 +307,42 @@ fn extrudeImpl(cs: geom.CrossSectionHandle, height: f64, slices: i32, twist_degr
     _ = twist_degrees;
     _ = scale_x;
     _ = scale_y;
-
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_sweeps.extrudeFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, @as(locus_topo_types.FaceIndex, @fromBackingInt(@backingInt(src_solid.solid_id))), .{ 0, 0, height }, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    const src = solidOf(cs.ptr);
+    return build(geom.GeometryHandle, src.env, locus_sweeps.extrudeFace, .{ &src.t_arena, &src.g_arena, faceOf(src), [3]f64{ 0, 0, height }, src.env });
 }
 
 fn revolveImpl(cs: geom.CrossSectionHandle, segments: i32, revolve_degrees: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_sweeps.revolveFace(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, @as(locus_topo_types.FaceIndex, @fromBackingInt(@backingInt(src_solid.solid_id))), @intCast(segments), revolve_degrees, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    const src = solidOf(cs.ptr);
+    return build(geom.GeometryHandle, src.env, locus_sweeps.revolveFace, .{ &src.t_arena, faceOf(src), @as(u32, @intCast(segments)), revolve_degrees, src.env });
 }
 
 fn translateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_trans.translateSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, x, y, z, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_trans.translateSolid, .{ x, y, z });
 }
 
 fn rotateImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_trans.rotateSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, x, y, z, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_trans.rotateSolid, .{ x, y, z });
 }
 
 fn scaleImpl(a: geom.GeometryHandle, x: f64, y: f64, z: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_trans.scaleSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, x, y, z, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_trans.scaleSolid, .{ x, y, z });
 }
 
 fn transformMatrixImpl(a: geom.GeometryHandle, mat: [12]f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, mat, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_trans.transformMatrixSolid, .{mat});
 }
 
 fn crossSectionTransformImpl(cs: geom.CrossSectionHandle, mat: [6]f64) ?geom.CrossSectionHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(cs.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
     const mat3d = [12]f64{
         mat[0], mat[1], 0.0, mat[2],
         mat[3], mat[4], 0.0, mat[5],
         0.0,    0.0,    1.0, 0.0,
     };
-
-    dest_solid.solid_id = locus_trans.transformMatrixSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, mat3d, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.CrossSectionHandle, cs.ptr, locus_trans.transformMatrixSolid, .{mat3d});
 }
 
 fn mirrorImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_trans.mirrorSolid(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, nx, ny, nz, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_trans.mirrorSolid, .{ nx, ny, nz });
 }
 
 fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: i32, miter_limit: f64) ?geom.CrossSectionHandle {
@@ -471,24 +359,8 @@ fn offsetImpl(cs: geom.CrossSectionHandle, delta: f64, join_type: u8, segments: 
 fn booleanImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
     // Real check: a Manifold pointer reinterpreted as a BrepSolid silently yields garbage.
     if (a.engine != .brep_native or b.engine != .brep_native) return null;
-    const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_a.env;
-    const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    const locus_op: locus_bool.BooleanOp = switch (op) {
-        .union_op => .union_op,
-        .difference_op => .difference,
-        .intersection_op => .intersection,
-    };
-
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_bool.computeBoolean(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_a.t_arena, &src_a.g_arena, src_a.solid_id, &src_b.t_arena, &src_b.g_arena, src_b.solid_id, locus_op, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    const other = solidOf(b.ptr);
+    return derive(geom.GeometryHandle, a.ptr, locus_bool.computeBoolean, .{ &other.t_arena, &other.g_arena, other.solid_id, locusBooleanOp(op) });
 }
 
 fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle, op: kernel.BooleanOp) ?geom.GeometryHandle {
@@ -514,54 +386,18 @@ fn batchBooleanImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHan
 
 fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryHandle {
     if (a.engine != .brep_native or b.engine != .brep_native) return null;
-    const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_a.env;
-    const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_mink.minkowskiSumConvex(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_a.t_arena, &src_a.g_arena, src_a.solid_id, &src_b.t_arena, &src_b.g_arena, src_b.solid_id, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    const other = solidOf(b.ptr);
+    return derive(geom.GeometryHandle, a.ptr, locus_mink.minkowskiSumConvex, .{ &other.t_arena, &other.g_arena, other.solid_id });
 }
 
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
     if (a.engine != .brep_native or b.engine != .brep_native) return null;
-
-    const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_a.env;
-    const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
-
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    const locus_op: locus_bool.BooleanOp = switch (op) {
-        .union_op => .union_op,
-        .difference_op => .difference,
-        .intersection_op => .intersection,
-    };
-
-    dest_solid.solid_id = locus_bool2d.crossSectionBoolean(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_a.t_arena, &src_a.g_arena, src_a.solid_id, &src_b.t_arena, &src_b.g_arena, src_b.solid_id, locus_op, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    const other = solidOf(b.ptr);
+    return derive(geom.CrossSectionHandle, a.ptr, locus_bool2d.crossSectionBoolean, .{ &other.t_arena, &other.g_arena, other.solid_id, locusBooleanOp(op) });
 }
 
 fn trimByPlaneImpl(a: geom.GeometryHandle, nx: f64, ny: f64, nz: f64, offset: f64) ?geom.GeometryHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
-    const env = src_solid.env;
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_slicing.trimByPlane(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, &src_solid.t_arena, &src_solid.g_arena, src_solid.solid_id, nx, ny, nz, offset, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return derive(geom.GeometryHandle, a.ptr, locus_slicing.trimByPlane, .{ nx, ny, nz, offset });
 }
 
 fn hullImpl(a: geom.GeometryHandle) ?geom.GeometryHandle {
@@ -579,9 +415,9 @@ fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.Cr
     _ = allocator; // Locus allocates with backend_allocator
     if (a.engine != .brep_native or b.engine != .brep_native) return null;
 
-    const src_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const src_a = solidOf(a.ptr);
     const env = src_a.env;
-    const src_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+    const src_b = solidOf(b.ptr);
 
     const pts_a = locus_bool2d.extractPolygon(backend_allocator, &src_a.t_arena, &src_a.g_arena, src_a.solid_id) catch return null;
     defer backend_allocator.free(pts_a);
@@ -589,14 +425,7 @@ fn loftImpl(allocator: std.mem.Allocator, a: geom.CrossSectionHandle, b: geom.Cr
     const pts_b = locus_bool2d.extractPolygon(backend_allocator, &src_b.t_arena, &src_b.g_arena, src_b.solid_id) catch return null;
     defer backend_allocator.free(pts_b);
 
-    const dest_solid = BrepSolid.create(backend_allocator, env) catch return null;
-
-    dest_solid.solid_id = locus_sweeps.loftPolygons(backend_allocator, &dest_solid.t_arena, &dest_solid.g_arena, pts_a, pts_b, height, env) catch {
-        dest_solid.destroy();
-        return null;
-    };
-
-    return geom.GeometryHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_solid) };
+    return build(geom.GeometryHandle, env, locus_sweeps.loftPolygons, .{ pts_a, pts_b, height, env });
 }
 
 fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]geom.GeometryHandle {
@@ -612,7 +441,7 @@ fn decomposeImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?[]g
 }
 
 fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const src_solid = solidOf(a.ptr);
     const env = src_solid.env;
 
     var mesh = locus_tess.Mesh{};
@@ -627,17 +456,11 @@ fn sliceImpl(a: geom.GeometryHandle, height: f64) ?geom.CrossSectionHandle {
 
     if (contours.len == 0) return null;
 
-    const dest_cs = BrepSolid.create(backend_allocator, env) catch return null;
-    dest_cs.solid_id = locus_gen.generatePolygonsEvenOdd(backend_allocator, &dest_cs.t_arena, &dest_cs.g_arena, contours) catch {
-        dest_cs.destroy();
-        return null;
-    };
-
-    return geom.CrossSectionHandle{ .engine = .brep_native, .ptr = @ptrCast(dest_cs) };
+    return build(geom.CrossSectionHandle, env, locus_gen.generatePolygonsEvenOdd, .{contours});
 }
 
 fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
-    const src_solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const src_solid = solidOf(a.ptr);
 
     const dest_cs = BrepSolid.create(backend_allocator, src_solid.env) catch return null;
 
@@ -658,12 +481,12 @@ fn projectImpl(a: geom.GeometryHandle) ?geom.CrossSectionHandle {
 }
 
 fn genusImpl(handle: geom.GeometryHandle) i32 {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     return locus_prop.genus(backend_allocator, &solid.t_arena, solid.solid_id);
 }
 
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     if (locus_prop.boundingBox(&solid.t_arena, &solid.g_arena, solid.solid_id)) |bb| {
         return geom.BoundingBox{ .min = bb.min, .max = bb.max };
     }
@@ -671,24 +494,24 @@ fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
 }
 
 fn volumeImpl(handle: geom.GeometryHandle) f64 {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     const env = solid.env;
     return locus_prop.volume(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, env);
 }
 
 fn surfaceAreaImpl(handle: geom.GeometryHandle) f64 {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     const env = solid.env;
     return locus_prop.surfaceArea(backend_allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, env);
 }
 
 fn crossSectionAreaImpl(handle: geom.CrossSectionHandle) f64 {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     return locus_prop.crossSectionArea(&solid.t_arena, &solid.g_arena, solid.solid_id);
 }
 
 fn crossSectionNumVertsImpl(handle: geom.CrossSectionHandle) usize {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     return solid.t_arena.vertices.items.len;
 }
 
@@ -715,13 +538,13 @@ fn crossSectionIsConvexImpl(handle: geom.CrossSectionHandle) ?bool {
 }
 
 fn crossSectionBoundsImpl(handle: geom.CrossSectionHandle) ?geom.Rect2D {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     const bb = locus_prop.crossSectionBounds(&solid.t_arena, &solid.g_arena, solid.solid_id);
     return .{ .min = .{ bb.min[0], bb.min[1] }, .max = .{ bb.max[0], bb.max[1] } };
 }
 
 fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, direction: [3]f64, tolerance: f64) ?[]geom.FaceHandle {
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
 
     const l_faces = (locus_insp.queryFaces(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, direction, tolerance) catch return null) orelse return null;
     defer allocator.free(l_faces); // also when the copy below fails (it used to leak)
@@ -733,7 +556,7 @@ fn queryFacesImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle, dir
 /// Whether `pt` lies in the solid, within `config`'s tolerance (Locus's point test, under
 /// the settings the shape is measured under).
 fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, config: *const engine_config.EngineConfig, pt: [3]f64) ?bool {
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid = solidOf(a.ptr);
     return locus_bool.isPointInsideSolid(allocator, &solid.t_arena, &solid.g_arena, solid.solid_id, pt, mathEnv(config));
 }
 
@@ -741,15 +564,15 @@ fn containsPointImpl(allocator: std.mem.Allocator, a: geom.GeometryHandle, confi
 fn minGapImpl(a: geom.GeometryHandle, b: geom.GeometryHandle, sl: f64) f64 {
     if (a.engine != .brep_native or b.engine != .brep_native) return 0.0;
 
-    const solid_a: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid_a = solidOf(a.ptr);
     const env = solid_a.env;
-    const solid_b: *BrepSolid = @ptrCast(@alignCast(b.ptr));
+    const solid_b = solidOf(b.ptr);
 
     return @min(sl, locus_query.minGap(backend_allocator, &solid_a.t_arena, &solid_a.g_arena, solid_a.solid_id, &solid_b.t_arena, &solid_b.g_arena, solid_b.solid_id, env));
 }
 
 fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [3]f64) ?[]geom.RayHit {
-    const solid: *BrepSolid = @ptrCast(@alignCast(a.ptr));
+    const solid = solidOf(a.ptr);
     const env = solid.env;
 
     if (locus_query.rayCast(alloc, &solid.t_arena, &solid.g_arena, solid.solid_id, o, e, env) catch null) |hits| {
@@ -763,7 +586,7 @@ fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [
 
 fn getMeshImpl(allocator: std.mem.Allocator, handle: geom.GeometryHandle) ?geom.Mesh {
     std.debug.assert(handle.engine == .brep_native);
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     const env = solid.env;
 
     var mesh = locus_tess.Mesh{};
@@ -790,7 +613,7 @@ pub fn copyMesh(allocator: std.mem.Allocator, mesh: *const locus_tess.Mesh) !geo
 
 fn numVertsImpl(handle: geom.GeometryHandle) usize {
     std.debug.assert(handle.engine == .brep_native);
-    const solid: *BrepSolid = @ptrCast(@alignCast(handle.ptr));
+    const solid = solidOf(handle.ptr);
     return solid.t_arena.vertices.items.len;
 }
 
@@ -825,6 +648,39 @@ fn cloneCrossSectionImpl(a: geom.CrossSectionHandle) ?geom.CrossSectionHandle {
 
 fn solidOf(ptr: *anyopaque) *BrepSolid {
     return @ptrCast(@alignCast(ptr));
+}
+
+/// A new B-Rep solid under `env`, made by Locus's `make` into its arenas (`make` takes the
+/// allocator, the new solid's two arenas, then `args`), as a handle of kind `Handle`; null
+/// when Locus fails, nothing kept.
+fn build(comptime Handle: type, env: locus_env.MathEnv, comptime make: anytype, args: anytype) ?Handle {
+    const solid = BrepSolid.create(backend_allocator, env) catch return null;
+    solid.solid_id = @call(.auto, make, .{ backend_allocator, &solid.t_arena, &solid.g_arena } ++ args) catch {
+        solid.destroy();
+        return null;
+    };
+    return .{ .engine = .brep_native, .ptr = @ptrCast(solid) };
+}
+
+/// `build` from the solid at `src_ptr`, under its settings: `make` takes the new solid's
+/// arenas, then the source's arenas and solid, then `args` and the settings (Locus's
+/// transforms, trims, booleans and Minkowski sums).
+fn derive(comptime Handle: type, src_ptr: *anyopaque, comptime make: anytype, args: anytype) ?Handle {
+    const src = solidOf(src_ptr);
+    return build(Handle, src.env, make, .{ &src.t_arena, &src.g_arena, src.solid_id } ++ args ++ .{src.env});
+}
+
+/// A sketch's one face, which Locus's sweeps take.
+fn faceOf(sketch: *const BrepSolid) locus_topo_types.FaceIndex {
+    return @fromBackingInt(@backingInt(sketch.solid_id));
+}
+
+fn locusBooleanOp(op: kernel.BooleanOp) locus_bool.BooleanOp {
+    return switch (op) {
+        .union_op => .union_op,
+        .difference_op => .difference,
+        .intersection_op => .intersection,
+    };
 }
 
 /// B-Rep solids are validated by Locus as they are built; there is no deferred status.
