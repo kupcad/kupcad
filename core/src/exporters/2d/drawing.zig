@@ -43,6 +43,10 @@ pub const Shape = struct {
     rgb: ?[3]u8,
     /// Its opacity, 0 to 1.
     alpha: f64,
+    /// The tolerance it is measured under (a Sketch's or Solid's own; a Path's, the one in
+    /// force): how far an exporter may stray from its curves where a format can't hold one
+    /// exactly.
+    tolerance: f64,
     outlines: []Outline,
 
     pub fn deinit(self: Shape, allocator: std.mem.Allocator) void {

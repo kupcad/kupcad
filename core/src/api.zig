@@ -653,7 +653,7 @@ fn pathShapeOf(allocator: std.mem.Allocator, vm: *const VM, path_val: value.Valu
     errdefer allocator.free(outlines);
     outlines[0] = .{ .start = p.start, .edges = try allocator.dupe(drawing_mod.Edge, p.segments), .closed = false };
     const material: ?MaterialDef = if (p.material_id) |id| (if (id < vm.materials.items.len) vm.materials.items[id] else null) else null;
-    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
+    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .tolerance = vm.config().tolerance, .outlines = outlines };
 }
 
 /// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
@@ -668,8 +668,9 @@ fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]
     const node = sketch.asCrossSection().dag_idx;
     var curves = try sketch_curves.collect(allocator, &vm.dag_builder, node);
     defer curves.deinit(allocator);
-    const outlines = try curves_mod.outlinesOf(allocator, contours, &curves, vm.settingsOf(sketch).tolerance);
-    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
+    const tolerance = vm.settingsOf(sketch).tolerance;
+    const outlines = try curves_mod.outlinesOf(allocator, contours, &curves, tolerance);
+    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .tolerance = tolerance, .outlines = outlines };
 }
 
 /// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names

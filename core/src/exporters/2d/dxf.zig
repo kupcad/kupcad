@@ -4,14 +4,14 @@
 //! name), its arcs as bulges (the exact circle, not the chords the kernel drew), an
 //! outline that is one circle a `CIRCLE`, and one with a glyph's curve a cubic `SPLINE`
 //! (a polyline can't bend that way: the curves exact, a line a straight piece, and an arc
-//! pieces of a quarter turn at most, within 0.03% of its circle), the layer coloured as
+//! as few cubic pieces as keep within the shape's tolerance of its circle), the layer coloured as
 //! the shape's material (true colour, and the nearest of the basic index colours for
 //! readers without it). The file holds the header, the layer and line type tables and the
 //! entities: what CAD, CAM and laser tools read.
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
-const bezier = @import("../../core/bezier.zig");
+const MAX_SEGMENTS = @import("../../core/limits.zig").MAX_SEGMENTS;
 
 /// AutoCAD 2004, the first with true colours (group 420).
 const VERSION = "AC1018";
@@ -30,9 +30,11 @@ const OPEN = 0;
 const PLANAR = 8;
 /// A SPLINE of cubic pieces: its degree, and its knots beyond its control points.
 const SPLINE_DEGREE = 3;
-/// The most an arc's cubic piece sweeps: a quarter turn, where the usual cubic stays
-/// within 0.03% of the circle.
+/// The most an arc's cubic piece sweeps: a quarter turn, the range the error bound
+/// (cubicArcError) holds for.
 const ARC_PIECE_MAX = std.math.pi / 2.0;
+/// The most pieces one arc is written as, for a tolerance finer than the file can hold.
+const MAX_ARC_PIECES: usize = MAX_SEGMENTS;
 
 /// The basic index colours (`62`) a true colour is matched to: AutoCAD's 1 to 7.
 const INDEX_COLORS = [_]struct { index: u8, rgb: [3]u8 }{
@@ -123,7 +125,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
                 continue;
             }
             if (hasCurve(outline)) {
-                try writeSpline(allocator, &file, shape.name, outline);
+                try writeSpline(allocator, &file, shape.name, outline, shape.tolerance);
                 continue;
             }
             try file.pair(0, "LWPOLYLINE");
@@ -177,8 +179,8 @@ const SplinePiece = struct { c1: [2]f64, c2: [2]f64, to: [2]f64 };
 
 /// `outline` as a `SPLINE` of cubic pieces (a piecewise Bézier: degree 3, each piece's
 /// knot thrice, the ends' four times), its control points the start and each piece's.
-fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: ?[]const u8, outline: drawing_mod.Outline) !void {
-    const pieces = try splinePieces(allocator, outline);
+fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: ?[]const u8, outline: drawing_mod.Outline, tolerance: f64) !void {
+    const pieces = try splinePieces(allocator, outline, tolerance);
     defer allocator.free(pieces);
     const controls = 1 + SPLINE_DEGREE * pieces.len;
     try file.pair(0, "SPLINE");
@@ -204,9 +206,9 @@ fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: ?[]const u8, ou
 }
 
 /// `outline`'s edges as cubic pieces: a curve as it is, a line as the cubic with its
-/// controls a third of the way along, an arc as pieces of ARC_PIECE_MAX at most, each the
-/// usual cubic (its controls along the tangents, 4/3 tan(θ/4) of the radius out).
-fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline) ![]SplinePiece {
+/// controls a third of the way along, an arc as the usual cubics (their controls along the
+/// tangents, 4/3 tan(θ/4) of the radius out), as many as keep within `tolerance` of it.
+fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline, tolerance: f64) ![]SplinePiece {
     var pieces: std.ArrayList(SplinePiece) = .empty;
     errdefer pieces.deinit(allocator);
     var from = outline.start;
@@ -214,7 +216,7 @@ fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline) ![]S
         if (edge.cubic) |cubic| {
             try pieces.append(allocator, .{ .c1 = cubic.c1, .c2 = cubic.c2, .to = edge.to });
         } else if (edge.arc) |arc| {
-            const count: usize = @intFromFloat(@max(1, @ceil(edge.angle / ARC_PIECE_MAX)));
+            const count = arcPieces(edge.angle, arc.radius, tolerance);
             const theta = edge.angle / @as(f64, @floatFromInt(count));
             const kappa = 4.0 / 3.0 * @tan(theta / 4) * arc.radius;
             const way: f64 = if (edge.ccw) 1 else -1;
@@ -241,6 +243,24 @@ fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline) ![]S
         from = edge.to;
     }
     return pieces.toOwnedSlice(allocator);
+}
+
+/// How many of the usual cubics an arc of `angle` radians and `radius` is written as: the
+/// fewest, none sweeping more than ARC_PIECE_MAX, that keep each within `tolerance` of the
+/// circle (at most MAX_ARC_PIECES).
+pub fn arcPieces(angle: f64, radius: f64, tolerance: f64) usize {
+    var count: usize = @intFromFloat(@max(1, @ceil(angle / ARC_PIECE_MAX)));
+    while (count < MAX_ARC_PIECES and cubicArcError(angle / @as(f64, @floatFromInt(count)), radius) > tolerance) count += 1;
+    return count;
+}
+
+/// How far, at most, the usual cubic for an arc of `theta` radians (a quarter turn at
+/// most) strays from its circle of `radius`: r · 2 sin⁶(θ/4) / (27 cos²(θ/4)), 2.7e-4 of
+/// the radius for a quarter turn.
+pub fn cubicArcError(theta: f64, radius: f64) f64 {
+    const s = @sin(theta / 4);
+    const c = @cos(theta / 4);
+    return radius * 2 * std.math.pow(f64, s, 6) / (27 * c * c);
 }
 
 /// A vertex's bulge (`42`): the tangent of a quarter of the angle the arc to the next

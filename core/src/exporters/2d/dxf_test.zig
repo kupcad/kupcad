@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 const api = @import("../../api.zig");
+const dxf_exporter = @import("dxf.zig");
+const bezier = @import("../../core/bezier.zig");
 
 fn exportDxf(source: []const u8) ![]const u8 {
     return api.buildModel(testing.allocator, testing.io, source, .{ .format = .dxf });
@@ -265,6 +267,50 @@ test "DXF: an outline with a glyph's curve is a closed cubic SPLINE on its layer
         try testing.expectEqual(controls.len + 4, spline.knots);
         try testing.expectEqual(controls[0], controls[controls.len - 1]);
     }
+}
+
+test "DXF: an arc's cubic pieces stray from it by the bound, and are as few as keep within the tolerance" {
+    // The usual cubic for a quarter of the unit circle, sampled: its worst radial error is
+    // the bound, 2.7e-4
+    const k = 4.0 / 3.0 * @tan(std.math.pi / 8.0);
+    const cubic = bezier.Cubic{ .c1 = .{ 1, k }, .c2 = .{ k, 1 } };
+    var worst: f64 = 0;
+    for (0..10_001) |i| {
+        const p = bezier.pointOn(.{ 1, 0 }, cubic, .{ 0, 1 }, @as(f64, @floatFromInt(i)) / 10_000);
+        worst = @max(worst, @abs(std.math.hypot(p[0], p[1]) - 1));
+    }
+    try testing.expectApproxEqRel(worst, dxf_exporter.cubicArcError(std.math.pi / 2.0, 1), 1e-3);
+    try testing.expectApproxEqAbs(@as(f64, 2.7253e-4), dxf_exporter.cubicArcError(std.math.pi / 2.0, 1), 1e-7);
+
+    // The fewest: one fewer would stray past the tolerance
+    const n = dxf_exporter.arcPieces(2 * std.math.pi, 2, 1e-5);
+    const turn = 2 * std.math.pi;
+    try testing.expect(dxf_exporter.cubicArcError(turn / @as(f64, @floatFromInt(n)), 2) <= 1e-5);
+    try testing.expect(dxf_exporter.cubicArcError(turn / @as(f64, @floatFromInt(n - 1)), 2) > 1e-5);
+    // Never more than a quarter turn a piece, however coarse the tolerance, and capped
+    try testing.expectEqual(@as(usize, 4), dxf_exporter.arcPieces(turn, 1, 1));
+    try testing.expectEqual(@as(usize, 1), dxf_exporter.arcPieces(0.1, 1, 1));
+    try testing.expectEqual(@as(usize, 2048), dxf_exporter.arcPieces(turn, 1, 1e-300));
+}
+
+test "DXF: a spline's arcs follow the shape's own tolerance" {
+    // They were quarter turns whatever the tolerance: 5e-4 mm off a 2 mm circle, fifty
+    // times the default tolerance
+    const model = "[text(\"O\", 10) + circle(r: 2).translate(x: 1, y: 4)]";
+    var counts: [2]usize = undefined;
+    for ([_][]const u8{ "", "CAD.config(tolerance: 0.01)\n" }, &counts) |config, *count| {
+        const source = try std.mem.concat(testing.allocator, u8, &.{ config, model });
+        defer testing.allocator.free(source);
+        const out = try exportDxf(source);
+        defer testing.allocator.free(out);
+        var pairs = try readPairs(out);
+        defer pairs.deinit(testing.allocator);
+        var found = try splines(pairs.items);
+        defer freeSplines(&found);
+        count.* = 0;
+        for (found.items) |spline| count.* += spline.controls.items.len;
+    }
+    try testing.expect(counts[0] > counts[1]);
 }
 
 test "DXF: every handle is given out once" {
