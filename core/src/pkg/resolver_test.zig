@@ -184,6 +184,18 @@ test "Resolver: linkWorkspace refuses a locked package the store doesn't have" {
     try testing.expectError(error.PackageNotInStore, fx.link());
 }
 
+test "Resolver: linkWorkspace fails on a dependency kupcad.lock doesn't have" {
+    // It warned and linked the others: the install passed, and the import failed later
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "unlocked"), try testing.allocator.dupe(u8, "github.com/user/unlocked"));
+    try testing.expectError(error.DependencyNotLocked, fx.link());
+    try testing.expect(fx.mem_vfs.nodes.get(@import("../core/import_path.zig").PACKAGE_DIR ++ "/unlocked") == null);
+}
+
 // Lockfile and store values are joined into filesystem paths; a tampered
 // kupcad.lock or index must not be able to place files outside the store.
 test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
