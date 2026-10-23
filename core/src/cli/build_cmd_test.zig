@@ -359,9 +359,13 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
     defer testing.allocator.free(list);
     const missing = try fx.path("missing.json");
     defer testing.allocator.free(missing);
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "number.json", .data = "5" });
+    const number = try fx.path("number.json");
+    defer testing.allocator.free(number);
     const cases = [_]struct { file: []const u8, message: []const u8 }{
         .{ .file = list, .message = ": parameter 'gears' is an array; a parameter takes a number, a string, true or false\n" },
         .{ .file = missing, .message = "': FileNotFound\n" },
+        .{ .file = number, .message = ": a parameter file holds one JSON object of names and values, as {\"width\": 40}\n" },
     };
     for (cases) |case| {
         var res = try runBuild(&.{ fx.input, "-P", case.file, "-o", fx.output });
