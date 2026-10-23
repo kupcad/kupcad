@@ -572,17 +572,14 @@ const Shape = struct {
             return;
         }
         // An ellipse's: cubic pieces of at most ELLIPSE_PIECE each
+        const ellipse = bezier.Ellipse{ .center = center, .rx = rx, .ry = ry, .axis = .{ cos_phi, sin_phi } };
         const pieces: usize = @intFromFloat(@max(1, @ceil(@abs(delta) / ELLIPSE_PIECE)));
         const step = delta / @as(f64, @floatFromInt(pieces));
-        const alpha = 4.0 / 3.0 * @tan(step / 4);
         for (0..pieces) |k| {
             const t0 = theta1 + step * @as(f64, @floatFromInt(k));
-            const t1 = t0 + step;
-            const p0 = ellipsePoint(center, rx, ry, cos_phi, sin_phi, t0);
-            const p3 = if (k + 1 == pieces) p else ellipsePoint(center, rx, ry, cos_phi, sin_phi, t1);
-            const d0 = ellipseTangent(rx, ry, cos_phi, sin_phi, t0);
-            const d1 = ellipseTangent(rx, ry, cos_phi, sin_phi, t1);
-            try self.cubicTo(.{ p0[0] + alpha * d0[0], p0[1] + alpha * d0[1] }, .{ p3[0] - alpha * d1[0], p3[1] - alpha * d1[1] }, p3);
+            const p3 = if (k + 1 == pieces) p else ellipse.at(t0 + step);
+            const piece = ellipse.cubic(t0, t0 + step, self.at, p3);
+            try self.cubicTo(piece.c1, piece.c2, p3);
         }
     }
 
@@ -652,35 +649,19 @@ const Shape = struct {
 /// it an ellipse.
 fn circleCubics(arena: std.mem.Allocator, from: [2]f64, segment: path.Segment) ![]path.Segment {
     const arc = segment.arc.?;
-    const way: f64 = if (segment.ccw) 1 else -1;
+    const circle = bezier.Ellipse.circle(arc.center, arc.radius);
     const pieces: usize = @intFromFloat(@max(1, @ceil(segment.angle / ELLIPSE_PIECE)));
-    const step = way * segment.angle / @as(f64, @floatFromInt(pieces));
-    const alpha = 4.0 / 3.0 * @tan(step / 4);
-    const theta0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+    const step = (if (segment.ccw) segment.angle else -segment.angle) / @as(f64, @floatFromInt(pieces));
+    var t0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+    var p0 = from;
     const out = try arena.alloc(path.Segment, pieces);
     for (out, 0..) |*piece, k| {
-        const t0 = theta0 + step * @as(f64, @floatFromInt(k));
-        const t1 = t0 + step;
-        const p0 = ellipsePoint(arc.center, arc.radius, arc.radius, 1, 0, t0);
-        const p3 = if (k + 1 == pieces) segment.to else ellipsePoint(arc.center, arc.radius, arc.radius, 1, 0, t1);
-        const d0 = ellipseTangent(arc.radius, arc.radius, 1, 0, t0);
-        const d1 = ellipseTangent(arc.radius, arc.radius, 1, 0, t1);
-        piece.* = .{ .to = p3, .cubic = .{ .c1 = .{ p0[0] + alpha * d0[0], p0[1] + alpha * d0[1] }, .c2 = .{ p3[0] - alpha * d1[0], p3[1] - alpha * d1[1] } } };
+        const p3 = if (k + 1 == pieces) segment.to else circle.at(t0 + step);
+        piece.* = .{ .to = p3, .cubic = circle.cubic(t0, t0 + step, p0, p3) };
+        t0 += step;
+        p0 = p3;
     }
     return out;
-}
-
-fn ellipsePoint(center: [2]f64, rx: f64, ry: f64, cos_phi: f64, sin_phi: f64, t: f64) [2]f64 {
-    const x = rx * @cos(t);
-    const y = ry * @sin(t);
-    return .{ center[0] + cos_phi * x - sin_phi * y, center[1] + sin_phi * x + cos_phi * y };
-}
-
-/// The derivative of ellipsePoint in t.
-fn ellipseTangent(rx: f64, ry: f64, cos_phi: f64, sin_phi: f64, t: f64) [2]f64 {
-    const x = -rx * @sin(t);
-    const y = ry * @cos(t);
-    return .{ cos_phi * x - sin_phi * y, sin_phi * x + cos_phi * y };
 }
 
 /// Numbers in SVG's notation, one after another: separated by whitespace or a comma, or by

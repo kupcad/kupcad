@@ -1,7 +1,8 @@
 //! Cubic Bézier curves: flattens quadratic and cubic ones into line segments by De
 //! Casteljau subdivision (`flattenQuadratic`, `flattenCubic`), used by text.zig for glyph
-//! outlines, and keeps the curve a run of points was flattened from (`Flattened`), so a
-//! drawing can write it exactly again.
+//! outlines, keeps the curve a run of points was flattened from (`Flattened`), so a
+//! drawing can write it exactly again, and draws an ellipse's arc (a circle's) as cubics
+//! (`Ellipse.cubic`), as a DXF spline writes an arc and an SVG import reads an ellipse.
 
 const std = @import("std");
 const affine2 = @import("affine2.zig");
@@ -14,6 +15,45 @@ pub const Cubic = struct {
     /// The same curve run the other way.
     pub fn reversed(self: Cubic) Cubic {
         return .{ .c1 = self.c2, .c2 = self.c1 };
+    }
+};
+
+/// An ellipse: its centre, its radii along its own x and y, its x along `axis` (a unit
+/// vector; (1, 0) unturned). A circle has its radii equal.
+pub const Ellipse = struct {
+    center: [2]f64,
+    rx: f64,
+    ry: f64,
+    axis: [2]f64 = .{ 1, 0 },
+
+    pub fn circle(center: [2]f64, radius: f64) Ellipse {
+        return .{ .center = center, .rx = radius, .ry = radius };
+    }
+
+    /// Its point at the parameter `t` (radians; the angle itself on a circle).
+    pub fn at(self: Ellipse, t: f64) [2]f64 {
+        return self.placed(.{ self.rx * @cos(t), self.ry * @sin(t) }, self.center);
+    }
+
+    /// The derivative of `at` in t: the way it runs as t grows.
+    pub fn tangentAt(self: Ellipse, t: f64) [2]f64 {
+        return self.placed(.{ -self.rx * @sin(t), self.ry * @cos(t) }, .{ 0, 0 });
+    }
+
+    /// The cubic close to it from `from`, its point at `t0`, to `to`, its point at `t1`
+    /// (either way round; within a quarter turn it keeps within 2.7e-4 of the radius):
+    /// the controls along its tangents there, 4/3 tan((t1 - t0) / 4) of them out. The ends
+    /// are the caller's, so a piece ends exactly where the next starts.
+    pub fn cubic(self: Ellipse, t0: f64, t1: f64, from: [2]f64, to: [2]f64) Cubic {
+        const alpha = 4.0 / 3.0 * @tan((t1 - t0) / 4);
+        const d0 = self.tangentAt(t0);
+        const d1 = self.tangentAt(t1);
+        return .{ .c1 = .{ from[0] + alpha * d0[0], from[1] + alpha * d0[1] }, .c2 = .{ to[0] - alpha * d1[0], to[1] - alpha * d1[1] } };
+    }
+
+    /// `v`, in its own axes, turned onto the plane's and moved by `by`.
+    fn placed(self: Ellipse, v: [2]f64, by: [2]f64) [2]f64 {
+        return .{ by[0] + self.axis[0] * v[0] - self.axis[1] * v[1], by[1] + self.axis[1] * v[0] + self.axis[0] * v[1] };
     }
 };
 

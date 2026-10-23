@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
+const bezier = @import("../../core/bezier.zig");
 const UniqueNames = @import("../names.zig").UniqueNames;
 const MAX_SEGMENTS = @import("../../core/limits.zig").MAX_SEGMENTS;
 
@@ -235,21 +236,18 @@ fn splinePieces(allocator: std.mem.Allocator, outline: drawing_mod.Outline, tole
             try pieces.append(allocator, .{ .c1 = cubic.c1, .c2 = cubic.c2, .to = edge.to });
         } else if (edge.arc) |arc| {
             const count = arcPieces(edge.angle, arc.radius, tolerance);
-            const theta = edge.angle / @as(f64, @floatFromInt(count));
-            const kappa = 4.0 / 3.0 * @tan(theta / 4) * arc.radius;
-            const way: f64 = if (edge.ccw) 1 else -1;
+            const step = (if (edge.ccw) edge.angle else -edge.angle) / @as(f64, @floatFromInt(count));
+            const circle = bezier.Ellipse.circle(arc.center, arc.radius);
             var a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+            var p0 = circle.at(a0);
             for (0..count) |k| {
-                const a1 = a0 + way * theta;
-                const p0 = [2]f64{ arc.center[0] + arc.radius * @cos(a0), arc.center[1] + arc.radius * @sin(a0) };
+                const a1 = a0 + step;
                 // The last piece ends exactly where the edge does
-                const p3 = if (k + 1 == count) edge.to else [2]f64{ arc.center[0] + arc.radius * @cos(a1), arc.center[1] + arc.radius * @sin(a1) };
-                try pieces.append(allocator, .{
-                    .c1 = .{ p0[0] - way * kappa * @sin(a0), p0[1] + way * kappa * @cos(a0) },
-                    .c2 = .{ p3[0] + way * kappa * @sin(a1), p3[1] - way * kappa * @cos(a1) },
-                    .to = p3,
-                });
+                const p3 = if (k + 1 == count) edge.to else circle.at(a1);
+                const piece = circle.cubic(a0, a1, p0, p3);
+                try pieces.append(allocator, .{ .c1 = piece.c1, .c2 = piece.c2, .to = p3 });
                 a0 = a1;
+                p0 = p3;
             }
         } else {
             try pieces.append(allocator, .{

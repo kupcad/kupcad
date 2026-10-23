@@ -50,3 +50,25 @@ test "Bezier: Adaptively subdivides sharp cubic curve" {
     try testing.expectEqual(10.0, last_point[0]);
     try testing.expectEqual(0.0, last_point[1]);
 }
+
+test "bezier: an ellipse's arc as a cubic, its controls along its tangents" {
+    // A quarter of the unit circle: the controls the well-known 0.5523 out along the tangents
+    const circle = bezier.Ellipse.circle(.{ 0, 0 }, 1);
+    const quarter = circle.cubic(0, std.math.pi / 2.0, circle.at(0), circle.at(std.math.pi / 2.0));
+    const kappa = 4.0 / 3.0 * (std.math.sqrt2 - 1);
+    try testing.expectApproxEqAbs(@as(f64, 1), quarter.c1[0], 1e-12);
+    try testing.expectApproxEqAbs(kappa, quarter.c1[1], 1e-12);
+    try testing.expectApproxEqAbs(kappa, quarter.c2[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1), quarter.c2[1], 1e-12);
+    // Clockwise, the controls lead the other way
+    const back = circle.cubic(0, -std.math.pi / 2.0, circle.at(0), circle.at(-std.math.pi / 2.0));
+    try testing.expectApproxEqAbs(-kappa, back.c1[1], 1e-12);
+    // An ellipse turned a quarter: its x axis along y, so its point at 0 is up, at 2 out
+    const turned = bezier.Ellipse{ .center = .{ 5, 0 }, .rx = 2, .ry = 1, .axis = .{ 0, 1 } };
+    const p = turned.at(0);
+    try testing.expectApproxEqAbs(@as(f64, 5), p[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 2), p[1], 1e-12);
+    const d = turned.tangentAt(0);
+    try testing.expectApproxEqAbs(@as(f64, -1), d[0], 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 0), d[1], 1e-12);
+}
