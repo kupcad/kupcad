@@ -19,7 +19,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
         .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .batch_hull_op, .hull => .solid,
         .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
-        .empty_sketch, .square, .circle, .polygon, .polygons_even_odd => .sketch,
+        .empty_sketch, .square, .rounded_square, .circle, .polygon, .polygons_even_odd => .sketch,
         .cs_union_op, .cs_difference_op, .cs_intersection_op, .offset, .cs_transform, .cs_set_material, .cs_set_name => .sketch,
         .slice_op, .project_op => .sketch,
     };

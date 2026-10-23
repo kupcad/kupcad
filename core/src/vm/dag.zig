@@ -4,6 +4,7 @@
 //! evaluated later, by `dag_evaluator.zig`.
 
 const std = @import("std");
+const rounded_rect = @import("../core/rounded_rect.zig");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
 const dag_verifier = @import("dag_verifier.zig");
@@ -59,6 +60,9 @@ pub const DAGTag = enum(u8) {
     cs_intersection_op,
     offset,
     cs_transform,
+    /// `square(round_r:)`: a rectangle with rounded corners (core/rounded_rect.zig), kept
+    /// as such so the 2D exporters know its corners' circles; it was the points.
+    rounded_square,
     polygon,
     polygons_even_odd,
     set_material,
@@ -77,6 +81,7 @@ pub const DAGTag = enum(u8) {
 pub fn scriptName(tag: DAGTag) []const u8 {
     return switch (tag) {
         .cube, .cylinder, .sphere, .translate, .rotate, .scale, .square, .circle, .extrude, .revolve, .mirror, .hull, .loft, .minkowski, .trim_by_plane, .offset, .polygon => @tagName(tag),
+        .rounded_square => "square",
         .union_op, .batch_union_op, .cs_union_op => "union",
         .difference_op, .cs_difference_op => "difference",
         .intersection_op, .cs_intersection_op => "intersection",
@@ -135,6 +140,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .cube => .{ .numbers = 3 },
         .cylinder => .{ .numbers = 4 },
         .sphere, .square, .circle => .{ .numbers = 2 },
+        .rounded_square => .{ .numbers = 4 },
         .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => .{ .operands = 2 },
         .hull, .project_op => .{ .operands = 1 },
         .batch_union_op, .batch_hull_op => .operand_list,
@@ -480,6 +486,14 @@ pub const DAGBuilder = struct {
         const snap = self.snapshot();
         const num_idx = try self.appendNumbers(&.{ x, y });
         return try self.appendNodeWithRollback(.{ .tag = .square, .flags = if (center) 1 else 0, .data = num_idx }, snap);
+    }
+
+    /// A rectangle with rounded corners (rounded_rect.RoundedRect: `radius` as given,
+    /// `segments` a full circle's share, resolved).
+    pub fn addRoundedSquare(self: *DAGBuilder, rect: rounded_rect.RoundedRect) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx = try self.appendNumbers(&.{ rect.x, rect.y, rect.radius, @floatFromInt(rect.segments) });
+        return try self.appendNodeWithRollback(.{ .tag = .rounded_square, .flags = if (rect.center) 1 else 0, .data = num_idx }, snap);
     }
 
     pub fn addCircle(self: *DAGBuilder, radius: f64, segments: i32) !DAGNodeIndex {
@@ -927,6 +941,11 @@ pub const DAGBuilder = struct {
             .y = self.numbers.items[node.data + 1],
             .center = (node.flags & 1) != 0,
         };
+    }
+
+    pub inline fn getRoundedSquarePayload(self: *const DAGBuilder, node: DAGNode) rounded_rect.RoundedRect {
+        const n = self.numbers.items[node.data..][0..4];
+        return .{ .x = n[0], .y = n[1], .center = (node.flags & 1) != 0, .radius = n[2], .segments = @intFromFloat(n[3]) };
     }
 
     pub inline fn getCirclePayload(self: *const DAGBuilder, node: DAGNode) struct { radius: f64, segments: i32 } {

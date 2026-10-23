@@ -3,6 +3,7 @@
 //! argument checks, and the `native*` function that adds the shape to the geometry DAG.
 
 const std = @import("std");
+const rounded_rect = @import("../core/rounded_rect.zig");
 const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
 const Signature = @import("signature.zig").Signature;
@@ -186,24 +187,15 @@ fn addRegularPolygon(vm: *VM, sides: i32, r: f64) !u32 {
 
 // --- Filleting Math Helpers ---
 
-/// How many chords a quarter arc gets when a full circle gets `total`: its share, rounded
-/// up. It was rounded down, so a corner the resolution gave 5 to 7 segments a turn (any
-/// radius up to about 2.2 mm by default) was one chord, a chamfer.
-fn quarterArcSegments(total: i32) usize {
-    return @max(1, (@as(usize, @intCast(total)) + 3) / 4);
-}
-
-/// Generates points along a circular arc and pushes them to the polygon list
-fn pushArc(allocator: std.mem.Allocator, pts: *std.ArrayList([2]f64), cx: f64, cy: f64, r: f64, start_ang: f64, end_ang: f64, segments: usize) !void {
-    const step = (end_ang - start_ang) / @as(f64, @floatFromInt(segments));
-    for (0..segments + 1) |i| {
-        const ang = start_ang + @as(f64, @floatFromInt(i)) * step;
-        try pts.append(allocator, .{ cx + r * @cos(ang), cy + r * @sin(ang) });
-    }
-}
-
-/// Helper to generate a 2D rounded or chamfered rectangle
+/// A rectangle with rounded corners (its own node, so a drawing knows the corners'
+/// circles) or chamfered ones (a polygon).
 fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfer: ?f64, segs: i32) !u32 {
+    if (round_r) |r| {
+        var rect = rounded_rect.RoundedRect{ .x = x, .y = y, .center = center, .radius = r, .segments = segs };
+        rect.radius = rect.safeRadius();
+        if (segs == 0) rect.segments = util.autoSegments(vm, rect.radius);
+        return vm.dag_builder.addRoundedSquare(rect);
+    }
     var pts = std.ArrayList([2]f64).empty;
     // Temporary structures map to scratch_arena instead of standard allocator
     const alloc = vm.scratch_arena.allocator();
@@ -214,16 +206,7 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
     const cx = if (center) 0.0 else hw;
     const cy = if (center) 0.0 else hh;
 
-    if (round_r) |r| {
-        const safe_r = @min(r, @min(hw, hh));
-        const total_segs: i32 = if (segs > 0) segs else util.autoSegments(vm, safe_r);
-        const arc_segs = quarterArcSegments(total_segs);
-        // Build corners Counter-Clockwise
-        try pushArc(alloc, &pts, cx + hw - safe_r, cy - hh + safe_r, safe_r, -std.math.pi / 2.0, 0.0, arc_segs); // Bottom-Right
-        try pushArc(alloc, &pts, cx + hw - safe_r, cy + hh - safe_r, safe_r, 0.0, std.math.pi / 2.0, arc_segs); // Top-Right
-        try pushArc(alloc, &pts, cx - hw + safe_r, cy + hh - safe_r, safe_r, std.math.pi / 2.0, std.math.pi, arc_segs); // Top-Left
-        try pushArc(alloc, &pts, cx - hw + safe_r, cy - hh + safe_r, safe_r, std.math.pi, std.math.pi * 1.5, arc_segs); // Bottom-Left
-    } else if (chamfer) |c| {
+    if (chamfer) |c| {
         const safe_c = @min(c, @min(hw, hh));
         try pts.appendSlice(alloc, &.{
             .{ cx + hw - safe_c, cy - hh },
@@ -348,11 +331,11 @@ pub fn nativeCylinder(vm: *VM, args: []const value.Value) !value.Value {
             const safe_r2 = @min(rr, @min(r2, opts.h / 2.0));
 
             const corner_segs: i32 = if (given_segments > 0) given_segments else util.autoSegments(vm, @max(safe_r1, safe_r2));
-            const arc_segs = quarterArcSegments(corner_segs);
+            const arc_segs = rounded_rect.quarterArcSegments(corner_segs);
             // Bottom Right Corner (sweep from -90 deg to 0)
-            try pushArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
+            try rounded_rect.appendArc(alloc, &pts, r1 - safe_r1, y_min + safe_r1, safe_r1, -std.math.pi / 2.0, 0.0, arc_segs);
             // Top Right Corner (sweep from 0 to 90 deg)
-            try pushArc(alloc, &pts, r2 - safe_r2, y_max - safe_r2, safe_r2, 0.0, std.math.pi / 2.0, arc_segs);
+            try rounded_rect.appendArc(alloc, &pts, r2 - safe_r2, y_max - safe_r2, safe_r2, 0.0, std.math.pi / 2.0, arc_segs);
         } else if (opts.chamfer) |c| {
             const safe_c1 = @min(c, @min(r1, opts.h / 2.0));
             const safe_c2 = @min(c, @min(r2, opts.h / 2.0));
