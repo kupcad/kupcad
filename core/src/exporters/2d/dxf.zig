@@ -19,8 +19,9 @@ const DEFAULT_LAYER = "0";
 const DEFAULT_COLOR_INDEX = 7;
 /// The first handle given out; AutoCAD keeps the ones below for itself.
 const FIRST_HANDLE = 0x20;
-/// `70` of an LWPOLYLINE: closed.
+/// `70` of an LWPOLYLINE: closed, or open (a Path's).
 const CLOSED = 1;
+const OPEN = 0;
 
 /// The basic index colours (`62`) a true colour is matched to: AutoCAD's 1 to 7.
 const INDEX_COLORS = [_]struct { index: u8, rgb: [3]u8 }{
@@ -104,15 +105,20 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
             try file.pair(100, "AcDbEntity");
             try file.layerOf(8, shape.name);
             try file.pair(100, "AcDbPolyline");
-            // A vertex per edge: its start; the last edge ends at the first vertex
-            try file.int(90, outline.edges.len);
-            try file.int(70, CLOSED);
+            // A vertex per edge, its start; a closed outline's last edge ends at the first
+            // vertex, an open one's end is a vertex of its own
+            try file.int(90, outline.edges.len + @intFromBool(!outline.closed));
+            try file.int(70, if (outline.closed) CLOSED else OPEN);
             var from = outline.start;
             for (outline.edges) |edge| {
                 try file.number(10, from[0]);
                 try file.number(20, from[1]);
                 if (edge.arc != null) try file.number(42, bulgeOf(edge));
                 from = edge.to;
+            }
+            if (!outline.closed) {
+                try file.number(10, from[0]);
+                try file.number(20, from[1]);
             }
         }
     }

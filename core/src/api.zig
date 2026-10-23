@@ -241,6 +241,12 @@ fn hashShapes(hasher: *std.hash.Wyhash, vm: *const VM, val: value.Value, depth: 
         hasher.update(std.mem.asBytes(&hashes[idx]));
         return true;
     }
+    if (val.isPath()) {
+        const p = val.asPath();
+        hasher.update(std.mem.asBytes(&p.start));
+        hasher.update(std.mem.sliceAsBytes(p.segments));
+        return true;
+    }
     const items: []const value.Value = if (val.isAssembly()) val.asAssembly().parts.items.items else if (val.isArray()) val.asArray().items.items else return true;
     if (depth >= MAX_MODEL_NESTING) return false;
     for (items) |item| {
@@ -308,6 +314,8 @@ pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geo
 pub const Model = struct {
     solids: std.ArrayList(value.Value) = .empty,
     sketches: std.ArrayList(value.Value) = .empty,
+    /// Open paths (`line`, `polyline`, `arc`): a drawing's, which no 3D format holds.
+    paths: std.ArrayList(value.Value) = .empty,
     /// The ghosts the script showed (the display list; borrowed from the VM).
     ghosts: []const geom.GeometryHandle = &.{},
     /// The model's name: its Assembly's, if it is one.
@@ -316,6 +324,11 @@ pub const Model = struct {
     pub fn deinit(self: *Model, allocator: std.mem.Allocator) void {
         self.solids.deinit(allocator);
         self.sketches.deinit(allocator);
+        self.paths.deinit(allocator);
+    }
+
+    pub fn shapeCount(self: *const Model) usize {
+        return self.solids.items.len + self.sketches.items.len + self.paths.items.len;
     }
 };
 
@@ -331,7 +344,7 @@ pub fn collectModel(allocator: std.mem.Allocator, vm: *VM) !Model {
     if (final_val.isAssembly()) model.title = final_val.asAssembly().name.chars;
     var path = ItemPath{};
     if (!try collectShapes(allocator, vm, &model, final_val, &path)) {
-        return vm.fail(.TypeError, "the script's last value ({s}) is not a model: end it with a Solid, a Sketch, an Assembly or an Array of them", .{vm.typeName(final_val)});
+        return vm.fail(.TypeError, "the script's last value ({s}) is not a model: end it with a Solid, a Sketch, a Path, an Assembly or an Array of them", .{vm.typeName(final_val)});
     }
     return model;
 }
@@ -361,6 +374,8 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
         try model.solids.append(allocator, val);
     } else if (val.isCrossSection()) {
         try model.sketches.append(allocator, val);
+    } else if (val.isPath()) {
+        try model.paths.append(allocator, val);
     } else if (val.isAssembly()) {
         for (val.asAssembly().parts.items.items) |part| try model.solids.append(allocator, part);
     } else if (val.isArray()) {
@@ -373,7 +388,7 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
             defer path.len = mark;
             path.push(index);
             if (!try collectShapes(allocator, vm, model, item, path)) {
-                return vm.fail(.TypeError, "the model's item {s} ({s}) is not a shape: a model holds Solids, Sketches and Arrays of them", .{ path.text(), vm.typeName(item) });
+                return vm.fail(.TypeError, "the model's item {s} ({s}) is not a shape: a model holds Solids, Sketches, Paths and Arrays of them", .{ path.text(), vm.typeName(item) });
             }
         }
     } else return false;
@@ -381,17 +396,22 @@ fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: valu
 }
 
 /// Whether `format` can hold `model`; raises in the VM (and fails with error.RuntimeError)
-/// when it can't: a 3D format refuses a Sketch (extrude it) and a model with no Solid,
-/// unless the format shows ghosts and there are some; a 2D format draws Sketches and
-/// Solids alike (the Solids projected onto XY) and refuses only a model with neither.
+/// when it can't: a 3D format refuses a Sketch (extrude it), a Path (close or stroke it)
+/// and a model with no Solid, unless the format shows ghosts and there are some; a 2D
+/// format draws Sketches, Paths and Solids alike (the Solids projected onto XY) and refuses
+/// only a model with none.
 pub fn requireExportable(vm: *VM, model: *const Model, format: ExportFormat) !void {
     switch (format.dimension()) {
         .@"2d" => {
-            if (model.solids.items.len + model.sketches.items.len == 0) {
+            if (model.shapeCount() == 0) {
                 return vm.fail(.GeometryError, "the model holds no shape: nothing to draw as {s}", .{@tagName(format)});
             }
         },
         .@"3d" => {
+            if (model.paths.items.len > 0) {
+                const which = if (model.shapeCount() == 1) "is" else "holds";
+                return vm.fail(.TypeError, "the model {s} a Path, which {s} (a 3D format) can't hold: close it (.close) into a Sketch or give it a width (.stroke(w)), then extrude it", .{ which, @tagName(format) });
+            }
             if (model.sketches.items.len > 0) {
                 const which = if (model.solids.items.len == 0 and model.sketches.items.len == 1) "is" else "holds";
                 return vm.fail(.TypeError, "the model {s} a Sketch, which {s} (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid", .{ which, @tagName(format) });
@@ -566,13 +586,14 @@ pub fn exportModelFromVm(
     try requireExportable(vm, &model, format);
     return switch (format.dimension()) {
         .@"3d" => exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title),
-        .@"2d" => exportDrawing(allocator, vm, format, model.sketches.items, model.solids.items),
+        .@"2d" => exportDrawing(allocator, vm, format, model.sketches.items, model.solids.items, model.paths.items),
     };
 }
 
-/// `sketches` and `solids` (rooted by the caller) as a drawing in `format` (drawingOf).
-pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value) ![]const u8 {
-    var drawing = try drawingOf(allocator, vm, sketches, solids);
+/// `sketches`, `solids` and `paths` (rooted by the caller) as a drawing in `format`
+/// (drawingOf).
+pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) ![]const u8 {
+    var drawing = try drawingOf(allocator, vm, sketches, solids, paths);
     defer drawing.deinit(allocator);
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
     return switch (format) {
@@ -582,22 +603,24 @@ pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat
     };
 }
 
-/// The drawing of `sketches`, each with its name and colour (bom.sketchLabel), then of
-/// `solids` projected onto the XY plane (their silhouettes, as `project` gives them), each
-/// with its part's name and colour. The outlines come from the kernel (feature
-/// `sketch_contours`), so a B-Rep sketch raises what it can't do.
-pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.Value, solids: []const value.Value) !drawing_mod.Drawing {
+/// The drawing of `sketches`, each with its name and colour (bom.sketchLabel), of
+/// `paths`, as they are (open, their arcs exact), and of `solids` projected onto the XY
+/// plane (their silhouettes, as `project` gives them), each with its part's name and
+/// colour. The outlines come from the kernel (feature `sketch_contours`), so a B-Rep sketch
+/// raises what it can't do.
+pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) !drawing_mod.Drawing {
     var shapes: std.ArrayList(drawing_mod.Shape) = .empty;
     errdefer {
         for (shapes.items) |shape| shape.deinit(allocator);
         shapes.deinit(allocator);
     }
-    try shapes.ensureTotalCapacity(allocator, sketches.len + solids.len);
+    try shapes.ensureTotalCapacity(allocator, sketches.len + solids.len + paths.len);
     for (sketches) |sketch| {
         const label = bom.sketchLabel(vm, sketch);
         const name: ?[]u8 = if (label.name) |n| try allocator.dupe(u8, n) else null;
         shapes.appendAssumeCapacity(try shapeOf(allocator, vm, sketch, name, label.material));
     }
+    for (paths) |path_val| shapes.appendAssumeCapacity(try pathShapeOf(allocator, vm, path_val));
     if (solids.len > 0) {
         const grouping = try bom.group(vm, allocator, solids);
         defer grouping.deinit(allocator);
@@ -616,6 +639,18 @@ pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.
     }
     const bounds = drawing_mod.Drawing.boundsOf(shapes.items);
     return .{ .shapes = try shapes.toOwnedSlice(allocator), .projected = solids.len, .bounds = bounds };
+}
+
+/// A Path as a shape of the drawing: one open outline of its segments, as they are.
+fn pathShapeOf(allocator: std.mem.Allocator, vm: *const VM, path_val: value.Value) !drawing_mod.Shape {
+    const p = path_val.asPath();
+    const name: ?[]u8 = if (p.name) |n| try allocator.dupe(u8, n.chars) else null;
+    errdefer if (name) |n| allocator.free(n);
+    const outlines = try allocator.alloc(drawing_mod.Outline, 1);
+    errdefer allocator.free(outlines);
+    outlines[0] = .{ .start = p.start, .edges = try allocator.dupe(drawing_mod.Edge, p.segments), .closed = false };
+    const material: ?MaterialDef = if (p.material_id) |id| (if (id < vm.materials.items.len) vm.materials.items[id] else null) else null;
+    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
 }
 
 /// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
@@ -747,16 +782,22 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
         vm.push(made);
         const bytes = switch (format.dimension()) {
             .@"3d" => try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name),
-            .@"2d" => try exportDrawing(allocator, vm, format, &.{}, &.{made}),
+            .@"2d" => try exportDrawing(allocator, vm, format, &.{}, &.{made}, &.{}),
         };
         errdefer allocator.free(bytes);
         try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
     }
     if (format.dimension() == .@"2d") {
         for (model.sketches.items) |sketch| {
-            const bytes = try exportDrawing(allocator, vm, format, &.{sketch}, &.{});
+            const bytes = try exportDrawing(allocator, vm, format, &.{sketch}, &.{}, &.{});
             errdefer allocator.free(bytes);
             try files.append(allocator, .{ .name = bom.sketchLabel(vm, sketch).name, .count = 1, .bytes = bytes });
+        }
+        for (model.paths.items) |path_val| {
+            const bytes = try exportDrawing(allocator, vm, format, &.{}, &.{}, &.{path_val});
+            errdefer allocator.free(bytes);
+            const name: ?[]const u8 = if (path_val.asPath().name) |n| n.chars else null;
+            try files.append(allocator, .{ .name = name, .count = 1, .bytes = bytes });
         }
     }
     return files.toOwnedSlice(allocator);

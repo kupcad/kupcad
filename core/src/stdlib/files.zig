@@ -94,11 +94,10 @@ pub fn meshExportDxf(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
 fn exportDrawingTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: api.ExportFormat, comptime method: []const u8) !value.Value {
     var solids: std.ArrayList(value.Value) = .empty;
     defer solids.deinit(vm.allocator);
-    const sketches: []const value.Value = if (receiver.isCrossSection()) &.{receiver} else blk: {
-        _ = try receiverSolids(vm, receiver, method, &solids);
-        break :blk &.{};
-    };
-    const bytes = try api.exportDrawing(vm.allocator, vm, format, sketches, solids.items);
+    const sketches: []const value.Value = if (receiver.isCrossSection()) &.{receiver} else &.{};
+    const paths: []const value.Value = if (receiver.isPath()) &.{receiver} else &.{};
+    if (!receiver.isCrossSection() and !receiver.isPath()) _ = try receiverSolids(vm, receiver, method, &solids);
+    const bytes = try api.exportDrawing(vm.allocator, vm, format, sketches, solids.items, paths);
     defer vm.allocator.free(bytes);
     try vm.vfs.writeFile(filepath, bytes);
     return receiver;

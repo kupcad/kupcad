@@ -127,6 +127,23 @@ test "SVG: a circle is two arcs of its exact radius, a rounded corner an arc, a 
     try testing.expect(std.mem.find(u8, hd, " A 3 3 0 0 0 ") == null);
 }
 
+test "SVG: a Path is an open, unfilled path with its arcs exact, a closed one's arcs too" {
+    // `end` and `from` are keywords, hence `sweep:` and `start:`/`to:`
+    const source = "p = (line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])).named(\"bracket\").material(color: \"#FF0000\")\n[p, p.close.translate(y: 20)]";
+    const svg = try exportSvg(source);
+    defer testing.allocator.free(svg);
+    errdefer std.debug.print("svg:\n{s}\n", .{svg});
+    // The sketches come first, then the paths. The path: no Z, no fill, stroked in its
+    // colour, the arc an A of radius 5
+    try testing.expectEqualStrings("M 0 0 L 10 0 A 5 5 0 0 0 10 -10 L 0 -10", pathData(svg, 1).?);
+    try testing.expect(std.mem.find(u8, svg, "<path id=\"bracket\" fill=\"none\" fill-rule=\"evenodd\" stroke=\"#FF0000\"") != null);
+    // Closed, the same outline is filled and its arc stays an arc
+    const closed = pathData(svg, 0).?;
+    try testing.expect(std.mem.endsWith(u8, closed, " Z"));
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, closed, " A 5 5 0 0 0 "));
+    try testing.expect(std.mem.find(u8, svg, "viewBox=\"0 -30 15 30\"") != null);
+}
+
 test "SVG: what can't be drawn is refused with a message" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "[]", .message = "GeometryError: the model holds no shape: nothing to draw as svg" },

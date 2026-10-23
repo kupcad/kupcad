@@ -1,76 +1,29 @@
 //! A model as a drawing, what the 2D exporters (SVG, DXF) write: each shape's outlines
 //! (the kernel's contours, their chords turned back into the arcs they were drawn from,
-//! arcs.zig) with the name and colour it carries, and the drawing's bounds. `api.drawingOf`
-//! builds it from the model's Sketches and from its Solids projected onto the XY plane, so a
-//! 3D model exports as a 2D format too.
+//! arcs.zig; a Path's segments as they are, open) with the name and colour it carries, and
+//! the drawing's bounds. `api.drawingOf` builds it from the model's Sketches and Paths and
+//! from its Solids projected onto the XY plane, so a 3D model exports as a 2D format too.
 
 const std = @import("std");
 const geom = @import("../../kernel/geometry_handle.zig");
+const path_mod = @import("../../core/path.zig");
 
-/// The circle an arc lies on.
-pub const Arc = struct {
-    center: [2]f64,
-    radius: f64,
-};
+/// An outline's edge is a path segment, and an arc its circle (core/path.zig).
+pub const Arc = path_mod.Arc;
+pub const Edge = path_mod.Segment;
+pub const sweep = path_mod.sweep;
 
-/// One edge of an outline: a straight line to `to`, or the arc of `arc`'s circle to it,
-/// counter-clockwise about the centre when `ccw`, sweeping `angle` radians (more than π:
-/// the long way round). The angle is the arc's own, as the matcher knows it, not derived
-/// from the chord, which the kernel's vertices place a little off the ideal circle.
-pub const Edge = struct {
-    to: [2]f64,
-    arc: ?Arc = null,
-    ccw: bool = true,
-    angle: f64 = 0,
-
-    pub fn large(self: Edge) bool {
-        return self.angle > std.math.pi;
-    }
-
-    /// Whether the arc from `from` passes `p`, a point of its circle: `p`'s angle lies
-    /// within the arc's, going its way.
-    pub fn passes(self: Edge, from: [2]f64, p: [2]f64) bool {
-        const arc = self.arc orelse return false;
-        return sweep(arc.center, from, p, self.ccw) <= self.angle;
-    }
-};
-
-/// The angle swept about `center` from `from` to `to` going the `ccw` way, in [0, 2π).
-pub fn sweep(center: [2]f64, from: [2]f64, to: [2]f64, ccw: bool) f64 {
-    const a0 = std.math.atan2(from[1] - center[1], from[0] - center[0]);
-    const a1 = std.math.atan2(to[1] - center[1], to[0] - center[0]);
-    const d = if (ccw) a1 - a0 else a0 - a1;
-    return if (d < 0) d + 2 * std.math.pi else d;
-}
-
-/// A closed outline: from `start` along its edges back to it (the last edge ends there).
+/// An outline: from `start` along its edges, back to it when `closed` (the last edge ends
+/// there) or left open, as a Path is.
 pub const Outline = struct {
     start: [2]f64,
     edges: []Edge,
+    closed: bool = true,
 
     /// The box around the outline, its arcs' bulges included.
-    pub fn bounds(self: Outline) ?geom.Rect2D {
-        var box: ?geom.Rect2D = null;
-        var from = self.start;
-        include(&box, from);
-        for (self.edges) |edge| {
-            include(&box, edge.to);
-            if (edge.arc) |arc| {
-                // Wherever the arc crosses an axis through the centre, it reaches the
-                // circle's extreme on that side
-                const extremes = [4][2]f64{
-                    .{ arc.center[0] + arc.radius, arc.center[1] },
-                    .{ arc.center[0], arc.center[1] + arc.radius },
-                    .{ arc.center[0] - arc.radius, arc.center[1] },
-                    .{ arc.center[0], arc.center[1] - arc.radius },
-                };
-                for (extremes) |p| {
-                    if (edge.passes(from, p)) include(&box, p);
-                }
-            }
-            from = edge.to;
-        }
-        return box;
+    pub fn bounds(self: Outline) geom.Rect2D {
+        const b = path_mod.bounds(self.start, self.edges);
+        return .{ .min = b.min, .max = b.max };
     }
 
     pub fn include(box: *?geom.Rect2D, p: [2]f64) void {
@@ -117,7 +70,7 @@ pub const Drawing = struct {
         var box: ?geom.Rect2D = null;
         for (shapes) |shape| {
             for (shape.outlines) |outline| {
-                const b = outline.bounds() orelse continue;
+                const b = outline.bounds();
                 Outline.include(&box, b.min);
                 Outline.include(&box, b.max);
             }

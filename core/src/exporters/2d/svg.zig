@@ -3,8 +3,8 @@
 //! down, a sketch's up) so the file shows the sketch as the script has it. Each shape is one
 //! `<path>` of all its outlines, lines as `L` and arcs as `A` (the exact circle, not the
 //! chords the kernel drew), filled by the even-odd rule so its holes are holes, in its
-//! material colour (or a neutral grey), with a thin black outline; a named shape carries
-//! its name as the path's `id`.
+//! material colour (or a neutral grey), with a thin black outline; a Path, open, is not
+//! filled and is stroked in its colour; a named shape carries its name as the path's `id`.
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
@@ -33,24 +33,28 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
             try writeId(w, name);
             try w.writeByte('"');
         }
-        if (shape.rgb) |rgb| {
-            try w.print(" fill=\"#{X:0>2}{X:0>2}{X:0>2}\"", .{ rgb[0], rgb[1], rgb[2] });
-        } else try w.print(" fill=\"{s}\"", .{DEFAULT_FILL});
+        // A Path encloses nothing: its colour is its stroke's
+        var open = true;
+        for (shape.outlines) |outline| open = open and !outline.closed;
+        const fill = if (open) "none" else null;
+        var color_buf: [7]u8 = undefined;
+        const color: []const u8 = if (shape.rgb) |rgb| try std.fmt.bufPrint(&color_buf, "#{X:0>2}{X:0>2}{X:0>2}", .{ rgb[0], rgb[1], rgb[2] }) else DEFAULT_FILL;
+        try w.print(" fill=\"{s}\"", .{fill orelse color});
         if (shape.alpha < 1) try w.print(" fill-opacity=\"{d}\"", .{shape.alpha});
-        try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ STROKE, STROKE_WIDTH });
+        try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ if (open and shape.rgb != null) color else STROKE, STROKE_WIDTH });
         for (shape.outlines, 0..) |outline, i| {
             if (i > 0) try w.writeByte(' ');
             try w.print("M {d} {d}", .{ outline.start[0], flipped(outline.start[1]) });
             for (outline.edges, 0..) |edge, e| {
                 // `Z` draws the last line back to the start itself
-                if (e == outline.edges.len - 1 and edge.arc == null) break;
+                if (outline.closed and e == outline.edges.len - 1 and edge.arc == null) break;
                 if (edge.arc) |arc| {
                     // Turned over, a counter-clockwise arc runs the other way: SVG's sweep
                     // flag is 1 for the positive-angle direction of its downward Y
                     try w.print(" A {d} {d} 0 {d} {d} {d} {d}", .{ arc.radius, arc.radius, @intFromBool(edge.large()), @intFromBool(!edge.ccw), edge.to[0], flipped(edge.to[1]) });
                 } else try w.print(" L {d} {d}", .{ edge.to[0], flipped(edge.to[1]) });
             }
-            try w.writeAll(" Z");
+            if (outline.closed) try w.writeAll(" Z");
         }
         try w.writeAll("\"/>\n");
     }

@@ -884,14 +884,13 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             const call = if (comptime std.mem.eql(u8, f.name, "text")) "text(\"A\", zz_unknown: 1)" else f.name ++ "(zz_unknown: 1)";
             comptime var accepted: []const u8 = "";
             inline for (sig.keywords, 0..) |k, i| accepted = accepted ++ (if (i == 0) "" else ", ") ++ k;
-            try expectScripts(&.{.{
-                .src = comptime rescued(call),
-                .expected = .{ .str = "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")" },
-            }});
+            // A primitive with no keywords (line, polyline) says so
+            const expected = if (sig.keywords.len == 0) "ArgumentError: " ++ f.name ++ " takes no keywords" else "ArgumentError: " ++ f.name ++ " does not take a keyword 'zz_unknown' (it accepts: " ++ accepted ++ ")";
+            try expectScripts(&.{.{ .src = comptime rescued(call), .expected = .{ .str = expected } }});
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 10), checked);
+    try std.testing.expectEqual(@as(usize, 13), checked);
 }
 
 test "Stdlib: each method's Signature lists exactly the keywords it accepts" {

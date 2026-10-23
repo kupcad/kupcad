@@ -103,6 +103,21 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                     try addCircle(allocator, &circles, visit.matrix, corner.center, corner.radius, try allocator.dupe([2]f64, pts.items[corner.first..][0..corner.count]), false);
                 }
             },
+            .closed_path => {
+                const closed = try b.readClosedPath(allocator, node);
+                defer closed.deinit(allocator);
+                var pts: std.ArrayList([2]f64) = .empty;
+                defer pts.deinit(allocator);
+                const ranges = try allocator.alloc(@import("../core/path.zig").Range, closed.segments.len);
+                defer allocator.free(ranges);
+                try @import("../core/path.zig").appendPoints(allocator, &pts, closed.start, closed.segments, closed.chords, ranges);
+                for (closed.segments, ranges, 0..) |segment, range, i| {
+                    const arc = segment.arc orelse continue;
+                    // An arc's points: its start (the segment before's end, or the path's start) and its own
+                    const first = if (i == 0) 0 else ranges[i - 1].first + ranges[i - 1].count - 1;
+                    try addCircle(allocator, &circles, visit.matrix, arc.center, arc.radius, try allocator.dupe([2]f64, pts.items[first .. range.first + range.count]), false);
+                }
+            },
             .cs_transform => {
                 const p = b.getTransformPayload(node);
                 try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix.then(b.numbers.items[p.num_idx..][0..6].*) });

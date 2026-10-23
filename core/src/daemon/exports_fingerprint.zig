@@ -18,7 +18,7 @@ const MAX_DEPTH = 64;
 
 /// What each hashed value starts with, so a String and a Symbol of one name, or an empty
 /// Array and an empty Map, hash apart.
-const Kind = enum(u8) { nil, false, true, number, string, symbol, shape, sketch, array, map, json_object, bounding_box, range, font };
+const Kind = enum(u8) { nil, false, true, number, string, symbol, shape, sketch, array, map, json_object, bounding_box, range, font, path };
 
 /// Hashes the exports of the script `vm` last ran into `hasher`; false when one of them
 /// isn't hashed by content (what is hashed so far stays in).
@@ -48,6 +48,13 @@ fn hashValue(hasher: *std.hash.Wyhash, node_hashes: []const u64, v: value.Value,
         .symbol => return chars(hasher, .symbol, v.asSymbol().chars),
         .geometry => return node(hasher, .shape, node_hashes, v.asGeometry().dag_idx),
         .cross_section => return node(hasher, .sketch, node_hashes, v.asCrossSection().dag_idx),
+        .path => {
+            const p = v.asPath();
+            _ = tag(hasher, .path);
+            hasher.update(std.mem.asBytes(&p.start));
+            hasher.update(std.mem.sliceAsBytes(p.segments));
+            return true;
+        },
         .array => {
             const items = v.asArray().items.items;
             _ = tag(hasher, .array);

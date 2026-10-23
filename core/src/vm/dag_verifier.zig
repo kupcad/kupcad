@@ -19,7 +19,7 @@ pub fn kindOf(tag: dag.DAGTag) Kind {
         .union_op, .batch_union_op, .difference_op, .intersection_op, .minkowski, .batch_hull_op, .hull => .solid,
         .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .set_material, .set_name => .solid,
         .extrude, .revolve, .loft => .solid,
-        .empty_sketch, .square, .rounded_square, .circle, .polygon, .polygons_even_odd => .sketch,
+        .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => .sketch,
         .cs_union_op, .cs_difference_op, .cs_intersection_op, .offset, .cs_transform, .cs_set_material, .cs_set_name => .sketch,
         .slice_op, .project_op => .sketch,
     };
@@ -63,6 +63,10 @@ pub fn problem(b: *const dag.DAGBuilder, node: dag.DAGNode) ?[]const u8 {
         .polygon => {
             if (!fits(node.data, 2, extra.len)) return "its point range is outside extra_data";
             return numbers(b, extra[node.data], 2 * @as(usize, extra[node.data + 1]));
+        },
+        .path => {
+            if (!fits(node.data, 2, extra.len)) return "its segment range is outside extra_data";
+            return numbers(b, extra[node.data], dag.PATH_START_NUMBERS + dag.PATH_SEGMENT_NUMBERS * @as(usize, extra[node.data + 1]));
         },
         .polygons => {
             if (node.data >= extra.len) return "its contour count is outside extra_data";

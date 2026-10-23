@@ -356,7 +356,7 @@ test "WASM Interop: build_model_wasm reports the runtime error message" {
 
 test "WASM Interop: build_model_wasm reports a script that leaves no model" {
     // The script runs fine but leaves nothing to export; it was a bare "Build Error: NoGeometry"
-    try testing.expectEqualStrings("TypeError: the script's last value (Number) is not a model: end it with a Solid, a Sketch, an Assembly or an Array of them", try expectBuildFailure("x = 1"));
+    try testing.expectEqualStrings("TypeError: the script's last value (Number) is not a model: end it with a Solid, a Sketch, a Path, an Assembly or an Array of them", try expectBuildFailure("x = 1"));
 }
 
 test "WASM Interop: get_last_error truncates long messages on a UTF-8 boundary" {

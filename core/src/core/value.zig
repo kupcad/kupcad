@@ -6,6 +6,7 @@ const std = @import("std");
 const dag = @import("../vm/dag.zig");
 const geom = @import("../kernel/geometry_handle.zig");
 const owned_keys = @import("owned_keys.zig");
+const path_mod = @import("path.zig");
 const lexer = @import("../frontend/lexer.zig");
 
 /// Below this magnitude plain notation prints a long run of zeros (0.0000001), so numbers
@@ -57,6 +58,8 @@ pub const ObjType = enum(u8) {
     range,
     bbox,
     cross_section,
+    /// An open 2D path (core/path.zig): lines and arcs from a start.
+    path,
     geometry,
     assembly,
     workplane,
@@ -319,6 +322,21 @@ pub const ObjCrossSection = struct {
     dag_idx: u32,
 };
 
+/// A Path: open 2D geometry, its segments owned by the GC's tracking allocator, with the
+/// name and material it carries for a drawing (as a Sketch's `named` and `material`).
+pub const ObjPath = struct {
+    obj: Obj,
+    start: [2]f64,
+    segments: []path_mod.Segment,
+    name: ?*ObjString,
+    /// The material's index in the VM's, or null.
+    material_id: ?u32,
+
+    pub fn end(self: *const ObjPath) [2]f64 {
+        return path_mod.endOf(self.start, self.segments);
+    }
+};
+
 pub const ObjAssembly = struct {
     obj: Obj,
     name: *ObjString,
@@ -456,6 +474,9 @@ pub const Value = packed struct {
     pub inline fn isCrossSection(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .cross_section;
     }
+    pub inline fn isPath(self: Value) bool {
+        return self.isObject() and self.asObj().obj_type == .path;
+    }
     pub inline fn isInstance(self: Value) bool {
         return self.isObject() and self.asObj().obj_type == .instance;
     }
@@ -517,6 +538,9 @@ pub const Value = packed struct {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asCrossSection(self: Value) *ObjCrossSection {
+        return @alignCast(@fieldParentPtr("obj", self.asObj()));
+    }
+    pub inline fn asPath(self: Value) *ObjPath {
         return @alignCast(@fieldParentPtr("obj", self.asObj()));
     }
     pub inline fn asInstance(self: Value) *ObjInstance {
@@ -671,6 +695,11 @@ pub const Value = packed struct {
                 .cross_section => {
                     const cs: *ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
+                },
+                .path => {
+                    const p: *ObjPath = @alignCast(@fieldParentPtr("obj", obj));
+                    const end = p.end();
+                    try writer.print("<Path {d} segment{s} from [{f}, {f}] to [{f}, {f}]>", .{ p.segments.len, if (p.segments.len == 1) "" else "s", fmtNumber(p.start[0]), fmtNumber(p.start[1]), fmtNumber(end[0]), fmtNumber(end[1]) });
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
                 // puts and interpolation give its name, inspect says what it is too

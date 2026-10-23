@@ -4,6 +4,7 @@
 //! an arena.
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const builtin = @import("builtin");
 const value = @import("../core/value.zig");
 const chunk = @import("chunk.zig");
@@ -51,6 +52,7 @@ pub const GC = struct {
 
     geometries: std.ArrayList(*value.ObjGeometry) = .empty,
     cross_sections: std.ArrayList(*value.ObjCrossSection) = .empty,
+    paths: std.ArrayList(*value.ObjPath) = .empty,
     assemblies: std.ArrayList(*value.ObjAssembly) = .empty,
     workplanes: std.ArrayList(*value.ObjWorkplane) = .empty,
     fonts: std.ArrayList(*value.ObjFont) = .empty,
@@ -109,6 +111,7 @@ pub const GC = struct {
         self.bboxes.deinit(self.allocator);
         self.geometries.deinit(self.allocator);
         self.cross_sections.deinit(self.allocator);
+        self.paths.deinit(self.allocator);
         self.assemblies.deinit(self.allocator);
         self.workplanes.deinit(self.allocator);
         self.fonts.deinit(self.allocator);
@@ -468,6 +471,17 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// A Path of `segments` from `start`, which it takes (allocated by trackingAllocator);
+    /// the caller roots `name`.
+    pub fn allocatePath(self: *GC, vm: *VM, start: [2]f64, segments: []path_mod.Segment, name: ?*value.ObjString, material_id: ?u32) !*value.ObjPath {
+        const ptr = try self.allocateObject(vm, value.ObjPath, &self.paths, .path);
+        ptr.start = start;
+        ptr.segments = segments;
+        ptr.name = name;
+        ptr.material_id = material_id;
+        return ptr;
+    }
+
     pub fn allocateAssembly(self: *GC, vm: *VM, name: *value.ObjString, parts: *value.ObjArray) !*value.ObjAssembly {
         const ptr = try self.allocateObject(vm, value.ObjAssembly, &self.assemblies, .assembly);
         ptr.name = name;
@@ -680,6 +694,7 @@ pub const GC = struct {
                 self.markObject(&wp_obj.parent.obj);
             },
             .font => self.markObject(&obj.as(value.ObjFont).name.obj),
+            .path => if (obj.as(value.ObjPath).name) |name| self.markObject(&name.obj),
             else => {},
         }
     }
@@ -734,6 +749,7 @@ pub const GC = struct {
 
         self.sweepList(vm, value.ObjGeometry, &self.geometries);
         self.sweepList(vm, value.ObjCrossSection, &self.cross_sections);
+        self.sweepList(vm, value.ObjPath, &self.paths);
         self.sweepList(vm, value.ObjAssembly, &self.assemblies);
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
         self.sweepList(vm, value.ObjFont, &self.fonts);
@@ -799,6 +815,11 @@ pub const GC = struct {
             },
             .cross_section => {
                 self.destroyObject(value.ObjCrossSection, obj.as(value.ObjCrossSection));
+            },
+            .path => {
+                const p = obj.as(value.ObjPath);
+                self.trackingAllocator().free(p.segments);
+                self.destroyObject(value.ObjPath, p);
             },
             .string => {
                 const str_obj = obj.as(value.ObjString);

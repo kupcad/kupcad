@@ -153,6 +153,28 @@ test "DXF: a circle is two bulged vertices, a rounded corner a bulge of its angl
     try testing.expect(std.mem.find(u8, holed, "\n42\n-1\n") != null);
 }
 
+test "DXF: a Path is an open polyline with its end as a vertex, its arcs as bulges" {
+    const dxf = try exportDxf("line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])");
+    defer testing.allocator.free(dxf);
+    var pairs = try readPairs(dxf);
+    defer pairs.deinit(testing.allocator);
+    // Open (70 = 0) with 4 vertices: the start, the arc's start and end, and the end
+    var open = false;
+    var count: ?[]const u8 = null;
+    for (pairs.items, 0..) |p, i| {
+        if (p.code == 0 and std.mem.eql(u8, p.value, "LWPOLYLINE")) {
+            var j = i + 1;
+            while (pairs.items[j].code != 0) : (j += 1) {
+                if (pairs.items[j].code == 70) open = std.mem.eql(u8, pairs.items[j].value, "0");
+                if (pairs.items[j].code == 90) count = pairs.items[j].value;
+            }
+        }
+    }
+    try testing.expect(open);
+    try testing.expectEqualStrings("4", count.?);
+    try testing.expect(std.mem.find(u8, dxf, "\n42\n1\n") != null); // the half turn
+}
+
 test "DXF: every handle is given out once" {
     const dxf = try exportDxf("[square(1), square(1).translate(x: 3).named(\"a\")]");
     defer testing.allocator.free(dxf);

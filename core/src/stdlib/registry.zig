@@ -94,6 +94,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.bbox_class = try defineValueClass(vm, "BoundingBox");
     vm.geometry_class = try defineValueClass(vm, "Geometry");
     vm.cross_section_class = try defineValueClass(vm, "CrossSection");
+    vm.path_class = try defineValueClass(vm, "Path");
     vm.nil_class = try defineValueClass(vm, "NilClass");
     vm.proc_class = try defineValueClass(vm, "Proc");
     vm.method_class = try defineValueClass(vm, "Method");
@@ -123,6 +124,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
             .io => kernel_class,
             .primitive_3d => solid_class,
             .primitive_2d => sketch2d_class,
+            .primitive_path => vm.path_class.?,
             else => continue,
         };
         try bindNativeClassMethod(vm, class, def.name, def.func);
@@ -133,6 +135,8 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try vm.cross_section_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
     try vm.assembly_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
     for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.assembly_class.?, def.name, def.func);
+    try vm.path_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.path_methods.len);
+    for (manifest.path_methods) |def| try bindNativeMethod(vm, vm.path_class.?, def.name, def.func);
     for (manifest.mesh_methods) |def| {
         if (def.isOn(.solids)) try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
         if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);

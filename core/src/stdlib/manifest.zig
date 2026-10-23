@@ -9,6 +9,7 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
+const paths = @import("paths.zig");
 const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
 const files = @import("files.zig");
@@ -26,6 +27,8 @@ const debug_mod = @import("debug.zig");
 pub const Category = enum {
     primitive_3d,
     primitive_2d,
+    /// `line`, `polyline`, `arc`: makes a Path.
+    primitive_path,
     transform,
     csg_operator,
     workplane_method,
@@ -42,6 +45,7 @@ pub const Result = enum {
     receiver,
     solid,
     sketch,
+    path,
     number,
     boolean,
     string,
@@ -60,6 +64,7 @@ pub const Result = enum {
         return switch (self) {
             .solid => "Geometry",
             .sketch => "CrossSection",
+            .path => "Path",
             .number => "Number",
             .boolean => "Boolean",
             .string => "String",
@@ -94,7 +99,7 @@ pub const GlobalFunction = struct {
 /// Which shapes a method is defined on: `respond_to?` and a call on the other kind answer
 /// as for any missing method (every method used to be bound to both, so a sketch said it
 /// responded to `hull` and then raised a TypeError).
-pub const On = enum { solids, sketches, both };
+pub const On = enum { solids, sketches, both, paths };
 
 pub const MeshMethod = struct {
     name: []const u8,
@@ -106,7 +111,7 @@ pub const MeshMethod = struct {
     on: On,
 
     pub fn isOn(self: MeshMethod, on: On) bool {
-        return self.on == .both or self.on == on;
+        return self.on == on or (self.on == .both and on != .paths);
     }
 };
 
@@ -114,7 +119,7 @@ pub const core_namespaces = [_][]const u8{
     "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
     "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
     "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
-    "Font",
+    "Font",     "Path",
     // "Workplane": hidden with on_face (see the method table)
 };
 
@@ -148,6 +153,9 @@ pub const global_functions = [_]GlobalFunction{
     primitive("square", .primitive_2d, primitives.nativeSquare, &primitives.SQUARE),
     primitive("circle", .primitive_2d, primitives.nativeCircle, &primitives.CIRCLE),
     primitive("polygon", .primitive_2d, primitives.nativePolygon, &primitives.POLYGON),
+    primitive("line", .primitive_path, paths.nativeLine, &paths.LINE),
+    primitive("polyline", .primitive_path, paths.nativePolyline, &paths.POLYLINE),
+    primitive("arc", .primitive_path, paths.nativeArc, &paths.ARC),
     primitive("regular_polygon", .primitive_2d, primitives.nativeRegularPolygon, &primitives.REGULAR_POLYGON),
     primitive("torus", .primitive_3d, primitives.nativeTorus, &primitives.TORUS),
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
@@ -210,6 +218,24 @@ pub const mesh_methods = [_]MeshMethod{
     method("export_dxf", .file_io, files.meshExportDxf, &sig.EXPORT, .receiver, .both),
 };
 
+/// The methods of a Path (line, polyline, arc): open 2D geometry, moved as a Sketch is,
+/// closed or stroked into one, labelled for a drawing, and drawn.
+pub const path_methods = [_]MeshMethod{
+    method("translate", .transform, paths.pathTranslate, &sig.TRANSLATE, .receiver, .paths),
+    method("rotate", .transform, paths.pathRotate, &sig.ROTATE, .receiver, .paths),
+    method("scale", .transform, paths.pathScale, &sig.SCALE, .receiver, .paths),
+    method("mirror", .transform, paths.pathMirror, &sig.MIRROR, .receiver, .paths),
+    method("close", .transform, paths.pathClose, &sig.NONE, .sketch, .paths),
+    method("stroke", .transform, paths.pathStroke, &paths.STROKE, .sketch, .paths),
+    method("named", .transform, paths.pathNamed, &sig.NAMED, .receiver, .paths),
+    method("material", .transform, methods.meshMaterial, &sig.MATERIAL, .receiver, .paths),
+    method("start", .inspection_method, paths.pathStart, &sig.NONE, .array, .paths),
+    method("end", .inspection_method, paths.pathEnd, &sig.NONE, .array, .paths),
+    method("length", .inspection_method, paths.pathLength, &sig.NONE, .number, .paths),
+    method("export_svg", .file_io, files.meshExportSvg, &sig.EXPORT, .receiver, .paths),
+    method("export_dxf", .file_io, files.meshExportDxf, &sig.EXPORT, .receiver, .paths),
+};
+
 /// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
 /// for export, so it answers what it holds and writes its parts as one file. It had no
 /// methods at all: `assemble(...).export_step(...)` was a NoMethodError.
@@ -235,7 +261,8 @@ fn primitive(comptime name: []const u8, comptime category: Category, comptime fu
     const result: Result = switch (category) {
         .primitive_3d => .solid,
         .primitive_2d => .sketch,
-        else => @compileError("primitive " ++ name ++ " makes neither a solid nor a sketch"),
+        .primitive_path => .path,
+        else => @compileError("primitive " ++ name ++ " makes neither a solid, a sketch nor a path"),
     };
     return .{ .name = name, .func = common.wrapGlobalWith(func, signature.*), .category = category, .result = result, .signature = signature };
 }
@@ -279,6 +306,9 @@ fn methodNamed(name: []const u8) ?*const MeshMethod {
         if (std.mem.eql(u8, m.name, name)) return m;
     }
     for (&assembly_methods) |*m| {
+        if (std.mem.eql(u8, m.name, name)) return m;
+    }
+    for (&path_methods) |*m| {
         if (std.mem.eql(u8, m.name, name)) return m;
     }
     return null;
@@ -334,6 +364,8 @@ pub const lsp_completions = buildLspCompletions();
 /// The host fallback for a method no class defines: every built-in method is bound on a
 /// class, so this only reports it.
 pub fn cadBinaryHandler(vm: *VM, op: chunk.OpCode, a: value.Value, b: value.Value) anyerror!value.Value {
+    // Two paths join where one ends and the next starts
+    if (op == .op_add and a.isPath() and b.isPath()) return paths.join(vm, a, b);
     const is_3d = a.isGeometry() and b.isGeometry();
     const is_2d = a.isCrossSection() and b.isCrossSection();
 

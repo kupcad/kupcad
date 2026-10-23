@@ -5,6 +5,7 @@
 
 const std = @import("std");
 const rounded_rect = @import("../core/rounded_rect.zig");
+const path_mod = @import("../core/path.zig");
 const builtin = @import("builtin");
 const kernel = @import("../kernel/kernel.zig");
 const dag_verifier = @import("dag_verifier.zig");
@@ -16,6 +17,23 @@ pub const DAGNodeIndex = u32;
 /// Every node is checked as it is added (dag_verifier.zig) where a check costs nothing
 /// that matters: Debug and test builds.
 const VERIFY_NODES = builtin.mode == .debug or builtin.is_test;
+
+/// A closed path's numbers: its start (x, y), then per segment its end (x, y), whether it
+/// is an arc, the arc's centre (x, y) and radius, its way round, its angle and its chords.
+pub const PATH_START_NUMBERS = 2;
+pub const PATH_SEGMENT_NUMBERS = 9;
+
+/// A closed path as read from its node (DAGBuilder.readClosedPath).
+pub const ClosedPath = struct {
+    start: [2]f64,
+    segments: []path_mod.Segment,
+    chords: []u32,
+
+    pub fn deinit(self: ClosedPath, allocator: std.mem.Allocator) void {
+        allocator.free(self.segments);
+        allocator.free(self.chords);
+    }
+};
 
 /// The size of the tables below which the graph is never compacted (DAGBuilder.compact).
 const MIN_COMPACTION_BYTES: usize = 1 << 20;
@@ -63,6 +81,9 @@ pub const DAGTag = enum(u8) {
     /// `square(round_r:)`: a rectangle with rounded corners (core/rounded_rect.zig), kept
     /// as such so the 2D exporters know its corners' circles; it was the points.
     rounded_square,
+    /// A Path closed into a sketch (`close`): its start and segments (core/path.zig), with
+    /// the chords each arc is drawn with, kept so the 2D exporters know its arcs.
+    closed_path,
     polygon,
     polygons_even_odd,
     set_material,
@@ -82,6 +103,7 @@ pub fn scriptName(tag: DAGTag) []const u8 {
     return switch (tag) {
         .cube, .cylinder, .sphere, .translate, .rotate, .scale, .square, .circle, .extrude, .revolve, .mirror, .hull, .loft, .minkowski, .trim_by_plane, .offset, .polygon => @tagName(tag),
         .rounded_square => "square",
+        .closed_path => "close",
         .union_op, .batch_union_op, .cs_union_op => "union",
         .difference_op, .cs_difference_op => "difference",
         .intersection_op, .cs_intersection_op => "intersection",
@@ -117,6 +139,9 @@ pub const Layout = union(enum) {
     loft,
     /// extra_data at `data`: the index of the points' numbers (x, y each), then their count.
     polygon,
+    /// extra_data at `data`: the index of a closed path's numbers (PATH_START_NUMBERS, then
+    /// PATH_SEGMENT_NUMBERS per segment), then its segment count.
+    path,
     /// extra_data at `data`: the contour count, then a polygon's two words per contour.
     polygons,
     /// extra_data at `data`: the points' start and count, the faces' start and count, and
@@ -128,7 +153,7 @@ pub const Layout = union(enum) {
     /// Whether the payload's parts can be of different lengths from node to node.
     pub fn variesInLength(self: Layout) bool {
         return switch (self) {
-            .operand_list, .polygon, .polygons => true,
+            .operand_list, .polygon, .path, .polygons => true,
             else => false,
         };
     }
@@ -141,6 +166,7 @@ pub fn layoutOf(tag: DAGTag) Layout {
         .cylinder => .{ .numbers = 4 },
         .sphere, .square, .circle => .{ .numbers = 2 },
         .rounded_square => .{ .numbers = 4 },
+        .closed_path => .path,
         .union_op, .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => .{ .operands = 2 },
         .hull, .project_op => .{ .operands = 1 },
         .batch_union_op, .batch_hull_op => .operand_list,
@@ -226,6 +252,7 @@ const PayloadParts = struct {
                 else => null,
             },
             .polygon => if (step == 0) .{ .numbers = b.numbers.items[extra[at]..][0 .. 2 * extra[at + 1]] } else null,
+            .path => if (step == 0) .{ .numbers = b.numbers.items[extra[at]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * extra[at + 1]] } else null,
             .polygons => if (step == 0)
                 .{ .value = extra[at] }
             else if (step <= extra[at])
@@ -699,6 +726,37 @@ pub const DAGBuilder = struct {
         return try self.appendNodeWithRollback(.{ .tag = .cs_transform, .flags = 0, .data = extra_idx }, snap);
     }
 
+    /// A Path closed into a sketch: `start`, then each segment with the chords it is drawn
+    /// with (`chords[i]`, 0 for a line), as numbers.
+    pub fn addClosedPath(self: *DAGBuilder, start: [2]f64, segments: []const path_mod.Segment, chords: []const u32) !DAGNodeIndex {
+        const snap = self.snapshot();
+        const num_idx: u32 = @intCast(self.numbers.items.len);
+        try self.numbers.append(self.allocator(), start[0]);
+        try self.numbers.append(self.allocator(), start[1]);
+        for (segments, chords) |segment, count| {
+            const arc = segment.arc orelse path_mod.Arc{ .center = .{ 0, 0 }, .radius = 0 };
+            try self.numbers.appendSlice(self.allocator(), &.{ segment.to[0], segment.to[1], @floatFromInt(@intFromBool(segment.arc != null)), arc.center[0], arc.center[1], arc.radius, @floatFromInt(@intFromBool(segment.ccw)), segment.angle, @floatFromInt(count) });
+        }
+        const extra_idx = try self.appendExtraData(&.{ num_idx, @intCast(segments.len) });
+        return try self.appendNodeWithRollback(.{ .tag = .closed_path, .flags = 0, .data = extra_idx }, snap);
+    }
+
+    /// A closed path's start, segments and chords, read back from its node; owned by
+    /// `allocator` (ClosedPath.deinit).
+    pub fn readClosedPath(self: *const DAGBuilder, alloc: std.mem.Allocator, node: DAGNode) !ClosedPath {
+        const count = self.extra_data.items[node.data + 1];
+        const numbers = self.numbers.items[self.extra_data.items[node.data]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * count];
+        const segments = try alloc.alloc(path_mod.Segment, count);
+        errdefer alloc.free(segments);
+        const chords = try alloc.alloc(u32, count);
+        for (segments, chords, 0..) |*segment, *chord, i| {
+            const n = numbers[PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * i ..][0..PATH_SEGMENT_NUMBERS];
+            segment.* = .{ .to = .{ n[0], n[1] }, .arc = if (n[2] != 0) .{ .center = .{ n[3], n[4] }, .radius = n[5] } else null, .ccw = n[6] != 0, .angle = n[7] };
+            chord.* = @intFromFloat(n[8]);
+        }
+        return .{ .start = .{ numbers[0], numbers[1] }, .segments = segments, .chords = chords };
+    }
+
     pub fn addPolygon(self: *DAGBuilder, pts: [][2]f64) !DAGNodeIndex {
         const snap = self.snapshot();
         const alloc = self.allocator();
@@ -722,7 +780,7 @@ pub const DAGBuilder = struct {
             .operand_list => extra[node.data + 1 ..][0..extra[node.data]],
             .target_numbers, .target_value => extra[node.data..][0..1],
             .loft => extra[node.data..][0..2],
-            .none, .numbers, .polygon, .polygons, .polyhedron, .concrete => &.{},
+            .none, .numbers, .polygon, .path, .polygons, .polyhedron, .concrete => &.{},
         };
     }
 
@@ -862,6 +920,11 @@ pub const DAGBuilder = struct {
             .polygon => {
                 const count = extra[at + 1];
                 const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at]..][0 .. 2 * count]);
+                copy.data = try fresh.appendExtraData(&.{ numbers_at, count });
+            },
+            .path => {
+                const count = extra[at + 1];
+                const numbers_at = try fresh.appendNumbers(self.numbers.items[extra[at]..][0 .. PATH_START_NUMBERS + PATH_SEGMENT_NUMBERS * count]);
                 copy.data = try fresh.appendExtraData(&.{ numbers_at, count });
             },
             .polygons => {

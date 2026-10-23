@@ -4,6 +4,7 @@
 //! errors (`raiseError`).
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const builtin = @import("builtin");
 const chunk = @import("chunk.zig");
 const memory = @import("memory.zig");
@@ -200,6 +201,7 @@ pub const VM = struct {
     object_class: ?*value.ObjClass = null,
     geometry_class: ?*value.ObjClass = null,
     cross_section_class: ?*value.ObjClass = null,
+    path_class: ?*value.ObjClass = null,
     /// The classes of values that are not instances (Ruby's NilClass, Proc, Method,
     /// Class, Module), so every value has a class.
     nil_class: ?*value.ObjClass = null,
@@ -1949,6 +1951,15 @@ pub const VM = struct {
         return value.Value.initCrossSection(cs_obj);
     }
 
+    /// A Path of a copy of `segments` from `start`, with `name` (rooted by the caller) and
+    /// `material_id`.
+    pub fn allocatePath(self: *VM, start: [2]f64, segments: []const path_mod.Segment, name: ?*value.ObjString, material_id: ?u32) !value.Value {
+        const owned = try self.gc.trackingAllocator().dupe(path_mod.Segment, segments);
+        errdefer self.gc.trackingAllocator().free(owned);
+        const obj = try self.gc.allocatePath(self, start, owned, name, material_id);
+        return value.Value.initObj(&obj.obj);
+    }
+
     // --- Shared Execution Helpers ---
     /// `==`, also behind `contains?` and `case`/`when`: Numbers by value, Arrays, Maps and
     /// Ranges by content (a Map's order doesn't matter), everything else by identity
@@ -2097,9 +2108,13 @@ pub const VM = struct {
             self.push(new_val);
             return .ok;
         } else if (self.host.binary_handler) |handler| {
+            // A handler may raise an error of its own (a join of paths that don't meet),
+            // which has been thrown by the time it fails
+            const depth = self.frames.items.len;
+            const throw_seq = self.throw_seq;
             const result = handler(self, op, a_val, b_val) catch |err| {
                 if (err == error.UnsupportedOperands) return self.operandError(op, a_val, b_val);
-                return self.nativeFailed(operatorSymbol(op), err);
+                return self.alreadyThrown(throw_seq, depth) orelse self.nativeFailed(operatorSymbol(op), err);
             };
 
             self.stack.ptr[self.stack_top] = result;
@@ -2888,6 +2903,7 @@ pub const VM = struct {
                 .class => return self.class_class,
                 .module => return self.module_class,
                 .assembly => return self.assembly_class,
+                .path => return self.path_class,
                 .workplane => return self.workplane_class,
                 .font => return self.font_class,
                 else => return null,
@@ -3564,6 +3580,7 @@ pub const VM = struct {
             .workplane => "Workplane",
             .assembly => "Assembly",
             .font => "Font",
+            .path => "Path",
             else => "Object",
         };
         return "Object";

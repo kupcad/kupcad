@@ -4,6 +4,7 @@
 //! `evaluateDAG` and `evaluateCrossSectionDAG`, called from vm.zig.
 
 const std = @import("std");
+const path_mod = @import("../core/path.zig");
 const dag = @import("dag.zig");
 const error_kind = @import("error_kind.zig");
 const kernel = @import("../kernel/kernel.zig");
@@ -379,7 +380,7 @@ fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(d
             try pushAll(f_stack, &.{ p.base, p.top });
         },
         .batch_union_op, .batch_hull_op => try pushAll(f_stack, b.getBatchUnionPayload(node)),
-        .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .rounded_square, .circle, .polygon, .polygons_even_odd => {},
+        .empty_solid, .empty_sketch, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => {},
     }
 }
 
@@ -397,7 +398,7 @@ fn pushAll(f_stack: *EvaluationFrameStack, nodes: []const dag.DAGNodeIndex) !voi
 /// result. Kernel calls never consume their inputs and always return new handles.
 fn executeNode(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: EngineConfig) !void {
     switch (node.tag) {
-        .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .rounded_square, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
+        .empty_solid, .cube, .cylinder, .sphere, .polyhedron_op, .concrete, .empty_sketch, .square, .rounded_square, .closed_path, .circle, .polygon, .polygons_even_odd => try buildLeaf(vm, v_stack, node, config),
         .union_op, .difference_op, .intersection_op, .minkowski, .translate, .rotate, .scale, .mirror, .transform_matrix, .trim_by_plane, .hull => try executeSolidOp(vm, v_stack, node, config),
         .set_material, .set_name, .cs_set_material, .cs_set_name => try executeLabel(vm, v_stack, node),
         .batch_union_op, .batch_hull_op => try executeBatch(vm, v_stack, config, node.tag, vm.dag_builder.getBatchUnionPayload(node).len),
@@ -464,6 +465,16 @@ fn buildLeaf(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, config: En
             var pts: std.ArrayList([2]f64) = .empty;
             defer pts.deinit(vm.allocator);
             try b.getRoundedSquarePayload(node).appendPoints(vm.allocator, &pts);
+            try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
+        },
+        .closed_path => {
+            const closed = try b.readClosedPath(vm.allocator, node);
+            defer closed.deinit(vm.allocator);
+            var pts: std.ArrayList([2]f64) = .empty;
+            defer pts.deinit(vm.allocator);
+            try path_mod.appendPoints(vm.allocator, &pts, closed.start, closed.segments, closed.chords, null);
+            // The last segment ends where the path starts, or the polygon closes it straight
+            if (pts.items.len > 1 and pts.items[pts.items.len - 1][0] == closed.start[0] and pts.items[pts.items.len - 1][1] == closed.start[1]) _ = pts.pop();
             try pushSketch(vm, v_stack, node.tag, kernel.polygon(&config, vm.allocator, pts.items));
         },
         .polygon => {

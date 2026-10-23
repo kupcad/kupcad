@@ -57,6 +57,8 @@ pub const CORPUS = [_][]const u8{
     // to `[:a:]` and `{ a b: 1 }` (the nightly fuzzer)
     "%i\x7f\r\rM:%i\x7f",
     "x = %i(a: b) + %i[c d]\nm = { :\"a b\" => 1, :a= => 2, :if => 3 }",
+    // Paths: open 2D geometry, joined, closed and stroked
+    "p = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])\n[p.named(\"edge\"), p.close, p.stroke(2, cap: :square).extrude(1), arc(r: 5, start: [0, 0], to: [8, 0], large: true).rotate(45)]",
     // Quoted symbols, read as the string in the same quotes: escapes, interpolation
     "s = :\"tab\\t#{1 + 1}\" == :'a\\'b'\nt = { :\"k #{s}\" => :\"#{:\"x\"}\" }.inspect",
     // Recursions through built-ins, which stop at the VM's nested-run limit (they crashed it)
