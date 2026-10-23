@@ -7,6 +7,8 @@ to fuzz. Run `python3 scripts/make-test-fonts.py` from core/ with fontTools inst
 - gpos-kerning.otf: CFF outlines, kerning in GPOS: one glyph pair (format 1) and class pairs
   (format 2).
 - unnamed.ttf: kern-table.ttf without a name table, a font that names itself nowhere.
+- no-cmap.ttf: kern-table.ttf without a cmap table, a font that maps no character.
+- no-outlines.ttf: kern-table.ttf without its glyf and loca tables, a font with no outlines.
 """
 
 import pathlib
@@ -67,15 +69,16 @@ def builder(family):
     return fb
 
 
-def finish(fb, family, path, named=True):
+def finish(fb, family, path, drop=()):
     metrics = {name: (advance, min((x for c in contours for x, _ in c), default=0)) for name, (advance, contours) in GLYPHS.items()}
     fb.setupHorizontalMetrics(metrics)
     fb.setupHorizontalHeader(ascent=ASCENT, descent=DESCENT)
     fb.setupNameTable({"familyName": family, "styleName": "Regular"})
     fb.setupOS2(sTypoAscender=ASCENT, sTypoDescender=DESCENT, usWinAscent=ASCENT, usWinDescent=-DESCENT)
     fb.setupPost()
-    if not named:
-        del fb.font["name"]
+    # A font that lacks a table text needs
+    for tag in drop:
+        del fb.font[tag]
     # The same bytes on every run: no creation or modification time of today
     fb.font.recalcTimestamp = False
     fb.font["head"].created = fb.font["head"].modified = FIXED_TIMESTAMP
@@ -83,7 +86,7 @@ def finish(fb, family, path, named=True):
     print(f"{path.name}: {path.stat().st_size} bytes")
 
 
-def kern_table_font(path="kern-table.ttf", named=True):
+def kern_table_font(path="kern-table.ttf", drop=()):
     family = "KupCAD Test TT"
     fb = builder(family)
     glyphs = {}
@@ -99,7 +102,7 @@ def kern_table_font(path="kern-table.ttf", named=True):
     subtable.kernTable = dict(KERN_PAIRS)
     kern.kernTables = [subtable]
     fb.font["kern"] = kern
-    finish(fb, family, OUT / path, named)
+    finish(fb, family, OUT / path, drop)
 
 
 def gpos_font():
@@ -118,5 +121,7 @@ def gpos_font():
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     kern_table_font()
-    kern_table_font("unnamed.ttf", named=False)
+    kern_table_font("unnamed.ttf", drop=("name",))
+    kern_table_font("no-cmap.ttf", drop=("cmap",))
+    kern_table_font("no-outlines.ttf", drop=("glyf", "loca"))
     gpos_font()
