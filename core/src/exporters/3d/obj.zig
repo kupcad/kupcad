@@ -1,6 +1,6 @@
-//! OBJ export: `build` writes a model as Wavefront OBJ, one `o` object per Solid, named
-//! after its part in the parts list (stdlib/bom.zig) and numbered when the part has several
-//! copies. The vertices are in millimetres and Z up, as the script made them (OBJ has no unit
+//! OBJ export: `build` writes a model as Wavefront OBJ, one `o` object per Solid, named as
+//! the parts list names its copies (bom.CopyNames: the part's name, numbered from its second
+//! copy on). The vertices are in millimetres and Z up, as the script made them (OBJ has no unit
 //! or up axis), and each face carries its own normal so a viewer keeps CAD edges sharp. No
 //! material is named unless a library is asked for: most tools apply their own, and a `.mtl`
 //! beside the file breaks when the file is moved. With one, `buildMaterialLibrary` writes
@@ -16,8 +16,6 @@ const material_groups = @import("material_groups.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 
 const HEADER = "# KupCAD Export\n# millimetres, Z up\n";
-/// What a copy after the first is called when its part has a name: "lid 2".
-const COPY_SEPARATOR = " ";
 /// The material of faces without one (kernel.DEFAULT_MATERIAL_SLOT), neutral grey as the
 /// glTF export's.
 const DEFAULT_MATERIAL_NAME = "default";
@@ -30,10 +28,8 @@ const DEFAULT_GREY = 0.8;
 pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
     const grouping = try bom.group(vm, allocator, solids);
     defer grouping.deinit(allocator);
-    // How many copies of each part are written so far, to number them
-    const copies_written = try allocator.alloc(u32, grouping.parts.len);
-    defer allocator.free(copies_written);
-    @memset(copies_written, 0);
+    var names = try bom.CopyNames.init(allocator, &grouping);
+    defer names.deinit(allocator);
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -61,8 +57,11 @@ pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value,
         defer allocator.free(mesh.tri_verts);
         if (mesh.tri_verts.len == 0) continue;
 
-        copies_written[copy.part] += 1;
-        try writeObjectName(w, grouping.parts[copy.part].name, copy.part + 1, copies_written[copy.part]);
+        const name = try names.next(allocator, copy);
+        defer allocator.free(name);
+        try w.writeAll("o ");
+        try writeLineText(w, name);
+        try w.writeByte('\n');
         var v: usize = 0;
         while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
             const p = mesh.vert_props[v..][0..3];
@@ -125,15 +124,6 @@ fn writeMaterial(w: *std.Io.Writer, slot: u32, rgb: [3]f64, alpha: f64) !void {
 fn writeMaterialName(w: *std.Io.Writer, slot: u32) !void {
     if (slot == kernel.DEFAULT_MATERIAL_SLOT) return w.writeAll(DEFAULT_MATERIAL_NAME);
     try w.print("material_{d}", .{slot});
-}
-
-/// `o name`: the part's name, or "part N" by its place in the parts list, with the copy's
-/// number from the second copy on ("lid 2").
-fn writeObjectName(w: *std.Io.Writer, name: ?[]const u8, part_number: usize, copy_number: u32) !void {
-    try w.writeAll("o ");
-    if (name) |n| try writeLineText(w, n) else try w.print("part {d}", .{part_number});
-    if (copy_number > 1) try w.print(COPY_SEPARATOR ++ "{d}", .{copy_number});
-    try w.writeByte('\n');
 }
 
 /// `text` on the current line: a script's name can hold a line break, which would start

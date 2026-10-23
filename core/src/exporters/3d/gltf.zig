@@ -1,7 +1,8 @@
-//! glTF export: `buildGltfBuffer` meshes each part into one primitive per part and material,
-//! optionally Draco-compressed, as a `.glb` or a self-contained `.gltf` (`Container`), with
-//! the scene turned Z-up to Y-up and scaled to metres. The script's `export_gltf` is in
-//! stdlib/files.zig.
+//! glTF export: `buildGltfBuffer` meshes each part into a mesh of one primitive per material
+//! on a node of its own, named after the part (the parts were one mesh, unnamed), optionally
+//! Draco-compressed, as a `.glb` or a self-contained `.gltf` (`Container`), under a root node
+//! that turns the scene Z-up to Y-up and scales it to metres. The script's `export_gltf` is
+//! in stdlib/files.zig.
 
 const std = @import("std");
 const VM = @import("../../vm/vm.zig").VM;
@@ -23,7 +24,7 @@ const DEFAULT_ROUGHNESS = 0.5;
 
 const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
 
-/// glTF is Y-up and KupCAD Z-up: the scene's one node turns the model -90 degrees about X.
+/// glTF is Y-up and KupCAD Z-up: the scene's root node turns the model -90 degrees about X.
 const Z_UP_TO_Y_UP = [4]f64{ -0.7071067811865475, 0.0, 0.0, 0.7071067811865476 };
 /// glTF lengths are metres and KupCAD's millimetres: without this a 10 mm cube opened in
 /// another tool as a 10 m one. The mesh data stays in millimetres; the node scales it.
@@ -64,6 +65,20 @@ const Primitive = struct {
     material: u32,
     extensions: ?PrimitiveExtensions = null,
 };
+/// A part's mesh: its primitives, one per material, under the part's name.
+const GltfMesh = struct {
+    name: ?[]const u8 = null,
+    primitives: []const Primitive,
+};
+/// The root node (the scene's turn and scale, its children the parts) or a part's (its
+/// name and mesh).
+const GltfNode = struct {
+    name: ?[]const u8 = null,
+    mesh: ?u32 = null,
+    rotation: ?[4]f64 = null,
+    scale: ?[3]f64 = null,
+    children: ?[]const u32 = null,
+};
 /// Each starts where its buffer view does, glTF's default, so no byteOffset is written: a
 /// Draco accessor has no buffer view, and a byteOffset without one is invalid glTF.
 const Accessor = struct {
@@ -102,23 +117,26 @@ pub const Container = enum {
     }
 };
 
+/// A part of the file: its mesh, and the name its node gets (null for a ghost's).
+pub const Part = struct { handle: geom.GeometryHandle, name: ?[]const u8 = null };
+
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     vm: *VM,
-    handles: []const geom.GeometryHandle,
+    model: []const Part,
     use_draco: bool,
     container: Container,
 ) ![]const u8 {
     var parts: Parts = .{};
     defer parts.deinit(allocator);
-    for (handles) |handle| try parts.add(allocator, handle);
+    for (model) |part| try parts.add(allocator, part);
     if (parts.vertexCount() == 0) return error.NoGeometry;
 
     var doc: Gltf = .{};
     defer doc.deinit(allocator);
     if (use_draco) try doc.addDracoPrimitives(allocator, &parts) else try doc.addPrimitives(allocator, &parts);
     try doc.addMaterials(allocator, vm.materials.items);
-    return doc.write(allocator, container);
+    return doc.write(allocator, container, parts.meshes.items);
 }
 
 /// One part's triangles with one material: a glTF primitive.
@@ -128,17 +146,27 @@ const PartPrimitive = struct {
     indices: std.ArrayList(u32),
 };
 
+/// A part's mesh in the file: its name, and which of the primitives are its.
+const MeshRange = struct {
+    name: ?[]const u8,
+    first_primitive: u32,
+    primitive_count: u32,
+};
+
 /// Every part's mesh, merged: the positions of all their vertices (x, y, z each) with
-/// their bounds, and one primitive per part and material, so every part keeps its own.
+/// their bounds, one primitive per part and material, so every part keeps its own, and
+/// which primitives make each part's mesh.
 const Parts = struct {
     positions: std.ArrayList(f32) = .empty,
     primitives: std.ArrayList(PartPrimitive) = .empty,
+    meshes: std.ArrayList(MeshRange) = .empty,
     min: [3]f64 = @splat(std.math.inf(f64)),
     max: [3]f64 = @splat(-std.math.inf(f64)),
 
     fn deinit(self: *Parts, allocator: std.mem.Allocator) void {
         for (self.primitives.items) |*p| p.indices.deinit(allocator);
         self.primitives.deinit(allocator);
+        self.meshes.deinit(allocator);
         self.positions.deinit(allocator);
     }
 
@@ -146,8 +174,10 @@ const Parts = struct {
         return @intCast(self.positions.items.len / 3);
     }
 
-    /// Meshes `handle` and adds its vertices and its primitives.
-    fn add(self: *Parts, allocator: std.mem.Allocator, handle: geom.GeometryHandle) !void {
+    /// Meshes `part` and adds its vertices and its primitives; one with no vertices has
+    /// no mesh in the file.
+    fn add(self: *Parts, allocator: std.mem.Allocator, part: Part) !void {
+        const handle = part.handle;
         // A part the kernel can't mesh is an error: skipping it exported a model without it.
         if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;
         const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
@@ -169,6 +199,7 @@ const Parts = struct {
             }
         }
 
+        try self.meshes.append(allocator, .{ .name = part.name, .first_primitive = @intCast(self.primitives.items.len), .primitive_count = @intCast(groups.count()) });
         try self.primitives.ensureUnusedCapacity(allocator, groups.count());
         for (0..groups.count()) |g| {
             const group = groups.at(g);
@@ -321,13 +352,28 @@ const Gltf = struct {
         }
     }
 
-    /// The document as `container` packages it, the scene turned Y-up and scaled to metres.
-    fn write(self: *Gltf, allocator: std.mem.Allocator, container: Container) ![]const u8 {
+    /// The document as `container` packages it: a mesh and a node per part (`ranges`, in
+    /// the primitives' order) under the root node, which turns the scene Y-up and scales
+    /// it to metres.
+    fn write(self: *Gltf, allocator: std.mem.Allocator, container: Container, ranges: []const MeshRange) ![]const u8 {
         const data_uri: ?[]const u8 = switch (container) {
             .glb => null,
             .gltf => try dataUri(allocator, self.bin.items),
         };
         defer if (data_uri) |uri| allocator.free(uri);
+
+        const meshes = try allocator.alloc(GltfMesh, ranges.len);
+        defer allocator.free(meshes);
+        const nodes = try allocator.alloc(GltfNode, ranges.len + 1);
+        defer allocator.free(nodes);
+        const children = try allocator.alloc(u32, ranges.len);
+        defer allocator.free(children);
+        for (ranges, meshes, children, 1..) |range, *mesh, *child, node| {
+            mesh.* = .{ .name = range.name, .primitives = self.primitives.items[range.first_primitive..][0..range.primitive_count] };
+            child.* = @intCast(node);
+            nodes[node] = .{ .name = range.name, .mesh = @intCast(node - 1) };
+        }
+        nodes[0] = .{ .rotation = Z_UP_TO_Y_UP, .scale = @splat(MM_TO_METRES), .children = children };
 
         const root_obj = .{
             .asset = .{ .version = "2.0", .generator = "KupCAD" },
@@ -335,8 +381,8 @@ const Gltf = struct {
             .extensionsRequired = if (self.extensions_required.items.len > 0) self.extensions_required.items else null,
             .scene = 0,
             .scenes = [_]struct { nodes: [1]u32 }{.{ .nodes = .{0} }},
-            .nodes = [_]struct { mesh: u32, rotation: [4]f64, scale: [3]f64 }{.{ .mesh = 0, .rotation = Z_UP_TO_Y_UP, .scale = @splat(MM_TO_METRES) }},
-            .meshes = [_]struct { primitives: []Primitive }{.{ .primitives = self.primitives.items }},
+            .nodes = nodes,
+            .meshes = meshes,
             .materials = self.materials.items,
             .accessors = self.accessors.items,
             .bufferViews = self.buffer_views.items,

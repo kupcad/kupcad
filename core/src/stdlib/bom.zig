@@ -59,6 +59,36 @@ pub const Copy = struct {
     placement: Placement,
 };
 
+/// The names a file that keeps parts apart (an OBJ's objects, a glTF's nodes) gives the
+/// model's Solids, in their order: the part's name, or "part N" by its place in the parts
+/// list, numbered from the second copy on ("lid 2").
+pub const CopyNames = struct {
+    grouping: *const Grouping,
+    /// How many copies of each part are named so far.
+    named: []u32,
+
+    pub fn init(allocator: std.mem.Allocator, grouping: *const Grouping) !CopyNames {
+        const named = try allocator.alloc(u32, grouping.parts.len);
+        @memset(named, 0);
+        return .{ .grouping = grouping, .named = named };
+    }
+
+    pub fn deinit(self: *CopyNames, allocator: std.mem.Allocator) void {
+        allocator.free(self.named);
+    }
+
+    /// The name of the next copy of `copy`'s part (the copies are named in the Solids'
+    /// order); caller owns it.
+    pub fn next(self: *CopyNames, allocator: std.mem.Allocator, copy: Copy) ![]u8 {
+        self.named[copy.part] += 1;
+        const number = self.named[copy.part];
+        if (self.grouping.parts[copy.part].name) |name| {
+            return if (number == 1) allocator.dupe(u8, name) else allocator.print("{s} {d}", .{ name, number });
+        }
+        return if (number == 1) allocator.print("part {d}", .{copy.part + 1}) else allocator.print("part {d} {d}", .{ copy.part + 1, number });
+    }
+};
+
 /// Solids grouped into parts, the parts not measured yet.
 pub const Grouping = struct {
     /// In the order each first appears.

@@ -572,17 +572,49 @@ fn exportSolids(
             try step_exporter.requireExactParts(vm, handles.items);
             return step_exporter.buildStepBuffer(allocator, handles.items);
         },
-        .stl, .glb, .gltf => {
-            var handles = try handlesOf(allocator, vm, solids, ghosts);
+        // STL holds one mesh: the model's parts are united, the ghosts left out.
+        .stl => {
+            var handles = try handlesOf(allocator, vm, solids, &.{});
             defer handles.deinit(allocator);
             // Refuse parts the engine can't tessellate before any work on them.
             for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-            // STL holds one mesh: the model's parts are united, the ghosts left out.
-            if (format == .stl) return stl_exporter.buildStlOfParts(allocator, vm, handles.items[ghosts.len..]);
+            return stl_exporter.buildStlOfParts(allocator, vm, handles.items);
+        },
+        .glb, .gltf => {
+            var parts = try gltfParts(allocator, vm, solids, ghosts);
+            defer parts.deinit();
+            for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-            return gltf_exporter.buildGltfBuffer(allocator, vm, handles.items, options.draco, container);
+            return gltf_exporter.buildGltfBuffer(allocator, vm, parts.items, options.draco, container);
         },
     }
+}
+
+/// The parts of a glTF: `ghosts`, unnamed, then `solids`, evaluated and named as the parts
+/// list names their copies (bom.CopyNames). Owned by `allocator`, the names included; the
+/// handles are borrowed (see VM.ensureConcrete).
+pub const GltfParts = struct {
+    arena: std.heap.ArenaAllocator,
+    items: []gltf_exporter.Part,
+
+    pub fn deinit(self: *GltfParts) void {
+        self.arena.deinit();
+    }
+};
+
+pub fn gltfParts(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !GltfParts {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    errdefer arena.deinit();
+    const items = try arena.allocator().alloc(gltf_exporter.Part, ghosts.len + solids.len);
+    for (ghosts, items[0..ghosts.len]) |ghost, *item| item.* = .{ .handle = ghost };
+    const grouping = try bom.group(vm, allocator, solids);
+    defer grouping.deinit(allocator);
+    var names = try bom.CopyNames.init(allocator, &grouping);
+    defer names.deinit(allocator);
+    for (solids, grouping.copies, items[ghosts.len..]) |solid, copy, *item| {
+        item.* = .{ .handle = try vm.ensureConcrete(solid), .name = try names.next(arena.allocator(), copy) };
+    }
+    return .{ .arena = arena, .items = items };
 }
 
 /// `ghosts`, then the meshes of `solids` (evaluated; borrowed, see VM.ensureConcrete).

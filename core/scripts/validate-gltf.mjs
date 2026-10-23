@@ -22,6 +22,7 @@ const MODELS = {
   (cube(2).material(color: "#0000FF") + cube(2).translate(x: 1)).translate(y: 10),
 ]`,
   ghost: 'cube(4).translate(y: 10).ghost\ncube(2)',
+  named: 'lid = cube(1).named("lid")\nassemble(name: "box", parts: [lid, lid.translate(x: 3), cube(2).translate(x: 6)])',
 };
 
 const VARIANTS = [

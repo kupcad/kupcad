@@ -150,16 +150,16 @@ fn describeFontError(err: text.ImportedFontError) []const u8 {
     };
 }
 
+/// `solid.export_gltf(path, draco)` and `assembly.export_gltf(path, draco)`: the parts kept
+/// apart, each a node named after it.
 pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
-    var handles = std.ArrayList(geom.GeometryHandle).empty;
-    defer handles.deinit(vm.allocator);
-
-    const use_draco = draco_opt orelse false;
-
-    try receiverParts(vm, receiver, "export_gltf", &handles);
-
-    for (handles.items) |h| try vm.requireFeature(h.engine, .mesh);
-    const bytes = try gltf.buildGltfBuffer(vm.allocator, vm, handles.items, use_draco, gltf.Container.forPath(filepath));
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    _ = try receiverSolids(vm, receiver, "export_gltf", &solids);
+    var parts = try api.gltfParts(vm.allocator, vm, solids.items, &.{});
+    defer parts.deinit();
+    for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
+    const bytes = try gltf.buildGltfBuffer(vm.allocator, vm, parts.items, draco_opt orelse false, gltf.Container.forPath(filepath));
     defer vm.allocator.free(bytes);
 
     try vm.vfs.writeFile(filepath, bytes);

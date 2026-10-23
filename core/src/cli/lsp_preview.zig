@@ -274,8 +274,8 @@ pub const SessionPreview = struct {
             logger.warn("the viewport can't show this model: the {s} engine can't {s} yet", .{ handle.engine.scriptName(), kernel.Feature.mesh.describe() });
             return .nothing;
         }
-        const handles = [_]geom.GeometryHandle{handle};
-        const glb = gltf.buildGltfBuffer(allocator, &self.session.vm, &handles, false, .glb) catch |err| {
+        const parts = [_]gltf.Part{.{ .handle = handle }};
+        const glb = gltf.buildGltfBuffer(allocator, &self.session.vm, &parts, false, .glb) catch |err| {
             logger.warn("Failed to build the preview's GLB: {}", .{err});
             return .nothing;
         };
