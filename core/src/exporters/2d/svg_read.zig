@@ -34,9 +34,9 @@ const LENGTH_UNITS = [_]struct { suffix: []const u8, px: f64 }{
     .{ .suffix = "Q", .px = 96.0 / 25.4 / 4.0 },
 };
 /// Elements whose content isn't drawn as it stands (definitions, text, images, styles).
-const UNDRAWN = [_][]const u8{ "defs", "clipPath", "mask", "symbol", "marker", "pattern", "metadata", "title", "desc", "style", "script", "linearGradient", "radialGradient", "filter", "foreignObject", "text", "image" };
+const UNDRAWN = std.StaticStringMap(void).initComptime(.{ .{"defs"}, .{"clipPath"}, .{"mask"}, .{"symbol"}, .{"marker"}, .{"pattern"}, .{"metadata"}, .{"title"}, .{"desc"}, .{"style"}, .{"script"}, .{"linearGradient"}, .{"radialGradient"}, .{"filter"}, .{"foreignObject"}, .{"text"}, .{"image"} });
 /// Elements that only group what is in them.
-const GROUPS = [_][]const u8{ "g", "a", "switch" };
+const GROUPS = std.StaticStringMap(void).initComptime(.{ .{"g"}, .{"a"}, .{"switch"} });
 /// The most an elliptical arc's cubic piece sweeps: a cubic keeps within about 4e-6 of
 /// its radius of an eighth of a turn.
 const ELLIPSE_PIECE = std.math.pi / 4.0;
@@ -272,7 +272,7 @@ const Reader = struct {
         // Another vocabulary's (Inkscape's sodipodi:namedview) isn't drawn
         const name = if (std.mem.startsWith(u8, tag.name, "svg:")) tag.name[4..] else tag.name;
         frame.skipped = true;
-        if (std.mem.findScalar(u8, name, ':') != null or (isOneOf(name, &UNDRAWN) and !symbol_drawn)) return frame;
+        if (std.mem.findScalar(u8, name, ':') != null or (UNDRAWN.has(name) and !symbol_drawn)) return frame;
         if (tag.property("display")) |display| {
             if (std.mem.eql(u8, display, "none")) return frame;
         }
@@ -299,7 +299,7 @@ const Reader = struct {
             try self.readPoints(tag, frame, std.mem.eql(u8, name, "polygon"));
         } else if (std.mem.eql(u8, name, "line")) {
             try self.readLine(tag, frame);
-        } else if (!std.mem.eql(u8, name, "svg") and !isOneOf(name, &GROUPS) and !symbol_drawn) {
+        } else if (!std.mem.eql(u8, name, "svg") and !GROUPS.has(name) and !symbol_drawn) {
             // An element the drawing has no shape for (an animation, a filter's part)
             frame.skipped = true;
         }
@@ -492,11 +492,6 @@ const Reader = struct {
         try shape.finish(closed);
     }
 };
-
-fn isOneOf(name: []const u8, names: []const []const u8) bool {
-    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
-    return false;
-}
 
 /// The subpaths of one element, in its user units, each an outline once finished.
 const Shape = struct {

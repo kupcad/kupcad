@@ -116,3 +116,10 @@ test "path: a segment leaves its start along its line, its arc's tangent, or tow
     // A first control on the start leaves toward the second
     try testing.expectEqual([2]f64{ 1, 0 }, path.startTangent(.{ 0, 0 }, .{ .to = .{ 3, 1 }, .cubic = .{ .c1 = .{ 0, 0 }, .c2 = .{ 2, 0 } } }));
 }
+
+test "path: a polygon's area by the shoelace sum, negative clockwise" {
+    const square = [_][2]f64{ .{ 0, 0 }, .{ 4, 0 }, .{ 4, 3 }, .{ 0, 3 } };
+    try testing.expectEqual(@as(f64, 12), path.polygonArea(&square));
+    const back = [_][2]f64{ .{ 0, 3 }, .{ 4, 3 }, .{ 4, 0 }, .{ 0, 0 } };
+    try testing.expectEqual(@as(f64, -12), path.polygonArea(&back));
+}

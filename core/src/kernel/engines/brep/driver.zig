@@ -6,6 +6,7 @@ const std = @import("std");
 const kernel = @import("../../kernel.zig");
 const geom = @import("../../../core/geometry_handle.zig");
 const engine_config = @import("../../../core/engine_config.zig");
+const path = @import("../../../core/path.zig");
 
 // --- DoD Locus Native B-Rep Library Imports ---
 const locus_math = @import("../../../locus/src/math.zig");
@@ -290,12 +291,7 @@ fn circleImpl(config: *const engine_config.EngineConfig, radius: f64, segments: 
 /// The face an outline encloses, whichever way it runs: Locus keeps the loop as given,
 /// so a clockwise one is turned around first (Manifold fills either by the even-odd rule).
 fn polygonImpl(config: *const engine_config.EngineConfig, allocator: std.mem.Allocator, pts: []const [2]f64) ?geom.CrossSectionHandle {
-    var twice_area: f64 = 0;
-    for (pts, 0..) |p, i| {
-        const q = pts[(i + 1) % pts.len];
-        twice_area += p[0] * q[1] - q[0] * p[1];
-    }
-    if (twice_area >= 0) return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygon, .{pts});
+    if (path.polygonArea(pts) >= 0) return build(geom.CrossSectionHandle, mathEnv(config), locus_gen.generatePolygon, .{pts});
     const turned = allocator.dupe([2]f64, pts) catch return null;
     defer allocator.free(turned);
     std.mem.reverse([2]f64, turned);

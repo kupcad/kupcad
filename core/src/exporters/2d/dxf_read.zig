@@ -35,7 +35,7 @@ const PLANE_SLACK = 1.0 / 64.0;
 /// How deep blocks nest in blocks at most: deeper is a block that inserts itself.
 const MAX_BLOCK_NESTING = 64;
 /// The entities that draw outlines.
-const DRAWN = [_][]const u8{ "LINE", "ARC", "CIRCLE", "LWPOLYLINE", "POLYLINE", "SPLINE", "ELLIPSE" };
+const DRAWN = std.StaticStringMap(void).initComptime(.{ .{"LINE"}, .{"ARC"}, .{"CIRCLE"}, .{"LWPOLYLINE"}, .{"POLYLINE"}, .{"SPLINE"}, .{"ELLIPSE"} });
 
 /// Millimetres in each `$INSUNITS` unit, by its code; 0 (unitless) is read as millimetres.
 const UNIT_MM = [_]f64{
@@ -322,7 +322,7 @@ const Reader = struct {
     fn piecesOf(self: *Reader, entities: []const Entity, depth: usize) Error!usize {
         var total: usize = 0;
         for (entities) |entity| {
-            if (isOneOf(entity.kind, &DRAWN)) {
+            if (DRAWN.has(entity.kind)) {
                 total +|= 1;
                 continue;
             }
@@ -400,7 +400,7 @@ const Reader = struct {
         if (std.mem.eql(u8, kind, "SEQEND")) return self.endPolyline();
         // A layout's (paper space: a title block, a viewport's frame), not the model's
         if (try entity.number(67, self.diag) == 1) return;
-        if (!isOneOf(kind, &DRAWN)) return;
+        if (!DRAWN.has(kind)) return;
         const layer = try self.noteLayer(self.layerOf(entity));
         if (!self.selected(layer)) return;
         if (std.mem.eql(u8, kind, "LINE")) return self.readLine(entity, layer);
@@ -708,11 +708,6 @@ const Reader = struct {
         chain.start = start;
     }
 };
-
-fn isOneOf(name: []const u8, names: []const []const u8) bool {
-    for (names) |n| if (std.mem.eql(u8, n, name)) return true;
-    return false;
-}
 
 fn near(a: [2]f64, b: [2]f64, tolerance: f64) bool {
     return std.math.hypot(a[0] - b[0], a[1] - b[1]) <= tolerance;

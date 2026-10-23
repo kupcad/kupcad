@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const triangulate = @import("triangulate.zig");
+const path = @import("path.zig");
 
 /// How many places along the outlines the twist is measured at, choosing the top's start.
 const TWIST_SAMPLES = 64;
@@ -99,12 +100,7 @@ const Outline = struct {
         if (given.len < 3) return error.Degenerate;
         const points = try allocator.dupe([2]f64, given);
         errdefer allocator.free(points);
-        var twice_area: f64 = 0;
-        for (points, 0..) |p, i| {
-            const q = points[(i + 1) % points.len];
-            twice_area += p[0] * q[1] - q[0] * p[1];
-        }
-        if (twice_area < 0) std.mem.reverse([2]f64, points);
+        if (path.polygonArea(points) < 0) std.mem.reverse([2]f64, points);
         const shares = try allocator.alloc(f64, points.len);
         errdefer allocator.free(shares);
         var outline = Outline{ .points = points, .shares = shares, .center = .{ 0, 0 } };

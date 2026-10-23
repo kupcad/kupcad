@@ -296,6 +296,17 @@ pub fn signedArea(start: [2]f64, segments: []const Segment) f64 {
     return twice / 2;
 }
 
+/// The area the closed polygon through `points` encloses (its last point joined back to
+/// its first), positive when it runs counter-clockwise: the shoelace sum.
+pub fn polygonArea(points: []const [2]f64) f64 {
+    var twice: f64 = 0;
+    for (points, 0..) |p, i| {
+        const q = points[(i + 1) % points.len];
+        twice += p[0] * q[1] - q[0] * p[1];
+    }
+    return twice / 2;
+}
+
 /// The path from `start` along `segments` run back from its end (endOf) to `start`: the
 /// segments in the other order, each arc turning the other way and each cubic's controls
 /// swapped. Owned by `allocator`.
