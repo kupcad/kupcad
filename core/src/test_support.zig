@@ -51,7 +51,13 @@ pub const ExpectedWarnings = struct {
 /// A VM with the standard library, muted: its errors are what a test expects, and the
 /// test runner treats logged errors as failures. Script output (puts) stays out of the log.
 pub fn initVm() !VM {
-    var vm = try VM.init(std.testing.allocator, std.testing.io);
+    return initVmWith(std.testing.allocator);
+}
+
+/// `initVm` on `allocator`: one that records no stack traces, for a test whose scripts are
+/// heavy (the testing allocator unwinds the stack on every allocation and free).
+pub fn initVmWith(allocator: std.mem.Allocator) !VM {
+    var vm = try VM.init(allocator, std.testing.io);
     errdefer vm.deinit();
     vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);
