@@ -1,15 +1,15 @@
 const std = @import("std");
 const testing = std.testing;
-const support = @import("../test_support.zig");
+const support = @import("../../test_support.zig");
 const sketch_curves = @import("sketch_curves.zig");
 
 /// The curves below the sketch the script leaves in `r`.
-fn curvesOf(vm: *@import("vm.zig").VM) !sketch_curves.Curves {
+fn curvesOf(vm: *@import("../../vm/vm.zig").VM) !sketch_curves.Curves {
     return sketch_curves.collect(testing.allocator, &vm.dag_builder, vm.globals.get("r").?.asCrossSection().dag_idx);
 }
 
 /// The circles below the sketch the script leaves in `r`, with the curves they came in.
-fn circlesOf(vm: *@import("vm.zig").VM) !sketch_curves.Curves {
+fn circlesOf(vm: *@import("../../vm/vm.zig").VM) !sketch_curves.Curves {
     return curvesOf(vm);
 }
 

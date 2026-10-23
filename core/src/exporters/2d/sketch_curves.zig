@@ -11,9 +11,9 @@
 //! the chords came from (exporters/2d/curves.zig).
 
 const std = @import("std");
-const dag = @import("dag.zig");
-const bezier = @import("../core/bezier.zig");
-const affine2 = @import("../core/affine2.zig");
+const dag = @import("../../vm/dag.zig");
+const bezier = @import("../../core/bezier.zig");
+const affine2 = @import("../../core/affine2.zig");
 
 /// The most curves collected for one sketch: a shared subgraph is visited once per path
 /// to it, so a graph of many unions of many copies can name more than a drawing needs.
@@ -101,9 +101,9 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                 defer closed.deinit(allocator);
                 var pts: std.ArrayList([2]f64) = .empty;
                 defer pts.deinit(allocator);
-                const ranges = try allocator.alloc(@import("../core/path.zig").Range, closed.segments.len);
+                const ranges = try allocator.alloc(@import("../../core/path.zig").Range, closed.segments.len);
                 defer allocator.free(ranges);
-                try @import("../core/path.zig").appendPoints(allocator, &pts, closed.start, closed.segments, closed.chords, ranges);
+                try @import("../../core/path.zig").appendPoints(allocator, &pts, closed.start, closed.segments, closed.chords, ranges);
                 for (closed.segments, ranges, 0..) |segment, range, i| {
                     const arc = segment.arc orelse continue;
                     // An arc's points: its start (the segment before's end, or the path's start) and its own

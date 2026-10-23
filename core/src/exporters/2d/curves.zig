@@ -1,7 +1,7 @@
 //! The curves in a sketch's outlines: the kernel draws a circle as chords between the
 //! points it was given, a glyph's curve as the lines it was flattened into, and keeps those
 //! points through its booleans, so an edge of an outline whose ends are two neighbouring
-//! points of a curve the sketch defined (vm/sketch_curves.zig) is a piece of that curve: a
+//! points of a curve the sketch defined (sketch_curves.zig) is a piece of that curve: a
 //! run of chords of one circle is an arc of it, exact (the circle's centre and radius), and
 //! a run of all of a cubic's pieces the cubic itself. `outlinesOf` turns the kernel's
 //! contours into outlines of lines, arcs and cubics for the 2D exporters to write as such.
@@ -15,7 +15,7 @@ const std = @import("std");
 const affine2 = @import("../../core/affine2.zig");
 const geom = @import("../../core/geometry_handle.zig");
 const drawing = @import("drawing.zig");
-const sketch_curves = @import("../../vm/sketch_curves.zig");
+const sketch_curves = @import("sketch_curves.zig");
 const Curves = sketch_curves.Curves;
 
 /// Where a contour's point lies on a curve: which circle or cubic, and which of its points.

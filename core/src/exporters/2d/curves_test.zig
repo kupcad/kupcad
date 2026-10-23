@@ -3,7 +3,7 @@ const testing = std.testing;
 const curves = @import("curves.zig");
 const bezier = @import("../../core/bezier.zig");
 const geom = @import("../../core/geometry_handle.zig");
-const sketch_curves = @import("../../vm/sketch_curves.zig");
+const sketch_curves = @import("sketch_curves.zig");
 const Circle = sketch_curves.Circle;
 const Cubic = sketch_curves.Cubic;
 
