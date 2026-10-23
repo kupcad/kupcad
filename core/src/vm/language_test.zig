@@ -426,6 +426,17 @@ test "Language: inspect shows an instance by its inspect, inherited too, or else
     }
 }
 
+test "Language: a class, rescue, range or module used wrongly says how" {
+    try expectScripts(&.{
+        .{ .src = rescued("class A\nend\nA.new(1)"), .expected = .{ .str = "ArgumentError: Expected 0 args for default constructor." } },
+        .{ .src = rescued("class B\n  def initialize\n    super\n  end\nend\nB.new"), .expected = .{ .str = "NoMethodError: Superclass method 'initialize' not found." } },
+        .{ .src = rescued("class C\n  def f\n    super\n  end\nend\nC.new.f"), .expected = .{ .str = "NoMethodError: Superclass method 'f' not found." } },
+        .{ .src = rescued("x = 5\nbegin\n  raise \"boom\"\nrescue x => e\n  2\nend"), .expected = .{ .str = "TypeError: Rescue type must be a Class." } },
+        .{ .src = rescued("(\"ab\"..\"c\").to_a"), .expected = .{ .str = "TypeError: a String range needs single characters, got \"ab\"..\"c\"" } },
+        .{ .src = rescued("module M\nend\nM::Nope"), .expected = .{ .str = "NameError: module M has no member 'Nope' (it has none)" } },
+    });
+}
+
 var captured_output: std.ArrayList(u8) = .empty;
 
 fn capturePrint(vm: *@import("vm.zig").VM, message: []const u8) void {

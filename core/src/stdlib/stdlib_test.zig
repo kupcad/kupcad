@@ -1396,6 +1396,53 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: a method's or primitive's argument error says what it needs" {
+    // Each of these is how a script learns what it got wrong; none was asserted
+    try expectScripts(&.{
+        // Transforms
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\")"), .expected = .{ .str = "ArgumentError: align(target, axes, my_align, [target_align], [offset]) requires at least 3 args" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", [1])"), .expected = .{ .str = "TypeError: align expects a String target_align or a number offset as argument 4, got Array" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).transform"), .expected = .{ .str = "ArgumentError: transform expects a flat matrix Array" } },
+        .{ .src = comptime rescued("cube(1).transform([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])"), .expected = .{ .str = "ValueError: transform matrix is singular (determinant 0), which flattens the shape" } },
+        .{ .src = comptime rescued("cube(1).resize"), .expected = .{ .str = "ArgumentError: resize() requires an array of target dimensions [x, y, z]" } },
+        .{ .src = comptime rescued("cube(1).resize(5)"), .expected = .{ .str = "TypeError: resize expects an Array for the target size, got Number" } },
+        .{ .src = comptime rescued("cube(1).resize([-1, 1, 1])"), .expected = .{ .str = "ValueError: resize dimensions must be >= 0 (0 keeps that axis), got -1 at component 0" } },
+        .{ .src = comptime rescued("cube(1).repeat_linear"), .expected = .{ .str = "ArgumentError: repeat_linear requires a 'count' number" } },
+        .{ .src = comptime rescued("cube(1).repeat_polar"), .expected = .{ .str = "ArgumentError: repeat_polar requires a 'count' number" } },
+        // Measurements
+        .{ .src = comptime rescued("cube(1).min_gap(5)"), .expected = .{ .str = "TypeError: min_gap expects a Geometry to measure against, got Number" } },
+        .{ .src = comptime rescued("cube(1).contains?"), .expected = .{ .str = "ArgumentError: contains? expects a point [x, y, z]" } },
+        .{ .src = comptime rescued("square(1).contains?"), .expected = .{ .str = "ArgumentError: contains? on a sketch expects a point [x, y]" } },
+        .{ .src = comptime rescued("cube(1).ray_cast([0, 0, 0])"), .expected = .{ .str = "ArgumentError: ray_cast expects an origin [x, y, z] and an end point [x, y, z]" } },
+        // Sweeps, offsets, materials and parameters
+        .{ .src = comptime rescued("square(1).loft"), .expected = .{ .str = "ArgumentError: loft requires a target CrossSection and a z-height" } },
+        .{ .src = comptime rescued("square(1).loft(cube(1), 5)"), .expected = .{ .str = "TypeError: loft expects a CrossSection for the target, got Geometry" } },
+        .{ .src = comptime rescued("cube(1).offset(-1)"), .expected = .{ .str = "ValueError: a Solid's offset only grows it: delta must be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("cube(1).offset(1, join: :miter)"), .expected = .{ .str = "ValueError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :miter" } },
+        .{ .src = comptime rescued("cube(1).material"), .expected = .{ .str = "ArgumentError: material requires keyword arguments (e.g. color: \"#FF0000\")" } },
+        .{ .src = comptime rescued("param(:x, default: 1, validate: 5)"), .expected = .{ .str = "TypeError: param expects a Map for validate, got Number" } },
+        // Primitives
+        .{ .src = comptime rescued("polygon(5)"), .expected = .{ .str = "TypeError: polygon expects an Array for points, got Number" } },
+        .{ .src = comptime rescued("polygon()"), .expected = .{ .str = "ArgumentError: polygon expects an Array of [x, y] points" } },
+        .{ .src = comptime rescued("polyhedron([[0, 0, 0]])"), .expected = .{ .str = "ArgumentError: polyhedron expects a points Array and a faces Array" } },
+        .{ .src = comptime rescued("text(5)"), .expected = .{ .str = "ArgumentError: text() expects a String as its first argument" } },
+        .{ .src = comptime rescued("text(\"A\", 10, tolerance: 1e-9)"), .expected = .{ .str = "ValueError: 'tolerance' must be at least size * 0.0001 (0.001), got 1e-9" } },
+        // Collections and settings
+        .{ .src = comptime rescued("[1, 2, 3].slice(Number::NAN, 1)"), .expected = .{ .str = "ValueError: Array#slice arguments must be numbers, got NaN." } },
+        .{ .src = comptime rescued("[1, 2].reduce"), .expected = .{ .str = "ArgumentError: reduce requires a block." } },
+        .{ .src = comptime rescued("[[]].to_h"), .expected = .{ .str = "ArgumentError: empty array cannot be converted to key-value pair." } },
+        .{ .src = comptime rescued("[1].to_h"), .expected = .{ .str = "ArgumentError: wrong element type (expected array)." } },
+        .{ .src = comptime rescued("\"abc\".upcase(1)"), .expected = .{ .str = "ArgumentError: String#upcase expects 0 arguments, got 1" } },
+        .{ .src = comptime rescued("(1..5).step(0)"), .expected = .{ .str = "ValueError: Range#step requires a finite, non-zero step, got 0" } },
+        .{ .src = comptime rescued("CAD.with_config(tolerance: 0.1)"), .expected = .{ .str = "ArgumentError: CAD.with_config requires a block" } },
+        // Exports of an empty model
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_3mf(\"x.3mf\")"), .expected = .{ .str = "GeometryError: export_3mf: the model is empty, there is nothing to write to 'x.3mf'" } },
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_obj(\"x.obj\")"), .expected = .{ .str = "GeometryError: export_obj: the model is empty, there is nothing to write to 'x.obj'" } },
+    });
+}
+
 test "Stdlib: a miter join reaches as far as its miter_limit lets it" {
     // The limit was fixed at the kernel's 2, its least: the 11° tip of this triangle
     // mitres out about 10 times the offset, so it is squared off under 2 or 5 and kept

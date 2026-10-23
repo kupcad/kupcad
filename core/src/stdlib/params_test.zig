@@ -36,6 +36,21 @@ test "param: text from the host is read as the type the parameter's default has"
     }
 }
 
+test "param: text a host gives that isn't UTF-8 is an error where a String must be text" {
+    // A shell passes bytes (`-p label=$'\xff'`); a script can't write them itself
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("text(label)"), .expected = "ValueError: text: the String isn't valid UTF-8" },
+        .{ .source = comptime "label = param(:label, default: \"x\")\n" ++ support.rescued("label.split(\"\")"), .expected = "ValueError: split: the String isn't valid UTF-8" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("{s}\n", .{case.source});
+        var vm = try support.initVm();
+        defer vm.deinit();
+        try testing.expectEqual(.ok, try runWith("label", .{ .text = "a\xff" }, case.source, &vm));
+        try support.expectValue(.{ .str = case.expected }, vm.globals.get("r").?);
+    }
+}
+
 test "param: a symbol parameter's value is a Symbol, so its in: choices are symbols" {
     // It was a String, which no symbol in `in:` equals: the parameter refused its own default.
     try support.expectScripts(&.{

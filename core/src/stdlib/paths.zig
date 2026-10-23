@@ -72,9 +72,8 @@ pub fn nativeArc(vm: *VM, args: []const value.Value) !value.Value {
         large: bool = false,
     };
     try util.requireOneOf(vm, args, &.{ "r", "radius" }, "arc");
-    const parsed = try util.parseKwargsSubset(Opts, ARC.keywords, vm, args, "arc");
-    if (parsed.positional.len > 0) return vm.fail(.ArgumentError, "arc takes keywords: arc(center: [x, y], r: 10, start: 0, sweep: 90) or arc(r: 10, start: [x, y], to: [x, y])", .{});
-    const opts = parsed.opts;
+    // ARC has no positional names, so the parse refuses a positional argument
+    const opts = (try util.parseKwargsSubset(Opts, ARC.keywords, vm, args, "arc")).opts;
     const radius = opts.r orelse opts.radius orelse return vm.fail(.ArgumentError, "arc needs a radius (r:)", .{});
     try util.requirePositive(vm, radius, "arc", "r");
     const start_val = opts.start orelse return vm.fail(.ArgumentError, "arc needs start:, an angle in degrees with center: and sweep:, or a point with to:", .{});

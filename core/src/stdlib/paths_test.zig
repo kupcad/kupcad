@@ -38,6 +38,18 @@ test "paths: what can't be a path is an error saying why" {
         .{ .src = rescued("line([0, 0], [1, 0]).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
         .{ .src = rescued("line([0, 0], [1, 0]).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for Path" } },
         .{ .src = rescued("line([0, 0], [1, 0]) - line([1, 0], [2, 0])"), .expected = .{ .str = "TypeError: '-' can't combine Path and Path" } },
+        // What each constructor needs, and where a Path can't go
+        .{ .src = rescued("line([0, 0])"), .expected = .{ .str = "ArgumentError: line expects two points, [x, y] each, got 1 argument" } },
+        .{ .src = rescued("polyline()"), .expected = .{ .str = "ArgumentError: polyline expects an Array of [x, y] points" } },
+        .{ .src = rescued("polyline(5)"), .expected = .{ .str = "TypeError: polyline expects an Array for points, got Number" } },
+        .{ .src = rescued("polyline([[0, 0], [0, 0], [1, 1]])"), .expected = .{ .str = "ValueError: polyline point 1 repeats the one before it, [0, 0]" } },
+        .{ .src = rescued("arc()"), .expected = .{ .str = "ArgumentError: arc needs a radius (r:)" } },
+        .{ .src = rescued("arc(5)"), .expected = .{ .str = "ArgumentError: arc takes no positional arguments, got 1" } },
+        .{ .src = rescued("arc(center: [0, 0], r: 5, start: 0)"), .expected = .{ .str = "ArgumentError: arc with center: needs sweep: (degrees, counter-clockwise when positive)" } },
+        .{ .src = rescued("arc(center: [0, 0], r: 5, start: 0, sweep: 400)"), .expected = .{ .str = "ValueError: arc sweeps at most a full turn, got 400 degrees" } },
+        .{ .src = rescued("line([0, 0], [1, 0]).translate(0, 0, 1)"), .expected = .{ .str = "ValueError: a Path can only translate in x and y (it lies in the XY plane), got z 1" } },
+        .{ .src = rescued("line([0, 0], [1, 0]).rotate(1, 0, 0)"), .expected = .{ .str = "ValueError: a Path can only rotate about z (it lies in the XY plane), got x 1 and y 0" } },
+        .{ .src = rescued("line([0, 0], [1, 0]).mirror(0, 0, 1)"), .expected = .{ .str = "ValueError: a Path can only mirror across a line in the XY plane, got a normal with z 1" } },
     });
 }
 
