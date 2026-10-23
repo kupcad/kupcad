@@ -42,6 +42,8 @@ pub const MAX_SEGMENTS: i32 = 2048;
 // Upper bound for repeat_linear / repeat_polar copy counts. Each copy adds a
 // translate node plus a union node to the DAG, so this caps DAG growth per call.
 pub const MAX_PATTERN_COUNT: usize = 10_000;
+// Most points a sweep follows: each adds an extrusion and a corner's revolve to the DAG.
+pub const MAX_SWEEP_POINTS: usize = 10_000;
 // Largest array a range may materialize (Range#to_a, and the array Range#map returns).
 // Block-driven iteration (each, times, upto, downto) is NOT capped: every block call runs
 // through the dispatch loop, which checks cancellation and the instruction budget, just

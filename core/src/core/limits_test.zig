@@ -34,6 +34,7 @@ const CASES = .{
     .DEFAULT_INSTRUCTION_LIMIT = defaultInstructionLimit,
     .MAX_SEGMENTS = segments,
     .MAX_PATTERN_COUNT = patternCount,
+    .MAX_SWEEP_POINTS = sweepPoints,
     .MAX_RANGE_MATERIALIZE = rangeMaterialize,
     .MAX_STRING_PAD = stringPad,
     .MAX_FACE_CORNERS = faceCorners,
@@ -133,6 +134,10 @@ fn segments() !void {
 
 fn patternCount() !void {
     try expectRescued("cube(1).repeat_linear(10001, [2, 0, 0])", "ValueError: repeat_linear 'count' must be a finite number <= 10000, got 10001");
+}
+
+fn sweepPoints() !void {
+    try expectRescued("square(1).sweep((0..10_000).map { |i| [i, 0, 0] })", "ValueError: sweep follows at most 10000 points, got 10001");
 }
 
 fn rangeMaterialize() !void {

@@ -1218,6 +1218,29 @@ test "Stdlib: loft joins concave profiles, and runs through several sections at 
     });
 }
 
+test "Stdlib: a Sketch sweeps along points in space, its frame turned only by the path's corners" {
+    const PROFILE = "prof = square(2, center: true)\n";
+    // A quarter of a circle of radius 1 in 16 chords (64 a turn), 2 wide: a corner's fill
+    const wedge = 2 * 8 * @sin(2 * std.math.pi / 64.0);
+    try expectScripts(&.{
+        // Straight up, the profile's y along y: a 2 by 2 prism
+        .{ .src = PROFILE ++ "b = prof.sweep([[0, 0, 0], [0, 0, 10]])\nr = [b.volume] + b.bbox.min + b.bbox.max", .expected = .{ .nums = &.{ 40, -1, -1, 0, 1, 1, 10 } } },
+        // Along x, then up: the bend fills round below, as a turn in the plane does
+        .{ .src = PROFILE ++ "r = prof.sweep([[0, 0, 0], [10, 0, 0], [10, 0, 10]], segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Up, then along x: the profile turned with the corner stays 2 high
+        .{ .src = PROFILE ++ "b = prof.sweep([[0, 0, 0], [0, 0, 10], [10, 0, 10]]).bbox\nr = b.min + b.max", .expected = .{ .nums = &.{ -1, -1, 0, 10, 1, 11 } } },
+        // Points in the plane ([x, y]) sweep as the Path through them does
+        .{ .src = PROFILE ++ "a = prof.sweep([[0, 0], [10, 0], [10, 10]], segments: 64).volume\nb = prof.sweep(polyline([[0, 0], [10, 0], [10, 10]]), segments: 64).volume\nr = a == b", .expected = .{ .boolean = true } },
+        .{ .src = PROFILE ++ "r = prof.sweep([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 0]], segments: 64).volume", .expected = .{ .num = 152 + 4 * wedge } },
+        // A turn of a helix in 24 lines: the tube's area times their length
+        .{ .src = "coil = (0..24).map { |i| a = i * 15.0; [10 * Math.cosd(a), 10 * Math.sind(a), a / 72] }\nc = circle(r: 1, segments: 32)\nv = c.sweep(coil, segments: 256).volume\nr = (v / (c.area * 24 * Math.sqrt((20 * Math.sind(7.5)) ** 2 + (5 / 24.0) ** 2)) - 1).abs < 1e-3", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0]])"), .expected = .{ .str = "ValueError: sweep needs at least 2 points to follow, got 1" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0], [1, 0, 0]])"), .expected = .{ .str = "ValueError: sweep point 2 repeats the one before it, [1, 0, 0]" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0, 1]])"), .expected = .{ .str = "ValueError: sweep expects point 1 to have 2 to 3 numbers, got 4" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0], 5])"), .expected = .{ .str = "TypeError: sweep expects an Array for point 1, got Number" } },
+    });
+}
+
 test "Stdlib: a revolve through a small angle near its axis keeps its divisions" {
     // A share of a turn of 1 or 2 segments was read by Manifold as its own default, which
     // at a small radius is no division at all: an empty or broken solid
@@ -1245,7 +1268,7 @@ test "Stdlib: a Sketch sweeps along a Path, standing on it, its corners filled r
         .{ .src = PROFILE ++ "v = prof.sweep(arc(center: [0, 0], r: 10, start: 0, sweep: 360), segments: 256).volume\nr = (v - 2 * Math::PI * 10 * 4).abs < 0.05", .expected = .{ .boolean = true } },
         .{ .src = PROFILE ++ "a = prof.sweep(arc(r: 10, start: [0, 10], to: [10, 0], ccw: false))\nb = prof.sweep(arc(r: 10, start: [10, 0], to: [0, 10]))\nr = Math.close?(a.volume, b.volume, 1e-9) && a.bbox.max == b.bbox.max", .expected = .{ .boolean = true } },
         .{ .src = comptime rescued(PROFILE ++ "prof.sweep"), .expected = .{ .str = "ArgumentError: sweep needs the Path to sweep along: sweep(path)" } },
-        .{ .src = comptime rescued(PROFILE ++ "prof.sweep(5)"), .expected = .{ .str = "TypeError: sweep expects a Path to sweep along, got Number" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep(5)"), .expected = .{ .str = "TypeError: sweep expects a Path or an Array of points to sweep along, got Number" } },
         .{ .src = comptime rescued("square(4, center: true).sweep(arc(center: [0, 0], r: 1, start: 0, sweep: 90))"), .expected = .{ .str = "ValueError: sweep: the profile reaches 2 to the path's left, as far as the centre of segment 0's arc of radius 1 or past it, where it would cross itself" } },
         .{ .src = comptime rescued("(square(1) - square(2)).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "ValueError: sweep: an empty sketch has no profile" } },
         .{ .src = comptime rescued("line([0, 0], [1, 0]).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "NoMethodError: undefined method 'sweep' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
