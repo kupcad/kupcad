@@ -59,22 +59,58 @@ pub const Copy = struct {
     placement: Placement,
 };
 
+/// What an unnamed shape is called where a name is needed (a split's file, an OBJ's object,
+/// a glTF's node, a drawing's layer): "part_N" for a Solid or a Sketch, "path_N" for a Path,
+/// numbered in order; a name used again gets a number too ("lid_2"). One scheme for all.
+pub const ShapeKind = enum {
+    part,
+    path,
+
+    fn fallback(self: ShapeKind) []const u8 {
+        return switch (self) {
+            .part => "part",
+            .path => "path",
+        };
+    }
+};
+
+/// What joins a name and its number.
+pub const NAME_NUMBER_SEPARATOR = "_";
+
+/// "part_3", "path_1": the name of the `number`th unnamed shape of its kind (the first is
+/// numbered too). Caller owns it.
+pub fn fallbackName(allocator: std.mem.Allocator, kind: ShapeKind, number: usize) ![]u8 {
+    return allocator.print("{s}" ++ NAME_NUMBER_SEPARATOR ++ "{d}", .{ kind.fallback(), number });
+}
+
+/// `name` with `number` after it ("lid_2"), or the name itself for the first. Caller owns it.
+pub fn numberedName(allocator: std.mem.Allocator, name: []const u8, number: usize) ![]u8 {
+    return if (number == 1) allocator.dupe(u8, name) else allocator.print("{s}" ++ NAME_NUMBER_SEPARATOR ++ "{d}", .{ name, number });
+}
+
 /// The names a file that keeps parts apart (an OBJ's objects, a glTF's nodes) gives the
-/// model's Solids, in their order: the part's name, or "part N" by its place in the parts
-/// list, numbered from the second copy on ("lid 2").
+/// model's Solids, in their order: the part's name, or "part_N" by its place in the parts
+/// list (fallbackName), numbered from the second copy on ("lid_2").
 pub const CopyNames = struct {
     grouping: *const Grouping,
     /// How many copies of each part are named so far.
     named: []u32,
+    /// The number each unnamed part got ("part_N"), in the order they first appear; 0 before.
+    fallbacks: []u32,
+    unnamed_so_far: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator, grouping: *const Grouping) !CopyNames {
         const named = try allocator.alloc(u32, grouping.parts.len);
+        errdefer allocator.free(named);
         @memset(named, 0);
-        return .{ .grouping = grouping, .named = named };
+        const fallbacks = try allocator.alloc(u32, grouping.parts.len);
+        @memset(fallbacks, 0);
+        return .{ .grouping = grouping, .named = named, .fallbacks = fallbacks };
     }
 
     pub fn deinit(self: *CopyNames, allocator: std.mem.Allocator) void {
         allocator.free(self.named);
+        allocator.free(self.fallbacks);
     }
 
     /// The name of the next copy of `copy`'s part (the copies are named in the Solids'
@@ -82,10 +118,14 @@ pub const CopyNames = struct {
     pub fn next(self: *CopyNames, allocator: std.mem.Allocator, copy: Copy) ![]u8 {
         self.named[copy.part] += 1;
         const number = self.named[copy.part];
-        if (self.grouping.parts[copy.part].name) |name| {
-            return if (number == 1) allocator.dupe(u8, name) else allocator.print("{s} {d}", .{ name, number });
+        if (self.grouping.parts[copy.part].name) |name| return numberedName(allocator, name, number);
+        if (self.fallbacks[copy.part] == 0) {
+            self.unnamed_so_far += 1;
+            self.fallbacks[copy.part] = self.unnamed_so_far;
         }
-        return if (number == 1) allocator.print("part {d}", .{copy.part + 1}) else allocator.print("part {d} {d}", .{ copy.part + 1, number });
+        const first = try fallbackName(allocator, .part, self.fallbacks[copy.part]);
+        defer allocator.free(first);
+        return numberedName(allocator, first, number);
     }
 };
 

@@ -84,7 +84,7 @@ test "OBJ: a cube is one object of 8 vertices and 12 faces, each with its own no
     defer summary.deinit();
     try testing.expectEqualStrings("KupCAD Export", summary.comments.items[0]);
     try testing.expectEqual(@as(usize, 1), summary.objects.items.len);
-    try testing.expectEqualStrings("part 1", summary.objects.items[0]);
+    try testing.expectEqualStrings("part_1", summary.objects.items[0]);
     try testing.expectEqual(@as(usize, 8), summary.vertices);
     try testing.expectEqual(@as(usize, 12), summary.normals);
     try testing.expectEqual(@as(usize, 12), summary.faces);
@@ -125,12 +125,12 @@ test "OBJ: each copy of a part is its own object, named after the part and numbe
     try testing.expectEqualStrings("Box", summary.comments.items[summary.comments.items.len - 1]);
     try testing.expectEqual(@as(usize, 3), summary.objects.items.len);
     try testing.expectEqualStrings("lid", summary.objects.items[0]);
-    try testing.expectEqualStrings("lid 2", summary.objects.items[1]);
-    try testing.expectEqualStrings("part 2", summary.objects.items[2]);
+    try testing.expectEqualStrings("lid_2", summary.objects.items[1]);
+    try testing.expectEqualStrings("part_1", summary.objects.items[2]);
     try testing.expectEqual(@as(usize, 24), summary.vertices);
     try testing.expectEqual(@as(usize, 36), summary.faces);
     // The second object's faces index past the first's 8 vertices
-    const second = std.mem.find(u8, text, "o lid 2\n").?;
+    const second = std.mem.find(u8, text, "o lid_2\n").?;
     const face = std.mem.find(u8, text[second..], "\nf ").? + second + 3;
     try testing.expect(try std.fmt.parseInt(usize, text[face .. face + std.mem.findScalar(u8, text[face..], '/').?], 10) > 8);
 }

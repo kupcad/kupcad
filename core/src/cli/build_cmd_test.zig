@@ -194,9 +194,9 @@ test "build_cmd: --split writes each part once, as made, named after it" {
     defer res.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.find(u8, res.text(), "M3_bolt.stl (2 copies)") != null);
-    // STL unless -f says: a separator replaced, an unnamed part numbered, a name taken
-    // (case aside) given a number
-    for ([_][]const u8{ "parts/M3_bolt.stl", "parts/part 2.stl", "parts/m3_bolt 2.stl" }) |name| {
+    // STL unless -f says: a separator replaced, an unnamed part numbered among the unnamed
+    // (part_1, whatever its place), a name taken (case aside) given a number
+    for ([_][]const u8{ "parts/M3_bolt.stl", "parts/part_1.stl", "parts/m3_bolt_2.stl" }) |name| {
         errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
         const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
         testing.allocator.free(bytes);
@@ -205,7 +205,7 @@ test "build_cmd: --split writes each part once, as made, named after it" {
     var glb = try runBuild(&.{ fx.input, "--split", dir, "-f", "glb" });
     defer glb.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, glb.outcome);
-    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part 2.glb", testing.allocator, .limited(1 << 20));
+    const bytes = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part_1.glb", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(bytes);
     try testing.expectEqualStrings("glTF", bytes[0..4]);
 }
@@ -240,7 +240,7 @@ test "build_cmd: --mtl writes an obj's materials beside it, and only an obj's" {
     var split = try runBuild(&.{ fx.input, "--split", dir, "-f", "obj", "--mtl" });
     defer split.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, split.outcome);
-    const part = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part 1.obj", testing.allocator, .limited(1 << 20));
+    const part = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part_1.obj", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(part);
     try testing.expect(std.mem.find(u8, part, "\nmtllib materials.mtl\n") != null);
     const shared = try fx.tmp.dir.readFileAlloc(testing.io, "parts/materials.mtl", testing.allocator, .limited(1 << 20));
@@ -257,7 +257,7 @@ test "build_cmd: --split in a 2D format draws each part and each sketch in a fil
     defer res.deinit();
     try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     try testing.expect(std.mem.find(u8, res.text(), "lid.dxf (2 copies)") != null);
-    for ([_][]const u8{ "parts/lid.dxf", "parts/gasket.dxf", "parts/part 3.dxf" }) |name| {
+    for ([_][]const u8{ "parts/lid.dxf", "parts/gasket.dxf", "parts/part_1.dxf" }) |name| {
         errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
         const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
         defer testing.allocator.free(bytes);
@@ -271,14 +271,14 @@ test "build_cmd: --split names a part's file safely, and each once" {
     defer names.deinit(testing.allocator);
     const cases = [_]struct { name: ?[]const u8, number: usize, file: []const u8 }{
         .{ .name = "bracket", .number = 1, .file = "bracket.stl" },
-        .{ .name = "Bracket", .number = 2, .file = "Bracket 2.stl" },
-        .{ .name = null, .number = 3, .file = "part 3.stl" },
-        .{ .name = " . ", .number = 4, .file = "part 4.stl" },
+        .{ .name = "Bracket", .number = 2, .file = "Bracket_2.stl" },
+        .{ .name = null, .number = 3, .file = "part_3.stl" },
+        .{ .name = " . ", .number = 4, .file = "part_4.stl" },
         .{ .name = "a:b*c?\"d\x01", .number = 5, .file = "a_b_c__d_.stl" },
         .{ .name = "größe", .number = 6, .file = "größe.stl" },
     };
     for (cases) |case| {
-        const file = try names.next(testing.allocator, case.name, case.number, "stl");
+        const file = try names.next(testing.allocator, case.name, .part, case.number, "stl");
         defer testing.allocator.free(file);
         try testing.expectEqualStrings(case.file, file);
     }

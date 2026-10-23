@@ -752,6 +752,8 @@ fn handlesOf(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value,
 pub const PartFile = struct {
     /// The part's name (the geometry graph's), or null when it has none.
     name: ?[]const u8,
+    /// What it is, for the name an unnamed one gets (bom.fallbackName).
+    kind: bom.ShapeKind,
     /// How many copies of it the model holds.
     count: u32,
     /// Owned by the allocator `exportPartsFromVm` was given.
@@ -785,19 +787,19 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
             .@"2d" => try exportDrawing(allocator, vm, format, &.{}, &.{made}, &.{}),
         };
         errdefer allocator.free(bytes);
-        try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
+        try files.append(allocator, .{ .name = part.name, .kind = .part, .count = part.count, .bytes = bytes });
     }
     if (format.dimension() == .@"2d") {
         for (model.sketches.items) |sketch| {
             const bytes = try exportDrawing(allocator, vm, format, &.{sketch}, &.{}, &.{});
             errdefer allocator.free(bytes);
-            try files.append(allocator, .{ .name = bom.sketchLabel(vm, sketch).name, .count = 1, .bytes = bytes });
+            try files.append(allocator, .{ .name = bom.sketchLabel(vm, sketch).name, .kind = .part, .count = 1, .bytes = bytes });
         }
         for (model.paths.items) |path_val| {
             const bytes = try exportDrawing(allocator, vm, format, &.{}, &.{}, &.{path_val});
             errdefer allocator.free(bytes);
             const name: ?[]const u8 = if (path_val.asPath().name) |n| n.chars else null;
-            try files.append(allocator, .{ .name = name, .count = 1, .bytes = bytes });
+            try files.append(allocator, .{ .name = name, .kind = .path, .count = 1, .bytes = bytes });
         }
     }
     return files.toOwnedSlice(allocator);

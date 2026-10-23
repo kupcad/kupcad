@@ -97,7 +97,7 @@ test "GLTF: each part is a node named after it, under the root node that turns t
     try std.testing.expect(root.get("rotation") != null and root.get("mesh") == null and root.get("name") == null);
     const children = root.get("children").?.array.items;
     try std.testing.expectEqual(@as(usize, 3), children.len);
-    for ([_][]const u8{ "lid", "lid 2", "part 2" }, 1..) |name, n| {
+    for ([_][]const u8{ "lid", "lid_2", "part_1" }, 1..) |name, n| {
         try std.testing.expectEqual(n, int(children[n - 1]));
         const node = nodes[n].object;
         try std.testing.expectEqualStrings(name, node.get("name").?.string);
@@ -113,7 +113,7 @@ test "GLTF: each part is a node named after it, under the root node that turns t
     const ghost_nodes = with_ghost.array("nodes");
     try std.testing.expectEqual(@as(usize, 3), ghost_nodes.len);
     try std.testing.expect(ghost_nodes[1].object.get("name") == null);
-    try std.testing.expectEqualStrings("part 1", ghost_nodes[2].object.get("name").?.string);
+    try std.testing.expectEqualStrings("part_1", ghost_nodes[2].object.get("name").?.string);
 }
 
 fn int(v: std.json.Value) usize {
