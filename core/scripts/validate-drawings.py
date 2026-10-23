@@ -33,6 +33,12 @@ MODELS = {
         3,
         4,
     ),
+    "paths": (
+        """hook = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180) + polyline([[10, 10], [0, 10]])
+[hook.named("outline").material(color: "#00AA00"), hook.close.translate(y: 20), hook.stroke(1).translate(y: 40)]""",
+        3,
+        3,
+    ),
     "mixed": (
         """lid = cube(4).named("lid").material(color: "#0000FF")
 [square(5).translate(x: 20), lid, lid.translate(z: 10), cylinder(r: 3, h: 2).translate(x: 10)]""",
@@ -60,9 +66,14 @@ def svg_problems(path, shapes, contours):
     paths = root.findall(f"{SVG_NS}path")
     if len(paths) != shapes:
         found.append(f"{len(paths)} paths, not {shapes}")
+    # An open path (a Path's) has no Z and no fill; a closed one counts by its Z
     closed = sum(p.get("d", "").count(" Z") for p in paths)
-    if closed != contours:
-        found.append(f"{closed} closed subpaths, not {contours}")
+    open_paths = sum(1 for p in paths if " Z" not in p.get("d", ""))
+    if closed + open_paths != contours:
+        found.append(f"{closed} closed and {open_paths} open subpaths, not {contours}")
+    for p in paths:
+        if " Z" not in p.get("d", "") and p.get("fill") != "none":
+            found.append("an open path is filled")
     for p in paths:
         if p.get("fill-rule") != "evenodd":
             found.append("a path isn't filled by the even-odd rule")
@@ -88,8 +99,8 @@ def dxf_problems(path, shapes, contours):
     for e in entities:
         if e.dxftype() != "LWPOLYLINE":
             found.append(f"a {e.dxftype()}, not an LWPOLYLINE")
-        elif not e.closed:
-            found.append(f"an open polyline on layer {e.dxf.layer}")
+        elif not e.closed and e.dxf.layer == "0":
+            found.append("an open polyline that isn't a Path's (a Path is named here)")
         elif e.dxf.layer not in doc.layers:
             found.append(f"layer {e.dxf.layer!r} isn't in the layer table")
     named = {l.dxf.name for l in doc.layers} - {"0", "Defpoints"}
