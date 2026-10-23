@@ -1,6 +1,6 @@
-//! File helpers for the CLI commands: `readFile` reads a file it is given under the size
-//! cap and `replaceFileAtomic` replaces a file's contents without ever leaving it
-//! half-written.
+//! File helpers for the CLI commands: `readFile` reads a file it is given and `readStdin`
+//! what is piped in, under the size cap, and `replaceFileAtomic` replaces a file's contents
+//! without ever leaving it half-written.
 
 const std = @import("std");
 
@@ -12,6 +12,14 @@ const MAX_FILE_BYTES = @import("../core/limits.zig").MAX_SOURCE_BYTES;
 /// caller frees it.
 pub fn readFile(io: std.Io, allocator: std.mem.Allocator, file_path: []const u8) ![]u8 {
     return std.Io.Dir.cwd().readFileAlloc(io, file_path, allocator, .limited(MAX_FILE_BYTES));
+}
+
+/// What stdin holds, to its end, at most MAX_FILE_BYTES (error.StreamTooLong past it); the
+/// caller frees it.
+pub fn readStdin(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
+    var buf: [4096]u8 = undefined;
+    var reader = std.Io.File.stdin().readerStreaming(io, &buf);
+    return reader.interface.allocRemaining(allocator, .limited(MAX_FILE_BYTES));
 }
 
 /// Replaces `file_path`'s contents with `data` atomically: the new contents go to a

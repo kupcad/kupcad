@@ -118,3 +118,21 @@ test "fmt: a file with syntax errors fails and is never written" {
         try fx.expectContents("broken.kup", BROKEN);
     }
 }
+
+test "fmt --stdin: prints the source piped in formatted, or with --check fails naming <stdin>" {
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    const reporter: @import("reporter.zig").Reporter = .{ .io = testing.io, .capture = &out.writer };
+    try testing.expectEqual(fmt_cmd.Outcome.success, try fmt_cmd.runSource(testing.allocator, UNFORMATTED, .{}, .print, reporter));
+    try testing.expectEqualStrings(FORMATTED, out.written());
+
+    out.clearRetainingCapacity();
+    try testing.expectEqual(fmt_cmd.Outcome.success, try fmt_cmd.runSource(testing.allocator, FORMATTED, .{}, .check, reporter));
+    try testing.expectEqualStrings("", out.written());
+    try testing.expectEqual(fmt_cmd.Outcome.failure, try fmt_cmd.runSource(testing.allocator, UNFORMATTED, .{}, .check, reporter));
+    try testing.expectEqualStrings("<stdin>\n", out.written());
+
+    out.clearRetainingCapacity();
+    try testing.expectEqual(fmt_cmd.Outcome.failure, try fmt_cmd.runSource(testing.allocator, BROKEN, .{}, .print, reporter));
+    try testing.expectEqualStrings("Error: '<stdin>' has syntax errors; kupcad check shows them\n", out.written());
+}

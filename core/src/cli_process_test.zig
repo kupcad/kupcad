@@ -150,6 +150,8 @@ test "kupcad: every command exits non-zero when it fails" {
         .{ .args = &.{ "fmt", "--bogus", "valid.kup" }, .code = 1, .contains = "Unknown option '--bogus'" },
         .{ .args = &.{ "fmt", "--check", "--write", "valid.kup" }, .code = 1, .contains = "--check and --write can't be used together" },
         .{ .args = &.{ "fmt", "--check", "syntax_error.kup" }, .code = 1, .contains = "has syntax errors" },
+        .{ .args = &.{ "fmt", "--stdin", "valid.kup" }, .code = 1, .contains = "--stdin formats what is piped in: it takes no files and no --write" },
+        .{ .args = &.{ "fmt", "--stdin", "--write" }, .code = 1, .contains = "--stdin formats what is piped in" },
         .{ .args = &.{"check"}, .code = 1, .contains = "Missing file path\n\nUsage: kupcad check" },
     });
 }
@@ -558,6 +560,29 @@ const Conversation = struct {
         }
     }
 };
+
+test "kupcad: fmt --stdin formats what is piped in, and --check fails when it isn't formatted" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const cases = [_]struct { args: []const []const u8, code: u8, out: []const u8 }{
+        .{ .args = &.{ "fmt", "--stdin" }, .code = 0, .out = "x = 1 + 2\n" },
+        .{ .args = &.{ "fmt", "--stdin", "--check" }, .code = 1, .out = "<stdin>\n" },
+    };
+    for (cases) |case| {
+        var talk: Conversation = undefined;
+        try talk.start(sb.path, case.args);
+        try talk.writer.interface.writeAll("x=1+  2");
+        try talk.writer.interface.flush();
+        // Its output to the end before it is waited for, which closes the pipes
+        talk.child.stdin.?.close(testing.io);
+        talk.child.stdin = null;
+        const out = try talk.reader.interface.allocRemaining(testing.allocator, .limited(1 << 16));
+        defer testing.allocator.free(out);
+        const term = try talk.child.wait(testing.io);
+        try testing.expectEqual(std.process.Child.Term{ .exited = case.code }, term);
+        try testing.expectEqualStrings(case.out, out);
+    }
+}
 
 fn u32Le(n: u32) [4]u8 {
     var b: [4]u8 = undefined;
