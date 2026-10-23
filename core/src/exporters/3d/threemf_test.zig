@@ -7,7 +7,6 @@ const support = @import("../../test_support.zig");
 const api = @import("../../api.zig");
 const kernel = @import("../../kernel/kernel.zig");
 const threemf = @import("threemf.zig");
-const VM = @import("../../vm/vm.zig").VM;
 
 /// A model's files, extracted by std.zip.
 const Package = struct {

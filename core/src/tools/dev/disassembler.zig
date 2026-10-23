@@ -4,7 +4,6 @@
 
 const std = @import("std");
 const chunk = @import("../../vm/chunk.zig");
-const value = @import("../../core/value.zig");
 
 pub fn disassembleChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk, name: []const u8, writer: anytype) !void {
     _ = allocator;

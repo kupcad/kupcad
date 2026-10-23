@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const chunk = @import("chunk.zig");
-const value = @import("../core/value.zig");
 
 pub const VerifierError = error{
     CorruptedBytecode,

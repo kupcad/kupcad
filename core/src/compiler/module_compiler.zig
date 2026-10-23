@@ -2,7 +2,6 @@
 //! `Host.compile_module` (the standard library registers it): parsing and compiling were in
 //! the VM's `op_import`, so the VM imported the compiler and the compiler the VM.
 
-const std = @import("std");
 const value = @import("../core/value.zig");
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;

@@ -2,8 +2,6 @@
 //! itself, which `text(font:)` draws with, kerned; files that aren't fonts text can draw with
 //! are ImportErrors naming them.
 
-const std = @import("std");
-const testing = std.testing;
 const support = @import("../test_support.zig");
 const rescued = support.rescued;
 

@@ -2,7 +2,6 @@
 //! Sketch, labelled and measured.
 
 const std = @import("std");
-const testing = std.testing;
 const support = @import("../test_support.zig");
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;

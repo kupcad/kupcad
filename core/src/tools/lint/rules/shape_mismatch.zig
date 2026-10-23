@@ -9,7 +9,6 @@ const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 const shapes_mod = @import("../shapes.zig");
 const Shapes = shapes_mod.Shapes;
-const Shape = shapes_mod.Shape;
 
 /// Flags a shape method called on a shape the script shows to be of a kind that doesn't
 /// have it, and `+`, `-` and `&` between a Path and another shape (a Path joins another

@@ -14,7 +14,6 @@ const lsp_inbox = @import("lsp_inbox.zig");
 const lsp_hints = @import("lsp_hints.zig");
 const ast = @import("../core/ast.zig");
 const manifest = @import("../stdlib/manifest.zig");
-const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const lsp_preview = @import("lsp_preview.zig");
@@ -25,7 +24,6 @@ const lsp_worker = @import("lsp_worker.zig");
 const Args = @import("args.zig").Args;
 const viewport_ws = @import("../daemon/viewport_ws.zig");
 const ViewportWsServer = viewport_ws.ViewportWsServer;
-const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
 

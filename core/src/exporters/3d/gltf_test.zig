@@ -2,7 +2,6 @@ const std = @import("std");
 const gltf = @import("gltf.zig");
 const registry = @import("../../stdlib/registry.zig");
 const dag_evaluator = @import("../../vm/dag_evaluator.zig");
-const geom = @import("../../kernel/geometry_handle.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const draco = @import("../../bindings/draco.zig");
 const mesh_check = @import("../../kernel/mesh_check.zig");

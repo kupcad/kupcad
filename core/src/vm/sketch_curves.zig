@@ -12,7 +12,6 @@
 
 const std = @import("std");
 const dag = @import("dag.zig");
-const rounded_rect = @import("../core/rounded_rect.zig");
 const bezier = @import("../core/bezier.zig");
 
 /// The most curves collected for one sketch: a shared subgraph is visited once per path

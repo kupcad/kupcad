@@ -7,7 +7,6 @@ const std = @import("std");
 const common = @import("classes/common.zig");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
-const util = @import("methods/util.zig");
 const primitives = @import("primitives.zig");
 const paths = @import("paths.zig");
 const Signature = @import("signature.zig").Signature;

@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const lsp_worker = @import("lsp_worker.zig");
 const SessionPreview = @import("lsp_preview.zig").SessionPreview;
-const ast = @import("../core/ast.zig");
 
 fn u32Bytes(n: u32) [4]u8 {
     var b: [4]u8 = undefined;

@@ -6,7 +6,6 @@ const std = @import("std");
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
-const LockedPackage = lockfile_mod.LockedPackage;
 const StringMap = lockfile_mod.StringMap;
 const provider = @import("providers/provider.zig");
 const cafs_mod = @import("cafs.zig");

@@ -11,7 +11,6 @@ const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
-const geom = @import("../kernel/geometry_handle.zig");
 const gltf = @import("../exporters/3d/gltf.zig");
 const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");

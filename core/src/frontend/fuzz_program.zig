@@ -19,7 +19,6 @@ const array_class = @import("../stdlib/classes/array.zig");
 const string_class = @import("../stdlib/classes/string.zig");
 const number_class = @import("../stdlib/classes/number.zig");
 const map_class = @import("../stdlib/classes/map.zig");
-const range_class = @import("../stdlib/classes/range.zig");
 const math_class = @import("../stdlib/classes/math.zig");
 
 pub const Error = error{OutOfMemory};

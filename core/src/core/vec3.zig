@@ -1,8 +1,6 @@
 //! 3D vectors as `[3]f64`: the few operations the kernels and exporters measure meshes
 //! with (a triangle's normal and centroid, how far a point is from one), in one place.
 
-const std = @import("std");
-
 pub fn dot(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }

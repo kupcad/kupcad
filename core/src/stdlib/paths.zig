@@ -9,7 +9,6 @@ const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const util = @import("methods/util.zig");
-const sig = @import("method_signatures.zig");
 const path_mod = @import("../core/path.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
 const Signature = @import("signature.zig").Signature;

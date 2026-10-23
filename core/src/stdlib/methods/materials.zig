@@ -2,7 +2,6 @@
 //! Solid with it in the DAG; `highlight` and `ghost`, as methods or block forms, tag it for
 //! the viewer, and a ghost goes to the VM's display list instead of the model.
 
-const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const material = @import("../../core/material.zig");
