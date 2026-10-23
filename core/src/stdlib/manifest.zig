@@ -96,9 +96,15 @@ pub const GlobalFunction = struct {
     func: value.NativeFn,
     category: Category,
     result: Result,
+    /// What it gives back instead when a call gives a keyword as `true` (`import_svg(path,
+    /// paths: true)` is an Array), for tools that read calls before they run.
+    result_when: ?ResultWhen = null,
     /// A primitive's parameters, for tools that read calls before they run.
     signature: ?*const Signature = null,
 };
+
+/// The result a global function gives when its `keyword` is `true`.
+pub const ResultWhen = struct { keyword: []const u8, result: Result };
 
 /// Which shapes a method is defined on: `respond_to?` and a call on the other kind answer
 /// as for any missing method (every method used to be bound to both, so a sketch said it
@@ -168,8 +174,8 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
-    .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .varies, .signature = &drawing_import.IMPORT_DXF },
-    .{ .name = "import_svg", .func = common.wrapGlobal(drawing_import.nativeImportSvg), .category = .file_io, .result = .varies, .signature = &drawing_import.IMPORT_SVG },
+    .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_DXF },
+    .{ .name = "import_svg", .func = common.wrapGlobal(drawing_import.nativeImportSvg), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_SVG },
 };
 
 pub const mesh_methods = [_]MeshMethod{
@@ -305,6 +311,14 @@ pub fn signatureOf(name: []const u8) ?*const Signature {
 pub fn resultOf(name: []const u8) ?Result {
     for (global_functions) |f| {
         if (std.mem.eql(u8, f.name, name)) return f.result;
+    }
+    return null;
+}
+
+/// The result the global function `name` gives instead when a keyword is `true`, if it has one.
+pub fn resultWhenOf(name: []const u8) ?ResultWhen {
+    for (global_functions) |f| {
+        if (std.mem.eql(u8, f.name, name)) return f.result_when;
     }
     return null;
 }

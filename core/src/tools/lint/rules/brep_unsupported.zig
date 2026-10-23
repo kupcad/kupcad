@@ -72,7 +72,7 @@ pub const BrepUnsupportedRule = struct {
                 const def = tree.defStmt(node);
                 try self.methods.append(engine.allocator, .{ .name = tree.getString(def.name), .first = token_span.first(tree, def.body), .last = token_span.last(tree, def.body) });
             },
-            .assignment => try self.shapes.observe(engine.allocator, tree, node),
+            .assignment, .import_stmt => try self.shapes.observe(engine.allocator, tree, node),
             .binary_op => {
                 const b = tree.binaryExpr(node);
                 switch (b.op) {

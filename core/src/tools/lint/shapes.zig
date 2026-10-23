@@ -1,10 +1,14 @@
 //! Which expressions of a script are solids, sketches or paths, as far as it says before it runs:
-//! a primitive, a variable last assigned one, a method that keeps or makes one, a boolean of
-//! them. A rule feeds it the script's assignments in order (`observe`) and asks `of`.
+//! a primitive, a variable last assigned one or bound by a file's import (`import logo from
+//! "./logo.svg"`), a method that keeps or makes one, a boolean of them. A rule feeds it the
+//! script's statements in order (`observe`) and asks `of`. `globalResult` is what a call of
+//! a built-in gives back, for the editor's type hints too.
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const manifest = @import("../../stdlib/manifest.zig");
+const import_kind = @import("../../core/import_kind.zig");
+const literals = @import("rules/literals.zig");
 
 pub const Shape = enum {
     solid,
@@ -39,8 +43,10 @@ pub const Shapes = struct {
         self.* = .{};
     }
 
-    /// Records what an assignment at `node` makes its variable; any other node is ignored.
+    /// Records what an assignment at `node` makes its variable, or what a file's import
+    /// binds its name to (the value its built-in gives); any other node is ignored.
     pub fn observe(self: *Shapes, allocator: std.mem.Allocator, tree: *const ast.Tree, node: *const ast.Node) !void {
+        if (node.tag == .import_stmt) return self.observeImport(allocator, tree, node);
         if (node.tag != .assignment) return;
         const a = tree.assignment(node);
         if (a.op != null) return;
@@ -65,12 +71,23 @@ pub const Shapes = struct {
                 // kept here by hand); a method of a shape that isn't a built-in is unknown.
                 const call = tree.methodCall(node);
                 const name = tree.getString(call.method_name);
-                if (call.receiver == .none) break :blk shapeOf(manifest.resultOf(name) orelse break :blk null, null);
+                if (call.receiver == .none) break :blk shapeOf(globalResult(tree, call) orelse break :blk null, null);
                 const receiver = self.of(tree, call.receiver) orelse break :blk null;
                 break :blk shapeOf(manifest.methodResultOf(name) orelse break :blk null, receiver);
             },
             else => null,
         };
+    }
+
+    fn observeImport(self: *Shapes, allocator: std.mem.Allocator, tree: *const ast.Tree, node: *const ast.Node) !void {
+        const stmt = tree.importStmt(node);
+        // Braces name keys of the file's value, not the value
+        if (stmt.braced) return;
+        const importer = import_kind.ofImport(tree, stmt).importer() orelse return;
+        const shape = shapeOf(manifest.resultOf(importer) orelse return, null) orelse return;
+        for (tree.getAliasPairs(stmt.symbols)) |pair| {
+            try self.vars.put(allocator, tree.getString(if (pair.alias != .none) pair.alias else pair.original), shape);
+        }
     }
 
     fn shapeOf(result: manifest.Result, receiver: ?Shape) ?Shape {
@@ -83,3 +100,19 @@ pub const Shapes = struct {
         };
     }
 };
+
+/// What a call of a built-in global function gives back: the manifest's result, or the one
+/// its `result_when` keyword gives as `true` (`import_svg(path, paths: true)`, an Array);
+/// null when it isn't a built-in, or gives that keyword a value only the run knows.
+pub fn globalResult(tree: *const ast.Tree, call: ast.MethodCall) ?manifest.Result {
+    const name = tree.getString(call.method_name);
+    const result = manifest.resultOf(name) orelse return null;
+    const when = manifest.resultWhenOf(name) orelse return result;
+    const arg = literals.keyword(tree, call, when.keyword) orelse return result;
+    const value = tree.getNode(arg.value) orelse return null;
+    return switch (value.tag) {
+        .boolean => if (tree.boolean(value)) when.result else result,
+        .nil => result,
+        else => null,
+    };
+}
