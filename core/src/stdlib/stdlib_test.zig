@@ -1067,6 +1067,21 @@ test "Stdlib: cube and square take their sizes as an Array, regular_polygon its 
     });
 }
 
+test "Stdlib: a polyhedron's faces have three corners or more, a concave one cut along its inside" {
+    const BOX = "pts = [[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]]\nquads = [[0,3,2,1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]\n";
+    // An L-shaped prism: its caps are concave hexagons, its sides quads
+    const L = "l = [[0,0],[2,0],[2,1],[1,1],[1,2],[0,2]]\npts = l.map { |(x, y)| [x, y, 0] } + l.map { |(x, y)| [x, y, 1] }\nsides = (0...6).map { |i| [i, (i + 1) % 6, (i + 1) % 6 + 6, i + 6] }\n";
+    try expectScripts(&.{
+        .{ .src = BOX ++ "r = polyhedron(pts, quads).volume", .expected = .{ .num = 1 } },
+        .{ .src = L ++ "r = polyhedron(pts, [[5, 4, 3, 2, 1, 0], [6, 7, 8, 9, 10, 11]] + sides).volume", .expected = .{ .num = 3 } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face 0 has 2 corners; a face has at least 3" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, 1, 2]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face 0 has point 1 twice" } },
+        .{ .src = comptime rescued("polyhedron([[0,0,0],[1,0,0],[2,0,0],[3,0,0],[0,1,1]], [[0, 1, 2, 3], [0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]])"), .expected = .{ .str = "ValueError: polyhedron face 0 encloses no area: its corners are in a line" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, 9, 4]] + quads)"), .expected = .{ .str = "ValueError: polyhedron face index 9 is out of range (0..8)" } },
+        .{ .src = comptime BOX ++ rescued("polyhedron(pts, [[0, 1, :a, 4]] + quads)"), .expected = .{ .str = "TypeError: polyhedron expects a number for a point index (face 0, entry 2), got Symbol" } },
+    });
+}
+
 test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
     try expectScripts(&.{
         .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
@@ -2108,7 +2123,7 @@ test "Stdlib: rescued argument errors name the method, the position and the bad 
         .{ .src = rescued("polygon([[0,0],[10],[10,10]])"), .expected = .{ .str = "ValueError: polygon expects point 1 to have 2 numbers, got 1" } },
         .{ .src = rescued("polygon([[0,0],[1,0],[0,1]], paths: [[0,1,[2]]])"), .expected = .{ .str = "TypeError: polygon expects a number for a point index (path 0, entry 2), got Array" } },
         .{ .src = rescued("polyhedron([[0,0,0],[1,0,0],[0,1,0],[0,nil,1]], " ++ TETRA_FACES ++ ")"), .expected = .{ .str = "TypeError: polyhedron expects a number for a coordinate (point 3, component 1), got nil" } },
-        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1,2],[0,2,3],[1,3,2]])"), .expected = .{ .str = "ValueError: polyhedron faces must be triangles (3 point indices), but face 1 has 4" } },
+        .{ .src = rescued("polyhedron(" ++ TETRA_PTS ++ ", [[0,1,2],[0,3,1,2],[0,2,3],[1,3,2]])"), .expected = .{ .str = "ValueError: polyhedron face 1 can't be cut into triangles: seen on its plane, its outline crosses itself (a face's corners lie in one plane, in order around it)" } },
         .{ .src = rescued("cube(1).translate(z: \"up\")"), .expected = .{ .str = "TypeError: translate expects a number for z, got String" } },
         .{ .src = rescued("cube(1).rotate(0, :y)"), .expected = .{ .str = "TypeError: rotate expects a number for y, got Symbol" } },
         .{ .src = rescued("cube(1).transform([1,0,0, 0,1,0, 0,0,:s, 0,0,0])"), .expected = .{ .str = "TypeError: transform expects a number for a matrix entry (index 8), got Symbol" } },

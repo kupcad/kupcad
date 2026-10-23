@@ -52,6 +52,10 @@ pub const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
 // A label or a table column is far shorter, and the padding is written in the native,
 // where the instruction budget can't stop it.
 pub const MAX_STRING_PAD: usize = 1_000_000;
+// Most corners a polyhedron's face has. A face is triangulated by ear clipping in the native
+// (core/triangulate.zig), O(n²) in its corners, where the instruction budget can't stop it;
+// a cap of a cylinder drawn at the finest resolution has MAX_SEGMENTS.
+pub const MAX_FACE_CORNERS: usize = 4096;
 // Upper bounds for the B-Rep solver iteration budgets set via CAD.config(brep: ...).
 // Both are per-call loops, so an unbounded user value turns one projection or
 // intersection into an effective hang. The caps sit 20x/200x above the defaults

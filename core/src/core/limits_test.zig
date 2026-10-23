@@ -36,6 +36,7 @@ const CASES = .{
     .MAX_PATTERN_COUNT = patternCount,
     .MAX_RANGE_MATERIALIZE = rangeMaterialize,
     .MAX_STRING_PAD = stringPad,
+    .MAX_FACE_CORNERS = faceCorners,
     .MAX_NEWTON_TRIALS = newtonTrials,
     .MAX_MARCHING_STEPS = marchingSteps,
     .MAX_SOURCE_BYTES = sourceBytes,
@@ -139,6 +140,10 @@ fn rangeMaterialize() !void {
 
 fn stringPad() !void {
     try expectRescued("\"a\".rjust(1_000_002)", "RangeError: rjust: a width of 1000002 would add more than 1000000 characters");
+}
+
+fn faceCorners() !void {
+    try expectRescued("polyhedron([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], [(0...4097).map { |i| i % 3 }, [0, 1, 3], [1, 2, 3], [2, 0, 3]])", "ValueError: polyhedron face 0 has 4097 corners; a face has at most 4096");
 }
 
 fn newtonTrials() !void {

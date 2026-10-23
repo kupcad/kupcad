@@ -10,6 +10,7 @@ const Signature = @import("signature.zig").Signature;
 const VM = @import("../vm/vm.zig").VM;
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
+const triangulate = @import("../core/triangulate.zig");
 const affine2 = @import("../core/affine2.zig");
 
 /// The names of one option. Two of a group in one call are an error: `d:` silently beat
@@ -92,8 +93,8 @@ const MIN_CONTOUR_POINTS = 3;
 /// Fewest points and faces of a closed solid (a tetrahedron).
 const MIN_POLYHEDRON_POINTS = 4;
 const MIN_POLYHEDRON_FACES = 4;
-/// Faces are triangles: the kernels take exactly three point indices per face.
-const POLYHEDRON_FACE_LEN = 3;
+/// The fewest corners a face has: a triangle.
+const MIN_FACE_CORNERS = 3;
 /// Room for an argument label such as "a point index (path 12, entry 345)".
 const MAX_LABEL_LEN = 64;
 
@@ -560,25 +561,32 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
     defer alloc.free(pts);
     for (pts_val, pts, 0..) |p, *pt, i| pt.* = try arguments.parsePoint(3, vm, p, "polyhedron", i);
 
-    const faces = try alloc.alloc([3]u32, faces_val.len);
-    defer alloc.free(faces);
-
-    for (faces_val, faces, 0..) |f, *face, i| {
-        // A quad used to be silently truncated to its first triangle.
-        if (f.isArray() and f.asArray().items.items.len != POLYHEDRON_FACE_LEN) {
-            return vm.fail(.ValueError, "polyhedron faces must be triangles ({d} point indices), but face {d} has {d}", .{ POLYHEDRON_FACE_LEN, i, f.asArray().items.items.len });
+    // A face of more corners is triangles to the kernels (core/triangulate.zig): a quad was
+    // once silently cut to its first triangle, then refused
+    var faces: std.ArrayList([3]u32) = .empty;
+    defer faces.deinit(alloc);
+    var corners: std.ArrayList(u32) = .empty;
+    defer corners.deinit(alloc);
+    for (faces_val, 0..) |f, i| {
+        if (!f.isArray()) return vm.fail(.TypeError, "polyhedron expects an Array for face {d}, got {s}", .{ i, vm.typeName(f) });
+        const items = f.asArray().items.items;
+        if (items.len < MIN_FACE_CORNERS) return vm.fail(.ValueError, "polyhedron face {d} has {d} corners; a face has at least {d}", .{ i, items.len, MIN_FACE_CORNERS });
+        if (items.len > limits.MAX_FACE_CORNERS) return vm.fail(.ValueError, "polyhedron face {d} has {d} corners; a face has at most {d}", .{ i, items.len, limits.MAX_FACE_CORNERS });
+        corners.clearRetainingCapacity();
+        for (items, 0..) |item, k| {
+            if (!item.isNumber()) return vm.fail(.TypeError, "polyhedron expects a number for a point index (face {d}, entry {d}), got {s}", .{ i, k, vm.typeName(item) });
+            // Kernels index points[] directly with these, so they must be in range.
+            const corner: u32 = @intCast(try checkedIndex(vm, item.asNumber(), pts.len, "polyhedron face"));
+            if (std.mem.findScalar(u32, corners.items, corner) != null) return vm.fail(.ValueError, "polyhedron face {d} has point {d} twice", .{ i, corner });
+            try corners.append(alloc, corner);
         }
-        const raw = try arguments.parseNumberArray(POLYHEDRON_FACE_LEN, vm, f, .{
-            .method = "polyhedron",
-            .name = "face",
-            .row = i,
-            .elem = "a point index",
-            .index_label = "entry",
-        }, POLYHEDRON_FACE_LEN, 0.0);
-        // Kernels index points[] directly with these, so they must be in range.
-        for (raw, face) |r, *c| c.* = @intCast(try checkedIndex(vm, r, pts.len, "polyhedron face"));
+        triangulate.face(alloc, pts, corners.items, &faces) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            error.Degenerate => return vm.fail(.ValueError, "polyhedron face {d} encloses no area: its corners are in a line", .{i}),
+            error.SelfIntersecting => return vm.fail(.ValueError, "polyhedron face {d} can't be cut into triangles: seen on its plane, its outline crosses itself (a face's corners lie in one plane, in order around it)", .{i}),
+        };
     }
-    const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces);
+    const dag_idx = try vm.dag_builder.addPolyhedron(pts, faces.items);
     return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
