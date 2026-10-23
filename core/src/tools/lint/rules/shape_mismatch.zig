@@ -5,6 +5,7 @@
 const std = @import("std");
 const ast = @import("../../../core/ast.zig");
 const manifest = @import("../../../stdlib/manifest.zig");
+const OPEN_PATH_HINT = @import("../../../core/path.zig").OPEN_PATH_HINT;
 const linter = @import("../linter.zig");
 const LintRule = @import("rule.zig").LintRule;
 const shapes_mod = @import("../shapes.zig");
@@ -73,7 +74,7 @@ pub const ShapeMismatchRule = struct {
                     try engine.report(id, loc, "'{s}' can't combine two Paths: '+' joins them where one ends and the next starts", .{op});
                 } else {
                     const other = if (left == .path) right else left;
-                    try engine.report(id, loc, "'{s}' can't combine a Path and a {s}: {s}", .{ op, other.className(), manifest.OPEN_PATH_HINT });
+                    try engine.report(id, loc, "'{s}' can't combine a Path and a {s}: {s}", .{ op, other.className(), OPEN_PATH_HINT });
                 }
             },
             else => {},

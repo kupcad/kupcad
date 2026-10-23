@@ -1,5 +1,5 @@
 //! OBJ export: `build` writes a model as Wavefront OBJ, one `o` object per Solid, named as
-//! the parts list names its copies (bom.CopyNames: the part's name, numbered from its second
+//! the parts list names its copies (parts_mod.CopyNames: the part's name, numbered from its second
 //! copy on). The vertices are in millimetres and Z up, as the script made them (OBJ has no unit
 //! or up axis), and each face carries its own normal so a viewer keeps CAD edges sharp. No
 //! material is named unless a library is asked for: most tools apply their own, and a `.mtl`
@@ -12,7 +12,7 @@ const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const vec3 = @import("../../core/vec3.zig");
-const bom = @import("../../stdlib/bom.zig");
+const parts_mod = @import("../parts.zig");
 const material_groups = @import("material_groups.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 
@@ -27,9 +27,9 @@ const DEFAULT_GREY = 0.8;
 /// (`mtllib`) and each run of faces its material. error.NoGeometry when no Solid has a
 /// triangle.
 pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
-    const grouping = try bom.group(vm, allocator, solids);
+    const grouping = try parts_mod.group(vm, allocator, solids);
     defer grouping.deinit(allocator);
-    var names = try bom.CopyNames.init(allocator, &grouping);
+    var names = try parts_mod.CopyNames.init(allocator, &grouping);
     defer names.deinit(allocator);
 
     var out: std.Io.Writer.Allocating = .init(allocator);

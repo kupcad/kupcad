@@ -95,7 +95,7 @@ pub const DAGTag = enum(u8) {
     /// A part's name (`named`), for the parts list: the shape is its operand's.
     set_name,
     /// A sketch's material and name (`material`, `named`), for a drawing: the shape is its
-    /// operand's (stdlib/bom.zig reads them). Tags of their own, as every sketch node has.
+    /// operand's (exporters/parts.zig reads them). Tags of their own, as every sketch node has.
     cs_set_material,
     cs_set_name,
     /// Leaf wrapping an already-evaluated handle (decompose/simplify results).

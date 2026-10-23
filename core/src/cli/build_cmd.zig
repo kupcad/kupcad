@@ -7,7 +7,7 @@
 
 const std = @import("std");
 const api = @import("../api.zig");
-const bom = @import("../stdlib/bom.zig");
+const parts_mod = @import("../exporters/parts.zig");
 const kernel = @import("../kernel/kernel.zig");
 const fs = @import("fs.zig");
 const param_flags = @import("param_flags.zig");
@@ -105,8 +105,8 @@ fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, options: *
     }
     var names: PartFileNames = .{};
     defer names.deinit(allocator);
-    // Unnamed files are numbered per kind: part_1, part_2 and path_1 (bom.fallbackName)
-    var unnamed = std.EnumArray(bom.ShapeKind, usize).initFill(0);
+    // Unnamed files are numbered per kind: part_1, part_2 and path_1 (parts_mod.fallbackName)
+    var unnamed = std.EnumArray(parts_mod.ShapeKind, usize).initFill(0);
     for (files) |file| {
         const number = unnamed.getPtr(file.kind);
         if (file.name == null) number.* += 1;
@@ -134,14 +134,14 @@ pub const PartFileNames = struct {
     }
 
     /// The next part's file name, with `extension`; caller owns it.
-    pub fn next(self: *PartFileNames, allocator: std.mem.Allocator, part_name: ?[]const u8, kind: bom.ShapeKind, number: usize, extension: []const u8) ![]u8 {
+    pub fn next(self: *PartFileNames, allocator: std.mem.Allocator, part_name: ?[]const u8, kind: parts_mod.ShapeKind, number: usize, extension: []const u8) ![]u8 {
         const safe = try safeName(allocator, part_name orelse "");
         defer allocator.free(safe);
-        const base = if (safe.len > 0) try allocator.dupe(u8, safe) else try bom.fallbackName(allocator, kind, number);
+        const base = if (safe.len > 0) try allocator.dupe(u8, safe) else try parts_mod.fallbackName(allocator, kind, number);
         defer allocator.free(base);
         var copy: usize = 1;
         while (true) : (copy += 1) {
-            const stem = try bom.numberedName(allocator, base, copy);
+            const stem = try parts_mod.numberedName(allocator, base, copy);
             defer allocator.free(stem);
             const key = try std.ascii.allocLowerString(allocator, stem);
             const entry = self.taken.getOrPut(allocator, key) catch |err| {

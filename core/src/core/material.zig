@@ -15,7 +15,7 @@ pub const MaterialDef = struct {
     metallic: f64 = 0.0,
     transmission: f64 = 0.0,
     role: MaterialRole = .standard,
-    /// g/cm³, for a part's mass in the parts list (stdlib/bom.zig); shows nowhere.
+    /// g/cm³, for a part's mass in the parts list (exporters/parts.zig); shows nowhere.
     density: ?f64 = null,
 
     /// Feeds every property to `hasher`, for fingerprints of what a model shows.

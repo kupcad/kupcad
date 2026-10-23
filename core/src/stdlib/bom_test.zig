@@ -54,15 +54,15 @@ test "bom: a sketch carries its name and material through its moves, for a drawi
     var vm = try support.initVm();
     defer vm.deinit();
     try std.testing.expectEqual(.ok, try support.runOn(&vm, source));
-    const bom = @import("bom.zig");
-    const hole = bom.sketchLabel(&vm, vm.globals.get("hole").?);
+    const parts = @import("../exporters/parts.zig");
+    const hole = parts.sketchLabel(&vm, vm.globals.get("hole").?);
     try testing.expectEqualStrings("hole", hole.name.?);
     try testing.expectEqual([3]u8{ 0xFF, 0, 0 }, hole.material.?.rgb);
     try testing.expectEqual(@as(f64, 0.5), hole.material.?.alpha);
     // The outermost name wins; another shape (an offset) has no label; a plain sketch none
-    try testing.expectEqualStrings("slot", bom.sketchLabel(&vm, vm.globals.get("renamed").?).name.?);
-    try testing.expectEqual(@as(?[]const u8, null), bom.sketchLabel(&vm, vm.globals.get("grown").?).name);
-    try testing.expectEqual(@as(?[]const u8, null), bom.sketchLabel(&vm, vm.globals.get("plain").?).name);
+    try testing.expectEqualStrings("slot", parts.sketchLabel(&vm, vm.globals.get("renamed").?).name.?);
+    try testing.expectEqual(@as(?[]const u8, null), parts.sketchLabel(&vm, vm.globals.get("grown").?).name);
+    try testing.expectEqual(@as(?[]const u8, null), parts.sketchLabel(&vm, vm.globals.get("plain").?).name);
     // A sketch's label isn't the Solid extruded from it
     try support.expectScripts(&.{
         .{ .src = source ++ "\nr = solid.bom[0][:name]", .expected = .nil },

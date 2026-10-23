@@ -523,7 +523,7 @@ fn executeSolidOp(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode, confi
 
 /// A name or a material on a Solid or a Sketch. A Solid's material goes into its mesh (its
 /// triangles' slot); a name, and a Sketch's material, are the parts list's and a drawing's
-/// alone (stdlib/bom.zig reads them from the graph), so the shape is its operand's, in a
+/// alone (exporters/parts.zig reads them from the graph), so the shape is its operand's, in a
 /// handle of its own (the result cache owns each node's).
 fn executeLabel(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !void {
     const target = v_stack.pop();

@@ -2,7 +2,7 @@
 //! Path and assembly methods (`mesh_methods`, `path_methods`, `assembly_methods`), each with
 //! its category, signature, result kind and the shapes it is bound for, from which the
 //! compiler's intrinsics, the LSP's completions and the lint's lookups are derived
-//! (`methodAllows`); what a Path can't do and why (`OPEN_PATH_HINT`, `missingMethodHint`);
+//! (`methodAllows`); why a Path lacks a method (`missingMethodHint`, core/path.zig's OPEN_PATH_HINT);
 //! and `cadBinaryHandler`, which turns `+ - &` into booleans, and `+` of two Paths into a
 //! join.
 
@@ -22,6 +22,7 @@ const chunk = @import("../vm/chunk.zig");
 const methods = @import("methods.zig");
 const assembly_mod = @import("assembly.zig");
 const bom = @import("bom.zig");
+const path_mod = @import("../core/path.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
 const debug_mod = @import("debug.zig");
@@ -303,8 +304,6 @@ pub fn methodSignatureOf(name: []const u8) ?*const Signature {
 
 /// What to do about a shape that lacks a method it is often asked for: a Path for
 /// `extrude` or `revolve`, which need a closed shape.
-pub const OPEN_PATH_HINT = "a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first";
-
 /// Whether the shape method `name` is one of the shapes `on`'s (a Solid's `hull`, a
 /// Sketch's `extrude`, a Path's `close`); null when no shape has a method of that name.
 pub fn methodAllows(name: []const u8, on: On) ?bool {
@@ -327,7 +326,7 @@ pub fn methodAllows(name: []const u8, on: On) ?bool {
 pub fn missingMethodHint(class: []const u8, name: []const u8) ?[]const u8 {
     if (!std.mem.eql(u8, class, "Path")) return null;
     for ([_][]const u8{ "extrude", "revolve", "helix", "loft", "hull", "offset" }) |needs_region| {
-        if (std.mem.eql(u8, name, needs_region)) return OPEN_PATH_HINT;
+        if (std.mem.eql(u8, name, needs_region)) return path_mod.OPEN_PATH_HINT;
     }
     return null;
 }

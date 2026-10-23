@@ -1,7 +1,7 @@
 //! A model as a drawing, what the 2D exporters (SVG, DXF) write: each shape's outlines
 //! (the kernel's contours, their chords turned back into the arcs and curves they were
 //! drawn from, curves.zig; a Path's segments as they are, open) with the name and colour it carries, and
-//! the drawing's bounds. `api.drawingOf` builds it from the model's Sketches and Paths and
+//! the drawing's bounds. `export.drawingOf` (exporters/export.zig) builds it from the model's Sketches and Paths and
 //! from its Solids projected onto the XY plane, so a 3D model exports as a 2D format too.
 
 const std = @import("std");

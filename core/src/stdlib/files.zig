@@ -1,6 +1,6 @@
 //! The script's file methods: `export_stl`, `export_gltf`, `export_step`, `export_3mf` and
 //! `export_obj` on a Solid or an Assembly, `export_svg` and `export_dxf` on any shape (a
-//! drawing, through api.exportDrawing), and `import_stl` / `import_step` / `import_font`
+//! drawing, through exporters/export.zig), and `import_stl` / `import_step` / `import_font`
 //! (`import_json` is in json.zig). The formats themselves are in exporters/3d and
 //! exporters/2d, which know nothing of scripts.
 
@@ -13,7 +13,8 @@ const util = @import("methods/util.zig");
 const stl = @import("../exporters/3d/stl.zig");
 const threemf = @import("../exporters/3d/threemf.zig");
 const obj = @import("../exporters/3d/obj.zig");
-const api = @import("../api.zig");
+const export_mod = @import("../exporters/export.zig");
+const ExportFormat = @import("../exporters/format.zig").ExportFormat;
 const step = @import("../exporters/3d/step.zig");
 const gltf = @import("../exporters/3d/gltf.zig");
 const text = @import("../core/text.zig");
@@ -65,7 +66,7 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_o
     var solids: std.ArrayList(value.Value) = .empty;
     defer solids.deinit(vm.allocator);
     const title = try receiverSolids(vm, receiver, "export_obj", &solids);
-    const mtl_path: ?[]u8 = if (mtl_opt orelse false) try api.materialLibraryPath(vm.allocator, filepath) else null;
+    const mtl_path: ?[]u8 = if (mtl_opt orelse false) try export_mod.materialLibraryPath(vm.allocator, filepath) else null;
     defer if (mtl_path) |p| vm.allocator.free(p);
 
     const bytes = obj.build(vm.allocator, vm, solids.items, title, if (mtl_path) |p| std.fs.path.basename(p) else null) catch |err| switch (err) {
@@ -75,7 +76,7 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_o
     defer vm.allocator.free(bytes);
     try vm.vfs.writeFile(filepath, bytes);
     if (mtl_path) |p| {
-        const library = try api.exportMaterialLibrary(vm.allocator, vm);
+        const library = try export_mod.exportMaterialLibrary(vm.allocator, vm);
         defer vm.allocator.free(library);
         try vm.vfs.writeFile(p, library);
     }
@@ -93,13 +94,13 @@ pub fn meshExportDxf(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     return exportDrawingTo(vm, receiver, filepath, .dxf, "export_dxf");
 }
 
-fn exportDrawingTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: api.ExportFormat, comptime method: []const u8) !value.Value {
+fn exportDrawingTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: ExportFormat, comptime method: []const u8) !value.Value {
     var solids: std.ArrayList(value.Value) = .empty;
     defer solids.deinit(vm.allocator);
     const sketches: []const value.Value = if (receiver.isCrossSection()) &.{receiver} else &.{};
     const paths: []const value.Value = if (receiver.isPath()) &.{receiver} else &.{};
     if (!receiver.isCrossSection() and !receiver.isPath()) _ = try receiverSolids(vm, receiver, method, &solids);
-    const bytes = try api.exportDrawing(vm.allocator, vm, format, .{}, sketches, solids.items, paths);
+    const bytes = try export_mod.exportDrawing(vm.allocator, vm, format, .{}, sketches, solids.items, paths);
     defer vm.allocator.free(bytes);
     try vm.vfs.writeFile(filepath, bytes);
     return receiver;
@@ -181,7 +182,7 @@ pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, drac
     var solids: std.ArrayList(value.Value) = .empty;
     defer solids.deinit(vm.allocator);
     _ = try receiverSolids(vm, receiver, "export_gltf", &solids);
-    var parts = try api.gltfParts(vm.allocator, vm, solids.items, &.{});
+    var parts = try export_mod.gltfParts(vm.allocator, vm, solids.items, &.{});
     defer parts.deinit();
     for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
     const draco_bits: ?u8 = if (draco_opt orelse false) gltf.DEFAULT_DRACO_POSITION_BITS else null;

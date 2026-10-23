@@ -1,6 +1,6 @@
 //! 3MF export: a model as a 3D Manufacturing Format package, a zip (exporters/zip.zig) of a
 //! content types file, a relationship and the model's XML. Each part of the parts list
-//! (stdlib/bom.zig) is one mesh, and each copy of it one build item placed by the copy's
+//! (stdlib/parts_mod.zig) is one mesh, and each copy of it one build item placed by the copy's
 //! transform, so a slicer gets a part once with all its copies (an STL holds them merged).
 //! Units are millimetres; the materials' colours are base materials, by triangle.
 
@@ -11,7 +11,7 @@ const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const kernel = @import("../../kernel/kernel.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 const Placement = @import("../../core/placement.zig").Placement;
-const bom = @import("../../stdlib/bom.zig");
+const parts_mod = @import("../parts.zig");
 const zip = @import("../zip.zig");
 
 pub const MODEL_PATH = "3D/3dmodel.model";
@@ -35,7 +35,7 @@ const DEFAULT_COLOR = [4]u8{ 0xCC, 0xCC, 0xCC, 0xFF };
 /// `solids` (rooted by the caller) as a 3MF package, owned by `allocator`; `title` names the
 /// model (an assembly's name). error.NoGeometry when no part has a triangle.
 pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8) ![]u8 {
-    const grouping = try bom.group(vm, allocator, solids);
+    const grouping = try parts_mod.group(vm, allocator, solids);
     defer grouping.deinit(allocator);
     // A part with no triangles has no object, nor items
     const object_ids = try allocator.alloc(?u32, grouping.parts.len);
@@ -96,11 +96,11 @@ fn writeBase(w: *std.Io.Writer, name: []const u8, color: [4]u8) !void {
 
 /// `part`'s shape as the object `id`, its triangles in the materials they have; false (and
 /// nothing written) when the mesh has none.
-fn writeObject(allocator: std.mem.Allocator, vm: *VM, w: *std.Io.Writer, part: bom.Part, id: u32) !bool {
+fn writeObject(allocator: std.mem.Allocator, vm: *VM, w: *std.Io.Writer, part: parts_mod.Part, id: u32) !bool {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     // With its material: the part's mesh has the colour the viewport shows
-    const shape = try bom.madeOf(vm, part);
+    const shape = try parts_mod.madeOf(vm, part);
     vm.push(shape);
     const solid = try vm.ensureConcrete(shape);
     try vm.requireFeature(solid.engine, .mesh);

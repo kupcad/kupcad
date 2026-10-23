@@ -9,6 +9,10 @@
 const std = @import("std");
 const bezier = @import("bezier.zig");
 
+/// What a Path can't be and why, for every message that says so: a 3D export's refusal,
+/// the VM's NoMethodError (an `extrude`) and the lint (`shape-mismatch`).
+pub const OPEN_PATH_HINT = "a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first";
+
 /// How many straight pieces a cubic's length is summed over.
 const CUBIC_LENGTH_PIECES = 64;
 
