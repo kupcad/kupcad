@@ -22,6 +22,10 @@ const affine2 = @import("../../core/affine2.zig");
 const bezier = @import("../../core/bezier.zig");
 const limits = @import("../../core/limits.zig");
 pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
+const xml = @import("../xml.zig");
+const Tag = xml.Tag;
+const Scanner = xml.Scanner;
+const lineOf = xml.lineOf;
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
 const MM_PER_PX = 25.4 / 96.0;
@@ -83,105 +87,24 @@ pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, di
     return drawing;
 }
 
-/// One tag of the file: a start tag (with its attributes' text), an end tag, or one that
-/// is both (`<path/>`).
-const Tag = struct {
-    name: []const u8,
-    attributes: []const u8,
-    closing: bool,
-    self_closing: bool,
-    offset: usize,
-
-    /// The value of the attribute `name`, as written.
-    fn attribute(self: Tag, name: []const u8) ?[]const u8 {
-        var rest = self.attributes;
-        while (true) {
-            rest = std.mem.trimStart(u8, rest, &std.ascii.whitespace);
-            const eq = std.mem.findScalar(u8, rest, '=') orelse return null;
-            const key = std.mem.trim(u8, rest[0..eq], &std.ascii.whitespace);
-            rest = std.mem.trimStart(u8, rest[eq + 1 ..], &std.ascii.whitespace);
-            if (rest.len == 0 or (rest[0] != '"' and rest[0] != '\'')) return null;
-            const close = std.mem.findScalarPos(u8, rest, 1, rest[0]) orelse return null;
-            if (std.mem.eql(u8, key, name)) return rest[1..close];
-            rest = rest[close + 1 ..];
+/// A property of `tag`'s `style` (`fill: none`), or else its attribute of that name: CSS
+/// wins over the presentation attribute.
+fn propertyOf(tag: Tag, name: []const u8) ?[]const u8 {
+    if (tag.attribute("style")) |style| {
+        var declarations = std.mem.splitScalar(u8, style, ';');
+        while (declarations.next()) |declaration| {
+            const colon = std.mem.findScalar(u8, declaration, ':') orelse continue;
+            if (std.mem.eql(u8, std.mem.trim(u8, declaration[0..colon], &std.ascii.whitespace), name)) return std.mem.trim(u8, declaration[colon + 1 ..], &std.ascii.whitespace);
         }
     }
-
-    /// A property of its `style` (`fill: none`), or else the attribute of that name: CSS
-    /// wins over the presentation attribute.
-    fn property(self: Tag, name: []const u8) ?[]const u8 {
-        if (self.attribute("style")) |style| {
-            var declarations = std.mem.splitScalar(u8, style, ';');
-            while (declarations.next()) |declaration| {
-                const colon = std.mem.findScalar(u8, declaration, ':') orelse continue;
-                if (std.mem.eql(u8, std.mem.trim(u8, declaration[0..colon], &std.ascii.whitespace), name)) return std.mem.trim(u8, declaration[colon + 1 ..], &std.ascii.whitespace);
-            }
-        }
-        return self.attribute(name);
-    }
-};
-
-const Scanner = struct {
-    text: []const u8,
-    pos: usize = 0,
-
-    /// The next tag, past text, comments, CDATA, processing instructions and the DOCTYPE.
-    fn next(self: *Scanner, diag: *Diagnostic) error{Unreadable}!?Tag {
-        while (true) {
-            const open = std.mem.findScalarPos(u8, self.text, self.pos, '<') orelse return null;
-            const rest = self.text[open..];
-            if (std.mem.startsWith(u8, rest, "<!--")) {
-                self.pos = try self.past(open, "-->", "a comment", diag);
-            } else if (std.mem.startsWith(u8, rest, "<![CDATA[")) {
-                self.pos = try self.past(open, "]]>", "a CDATA section", diag);
-            } else if (std.mem.startsWith(u8, rest, "<?")) {
-                self.pos = try self.past(open, "?>", "a processing instruction", diag);
-            } else if (std.mem.startsWith(u8, rest, "<!")) {
-                // A DOCTYPE, its internal subset in brackets
-                const bracket = std.mem.findScalarPos(u8, self.text, open, '[');
-                const close = std.mem.findScalarPos(u8, self.text, open, '>') orelse return diag.fail("line {d}: a declaration doesn't end", .{lineOf(self.text, open)});
-                self.pos = if (bracket != null and bracket.? < close) try self.past(bracket.?, "]>", "a DOCTYPE", diag) else close + 1;
-            } else return try self.tag(open, diag);
-        }
-    }
-
-    fn past(self: *Scanner, from: usize, end: []const u8, what: []const u8, diag: *Diagnostic) error{Unreadable}!usize {
-        const at = std.mem.findPos(u8, self.text, from, end) orelse return diag.fail("line {d}: {s} doesn't end", .{ lineOf(self.text, from), what });
-        return at + end.len;
-    }
-
-    fn tag(self: *Scanner, open: usize, diag: *Diagnostic) error{Unreadable}!Tag {
-        // The '>' that ends it, outside its quoted values
-        var i = open + 1;
-        var quote: ?u8 = null;
-        while (i < self.text.len) : (i += 1) {
-            const c = self.text[i];
-            if (quote) |q| {
-                if (c == q) quote = null;
-            } else if (c == '"' or c == '\'') {
-                quote = c;
-            } else if (c == '>') break;
-        } else return diag.fail("line {d}: a tag doesn't end", .{lineOf(self.text, open)});
-        self.pos = i + 1;
-        var body = self.text[open + 1 .. i];
-        const closing = body.len > 0 and body[0] == '/';
-        if (closing) body = body[1..];
-        const self_closing = body.len > 0 and body[body.len - 1] == '/';
-        if (self_closing) body = body[0 .. body.len - 1];
-        const name_end = std.mem.findAny(u8, body, &std.ascii.whitespace) orelse body.len;
-        return .{ .name = body[0..name_end], .attributes = body[name_end..], .closing = closing, .self_closing = self_closing, .offset = open };
-    }
-};
+    return tag.attribute(name);
+}
 
 /// The tag that gives a drawn symbol's `name` (its width or height): the use's when it
 /// gives one, else the symbol's own (a nested svg's, with no use).
 fn sizedBy(use: ?Tag, tag: Tag, name: []const u8) Tag {
     if (use) |u| if (u.attribute(name) != null) return u;
     return tag;
-}
-
-fn lineOf(text: []const u8, offset: usize) usize {
-    return std.mem.countScalar(u8, text[0..offset], '\n') + 1;
 }
 
 /// What an open element gives the ones in it.
@@ -289,7 +212,7 @@ const Reader = struct {
         const name = if (std.mem.startsWith(u8, tag.name, "svg:")) tag.name[4..] else tag.name;
         frame.skipped = true;
         if (std.mem.findScalar(u8, name, ':') != null or (UNDRAWN.has(name) and !symbol_drawn)) return frame;
-        if (tag.property("display")) |display| {
+        if (propertyOf(tag, "display")) |display| {
             if (std.mem.eql(u8, display, "none")) return frame;
         }
         frame.skipped = false;
@@ -303,7 +226,7 @@ const Reader = struct {
             };
         }
         if (tag.attribute("transform")) |transform| frame.matrix = affine2.compose(frame.matrix, try self.transformOf(tag, transform));
-        if (tag.property("fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
+        if (propertyOf(tag, "fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
         if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ lineOf(self.text, tag.offset), name });
 
         if (std.mem.eql(u8, name, "use")) {
