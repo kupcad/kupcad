@@ -313,6 +313,31 @@ test "DXF: a spline's arcs follow the shape's own tolerance" {
     try testing.expect(counts[0] > counts[1]);
 }
 
+test "DXF: one layer per name, the shapes of a name on it, names spelt alike kept apart" {
+    // a:b and a/b, both a_b in DXF's spelling, were two layers of one name
+    const dxf = try exportDxf("[square(1).named(\"plate\"), square(1).translate(x: 3).named(\"plate\"), square(1).translate(x: 6).named(\"a:b\"), square(1).translate(x: 9).named(\"a/b\"), square(1).translate(x: 12).named(\"0\")]");
+    defer testing.allocator.free(dxf);
+    var pairs = try readPairs(dxf);
+    defer pairs.deinit(testing.allocator);
+    var table: std.ArrayList([]const u8) = .empty;
+    defer table.deinit(testing.allocator);
+    for (pairs.items, 0..) |p, i| {
+        if (p.code == 0 and std.mem.eql(u8, p.value, "LAYER")) {
+            var j = i + 1;
+            while (pairs.items[j].code != 2) j += 1;
+            try table.append(testing.allocator, pairs.items[j].value);
+        }
+    }
+    // `0`, then a layer per name: a shape named "0" isn't put with the unnamed ones
+    const expected = [_][]const u8{ "0", "plate", "a_b", "a_b_2", "0_2" };
+    try testing.expectEqual(expected.len, table.items.len);
+    for (expected, table.items) |want, got| try testing.expectEqualStrings(want, got);
+    var lines = try polylines(pairs.items);
+    defer freePolylines(&lines);
+    const on = [_][]const u8{ "plate", "plate", "a_b", "a_b_2", "0_2" };
+    for (on, lines.items) |want, line| try testing.expectEqualStrings(want, line.layer);
+}
+
 test "DXF: every handle is given out once" {
     const dxf = try exportDxf("[square(1), square(1).translate(x: 3).named(\"a\")]");
     defer testing.allocator.free(dxf);

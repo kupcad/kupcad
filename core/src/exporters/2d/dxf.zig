@@ -11,6 +11,7 @@
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
+const UniqueNames = @import("names.zig").UniqueNames;
 const MAX_SEGMENTS = @import("../../core/limits.zig").MAX_SEGMENTS;
 
 /// AutoCAD 2004, the first with true colours (group 420).
@@ -47,17 +48,34 @@ const INDEX_COLORS = [_]struct { index: u8, rgb: [3]u8 }{
     .{ .index = 7, .rgb = .{ 255, 255, 255 } },
 };
 
-/// A layer of the file: a shape name, with the colour of the first shape of that name.
+/// A layer of the file: for the shapes of one name (`shape_name`, null for those without
+/// one), its name as the file writes it (`name`: DXF's spelling, made different from the
+/// other layers'), with the colour of the first shape of that name.
 const Layer = struct {
+    shape_name: ?[]const u8,
     name: []const u8,
     rgb: ?[3]u8,
+};
+
+const Layers = struct {
+    items: []Layer,
+
+    /// The layer the shapes called `shape_name` are on.
+    fn of(self: Layers, shape_name: ?[]const u8) []const u8 {
+        for (self.items) |layer| {
+            const same = if (layer.shape_name) |a| (if (shape_name) |b| std.mem.eql(u8, a, b) else false) else shape_name == null;
+            if (same) return layer.name;
+        }
+        unreachable; // layersOf gives every shape name a layer
+    }
 };
 
 /// `drawing` as DXF text, owned by `allocator`. error.NoGeometry for a drawing with no point.
 pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) ![]u8 {
     const bounds = drawing.bounds orelse return error.NoGeometry;
-    var layers = try layersOf(allocator, drawing);
-    defer layers.deinit(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const layers = try layersOf(arena.allocator(), drawing);
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -100,7 +118,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
         try file.handle();
         try file.pair(100, "AcDbSymbolTableRecord");
         try file.pair(100, "AcDbLayerTableRecord");
-        try file.layerName(layer.name);
+        try file.pair(2, layer.name);
         try file.int(70, 0);
         try file.int(62, if (layer.rgb) |rgb| nearestIndexColor(rgb) else DEFAULT_COLOR_INDEX);
         if (layer.rgb) |rgb| try file.int(420, (@as(u32, rgb[0]) << 16) | (@as(u32, rgb[1]) << 8) | rgb[2]);
@@ -117,7 +135,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
                 try file.pair(0, "CIRCLE");
                 try file.handle();
                 try file.pair(100, "AcDbEntity");
-                try file.layerOf(8, shape.name);
+                try file.pair(8, layers.of(shape.name));
                 try file.pair(100, "AcDbCircle");
                 try file.number(10, arc.center[0]);
                 try file.number(20, arc.center[1]);
@@ -125,13 +143,13 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
                 continue;
             }
             if (hasCurve(outline)) {
-                try writeSpline(allocator, &file, shape.name, outline, shape.tolerance);
+                try writeSpline(allocator, &file, layers.of(shape.name), outline, shape.tolerance);
                 continue;
             }
             try file.pair(0, "LWPOLYLINE");
             try file.handle();
             try file.pair(100, "AcDbEntity");
-            try file.layerOf(8, shape.name);
+            try file.pair(8, layers.of(shape.name));
             try file.pair(100, "AcDbPolyline");
             // A vertex per edge, its start; a closed outline's last edge ends at the first
             // vertex, an open one's end is a vertex of its own
@@ -179,14 +197,14 @@ const SplinePiece = struct { c1: [2]f64, c2: [2]f64, to: [2]f64 };
 
 /// `outline` as a `SPLINE` of cubic pieces (a piecewise Bézier: degree 3, each piece's
 /// knot thrice, the ends' four times), its control points the start and each piece's.
-fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: ?[]const u8, outline: drawing_mod.Outline, tolerance: f64) !void {
+fn writeSpline(allocator: std.mem.Allocator, file: *File, layer: []const u8, outline: drawing_mod.Outline, tolerance: f64) !void {
     const pieces = try splinePieces(allocator, outline, tolerance);
     defer allocator.free(pieces);
     const controls = 1 + SPLINE_DEGREE * pieces.len;
     try file.pair(0, "SPLINE");
     try file.handle();
     try file.pair(100, "AcDbEntity");
-    try file.layerOf(8, layer);
+    try file.pair(8, layer);
     try file.pair(100, "AcDbSpline");
     try file.int(70, PLANAR);
     try file.int(71, SPLINE_DEGREE);
@@ -271,19 +289,19 @@ fn bulgeOf(edge: drawing_mod.Edge) f64 {
     return if (edge.ccw) bulge else -bulge;
 }
 
-/// The layers of `drawing`: `0` first, then each shape name once, in the shapes' order,
-/// with the first shape's colour.
-fn layersOf(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) !std.ArrayList(Layer) {
+/// The layers of `drawing`: `0` first, for the shapes without a name, then one for each
+/// shape name, in the shapes' order, with its first shape's colour. Owned by `arena`.
+fn layersOf(arena: std.mem.Allocator, drawing: *const drawing_mod.Drawing) !Layers {
+    var names: UniqueNames = .{ .arena = arena };
     var layers: std.ArrayList(Layer) = .empty;
-    errdefer layers.deinit(allocator);
-    try layers.append(allocator, .{ .name = DEFAULT_LAYER, .rgb = null });
+    try layers.append(arena, .{ .shape_name = null, .name = try names.take(DEFAULT_LAYER), .rgb = null });
     for (drawing.shapes) |shape| {
         const name = shape.name orelse continue;
         for (layers.items) |layer| {
-            if (std.mem.eql(u8, layer.name, name)) break;
-        } else try layers.append(allocator, .{ .name = name, .rgb = shape.rgb });
+            if (layer.shape_name != null and std.mem.eql(u8, layer.shape_name.?, name)) break;
+        } else try layers.append(arena, .{ .shape_name = name, .name = try names.take(try layerNameOf(arena, name)), .rgb = shape.rgb });
     }
-    return layers;
+    return .{ .items = layers.items };
 }
 
 /// The index colour (`62`) nearest `rgb`, as readers without true colour show it.
@@ -355,24 +373,15 @@ const File = struct {
         try self.pair(100, "AcDbSymbolTable");
         try self.int(70, entries);
     }
-
-    /// Group `code` naming the layer of a shape called `name` (`0` without one).
-    fn layerOf(self: *File, code: u16, name: ?[]const u8) !void {
-        try self.w.print("{d}\n", .{code});
-        try writeLayerName(self.w, name orelse DEFAULT_LAYER);
-        try self.w.writeByte('\n');
-    }
-
-    fn layerName(self: *File, name: []const u8) !void {
-        try self.layerOf(2, name);
-    }
 };
 
 /// `name` as a layer name: the characters DXF forbids in one (`<>/\":;?*|=,` and the
-/// backtick), and control characters, become `_`.
-fn writeLayerName(w: *std.Io.Writer, name: []const u8) !void {
-    for (name) |c| {
-        const forbidden = std.mem.indexOfScalar(u8, "<>/\\\":;?*|=,`", c) != null or c < 0x20 or c == 0x7f;
-        try w.writeByte(if (forbidden) '_' else c);
+/// backtick), and control characters, become `_`. Owned by `arena`.
+fn layerNameOf(arena: std.mem.Allocator, name: []const u8) ![]u8 {
+    const out = try arena.dupe(u8, name);
+    for (out) |*c| {
+        const forbidden = std.mem.indexOfScalar(u8, "<>/\\\":;?*|=,`", c.*) != null or c.* < 0x20 or c.* == 0x7f;
+        if (forbidden) c.* = '_';
     }
+    return out;
 }

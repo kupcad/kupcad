@@ -4,10 +4,12 @@
 //! `<path>` of all its outlines, lines as `L`, arcs as `A` (the exact circle, not the
 //! chords the kernel drew) and a glyph's curves as `C`, filled by the even-odd rule so its holes are holes, in its
 //! material colour (or a neutral grey), with a thin black outline; a Path, open, is not
-//! filled and is stroked in its colour; a named shape carries its name as the path's `id`.
+//! filled and is stroked in its colour; a named shape carries its name as the path's `id`,
+//! each id different (names.zig: a second `plate` is `plate_2`).
 
 const std = @import("std");
 const drawing_mod = @import("drawing.zig");
+const UniqueNames = @import("names.zig").UniqueNames;
 
 const DEFAULT_FILL = "#CCCCCC";
 const STROKE = "#000000";
@@ -18,6 +20,9 @@ pub const DEFAULT_STROKE_WIDTH = 0.1;
 /// say), owned by `allocator`. error.NoGeometry for a drawing with no point.
 pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing, stroke_width: f64) ![]u8 {
     const bounds = drawing.bounds orelse return error.NoGeometry;
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var ids: UniqueNames = .{ .arena = arena.allocator() };
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -29,11 +34,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing, 
     for (drawing.shapes) |shape| {
         if (shape.outlines.len == 0) continue;
         try w.writeAll("  <path");
-        if (shape.name) |name| {
-            try w.writeAll(" id=\"");
-            try writeId(w, name);
-            try w.writeByte('"');
-        }
+        if (shape.name) |name| try w.print(" id=\"{s}\"", .{try ids.take(try idOf(arena.allocator(), name))});
         // A Path encloses nothing: its colour is its stroke's
         var open = true;
         for (shape.outlines) |outline| open = open and !outline.closed;
@@ -72,7 +73,10 @@ fn flipped(y: f64) f64 {
 
 /// `name` as an XML id: letters, digits, `_` and `-` as they are, anything else `_`, and a
 /// leading `_` when it doesn't start with a letter or `_`.
-fn writeId(w: *std.Io.Writer, name: []const u8) !void {
+fn idOf(arena: std.mem.Allocator, name: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(arena);
+    const w = &out.writer;
     if (name.len == 0 or !(std.ascii.isAlphabetic(name[0]) or name[0] == '_')) try w.writeByte('_');
     for (name) |c| try w.writeByte(if (std.ascii.isAlphanumeric(c) or c == '_' or c == '-') c else '_');
+    return out.toOwnedSlice();
 }

@@ -36,6 +36,8 @@ MODELS = {
     ),
     # Each a circle, through what projects or slices it
     "cylinders": ("[cylinder(r: 5, h: 10).project, cylinder(r1: 5, r2: 2, h: 10).translate(x: 20).project, cylinder(r: 4, h: 10).rotate(z: 30).translate(x: 40).slice(3)]", 3, 3),
+    # Names repeated, and spelt alike in a format (a:b and a/b), each kept apart
+    "names": ('[square(1).named("plate"), square(1).translate(x: 3).named("plate"), square(1).translate(x: 6).named("a:b"), square(1).translate(x: 9).named("a/b")]', 4, 4),
     # Glyphs: curves, and curves beside an arc in one outline
     "text": ('[text("O", 10).named("o"), text("L", 10).translate(x: 12), text("O", 10) + circle(r: 2).translate(x: 1, y: 4)]', 3, 5),
     "paths": (
@@ -79,6 +81,9 @@ def svg_problems(path, shapes, contours):
     for p in paths:
         if " Z" not in p.get("d", "") and p.get("fill") != "none":
             found.append("an open path is filled")
+    ids = [p.get("id") for p in paths if p.get("id") is not None]
+    if len(ids) != len(set(ids)):
+        found.append(f"ids repeat: {ids}")
     for p in paths:
         if p.get("fill-rule") != "evenodd":
             found.append("a path isn't filled by the even-odd rule")
@@ -121,6 +126,9 @@ def dxf_problems(path, shapes, contours):
             found.append("an open polyline that isn't a Path's (a Path is named here)")
         elif e.dxf.layer not in doc.layers:
             found.append(f"layer {e.dxf.layer!r} isn't in the layer table")
+    layer_names = [l.dxf.name.lower() for l in doc.layers]
+    if len(layer_names) != len(set(layer_names)):
+        found.append(f"layer names repeat: {layer_names}")
     named = {l.dxf.name for l in doc.layers} - {"0", "Defpoints"}
     if len(named) > shapes:
         found.append(f"{len(named)} named layers for {shapes} shapes")

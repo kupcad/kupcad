@@ -6,6 +6,23 @@ fn exportSvg(source: []const u8) ![]const u8 {
     return api.buildModel(testing.allocator, testing.io, source, .{ .format = .svg });
 }
 
+test "SVG: every named shape's id is a valid one of its own, a repeated or clashing name numbered" {
+    // Two shapes named alike, or names spelt alike as ids (a:b and a/b), got the same id,
+    // which XML forbids
+    const svg = try exportSvg("[square(1).named(\"plate\"), square(1).translate(x: 3).named(\"plate\"), square(1).translate(x: 6).named(\"a:b\"), square(1).translate(x: 9).named(\"a/b\"), square(1).translate(x: 12).named(\"1<&>\")]");
+    defer testing.allocator.free(svg);
+    var ids: std.ArrayList([]const u8) = .empty;
+    defer ids.deinit(testing.allocator);
+    var rest = svg;
+    while (std.mem.find(u8, rest, " id=\"")) |at| {
+        rest = rest[at + " id=\"".len ..];
+        try ids.append(testing.allocator, rest[0..std.mem.findScalar(u8, rest, '"').?]);
+    }
+    const expected = [_][]const u8{ "plate", "plate_2", "a_b", "a_b_2", "_1___" };
+    try testing.expectEqual(expected.len, ids.items.len);
+    for (expected, ids.items) |want, got| try testing.expectEqualStrings(want, got);
+}
+
 test "SVG: the outline is 0.1 mm wide unless the export asks for another width" {
     var vm = try @import("../../test_support.zig").initVm();
     defer vm.deinit();
