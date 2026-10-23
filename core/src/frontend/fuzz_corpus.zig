@@ -22,6 +22,9 @@ pub const RAW = [_][]const u8{ "layout", "literals" };
 /// cases and the examples.
 pub const CORPUS = [_][]const u8{
     "",
+    // The nightly fuzzer's find of 2026-10-23: a line ending in an operator goes on past
+    // comments and a blank line, and the comments after it must format the same twice
+    "I_;we --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = par",
     "x = 1 + 2 * (3 - 4) / 5 % 6 ** 2\ny = -x\nz = !true && false || nil",
     "s = \"a #{1 + 2} b\\n\\t\"\nt = 'raw #{x}'\nu = :sym\nv = :\"with space\"",
     "h = <<~EOS\n  line #{1}\n  two\nEOS\nputs(h)",
