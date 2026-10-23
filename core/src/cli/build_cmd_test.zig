@@ -247,6 +247,25 @@ test "build_cmd: --mtl writes an obj's materials beside it, and only an obj's" {
     testing.allocator.free(shared);
 }
 
+test "build_cmd: --split in a 2D format draws each part and each sketch in a file of its own" {
+    // A 2D format crashed the split (an unreachable branch), and a sketch had no file.
+    var fx = try Fixture.init("lid = cube(4).named(\"lid\")\n[lid, lid.translate(x: 10), square(3).named(\"gasket\"), circle(r: 1)]\n");
+    defer fx.deinit();
+    const dir = try fx.path("parts");
+    defer testing.allocator.free(dir);
+    var res = try runBuild(&.{ fx.input, "--split", dir, "-f", "dxf" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(std.mem.find(u8, res.text(), "lid.dxf (2 copies)") != null);
+    for ([_][]const u8{ "parts/lid.dxf", "parts/gasket.dxf", "parts/part 3.dxf" }) |name| {
+        errdefer std.debug.print("missing: {s}\nreported: {s}\n", .{ name, res.text() });
+        const bytes = try fx.tmp.dir.readFileAlloc(testing.io, name, testing.allocator, .limited(1 << 20));
+        defer testing.allocator.free(bytes);
+        try testing.expectEqual(@as(?FileKind, .dxf), detectFileKind(bytes));
+    }
+    try testing.expectEqual(@as(usize, 2), try fx.entryCount()); // model.kup and parts/
+}
+
 test "build_cmd: --split names a part's file safely, and each once" {
     var names: build_cmd.PartFileNames = .{};
     defer names.deinit(testing.allocator);

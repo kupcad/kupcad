@@ -718,8 +718,9 @@ pub const PartFile = struct {
 };
 
 /// Each part of the model's parts list (stdlib/bom.zig) in `format`, without its placement:
-/// a file to print each from. Raises in the VM when the format can't hold the model
-/// (requireExportable; a split has no ghosts to show).
+/// a file to print each from; in a 2D format, each Sketch of the model too, as a drawing of
+/// its own (it was left out, and a 2D format crashed the split). Raises in the VM when the
+/// format can't hold the model (requireExportable; a split has no ghosts to show).
 pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions) ![]PartFile {
     var model = try collectModel(allocator, vm);
     defer model.deinit(allocator);
@@ -738,9 +739,19 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
         defer scope.deinit();
         const made = try bom.madeOf(vm, part);
         vm.push(made);
-        const bytes = try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name);
+        const bytes = switch (format.dimension()) {
+            .@"3d" => try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name),
+            .@"2d" => try exportDrawing(allocator, vm, format, &.{}, &.{made}),
+        };
         errdefer allocator.free(bytes);
         try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
+    }
+    if (format.dimension() == .@"2d") {
+        for (model.sketches.items) |sketch| {
+            const bytes = try exportDrawing(allocator, vm, format, &.{sketch}, &.{});
+            errdefer allocator.free(bytes);
+            try files.append(allocator, .{ .name = bom.sketchLabel(vm, sketch).name, .count = 1, .bytes = bytes });
+        }
     }
     return files.toOwnedSlice(allocator);
 }
