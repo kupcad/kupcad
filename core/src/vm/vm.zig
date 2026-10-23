@@ -15,6 +15,7 @@ const verifier = @import("verifier.zig");
 const limits = @import("../core/limits.zig");
 const InstructionHooks = @import("instruction_hooks.zig").InstructionHooks;
 const value = @import("../core/value.zig");
+const ast = @import("../core/ast.zig");
 const parameters = @import("../core/parameters.zig");
 const host_mod = @import("host.zig");
 const geom = @import("../kernel/geometry_handle.zig");
@@ -3593,25 +3594,27 @@ pub const VM = struct {
         return self.raiseError(.TypeError, "'{s}' can't combine {s} and {s}", .{ operatorSymbol(op), self.typeName(a), self.typeName(b) });
     }
 
+    /// How the operator `op` runs is written (ast.BinaryOp.symbol), for an error naming it.
     fn operatorSymbol(op: chunk.OpCode) []const u8 {
-        return switch (op) {
-            .op_add => "+",
-            .op_subtract => "-",
-            .op_multiply => "*",
-            .op_divide => "/",
-            .op_modulo => "%",
-            .op_exponent => "**",
-            .op_less => "<",
-            .op_greater => ">",
-            .op_less_equal => "<=",
-            .op_greater_equal => ">=",
-            .op_bitwise_and => "&",
-            .op_bitwise_or => "|",
-            .op_bitwise_xor => "^",
-            .op_shift_left => "<<",
-            .op_shift_right => ">>",
-            else => @tagName(op),
+        const binary: ast.BinaryOp = switch (op) {
+            .op_add => .add,
+            .op_subtract => .subtract,
+            .op_multiply => .multiply,
+            .op_divide => .divide,
+            .op_modulo => .modulo,
+            .op_exponent => .exponent,
+            .op_less => .less,
+            .op_greater => .greater,
+            .op_less_equal => .less_equal,
+            .op_greater_equal => .greater_equal,
+            .op_bitwise_and => .bitwise_and,
+            .op_bitwise_or => .bitwise_or,
+            .op_bitwise_xor => .bitwise_xor,
+            .op_shift_left => .shift_left,
+            .op_shift_right => .shift_right,
+            else => return @tagName(op),
         };
+        return binary.symbol();
     }
 
     /// The script-facing name of a value's type, for error messages.

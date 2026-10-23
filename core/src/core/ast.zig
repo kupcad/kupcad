@@ -20,26 +20,53 @@ pub const UnaryOp = enum {
 };
 
 pub const BinaryOp = enum {
-    add, // +
-    subtract, // -
-    multiply, // *
-    divide, // /
-    modulo, // %
-    exponent, // ** or ^
-    equal, // ==
-    not_equal, // !=
-    less, // <
-    less_equal, // <=
-    greater, // >
-    greater_equal, // >=
-    spaceship, // <=>
-    logical_and, // &&
-    logical_or, // ||
-    shift_left, // <<
-    shift_right, // >>
-    bitwise_and, // & (CSG Intersection)
-    bitwise_or, // |
-    bitwise_xor, // ^
+    add,
+    subtract,
+    multiply,
+    divide,
+    modulo,
+    exponent,
+    equal,
+    not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    spaceship,
+    logical_and,
+    logical_or,
+    shift_left,
+    shift_right,
+    /// `&`, a CSG intersection of shapes
+    bitwise_and,
+    bitwise_or,
+    bitwise_xor,
+
+    /// How the operator is written, as the formatter prints it and an error names it.
+    pub fn symbol(self: BinaryOp) []const u8 {
+        return switch (self) {
+            .add => "+",
+            .subtract => "-",
+            .multiply => "*",
+            .divide => "/",
+            .modulo => "%",
+            .exponent => "**",
+            .equal => "==",
+            .not_equal => "!=",
+            .less => "<",
+            .less_equal => "<=",
+            .greater => ">",
+            .greater_equal => ">=",
+            .spaceship => "<=>",
+            .logical_and => "&&",
+            .logical_or => "||",
+            .shift_left => "<<",
+            .shift_right => ">>",
+            .bitwise_and => "&",
+            .bitwise_or => "|",
+            .bitwise_xor => "^",
+        };
+    }
 };
 
 pub const ArgModifier = enum { splat, double_splat, block };

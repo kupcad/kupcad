@@ -1141,7 +1141,7 @@ pub const Formatter = struct {
     fn formatAssignment(self: *Formatter, tree: *const ast.Tree, a: ast.Assignment) Error!void {
         try self.out.appendSlice(self.allocator, tree.getString(a.name));
         try self.out.append(self.allocator, ' ');
-        if (a.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        if (a.op) |op| try self.out.appendSlice(self.allocator, op.symbol());
         try self.out.appendSlice(self.allocator, "= ");
         try self.formatNode(tree, a.value);
     }
@@ -1170,7 +1170,7 @@ pub const Formatter = struct {
         try self.out.append(self.allocator, '.');
         try self.out.appendSlice(self.allocator, tree.getString(pa.property));
         try self.out.append(self.allocator, ' ');
-        if (pa.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        if (pa.op) |op| try self.out.appendSlice(self.allocator, op.symbol());
         try self.out.appendSlice(self.allocator, "= ");
         try self.formatNode(tree, pa.value);
     }
@@ -1180,7 +1180,7 @@ pub const Formatter = struct {
         try self.out.append(self.allocator, '[');
         try self.formatNode(tree, ia.index);
         try self.out.appendSlice(self.allocator, "] ");
-        if (ia.op) |op| try self.out.appendSlice(self.allocator, getBinaryOpStr(op));
+        if (ia.op) |op| try self.out.appendSlice(self.allocator, op.symbol());
         try self.out.appendSlice(self.allocator, "= ");
         try self.formatNode(tree, ia.value);
     }
@@ -1198,7 +1198,7 @@ pub const Formatter = struct {
         const right_assoc = b.op == .exponent;
         try self.formatOperand(tree, b.left, if (right_assoc) prec.tighter() else prec);
         try self.out.append(self.allocator, ' ');
-        try self.out.appendSlice(self.allocator, getBinaryOpStr(b.op));
+        try self.out.appendSlice(self.allocator, b.op.symbol());
 
         // A line ends after the operator where the author ended it (a line can't start with
         // one), with the comments there kept: they used to move after the statement.
@@ -1552,31 +1552,6 @@ pub const Formatter = struct {
 };
 
 // --- Pure Data Lookups ---
-
-fn getBinaryOpStr(op: ast.BinaryOp) []const u8 {
-    return switch (op) {
-        .add => "+",
-        .subtract => "-",
-        .multiply => "*",
-        .divide => "/",
-        .modulo => "%",
-        .exponent => "**",
-        .equal => "==",
-        .not_equal => "!=",
-        .less => "<",
-        .less_equal => "<=",
-        .greater => ">",
-        .greater_equal => ">=",
-        .logical_and => "&&",
-        .logical_or => "||",
-        .shift_left => "<<",
-        .shift_right => ">>",
-        .bitwise_and => "&",
-        .bitwise_or => "|",
-        .bitwise_xor => "^",
-        .spaceship => "<=>",
-    };
-}
 
 fn getArgModifierStr(mod: ast.ArgModifier) []const u8 {
     return switch (mod) {
