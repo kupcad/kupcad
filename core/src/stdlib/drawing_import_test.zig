@@ -113,6 +113,8 @@ test "import_dxf and import_svg: paths: true reads the open lines a Sketch can't
         .{ .src = "r = import_svg(\"template.svg\").area", .expected = .{ .num = 800 }, .files = files },
         .{ .src = "s = import_svg(\"template.svg\", paths: true)\nr = s.map { |p| p.length }", .expected = .{ .nums = &.{ 20, 5 * std.math.pi } }, .files = files },
         .{ .src = "r = import_svg(\"template.svg\", paths: true).map { |p| \"#{p.class}\" }.uniq.inspect", .expected = .{ .str = "[\"Path\"]" }, .files = files },
+        // Each Path made while the Array of them is: a collection between them frees none
+        .{ .src = "s = import_svg(\"template.svg\", paths: true)\nr = s.map { |p| p.length }", .expected = .{ .nums = &.{ 20, 5 * std.math.pi } }, .files = files, .gc_stress = true },
         // The DXF's three lines and half a circle that don't quite meet: one open line
         .{ .src = "s = import_dxf(\"gapped.dxf\", paths: true)\nr = [s.length, s[0].start[0]]", .expected = .{ .nums = &.{ 1, 10.001 } }, .files = files },
         .{ .src = comptime rescued("import_dxf(\"plate.dxf\", paths: true)"), .expected = .{ .str = "ImportError: DXF file 'plate.dxf' has no open path to read" }, .files = files },

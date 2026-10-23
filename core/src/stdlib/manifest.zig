@@ -299,28 +299,27 @@ fn method(comptime name: []const u8, comptime category: Category, comptime func:
     return .{ .name = name, .category = category, .func = common.wrapMethodWith(func, signature.*), .signature = signature, .result = result, .on = on };
 }
 
-/// The signature of the global function `name`, if it is a primitive that declares one.
-pub fn signatureOf(name: []const u8) ?*const Signature {
-    for (global_functions) |f| {
-        if (std.mem.eql(u8, f.name, name)) return f.signature;
+/// The global function `name`, if it is a built-in.
+fn globalNamed(name: []const u8) ?*const GlobalFunction {
+    for (&global_functions) |*f| {
+        if (std.mem.eql(u8, f.name, name)) return f;
     }
     return null;
+}
+
+/// The signature of the global function `name`, if it is a primitive that declares one.
+pub fn signatureOf(name: []const u8) ?*const Signature {
+    return (globalNamed(name) orelse return null).signature;
 }
 
 /// What the global function `name` gives back, if it is a built-in.
 pub fn resultOf(name: []const u8) ?Result {
-    for (global_functions) |f| {
-        if (std.mem.eql(u8, f.name, name)) return f.result;
-    }
-    return null;
+    return (globalNamed(name) orelse return null).result;
 }
 
 /// The result the global function `name` gives instead when a keyword is `true`, if it has one.
 pub fn resultWhenOf(name: []const u8) ?ResultWhen {
-    for (global_functions) |f| {
-        if (std.mem.eql(u8, f.name, name)) return f.result_when;
-    }
-    return null;
+    return (globalNamed(name) orelse return null).result_when;
 }
 
 /// What the method `name` of a solid, a sketch or an assembly gives back.
