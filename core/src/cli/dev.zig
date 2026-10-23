@@ -15,7 +15,7 @@ const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const bench = @import("../tools/bench.zig");
 const log_helpers = @import("../log.zig");
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
 
 const log = std.log.scoped(.dev);
 

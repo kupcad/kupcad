@@ -213,7 +213,7 @@ pub const GC = struct {
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
                 vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
-                // Instruct the VM to halt execution immediately so the daemon stays alive
+                // Halt the script now, so a long-lived host (the LSP, `kupcad watch`) stays alive
                 vm.cancel_token.store(true, .release);
                 return;
             };

@@ -11,7 +11,7 @@ pub const manifest = @import("stdlib/manifest.zig");
 /// For the WebAssembly tests (wasm_test.zig), which run scripts through this module.
 pub const test_support = @import("test_support.zig");
 pub const std_options = @import("log.zig").std_options;
-pub const SessionManager = @import("daemon/session_manager.zig").SessionManager;
+pub const SessionManager = @import("session/session_manager.zig").SessionManager;
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;
@@ -42,7 +42,7 @@ test {
     _ = @import("core/material_test.zig");
     _ = @import("exporters/2d/names_test.zig");
     _ = @import("vm/sequence_test.zig");
-    _ = @import("daemon/exports_fingerprint_test.zig");
+    _ = @import("session/exports_fingerprint_test.zig");
     _ = @import("core/rounded_rect_test.zig");
     _ = @import("frontend/document_test.zig");
     _ = @import("core/error_codes_test.zig");
@@ -77,10 +77,10 @@ test {
     _ = @import("core/import_path_test.zig");
 
     // Daemon
-    _ = @import("daemon/session_manager_test.zig");
-    _ = @import("daemon/session_test.zig");
-    _ = @import("daemon/watcher_test.zig");
-    _ = @import("daemon/viewport_ws_test.zig");
+    _ = @import("session/session_manager_test.zig");
+    _ = @import("session/session_test.zig");
+    _ = @import("session/watcher_test.zig");
+    _ = @import("cli/viewport_ws_test.zig");
 
     // exports
     _ = @import("exporters/3d/gltf_test.zig");

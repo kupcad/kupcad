@@ -48,7 +48,7 @@ test "kupcad watch: options it can't take are refused, saying why" {
 }
 
 test "kupcad watch: each watcher event is reported as build reports it" {
-    const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+    const ScriptSession = @import("../session/session.zig").ScriptSession;
     const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
     var mem = MemoryVfs.init(testing.allocator);
     defer mem.deinit();
@@ -67,7 +67,7 @@ test "kupcad watch: each watcher event is reported as build reports it" {
     defer output.deinit();
     var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root_path = "model.kup", .reporter = .{ .io = testing.io, .capture = &output.writer } };
     const listener = printer.listener();
-    const cases = [_]struct { event: @import("../daemon/watcher.zig").Event, says: []const u8 }{
+    const cases = [_]struct { event: @import("../session/watcher.zig").Event, says: []const u8 }{
         .{ .event = .{ .changed = "lib.kup" }, .says = "Changed: lib.kup\n" },
         .{ .event = .built, .says = "Built model.kup\n" },
         .{ .event = .{ .run_failed = error.RuntimeError }, .says = "Build failed: RuntimeError\n" },

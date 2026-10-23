@@ -1,7 +1,7 @@
 //! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
 //! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints)
 //! and, through a `Preview` (lsp_preview.zig), runs the last edited document for the
-//! viewport WebSocket server (daemon/viewport_ws.zig) and for hovers: in a worker process
+//! viewport WebSocket server (viewport_ws.zig) and for hovers: in a worker process
 //! (lsp_worker.zig), so a script whose run crashes leaves the server running.
 
 const std = @import("std");
@@ -22,7 +22,7 @@ const SessionPreview = lsp_preview.SessionPreview;
 const freeFiles = lsp_preview.freeFiles;
 const lsp_worker = @import("lsp_worker.zig");
 const Args = @import("args.zig").Args;
-const viewport_ws = @import("../daemon/viewport_ws.zig");
+const viewport_ws = @import("viewport_ws.zig");
 const ViewportWsServer = viewport_ws.ViewportWsServer;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;

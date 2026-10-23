@@ -20,7 +20,7 @@ const validate = @import("pkg/validate.zig");
 const pkg_helpers = @import("pkg/test_helpers.zig");
 const ProjectConfig = @import("cli/config.zig").ProjectConfig;
 const semver = @import("core/semver.zig");
-const viewport_ws = @import("daemon/viewport_ws.zig");
+const viewport_ws = @import("cli/viewport_ws.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 const text_mod = @import("core/text.zig");
 

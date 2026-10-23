@@ -2,16 +2,16 @@
 //! whenever the `Watcher` sees it or a module it imports change.
 
 const std = @import("std");
-const watcher_mod = @import("../daemon/watcher.zig");
+const watcher_mod = @import("../session/watcher.zig");
 const Watcher = watcher_mod.Watcher;
-const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
 const Reporter = @import("reporter.zig").Reporter;
 const build_cmd = @import("build_cmd.zig");
 const fs = @import("fs.zig");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
-const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
+const SessionManager = @import("../session/session_manager.zig").SessionManager;
 const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;

@@ -556,7 +556,7 @@ test "VM: redefining a global on a reused VM after its defining chunk was freed"
     try registry.registerStandardLibrary(&vm);
     vm.mute_errors = true;
 
-    // Each run gets its own chunk, freed afterwards, as the daemon and LSP do
+    // Each run gets its own chunk, freed afterwards, as a session and the LSP do
     const runs = [_][]const u8{
         "shared_global = \"first run\"",
         "padding = \"0123456789abcdef0123456789abcdef\"\nshared_global = \"second run\"",

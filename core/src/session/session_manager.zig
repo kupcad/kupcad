@@ -18,7 +18,7 @@ pub const SessionLease = struct {
 /// - The manager owns every `ScriptSession` and destroys them on eviction / deinit.
 /// - `getOrInitializeSession` returns an UNPINNED pointer: it is only valid until the next call
 ///   that may evict (another `getOrInitializeSession`/`acquireSession` for a different path).
-/// - Long-lived holders (watchers, daemons, other threads) must use `acquireSession`, which
+/// - Long-lived holders (watchers, the LSP, other threads) must use `acquireSession`, which
 ///   refcounts the session; `evictLRU` skips pinned sessions so it can never free one in use.
 pub const SessionManager = struct {
     allocator: std.mem.Allocator,
