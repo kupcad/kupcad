@@ -46,3 +46,41 @@ test "kupcad watch: options it can't take are refused, saying why" {
         try testing.expect(std.mem.startsWith(u8, output.written(), case.says));
     }
 }
+
+test "kupcad watch: each watcher event is reported as build reports it" {
+    const ScriptSession = @import("../daemon/session.zig").ScriptSession;
+    const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+    var mem = MemoryVfs.init(testing.allocator);
+    defer mem.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io);
+    defer session.deinit();
+    session.vm.vfs = mem.vfs();
+    // A module that doesn't compile, for the failed event's diagnostics
+    const bad = "f = ->(x) { break x }\ncube(1)";
+    try mem.vfs().writeFile("model.kup", bad);
+    _ = try session.workspace.addModule("model.kup", bad);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+
+    var output: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer output.deinit();
+    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root_path = "model.kup", .reporter = .{ .io = testing.io, .capture = &output.writer } };
+    const listener = printer.listener();
+    const cases = [_]struct { event: @import("../daemon/watcher.zig").Event, says: []const u8 }{
+        .{ .event = .{ .changed = "lib.kup" }, .says = "Changed: lib.kup\n" },
+        .{ .event = .built, .says = "Built model.kup\n" },
+        .{ .event = .{ .run_failed = error.RuntimeError }, .says = "Build failed: RuntimeError\n" },
+        .{ .event = .{ .reload_failed = .{ .path = "lib.kup", .err = error.FileNotFound } }, .says = "Could not reload 'lib.kup': FileNotFound\n" },
+        .{ .event = .{ .failed = &session.failure.? }, .says = "Build failed: 1 error in model.kup\n" },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("said: {s}\n", .{output.written()});
+        output.clearRetainingCapacity();
+        listener.onEvent(listener.ptr, case.event);
+        try testing.expect(std.mem.endsWith(u8, output.written(), case.says));
+    }
+    // The failure names where it is
+    listener.onEvent(listener.ptr, .{ .failed = &session.failure.? });
+    try testing.expect(std.mem.find(u8, output.written(), "Cannot use 'break' outside of a loop") != null);
+}

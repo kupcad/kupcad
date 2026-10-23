@@ -125,13 +125,13 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
 /// Prints the watcher's events the way `kupcad build` reports: diagnostics with their
 /// file, line and column, then a one-line summary.
-const EventPrinter = struct {
+pub const EventPrinter = struct {
     allocator: std.mem.Allocator,
     session: *ScriptSession,
     root_path: []const u8,
     reporter: Reporter,
 
-    fn listener(self: *EventPrinter) watcher_mod.Listener {
+    pub fn listener(self: *EventPrinter) watcher_mod.Listener {
         return .{ .ptr = self, .onEvent = onEvent };
     }
 

@@ -64,6 +64,7 @@ const Sandbox = struct {
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "strict.json", .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "quiet.json", .data = "{ \"lint\": { \"unused-variable\": \"off\" } }" });
         try tmp.dir.writeFile(testing.io, .{ .sub_path = "typo.json", .data = "{\n  \"lint\": {\n    \"unused-variabel\": \"off\"\n  }\n}" });
+        try tmp.dir.createDirPath(testing.io, "empty");
         const path = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
         return .{ .tmp = tmp, .path = path };
     }
@@ -306,6 +307,41 @@ test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     try testing.expect(std.mem.find(u8, unknown.stderr, "write gitlab:<host>/<user>/<repo> or gitea:") != null);
 }
 
+test "kupcad: pkg install needs kupcad.json; install, prune and doctor run on a fresh store" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+
+    const without = try kupcadIn(sb.path, &.{ "pkg", "install" }, &env);
+    defer without.deinit();
+    try testing.expectEqual(@as(u8, 1), without.code);
+    try testing.expect(std.mem.find(u8, without.stderr, "could not read kupcad.json") != null);
+    try testing.expect(std.mem.find(u8, without.stderr, "run `kupcad pkg init` to create one") != null);
+
+    const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
+    defer created.deinit();
+    try testing.expectEqual(@as(u8, 0), created.code);
+    const steps = [_]struct { args: []const []const u8, says: []const u8 }{
+        .{ .args = &.{ "pkg", "install" }, .says = "Workspace linked successfully." },
+        .{ .args = &.{ "pkg", "prune" }, .says = "Pruned 0 files" },
+        .{ .args = &.{ "pkg", "prune", "--force" }, .says = "Pruned 0 files" },
+        .{ .args = &.{ "pkg", "doctor" }, .says = "System health check complete." },
+    };
+    for (steps) |step| {
+        errdefer std.debug.print("kupcad {any}\n", .{step.args});
+        const run = try kupcadIn(sb.path, step.args, &env);
+        defer run.deinit();
+        try testing.expectEqual(@as(u8, 0), run.code);
+        const said = try std.mem.concat(testing.allocator, u8, &.{ run.stdout, run.stderr });
+        defer testing.allocator.free(said);
+        try testing.expect(std.mem.find(u8, said, step.says) != null);
+    }
+}
+
 test "kupcad: dev ast-dump, disasm and lex-dump write their file beside the script" {
     var sb = try Sandbox.init();
     defer sb.deinit();
@@ -373,6 +409,10 @@ test "kupcad: check --format json and sarif write one document to stdout" {
 test "kupcad: check --max-warnings fails a run with more warnings than that" {
     try expectRuns(&.{
         .{ .args = &.{ "check", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "Failed: 1 warning, more than --max-warnings 0." },
+        .{ .args = &.{ "check", "--max-warnings", "many", "unused.kup" }, .code = 1, .contains = "Error: --max-warnings takes a whole number, not 'many'" },
+        .{ .args = &.{ "check", "--format", "yaml", "unused.kup" }, .code = 1, .contains = "Error: --format is text, json or sarif, not 'yaml'" },
+        // A folder with no script has nothing wrong in it
+        .{ .args = &.{ "check", "empty" }, .code = 0, .contains = "across 0 files" },
         .{ .args = &.{ "check", "--max-warnings", "1", "unused.kup" }, .code = 0 },
         .{ .args = &.{ "check", "--format", "json", "--max-warnings", "0", "unused.kup" }, .code = 1, .contains = "1 warning, more than --max-warnings 0" },
         .{ .args = &.{ "check", "--format", "xml", "unused.kup" }, .code = 1, .contains = "--format is text, json or sarif, not 'xml'" },

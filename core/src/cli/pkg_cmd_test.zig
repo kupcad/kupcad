@@ -56,7 +56,7 @@ test "pkg init: writes a manifest once, and refuses to overwrite an existing one
     defer mem.deinit();
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    const reporter: @import("reporter.zig").Reporter = .{ .io = testing.io, .capture = &out.writer };
+    const reporter: Reporter = .{ .io = testing.io, .capture = &out.writer };
 
     try testing.expectEqual(.success, try pkg_cmd.initManifest(testing.allocator, mem.vfs(), reporter));
     try testing.expectEqualStrings("Initialized kupcad.json\n", out.written());
