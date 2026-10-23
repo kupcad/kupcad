@@ -17,6 +17,8 @@ const path_mod = @import("../../core/path.zig");
 const vec3 = @import("../../core/vec3.zig");
 const frames = @import("../../core/frames.zig");
 const limits = @import("../../core/limits.zig");
+const bezier = @import("../../core/bezier.zig");
+const paths = @import("../paths.zig");
 
 /// The axis a sweep turns the profile about: revolve's y, a twist's z.
 const Axis = enum { y, z };
@@ -164,17 +166,20 @@ const Sweep = struct {
     /// Segments a full turn, or 0 for the resolution's
     per_turn: i32,
 
-    /// Along a Path in the XY plane: its lines and corners as along points, its arcs exact.
+    /// Along a Path in the XY plane: its lines and corners as along points, its arcs exact,
+    /// its curves along the chords the kernel draws them with.
     fn alongPath(self: Sweep, pieces: *std.ArrayList(u32), p: *const value.ObjPath) !void {
         const end = p.end();
         const closed = std.math.hypot(end[0] - p.start[0], end[1] - p.start[1]) <= self.vm.config().tolerance;
+        const legs = try self.pathLegs(p);
+        defer self.vm.allocator.free(legs);
         var from = p.start;
-        for (p.segments, 0..) |segment, k| {
-            if (segment.cubic != null) return self.vm.fail(.ValueError, "sweep follows lines and arcs, and segment {d} of the path is a curve", .{k});
+        for (legs, 0..) |leg, k| {
+            const segment = leg.segment;
             const t_in = flat(path_mod.startTangent(from, segment));
-            const next = if (k + 1 < p.segments.len) p.segments[k + 1] else if (closed) p.segments[0] else null;
+            const next = if (k + 1 < legs.len) legs[k + 1].segment else if (closed) legs[0].segment else null;
             const joints = Joints{ .start = k > 0 or closed, .end = next != null };
-            try pieces.append(self.vm.allocator, if (segment.arc) |arc| try self.arcPiece(from, segment, arc, k, joints) else try self.linePiece(flat(from), flat(segment.to), Frame.along(t_in), 0, joints));
+            try pieces.append(self.vm.allocator, if (segment.arc) |arc| try self.arcPiece(from, segment, arc, leg.index, joints) else try self.linePiece(flat(from), flat(segment.to), Frame.along(t_in), 0, joints));
             if (next) |n| {
                 // In the plane, the profile stands up from the path at every point
                 const t1 = flat(path_mod.endTangent(from, &.{segment}).?);
@@ -182,6 +187,31 @@ const Sweep = struct {
             }
             from = segment.to;
         }
+    }
+
+    /// A Path's segments as a sweep follows them, each with its index in the path.
+    const PathLeg = struct { segment: path_mod.Segment, index: usize };
+
+    /// `p`'s lines and arcs as they are, and each curve as the lines of its chords
+    /// (paths.cubicChordsAt). Owned by vm.allocator.
+    fn pathLegs(self: Sweep, p: *const value.ObjPath) ![]PathLeg {
+        const vm = self.vm;
+        var legs: std.ArrayList(PathLeg) = .empty;
+        errdefer legs.deinit(vm.allocator);
+        var from = p.start;
+        for (p.segments, 0..) |segment, index| {
+            defer from = segment.to;
+            const cubic = segment.cubic orelse {
+                try legs.append(vm.allocator, .{ .segment = segment, .index = index });
+                continue;
+            };
+            const chords = paths.cubicChordsAt(vm, from, cubic, segment.to);
+            for (1..chords + 1) |k| {
+                const to = if (k == chords) segment.to else bezier.pointOn(from, cubic, segment.to, @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(chords)));
+                try legs.append(vm.allocator, .{ .segment = .{ .to = to }, .index = index });
+            }
+        }
+        return legs.toOwnedSlice(vm.allocator);
     }
 
     /// Along a polyline of points in space, in the frames core/frames.zig carries along it

@@ -213,5 +213,7 @@ test "import_svg: an open path's curve is a Path's cubic, which its methods foll
         .{ .src = "CAD.config(resolution: {segments: 1024})\nr = (import_svg(\"curve.svg\", paths: true)[0].close.area - 60).abs < 1e-3", .expected = .{ .boolean = true }, .files = files },
         .{ .src = "r = import_svg(\"curve.svg\", paths: true)[0].stroke(1).area > 20", .expected = .{ .boolean = true }, .files = files },
         .{ .src = "r = import_svg(\"curve.svg\", paths: true)[0].scale(x: 2, y: 1).bbox.size[0]", .expected = .{ .num = 40 }, .files = files },
+        // Swept along its chords, the curve's tube as long as the path, about
+        .{ .src = "p = import_svg(\"curve.svg\", paths: true)[0]\nv = square(1, center: true).sweep(p).volume\nr = (v - p.length).abs < 0.05 * p.length", .expected = .{ .boolean = true }, .files = files },
     });
 }
