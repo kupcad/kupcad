@@ -49,3 +49,4 @@ pub const MATERIAL = Signature{ .keywords = &.{ "color", "alpha", "roughness", "
 pub const NAMED = Signature{ .positional = &.{"name"} };
 pub const EXPORT = Signature{ .positional = &.{"path"} };
 pub const EXPORT_GLTF = Signature{ .positional = &.{ "path", "draco" } };
+pub const EXPORT_OBJ = Signature{ .positional = &.{ "path", "mtl" } };

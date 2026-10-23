@@ -1600,6 +1600,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
         .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = brepLacks(.mesh) }, // was a bare EngineCannotTessellate
         .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
         // What it has keeps working.
         .{ .src = comptime rescued("cylinder(r: 5, h: 10).simplify"), .expected = "no error" },
         .{ .src = comptime rescued("batch_hull([cube(10), cube(4, 4, 30)]).simplify"), .expected = "no error" },
@@ -2376,7 +2378,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
     };
     // They write files; each returns its receiver.
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj" };
     @setEvalBranchQuota(20_000); // matching each method to its sample call at comptime
     var checked: usize = 0;
     inline for (manifest.mesh_methods) |m| {
@@ -2452,13 +2454,16 @@ test "Stdlib: assemble takes only Solids, naming the first that isn't one" {
     });
 }
 
-test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
+test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     const kit = "a = assemble(name: \"kit\", parts: [cube(1), cube(1).translate(3, 0, 0)])\n";
     const cases = [_]ScriptCase{
         .{ .src = kit ++ "r = \"#{a.export_stl(\"kit.stl\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_3mf(\"kit.3mf\").class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", true).class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Geometry" } },
         .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
         .{ .src = "CAD.config(engine: :brep)\na = assemble(name: \"b\", parts: [cube(1), cylinder(r: 1, h: 2)])\nr = \"#{a.export_step(\"b.step\").class}\"", .expected = .{ .str = "Assembly" } },
     };
@@ -2481,6 +2486,23 @@ test "Stdlib: an Assembly exports its parts to STL, glTF and STEP" {
     defer testing.allocator.free(step_file);
     try testing.expect(std.mem.startsWith(u8, step_file, "ISO-10303-21;"));
     try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "kit.step"));
+    // A 3MF is a zip; the OBJ names the library asked for, which went beside it
+    const threemf = try mem_vfs.vfs().readFile(testing.allocator, "kit.3mf");
+    defer testing.allocator.free(threemf);
+    try testing.expectEqualStrings("PK", threemf[0..2]);
+    const obj = try mem_vfs.vfs().readFile(testing.allocator, "kit.obj");
+    defer testing.allocator.free(obj);
+    try testing.expect(std.mem.startsWith(u8, obj, "# KupCAD Export\n"));
+    try testing.expect(std.mem.find(u8, obj, "\nmtllib kit.mtl\n") != null);
+    try testing.expect(std.mem.find(u8, obj, "\nusemtl default\n") != null);
+    const mtl = try mem_vfs.vfs().readFile(testing.allocator, "kit.mtl");
+    defer testing.allocator.free(mtl);
+    try testing.expect(std.mem.startsWith(u8, mtl, "# KupCAD Export\nnewmtl default\n"));
+    // Without `mtl`, no library and no material
+    const plain = try mem_vfs.vfs().readFile(testing.allocator, "cube.obj");
+    defer testing.allocator.free(plain);
+    try testing.expect(std.mem.find(u8, plain, "mtllib") == null);
+    try testing.expectError(error.FileNotFound, mem_vfs.vfs().readFile(testing.allocator, "cube.mtl"));
 }
 
 test "Stdlib: ghost shows a copy and gives the shape back to use" {
@@ -2501,13 +2523,15 @@ test "Stdlib: every export refuses a Sketch the same way" {
     try expectScripts(&.{
         .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_3mf(\"s.3mf\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_3mf' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_obj(\"s.obj\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_obj' for CrossSection" } },
         .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for CrossSection" } },
     });
 }
 
 test "Stdlib: each Assembly method gives back what the manifest says it does" {
     const manifest = @import("manifest.zig");
-    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf" };
+    const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj" };
     inline for (manifest.assembly_methods) |m| {
         if (comptime isOneOf(m.name, &writes_files)) {
             try testing.expectEqual(manifest.Result.receiver, m.result);

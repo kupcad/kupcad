@@ -9,6 +9,9 @@ const geom = @import("../kernel/geometry_handle.zig");
 const kernel = @import("../kernel/kernel.zig");
 const util = @import("methods/util.zig");
 const stl = @import("../exporters/3d/stl.zig");
+const threemf = @import("../exporters/3d/threemf.zig");
+const obj = @import("../exporters/3d/obj.zig");
+const api = @import("../api.zig");
 const step = @import("../exporters/3d/step.zig");
 const gltf = @import("../exporters/3d/gltf.zig");
 const text = @import("../core/text.zig");
@@ -22,6 +25,59 @@ pub fn receiverParts(vm: *VM, receiver: value.Value, comptime method: []const u8
     if (receiver.isGeometry()) return out.append(vm.allocator, try vm.ensureConcrete(receiver));
     if (!receiver.isAssembly()) return util.notDefinedFor(vm, method, receiver);
     for (receiver.asAssembly().parts.items.items) |part| try out.append(vm.allocator, try vm.ensureConcrete(part));
+}
+
+/// The Solids of `receiver`, a Solid (itself) or an Assembly (its parts), appended to
+/// `out`, and the Assembly's name; `method` names the export in the error for anything
+/// else. For the exporters that take the parts list's view of a model (3MF, OBJ).
+fn receiverSolids(vm: *VM, receiver: value.Value, comptime method: []const u8, out: *std.ArrayList(value.Value)) !?[]const u8 {
+    if (receiver.isGeometry()) {
+        try out.append(vm.allocator, receiver);
+        return null;
+    }
+    if (!receiver.isAssembly()) return util.notDefinedFor(vm, method, receiver);
+    const assembly = receiver.asAssembly();
+    try out.appendSlice(vm.allocator, assembly.parts.items.items);
+    return assembly.name.chars;
+}
+
+/// `solid.export_3mf(path)` and `assembly.export_3mf(path)`: each part once, placed once
+/// per copy, with its name and colours, as `kupcad build -o part.3mf` writes it.
+pub fn meshExport3mf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    const title = try receiverSolids(vm, receiver, "export_3mf", &solids);
+    const bytes = threemf.build(vm.allocator, vm, solids.items, title) catch |err| switch (err) {
+        error.NoGeometry => return vm.fail(.GeometryError, "export_3mf: the model is empty, there is nothing to write to '{s}'", .{filepath}),
+        else => return err,
+    };
+    defer vm.allocator.free(bytes);
+    try vm.vfs.writeFile(filepath, bytes);
+    return receiver;
+}
+
+/// `solid.export_obj(path, mtl)` and `assembly.export_obj(path, mtl)`: Wavefront OBJ, an
+/// object per Solid, as `kupcad build -o part.obj` writes it; with `mtl` true, the
+/// materials go in a library beside it (part.mtl), as `--mtl` writes them.
+pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_opt: ?bool) !value.Value {
+    var solids: std.ArrayList(value.Value) = .empty;
+    defer solids.deinit(vm.allocator);
+    const title = try receiverSolids(vm, receiver, "export_obj", &solids);
+    const mtl_path: ?[]u8 = if (mtl_opt orelse false) try api.materialLibraryPath(vm.allocator, filepath) else null;
+    defer if (mtl_path) |p| vm.allocator.free(p);
+
+    const bytes = obj.build(vm.allocator, vm, solids.items, title, if (mtl_path) |p| std.fs.path.basename(p) else null) catch |err| switch (err) {
+        error.NoGeometry => return vm.fail(.GeometryError, "export_obj: the model is empty, there is nothing to write to '{s}'", .{filepath}),
+        else => return err,
+    };
+    defer vm.allocator.free(bytes);
+    try vm.vfs.writeFile(filepath, bytes);
+    if (mtl_path) |p| {
+        const library = try api.exportMaterialLibrary(vm.allocator, vm);
+        defer vm.allocator.free(library);
+        try vm.vfs.writeFile(p, library);
+    }
+    return receiver;
 }
 
 /// `solid.export_stl(path)` and `assembly.export_stl(path)` (its parts united).

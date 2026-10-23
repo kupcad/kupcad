@@ -358,8 +358,7 @@ fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, re
     } else null;
     defer if (generated) |path| allocator.free(path);
     const path = options.output_path orelse generated.?;
-    // The library beside the model, named after it: part.obj's is part.mtl
-    const mtl_path = if (options.use_mtl) try allocator.print("{s}.mtl", .{path[0 .. path.len - std.fs.path.extension(path).len]}) else null;
+    const mtl_path = if (options.use_mtl) try api.materialLibraryPath(allocator, path) else null;
     defer if (mtl_path) |p| allocator.free(p);
 
     const exporting: api.ExportOptions = .{ .draco = options.use_draco, .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null };

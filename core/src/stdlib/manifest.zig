@@ -204,6 +204,8 @@ pub const mesh_methods = [_]MeshMethod{
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
+    method("export_3mf", .file_io, files.meshExport3mf, &sig.EXPORT, .receiver, .solids),
+    method("export_obj", .file_io, files.meshExportObj, &sig.EXPORT_OBJ, .receiver, .solids),
 };
 
 /// The methods of an Assembly (assemble(name:, parts:)): it is a named group of Solids
@@ -220,6 +222,8 @@ pub const assembly_methods = [_]MeshMethod{
     method("export_stl", .file_io, files.meshExportStl, &sig.EXPORT, .receiver, .solids),
     method("export_step", .file_io, files.meshExportStep, &sig.EXPORT, .receiver, .solids),
     method("export_gltf", .file_io, files.meshExportGltf, &sig.EXPORT_GLTF, .receiver, .solids),
+    method("export_3mf", .file_io, files.meshExport3mf, &sig.EXPORT, .receiver, .solids),
+    method("export_obj", .file_io, files.meshExportObj, &sig.EXPORT_OBJ, .receiver, .solids),
 };
 
 /// A primitive whose calls are checked against `signature` (common.checkArguments).

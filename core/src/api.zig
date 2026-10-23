@@ -528,6 +528,12 @@ pub fn exportMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM) ![]u8 
     return obj_exporter.buildMaterialLibrary(allocator, vm.materials.items);
 }
 
+/// Where an OBJ's material library goes: beside it, named after it (part.obj's is
+/// part.mtl). Caller owns the result.
+pub fn materialLibraryPath(allocator: std.mem.Allocator, obj_path: []const u8) ![]u8 {
+    return allocator.print("{s}.mtl", .{obj_path[0 .. obj_path.len - std.fs.path.extension(obj_path).len]});
+}
+
 /// The model the script left (collectModel) in `format`, its ghosts (the display list)
 /// beside it where the format shows them. A failure the script can read about (a model the
 /// format can't hold, an engine that can't mesh, a failed union) is raised in the VM first,
