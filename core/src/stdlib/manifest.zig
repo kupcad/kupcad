@@ -16,6 +16,7 @@ const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
 const files = @import("files.zig");
 const json = @import("json.zig");
+const drawing_import = @import("drawing_import.zig");
 const dag = @import("../vm/dag.zig");
 const io_mod = @import("io.zig");
 const chunk = @import("../vm/chunk.zig");
@@ -167,6 +168,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
+    .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .sketch, .signature = &drawing_import.IMPORT_DXF },
 };
 
 pub const mesh_methods = [_]MeshMethod{

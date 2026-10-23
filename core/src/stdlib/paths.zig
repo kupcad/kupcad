@@ -312,9 +312,14 @@ pub fn pathClose(vm: *VM, receiver: value.Value) !value.Value {
 /// The Sketch the path from `start` along `segments` encloses, its end joined straight back
 /// to its start, its arcs drawn as chordsOf says for `per_turn` and known to a drawing.
 pub fn closedSketch(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn: i32) !value.Value {
+    return vm.allocateCrossSection(try closedPathNode(vm, start, segments, per_turn));
+}
+
+/// closedSketch's node of the geometry graph.
+pub fn closedPathNode(vm: *VM, start: [2]f64, segments: []const path_mod.Segment, per_turn: i32) !u32 {
     const chords = try chordsOf(vm, segments, per_turn);
     defer vm.allocator.free(chords);
-    return vm.allocateCrossSection(try vm.dag_builder.addClosedPath(start, segments, chords));
+    return vm.dag_builder.addClosedPath(start, segments, chords);
 }
 
 /// `stroke(width, cap:, segments:)`: the Sketch of the path given a width, `cap:` its

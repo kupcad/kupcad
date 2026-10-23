@@ -310,7 +310,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `RangeError` | A number outside a representable range: arithmetic that overflows (`2 ** 1024`; numbers are 64-bit floats, so beyond ±1.8e308 there is no number), bitwise operands, shift counts. A script that needs a non-finite value writes `Number::INFINITY` or `Number::NAN` |
 | `ZeroDivisionError`, `MathError` | Division by zero, an operation producing `NaN` |
 | `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
-| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`) or a font (`import_font`) that can't be read |
+| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`), a font (`import_font`) or a drawing (`import_dxf`) that can't be read |
 | `NotImplementedError` | A feature the active engine doesn't support yet |
 | `GeometryError` | The geometry kernel failed an operation or produced an invalid solid (e.g. a `polyhedron` that isn't a closed manifold) |
 | `AssertionError` | A failed `assert` |
@@ -529,7 +529,7 @@ logo = import_stl("assets/logo.stl")
 
 A relative import (`"./hardware.kup"`, `"../lib/units.kup"`, `"./logo.stl"`) names a file next to the one that imports it, so `kupcad build parts/main.kup` and the files it imports agree on where `./` is. Imports stay inside the project (the directory `kupcad` runs in, or the folder the editor opened): one that climbs out of it is refused. Any other name is a package, by its alias.
 
-An import whose path ends in `.stl`, `.step` (or `.stp`), `.json`, or `.ttf` or `.otf` (a font), in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"`, `"json"` or `"font"`, as a string or a symbol, and it wins over the extension:
+An import whose path ends in `.stl`, `.step` (or `.stp`), `.json`, `.dxf`, or `.ttf` or `.otf` (a font), in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"`, `"json"`, `"font"` or `"dxf"`, as a string or a symbol, and it wins over the extension:
 
 ```ruby
 import scan from "./scan.bin" with { type: "stl" }
@@ -576,7 +576,7 @@ plate = machine.fetch(:plate, nil)          # nil: the file has no plate
 * **Read-only:** `machine[:name] = "x"` is a `TypeError`. `to_h` gives a Map that can change, its objects Maps and its Arrays copies all the way down, with the file's String keys (a Map's `.symbolize_keys` turns its own keys into Symbols, not those of the Maps in it). The Arrays a JsonObject holds are ordinary Arrays.
 * **Methods:** `[]`, `fetch`, `dig`, `key?`, `keys`, `values`, `size`/`length`, `empty?`, `each { |key, value| }`, `to_h`, and `for key, value in machine`. `==` compares two JsonObjects by content; it prints as a Map does. There is no dot access (`machine.gears`): a key named `size` or `keys` would be hidden by the method.
 * **Limits:** a file of at most 64 MiB, nested at most 256 levels; a number past the largest (`1e400`) is refused, as is a key written twice. Each is an `ImportError` naming the file and the line and column or the place in the data.
-* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`, `import_font`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
+* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`, `import_font`, `import_dxf`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
 
 ### Fonts (`import_font`)
 
@@ -594,6 +594,22 @@ plate - text("KupCAD", size: 8, font: label, halign: "center", valign: "center")
 * **Drawing:** its glyphs are kerned as the font says, by its GPOS table or, for a font without GPOS kerning, its `kern` table. A variable font draws its default style. A character the font has no glyph for is a `ValueError` naming it, as with the embedded fonts.
 * **Refused:** a file that isn't a font, one with no outlines text draws (TrueType's or CFF's; a CFF2 variable font's and a bitmap font's aren't read), one that maps no characters, and one past 32 MiB are each an `ImportError` naming the file. The font file is fuzzed nightly (`-Dfuzz-target=fonts`), as it comes from whoever wrote the script.
 * **Not yet:** right-to-left scripts and those whose letters change shape with their neighbours (Arabic, Hebrew, the Indic scripts) need text shaping, which `text()` doesn't do; CJK fonts draw, glyph by glyph.
+
+### Drawings (`import_dxf`)
+
+A 2D drawing from another CAD tool, a laser cutter's or a CNC's, reads as a Sketch: `import plate from "./plate.dxf"` or `plate = import_dxf("plate.dxf", layers: "cut", tolerance: 0.01)`, an ASCII DXF file (`with { type: "dxf" }` for one named otherwise).
+
+```ruby
+import outline from "./bracket.dxf"
+bracket = outline.extrude(4)
+gasket = import_dxf("bracket.dxf", layers: ["cut", "holes"]).offset(-0.5)
+```
+
+* **Outlines:** a `LINE`, an `ARC` and a `CIRCLE` are read exact, an `LWPOLYLINE` and an old-style `POLYLINE` with their bulges as arcs, and a `SPLINE` (by its control points, rational or not) and an `ELLIPSE` as the lines that keep within the resolution of them. Pieces drawn apart are joined where their ends meet, within `tolerance:` (the active tolerance without it), either way round; an outline that still doesn't close is an `ImportError` saying where its ends are and how far apart. The arcs stay arcs: exported again, a hole is a `CIRCLE` and a rounded corner a bulge.
+* **Holes:** the outlines fill by nesting, as a laser cutter reads them: an outline inside another is a hole, one inside the hole an island, whichever way each is drawn round.
+* **Units:** the file's own (`$INSUNITS`: inches, centimetres, metres and the rest), read as millimetres; a file without them is read in millimetres.
+* **Layers:** `layers:` (a name or an Array of them) reads only those; one the file has no outline on is an `ImportError` listing the layers it has.
+* **Left out:** what isn't an outline (text, dimensions, hatches, points, 3D faces and meshes), what a layout draws (paper space: a title block, a viewport's frame) and the BLOCKS section's definitions. A block reference (`INSERT`) is refused for now (explode the blocks first), and so is a spline given by fit points alone, an entity off the XY plane and a binary DXF file. A file past 64 MiB is refused before it is read.
 
 ---
 

@@ -97,9 +97,11 @@ test {
     _ = @import("exporters/3d/obj_test.zig");
     _ = @import("exporters/2d/svg_test.zig");
     _ = @import("exporters/2d/dxf_test.zig");
+    _ = @import("exporters/2d/dxf_read_test.zig");
     _ = @import("exporters/2d/curves_test.zig");
     _ = @import("exporters/2d/sketch_curves_test.zig");
     _ = @import("stdlib/paths_test.zig");
+    _ = @import("stdlib/drawing_import_test.zig");
 
     // Frontends
     _ = @import("frontend/docstring_test.zig");

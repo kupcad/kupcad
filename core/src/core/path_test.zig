@@ -61,3 +61,46 @@ test "path: a path leaves its end along its last segment, and a tangent arc turn
     try testing.expect(!path.tangentArc(.{ 10, 5 }, .{ 0, 1 }, .{ 15, 10 }, 1e-6).?.ccw);
     try testing.expectEqual(@as(?path.Segment, null), path.tangentArc(.{ 0, 0 }, .{ 1, 0 }, .{ 7, 0 }, 1e-6));
 }
+
+test "path: a closed path's signed area counts its arcs' bulges, and its reverse runs the other way" {
+    // A half disc of radius 2, counter-clockwise: over the top, then the line back
+    const half = [_]path.Segment{path.arcByAngles(.{ 0, 0 }, 2, 0, 180)};
+    try testing.expectApproxEqAbs(2 * std.math.pi, path.signedArea(.{ 2, 0 }, &half), 1e-12);
+    // Back from (-2, 0) to (2, 0) the same way over: clockwise, the same area negated
+    const back = try path.reversed(testing.allocator, .{ 2, 0 }, &half);
+    defer testing.allocator.free(back);
+    try testing.expectEqual([2]f64{ 2, 0 }, back[0].to);
+    try testing.expect(!back[0].ccw);
+    try testing.expectApproxEqAbs(-2 * std.math.pi, path.signedArea(path.endOf(.{ 2, 0 }, &half), back), 1e-12);
+    // A unit square clockwise, and the order of its lines turned around
+    const square = [_]path.Segment{ .{ .to = .{ 0, 1 } }, .{ .to = .{ 1, 1 } }, .{ .to = .{ 1, 0 } } };
+    try testing.expectEqual(@as(f64, -1), path.signedArea(.{ 0, 0 }, &square));
+    const ccw = try path.reversed(testing.allocator, .{ 0, 0 }, &square);
+    defer testing.allocator.free(ccw);
+    try testing.expectEqualSlices(path.Segment, &.{ .{ .to = .{ 1, 1 } }, .{ .to = .{ 0, 1 } }, .{ .to = .{ 0, 0 } } }, ccw);
+    try testing.expectEqual(@as(f64, 1), path.signedArea(.{ 1, 0 }, ccw));
+}
+
+test "path: a point is inside a closed path by the even-odd rule, exactly on its arcs" {
+    const half = [_]path.Segment{path.arcByAngles(.{ 0, 0 }, 2, 0, 180)};
+    // Just inside and just outside the arc, below the line, and near the arc's low end
+    try testing.expect(path.encloses(.{ 2, 0 }, &half, .{ 0, 1.999 }));
+    try testing.expect(!path.encloses(.{ 2, 0 }, &half, .{ 0, 2.001 }));
+    try testing.expect(!path.encloses(.{ 2, 0 }, &half, .{ 0, -0.1 }));
+    try testing.expect(path.encloses(.{ 2, 0 }, &half, .{ 1.9, 0.5 }));
+    try testing.expect(!path.encloses(.{ 2, 0 }, &half, .{ 1.95, 0.5 }));
+    // Clockwise, the same
+    const back = try path.reversed(testing.allocator, .{ 2, 0 }, &half);
+    defer testing.allocator.free(back);
+    try testing.expect(path.encloses(.{ -2, 0 }, back, .{ 1.9, 0.5 }));
+    try testing.expect(!path.encloses(.{ -2, 0 }, back, .{ 1.95, 0.5 }));
+    // A circle of two halves: its centre, where the ray meets the joint of the halves, is in
+    const circle = [_]path.Segment{ path.arcByAngles(.{ 0, 0 }, 2, 0, 180), path.arcByAngles(.{ 0, 0 }, 2, 180, 360) };
+    try testing.expect(path.encloses(.{ 2, 0 }, &circle, .{ 0, 0 }));
+    try testing.expect(path.encloses(.{ 2, 0 }, &circle, .{ -1.99, 0 }));
+    try testing.expect(!path.encloses(.{ 2, 0 }, &circle, .{ 2.01, 0 }));
+    // A unit square's lines, by the same rule
+    const square = [_]path.Segment{ .{ .to = .{ 1, 0 } }, .{ .to = .{ 1, 1 } }, .{ .to = .{ 0, 1 } } };
+    try testing.expect(path.encloses(.{ 0, 0 }, &square, .{ 0.5, 0.5 }));
+    try testing.expect(!path.encloses(.{ 0, 0 }, &square, .{ 1.5, 0.5 }));
+}

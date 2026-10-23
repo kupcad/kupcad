@@ -16,6 +16,9 @@ pub const OPEN_PATH_HINT = "a Path is open and encloses nothing: close it (.clos
 
 /// How many straight pieces a cubic's length is summed over.
 const CUBIC_LENGTH_PIECES = 64;
+/// The least an arc piece of `encloses` turns (radians): an arc that starts a rounding
+/// error short of a quarter's end goes on past it, rather than by a piece of no length.
+const QUARTER_SLACK = 1e-12;
 
 /// The circle an arc lies on.
 pub const Arc = struct {
@@ -249,6 +252,96 @@ pub fn bounds(start: [2]f64, segments: []const Segment) Bounds {
         from = segment.to;
     }
     return box.?;
+}
+
+/// The area the closed path from `start` along `segments` encloses (its end joined
+/// straight back to its start), positive when it runs counter-clockwise: its chords'
+/// shoelace sum, with each arc's bulge past its chord on the side it bends to. A cubic
+/// counts as its chord.
+pub fn signedArea(start: [2]f64, segments: []const Segment) f64 {
+    var twice: f64 = 0;
+    var from = start;
+    for (segments) |segment| {
+        twice += from[0] * segment.to[1] - segment.to[0] * from[1];
+        if (segment.arc) |arc| {
+            // Between an arc and its chord: r²(θ - sin θ) / 2
+            const bulge = arc.radius * arc.radius * (segment.angle - @sin(segment.angle));
+            twice += if (segment.ccw) bulge else -bulge;
+        }
+        from = segment.to;
+    }
+    twice += from[0] * start[1] - start[0] * from[1];
+    return twice / 2;
+}
+
+/// The path from `start` along `segments` run back from its end (endOf) to `start`: the
+/// segments in the other order, each arc turning the other way and each cubic's controls
+/// swapped. Owned by `allocator`.
+pub fn reversed(allocator: std.mem.Allocator, start: [2]f64, segments: []const Segment) ![]Segment {
+    const out = try allocator.alloc(Segment, segments.len);
+    for (out, 0..) |*segment, i| {
+        const k = segments.len - 1 - i;
+        segment.* = segments[k];
+        segment.to = if (k == 0) start else segments[k - 1].to;
+        if (segments[k].arc != null) segment.ccw = !segments[k].ccw;
+        if (segments[k].cubic) |cubic| segment.cubic = cubic.reversed();
+    }
+    return out;
+}
+
+/// Whether `p` lies inside the closed path from `start` along `segments` (its end joined
+/// straight back to its start), by the even-odd rule: whether a ray from `p` along +x
+/// crosses it an odd number of times, exactly on arcs. A point on the path may count
+/// either way; a cubic counts as its chord.
+pub fn encloses(start: [2]f64, segments: []const Segment, p: [2]f64) bool {
+    var inside = false;
+    var from = start;
+    for (segments) |segment| {
+        const crosses = if (segment.arc) |arc| arcCrosses(from, segment, arc, p) else lineCrosses(from, segment.to, p);
+        if (crosses) inside = !inside;
+        from = segment.to;
+    }
+    if (lineCrosses(from, start, p)) inside = !inside;
+    return inside;
+}
+
+/// Whether the line from `a` to `b` crosses the ray from `p` along +x: one end above
+/// `p` and the other not, and the crossing to its right.
+fn lineCrosses(a: [2]f64, b: [2]f64, p: [2]f64) bool {
+    if ((a[1] > p[1]) == (b[1] > p[1])) return false;
+    return a[0] + (p[1] - a[1]) * (b[0] - a[0]) / (b[1] - a[1]) > p[0];
+}
+
+/// Whether the arc from `from` crosses the ray from `p` along +x an odd number of times.
+/// Cut where it passes a quarter of its circle, each piece rises or falls only, so it
+/// crosses as a line between its ends would, at the circle's x on its side.
+fn arcCrosses(from: [2]f64, segment: Segment, arc: Arc, p: [2]f64) bool {
+    const quarter = std.math.pi / 2.0;
+    const way: f64 = if (segment.ccw) 1 else -1;
+    const a0 = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+    var odd = false;
+    var done: f64 = 0;
+    var piece_from = from;
+    while (done < segment.angle) {
+        // On to the next quarter's end the arc's way, or to the arc's end
+        const at = a0 + way * done;
+        const boundary = if (segment.ccw) (@floor(at / quarter) + 1) * quarter else (@ceil(at / quarter) - 1) * quarter;
+        const step = @min(@max(@abs(boundary - at), QUARTER_SLACK), segment.angle - done);
+        done += step;
+        const piece_to = if (done >= segment.angle) segment.to else pointAtRadians(arc, a0 + way * done);
+        if ((piece_from[1] > p[1]) != (piece_to[1] > p[1])) {
+            const dy = p[1] - arc.center[1];
+            const dx = @sqrt(@max(0, arc.radius * arc.radius - dy * dy));
+            const right = @cos(a0 + way * (done - step / 2)) >= 0;
+            if (arc.center[0] + (if (right) dx else -dx) > p[0]) odd = !odd;
+        }
+        piece_from = piece_to;
+    }
+    return odd;
+}
+
+fn pointAtRadians(arc: Arc, radians: f64) [2]f64 {
+    return .{ arc.center[0] + arc.radius * @cos(radians), arc.center[1] + arc.radius * @sin(radians) };
 }
 
 /// The real roots of a t² + b t + c (a line's one root when `a` is 0), each null when

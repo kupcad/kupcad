@@ -41,6 +41,7 @@ const CASES = .{
     .MAX_MARCHING_STEPS = marchingSteps,
     .MAX_SOURCE_BYTES = sourceBytes,
     .MAX_JSON_BYTES = jsonBytes,
+    .MAX_DRAWING_BYTES = drawingBytes,
     .MAX_FONT_BYTES = fontBytes,
     .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
@@ -167,6 +168,15 @@ fn jsonBytes() !void {
     @memset(data, ' ');
     const expected = std.fmt.comptimePrint("ImportError: JSON file 'big.json' is {d} bytes; a script reads at most {d}", .{ limits.MAX_JSON_BYTES + 1, limits.MAX_JSON_BYTES });
     try support.expectScripts(&.{.{ .src = support.rescued("import_json(\"big.json\")"), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.json", .data = data }} }});
+}
+
+fn drawingBytes() !void {
+    // Refused by its size before it is read, so what it holds doesn't matter
+    const data = try testing.allocator.alloc(u8, limits.MAX_DRAWING_BYTES + 1);
+    defer testing.allocator.free(data);
+    @memset(data, ' ');
+    const expected = std.fmt.comptimePrint("ImportError: DXF file 'big.dxf' is {d} bytes; a script reads at most {d}", .{ limits.MAX_DRAWING_BYTES + 1, limits.MAX_DRAWING_BYTES });
+    try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.dxf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.dxf", .data = data }} }});
 }
 
 fn fontBytes() !void {

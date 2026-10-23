@@ -71,6 +71,8 @@ pub const MAX_MARCHING_STEPS: u32 = 100_000;
 pub const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 // Largest JSON file `import_json` reads: its values take several times its size.
 pub const MAX_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+// Largest drawing `import_dxf` reads: its outlines take several times its size.
+pub const MAX_DRAWING_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 // Largest font file `import_font` reads: the biggest CJK fonts are about 20 MiB, and the file
 // stays in memory while the run lasts.
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB

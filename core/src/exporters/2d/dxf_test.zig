@@ -355,3 +355,33 @@ test "DXF: every handle is given out once" {
     }
     try testing.expect(seen.count() >= 5); // two tables, two layers, two polylines
 }
+
+test "DXF: a drawing written and read back has its outlines, arcs as arcs, a glyph's curve as lines along it" {
+    const dxf_read = @import("dxf_read.zig");
+    const path = @import("../../core/path.zig");
+    const dxf = try exportDxf("[square(20, round_r: 4, segments: 16) - circle(r: 3, segments: 16).translate(x: 10, y: 10), text(\"O\", 10).translate(x: 30)]");
+    defer testing.allocator.free(dxf);
+    const config = @import("../../core/engine_config.zig").EngineConfig{};
+    var diag: dxf_read.Diagnostic = .{};
+    var drawing = dxf_read.read(testing.allocator, dxf, .{ .tolerance = 1e-6, .config = &config }, &diag) catch |err| {
+        std.debug.print("dxf: {s}\n", .{diag.message()});
+        return err;
+    };
+    defer drawing.deinit();
+    // The plate, its hole, and the O's two outlines
+    try testing.expectEqual(@as(usize, 4), drawing.outlines.len);
+    var corners: usize = 0;
+    for (drawing.outlines[0].segments) |segment| {
+        const arc = segment.arc orelse continue;
+        try testing.expectApproxEqAbs(@as(f64, 4), arc.radius, 1e-9);
+        corners += 1;
+    }
+    try testing.expectEqual(@as(usize, 4), corners);
+    // The hole: the exact circle, as the CIRCLE written for it
+    const hole = drawing.outlines[1];
+    try testing.expectEqual(@as(usize, 2), hole.segments.len);
+    try testing.expectApproxEqAbs(@as(f64, 3), hole.segments[0].arc.?.radius, 1e-9);
+    try testing.expectApproxEqAbs(9 * std.math.pi, @abs(path.signedArea(hole.start, hole.segments)), 1e-9);
+    // The glyph's outlines: SPLINEs, read back as many lines
+    for (drawing.outlines[2..]) |outline| try testing.expect(outline.segments.len > 8);
+}

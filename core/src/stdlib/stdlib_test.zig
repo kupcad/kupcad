@@ -890,7 +890,7 @@ test "Stdlib: each primitive's Signature lists exactly the keywords it accepts" 
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 13), checked);
+    try std.testing.expectEqual(@as(usize, 14), checked);
 }
 
 test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
