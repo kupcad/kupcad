@@ -619,10 +619,6 @@ pub const DAGBuilder = struct {
         b: *const DAGBuilder,
         at: u32,
 
-        pub fn contourCount(self: PolygonsPayload) u32 {
-            return self.b.extra_data.items[self.at];
-        }
-
         /// Contour `i`'s points.
         pub fn contour(self: PolygonsPayload, i: u32) []const [2]f64 {
             const extra = self.b.extra_data.items;
@@ -1119,12 +1115,6 @@ pub const DAGBuilder = struct {
         };
     }
 
-    pub const getMirrorPayload = getTranslatePayload;
-
-    pub inline fn getHullPayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex } {
-        return .{ .target = self.extra_data.items[node.data] };
-    }
-
     pub inline fn getLoftPayload(self: *const DAGBuilder, node: DAGNode) LoftPayload {
         return .{
             .base = self.extra_data.items[node.data],
@@ -1142,8 +1132,6 @@ pub const DAGBuilder = struct {
             .miter_limit = self.numbers.items[self.extra_data.items[node.data + 1] + 2],
         };
     }
-
-    pub const getProjectPayload = getHullPayload;
 
     pub inline fn getSlicePayload(self: *const DAGBuilder, node: DAGNode) struct { target: DAGNodeIndex, height: f64 } {
         return .{

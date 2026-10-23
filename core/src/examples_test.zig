@@ -10,7 +10,6 @@ const std = @import("std");
 const testing = std.testing;
 const api = @import("api.zig");
 const kernel = @import("kernel/kernel.zig");
-const geom = @import("kernel/geometry_handle.zig");
 const test_support = @import("test_support.zig");
 const examples = @import("examples");
 
@@ -66,9 +65,8 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         return error.ExampleFailed;
     }
 
-    var parts: std.ArrayList(geom.GeometryHandle) = .empty;
+    var parts = try api.modelParts(allocator, &vm);
     defer parts.deinit(allocator);
-    try api.modelParts(allocator, &vm, &parts);
     if (parts.items.len == 0) return error.ExampleHasNoModel;
 
     var exact = true;

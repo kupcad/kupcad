@@ -61,11 +61,6 @@ pub const Contours = struct {
     }
 };
 
-pub const SolidPair = struct {
-    first: ?GeometryHandle,
-    second: ?GeometryHandle,
-};
-
 pub const BoundingBox = struct {
     min: [3]f64,
     max: [3]f64,

@@ -9,7 +9,6 @@ const dag = @import("dag.zig");
 const error_kind = @import("error_kind.zig");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../kernel/geometry_handle.zig");
-const log_helpers = @import("../log.zig");
 const VM = @import("vm.zig").VM;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 
@@ -237,59 +236,6 @@ pub const EvaluationFrameStack = struct {
         self.frames.deinit(self.allocator);
     }
 };
-
-fn dumpDAG(vm: *VM, node_idx: dag.DAGNodeIndex, depth: usize) void {
-    if (depth > 20) {
-        log_helpers.printStdout("... [max depth reached]\n", .{});
-        return;
-    }
-    if (node_idx >= vm.dag_builder.nodes.items.len) {
-        log_helpers.printStdout("[OUT OF BOUNDS: {d}]\n", .{node_idx});
-        return;
-    }
-
-    const node = vm.dag_builder.nodes.items[node_idx];
-
-    var i: usize = 0;
-    while (i < depth) : (i += 1) log_helpers.printStdout("  ", .{});
-
-    log_helpers.printStdout("Node #{d}: {s}", .{ node_idx, @tagName(node.tag) });
-
-    switch (node.tag) {
-        .union_op, .difference_op, .intersection_op, .cs_union_op, .cs_difference_op, .cs_intersection_op, .minkowski => {
-            const p = vm.dag_builder.getBinaryPayload(node);
-            log_helpers.printStdout("\n", .{});
-            dumpDAG(vm, p.left, depth + 1);
-            dumpDAG(vm, p.right, depth + 1);
-        },
-        .translate, .rotate, .scale, .mirror, .hull, .trim_by_plane, .set_material, .set_name, .cs_set_material, .cs_set_name => {
-            const p = vm.dag_builder.getTranslatePayload(node);
-            log_helpers.printStdout("\n", .{});
-            dumpDAG(vm, p.target, depth + 1);
-        },
-        .extrude, .revolve => {
-            const p = vm.dag_builder.getExtrudePayload(node);
-            log_helpers.printStdout(" (sweeping 2D target)\n", .{});
-            dumpDAG(vm, p.target, depth + 1);
-        },
-        .loft => {
-            const p = vm.dag_builder.getLoftPayload(node);
-            log_helpers.printStdout(" (height: {d})\n", .{p.height});
-            dumpDAG(vm, p.base, depth + 1);
-            dumpDAG(vm, p.top, depth + 1);
-        },
-        .batch_union_op, .batch_hull_op => {
-            const targets = vm.dag_builder.getBatchUnionPayload(node);
-            log_helpers.printStdout(" (batch count: {d})\n", .{targets.len});
-            for (targets) |t_idx| {
-                dumpDAG(vm, t_idx, depth + 1);
-            }
-        },
-        else => {
-            log_helpers.printStdout("\n", .{});
-        },
-    }
-}
 
 fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHandle {
     var v_stack = IntermediateStack.init(vm.allocator);

@@ -104,11 +104,31 @@ test "Kernel: ghost display list survives garbage collection" {
 
 const planar = @import("planar.zig");
 
+/// Whether `p` lies in the region of the closed `contours` (each one's last point joined
+/// back to its first).
 fn regionContains(contours: []const []const planar.Vec2, p: planar.Vec2, tolerance: f64) bool {
     var region = planar.RegionTest.init(p, tolerance);
-    for (contours) |c| region.addContour(c);
+    for (contours) |points| {
+        if (points.len < 2) continue;
+        var prev = points[points.len - 1];
+        for (points) |cur| {
+            region.addEdge(prev, cur);
+            prev = cur;
+        }
+    }
     return region.contains();
 }
+
+/// A polygon's points as a ring for planar.isConvexRing.
+const SliceRing = struct {
+    points: []const planar.Vec2,
+    pub fn len(self: SliceRing) usize {
+        return self.points.len;
+    }
+    pub fn at(self: SliceRing, i: usize) planar.Vec2 {
+        return self.points[i];
+    }
+};
 
 test "Kernel planar: point in region with holes, boundary and orientation" {
     const tol = 1e-9;
@@ -146,7 +166,7 @@ test "Kernel planar: point in region with holes, boundary and orientation" {
     try std.testing.expect(!regionContains(square, .{ 10.002, 5 }, 1e-3));
 }
 
-test "Kernel planar: isConvexPolygon" {
+test "Kernel planar: isConvexRing" {
     const Case = struct { pts: []const planar.Vec2, convex: bool };
     const cases = [_]Case{
         .{ .pts = &.{ .{ 0, 0 }, .{ 10, 0 }, .{ 10, 10 }, .{ 0, 10 } }, .convex = true },
@@ -159,6 +179,6 @@ test "Kernel planar: isConvexPolygon" {
     };
     for (cases) |case| {
         errdefer std.debug.print("points: {any}\n", .{case.pts});
-        try std.testing.expectEqual(case.convex, planar.isConvexPolygon(case.pts));
+        try std.testing.expectEqual(case.convex, planar.isConvexRing(SliceRing{ .points = case.pts }));
     }
 }

@@ -452,8 +452,8 @@ pub const Compiler = struct {
             .binary_op => try self.compileBinaryOp(node_idx),
             .array_literal => try self.compileArrayLiteral(node),
             .hash_literal => try self.compileHashLiteral(node),
-            .case_stmt => try self.compileCaseStmt(node, expected_entry_depth),
-            .begin_stmt => try self.compileBeginStmt(node, expected_entry_depth),
+            .case_stmt => try self.compileCaseStmt(node),
+            .begin_stmt => try self.compileBeginStmt(node),
             .method_call => try self.compileMethodCall(node),
             .if_stmt => try self.compileIfStmt(node, expected_entry_depth),
             .self_expr => try self.emitPushSelf(),
@@ -1208,8 +1208,7 @@ pub const Compiler = struct {
     }
 
     // Entry Point: Routes to Fast Path or Linear Fallback
-    fn compileCaseStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
-        _ = expected_entry_depth;
+    fn compileCaseStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const cs = self.tree.caseStmt(node);
         const saved_depth = self.current_stack_depth;
         const branches = self.tree.getWhenBranches(cs.when_branches);
@@ -1438,8 +1437,7 @@ pub const Compiler = struct {
         self.current_stack_depth = saved_depth + 1;
     }
 
-    fn compileBeginStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
-        _ = expected_entry_depth; // Ignore warning
+    fn compileBeginStmt(self: *Compiler, node: *const ast.Node) CompileError!void {
         const bs = self.tree.beginStmt(node);
         const saved_depth = self.current_stack_depth;
 
@@ -2719,23 +2717,6 @@ pub const Compiler = struct {
         } else {
             // MUST reject invalid tuple parameters (like splats or defaults) natively
             return error.UnknownNode;
-        }
-    }
-
-    fn emitAugmentedOp(self: *Compiler, op: ast.BinaryOp) CompileError!void {
-        switch (op) {
-            .add => try self.emitOp(.op_add),
-            .subtract => try self.emitOp(.op_subtract),
-            .multiply => try self.emitOp(.op_multiply),
-            .divide => try self.emitOp(.op_divide),
-            .modulo => try self.emitOp(.op_modulo),
-            .exponent => try self.emitOp(.op_exponent),
-            .bitwise_and => try self.emitOp(.op_bitwise_and),
-            .bitwise_or => try self.emitOp(.op_bitwise_or),
-            .bitwise_xor => try self.emitOp(.op_bitwise_xor),
-            .shift_left => try self.emitOp(.op_shift_left),
-            .shift_right => try self.emitOp(.op_shift_right),
-            else => return error.UnknownNode,
         }
     }
 

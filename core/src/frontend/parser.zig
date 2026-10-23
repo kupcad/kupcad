@@ -2114,37 +2114,6 @@ pub const Parser = struct {
         return ParseError.UnexpectedToken;
     }
 
-    fn parseAssertOrEcho(self: *Parser) ParseError!ast.NodeIndex {
-        const start_tok = self.tok_idx;
-        self.advance();
-        const args = try self.parseParenArgs();
-        const end_tok = self.tok_idx;
-        const call_node = self.b.methodCall(.none, try self.b.intern(self.tokens.lexeme(self.source, start_tok)), args, .none, false, end_tok, start_tok) catch return ParseError.OutOfMemory;
-        if (self.tag(0) == .semicolon) {
-            self.advance();
-            return call_node;
-        } else if (self.tag(0) == .l_brace) {
-            self.advance();
-            const child_block = try self.parseBlock(&.{.r_brace});
-            _ = try self.expect(.r_brace);
-            const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @backingInt(child_block);
-            return call_node;
-        } else if (self.tag(0) != .r_brace and self.tag(0) != .eof) {
-            const child_stmt = try self.parseStatement();
-            const s_len = self.scratch_nodes.items.len;
-            defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
-            try self.scratch_nodes.append(self.allocator, child_stmt);
-            const child_main_token = self.b.tree.getNode(child_stmt).?.main_token;
-            const child_end_tok = self.tok_idx;
-            const block = try self.b.block(&.{}, self.scratch_nodes.items[s_len..], child_end_tok, child_main_token);
-            const call_data = self.b.tree.getNode(call_node).?.data;
-            self.b.tree.extra_data.items[call_data + 4] = @backingInt(block);
-            return call_node;
-        }
-        return call_node;
-    }
-
     fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {
         if (self.in_block_params and t == .pipe) return .none;
         if (tagToBinaryOp(t)) |op| return binaryPrecedence(op);

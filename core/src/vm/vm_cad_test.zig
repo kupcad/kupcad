@@ -587,25 +587,6 @@ test "VM Edge Case: Robot Mount Bracket execution safely resolves Spatial Querie
     try testing.expect(result.isGeometry());
 }
 
-test "VM: FFI getReceiver safely extracts receiver and enforces pointer bounds" {
-    var vm = try VM.init(testing.allocator, testing.io);
-    defer vm.deinit();
-
-    // 1. Simulate the stack state right before a native call
-    vm.push(value.Value.initNumber(10.0)); // Receiver (base slot)
-    vm.push(value.Value.initNumber(20.0)); // Arg 1
-    vm.push(value.Value.initNumber(30.0)); // Arg 2
-
-    // 2. The native FFI boundary is handed a pointer starting at Arg 1
-    const args_ptr = vm.stack.ptr + 1;
-
-    // 3. Extract the receiver safely
-    const receiver = vm.getReceiver(args_ptr);
-
-    // 4. Verify it correctly stepped back 1 slot to grab the receiver
-    try testing.expectEqual(@as(f64, 10.0), receiver.asNumber());
-}
-
 test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

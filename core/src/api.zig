@@ -302,11 +302,10 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
 
 /// The meshes of the model the script left: its ghosts (the display list), then its
 /// Solids (collectModel), each evaluated. The handles are borrowed (see VM.ensureConcrete).
-pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
+pub fn modelParts(allocator: std.mem.Allocator, vm: *VM) !std.ArrayList(geom.GeometryHandle) {
     var model = try collectModel(allocator, vm);
     defer model.deinit(allocator);
-    try out.appendSlice(allocator, model.ghosts);
-    for (model.solids.items) |part| try out.append(allocator, try vm.ensureConcrete(part));
+    return handlesOf(allocator, vm, model.solids.items, model.ghosts);
 }
 
 /// The shapes the script left as its model: its final value, a Solid or a Sketch, an
