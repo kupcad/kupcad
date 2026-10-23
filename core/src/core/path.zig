@@ -140,14 +140,32 @@ pub fn endTangent(start: [2]f64, segments: []const Segment) ?[2]f64 {
     if (segments.len == 0) return null;
     const last = segments[segments.len - 1];
     const from = if (segments.len >= 2) segments[segments.len - 2].to else start;
-    const d: [2]f64 = if (last.arc) |arc| blk: {
-        const r = [2]f64{ last.to[0] - arc.center[0], last.to[1] - arc.center[1] };
-        break :blk if (last.ccw) .{ -r[1], r[0] } else .{ r[1], -r[0] };
-    } else if (last.cubic) |cubic| blk: {
+    const d: [2]f64 = if (last.arc) |arc| arcTangent(arc, last.to, last.ccw) else if (last.cubic) |cubic| blk: {
         // A last control on the end point leaves along the first one's line
         const c = if (cubic.c2[0] != last.to[0] or cubic.c2[1] != last.to[1]) cubic.c2 else cubic.c1;
         break :blk .{ last.to[0] - c[0], last.to[1] - c[1] };
     } else .{ last.to[0] - from[0], last.to[1] - from[1] };
+    return unit(d);
+}
+
+/// The direction (a unit vector) `segment` leaves `from` in: a line's, an arc's tangent
+/// there going its way round, a cubic's toward its first control.
+pub fn startTangent(from: [2]f64, segment: Segment) [2]f64 {
+    const d: [2]f64 = if (segment.arc) |arc| arcTangent(arc, from, segment.ccw) else if (segment.cubic) |cubic| blk: {
+        // A first control on the start point leaves toward the second
+        const c = if (cubic.c1[0] != from[0] or cubic.c1[1] != from[1]) cubic.c1 else cubic.c2;
+        break :blk .{ c[0] - from[0], c[1] - from[1] };
+    } else .{ segment.to[0] - from[0], segment.to[1] - from[1] };
+    return unit(d);
+}
+
+/// The direction along `arc`'s circle at `p` going the `ccw` way, not of unit length.
+fn arcTangent(arc: Arc, p: [2]f64, ccw: bool) [2]f64 {
+    const r = [2]f64{ p[0] - arc.center[0], p[1] - arc.center[1] };
+    return if (ccw) .{ -r[1], r[0] } else .{ r[1], -r[0] };
+}
+
+fn unit(d: [2]f64) [2]f64 {
     const len = std.math.hypot(d[0], d[1]);
     return .{ d[0] / len, d[1] / len };
 }

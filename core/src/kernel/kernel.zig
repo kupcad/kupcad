@@ -110,7 +110,7 @@ pub const Feature = enum {
         return switch (self) {
             .transform => &.{ "translate", "rotate", "scale", "mirror", "transform", "align", "center", "resize" },
             .boolean => &.{ "union", "difference", "intersection" },
-            .extrude => &.{ "extrude", "helix" },
+            .extrude => &.{ "extrude", "helix", "sweep" },
             .revolve => &.{ "revolve", "torus" },
             .loft => &.{"loft"},
             .sphere => &.{"sphere"},

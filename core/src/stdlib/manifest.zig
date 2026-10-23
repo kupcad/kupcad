@@ -205,6 +205,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("hull", .transform, methods.meshHull, &sig.SHAPES, .receiver, .both),
     method("helix", .transform, methods.meshHelix, &sig.HELIX, .solid, .sketches),
     method("loft", .transform, methods.meshLoft, &sig.LOFT, .solid, .sketches),
+    method("sweep", .transform, methods.meshSweep, &sig.SWEEP, .solid, .sketches),
     method("trim_by_plane", .transform, methods.meshTrimByPlane, &sig.TRIM_BY_PLANE, .receiver, .solids),
     method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver, .solids),
     method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver, .both),
@@ -341,7 +342,7 @@ pub fn methodAllows(name: []const u8, on: On) ?bool {
 /// the NoMethodError and the lint to its finding.
 pub fn missingMethodHint(class: []const u8, name: []const u8) ?[]const u8 {
     if (!std.mem.eql(u8, class, "Path")) return null;
-    for ([_][]const u8{ "extrude", "revolve", "helix", "loft", "hull", "offset", "shell" }) |needs_region| {
+    for ([_][]const u8{ "extrude", "revolve", "helix", "loft", "hull", "offset", "shell", "sweep" }) |needs_region| {
         if (std.mem.eql(u8, name, needs_region)) return path_mod.OPEN_PATH_HINT;
     }
     return null;

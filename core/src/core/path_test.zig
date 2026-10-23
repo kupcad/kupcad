@@ -104,3 +104,15 @@ test "path: a point is inside a closed path by the even-odd rule, exactly on its
     try testing.expect(path.encloses(.{ 0, 0 }, &square, .{ 0.5, 0.5 }));
     try testing.expect(!path.encloses(.{ 0, 0 }, &square, .{ 1.5, 0.5 }));
 }
+
+test "path: a segment leaves its start along its line, its arc's tangent, or toward its first control" {
+    try testing.expectEqual([2]f64{ 0, 1 }, path.startTangent(.{ 0, 0 }, .{ .to = .{ 0, 5 } }));
+    // A quarter from (5, 0) about the origin: leaving up counter-clockwise, down clockwise
+    const up = path.startTangent(.{ 5, 0 }, path.arcByAngles(.{ 0, 0 }, 5, 0, 90));
+    try testing.expectApproxEqAbs(@as(f64, 1), up[1], 1e-12);
+    const down = path.startTangent(.{ 5, 0 }, path.arcByAngles(.{ 0, 0 }, 5, 0, -90));
+    try testing.expectApproxEqAbs(@as(f64, -1), down[1], 1e-12);
+    try testing.expectEqual([2]f64{ 0, 1 }, path.startTangent(.{ 0, 0 }, .{ .to = .{ 3, 1 }, .cubic = .{ .c1 = .{ 0, 2 }, .c2 = .{ 2, 1 } } }));
+    // A first control on the start leaves toward the second
+    try testing.expectEqual([2]f64{ 1, 0 }, path.startTangent(.{ 0, 0 }, .{ .to = .{ 3, 1 }, .cubic = .{ .c1 = .{ 0, 0 }, .c2 = .{ 2, 0 } } }));
+}

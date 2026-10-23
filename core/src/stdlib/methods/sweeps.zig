@@ -1,4 +1,5 @@
-//! The methods that make a solid from a sketch: `extrude`, `revolve`, `helix` and `loft`,
+//! The methods that make a solid from a sketch: `extrude`, `revolve`, `helix`, `loft` and
+//! `sweep`,
 //! each checking its arguments and adding a DAG node. Exported through methods.zig. A
 //! sweep that turns the profile (a revolve, a twist) gets its share of the segments a full
 //! turn gets at the profile's farthest point from the axis, as OpenSCAD's rotate_extrude
@@ -12,9 +13,14 @@ const value = @import("../../core/value.zig");
 const turnShare = @import("../../core/engine_config.zig").turnShare;
 const error_kind = @import("../../vm/error_kind.zig");
 const VM = @import("../../vm/vm.zig").VM;
+const path_mod = @import("../../core/path.zig");
+const DAGBuilder = @import("../../vm/dag.zig").DAGBuilder;
 
 /// The axis a sweep turns the profile about: revolve's y, a twist's z.
 const Axis = enum { y, z };
+
+/// A turn (radians) this small at a path's joint is none: no corner to fill.
+const STRAIGHT_TURN = 1e-9;
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "extrude", receiver);
@@ -103,6 +109,117 @@ pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     // Re-use DAG's extrude with twist applied natively
     const new_idx = try vm.dag_builder.addExtrude(receiver.asCrossSection().dag_idx, opts.h, slices, opts.twist, 1.0, 1.0);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// `profile.sweep(path, segments:)`: the Solid the Sketch sweeps out along the Path,
+/// standing on it: the profile's origin on the path, its x across it (to its left), its y
+/// up (z). A line extrudes the profile along it, an arc revolves it about the arc's centre,
+/// and where the path turns at a corner the profile turns about the corner on its outer
+/// side, filling the gap round, as a stroke's joints are; the pieces are united. A closed
+/// path (its end on its start) has a corner there too. `segments:` is per full turn, as
+/// revolve's, the resolution's at the farthest the profile reaches from the centre without.
+pub fn meshSweep(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "sweep", receiver);
+    const Opts = struct { path: ?value.Value = null, segments: i32 = 0 };
+    const pos = arguments.positionalArgs(args);
+    const opts = (try arguments.parseKwargsOver(Opts, .{ .path = if (pos.len > 0) pos[0] else null }, sig.SWEEP.keywords, vm, args, "sweep")).opts;
+    const path_val = opts.path orelse return vm.fail(.ArgumentError, "sweep needs the Path to sweep along: sweep(path)", .{});
+    if (!path_val.isPath()) return vm.fail(.TypeError, "sweep expects a Path to sweep along, got {s}", .{arguments.typeName(vm, path_val)});
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const p = path_val.asPath();
+
+    // How far the profile reaches to the path's left (+x) and right (-x), measured now
+    const profile = try vm.ensureConcreteCrossSection(receiver);
+    for ([_]kernel.Feature{ .extrude, .revolve, .sketch_measure }) |op| try vm.requireFeature(profile.engine, op);
+    const bounds = kernel.crossSectionBounds(profile) orelse return vm.fail(.ValueError, "sweep: an empty sketch has no profile", .{});
+    const sweep = Sweep{ .vm = vm, .profile = receiver.asCrossSection().dag_idx, .left = bounds.max[0], .right = -bounds.min[0], .per_turn = opts.segments };
+
+    var pieces: std.ArrayList(u32) = .empty;
+    defer pieces.deinit(vm.allocator);
+    const end = p.end();
+    const closed = std.math.hypot(end[0] - p.start[0], end[1] - p.start[1]) <= vm.config().tolerance;
+    var from = p.start;
+    for (p.segments, 0..) |segment, k| {
+        if (segment.cubic != null) return vm.fail(.ValueError, "sweep follows lines and arcs, and segment {d} of the path is a curve", .{k});
+        try pieces.append(vm.allocator, if (segment.arc) |arc| try sweep.arcPiece(from, segment, arc, k) else try sweep.linePiece(from, segment.to));
+        const next = if (k + 1 < p.segments.len) p.segments[k + 1] else if (closed) p.segments[0] else null;
+        if (next) |n| {
+            if (try sweep.cornerPiece(segment.to, path_mod.endTangent(from, &.{segment}).?, path_mod.startTangent(segment.to, n))) |corner| try pieces.append(vm.allocator, corner);
+        }
+        from = segment.to;
+    }
+    return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, pieces.items) });
+}
+
+/// The pieces of a sweep: the profile (a graph node) and how far it reaches to either
+/// side of the path.
+const Sweep = struct {
+    vm: *VM,
+    profile: u32,
+    left: f64,
+    right: f64,
+    /// Segments a full turn, or 0 for the resolution's
+    per_turn: i32,
+
+    /// The profile extruded from `a` to `b`: its x along the line's left, its y along z,
+    /// its extrusion along the line.
+    fn linePiece(self: Sweep, a: [2]f64, b: [2]f64) !u32 {
+        const len = std.math.hypot(b[0] - a[0], b[1] - a[1]);
+        const t = [2]f64{ (b[0] - a[0]) / len, (b[1] - a[1]) / len };
+        const dag = &self.vm.dag_builder;
+        const solid = try dag.addExtrude(self.profile, len, 0, 0, 1, 1);
+        return dag.addTransformMatrix(solid, .{ -t[1], t[0], 0, 0, 0, 1, t[0], t[1], 0, a[0], a[1], 0 });
+    }
+
+    /// The profile revolved about the arc's centre, through its sweep: at the radius less
+    /// its x on a counter-clockwise arc (the left is inward), plus it on a clockwise one.
+    fn arcPiece(self: Sweep, from: [2]f64, segment: path_mod.Segment, arc: path_mod.Arc, k: usize) !u32 {
+        const inward = if (segment.ccw) self.left else self.right;
+        if (inward >= arc.radius) {
+            return self.vm.fail(.ValueError, "sweep: the profile reaches {f} to the path's {s}, as far as the centre of segment {d}'s arc of radius {f} or past it, where it would cross itself", .{ value.fmtNumber(inward), if (segment.ccw) "left" else "right", k, value.fmtNumber(arc.radius) });
+        }
+        const dag = &self.vm.dag_builder;
+        const placed = try dag.addCrossSectionTransform(self.profile, if (segment.ccw) .{ -1, 0, 0, 1, arc.radius, 0 } else .{ 1, 0, 0, 1, arc.radius, 0 });
+        const degrees = segment.angle * 180 / std.math.pi;
+        const solid = try dag.addRevolve(placed, try self.segmentsFor(arc.radius + @max(self.left, self.right), degrees), degrees);
+        // Revolved counter-clockwise from +x: turned to the arc's start, or for a clockwise
+        // arc, to its end, from which it runs counter-clockwise back to the start
+        const start = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
+        return placedAbout(dag, solid, if (segment.ccw) start else start - segment.angle, arc.center);
+    }
+
+    /// The corner where the path, coming in along `t1`, leaves along `t2` at `p`: the
+    /// profile's outer side (its right on a left turn) turned about the corner through the
+    /// turn; null where the path goes on straight or the profile has no outer side.
+    fn cornerPiece(self: Sweep, p: [2]f64, t1: [2]f64, t2: [2]f64) !?u32 {
+        const turn = std.math.atan2(t1[0] * t2[1] - t1[1] * t2[0], t1[0] * t2[0] + t1[1] * t2[1]);
+        if (@abs(turn) <= STRAIGHT_TURN) return null;
+        const left_turn = turn > 0;
+        const outer = if (left_turn) self.right else self.left;
+        if (!(outer > 0)) return null;
+        const dag = &self.vm.dag_builder;
+        // The kernel's revolve keeps the profile's positive x: the outer side's
+        const outward = if (left_turn) try dag.addCrossSectionTransform(self.profile, .{ -1, 0, 0, 1, 0, 0 }) else self.profile;
+        const degrees = @abs(turn) * 180 / std.math.pi;
+        const solid = try dag.addRevolve(outward, try self.segmentsFor(outer, degrees), degrees);
+        // From the outer side of the way in (a left turn's right of t1) round to the way
+        // out's; a right turn's runs from t2's left back to t1's
+        const from_dir: [2]f64 = if (left_turn) .{ t1[1], -t1[0] } else .{ -t2[1], t2[0] };
+        return try placedAbout(dag, solid, std.math.atan2(from_dir[1], from_dir[0]), p);
+    }
+
+    /// The segments a revolve through `degrees` gets at `radius`: its share of a full turn's.
+    fn segmentsFor(self: Sweep, radius: f64, degrees: f64) !i32 {
+        const per_turn = if (self.per_turn > 0) self.per_turn else arguments.autoSegments(self.vm, radius);
+        return @intCast(turnShare(@intCast(per_turn), degrees / 360.0));
+    }
+};
+
+/// `solid` turned `angle` radians about z and moved to `center`.
+fn placedAbout(dag: *DAGBuilder, solid: u32, angle: f64, center: [2]f64) !u32 {
+    const c = @cos(angle);
+    const s = @sin(angle);
+    return dag.addTransformMatrix(solid, .{ c, s, 0, -s, c, 0, 0, 0, 1, center[0], center[1], 0 });
 }
 
 /// The slices a twist of `twist_degrees` is cut into: the script's `slices`, or with none

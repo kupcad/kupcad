@@ -28,6 +28,7 @@ pub const EXTRUDE = Signature{ .positional = &.{"h"}, .keywords = &.{ "h", "slic
 pub const REVOLVE = Signature{ .positional = &.{"deg"}, .keywords = &.{ "deg", "angle", "segments" } };
 pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "pitch", "turns", "slices" } };
 pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
+pub const SWEEP = Signature{ .positional = &.{"path"}, .keywords = &.{ "path", "segments" } };
 
 // --- Advanced ---
 pub const MINKOWSKI = Signature{ .positional = &.{"other"} };

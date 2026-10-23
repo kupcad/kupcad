@@ -912,7 +912,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 16), checked);
+    try std.testing.expectEqual(@as(usize, 17), checked);
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -1199,6 +1199,31 @@ test "Stdlib: a negative offset shrinks a Solid, and shell hollows a shape to wa
         .{ .src = comptime rescued("cube(10).shell(0)"), .expected = .{ .str = "ValueError: shell expects thickness to be a finite number greater than zero, got 0" } },
         .{ .src = comptime rescued("cube(10).shell(1, join: :miter)"), .expected = .{ .str = "ArgumentError: shell does not take a keyword 'join' (it accepts: thickness, segments)" } },
         .{ .src = comptime rescued("line([0, 0], [1, 0]).shell(1)"), .expected = .{ .str = "NoMethodError: undefined method 'shell' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
+    });
+}
+
+test "Stdlib: a Sketch sweeps along a Path, standing on it, its corners filled round outside" {
+    // A 2 by 2 profile across the path and up from it
+    const PROFILE = "prof = square(2, center: true).translate(y: 1)\n";
+    // A quarter of a circle of radius 1 in 16 chords (64 a turn), 2 high: a corner's fill
+    const wedge = 2 * 8 * @sin(2 * std.math.pi / 64.0);
+    try expectScripts(&.{
+        .{ .src = PROFILE ++ "r = prof.sweep(line([0, 0], [10, 0])).volume", .expected = .{ .num = 40 } },
+        .{ .src = PROFILE ++ "b = prof.sweep(path: line([0, 0], [10, 0])).bbox\nr = b.min + b.max", .expected = .{ .nums = &.{ 0, -1, 0, 10, 1, 2 } } },
+        // Two sides of 40 that overlap by 1 by 1 by 2 inside the turn, and the fill outside it
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, 10]]), segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Turning right instead: the fill is on the left
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, -10]]), segments: 64).volume", .expected = .{ .num = 78 + wedge } },
+        // Closed, a corner where it starts too: four sides, four overlaps, four fills
+        .{ .src = PROFILE ++ "r = prof.sweep(polyline([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]), segments: 64).volume", .expected = .{ .num = 152 + 4 * wedge } },
+        // An arc revolves the profile about its centre, either way round
+        .{ .src = PROFILE ++ "v = prof.sweep(arc(center: [0, 0], r: 10, start: 0, sweep: 360), segments: 256).volume\nr = (v - 2 * Math::PI * 10 * 4).abs < 0.05", .expected = .{ .boolean = true } },
+        .{ .src = PROFILE ++ "a = prof.sweep(arc(r: 10, start: [0, 10], to: [10, 0], ccw: false))\nb = prof.sweep(arc(r: 10, start: [10, 0], to: [0, 10]))\nr = Math.close?(a.volume, b.volume, 1e-9) && a.bbox.max == b.bbox.max", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep"), .expected = .{ .str = "ArgumentError: sweep needs the Path to sweep along: sweep(path)" } },
+        .{ .src = comptime rescued(PROFILE ++ "prof.sweep(5)"), .expected = .{ .str = "TypeError: sweep expects a Path to sweep along, got Number" } },
+        .{ .src = comptime rescued("square(4, center: true).sweep(arc(center: [0, 0], r: 1, start: 0, sweep: 90))"), .expected = .{ .str = "ValueError: sweep: the profile reaches 2 to the path's left, as far as the centre of segment 0's arc of radius 1 or past it, where it would cross itself" } },
+        .{ .src = comptime rescued("(square(1) - square(2)).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "ValueError: sweep: an empty sketch has no profile" } },
+        .{ .src = comptime rescued("line([0, 0], [1, 0]).sweep(line([0, 0], [1, 0]))"), .expected = .{ .str = "NoMethodError: undefined method 'sweep' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
     });
 }
 
@@ -1952,6 +1977,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).offset(-1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
+        .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).offset(1).simplify"), .expected = brepLacks(.sphere) }, // its rounding tool
         .{ .src = comptime rescued("cube(10).trim_by_plane(0, 0, 1).simplify"), .expected = brepLacks(.trim_by_plane) },
@@ -2766,7 +2792,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
         .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
         .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
-        .{ "shell", "c.shell(0.1)" },
+        .{ "shell", "c.shell(0.1)" },                            .{ "sweep", "s.sweep(line([0, 0], [1, 0]))" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
