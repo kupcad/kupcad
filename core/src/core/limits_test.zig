@@ -12,6 +12,7 @@ const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
 const support = @import("../test_support.zig");
+const zip = @import("../exporters/zip.zig");
 
 /// The budget the runaway-loop and runaway-heap cases run under: the interactive limits
 /// themselves would take seconds of a Debug test run to reach, and the mechanism is the same.
@@ -44,6 +45,8 @@ const CASES = .{
     .MAX_JSON_BYTES = jsonBytes,
     .MAX_DRAWING_BYTES = drawingBytes,
     .MAX_DRAWING_PIECES = drawingPieces,
+    .MAX_PACKAGE_PART_BYTES = packagePartBytes,
+    .MAX_PLACED_TRIANGLES = placedTriangles,
     .MAX_FONT_BYTES = fontBytes,
     .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
@@ -192,6 +195,36 @@ fn drawingPieces() !void {
     const dxf = "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nb\n10\n0\n20\n0\n70\n1001\n44\n3000\n0\nENDSEC\n0\nEOF\n";
     const expected = std.fmt.comptimePrint("ImportError: could not read DXF file 'big.dxf': its blocks would place 1001000 pieces; a script reads at most {d}", .{limits.MAX_DRAWING_PIECES});
     try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.dxf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.dxf", .data = dxf }} }});
+}
+
+fn packagePartBytes() !void {
+    // A model that says it unpacks to a byte past the limit: refused before it is unpacked
+    const package = try zip.write(testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = "<model/>" }});
+    defer testing.allocator.free(package);
+    const central = std.mem.find(u8, package, "PK\x01\x02").?;
+    std.mem.writeInt(u32, package[central + 24 ..][0..4], limits.MAX_PACKAGE_PART_BYTES + 1, .little);
+    const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': 3D/3dmodel.model unpacks to more than {d} bytes; a script reads at most that", .{limits.MAX_PACKAGE_PART_BYTES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
+}
+
+fn placedTriangles() !void {
+    // A triangle, an object of 5000 of it, and 5000 of that: 25 million, counted before
+    // any is placed
+    var model: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer model.deinit();
+    const w = &model.writer;
+    try w.writeAll("<model><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/></vertices>" ++
+        "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/></triangles></mesh></object>");
+    for ([_]u8{ 2, 3 }) |id| {
+        try w.print("<object id=\"{d}\"><components>", .{id});
+        for (0..5000) |_| try w.print("<component objectid=\"{d}\"/>", .{id - 1});
+        try w.writeAll("</components></object>");
+    }
+    try w.writeAll("</resources><build><item objectid=\"3\"/></build></model>");
+    const package = try zip.write(testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = model.written() }});
+    defer testing.allocator.free(package);
+    const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} triangles; a script reads at most that", .{limits.MAX_PLACED_TRIANGLES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
 }
 
 fn fontBytes() !void {

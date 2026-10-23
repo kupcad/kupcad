@@ -1,4 +1,4 @@
-//! Fuzzing what KupCAD reads but didn't write: an STL, OBJ or font file a script imports, a package
+//! Fuzzing what KupCAD reads but didn't write: an STL, OBJ, 3MF or font file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
@@ -12,6 +12,8 @@ const testing = std.testing;
 const support = @import("test_support.zig");
 const stl = @import("exporters/3d/stl.zig");
 const obj_read = @import("exporters/3d/obj_read.zig");
+const threemf_read = @import("exporters/3d/threemf_read.zig");
+const zip = @import("exporters/zip.zig");
 const cafs_mod = @import("pkg/cafs.zig");
 const Lockfile = @import("pkg/lockfile.zig").Lockfile;
 const Manifest = @import("pkg/manifest.zig").Manifest;
@@ -98,6 +100,31 @@ fn checkObj(data: []const u8) !void {
     for (model.objects) |object| {
         for (object.mesh.faces) |face| for (face) |index| try testing.expect(index < object.mesh.points.len);
         for (object.mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+    }
+}
+
+// --- 3MF ---
+
+test "fuzz: a 3MF package a script imports" {
+    // A package of one triangle placed twice, one of them mirrored, and its model alone
+    const model = "<model unit=\"inch\"><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/>" ++
+        "<vertex x=\"0\" y=\"1\" z=\"0\"/></vertices><triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/></triangles></mesh></object>" ++
+        "<object id=\"2\"><components><component objectid=\"1\" transform=\"-1 0 0 0 1 0 0 0 1 0 0 0\"/></components></object></resources>" ++
+        "<build><item objectid=\"1\"/><item objectid=\"2\"/></build></model>";
+    const package = try zip.write(testing.allocator, &.{ .{ .name = "_rels/.rels", .data = "<Relationships/>" }, .{ .name = "3D/3dmodel.model", .data = model } });
+    defer testing.allocator.free(package);
+    try fuzzParser(check3mf, &.{ package, model });
+}
+
+fn check3mf(data: []const u8) !void {
+    var diag: threemf_read.Diagnostic = .{};
+    var model = threemf_read.read(testing.allocator, data, &diag) catch return;
+    defer model.deinit();
+    // Each mesh goes to the kernel, as an STL's does
+    try testing.expect(model.meshes.len > 0);
+    for (model.meshes) |mesh| {
+        for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
+        for (mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
     }
 }
 

@@ -78,6 +78,12 @@ pub const MAX_DRAWING_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 // Most pieces a drawing's blocks (DXF INSERTs) or clones (SVG <use>s) place: nested,
 // they multiply, so a small file could ask for more than memory holds.
 pub const MAX_DRAWING_PIECES: usize = 1_000_000;
+// Largest file of a 3MF package `import_3mf` unpacks: a zip's file says what it unpacks
+// to, so a small archive could ask for more than memory holds.
+pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
+// Most triangles a 3MF's build places: components within components multiply, so a small
+// file could ask for more than memory holds.
+pub const MAX_PLACED_TRIANGLES: usize = 20_000_000;
 // Largest font file `import_font` reads: the biggest CJK fonts are about 20 MiB, and the file
 // stays in memory while the run lasts.
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB

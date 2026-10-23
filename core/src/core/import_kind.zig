@@ -1,5 +1,5 @@
 //! What an `import` reads: a KupCAD module, or a file a built-in reads as a value (an STL,
-//! OBJ or STEP mesh, a drawing, JSON data, a font). The `type` its `with { }` gives says which (`import machine from
+//! OBJ, 3MF or STEP mesh, a drawing, JSON data, a font). The `type` its `with { }` gives says which (`import machine from
 //! "./machine.dat" with { type: "json" }`); without one, the path's extension does (in any
 //! case: `.STL` too), and any other path is a module. The compiler, the parser's checks, the
 //! workspace and the watcher all ask here, so they agree on what an import is.
@@ -11,6 +11,7 @@ const ast = @import("ast.zig");
 const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
     .{ .extension = ".stl", .kind = .stl },
     .{ .extension = ".obj", .kind = .obj },
+    .{ .extension = ".3mf", .kind = .@"3mf" },
     .{ .extension = ".step", .kind = .step },
     .{ .extension = ".stp", .kind = .step },
     .{ .extension = ".json", .kind = .json },
@@ -37,6 +38,7 @@ pub const Kind = enum {
     module,
     stl,
     obj,
+    @"3mf",
     step,
     json,
     font,
@@ -50,6 +52,7 @@ pub const Kind = enum {
             .module => null,
             .stl => "import_stl",
             .obj => "import_obj",
+            .@"3mf" => "import_3mf",
             .step => "import_step",
             .json => "import_json",
             .font => "import_font",
@@ -73,6 +76,7 @@ pub const Kind = enum {
             .module => "kup",
             .stl => "stl",
             .obj => "obj",
+            .@"3mf" => "3mf",
             .step => "step",
             .json => "json",
             .font => "font",
@@ -86,7 +90,7 @@ pub const Kind = enum {
     pub fn hasKeys(self: Kind) bool {
         return switch (self) {
             .module, .json => true,
-            .stl, .obj, .step, .font, .dxf, .svg => false,
+            .stl, .obj, .@"3mf", .step, .font, .dxf, .svg => false,
         };
     }
 

@@ -1,12 +1,15 @@
-//! `import_stl` and `import_obj`: a mesh file's Solid, in millimetres, each mesh in it (an
-//! OBJ's objects) a polyhedron node of the geometry graph, united. The readers are
-//! exporters/3d/stl.zig and obj_read.zig.
+//! `import_stl`, `import_obj` and `import_3mf`: a mesh file's Solid, in millimetres, each
+//! mesh in it (an OBJ's objects, the meshes a 3MF's build places) a polyhedron node of the
+//! geometry graph, united. The readers are exporters/3d/stl.zig, obj_read.zig and
+//! threemf_read.zig.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const stl = @import("../exporters/3d/stl.zig");
 const obj_read = @import("../exporters/3d/obj_read.zig");
+const threemf_read = @import("../exporters/3d/threemf_read.zig");
+const imported_mesh = @import("../exporters/3d/imported_mesh.zig");
 const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
 const file_import = @import("file_import.zig");
 
@@ -31,8 +34,28 @@ pub fn nativeImportObj(vm: *VM, path: []const u8) !value.Value {
     var diag: Diagnostic = .{};
     var model = obj_read.read(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, path, "OBJ", &diag);
     defer model.deinit();
-    const nodes = try vm.allocator.alloc(u32, model.objects.len);
+    const meshes = try vm.allocator.alloc(imported_mesh.Mesh, model.objects.len);
+    defer vm.allocator.free(meshes);
+    for (model.objects, meshes) |object, *mesh| mesh.* = object.mesh;
+    return solidOf(vm, meshes);
+}
+
+/// import_3mf(path): the Solid of what the 3MF package's build places, each copy of an
+/// object's mesh where it is placed, united. What `import bracket from "./bracket.3mf"`
+/// calls.
+pub fn nativeImport3mf(vm: *VM, path: []const u8) !value.Value {
+    const file = try file_import.read(vm, path, "3MF", null);
+    defer vm.allocator.free(file);
+    var diag: Diagnostic = .{};
+    var model = threemf_read.read(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, path, "3MF", &diag);
+    defer model.deinit();
+    return solidOf(vm, model.meshes);
+}
+
+/// The Solid of `meshes`: a polyhedron node each, united.
+fn solidOf(vm: *VM, meshes: []const imported_mesh.Mesh) !value.Value {
+    const nodes = try vm.allocator.alloc(u32, meshes.len);
     defer vm.allocator.free(nodes);
-    for (model.objects, nodes) |object, *node| node.* = try vm.dag_builder.addPolyhedron(object.mesh.points, object.mesh.faces);
+    for (meshes, nodes) |mesh, *node| node.* = try vm.dag_builder.addPolyhedron(mesh.points, mesh.faces);
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, nodes) });
 }

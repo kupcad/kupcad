@@ -108,6 +108,7 @@ test {
     _ = @import("stdlib/drawing_import_test.zig");
     _ = @import("stdlib/mesh_import_test.zig");
     _ = @import("exporters/3d/obj_read_test.zig");
+    _ = @import("exporters/3d/threemf_read_test.zig");
 
     // Frontends
     _ = @import("frontend/docstring_test.zig");
