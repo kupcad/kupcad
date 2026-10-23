@@ -232,6 +232,9 @@ pub const VM = struct {
     /// each run it frees the geometry its shapes no longer use (tidyGeometryGraph). A VM that
     /// runs one script and goes skips it.
     runs_many_scripts: bool = false,
+    /// The run is the editor's live preview (`CAD.preview?`), which its host sets: a
+    /// script can lighten what it draws there, as OpenSCAD's `$preview` lets one.
+    previewing: bool = false,
     static_true: ?*value.ObjString = null,
     static_false: ?*value.ObjString = null,
     static_nil: ?*value.ObjString = null,

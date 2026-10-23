@@ -388,6 +388,8 @@ A parameter's default gives its type: a number, a String, `true`/`false`, or a S
 
 `CAD.config(...)` changes the settings for the rest of the script; `CAD.with_config(...) do ... end` applies them only inside the block; `CAD.current_config` returns them as a Map with the same keys. The shared settings mean the same on both kernels, so a model reads the same whichever engine builds it:
 
+`CAD.preview?` is `true` while the editor's live preview runs the script (and its hovers read that run), `false` under `kupcad build`, `run` and `watch` and the API: a script can leave out what only an export needs, as OpenSCAD's `$preview` lets one (`threads = CAD.preview? ? nil : thread_detail`). What it builds then differs from the export, so keep the difference to detail.
+
 ```ruby
 CAD.config(
   engine: :manifold,          # or :brep (exact B-Rep, for STEP)

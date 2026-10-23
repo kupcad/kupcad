@@ -503,6 +503,15 @@ test "LSP: an editor that can't watch files by relative path isn't asked to" {
     try testing.expectEqual(@as(usize, 0), server.sent("registerCapability"));
 }
 
+test "LSP: the preview's run is a preview (CAD.preview?), where a script can lighten its model" {
+    var server: Server = undefined;
+    try server.initReading(false);
+    defer server.deinit();
+    try server.open("file:///p/main.kup", "CAD.preview? ? cube(1) : cube(2)\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 1), try server.volumeOf("/p/main.kup"), 1e-9);
+}
+
 test "LSP: go to definition finds a name in the document, and an import's file under the workspace" {
     var server: Server = undefined;
     try server.init();

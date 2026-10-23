@@ -155,6 +155,7 @@ pub const SessionPreview = struct {
         self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        self.session.vm.previewing = true;
     }
 
     pub fn deinit(self: *SessionPreview) void {
@@ -377,6 +378,8 @@ pub const HoverRun = struct {
         self.vm.mute_errors = true; // its errors are the document's diagnostics
         self.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
         self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        // Hovers read the run the preview shows
+        self.vm.previewing = true;
         try registry.registerStandardLibrary(&self.vm);
 
         var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);

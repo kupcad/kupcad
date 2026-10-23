@@ -1045,6 +1045,15 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
     });
 }
 
+test "Stdlib: CAD.preview? is false unless the host runs the script for a preview" {
+    try expectScripts(&.{.{ .src = "r = CAD.preview?", .expected = .{ .boolean = false } }});
+    var vm = try initVm();
+    defer vm.deinit();
+    vm.previewing = true;
+    try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "r = CAD.preview?"));
+    try testing.expect(vm.globals.get("r").?.asBool());
+}
+
 test "Stdlib: Math.polar places a point by radius and angle, and lengths convert to millimetres" {
     try expectScripts(&.{
         // Exact where cosd and sind are: no 6e-16 off the axes
