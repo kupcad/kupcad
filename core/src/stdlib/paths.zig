@@ -10,6 +10,7 @@ const VM = @import("../vm/vm.zig").VM;
 const HandleScope = @import("../vm/scope.zig").HandleScope;
 const util = @import("methods/util.zig");
 const path_mod = @import("../core/path.zig");
+const affine2 = @import("../core/affine2.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
 const Signature = @import("signature.zig").Signature;
 
@@ -123,7 +124,7 @@ pub fn join(vm: *VM, a: value.Value, b: value.Value) !value.Value {
 /// The path as `matrix` places it; an uneven scale can't keep an arc, so it is refused.
 fn transformed(vm: *VM, receiver: value.Value, matrix: [6]f64, comptime method: []const u8) !value.Value {
     const p = receiver.asPath();
-    if (!path_mod.isSimilarity(matrix)) {
+    if (affine2.similarityScale(matrix) == null) {
         for (p.segments) |segment| {
             if (segment.arc != null) return vm.fail(.ValueError, method ++ " can't scale a Path's arcs unevenly (an arc stays an arc): scale it the same in x and y, or close or stroke it first", .{});
         }
@@ -131,13 +132,13 @@ fn transformed(vm: *VM, receiver: value.Value, matrix: [6]f64, comptime method: 
     const segments = try vm.allocator.alloc(path_mod.Segment, p.segments.len);
     defer vm.allocator.free(segments);
     for (p.segments, segments) |segment, *out| out.* = segment.transformed(matrix);
-    return vm.allocatePath(path_mod.apply(matrix, p.start), segments, p.name, p.material_id);
+    return vm.allocatePath(affine2.apply(matrix, p.start), segments, p.name, p.material_id);
 }
 
 pub fn pathTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     const vec = try util.parseVec3(vm, args, 0.0, "translate");
     if (vec[2] != 0.0) return vm.fail(.ValueError, "a Path can only translate in x and y (it lies in the XY plane), got z {f}", .{value.fmtNumber(vec[2])});
-    return transformed(vm, receiver, .{ 1, 0, 0, 1, vec[0], vec[1] }, "translate");
+    return transformed(vm, receiver, affine2.translation(vec[0], vec[1]), "translate");
 }
 
 /// `rotate(a)` in degrees about z, as a Sketch's.
@@ -148,8 +149,7 @@ pub fn pathRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         vec = .{ 0.0, 0.0, angle };
     }
     if (vec[0] != 0.0 or vec[1] != 0.0) return vm.fail(.ValueError, "a Path can only rotate about z (it lies in the XY plane), got x {f} and y {f}", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
-    const rad = vec[2] * std.math.pi / 180.0;
-    return transformed(vm, receiver, .{ @cos(rad), @sin(rad), -@sin(rad), @cos(rad), 0, 0 }, "rotate");
+    return transformed(vm, receiver, affine2.rotation(vec[2]), "rotate");
 }
 
 pub fn pathScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -158,7 +158,7 @@ pub fn pathScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     for (vec[0..2]) |f| {
         if (!(@abs(f) >= std.math.floatMin(f64))) return vm.fail(.ValueError, "scale factors must be non-zero, got [{f}, {f}]", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
     }
-    return transformed(vm, receiver, .{ vec[0], 0, 0, vec[1], 0, 0 }, "scale");
+    return transformed(vm, receiver, affine2.scaling(vec[0], vec[1]), "scale");
 }
 
 /// `mirror(nx, ny)`: across the line through the origin with that normal, as a Sketch's.
@@ -166,10 +166,7 @@ pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const vec = try util.parseVec3(vm, args, 0.0, "mirror");
     try util.requireNonZeroVector(vm, vec, "mirror", "plane normal");
     if (vec[2] != 0.0) return vm.fail(.ValueError, "a Path can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
-    const len = std.math.hypot(vec[0], vec[1]);
-    const nx = vec[0] / len;
-    const ny = vec[1] / len;
-    return transformed(vm, receiver, .{ 1.0 - 2.0 * nx * nx, -2.0 * nx * ny, -2.0 * nx * ny, 1.0 - 2.0 * ny * ny, 0, 0 }, "mirror");
+    return transformed(vm, receiver, affine2.reflection(vec[0], vec[1]), "mirror");
 }
 
 // --- Into a Sketch ---

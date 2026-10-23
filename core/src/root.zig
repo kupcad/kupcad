@@ -37,6 +37,7 @@ test {
     _ = @import("core/bezier_test.zig");
     _ = @import("core/path_test.zig");
     _ = @import("core/vec3_test.zig");
+    _ = @import("core/affine2_test.zig");
     _ = @import("core/rounded_rect_test.zig");
     _ = @import("core/document_test.zig");
     _ = @import("core/error_codes_test.zig");

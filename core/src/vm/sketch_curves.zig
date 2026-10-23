@@ -13,13 +13,11 @@
 const std = @import("std");
 const dag = @import("dag.zig");
 const bezier = @import("../core/bezier.zig");
+const affine2 = @import("../core/affine2.zig");
 
 /// The most curves collected for one sketch: a shared subgraph is visited once per path
 /// to it, so a graph of many unions of many copies can name more than a drawing needs.
 const MAX_CURVES = 10_000;
-/// How far from a similarity a transform's matrix may be (relative to its scale) and still
-/// keep a circle a circle.
-const SIMILARITY_TOLERANCE = 1e-9;
 
 /// A circle as drawn: its centre and radius after the sketch's transforms, and the points
 /// the kernel was given for it, in order around it: all the way round for a `circle`
@@ -52,45 +50,6 @@ pub const Curves = struct {
     }
 };
 
-/// A 2D affine transform as the graph stores one: column-major, x' = a x + c y + tx and
-/// y' = b x + d y + ty.
-const Matrix = struct {
-    m: [6]f64,
-
-    const identity = Matrix{ .m = .{ 1, 0, 0, 1, 0, 0 } };
-
-    /// This transform applied after `inner`.
-    fn then(self: Matrix, inner: [6]f64) Matrix {
-        const o = self.m;
-        return .{ .m = .{
-            o[0] * inner[0] + o[2] * inner[1],
-            o[1] * inner[0] + o[3] * inner[1],
-            o[0] * inner[2] + o[2] * inner[3],
-            o[1] * inner[2] + o[3] * inner[3],
-            o[0] * inner[4] + o[2] * inner[5] + o[4],
-            o[1] * inner[4] + o[3] * inner[5] + o[5],
-        } };
-    }
-
-    fn apply(self: Matrix, p: [2]f64) [2]f64 {
-        const o = self.m;
-        return .{ o[0] * p[0] + o[2] * p[1] + o[4], o[1] * p[0] + o[3] * p[1] + o[5] };
-    }
-
-    /// The factor a length is scaled by, when the transform keeps a circle a circle (its
-    /// two columns equally long and perpendicular); null when it makes an ellipse.
-    fn similarityScale(self: Matrix) ?f64 {
-        const o = self.m;
-        const sx = std.math.hypot(o[0], o[1]);
-        const sy = std.math.hypot(o[2], o[3]);
-        const scale = @max(sx, sy);
-        if (scale == 0) return null;
-        if (@abs(sx - sy) > SIMILARITY_TOLERANCE * scale) return null;
-        if (@abs(o[0] * o[2] + o[1] * o[3]) > SIMILARITY_TOLERANCE * scale * scale) return null;
-        return sx;
-    }
-};
-
 /// The curves below `root` (a sketch node of `b`). Owned by `allocator`.
 pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag.DAGNodeIndex) !Curves {
     var circles: std.ArrayList(Circle) = .empty;
@@ -103,10 +62,10 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
         for (cubics.items) |cubic| allocator.free(cubic.points);
         cubics.deinit(allocator);
     }
-    const Visit = struct { node: dag.DAGNodeIndex, matrix: Matrix };
+    const Visit = struct { node: dag.DAGNodeIndex, matrix: affine2.Matrix };
     var pending: std.ArrayList(Visit) = .empty;
     defer pending.deinit(allocator);
-    try pending.append(allocator, .{ .node = root, .matrix = Matrix.identity });
+    try pending.append(allocator, .{ .node = root, .matrix = affine2.identity });
     while (pending.pop()) |visit| {
         if (visit.node == dag.CONCRETE_NODE_SENTINEL) continue;
         if (circles.items.len + cubics.items.len >= MAX_CURVES) break;
@@ -119,8 +78,8 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
                     const curve = p.curve(@intCast(i));
                     const points = try allocator.dupe([2]f64, p.contour(curve.contour)[curve.first..][0..curve.count]);
                     errdefer allocator.free(points);
-                    for (points) |*pt| pt.* = visit.matrix.apply(pt.*);
-                    const control = bezier.Cubic{ .c1 = visit.matrix.apply(curve.cubic.c1), .c2 = visit.matrix.apply(curve.cubic.c2) };
+                    for (points) |*pt| pt.* = affine2.apply(visit.matrix, pt.*);
+                    const control = bezier.Cubic{ .c1 = affine2.apply(visit.matrix, curve.cubic.c1), .c2 = affine2.apply(visit.matrix, curve.cubic.c2) };
                     try cubics.append(allocator, .{ .control = control, .points = points });
                 }
             },
@@ -154,7 +113,7 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
             },
             .cs_transform => {
                 const p = b.getTransformPayload(node);
-                try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix.then(b.numbers.items[p.num_idx..][0..6].*) });
+                try pending.append(allocator, .{ .node = p.target, .matrix = affine2.compose(visit.matrix, b.numbers.items[p.num_idx..][0..6].*) });
             },
             .cs_set_name, .cs_set_material, .set_name, .set_material, .project_op, .slice_op => try pending.append(allocator, .{ .node = b.extra_data.items[node.data], .matrix = visit.matrix }),
             .cs_union_op, .cs_difference_op, .cs_intersection_op, .union_op, .difference_op, .intersection_op => {
@@ -178,16 +137,16 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
             // A Solid's moves that keep the XY plane are the sketch's
             .translate, .rotate, .scale, .mirror => {
                 const p = b.getTranslatePayload(node);
-                const flat: ?[6]f64 = switch (node.tag) {
-                    .translate => .{ 1, 0, 0, 1, p.x, p.y },
-                    .rotate => if (p.x == 0 and p.y == 0) turn(p.z) else null,
-                    .scale => .{ p.x, 0, 0, p.y, 0, 0 },
+                const flat: ?affine2.Matrix = switch (node.tag) {
+                    .translate => affine2.translation(p.x, p.y),
+                    .rotate => if (p.x == 0 and p.y == 0) affine2.rotation(p.z) else null,
+                    .scale => affine2.scaling(p.x, p.y),
                     // Across a vertical plane: its normal lies in XY; across a horizontal
                     // one nothing moves in XY
-                    .mirror => if (p.z == 0) mirror(p.x, p.y) else if (p.x == 0 and p.y == 0) Matrix.identity.m else null,
+                    .mirror => if (p.z == 0) affine2.reflection(p.x, p.y) else if (p.x == 0 and p.y == 0) affine2.identity else null,
                     else => unreachable,
                 };
-                if (flat) |m| try pending.append(allocator, .{ .node = p.target, .matrix = visit.matrix.then(m) });
+                if (flat) |m| try pending.append(allocator, .{ .node = p.target, .matrix = affine2.compose(visit.matrix, m) });
             },
             // An offset draws its own outline; a revolve, hull, Minkowski sum, trim or
             // concrete leaf gives a shape of its own; the rest have no circle
@@ -204,28 +163,14 @@ pub fn collect(allocator: std.mem.Allocator, b: *const dag.DAGBuilder, root: dag
 
 /// Adds the circle of `radius` at `center` drawn with `points` (owned from here on), as
 /// `matrix` places it, if the matrix keeps it a circle.
-fn addCircle(allocator: std.mem.Allocator, circles: *std.ArrayList(Circle), matrix: Matrix, center: [2]f64, radius: f64, points: [][2]f64, closed: bool) !void {
+fn addCircle(allocator: std.mem.Allocator, circles: *std.ArrayList(Circle), matrix: affine2.Matrix, center: [2]f64, radius: f64, points: [][2]f64, closed: bool) !void {
     errdefer allocator.free(points);
-    const scale = matrix.similarityScale() orelse {
+    const scale = affine2.similarityScale(matrix) orelse {
         allocator.free(points);
         return;
     };
-    for (points) |*p| p.* = matrix.apply(p.*);
-    try circles.append(allocator, .{ .center = matrix.apply(center), .radius = radius * scale, .points = points, .closed = closed });
-}
-
-/// A turn of `degrees` about z, as the kernel turns a Solid about z.
-fn turn(degrees: f64) [6]f64 {
-    const rad = degrees * std.math.pi / 180.0;
-    return .{ @cos(rad), @sin(rad), -@sin(rad), @cos(rad), 0, 0 };
-}
-
-/// A mirror across the vertical plane whose normal is (`nx`, `ny`) in XY.
-fn mirror(nx: f64, ny: f64) [6]f64 {
-    const len = std.math.hypot(nx, ny);
-    const x = nx / len;
-    const y = ny / len;
-    return .{ 1 - 2 * x * x, -2 * x * y, -2 * x * y, 1 - 2 * y * y, 0, 0 };
+    for (points) |*p| p.* = affine2.apply(matrix, p.*);
+    try circles.append(allocator, .{ .center = affine2.apply(matrix, center), .radius = radius * scale, .points = points, .closed = closed });
 }
 
 /// The points the kernel draws a circle of `radius` with: `segments` of them from the +x

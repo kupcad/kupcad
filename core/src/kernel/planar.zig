@@ -1,6 +1,7 @@
 //! Engine-independent 2D geometry: point-in-region tests over polygon contours.
 
 const std = @import("std");
+const segmentDistanceSq = @import("../core/affine2.zig").segmentDistanceSq;
 
 pub const Vec2 = [2]f64;
 
@@ -15,17 +16,6 @@ pub fn edgeWinding(a: Vec2, b: Vec2, p: Vec2) i32 {
         return -1;
     }
     return 0;
-}
-
-/// Squared distance from `p` to the segment a - b.
-pub fn segmentDistanceSq(a: Vec2, b: Vec2, p: Vec2) f64 {
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const len_sq = dx * dx + dy * dy;
-    const t = if (len_sq == 0) 0 else std.math.clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len_sq, 0, 1);
-    const ex = a[0] + t * dx - p[0];
-    const ey = a[1] + t * dy - p[1];
-    return ex * ex + ey * ey;
 }
 
 /// Accumulates the contours of a region and answers whether `point` lies in it.

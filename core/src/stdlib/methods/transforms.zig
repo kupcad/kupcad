@@ -11,6 +11,7 @@ const kernel = @import("../../kernel/kernel.zig");
 const util = @import("util.zig");
 const sig = @import("../method_signatures.zig");
 const limits = @import("../../core/limits.zig");
+const affine2 = @import("../../core/affine2.zig");
 
 // A Sketch lies in the XY plane, so its transforms stay in that plane. A component that
 // would move it out of the plane is a ValueError: it used to be dropped silently, so
@@ -31,7 +32,7 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
         if (vec[2] != 0.0) {
             return vm.fail(.ValueError, "a Sketch can only translate in x and y (it lies in the XY plane), got z {f}; extrude it to lift it", .{value.fmtNumber(vec[2])});
         }
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, vec[0], vec[1] };
+        const mat = affine2.translation(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -50,10 +51,7 @@ pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const rad = try sketchRotation(vm, args, vec) * std.math.pi / 180.0;
-        const cos_a = std.math.cos(rad);
-        const sin_a = std.math.sin(rad);
-        const mat = [6]f64{ cos_a, sin_a, -sin_a, cos_a, 0.0, 0.0 };
+        const mat = affine2.rotation(try sketchRotation(vm, args, vec));
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -90,7 +88,7 @@ pub fn meshScale(vm: *VM, receiver: value.Value, args: []const value.Value) !val
         const new_idx = try vm.dag_builder.addScale(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ vec[0], 0.0, 0.0, vec[1], 0.0, 0.0 };
+        const mat = affine2.scaling(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -135,7 +133,7 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, tx, ty };
+        const mat = affine2.translation(tx, ty);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -214,7 +212,7 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
         return try vm.allocateGeometry(.{ .symbolic = new_idx });
     } else if (receiver.isCrossSection()) {
-        const mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, tx, ty };
+        const mat = affine2.translation(tx, ty);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
@@ -233,11 +231,7 @@ pub fn meshMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
         if (vec[2] != 0.0) {
             return vm.fail(.ValueError, "a Sketch can only mirror across a line in the XY plane, got a normal with z {f}", .{value.fmtNumber(vec[2])});
         }
-        const len = std.math.hypot(vec[0], vec[1]);
-        const nx = vec[0] / len;
-        const ny = vec[1] / len;
-        // The reflection I - 2nn^T (symmetric, so its column-major layout is the same).
-        const mat = [6]f64{ 1.0 - 2.0 * nx * nx, -2.0 * nx * ny, -2.0 * nx * ny, 1.0 - 2.0 * ny * ny, 0.0, 0.0 };
+        const mat = affine2.reflection(vec[0], vec[1]);
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }

@@ -4,6 +4,7 @@
 //! drawing can write it exactly again.
 
 const std = @import("std");
+const affine2 = @import("affine2.zig");
 
 /// A cubic Bézier curve's two control points; its ends are the points it runs between.
 pub const Cubic = struct {
@@ -51,18 +52,6 @@ inline fn midpoint(a: [2]f64, b: [2]f64) [2]f64 {
     return .{ (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 };
 }
 
-/// Calculates the squared distance from point `p` to the line segment `v-w`
-fn distToSegmentSq(p: [2]f64, v: [2]f64, w: [2]f64) f64 {
-    const l2 = std.math.pow(f64, v[0] - w[0], 2) + std.math.pow(f64, v[1] - w[1], 2);
-    if (l2 == 0) return std.math.pow(f64, p[0] - v[0], 2) + std.math.pow(f64, p[1] - v[1], 2);
-
-    var t = ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2;
-    t = std.math.clamp(t, 0.0, 1.0);
-
-    const proj = [2]f64{ v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1]) };
-    return std.math.pow(f64, p[0] - proj[0], 2) + std.math.pow(f64, p[1] - proj[1], 2);
-}
-
 /// Recursively flattens a Quadratic Bézier curve.
 /// We do NOT append p0, because the previous curve/line/moveTo will have already appended it.
 pub fn flattenQuadratic(
@@ -73,7 +62,7 @@ pub fn flattenQuadratic(
     p2: [2]f64,
     toleranceSq: f64,
 ) !void {
-    const d = distToSegmentSq(p1, p0, p2);
+    const d = affine2.segmentDistanceSq(p0, p2, p1);
 
     // If the control point is close enough to the straight line p0-p2, it's flat!
     if (d <= toleranceSq) {
@@ -100,8 +89,8 @@ pub fn flattenCubic(
     p3: [2]f64,
     toleranceSq: f64,
 ) !void {
-    const d1 = distToSegmentSq(p1, p0, p3);
-    const d2 = distToSegmentSq(p2, p0, p3);
+    const d1 = affine2.segmentDistanceSq(p0, p3, p1);
+    const d2 = affine2.segmentDistanceSq(p0, p3, p2);
 
     // If both control points are close to the straight line p0-p3, it's flat!
     if (d1 <= toleranceSq and d2 <= toleranceSq) {

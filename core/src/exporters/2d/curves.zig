@@ -12,6 +12,7 @@
 //! no corner, and would cut a chord in two.
 
 const std = @import("std");
+const affine2 = @import("../../core/affine2.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const drawing = @import("drawing.zig");
 const sketch_curves = @import("../../vm/sketch_curves.zig");
@@ -56,30 +57,20 @@ pub fn outlinesOf(allocator: std.mem.Allocator, contours: geom.Contours, curves:
     return outlines.toOwnedSlice(allocator);
 }
 
-/// `contour` without the points that lie on the line between their neighbours (within the
-/// index's tolerance of it, and between them) and are no curve's, as a closed polygon.
-/// Owned by `allocator`.
+/// `contour` without the points that lie on the segment between their neighbours (within
+/// the index's tolerance of it) and are no curve's, as a closed polygon. Owned by
+/// `allocator`.
 fn withoutCollinear(allocator: std.mem.Allocator, contour: []const [2]f64, index: *const PointIndex) ![][2]f64 {
     var kept: std.ArrayList([2]f64) = .empty;
     errdefer kept.deinit(allocator);
     const n = contour.len;
     for (contour, 0..) |p, i| {
-        if (n >= 3 and !index.has(p) and onSegment(p, contour[(i + n - 1) % n], contour[(i + 1) % n], index.tolerance)) continue;
+        const before = contour[(i + n - 1) % n];
+        const after = contour[(i + 1) % n];
+        if (n >= 3 and !index.has(p) and !std.meta.eql(before, after) and affine2.segmentDistanceSq(before, after, p) <= index.tolerance * index.tolerance) continue;
         try kept.append(allocator, p);
     }
     return kept.toOwnedSlice(allocator);
-}
-
-/// Whether `p` lies on the segment from `a` to `b`, within `tolerance` of the line and
-/// between the ends.
-fn onSegment(p: [2]f64, a: [2]f64, b: [2]f64, tolerance: f64) bool {
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const len = std.math.hypot(dx, dy);
-    if (len == 0) return false;
-    const cross = @abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / len;
-    const along = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len;
-    return cross <= tolerance and along >= -tolerance and along <= len + tolerance;
 }
 
 /// `points` as an outline, the edges whose pieces lie on one circle in a row merged into

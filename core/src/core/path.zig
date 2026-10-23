@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const bezier = @import("bezier.zig");
+const affine2 = @import("affine2.zig");
 
 /// What a Path can't be and why, for every message that says so: a 3D export's refusal,
 /// the VM's NoMethodError (an `extrude`) and the lint (`shape-mismatch`).
@@ -66,19 +67,19 @@ pub const Segment = struct {
         return sweep(arc.center, from, p, self.ccw) <= self.angle;
     }
 
-    /// The segment as `matrix` (column-major, x' = a x + c y + tx) places it: a similarity
+    /// The segment as `matrix` (core/affine2.zig) places it: a similarity
     /// keeps an arc an arc, turned over by a mirror; anything else (an uneven scale) can't
     /// keep it one, and the caller draws the arc as lines first. Any affine keeps a cubic
     /// a cubic, its controls moved with it.
     pub fn transformed(self: Segment, matrix: [6]f64) Segment {
         var out = self;
-        out.to = apply(matrix, self.to);
+        out.to = affine2.apply(matrix, self.to);
         if (self.arc) |arc| {
             const det = matrix[0] * matrix[3] - matrix[1] * matrix[2];
-            out.arc = .{ .center = apply(matrix, arc.center), .radius = arc.radius * std.math.hypot(matrix[0], matrix[1]) };
+            out.arc = .{ .center = affine2.apply(matrix, arc.center), .radius = arc.radius * std.math.hypot(matrix[0], matrix[1]) };
             if (det < 0) out.ccw = !self.ccw;
         }
-        if (self.cubic) |cubic| out.cubic = .{ .c1 = apply(matrix, cubic.c1), .c2 = apply(matrix, cubic.c2) };
+        if (self.cubic) |cubic| out.cubic = .{ .c1 = affine2.apply(matrix, cubic.c1), .c2 = affine2.apply(matrix, cubic.c2) };
         return out;
     }
 };
@@ -90,24 +91,6 @@ pub fn sweep(center: [2]f64, from: [2]f64, to: [2]f64, ccw: bool) f64 {
     const d = if (ccw) a1 - a0 else a0 - a1;
     return if (d < 0) d + 2 * std.math.pi else d;
 }
-
-/// `p` as the column-major 2D affine `matrix` places it.
-pub fn apply(matrix: [6]f64, p: [2]f64) [2]f64 {
-    return .{ matrix[0] * p[0] + matrix[2] * p[1] + matrix[4], matrix[1] * p[0] + matrix[3] * p[1] + matrix[5] };
-}
-
-/// Whether `matrix` keeps a circle a circle: its columns equally long and perpendicular
-/// (a move, a turn, a uniform scale, a mirror).
-pub fn isSimilarity(matrix: [6]f64) bool {
-    const sx = std.math.hypot(matrix[0], matrix[1]);
-    const sy = std.math.hypot(matrix[2], matrix[3]);
-    const scale = @max(sx, sy);
-    if (scale == 0) return false;
-    return @abs(sx - sy) <= SIMILARITY_TOLERANCE * scale and @abs(matrix[0] * matrix[2] + matrix[1] * matrix[3]) <= SIMILARITY_TOLERANCE * scale * scale;
-}
-
-/// How far from a similarity a matrix may be, relative to its scale, and still keep arcs.
-const SIMILARITY_TOLERANCE = 1e-9;
 
 /// The point of `arc`'s circle at `degrees` from the +x axis.
 pub fn pointAt(arc: Arc, degrees: f64) [2]f64 {

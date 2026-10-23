@@ -11,6 +11,7 @@ const VM = @import("../vm/vm.zig").VM;
 const tatfi = @import("tatfi");
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
+const affine2 = @import("../core/affine2.zig");
 
 /// The names of one option. Two of a group in one call are an error: `d:` silently beat
 /// `r:`, `radius:` both, `size:` an `x:`.
@@ -485,7 +486,7 @@ pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
     const circ_idx = try vm.dag_builder.addCircle(minor_r, circ_segs);
 
     // Translate the circle outward by the major radius
-    const trans_mat = [6]f64{ 1.0, 0.0, 0.0, 1.0, major_r, 0.0 };
+    const trans_mat = affine2.translation(major_r, 0);
     const trans_idx = try vm.dag_builder.addCrossSectionTransform(circ_idx, trans_mat);
 
     // Revolve the translated circle 360 degrees around the origin
