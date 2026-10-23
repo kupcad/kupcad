@@ -1,5 +1,6 @@
-//! What is wrong with a drawing a reader (dxf_read.zig, svg_read.zig) can't read: one
-//! message, formatted where the reader finds the fault, for the import to raise.
+//! What is wrong with a file a reader (a drawing's, 2d/dxf_read.zig and 2d/svg_read.zig, or
+//! a mesh's, 3d/obj_read.zig and 3d/threemf_read.zig) can't read: one message, formatted
+//! where the reader finds the fault, for the import to raise.
 
 const std = @import("std");
 
@@ -15,9 +16,9 @@ pub const Diagnostic = struct {
     }
 
     /// Keeps the message (cut short at MESSAGE_CAPACITY) and gives the error to return.
-    pub fn fail(self: *Diagnostic, comptime fmt: []const u8, args: anytype) error{InvalidDrawing} {
+    pub fn fail(self: *Diagnostic, comptime fmt: []const u8, args: anytype) error{Unreadable} {
         const written = std.fmt.bufPrint(&self.buffer, fmt, args) catch self.buffer[0..];
         self.len = written.len;
-        return error.InvalidDrawing;
+        return error.Unreadable;
     }
 };

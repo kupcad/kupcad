@@ -21,7 +21,7 @@ const path = @import("../../core/path.zig");
 const affine2 = @import("../../core/affine2.zig");
 const bezier = @import("../../core/bezier.zig");
 const limits = @import("../../core/limits.zig");
-pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
+pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
 const MM_PER_PX = 25.4 / 96.0;
@@ -70,7 +70,7 @@ pub const Drawing = struct {
     }
 };
 
-pub const Error = error{InvalidDrawing} || std.mem.Allocator.Error;
+pub const Error = error{Unreadable} || std.mem.Allocator.Error;
 
 /// The outlines of the SVG `text`, as `options` says.
 pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
@@ -126,7 +126,7 @@ const Scanner = struct {
     pos: usize = 0,
 
     /// The next tag, past text, comments, CDATA, processing instructions and the DOCTYPE.
-    fn next(self: *Scanner, diag: *Diagnostic) error{InvalidDrawing}!?Tag {
+    fn next(self: *Scanner, diag: *Diagnostic) error{Unreadable}!?Tag {
         while (true) {
             const open = std.mem.findScalarPos(u8, self.text, self.pos, '<') orelse return null;
             const rest = self.text[open..];
@@ -145,12 +145,12 @@ const Scanner = struct {
         }
     }
 
-    fn past(self: *Scanner, from: usize, end: []const u8, what: []const u8, diag: *Diagnostic) error{InvalidDrawing}!usize {
+    fn past(self: *Scanner, from: usize, end: []const u8, what: []const u8, diag: *Diagnostic) error{Unreadable}!usize {
         const at = std.mem.findPos(u8, self.text, from, end) orelse return diag.fail("line {d}: {s} doesn't end", .{ lineOf(self.text, from), what });
         return at + end.len;
     }
 
-    fn tag(self: *Scanner, open: usize, diag: *Diagnostic) error{InvalidDrawing}!Tag {
+    fn tag(self: *Scanner, open: usize, diag: *Diagnostic) error{Unreadable}!Tag {
         // The '>' that ends it, outside its quoted values
         var i = open + 1;
         var quote: ?u8 = null;
@@ -403,7 +403,7 @@ const Reader = struct {
         return .{ .at = ALIGNS.get(word) orelse return self.badAlign(tag, text), .slice = slice };
     }
 
-    fn badAlign(self: *Reader, tag: Tag, text: []const u8) error{InvalidDrawing} {
+    fn badAlign(self: *Reader, tag: Tag, text: []const u8) error{Unreadable} {
         return self.diag.fail("line {d}: the preserveAspectRatio \"{s}\" of a <{s}> isn't SVG's", .{ lineOf(self.text, tag.offset), text, tag.name });
     }
 
@@ -492,7 +492,7 @@ const Reader = struct {
         }
     }
 
-    fn badTransform(self: *Reader, tag: Tag, text: []const u8) error{InvalidDrawing} {
+    fn badTransform(self: *Reader, tag: Tag, text: []const u8) error{Unreadable} {
         return self.diag.fail("line {d}: the transform \"{s}\" of a <{s}> isn't one SVG has", .{ lineOf(self.text, tag.offset), text[0..@min(text.len, 60)], tag.name });
     }
 

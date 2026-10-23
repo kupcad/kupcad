@@ -16,7 +16,8 @@ const path_mod = @import("../core/path.zig");
 const paths = @import("paths.zig");
 const dxf_read = @import("../exporters/2d/dxf_read.zig");
 const svg_read = @import("../exporters/2d/svg_read.zig");
-const Diagnostic = @import("../exporters/2d/diagnostic.zig").Diagnostic;
+const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
+const file_import = @import("file_import.zig");
 
 pub const IMPORT_DXF = Signature{ .positional = &.{"path"}, .keywords = &.{ "layers", "tolerance", "paths" }, .sizes = &.{"tolerance"} };
 pub const IMPORT_SVG = Signature{ .positional = &.{"path"}, .keywords = &.{ "tolerance", "paths" }, .sizes = &.{"tolerance"} };
@@ -33,11 +34,11 @@ pub fn nativeImportDxf(vm: *VM, args: []const value.Value) !value.Value {
     const layers = if (parsed.opts.layers) |v| try layerNames(vm, v) else null;
     defer if (layers) |names| vm.allocator.free(names);
 
-    const file = try readDrawing(vm, file_path, "DXF");
+    const file = try file_import.read(vm, file_path, "DXF", limits.MAX_DRAWING_BYTES);
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
     var drawing = dxf_read.read(vm.allocator, file, .{ .tolerance = tolerance, .layers = layers, .keep_open = parsed.opts.paths }, &diag) catch |err| {
-        return unreadable(vm, err, file_path, "DXF", &diag);
+        return file_import.unreadable(vm, err, file_path, "DXF", &diag);
     };
     defer drawing.deinit();
     if (layers) |names| for (names) |name| {
@@ -56,11 +57,11 @@ pub fn nativeImportDxf(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativeImportSvg(vm: *VM, args: []const value.Value) !value.Value {
     const parsed = try arguments.parseKwargsSubset(struct { tolerance: ?f64 = null, paths: bool = false }, IMPORT_SVG.keywords, vm, args, "import_svg");
     const file_path, const tolerance = try pathAndTolerance(vm, parsed.positional, parsed.opts.tolerance, "import_svg", "an SVG file");
-    const file = try readDrawing(vm, file_path, "SVG");
+    const file = try file_import.read(vm, file_path, "SVG", limits.MAX_DRAWING_BYTES);
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
     var drawing = svg_read.read(vm.allocator, file, .{ .tolerance = tolerance }, &diag) catch |err| {
-        return unreadable(vm, err, file_path, "SVG", &diag);
+        return file_import.unreadable(vm, err, file_path, "SVG", &diag);
     };
     defer drawing.deinit();
     if (parsed.opts.paths) return pathsOf(vm, drawing.open_paths, file_path, "SVG");
@@ -75,28 +76,6 @@ fn pathAndTolerance(vm: *VM, positional: []const value.Value, given: ?f64, compt
     const tolerance = given orelse vm.config().tolerance;
     try arguments.requirePositive(vm, tolerance, method, "tolerance");
     return .{ file_path, tolerance };
-}
-
-/// The file at `file_path`, owned by vm.allocator: an ImportError when it can't be read
-/// or is past limits.MAX_DRAWING_BYTES.
-fn readDrawing(vm: *VM, file_path: []const u8, comptime format: []const u8) ![]u8 {
-    const file = vm.readScriptFile(file_path) catch |err| {
-        if (err == error.OutOfMemory) return err;
-        return vm.fail(.ImportError, "could not read " ++ format ++ " file '{s}': {s}", .{ file_path, @errorName(err) });
-    };
-    errdefer vm.allocator.free(file);
-    if (file.len > limits.MAX_DRAWING_BYTES) {
-        return vm.fail(.ImportError, format ++ " file '{s}' is {d} bytes; a script reads at most {d}", .{ file_path, file.len, limits.MAX_DRAWING_BYTES });
-    }
-    return file;
-}
-
-/// The ImportError of a reader's `err`, with what `diag` says of it.
-fn unreadable(vm: *VM, err: dxf_read.Error, file_path: []const u8, comptime format: []const u8, diag: *const Diagnostic) error{ RuntimeError, OutOfMemory } {
-    return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        error.InvalidDrawing => vm.fail(.ImportError, "could not read " ++ format ++ " file '{s}': {s}", .{ file_path, diag.message() }),
-    };
 }
 
 /// The Sketch of a drawing's outlines, an ImportError when it has none.

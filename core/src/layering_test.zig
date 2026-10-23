@@ -24,10 +24,11 @@ const RULES = [_]Rule{
     .{ .path = "exporters/", .may_import = &.{ "exporters/", "core/", "kernel/", "bindings/", "vm/" } },
     // The format writers take kernel handles and plain data; export.zig, model.zig and
     // parts.zig evaluate a VM's model for them
-    .{ .path = "exporters/3d/", .may_import = &.{ "exporters/3d/", "exporters/zip.zig", "core/", "kernel/", "bindings/" } },
-    .{ .path = "exporters/2d/", .may_import = &.{ "exporters/2d/", "exporters/names.zig", "core/", "kernel/" } },
+    .{ .path = "exporters/3d/", .may_import = &.{ "exporters/3d/", "exporters/zip.zig", "exporters/diagnostic.zig", "core/", "kernel/", "bindings/" } },
+    .{ .path = "exporters/2d/", .may_import = &.{ "exporters/2d/", "exporters/names.zig", "exporters/diagnostic.zig", "core/", "kernel/" } },
     .{ .path = "exporters/2d/sketch_curves.zig", .may_import = &.{ "exporters/2d/", "core/", "kernel/", "vm/dag.zig" } },
     .{ .path = "exporters/names.zig", .may_import = &.{} },
+    .{ .path = "exporters/diagnostic.zig", .may_import = &.{} },
     .{ .path = "pkg/", .may_import = &.{ "pkg/", "core/", "vfs/", "log.zig" } },
     .{ .path = "tools/", .may_import = &.{ "tools/", "core/", "frontend/", "kernel/", "stdlib/", "vm/", "compiler/" } },
     .{ .path = "session/", .may_import = &.{ "session/", "core/", "frontend/", "compiler/", "vm/", "kernel/", "stdlib/", "vfs/", "api.zig" } },

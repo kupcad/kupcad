@@ -1,7 +1,8 @@
 //! The script's file methods: `export_stl`, `export_gltf`, `export_step`, `export_3mf` and
 //! `export_obj` on a Solid or an Assembly, `export_svg` and `export_dxf` on any shape (a
-//! drawing, through exporters/export.zig), and `import_stl` / `import_step` / `import_font`
-//! (`import_json` is in json.zig). The formats themselves are in exporters/3d and
+//! drawing, through exporters/export.zig), and `import_step` / `import_font` (`import_json`
+//! is in json.zig, the meshes' imports in mesh_import.zig, the drawings' in
+//! drawing_import.zig). The formats themselves are in exporters/3d and
 //! exporters/2d, which know nothing of scripts.
 
 const std = @import("std");
@@ -112,21 +113,6 @@ pub fn meshExportSvg(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
 pub fn meshExportDxf(vm: *VM, receiver: value.Value, filepath: []const u8) !value.Value {
     try exportTo(vm, receiver, filepath, .dxf, .{}, "export_dxf");
     return receiver;
-}
-
-pub fn nativeImportStl(vm: *VM, path_str: []const u8) !value.Value {
-    const file_buf = vm.readScriptFile(path_str) catch |err| {
-        return vm.fail(.ImportError, "could not read STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer vm.allocator.free(file_buf);
-
-    var stl_mesh = stl.parseStlBuffer(vm.allocator, file_buf) catch |err| {
-        return vm.fail(.ImportError, "could not parse STL file '{s}': {s}", .{ path_str, @errorName(err) });
-    };
-    defer stl_mesh.deinit(vm.allocator);
-
-    const dag_idx = try vm.dag_builder.addPolyhedron(stl_mesh.points, stl_mesh.faces);
-    return try vm.allocateGeometry(.{ .symbolic = dag_idx });
 }
 
 /// import_font(path) -> the font file at `path` as a Font, for `text(font:)`: what

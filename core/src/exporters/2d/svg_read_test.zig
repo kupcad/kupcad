@@ -15,7 +15,7 @@ fn read(text: []const u8) !svg_read.Drawing {
 
 fn expectRefused(text: []const u8, message: []const u8) !void {
     var diag: svg_read.Diagnostic = .{};
-    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
+    try testing.expectError(error.Unreadable, svg_read.read(testing.allocator, text, .{ .tolerance = 1e-6 }, &diag));
     try testing.expectEqualStrings(message, diag.message());
 }
 
@@ -232,7 +232,7 @@ test "SVG read: uses that draw themselves, or more than they may, are refused" {
     var diag: svg_read.Diagnostic = .{};
     const nested = MM ++ "<defs><g id=\"a\"><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/></g>" ++
         "<g id=\"b\"><use href=\"#a\"/><use href=\"#a\"/></g></defs><use href=\"#b\"/><use href=\"#b\"/><use href=\"#b\"/></svg>";
-    try testing.expectError(error.InvalidDrawing, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .max_cloned = 10 }, &diag));
+    try testing.expectError(error.Unreadable, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .max_cloned = 10 }, &diag));
     try testing.expectEqualStrings("its <use>s would draw more than 10 elements; a script reads at most that", diag.message());
 }
 

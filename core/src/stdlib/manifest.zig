@@ -15,6 +15,7 @@ const paths = @import("paths.zig");
 const Signature = @import("signature.zig").Signature;
 const sig = @import("method_signatures.zig");
 const files = @import("files.zig");
+const mesh_import = @import("mesh_import.zig");
 const json = @import("json.zig");
 const drawing_import = @import("drawing_import.zig");
 const dag = @import("../vm/dag.zig");
@@ -170,7 +171,7 @@ pub const global_functions = [_]GlobalFunction{
     primitive("torus", .primitive_3d, primitives.nativeTorus, &primitives.TORUS),
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
-    .{ .name = "import_stl", .func = common.wrapGlobal(files.nativeImportStl), .category = .file_io, .result = .solid },
+    .{ .name = "import_stl", .func = common.wrapGlobal(mesh_import.nativeImportStl), .category = .file_io, .result = .solid },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },

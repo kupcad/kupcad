@@ -19,7 +19,7 @@ const bezier = @import("../../core/bezier.zig");
 const bspline = @import("../../core/bspline.zig");
 const affine2 = @import("../../core/affine2.zig");
 const limits = @import("../../core/limits.zig");
-pub const Diagnostic = @import("diagnostic.zig").Diagnostic;
+pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 
 /// The layer of an entity that names none.
 const DEFAULT_LAYER = "0";
@@ -82,7 +82,7 @@ pub const Drawing = struct {
     }
 };
 
-pub const Error = error{InvalidDrawing} || std.mem.Allocator.Error;
+pub const Error = error{Unreadable} || std.mem.Allocator.Error;
 
 /// The outlines of the DXF `text`, as `options` says.
 pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
@@ -107,7 +107,7 @@ const Pairs = struct {
     line: usize = 0,
     peeked: ?Pair = null,
 
-    fn next(self: *Pairs, diag: *Diagnostic) error{InvalidDrawing}!?Pair {
+    fn next(self: *Pairs, diag: *Diagnostic) error{Unreadable}!?Pair {
         if (self.peeked) |pair| {
             self.peeked = null;
             return pair;
@@ -121,7 +121,7 @@ const Pairs = struct {
         return .{ .code = code, .value = value, .line = at };
     }
 
-    fn peek(self: *Pairs, diag: *Diagnostic) error{InvalidDrawing}!?Pair {
+    fn peek(self: *Pairs, diag: *Diagnostic) error{Unreadable}!?Pair {
         if (self.peeked == null) self.peeked = try self.next(diag);
         return self.peeked;
     }
@@ -163,18 +163,18 @@ const Entity = struct {
         return null;
     }
 
-    fn number(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDrawing}!?f64 {
+    fn number(self: Entity, code: i32, diag: *Diagnostic) error{Unreadable}!?f64 {
         for (self.pairs) |pair| if (pair.code == code) return try numberOf(pair, diag);
         return null;
     }
 
-    fn required(self: Entity, code: i32, diag: *Diagnostic) error{InvalidDrawing}!f64 {
+    fn required(self: Entity, code: i32, diag: *Diagnostic) error{Unreadable}!f64 {
         return try self.number(code, diag) orelse diag.fail("line {d}: the {s} has no group {d}", .{ self.line, self.kind, code });
     }
 
     /// Its normal (210, 220, 230): whether it is the XY plane's turned over (-z), which
     /// mirrors the entity's own x; another plane is an error.
-    fn flipped(self: Entity, diag: *Diagnostic) error{InvalidDrawing}!bool {
+    fn flipped(self: Entity, diag: *Diagnostic) error{Unreadable}!bool {
         const x = try self.number(210, diag) orelse 0;
         const y = try self.number(220, diag) orelse 0;
         const z = try self.number(230, diag) orelse 1;
@@ -183,7 +183,7 @@ const Entity = struct {
     }
 };
 
-fn numberOf(pair: Pair, diag: *Diagnostic) error{InvalidDrawing}!f64 {
+fn numberOf(pair: Pair, diag: *Diagnostic) error{Unreadable}!f64 {
     const n = std.fmt.parseFloat(f64, std.mem.trim(u8, pair.value, " \t")) catch {
         return diag.fail("line {d}: group {d} should be a number, got '{s}'", .{ pair.line + 1, pair.code, pair.value[0..@min(pair.value.len, 40)] });
     };

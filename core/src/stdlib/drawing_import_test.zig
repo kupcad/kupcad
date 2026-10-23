@@ -7,7 +7,7 @@ const path = @import("../core/path.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const dxf_read = @import("../exporters/2d/dxf_read.zig");
 const svg_read = @import("../exporters/2d/svg_read.zig");
-const Diagnostic = @import("../exporters/2d/diagnostic.zig").Diagnostic;
+const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
 const expectScripts = support.expectScripts;
 const rescued = support.rescued;
 
