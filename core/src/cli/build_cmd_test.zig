@@ -10,7 +10,7 @@ const STL_TRIANGLE_LEN = 50;
 const GLB_MAGIC = "glTF";
 const STEP_MAGIC = "ISO-10303-21";
 
-const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf) or pass --format.\n";
+const UNKNOWN_EXTENSION_HINT = "Use an extension (.stl, .glb, .gltf, .step, .stp, .3mf, .obj) or pass --format.\n";
 
 const Result = struct {
     outcome: build_cmd.Outcome,
@@ -95,7 +95,7 @@ test "build_cmd: invalid arguments fail before touching the filesystem" {
         .{ .args = &.{ "model.kup", "--split" }, .message = "Error: Missing directory after --split\n" },
         .{ .args = &.{ "model.kup", "--split", "parts", "-o", "x.stl" }, .message = "Error: --split writes a file per part into its directory; leave out -o\n" },
         .{ .args = &.{ "model.kup", "-f" }, .message = "Error: Missing format after -f\n" },
-        .{ .args = &.{ "model.kup", "--format", "obj" }, .message = "Error: Unsupported format 'obj'. Allowed: stl, glb, gltf, step, 3mf\n" },
+        .{ .args = &.{ "model.kup", "--format", "wrl" }, .message = "Error: Unsupported format 'wrl'. Allowed: stl, glb, gltf, step, 3mf, obj\n" },
     };
     for (cases) |case| {
         var res = try runBuild(case.args);
@@ -372,7 +372,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.STL", .format = "glb", .expect = .{ .rejected = "Error: --format glb conflicts with output extension .STL\n" } },
         .{ .output = "part.stp", .format = "gltf", .expect = .{ .rejected = "Error: --format gltf conflicts with output extension .stp\n" } },
         // Unrecognized or missing extensions need an explicit --format.
-        .{ .output = "part.obj", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
+        .{ .output = "part.wrl", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
         .{ .output = "part", .expect = .{ .rejected = UNKNOWN_EXTENSION_HINT } },
         .{ .output = "part.bin", .format = "stl", .expect = .{ .written = .{ .name = "part.bin", .kind = .stl } } },
         // Without -o the name is derived from the input stem and the format.

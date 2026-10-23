@@ -22,6 +22,7 @@ const stl_exporter = @import("exporters/3d/stl.zig");
 const gltf_exporter = @import("exporters/3d/gltf.zig");
 const step_exporter = @import("exporters/3d/step.zig");
 const threemf_exporter = @import("exporters/3d/threemf.zig");
+const obj_exporter = @import("exporters/3d/obj.zig");
 const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
 
@@ -417,6 +418,8 @@ pub const ExportFormat = enum {
     step,
     /// 3D Manufacturing Format: each part once, placed once per copy (exporters/3d/threemf.zig).
     @"3mf",
+    /// Wavefront OBJ: an object per Solid, in millimetres and Z up (exporters/3d/obj.zig).
+    obj,
 
     /// What a format holds: a 3D format the model's Solids, a 2D one its Sketches.
     pub const Dimension = enum { @"2d", @"3d" };
@@ -454,7 +457,7 @@ pub const ExportFormat = enum {
 
     pub fn dimension(self: ExportFormat) Dimension {
         return switch (self) {
-            .stl, .glb, .gltf, .step, .@"3mf" => .@"3d",
+            .stl, .glb, .gltf, .step, .@"3mf", .obj => .@"3d",
         };
     }
 
@@ -466,6 +469,7 @@ pub const ExportFormat = enum {
             .gltf => &.{".gltf"},
             .step => &.{ ".step", ".stp" },
             .@"3mf" => &.{".3mf"},
+            .obj => &.{".obj"},
         };
     }
 
@@ -478,7 +482,7 @@ pub const ExportFormat = enum {
     pub fn supportsDraco(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf" => false,
+            .stl, .step, .@"3mf", .obj => false,
         };
     }
 
@@ -487,7 +491,7 @@ pub const ExportFormat = enum {
     pub fn showsGhosts(self: ExportFormat) bool {
         return switch (self) {
             .glb, .gltf => true,
-            .stl, .step, .@"3mf" => false,
+            .stl, .step, .@"3mf", .obj => false,
         };
     }
 
@@ -496,7 +500,7 @@ pub const ExportFormat = enum {
     pub fn requiredEngine(self: ExportFormat) ?geom.EngineType {
         return switch (self) {
             .step => .brep_native,
-            .stl, .glb, .gltf, .@"3mf" => null,
+            .stl, .glb, .gltf, .@"3mf", .obj => null,
         };
     }
 };
@@ -532,6 +536,7 @@ fn exportSolids(
         // The parts once each, placed per copy: the Solids themselves, not their meshes. The
         // ghosts are the viewer's, as in an STL.
         .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
+        .obj => return obj_exporter.build(allocator, vm, solids, title),
         .step => {
             var handles = try handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
