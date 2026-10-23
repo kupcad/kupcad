@@ -234,7 +234,7 @@ test "API: buildModel with a diagnostic reports an error raised while exporting"
 
 test "API: a model the engine can't mesh says so, for every mesh format" {
     // The API, wasm and the CLI got only error.EngineCannotTessellate, with no message.
-    const expected = "NotImplementedError: the brep engine can't tessellate solids for STL, glTF or the viewport (STEP export works) yet; build this part with engine: :manifold";
+    const expected = "NotImplementedError: the brep engine can't tessellate solids for STL, glTF, 3MF, OBJ or the viewport (STEP export works) yet; build this part with engine: :manifold";
     inline for (.{ "stl", "glb", "gltf" }) |format| {
         var diag: api.BuildDiagnostic = .{};
         defer diag.deinit(testing.allocator);

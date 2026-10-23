@@ -54,15 +54,39 @@ pub fn exportModelFromVm(
     var model = try model_mod.collectModel(allocator, vm);
     defer model.deinit(allocator);
     try model_mod.requireExportable(vm, &model, format);
+    return exportShapes(allocator, vm, format, options, .{
+        .solids = model.solids.items,
+        .sketches = model.sketches.items,
+        .paths = model.paths.items,
+        .ghosts = model.ghosts,
+        .title = model.title,
+    });
+}
+
+/// What an export writes: Solids (rooted by the caller) and the ghosts shown beside them,
+/// which only glb and gltf hold, in a 3D format, `title` naming a 3MF model; Sketches,
+/// Paths and the Solids projected onto XY in a 2D one.
+pub const Shapes = struct {
+    solids: []const value.Value = &.{},
+    sketches: []const value.Value = &.{},
+    paths: []const value.Value = &.{},
+    ghosts: []const geom.GeometryHandle = &.{},
+    title: ?[]const u8 = null,
+};
+
+/// `shapes` in `format`, as `options` say. error.NoGeometry when there is nothing to write
+/// (no triangle, or no point), for the caller to say where it was going; what the format
+/// can't hold (a Sketch in STL, a mesh in STEP) is raised in the VM.
+pub fn exportShapes(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, shapes: Shapes) ![]const u8 {
     return switch (format.dimension()) {
-        .@"3d" => exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title),
-        .@"2d" => exportDrawing(allocator, vm, format, options, model.sketches.items, model.solids.items, model.paths.items),
+        .@"3d" => exportSolids(allocator, vm, format, options, shapes.solids, shapes.ghosts, shapes.title),
+        .@"2d" => exportDrawing(allocator, vm, format, options, shapes.sketches, shapes.solids, shapes.paths),
     };
 }
 
 /// `sketches`, `solids` and `paths` (rooted by the caller) as a drawing in `format`
 /// (drawingOf), written as `options` say.
-pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) ![]const u8 {
+fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions, sketches: []const value.Value, solids: []const value.Value, paths: []const value.Value) ![]const u8 {
     var drawing = try drawingOf(allocator, vm, sketches, solids, paths);
     defer drawing.deinit(allocator);
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
@@ -242,21 +266,18 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
         defer scope.deinit();
         const made = try parts_mod.madeOf(vm, part);
         vm.push(made);
-        const bytes = switch (format.dimension()) {
-            .@"3d" => try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name),
-            .@"2d" => try exportDrawing(allocator, vm, format, options, &.{}, &.{made}, &.{}),
-        };
+        const bytes = try exportShapes(allocator, vm, format, options, .{ .solids = &.{made}, .title = part.name });
         errdefer allocator.free(bytes);
         try files.append(allocator, .{ .name = part.name, .kind = .part, .count = part.count, .bytes = bytes });
     }
     if (format.dimension() == .@"2d") {
         for (model.sketches.items) |sketch| {
-            const bytes = try exportDrawing(allocator, vm, format, options, &.{sketch}, &.{}, &.{});
+            const bytes = try exportShapes(allocator, vm, format, options, .{ .sketches = &.{sketch} });
             errdefer allocator.free(bytes);
             try files.append(allocator, .{ .name = parts_mod.sketchLabel(vm, sketch).name, .kind = .part, .count = 1, .bytes = bytes });
         }
         for (model.paths.items) |path_val| {
-            const bytes = try exportDrawing(allocator, vm, format, options, &.{}, &.{}, &.{path_val});
+            const bytes = try exportShapes(allocator, vm, format, options, .{ .paths = &.{path_val} });
             errdefer allocator.free(bytes);
             const name: ?[]const u8 = if (path_val.asPath().name) |n| n.chars else null;
             try files.append(allocator, .{ .name = name, .kind = .path, .count = 1, .bytes = bytes });

@@ -117,6 +117,9 @@ test "build_cmd: script failures and empty exports return failure without writin
         .{ .source = "x = undefined_var + 10\n", .message = "Build failed: " },
         // The reason is the VM's report (a TypeError naming the value, see api_test)
         .{ .source = "x = 1\n", .message = "Export failed: error.RuntimeError\n" },
+        // An empty Solid says so, with the file it would have written (it was
+        // "Export failed: error.NoGeometry")
+        .{ .source = "cube(1) - cube(2)\n", .message = "Error: the model is empty, there is nothing to write to '" },
     };
     for (cases) |case| {
         var fx = try Fixture.init(case.source);

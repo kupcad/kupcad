@@ -95,7 +95,7 @@ pub const Feature = enum {
             .ray_cast => "cast rays",
             .min_gap => "measure gaps (min_gap)",
             .faces => "select faces (on_face)",
-            .mesh => "tessellate solids for STL, glTF or the viewport (STEP export works)",
+            .mesh => "tessellate solids for STL, glTF, 3MF, OBJ or the viewport (STEP export works)",
             .materials => "keep materials",
         };
     }

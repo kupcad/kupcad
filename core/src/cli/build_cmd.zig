@@ -89,7 +89,7 @@ const MAX_DRACO_BITS = @import("../exporters/3d/gltf.zig").MAX_DRACO_POSITION_BI
 fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, options: *const Options, reporter: Reporter) !bool {
     const exporting = options.exportOptions(if (options.use_mtl) SPLIT_MTL_NAME else null);
     const files = api.exportPartsFromVm(allocator, vm, options.format, exporting) catch |err| {
-        reporter.err("Export failed: {}\n", .{err});
+        reportExportFailure(reporter, err, dir);
         return false;
     };
     defer {
@@ -238,6 +238,14 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
         if (!try writeBom(allocator, vm, path, reporter)) return .failure;
     }
     return .success;
+}
+
+/// Why the model wasn't written to `path`: empty (the export's error.NoGeometry), or the
+/// error (a script error the VM has already reported is error.RuntimeError).
+fn reportExportFailure(reporter: Reporter, err: anyerror, path: []const u8) void {
+    if (err == error.NoGeometry) {
+        reporter.err("Error: the model is empty, there is nothing to write to '{s}'\n", .{path});
+    } else reporter.err("Export failed: {}\n", .{err});
 }
 
 /// The options in `args`, or null, the refusal reported.
@@ -409,7 +417,7 @@ fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, re
 
     const exporting = options.exportOptions(if (mtl_path) |p| std.fs.path.basename(p) else null);
     const bytes = api.exportModelFromVm(allocator, vm, options.format, exporting) catch |err| {
-        reporter.err("Export failed: {}\n", .{err});
+        reportExportFailure(reporter, err, path);
         return false;
     };
     defer allocator.free(bytes);

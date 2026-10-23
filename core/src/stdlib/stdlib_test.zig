@@ -1462,6 +1462,8 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         // Exports of an empty model
         .{ .src = comptime rescued("(cube(1) - cube(2)).export_3mf(\"x.3mf\")"), .expected = .{ .str = "GeometryError: export_3mf: the model is empty, there is nothing to write to 'x.3mf'" } },
         .{ .src = comptime rescued("(cube(1) - cube(2)).export_obj(\"x.obj\")"), .expected = .{ .str = "GeometryError: export_obj: the model is empty, there is nothing to write to 'x.obj'" } },
+        .{ .src = comptime rescued("(cube(1) - cube(2)).export_gltf(\"x.gltf\")"), .expected = .{ .str = "GeometryError: export_gltf: the model is empty, there is nothing to write to 'x.gltf'" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"x.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
     });
 }
 
@@ -1757,6 +1759,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(1).min_gap(cube(2))"), .expected = brepLacks(.min_gap) },
         .{ .src = comptime rescued("cube(10).export_stl(\"part.stl\")"), .expected = brepLacks(.mesh) }, // was a bare EngineCannotTessellate
         .{ .src = comptime rescued("cube(10).export_gltf(\"part.glb\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
+        .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
         .{ .src = comptime rescued("cube(10).export_3mf(\"part.3mf\")"), .expected = brepLacks(.mesh) },
         .{ .src = comptime rescued("cube(10).export_obj(\"part.obj\")"), .expected = brepLacks(.mesh) },
         .{ .src = comptime rescued("square(10).export_svg(\"s.svg\")"), .expected = brepLacks(.sketch_contours) },
