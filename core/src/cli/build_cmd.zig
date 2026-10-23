@@ -34,6 +34,8 @@ pub const USAGE =
 ++ Format.NAMES ++ " (glb when there is no -o)\n" ++
     param_flags.USAGE ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
+    \\      --mtl                 Also write the materials of an obj as a library beside it
+    \\                            (<output>.mtl; materials.mtl with --split)
     \\      --bom <file.json>     Also write the model's parts list: each part, how many
     \\                            copies, its volume, size and mass
     \\      --split <dir>         Write each part to its own file in <dir>, as made
@@ -71,10 +73,15 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
     return null;
 }
 
+/// The material library the parts of a `--split` share.
+const SPLIT_MTL_NAME = "materials.mtl";
+
 /// Writes each part of the model to its own file in `dir` (`--split`), named by
-/// PartFileNames; false, the failure reported, when the model can't be written.
-fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, format: Format, use_draco: bool, reporter: Reporter) !bool {
-    const files = api.exportPartsFromVm(allocator, vm, format, use_draco) catch |err| {
+/// PartFileNames, and with `--mtl` the one library they share; false, the failure
+/// reported, when the model can't be written.
+fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, options: *const Options, reporter: Reporter) !bool {
+    const exporting: api.ExportOptions = .{ .draco = options.use_draco, .mtl_name = if (options.use_mtl) SPLIT_MTL_NAME else null };
+    const files = api.exportPartsFromVm(allocator, vm, options.format, exporting) catch |err| {
         reporter.err("Export failed: {}\n", .{err});
         return false;
     };
@@ -84,10 +91,15 @@ fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, format: Fo
     }
     const cwd = std.Io.Dir.cwd();
     try cwd.createDirPath(reporter.io, dir);
+    if (options.use_mtl) {
+        const path = try std.fs.path.join(allocator, &.{ dir, SPLIT_MTL_NAME });
+        defer allocator.free(path);
+        try writeMaterialLibrary(allocator, vm, path, reporter);
+    }
     var names: PartFileNames = .{};
     defer names.deinit(allocator);
     for (files, 1..) |file, number| {
-        const name = try names.next(allocator, file.name, number, format.extension()[1..]);
+        const name = try names.next(allocator, file.name, number, options.format.extension()[1..]);
         defer allocator.free(name);
         const path = try std.fs.path.join(allocator, &.{ dir, name });
         defer allocator.free(path);
@@ -167,6 +179,8 @@ const Options = struct {
     output_path: ?[]const u8 = null,
     format: Format = DEFAULT_FORMAT,
     use_draco: bool = false,
+    /// `--mtl`: an OBJ names its materials, written to a library beside it.
+    use_mtl: bool = false,
     /// `--bom`: where the parts list goes, besides the model.
     bom_path: ?[]const u8 = null,
     /// `--split`: the directory a file per part goes in, instead of one model file.
@@ -193,7 +207,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
     const vm = &session.vm;
     const written = if (options.split_dir) |dir|
-        try writeSplit(allocator, vm, dir, options.format, options.use_draco, reporter)
+        try writeSplit(allocator, vm, dir, &options, reporter)
     else
         try writeModel(allocator, vm, &options, reporter);
     if (!written) return .failure;
@@ -219,6 +233,8 @@ fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter)
             options.output_path = flagValue(args, arg, "output path", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--draco")) {
             options.use_draco = true;
+        } else if (std.mem.eql(u8, arg, "--mtl")) {
+            options.use_mtl = true;
         } else if (std.mem.eql(u8, arg, "--split")) {
             options.split_dir = flagValue(args, arg, "directory", reporter) orelse return refuse(allocator, &options);
         } else if (std.mem.eql(u8, arg, "--bom")) {
@@ -276,6 +292,10 @@ fn settleFormat(options: *Options, explicit: ?Format, reporter: Reporter) bool {
     // the request, so refuse it rather than pretend it was applied.
     if (options.use_draco and !options.format.supportsDraco()) {
         reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{@tagName(options.format)});
+        return false;
+    }
+    if (options.use_mtl and !options.format.supportsMaterialLibrary()) {
+        reporter.err("Error: --mtl only applies to obj output, not {s}\n", .{@tagName(options.format)});
         return false;
     }
     return true;
@@ -338,15 +358,28 @@ fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, re
     } else null;
     defer if (generated) |path| allocator.free(path);
     const path = options.output_path orelse generated.?;
+    // The library beside the model, named after it: part.obj's is part.mtl
+    const mtl_path = if (options.use_mtl) try allocator.print("{s}.mtl", .{path[0 .. path.len - std.fs.path.extension(path).len]}) else null;
+    defer if (mtl_path) |p| allocator.free(p);
 
-    const bytes = api.exportModelFromVm(allocator, vm, options.format, options.use_draco) catch |err| {
+    const exporting: api.ExportOptions = .{ .draco = options.use_draco, .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null };
+    const bytes = api.exportModelFromVm(allocator, vm, options.format, exporting) catch |err| {
         reporter.err("Export failed: {}\n", .{err});
         return false;
     };
     defer allocator.free(bytes);
     try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes });
     reporter.out("Successfully built {s} ({d} bytes)\n", .{ path, bytes.len });
+    if (mtl_path) |p| try writeMaterialLibrary(allocator, vm, p, reporter);
     return true;
+}
+
+/// Writes the model's material library (`--mtl`) to `path`.
+fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []const u8, reporter: Reporter) !void {
+    const bytes = try api.exportMaterialLibrary(allocator, vm);
+    defer allocator.free(bytes);
+    try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes });
+    reporter.out("Wrote {s} ({d} bytes)\n", .{ path, bytes.len });
 }
 
 /// Writes the model's parts list to `path` (`--bom`); false, the failure reported, when it

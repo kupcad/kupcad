@@ -478,6 +478,14 @@ pub const ExportFormat = enum {
         return self.extensions()[0];
     }
 
+    /// Whether a material library (`.mtl`) can go beside it: OBJ's.
+    pub fn supportsMaterialLibrary(self: ExportFormat) bool {
+        return switch (self) {
+            .obj => true,
+            .stl, .glb, .gltf, .step, .@"3mf" => false,
+        };
+    }
+
     /// Whether its meshes can be Draco-compressed (a glTF extension).
     pub fn supportsDraco(self: ExportFormat) bool {
         return switch (self) {
@@ -505,6 +513,21 @@ pub const ExportFormat = enum {
     }
 };
 
+/// How a model is exported, beyond its format: what `kupcad build`'s flags ask for.
+pub const ExportOptions = struct {
+    /// Compress glb and gltf meshes with Draco.
+    draco: bool = false,
+    /// The material library an OBJ names (`mtllib`), written by `exportMaterialLibrary`;
+    /// null for an OBJ without materials.
+    mtl_name: ?[]const u8 = null,
+};
+
+/// The material library (`.mtl`) of the model: the script's materials, as an OBJ written
+/// with `ExportOptions.mtl_name` refers to them.
+pub fn exportMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM) ![]u8 {
+    return obj_exporter.buildMaterialLibrary(allocator, vm.materials.items);
+}
+
 /// The model the script left (collectModel) in `format`, its ghosts (the display list)
 /// beside it where the format shows them. A failure the script can read about (a model the
 /// format can't hold, an engine that can't mesh, a failed union) is raised in the VM first,
@@ -513,12 +536,12 @@ pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
     vm: *VM,
     format: ExportFormat,
-    use_draco: bool,
+    options: ExportOptions,
 ) ![]const u8 {
     var model = try collectModel(allocator, vm);
     defer model.deinit(allocator);
     try requireExportable(vm, &model, format);
-    return exportSolids(allocator, vm, format, use_draco, model.solids.items, model.ghosts, model.title);
+    return exportSolids(allocator, vm, format, options, model.solids.items, model.ghosts, model.title);
 }
 
 /// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
@@ -527,7 +550,7 @@ fn exportSolids(
     allocator: std.mem.Allocator,
     vm: *VM,
     format: ExportFormat,
-    use_draco: bool,
+    options: ExportOptions,
     solids: []const value.Value,
     ghosts: []const geom.GeometryHandle,
     title: ?[]const u8,
@@ -536,7 +559,7 @@ fn exportSolids(
         // The parts once each, placed per copy: the Solids themselves, not their meshes. The
         // ghosts are the viewer's, as in an STL.
         .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
-        .obj => return obj_exporter.build(allocator, vm, solids, title),
+        .obj => return obj_exporter.build(allocator, vm, solids, title, options.mtl_name),
         .step => {
             var handles = try handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
@@ -551,7 +574,7 @@ fn exportSolids(
             // STL holds one mesh: the model's parts are united, the ghosts left out.
             if (format == .stl) return stl_exporter.buildStlOfParts(allocator, vm, handles.items[ghosts.len..]);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
-            return gltf_exporter.buildGltfBuffer(allocator, vm, handles.items, use_draco, container);
+            return gltf_exporter.buildGltfBuffer(allocator, vm, handles.items, options.draco, container);
         },
     }
 }
@@ -579,7 +602,7 @@ pub const PartFile = struct {
 /// Each part of the model's parts list (stdlib/bom.zig) in `format`, without its placement:
 /// a file to print each from. Raises in the VM when the format can't hold the model
 /// (requireExportable; a split has no ghosts to show).
-pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, use_draco: bool) ![]PartFile {
+pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, options: ExportOptions) ![]PartFile {
     var model = try collectModel(allocator, vm);
     defer model.deinit(allocator);
     model.ghosts = &.{};
@@ -597,7 +620,7 @@ pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFo
         defer scope.deinit();
         const made = try bom.madeOf(vm, part);
         vm.push(made);
-        const bytes = try exportSolids(allocator, vm, format, use_draco, &.{made}, &.{}, part.name);
+        const bytes = try exportSolids(allocator, vm, format, options, &.{made}, &.{}, part.name);
         errdefer allocator.free(bytes);
         try files.append(allocator, .{ .name = part.name, .count = part.count, .bytes = bytes });
     }
@@ -695,7 +718,7 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     vm.clearLastError();
 
     // Geometry is evaluated lazily, so kernel errors (e.g. the mesh budget) surface here.
-    return exportModelFromVm(allocator, &vm, format, options.draco) catch |err| {
+    return exportModelFromVm(allocator, &vm, format, .{ .draco = options.draco }) catch |err| {
         if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
         return err;
     };

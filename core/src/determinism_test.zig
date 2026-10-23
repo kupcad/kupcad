@@ -54,5 +54,5 @@ fn build(case: Case) ![]const u8 {
     var vm = try support.initVm();
     defer vm.deinit();
     try testing.expectEqual(.ok, try support.runOn(&vm, case.source));
-    return api.exportModelFromVm(testing.allocator, &vm, case.format, false);
+    return api.exportModelFromVm(testing.allocator, &vm, case.format, .{});
 }

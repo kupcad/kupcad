@@ -9,6 +9,7 @@ const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../kernel/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const material_groups = @import("material_groups.zig");
 
 // --- GLTF & Draco Configuration Constants ---
 const GLTF_COMPONENT_TYPE_FLOAT = 5126;
@@ -155,26 +156,8 @@ const Parts = struct {
         if (mesh.vert_props.len / mesh.num_prop == 0) return;
         const base_vertex = self.vertexCount();
 
-        var by_material = std.AutoHashMap(u32, std.ArrayList(u32)).init(allocator);
-        defer by_material.deinit();
-        // The index lists are this part's to free until they move into `primitives`,
-        // which can't fail once its room is reserved.
-        errdefer {
-            var lists = by_material.valueIterator();
-            while (lists.next()) |list| list.deinit(allocator);
-        }
-        var i: usize = 0;
-        while (i < mesh.tri_verts.len) : (i += 3) {
-            const v_idx = mesh.tri_verts[i] * mesh.num_prop;
-            const slot: u32 = if (mesh.num_prop >= 4) @intFromFloat(mesh.vert_props[v_idx + 3]) else kernel.DEFAULT_MATERIAL_SLOT;
-            const gop = try by_material.getOrPut(slot);
-            if (!gop.found_existing) gop.value_ptr.* = .empty;
-            try gop.value_ptr.appendSlice(allocator, &.{
-                mesh.tri_verts[i] + base_vertex,
-                mesh.tri_verts[i + 1] + base_vertex,
-                mesh.tri_verts[i + 2] + base_vertex,
-            });
-        }
+        var groups = try material_groups.Groups.collect(allocator, mesh);
+        defer groups.deinit(allocator);
 
         var v: usize = 0;
         while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
@@ -186,10 +169,16 @@ const Parts = struct {
             }
         }
 
-        try self.primitives.ensureUnusedCapacity(allocator, by_material.count());
-        var it = by_material.iterator();
-        while (it.next()) |entry| {
-            self.primitives.appendAssumeCapacity(.{ .material = entry.key_ptr.*, .indices = entry.value_ptr.* });
+        try self.primitives.ensureUnusedCapacity(allocator, groups.count());
+        for (0..groups.count()) |g| {
+            const group = groups.at(g);
+            var indices: std.ArrayList(u32) = .empty;
+            errdefer indices.deinit(allocator);
+            try indices.ensureTotalCapacity(allocator, group.tri_starts.len * 3);
+            for (group.tri_starts) |tri| {
+                for (mesh.tri_verts[tri..][0..3]) |vertex| indices.appendAssumeCapacity(vertex + base_vertex);
+            }
+            self.primitives.appendAssumeCapacity(.{ .material = group.slot, .indices = indices });
         }
     }
 };

@@ -109,7 +109,7 @@ fn exportAndCheck(source: []const u8) !struct { model: Model, xml: []u8 } {
     var vm = try support.initVm();
     defer vm.deinit();
     try testing.expectEqual(.ok, try support.runOn(&vm, source));
-    const archive = try api.exportModelFromVm(testing.allocator, &vm, .@"3mf", false);
+    const archive = try api.exportModelFromVm(testing.allocator, &vm, .@"3mf", .{});
     defer testing.allocator.free(archive);
     var package = try Package.open(archive);
     defer package.close();
@@ -178,5 +178,5 @@ test "3mf: a model with no Solid is no file" {
     var vm = try support.initVm();
     defer vm.deinit();
     try testing.expectEqual(.ok, try support.runOn(&vm, "x = 5"));
-    try testing.expectError(error.RuntimeError, api.exportModelFromVm(testing.allocator, &vm, .@"3mf", false));
+    try testing.expectError(error.RuntimeError, api.exportModelFromVm(testing.allocator, &vm, .@"3mf", .{}));
 }

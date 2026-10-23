@@ -210,6 +210,43 @@ test "build_cmd: --split writes each part once, as made, named after it" {
     try testing.expectEqualStrings("glTF", bytes[0..4]);
 }
 
+test "build_cmd: --mtl writes an obj's materials beside it, and only an obj's" {
+    var fx = try Fixture.init("red = cube(1).material(color: \"#FF0000\")\nassemble(name: \"kit\", parts: [red, cube(2).translate(x: 5)])\n");
+    defer fx.deinit();
+    const output = try fx.path("part.obj");
+    defer testing.allocator.free(output);
+    var res = try runBuild(&.{ fx.input, "-o", output, "--mtl" });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+    try testing.expect(std.mem.find(u8, res.text(), "part.mtl (") != null);
+    try testing.expectEqual(@as(usize, 3), try fx.entryCount()); // model.kup, part.obj, part.mtl
+    const obj = try fx.tmp.dir.readFileAlloc(testing.io, "part.obj", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(obj);
+    try testing.expect(std.mem.find(u8, obj, "\nmtllib part.mtl\n") != null);
+    try testing.expect(std.mem.find(u8, obj, "\nusemtl material_1\n") != null);
+    const mtl = try fx.tmp.dir.readFileAlloc(testing.io, "part.mtl", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(mtl);
+    try testing.expect(std.mem.find(u8, mtl, "newmtl material_1\nKd 1 0 0\n") != null);
+
+    // Another format has no library; refused rather than silently none
+    var stl = try runBuild(&.{ fx.input, "-f", "stl", "--mtl" });
+    defer stl.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, stl.outcome);
+    try testing.expectEqualStrings("Error: --mtl only applies to obj output, not stl\n", stl.text());
+
+    // The parts of a split share one library
+    const dir = try fx.path("parts");
+    defer testing.allocator.free(dir);
+    var split = try runBuild(&.{ fx.input, "--split", dir, "-f", "obj", "--mtl" });
+    defer split.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, split.outcome);
+    const part = try fx.tmp.dir.readFileAlloc(testing.io, "parts/part 1.obj", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(part);
+    try testing.expect(std.mem.find(u8, part, "\nmtllib materials.mtl\n") != null);
+    const shared = try fx.tmp.dir.readFileAlloc(testing.io, "parts/materials.mtl", testing.allocator, .limited(1 << 20));
+    testing.allocator.free(shared);
+}
+
 test "build_cmd: --split names a part's file safely, and each once" {
     var names: build_cmd.PartFileNames = .{};
     defer names.deinit(testing.allocator);
@@ -317,10 +354,11 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
 }
 
 /// What an exporter actually wrote, judged by content rather than by file name.
-const FileKind = enum { stl, glb, gltf, step };
+const FileKind = enum { stl, glb, gltf, step, obj };
 
 fn detectFileKind(bytes: []const u8) ?FileKind {
     if (std.mem.startsWith(u8, bytes, GLB_MAGIC)) return .glb;
+    if (std.mem.startsWith(u8, bytes, "# KupCAD Export\n# millimetres")) return .obj;
     if (std.mem.startsWith(u8, bytes, "{\"asset\":")) return .gltf;
     if (std.mem.startsWith(u8, bytes, STEP_MAGIC)) return .step;
     // Binary STL: 80-byte header, u32 triangle count, then fixed-size triangle records.
@@ -364,6 +402,7 @@ test "build_cmd: output format follows the -o extension and must agree with --fo
         .{ .output = "part.gltf", .expect = .{ .written = .{ .name = "part.gltf", .kind = .gltf } } },
         .{ .output = "part.step", .expect = .{ .written = .{ .name = "part.step", .kind = .step } } },
         .{ .output = "part.stp", .expect = .{ .written = .{ .name = "part.stp", .kind = .step } } },
+        .{ .output = "part.obj", .expect = .{ .written = .{ .name = "part.obj", .kind = .obj } } },
         // An agreeing --format is accepted.
         .{ .output = "part.stl", .format = "stl", .expect = .{ .written = .{ .name = "part.stl", .kind = .stl } } },
         .{ .output = "part.Stp", .format = "step", .expect = .{ .written = .{ .name = "part.Stp", .kind = .step } } },

@@ -87,7 +87,7 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
     }
 
     const format: api.ExportFormat = if (exact) .step else .glb;
-    const bytes = api.exportModelFromVm(allocator, &vm, format, false) catch |err| {
+    const bytes = api.exportModelFromVm(allocator, &vm, format, .{}) catch |err| {
         std.debug.print("{t} export failed: {s} {s}\n", .{ format, @errorName(err), vm.last_error orelse "" });
         return err;
     };
