@@ -1,5 +1,5 @@
-//! What an `import` reads: a KupCAD module, or a file a built-in reads as a value (an STL or
-//! STEP mesh, JSON data, a font). The `type` its `with { }` gives says which (`import machine from
+//! What an `import` reads: a KupCAD module, or a file a built-in reads as a value (an STL,
+//! OBJ or STEP mesh, a drawing, JSON data, a font). The `type` its `with { }` gives says which (`import machine from
 //! "./machine.dat" with { type: "json" }`); without one, the path's extension does (in any
 //! case: `.STL` too), and any other path is a module. The compiler, the parser's checks, the
 //! workspace and the watcher all ask here, so they agree on what an import is.
@@ -10,6 +10,7 @@ const ast = @import("ast.zig");
 /// The extensions that make an import a file's, without a `type`.
 const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
     .{ .extension = ".stl", .kind = .stl },
+    .{ .extension = ".obj", .kind = .obj },
     .{ .extension = ".step", .kind = .step },
     .{ .extension = ".stp", .kind = .step },
     .{ .extension = ".json", .kind = .json },
@@ -21,7 +22,7 @@ const EXTENSIONS = [_]struct { extension: []const u8, kind: Kind }{
 /// The one key `with { }` takes.
 const TYPE_KEY = "type";
 
-/// Every type name, for an error that lists them: `"kup", "stl", "step" or "json"`.
+/// Every type name, for an error that lists them: `"kup", "stl", "obj" or "json"`.
 pub const TYPE_NAMES = blk: {
     const kinds = std.enums.values(Kind);
     var text: []const u8 = "";
@@ -35,6 +36,7 @@ pub const TYPE_NAMES = blk: {
 pub const Kind = enum {
     module,
     stl,
+    obj,
     step,
     json,
     font,
@@ -47,6 +49,7 @@ pub const Kind = enum {
         return switch (self) {
             .module => null,
             .stl => "import_stl",
+            .obj => "import_obj",
             .step => "import_step",
             .json => "import_json",
             .font => "import_font",
@@ -69,6 +72,7 @@ pub const Kind = enum {
         return switch (self) {
             .module => "kup",
             .stl => "stl",
+            .obj => "obj",
             .step => "step",
             .json => "json",
             .font => "font",
@@ -82,7 +86,7 @@ pub const Kind = enum {
     pub fn hasKeys(self: Kind) bool {
         return switch (self) {
             .module, .json => true,
-            .stl, .step, .font, .dxf, .svg => false,
+            .stl, .obj, .step, .font, .dxf, .svg => false,
         };
     }
 

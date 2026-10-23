@@ -279,7 +279,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `misplaced-import` | An `import` or `export` inside a method, class or block; they belong at the top level. |
 | `import-without-from` | An `import` without its `from` path. |
 | `import-attribute` | An import's `with { }` with a key other than `type`, or a type that names nothing an import reads (`with { type: "yaml" }`). |
-| `file-import-names` | An import or re-export of a mesh (STL, STEP) or a font in braces (`import { teeth } from "./gear.stl"`): it has no names in it, so its one value is named bare (`import gear from "./gear.stl"`); or of any file naming more than one variable without braces. |
+| `file-import-names` | An import or re-export of a mesh (STL, OBJ, STEP) or a font in braces (`import { teeth } from "./gear.stl"`): it has no names in it, so its one value is named bare (`import gear from "./gear.stl"`); or of any file naming more than one variable without braces. |
 | `misplaced-do` | A `do` after a `while`, `until` or `for` header, which ends at the line break. |
 | `spaced-parentheses` | Several arguments in parentheses with a space before them, which hold one value (`f (1, 2)`; write `f(1, 2)`). |
 | `invalid-parameter` | A parameter, block parameter or loop variable that can't be one: an instance, class or global variable (`def f(@x)`), a second splat, a block for a block parameter. |
@@ -310,7 +310,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `RangeError` | A number outside a representable range: arithmetic that overflows (`2 ** 1024`; numbers are 64-bit floats, so beyond ±1.8e308 there is no number), bitwise operands, shift counts. A script that needs a non-finite value writes `Number::INFINITY` or `Number::NAN` |
 | `ZeroDivisionError`, `MathError` | Division by zero, an operation producing `NaN` |
 | `NameError`, `NoMethodError` | An undefined variable or member, an unknown method |
-| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`), a font (`import_font`) or a drawing (`import_dxf`, `import_svg`) that can't be read |
+| `ImportError` | A module that can't be read, parsed or compiled, or a data file (`import_json`), a mesh (`import_stl`, `import_obj`), a font (`import_font`) or a drawing (`import_dxf`, `import_svg`) that can't be read |
 | `NotImplementedError` | A feature the active engine doesn't support yet |
 | `GeometryError` | The geometry kernel failed an operation or produced an invalid solid (e.g. a `polyhedron` that isn't a closed manifold) |
 | `AssertionError` | A failed `assert` |
@@ -529,7 +529,7 @@ logo = import_stl("assets/logo.stl")
 
 A relative import (`"./hardware.kup"`, `"../lib/units.kup"`, `"./logo.stl"`) names a file next to the one that imports it, so `kupcad build parts/main.kup` and the files it imports agree on where `./` is. Imports stay inside the project (the directory `kupcad` runs in, or the folder the editor opened): one that climbs out of it is refused. Any other name is a package, by its alias.
 
-An import whose path ends in `.stl`, `.step` (or `.stp`), `.json`, `.dxf`, `.svg`, or `.ttf` or `.otf` (a font), in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"`, `"json"`, `"font"`, `"dxf"` or `"svg"`, as a string or a symbol, and it wins over the extension:
+An import whose path ends in `.stl`, `.obj`, `.step` (or `.stp`), `.json`, `.dxf`, `.svg`, or `.ttf` or `.otf` (a font), in any case, reads that file as a value instead of running a module: `import logo from "./logo.stl"` is `logo = import_stl(...)` with the path resolved as above, so a package's own files are imported by its alias (`import screws from "hardware/screws.json"`). The call reads from the project's directory as written (`import_stl("assets/logo.stl")`). `with { type: ... }` says what a file is when its name doesn't: `"kup"` (a module), `"stl"`, `"step"`, `"json"`, `"font"`, `"dxf"` or `"svg"`, as a string or a symbol, and it wins over the extension:
 
 ```ruby
 import scan from "./scan.bin" with { type: "stl" }
@@ -576,7 +576,7 @@ plate = machine.fetch(:plate, nil)          # nil: the file has no plate
 * **Read-only:** `machine[:name] = "x"` is a `TypeError`. `to_h` gives a Map that can change, its objects Maps and its Arrays copies all the way down, with the file's String keys (a Map's `.symbolize_keys` turns its own keys into Symbols, not those of the Maps in it). The Arrays a JsonObject holds are ordinary Arrays.
 * **Methods:** `[]`, `fetch`, `dig`, `key?`, `keys`, `values`, `size`/`length`, `empty?`, `each { |key, value| }`, `to_h`, and `for key, value in machine`. `==` compares two JsonObjects by content; it prints as a Map does. There is no dot access (`machine.gears`): a key named `size` or `keys` would be hidden by the method.
 * **Limits:** a file of at most 64 MiB, nested at most 256 levels; a number past the largest (`1e400`) is refused, as is a key written twice. Each is an `ImportError` naming the file and the line and column or the place in the data.
-* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`, `import_font`, `import_dxf`, `import_svg`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
+* **Rebuilds:** `kupcad watch` watches the files a build read (`import_json`, `import_stl`, `import_obj`, `import_font`, `import_dxf`, `import_svg`) along with the modules: a change to one runs the modules that read it again, and a file missing at the last build is watched too, so creating it rebuilds. The editor's preview does the same when such a file is saved (see `kupcad lsp`).
 
 ### Fonts (`import_font`)
 
@@ -613,6 +613,14 @@ gasket = import_dxf("bracket.dxf", layers: ["cut", "holes"]).offset(-0.5)
 * **Layers:** `layers:` (a name or an Array of them) reads only those; one the file has no outline on is an `ImportError` listing the layers it has.
 * **Blocks and clones:** a DXF block reference (`INSERT`) draws its block's entities at its insertion point, scaled, turned and copied along its columns and rows (MINSERT's array), blocks within blocks too, an entity on layer 0 taking the INSERT's layer as AutoCAD draws it; an uneven scale draws the block's arcs as cubics, an ellipse's. An SVG `use` draws the element it names (`href="#id"`, in `defs` or anywhere; a `symbol` as a group, sized by the use's `width` and `height` or its own) where it is, through its `transform`, `x` and `y`, with the style it gives. A `symbol` or a nested `svg` with a `viewBox` fits it into its box as SVG does (`preserveAspectRatio`: in the middle by default, `xMinYMin` and the rest, `slice` to cover the box, `none` to stretch), a size not given, or given as a percentage, the viewport's it is in (an icon `<use href="#icon">` with no size fills the drawing's), and what reaches outside the box isn't clipped. A block that inserts itself, a `use` within what it names and a reference to another file are refused, and so is a drawing whose blocks or clones would place more than a million pieces.
 * **Left out:** what isn't an outline (text, dimensions, hatches, points, 3D faces and meshes) and what a layout draws (paper space: a title block, a viewport's frame). An entity off the XY plane and a binary DXF file are refused. A file past 64 MiB is refused before it is read.
+
+### Meshes (`import_stl`, `import_obj`)
+
+A mesh from a scanner, a mesh modeller or a model site reads as a Solid, to cut, combine or measure like any other: `import scan from "./scan.stl"` or `import_stl("scan.stl")`, binary or ASCII STL, and `import bracket from "./bracket.obj"` or `import_obj("bracket.obj")`, Wavefront OBJ (`with { type: "obj" }` for a file named otherwise). The file's numbers are millimetres: neither format says its unit, and KupCAD writes millimetres.
+
+* **OBJ:** each object (`o`) is a mesh of its own and the Solid is their union, so overlapping parts (an `export_obj` of an assembly) merge cleanly; the faces before any `o` are one. A face names its corners by vertex number, from 1 or back from the last vertex for a negative one, its texture and normal numbers after slashes left out; a face of more than three corners is cut into triangles along its inside, and one with no area is left out. Normals, texture coordinates, groups, smoothing, materials, points, lines, curves and surfaces are left out. A line ending in `\` goes on on the next.
+* **Errors:** a face naming a vertex the file hasn't, a vertex that isn't three finite numbers, a face of fewer than three corners (or more than 4096), and a file with no faces are an `ImportError` naming the line.
+* **The mesh:** it must enclose a volume (closed, each edge shared by two faces) for booleans to work on it, as the kernel needs of any polyhedron.
 
 ---
 

@@ -172,6 +172,7 @@ pub const global_functions = [_]GlobalFunction{
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
     .{ .name = "import_stl", .func = common.wrapGlobal(mesh_import.nativeImportStl), .category = .file_io, .result = .solid },
+    .{ .name = "import_obj", .func = common.wrapGlobal(mesh_import.nativeImportObj), .category = .file_io, .result = .solid },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },

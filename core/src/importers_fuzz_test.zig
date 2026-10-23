@@ -1,4 +1,4 @@
-//! Fuzzing what KupCAD reads but didn't write: an STL or font file a script imports, a package
+//! Fuzzing what KupCAD reads but didn't write: an STL, OBJ or font file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
@@ -11,6 +11,7 @@ const std = @import("std");
 const testing = std.testing;
 const support = @import("test_support.zig");
 const stl = @import("exporters/3d/stl.zig");
+const obj_read = @import("exporters/3d/obj_read.zig");
 const cafs_mod = @import("pkg/cafs.zig");
 const Lockfile = @import("pkg/lockfile.zig").Lockfile;
 const Manifest = @import("pkg/manifest.zig").Manifest;
@@ -79,6 +80,25 @@ fn checkStl(data: []const u8) !void {
     // The mesh goes to the kernel, which indexes the points by the faces and computes on them
     for (mesh.faces) |face| for (face) |index| try testing.expect(index < mesh.points.len);
     for (mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+}
+
+// --- OBJ ---
+
+test "fuzz: an OBJ file a script imports" {
+    const cube = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\no box\nf 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 3 4 8 7\nf 4 1 5 8\nf 2 3 7 6\n";
+    try fuzzParser(checkObj, &.{ cube, "v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf -3//1 -2//1 \\\n -1//1\n", "f 1 2 3\n" });
+}
+
+fn checkObj(data: []const u8) !void {
+    var diag: obj_read.Diagnostic = .{};
+    var model = obj_read.read(testing.allocator, data, &diag) catch return;
+    defer model.deinit();
+    // Each object's mesh goes to the kernel, as an STL's does
+    try testing.expect(model.objects.len > 0);
+    for (model.objects) |object| {
+        for (object.mesh.faces) |face| for (face) |index| try testing.expect(index < object.mesh.points.len);
+        for (object.mesh.points) |point| for (point) |coordinate| try testing.expect(std.math.isFinite(coordinate));
+    }
 }
 
 // --- Fonts ---
