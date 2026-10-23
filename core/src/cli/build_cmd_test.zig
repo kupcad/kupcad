@@ -270,7 +270,7 @@ test "build_cmd: --split in a 2D format draws each part and each sketch in a fil
 }
 
 test "build_cmd: --split names a part's file safely, and each once" {
-    var names: build_cmd.PartFileNames = .{};
+    var names: @import("export_flags.zig").PartFileNames = .{};
     defer names.deinit(testing.allocator);
     const cases = [_]struct { name: ?[]const u8, number: usize, file: []const u8 }{
         .{ .name = "bracket", .number = 1, .file = "bracket.stl" },
