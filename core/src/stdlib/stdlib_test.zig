@@ -1190,6 +1190,9 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         // center works on a Sketch: it used to evaluate the Sketch as a Solid.
         .{ .src = "r = square(2).center.extrude(1).bbox.min", .expected = .{ .nums = &.{ -1, -1, 0 } } },
         .{ .src = "r = square(2).align(square(4), \"xy\", \"max\").extrude(1).bbox.min", .expected = .{ .nums = &.{ 2, 2, 0 } } },
+        // Symbols name them too, as center's axes; the target side and an offset apart
+        .{ .src = "r = cube(2).align(cube(4), :z, :min, :max).bbox.min", .expected = .{ .nums = &.{ 0, 0, 4 } } },
+        .{ .src = "r = cube(2).align(cube(4), :x, :center, :center, 1).bbox.min", .expected = .{ .nums = &.{ 2, 0, 0 } } },
     });
 }
 
@@ -1423,7 +1426,12 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
     try expectScripts(&.{
         // Transforms
         .{ .src = comptime rescued("cube(1).align(cube(2), \"x\")"), .expected = .{ .str = "ArgumentError: align(target, axes, my_align, [target_align], [offset]) requires at least 3 args" } },
-        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", [1])"), .expected = .{ .str = "TypeError: align expects a String target_align or a number offset as argument 4, got Array" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", [1])"), .expected = .{ .str = "TypeError: align expects a String or Symbol target_align or a number offset as argument 4, got Array" } },
+        // The names were checked only where an axis letter matched, so a typo there, or
+        // axes with no letter, moved nothing without a word
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"q\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), \"q\", \"min\")"), .expected = .{ .str = "ArgumentError: align needs axes to move along, letters of x, y and z, got 'q'" } },
+        .{ .src = comptime rescued("cube(1).align(cube(2), 5, \"min\")"), .expected = .{ .str = "TypeError: align expects a String or Symbol for axes, got Number" } },
         .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
         .{ .src = comptime rescued("cube(1).align(cube(2), \"x\", \"min\", \"middle\")"), .expected = .{ .str = "ArgumentError: invalid alignment 'middle' (use 'min', 'max', or 'center')" } },
         .{ .src = comptime rescued("cube(1).transform"), .expected = .{ .str = "ArgumentError: transform expects a flat matrix Array" } },

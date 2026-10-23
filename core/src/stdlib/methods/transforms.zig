@@ -140,29 +140,62 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
     return util.notDefinedFor(vm, "center", receiver);
 }
 
-pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    // Signature: align(target, axes, my_align, target_align = my_align, offset = 0.0)
-    if (args.len < 3 or !args[1].isString() or !args[2].isString()) {
-        return vm.fail(.ArgumentError, "align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
+/// A side of a shape's box along an axis `align` lines up: its low end, its high end or
+/// its middle.
+const Alignment = enum {
+    min,
+    max,
+    center,
+
+    /// The alignment `text` names, or an ArgumentError listing the three.
+    fn parse(vm: *VM, text: []const u8) !Alignment {
+        return std.meta.stringToEnum(Alignment, text) orelse vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{text});
     }
 
-    const target = args[0];
-    const axis_str = args[1].asString().chars;
-    const my_align_str = args[2].asString().chars;
-    var target_align_str = my_align_str;
-    var offset: f64 = 0.0;
+    /// Where it is on `box` along `axis`.
+    fn on(self: Alignment, box: anytype, axis: usize) f64 {
+        return switch (self) {
+            .min => box.min[axis],
+            .max => box.max[axis],
+            .center => (box.min[axis] + box.max[axis]) / 2.0,
+        };
+    }
+};
 
+/// `align(target, axes, my_align, target_align = my_align, offset = 0)`: the shape moved
+/// along each of `axes` (letters of x, y and z) so its `my_align` side meets the target's
+/// `target_align` side, `offset` beyond it; the names are Strings or Symbols (`:z`, `:max`).
+pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    if (args.len < 3) {
+        return vm.fail(.ArgumentError, "align(target, axes, my_align, [target_align], [offset]) requires at least 3 args", .{});
+    }
+    const target = args[0];
+    const axes_text = try util.requireName(vm, args[1], "align", "axes");
+    const my_align = try Alignment.parse(vm, try util.requireName(vm, args[2], "align", "my_align"));
+    var target_align = my_align;
+    var offset: f64 = 0.0;
     if (args.len > 3) {
-        if (args[3].isString()) {
-            target_align_str = args[3].asString().chars;
+        if (args[3].nameChars()) |text| {
+            target_align = try Alignment.parse(vm, text);
         } else if (args[3].isNumber()) {
             // Allow skipping target_align: align(target, axes, my_align, offset)
             offset = try util.requireNumber(vm, args[3], "align", "offset");
         } else if (!args[3].isNil()) { // nil keeps target_align = my_align
-            return vm.fail(.TypeError, "align expects a String target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
+            return vm.fail(.TypeError, "align expects a String or Symbol target_align or a number offset as argument 4, got {s}", .{util.typeName(vm, args[3])});
         }
     }
     if (args.len > 4) offset = try util.requireNumber(vm, args[4], "align", "offset");
+
+    var axes = [3]bool{ false, false, false };
+    for (axes_text) |c| switch (std.ascii.toLower(c)) {
+        'x' => axes[0] = true,
+        'y' => axes[1] = true,
+        'z' => axes[2] = true,
+        else => {},
+    };
+    if (!axes[0] and !axes[1] and !axes[2]) {
+        return vm.fail(.ArgumentError, "align needs axes to move along, letters of x, y and z, got '{s}'", .{axes_text});
+    }
 
     // The target used to be evaluated as a Geometry whatever it was.
     if (!target.isGeometry() and !target.isCrossSection()) {
@@ -170,43 +203,13 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     }
     const my_bbox = try util.boundsOf(vm, receiver, "align");
     const target_bbox = try util.boundsOf(vm, target, "align");
-
-    var tx: f64 = 0;
-    var ty: f64 = 0;
-    var tz: f64 = 0;
-
-    for (axis_str) |c| {
-        var axis_idx: usize = 0;
-        switch (c) {
-            'x', 'X' => axis_idx = 0,
-            'y', 'Y' => axis_idx = 1,
-            'z', 'Z' => axis_idx = 2,
-            else => continue,
-        }
-
-        const my_min = my_bbox.min[axis_idx];
-        const my_max = my_bbox.max[axis_idx];
-        const my_center = my_min + (my_max - my_min) / 2.0;
-
-        const target_min = target_bbox.min[axis_idx];
-        const target_max = target_bbox.max[axis_idx];
-        const target_center = target_min + (target_max - target_min) / 2.0;
-
-        var my_pt: f64 = 0.0;
-        if (std.mem.eql(u8, my_align_str, "min")) my_pt = my_min else if (std.mem.eql(u8, my_align_str, "max")) my_pt = my_max else if (std.mem.eql(u8, my_align_str, "center")) my_pt = my_center else {
-            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{my_align_str});
-        }
-
-        var target_pt: f64 = 0.0;
-        if (std.mem.eql(u8, target_align_str, "min")) target_pt = target_min else if (std.mem.eql(u8, target_align_str, "max")) target_pt = target_max else if (std.mem.eql(u8, target_align_str, "center")) target_pt = target_center else {
-            return vm.fail(.ArgumentError, "invalid alignment '{s}' (use 'min', 'max', or 'center')", .{target_align_str});
-        }
-
-        const delta = target_pt - my_pt + offset;
-        if (axis_idx == 0) tx = delta;
-        if (axis_idx == 1) ty = delta;
-        if (axis_idx == 2) tz = delta;
+    var move = [3]f64{ 0, 0, 0 };
+    for (axes, &move, 0..) |on_axis, *delta, axis| {
+        if (on_axis) delta.* = target_align.on(target_bbox, axis) - my_align.on(my_bbox, axis) + offset;
     }
+    const tx = move[0];
+    const ty = move[1];
+    const tz = move[2];
 
     if (receiver.isGeometry()) {
         const new_idx = try vm.dag_builder.addTranslate(receiver.asGeometry().dag_idx, tx, ty, tz);
