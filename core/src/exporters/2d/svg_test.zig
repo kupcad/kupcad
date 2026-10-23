@@ -81,6 +81,52 @@ test "SVG: a Solid is drawn as its projection onto XY, named after its part, bes
     try testing.expect(std.mem.find(u8, svg, "width=\"22mm\" height=\"6mm\" viewBox=\"0 -4 22 6\"") != null);
 }
 
+/// The centre of the arc an SVG `A` command describes from `from` to `to` (both in SVG's
+/// coordinates), per the SVG specification's conversion from endpoints to centre.
+fn svgArcCenter(from: [2]f64, to: [2]f64, r: f64, large: bool, sweep: bool) [2]f64 {
+    const dx = (from[0] - to[0]) / 2;
+    const dy = (from[1] - to[1]) / 2;
+    const rr = r * r;
+    const root = @sqrt(@max(0, (rr * rr - rr * dy * dy - rr * dx * dx) / (rr * dy * dy + rr * dx * dx)));
+    const sign: f64 = if (large == sweep) -1 else 1;
+    const cx1 = sign * root * (r * dy / r);
+    const cy1 = sign * root * (-(r * dx) / r);
+    return .{ cx1 + (from[0] + to[0]) / 2, cy1 + (from[1] + to[1]) / 2 };
+}
+
+test "SVG: a circle is two arcs of its exact radius, a rounded corner an arc, a hole's arcs run the other way" {
+    // The kernel's chords were written as lines
+    const circle = try exportSvg("circle(r: 5, segments: 8).translate(x: 10)");
+    defer testing.allocator.free(circle);
+    const d = pathData(circle, 0).?;
+    try testing.expectEqualStrings("M 15 0 A 5 5 0 0 0 5 0 A 5 5 0 0 0 15 0 Z", d);
+    try testing.expect(std.mem.find(u8, circle, "viewBox=\"5 -5 10 10\"") != null);
+
+    // Four quarter arcs between four lines; each arc bulges away from the plate's middle
+    const plate = try exportSvg("square(20, round_r: 4, segments: 16)");
+    defer testing.allocator.free(plate);
+    const pd = pathData(plate, 0).?;
+    errdefer std.debug.print("plate: {s}\n", .{pd});
+    try testing.expectEqual(@as(usize, 4), std.mem.count(u8, pd, " A "));
+    try testing.expectEqual(@as(usize, 4), std.mem.count(u8, pd, " L "));
+    // The bottom-right corner's arc, from (16, 0) up to (20, 4) in the sketch, (16, 0) to
+    // (20, -4) on the page, a quarter turn; its centre must be (16, -4), the corner's
+    const arc = " A 4 4 0 0 0 20 -4";
+    const at = std.mem.find(u8, pd, arc).?;
+    try testing.expect(std.mem.endsWith(u8, pd[0..at], " 16 0") or std.mem.endsWith(u8, pd[0..at], "M 16 0"));
+    const center = svgArcCenter(.{ 16, 0 }, .{ 20, -4 }, 4, false, false);
+    try testing.expectApproxEqAbs(@as(f64, 16), center[0], 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, -4), center[1], 1e-9);
+
+    // A hole runs clockwise in the sketch, so its arcs sweep the other way
+    const holed = try exportSvg("square(20, center: true) - circle(r: 3, segments: 8)");
+    defer testing.allocator.free(holed);
+    const hd = pathData(holed, 0).?;
+    errdefer std.debug.print("holed: {s}\n", .{hd});
+    try testing.expect(std.mem.find(u8, hd, " A 3 3 0 0 1 ") != null);
+    try testing.expect(std.mem.find(u8, hd, " A 3 3 0 0 0 ") == null);
+}
+
 test "SVG: what can't be drawn is refused with a message" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "[]", .message = "GeometryError: the model holds no shape: nothing to draw as svg" },

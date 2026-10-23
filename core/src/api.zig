@@ -26,6 +26,8 @@ const obj_exporter = @import("exporters/3d/obj.zig");
 const svg_exporter = @import("exporters/2d/svg.zig");
 const dxf_exporter = @import("exporters/2d/dxf.zig");
 const drawing_mod = @import("exporters/2d/drawing.zig");
+const arcs = @import("exporters/2d/arcs.zig");
+const sketch_circles = @import("vm/sketch_circles.zig");
 const log = std.log.scoped(.@"export");
 const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
@@ -587,10 +589,7 @@ pub fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat
 pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.Value, solids: []const value.Value) !drawing_mod.Drawing {
     var shapes: std.ArrayList(drawing_mod.Shape) = .empty;
     errdefer {
-        for (shapes.items) |shape| {
-            shape.contours.deinit(allocator);
-            if (shape.name) |name| allocator.free(name);
-        }
+        for (shapes.items) |shape| shape.deinit(allocator);
         shapes.deinit(allocator);
     }
     try shapes.ensureTotalCapacity(allocator, sketches.len + solids.len);
@@ -620,13 +619,20 @@ pub fn drawingOf(allocator: std.mem.Allocator, vm: *VM, sketches: []const value.
 }
 
 /// `sketch`'s outlines as a shape of the drawing, labelled `name` (owned by `allocator`;
-/// the shape's from here on, freed on failure) and `material`.
+/// the shape's from here on, freed on failure) and `material`: the kernel's contours, with
+/// the chords of the circles the sketch's graph defines turned back into their arcs.
 fn shapeOf(allocator: std.mem.Allocator, vm: *VM, sketch: value.Value, name: ?[]const u8, material: ?MaterialDef) !drawing_mod.Shape {
     errdefer if (name) |n| allocator.free(n);
     const handle = try vm.ensureConcreteCrossSection(sketch);
     try vm.requireFeature(handle.engine, .sketch_contours);
     const contours = kernel.crossSectionContours(allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"the sketch's outlines"});
-    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .contours = contours };
+    defer contours.deinit(allocator);
+    const node = sketch.asCrossSection().dag_idx;
+    var circles = try sketch_circles.collect(allocator, &vm.dag_builder, node);
+    defer circles.deinit(allocator);
+    const tolerance = vm.dag_builder.settings(vm.dag_builder.nodes.items[node].settings).tolerance;
+    const outlines = try arcs.outlinesOf(allocator, contours, circles.items, tolerance);
+    return .{ .name = name, .rgb = if (material) |m| m.rgb else null, .alpha = if (material) |m| m.alpha else 1.0, .outlines = outlines };
 }
 
 /// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names

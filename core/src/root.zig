@@ -83,6 +83,8 @@ test {
     _ = @import("exporters/3d/obj_test.zig");
     _ = @import("exporters/2d/svg_test.zig");
     _ = @import("exporters/2d/dxf_test.zig");
+    _ = @import("exporters/2d/arcs_test.zig");
+    _ = @import("vm/sketch_circles_test.zig");
 
     // Frontends
     _ = @import("frontend/docstring_test.zig");

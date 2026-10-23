@@ -1,8 +1,9 @@
 //! DXF export: `build` writes a drawing (drawing.zig) as ASCII DXF (AutoCAD 2004, AC1018),
-//! in millimetres (`$INSUNITS`), Y up as a sketch's is. Each contour is a closed
+//! in millimetres (`$INSUNITS`), Y up as a sketch's is. Each outline is a closed
 //! `LWPOLYLINE` on the layer named after its shape (`named`; the layer `0` for one without a
-//! name), the layer coloured as the shape's material (true colour, and the nearest of the
-//! basic index colours for readers without it). The file holds the header, the layer and
+//! name), its arcs as bulges (the exact circle, not the chords the kernel drew; a circle is
+//! two half turns), the layer coloured as the shape's material (true colour, and the
+//! nearest of the basic index colours for readers without it). The file holds the header, the layer and
 //! line type tables and the entities: what CAD, CAM and laser tools read.
 
 const std = @import("std");
@@ -48,10 +49,10 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
     defer out.deinit();
     var file = File{ .w = &out.writer };
 
-    // How many handles the file gives out: the tables', the layers' and the contours'
-    var contours: usize = 0;
-    for (drawing.shapes) |shape| contours += shape.contours.count();
-    const handles = 2 + 1 + layers.items.len + contours;
+    // How many handles the file gives out: the tables', the layers' and the outlines'
+    var outlines: usize = 0;
+    for (drawing.shapes) |shape| outlines += shape.outlines.len;
+    const handles = 2 + 1 + layers.items.len + outlines;
 
     try file.section("HEADER");
     try file.pair(9, "$ACADVER");
@@ -96,25 +97,36 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
 
     try file.section("ENTITIES");
     for (drawing.shapes) |shape| {
-        for (0..shape.contours.count()) |ci| {
-            const contour = shape.contours.contour(ci);
-            if (contour.len == 0) continue;
+        for (shape.outlines) |outline| {
+            if (outline.edges.len == 0) continue;
             try file.pair(0, "LWPOLYLINE");
             try file.handle();
             try file.pair(100, "AcDbEntity");
             try file.layerOf(8, shape.name);
             try file.pair(100, "AcDbPolyline");
-            try file.int(90, contour.len);
+            // A vertex per edge: its start; the last edge ends at the first vertex
+            try file.int(90, outline.edges.len);
             try file.int(70, CLOSED);
-            for (contour) |p| {
-                try file.number(10, p[0]);
-                try file.number(20, p[1]);
+            var from = outline.start;
+            for (outline.edges) |edge| {
+                try file.number(10, from[0]);
+                try file.number(20, from[1]);
+                if (edge.arc != null) try file.number(42, bulgeOf(edge));
+                from = edge.to;
             }
         }
     }
     try file.endSection();
     try file.pair(0, "EOF");
     return out.toOwnedSlice();
+}
+
+/// A vertex's bulge (`42`): the tangent of a quarter of the angle the arc to the next
+/// vertex sweeps, positive counter-clockwise, as DXF stores an arc in a polyline.
+fn bulgeOf(edge: drawing_mod.Edge) f64 {
+    // A half turn's bulge is exactly 1, the usual circle (tan rounds it to 0.999...)
+    const bulge = if (edge.angle == std.math.pi) 1.0 else @tan(edge.angle / 4);
+    return if (edge.ccw) bulge else -bulge;
 }
 
 /// The layers of `drawing`: `0` first, then each shape name once, in the shapes' order,

@@ -27,6 +27,12 @@ MODELS = {
         2,
         4,
     ),
+    "arcs": (
+        """ring = circle(r: 10) - circle(r: 4).translate(x: 2)
+[ring.named("ring"), square(20, round_r: 3).translate(x: 30), circle(r: 2, segments: 5).translate(y: 30)]""",
+        3,
+        4,
+    ),
     "mixed": (
         """lid = cube(4).named("lid").material(color: "#0000FF")
 [square(5).translate(x: 20), lid, lid.translate(z: 10), cylinder(r: 3, h: 2).translate(x: 10)]""",

@@ -1,7 +1,8 @@
 //! SVG export: `build` writes a drawing (drawing.zig) as SVG, in millimetres (`width` and
 //! `height` in mm, the `viewBox` the drawing's bounds), with Y turned over (SVG's Y runs
 //! down, a sketch's up) so the file shows the sketch as the script has it. Each shape is one
-//! `<path>` of all its contours, filled by the even-odd rule so its holes are holes, in its
+//! `<path>` of all its outlines, lines as `L` and arcs as `A` (the exact circle, not the
+//! chords the kernel drew), filled by the even-odd rule so its holes are holes, in its
 //! material colour (or a neutral grey), with a thin black outline; a named shape carries
 //! its name as the path's `id`.
 
@@ -25,7 +26,7 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
     try w.print("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{d}mm\" height=\"{d}mm\" viewBox=\"{d} {d} {d} {d}\">\n", .{ width, height, bounds.min[0], flipped(bounds.max[1]), width, height });
     try w.print("<!-- KupCAD Export: millimetres -->\n", .{});
     for (drawing.shapes) |shape| {
-        if (shape.contours.points.len == 0) continue;
+        if (shape.outlines.len == 0) continue;
         try w.writeAll("  <path");
         if (shape.name) |name| {
             try w.writeAll(" id=\"");
@@ -37,10 +38,17 @@ pub fn build(allocator: std.mem.Allocator, drawing: *const drawing_mod.Drawing) 
         } else try w.print(" fill=\"{s}\"", .{DEFAULT_FILL});
         if (shape.alpha < 1) try w.print(" fill-opacity=\"{d}\"", .{shape.alpha});
         try w.print(" fill-rule=\"evenodd\" stroke=\"{s}\" stroke-width=\"{d}\" d=\"", .{ STROKE, STROKE_WIDTH });
-        for (0..shape.contours.count()) |ci| {
-            if (ci > 0) try w.writeByte(' ');
-            for (shape.contours.contour(ci), 0..) |p, i| {
-                try w.print("{s}{d} {d}", .{ if (i == 0) "M " else " L ", p[0], flipped(p[1]) });
+        for (shape.outlines, 0..) |outline, i| {
+            if (i > 0) try w.writeByte(' ');
+            try w.print("M {d} {d}", .{ outline.start[0], flipped(outline.start[1]) });
+            for (outline.edges, 0..) |edge, e| {
+                // `Z` draws the last line back to the start itself
+                if (e == outline.edges.len - 1 and edge.arc == null) break;
+                if (edge.arc) |arc| {
+                    // Turned over, a counter-clockwise arc runs the other way: SVG's sweep
+                    // flag is 1 for the positive-angle direction of its downward Y
+                    try w.print(" A {d} {d} 0 {d} {d} {d} {d}", .{ arc.radius, arc.radius, @intFromBool(edge.large()), @intFromBool(!edge.ccw), edge.to[0], flipped(edge.to[1]) });
+                } else try w.print(" L {d} {d}", .{ edge.to[0], flipped(edge.to[1]) });
             }
             try w.writeAll(" Z");
         }

@@ -128,6 +128,31 @@ test "DXF: a hole is a polyline of its own, a name a layer in the shape's colour
     try testing.expectEqualStrings("16719872", plate_true.?); // 0xFF2000
 }
 
+test "DXF: a circle is two bulged vertices, a rounded corner a bulge of its angle, a line none" {
+    const dxf = try exportDxf("[circle(r: 5, segments: 8), square(20, round_r: 4, segments: 16).translate(x: 20)]");
+    defer testing.allocator.free(dxf);
+    var pairs = try readPairs(dxf);
+    defer pairs.deinit(testing.allocator);
+    var bulges: std.ArrayList([]const u8) = .empty;
+    defer bulges.deinit(testing.allocator);
+    for (pairs.items) |p| {
+        if (p.code == 42) try bulges.append(testing.allocator, p.value);
+    }
+    // The circle's two half turns, then the plate's four quarter turns (tan 22.5°)
+    try testing.expectEqual(@as(usize, 6), bulges.items.len);
+    try testing.expectEqualStrings("1", bulges.items[0]);
+    try testing.expectEqualStrings("1", bulges.items[1]);
+    for (bulges.items[2..]) |b| try testing.expectApproxEqAbs(@tan(std.math.pi / 8.0), try std.fmt.parseFloat(f64, b), 1e-12);
+    var lines = try polylines(pairs.items);
+    defer freePolylines(&lines);
+    try testing.expectEqual(@as(usize, 2), lines.items[0].points.items.len);
+    try testing.expectEqual(@as(usize, 8), lines.items[1].points.items.len);
+    // A hole's bulges are negative: it runs clockwise
+    const holed = try exportDxf("square(20, center: true) - circle(r: 3, segments: 8)");
+    defer testing.allocator.free(holed);
+    try testing.expect(std.mem.find(u8, holed, "\n42\n-1\n") != null);
+}
+
 test "DXF: every handle is given out once" {
     const dxf = try exportDxf("[square(1), square(1).translate(x: 3).named(\"a\")]");
     defer testing.allocator.free(dxf);
