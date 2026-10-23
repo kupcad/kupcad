@@ -9,6 +9,7 @@ const kernel = @import("../../kernel/kernel.zig");
 const geom = @import("../../core/geometry_handle.zig");
 const arguments = @import("../arguments.zig");
 const error_kind = @import("../../vm/error_kind.zig");
+const vec3 = @import("../../core/vec3.zig");
 
 /// min_gap without a search length first looks this fraction of the way across the box
 /// around both shapes (when their own boxes overlap), then twice as far each time: the
@@ -67,6 +68,58 @@ pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .volume);
     return value.Value.initNumber(kernel.volume(handle));
+}
+
+/// `solid.center_of_mass`: the centroid of its volume, [x, y, z], where it balances at a
+/// uniform density: the first moments of the tetrahedra its mesh's triangles make with a
+/// vertex of its own (near, so the sums keep their digits) over its volume.
+pub fn meshCenterOfMass(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "center_of_mass", receiver);
+    const handle = try vm.ensureConcrete(receiver);
+    // A measurement of its volume, made from its mesh
+    try vm.requireFeature(handle.engine, .volume);
+    try vm.requireFeature(handle.engine, .mesh);
+    const mesh = kernel.getMesh(vm.allocator, handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"center_of_mass"});
+    defer vm.allocator.free(mesh.vert_props);
+    defer vm.allocator.free(mesh.tri_verts);
+    if (mesh.tri_verts.len == 0) return vm.fail(.ValueError, "center_of_mass: the Solid is empty, it has no volume to balance", .{});
+    const ref = vertexAt(mesh, 0);
+    var six_volume: f64 = 0;
+    var moment: [3]f64 = @splat(0);
+    var t: usize = 0;
+    while (t < mesh.tri_verts.len) : (t += 3) {
+        const a = vec3.sub(vertexAt(mesh, mesh.tri_verts[t]), ref);
+        const b = vec3.sub(vertexAt(mesh, mesh.tri_verts[t + 1]), ref);
+        const c = vec3.sub(vertexAt(mesh, mesh.tri_verts[t + 2]), ref);
+        // Six times the tetrahedron's signed volume; its centroid is (a + b + c) / 4
+        const v6 = vec3.dot(a, vec3.cross(b, c));
+        six_volume += v6;
+        moment = vec3.add(moment, vec3.scale(vec3.add(vec3.add(a, b), c), v6));
+    }
+    if (!(six_volume > 0)) return vm.fail(.ValueError, "center_of_mass: the Solid encloses no volume", .{});
+    const centroid = vec3.add(ref, vec3.scale(moment, 1 / (4 * six_volume)));
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, &.{ value.Value.initNumber(centroid[0]), value.Value.initNumber(centroid[1]), value.Value.initNumber(centroid[2]) })).obj);
+}
+
+fn vertexAt(mesh: geom.Mesh, i: usize) [3]f64 {
+    const p = mesh.vert_props[i * mesh.num_prop ..][0..3];
+    return .{ p[0], p[1], p[2] };
+}
+
+/// `solid.intersects?(other)`: whether the two overlap, their intersection holding more
+/// than the tolerance cubed; solids that only touch (a face on a face) don't.
+pub fn meshIntersects(vm: *VM, receiver: value.Value, other: value.Value) !value.Value {
+    if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "intersects?", receiver);
+    if (!other.isGeometry()) return vm.fail(.TypeError, "intersects? expects a Solid to test against, got {s}", .{arguments.typeName(vm, other)});
+    const handle = try vm.ensureConcrete(receiver);
+    const other_handle = try vm.ensureConcrete(other);
+    try vm.requireSameEngine(handle.engine, other_handle.engine);
+    try vm.requireFeature(handle.engine, .boolean);
+    try vm.requireFeature(handle.engine, .volume);
+    const common = kernel.boolean(handle, other_handle, .intersection_op) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"intersects?"});
+    defer kernel.destruct(common);
+    const tolerance = vm.settingsOf(receiver).tolerance;
+    return value.Value.initBool(kernel.volume(common) > tolerance * tolerance * tolerance);
 }
 
 /// `sketch.area`: how much the sketch encloses, in mm² (its holes left out).

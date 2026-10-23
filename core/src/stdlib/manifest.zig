@@ -194,6 +194,9 @@ pub const mesh_methods = [_]MeshMethod{
     method("volume", .inspection_method, methods.meshVolume, &sig.NONE, .number, .solids),
     method("surface_area", .inspection_method, methods.meshSurfaceArea, &sig.NONE, .number, .solids),
     method("area", .inspection_method, methods.sketchArea, &sig.NONE, .number, .sketches),
+    method("center_of_mass", .inspection_method, methods.meshCenterOfMass, &sig.NONE, .array, .solids),
+    method("intersects?", .inspection_method, methods.meshIntersects, &sig.INTERSECTS, .boolean, .solids),
+    method("mass", .inspection_method, bom.meshMass, &sig.NONE, .number, .solids),
     method("extrude", .transform, methods.meshExtrude, &sig.EXTRUDE, .solid, .sketches),
     method("revolve", .transform, methods.meshRevolve, &sig.REVOLVE, .solid, .sketches),
     method("hull", .transform, methods.meshHull, &sig.SHAPES, .solid, .solids),
@@ -251,6 +254,7 @@ pub const assembly_methods = [_]MeshMethod{
     method("name", .inspection_method, assembly_mod.assemblyName, &sig.NONE, .string, .solids),
     method("parts", .inspection_method, assembly_mod.assemblyParts, &sig.NONE, .array, .solids),
     method("bom", .inspection_method, bom.meshBom, &sig.NONE, .array, .solids),
+    method("mass", .inspection_method, bom.meshMass, &sig.NONE, .number, .solids),
     // Placing a whole subassembly: its bounds, and every part moved alike.
     method("bbox", .inspection_method, methods.meshBBox, &sig.NONE, .bounding_box, .both),
     method("center", .transform, methods.meshCenter, &sig.CENTER, .receiver, .both),

@@ -34,6 +34,24 @@ pub fn meshBom(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initObj(&rows.obj);
 }
 
+/// solid.mass / assembly.mass -> its mass in grams: each part's volume times its material's
+/// density (`material(density:)`, g/cm³), as the parts list counts it, copies and all. A
+/// part with no density is a ValueError naming it.
+pub fn meshMass(vm: *VM, receiver: value.Value) !value.Value {
+    var single: [1]value.Value = undefined;
+    const parts = try parts_mod.collect(vm, vm.allocator, try solidsOf(vm, receiver, "mass", &single));
+    defer vm.allocator.free(parts);
+    var total: f64 = 0;
+    for (parts) |part| {
+        const mass = part.mass() orelse {
+            if (part.name) |name| return vm.fail(.ValueError, "mass: part '{s}' has no density; give it one with material(density:), in g/cm³", .{name});
+            return vm.fail(.ValueError, "mass: the Solid has no density; give it one with material(density:), in g/cm³", .{});
+        };
+        total += mass * @as(f64, @floatFromInt(part.count));
+    }
+    return value.Value.initNumber(total);
+}
+
 /// `part` as a Map with Symbol keys (parts.FIELDS).
 fn rowOf(vm: *VM, part: Part) !value.Value {
     var scope = HandleScope.init(vm);

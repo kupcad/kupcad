@@ -457,6 +457,9 @@ topology = box.genus            # Topological genus (holes)
 
 ```
 
+
+A Solid also answers `center_of_mass`, the centroid of its volume ([x, y, z], where it balances at a uniform density), `intersects?(other)`, whether two overlap by more than the tolerance cubed (touching face to face is not overlapping), and `mass`, in grams: its volume times its material's `density:` (g/cm³), as the parts list counts it; an Assembly's `mass` is its parts' together. A Solid or a part with no density is a `ValueError` naming it, and a union has no material of its own, so assemble parts of different materials to weigh them.
+
 ---
 
 ## 7. System Kernel & Development Modifiers

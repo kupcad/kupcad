@@ -1128,6 +1128,25 @@ test "Stdlib: a plane's normal as an Array or keywords, a helix by pitch or turn
     });
 }
 
+test "Stdlib: a solid's center of mass, its mass from its density, and whether two overlap" {
+    try expectScripts(&.{
+        .{ .src = "r = cube(2).center_of_mass", .expected = .{ .nums = &.{ 1, 1, 1 } } },
+        .{ .src = "r = cube([4, 2, 2], true).translate(10, 0, 0).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 10, 0, 0 } } },
+        // An L of two boxes balances nearer its corner, by volume
+        .{ .src = "r = (cube([2, 1, 1]) + cube([1, 2, 1])).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0.833333, 0.833333, 0.5 } } },
+        .{ .src = "r = cylinder(r: 1, h: 4).center_of_mass.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 0, 0, 2 } } },
+        // Overlapping, touching face to face, apart
+        .{ .src = "c = cube(2)\nr = [c.intersects?(c.translate(1, 0, 0)), c.intersects?(c.translate(2, 0, 0)), c.intersects?(c.translate(3, 0, 0))].inspect", .expected = .{ .str = "[true, false, false]" } },
+        .{ .src = comptime rescued("cube(2).intersects?(5)"), .expected = .{ .str = "TypeError: intersects? expects a Solid to test against, got Number" } },
+        // 1000 mm³ of aluminium
+        .{ .src = "r = cube(10).material(density: 2.7).mass", .expected = .{ .num = 2.7 } },
+        .{ .src = "p = cube(10).material(density: 2).named(\"plate\")\nr = assemble(name: \"k\", parts: [p, p.translate(20, 0, 0), cube(5).material(density: 8).named(\"weight\")]).mass", .expected = .{ .num = 5 } },
+        .{ .src = comptime rescued("cube(10).mass"), .expected = .{ .str = "ValueError: mass: the Solid has no density; give it one with material(density:), in g/cm³" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(10).named(\"plate\")]).mass"), .expected = .{ .str = "ValueError: mass: part 'plate' has no density; give it one with material(density:), in g/cm³" } },
+        .{ .src = comptime rescued("CAD.config(engine: :brep)\ncube(1).center_of_mass"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
+    });
+}
+
 test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
     try expectScripts(&.{
         .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
@@ -2688,7 +2707,8 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
         .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
-        .{ "area", "s.area" },
+        .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
+        .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };
@@ -2862,7 +2882,8 @@ test "Stdlib: each Assembly method gives back what the manifest says it does" {
             try testing.expectEqual(manifest.Result.receiver, m.result);
         } else {
             const expected = comptime if (m.result == .receiver) "Assembly" else m.result.className().?;
-            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
+            // A density, for mass
+            try expectScripts(&.{.{ .src = "a = assemble(name: \"k\", parts: [cube(1).material(density: 1)])\nr = \"#{a." ++ m.name ++ ".class}\"", .expected = .{ .str = expected } }});
         }
     }
 }

@@ -31,6 +31,7 @@ pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
 
 // --- Advanced ---
 pub const MINKOWSKI = Signature{ .positional = &.{"other"} };
+pub const INTERSECTS = Signature{ .positional = &.{"other"} };
 pub const TRIM_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" }, .keywords = &.{ "nx", "ny", "nz", "offset", "normal" } };
 pub const SPLIT_BY_PLANE = TRIM_BY_PLANE;
 pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta", "join", "miter_limit", "segments" }, .solid_sizes = &.{"delta"} };
