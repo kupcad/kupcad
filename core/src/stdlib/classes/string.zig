@@ -1,12 +1,14 @@
-//! The String class's methods (`methods`): `length`, case changes, `split`, `replace`,
-//! conversions such as `to_f` and `to_sym`, `trim` and prefix and suffix tests. Each returns
-//! a new String, as Strings are immutable values.
+//! The String class's methods (`methods`): `length`, case changes, `split`, `chars`,
+//! `replace`, `reverse`, padding (`rjust`, `ljust`), conversions such as `to_f` and
+//! `to_sym`, `trim` (`strip`) and substring, prefix and suffix tests. Each returns a new
+//! String, as Strings are immutable values.
 
 const std = @import("std");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
+const limits = @import("../../core/limits.zig");
 
 /// String.new(text = "") -> the text (Strings are immutable values)
 pub fn stringNew(vm: *VM, class: value.Value, text: ?*value.ObjString) !value.Value {
@@ -47,18 +49,8 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
 
     const arr_obj = try scope.array();
 
-    if (delim_str.len == 0) {
-        // Into its characters, as in Ruby (an empty delimiter tripped an assertion).
-        const view = std.unicode.Utf8View.init(str.chars) catch {
-            return vm.fail(.ValueError, "split: the String isn't valid UTF-8", .{});
-        };
-        var chars = view.iterator();
-        while (chars.nextCodepointSlice()) |ch| {
-            const ch_val = try vm.allocateString(ch);
-            try arr_obj.items.append(vm.gc.trackingAllocator(), ch_val);
-        }
-        return value.Value.initObj(&arr_obj.obj);
-    }
+    // Into its characters, as in Ruby (an empty delimiter tripped an assertion).
+    if (delim_str.len == 0) return charsInto(vm, str, arr_obj, "split");
 
     var iter = std.mem.splitSequence(u8, str.chars, delim_str);
     while (iter.next()) |part| {
@@ -66,6 +58,87 @@ pub fn stringSplit(vm: *VM, str: *value.ObjString, delim_obj: *value.ObjString) 
         try arr_obj.items.append(vm.gc.trackingAllocator(), part_val);
     }
     return value.Value.initObj(&arr_obj.obj);
+}
+
+/// String#chars: its characters, each a String (`split("")`).
+pub fn stringChars(vm: *VM, str: *value.ObjString) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    return charsInto(vm, str, try scope.array(), "chars");
+}
+
+/// `str`'s characters appended to `arr` (rooted by the caller), which is the result; a
+/// String that isn't UTF-8 is a ValueError naming `method`.
+fn charsInto(vm: *VM, str: *value.ObjString, arr: *value.ObjArray, comptime method: []const u8) !value.Value {
+    var chars = (try utf8View(vm, str, method)).iterator();
+    while (chars.nextCodepointSlice()) |ch| {
+        const ch_val = try vm.allocateString(ch);
+        try arr.items.append(vm.gc.trackingAllocator(), ch_val);
+    }
+    return value.Value.initObj(&arr.obj);
+}
+
+fn utf8View(vm: *VM, str: *const value.ObjString, comptime method: []const u8) !std.unicode.Utf8View {
+    return std.unicode.Utf8View.init(str.chars) catch vm.fail(.ValueError, method ++ ": the String isn't valid UTF-8", .{});
+}
+
+/// String#include?(other): whether `other` occurs in it.
+pub fn stringInclude(vm: *VM, str: *value.ObjString, other: *value.ObjString) !value.Value {
+    _ = vm;
+    return value.Value.initBool(std.mem.find(u8, str.chars, other.chars) != null);
+}
+
+/// String#reverse: its characters in the opposite order.
+pub fn stringReverse(vm: *VM, str: *value.ObjString) !value.Value {
+    var chars = (try utf8View(vm, str, "reverse")).iterator();
+    const out = try vm.gc.trackingAllocator().alloc(u8, str.chars.len);
+    errdefer vm.gc.trackingAllocator().free(out);
+    var end = out.len;
+    while (chars.nextCodepointSlice()) |ch| {
+        end -= ch.len;
+        @memcpy(out[end..][0..ch.len], ch);
+    }
+    return vm.allocateStringTakeOwnership(out);
+}
+
+/// String#rjust(width, pad = " "): the String `width` characters long, `pad` repeated
+/// before it (cut to fit); the String itself when it is that long already.
+pub fn stringRjust(vm: *VM, str: *value.ObjString, width: f64, pad: ?*value.ObjString) !value.Value {
+    return justify(vm, str, width, pad, .right, "rjust");
+}
+
+/// String#ljust(width, pad = " "): the String `width` characters long, `pad` repeated
+/// after it (cut to fit); the String itself when it is that long already.
+pub fn stringLjust(vm: *VM, str: *value.ObjString, width: f64, pad: ?*value.ObjString) !value.Value {
+    return justify(vm, str, width, pad, .left, "ljust");
+}
+
+fn justify(vm: *VM, str: *value.ObjString, width_num: f64, pad_obj: ?*value.ObjString, comptime side: enum { left, right }, comptime method: []const u8) !value.Value {
+    if (!std.math.isFinite(width_num)) return vm.fail(.ArgumentError, method ++ ": the width is a finite number, got {f}", .{value.fmtNumber(width_num)});
+    const pad = if (pad_obj) |p| p.chars else " ";
+    if (pad.len == 0) return vm.fail(.ArgumentError, method ++ ": the padding is empty", .{});
+    const pad_view = std.unicode.Utf8View.init(pad) catch return vm.fail(.ValueError, method ++ ": the padding isn't valid UTF-8", .{});
+    const len = std.unicode.utf8CountCodepoints(str.chars) catch str.chars.len;
+    const width = @trunc(width_num);
+    if (width <= @as(f64, @floatFromInt(len))) return value.Value.initObj(&str.obj);
+    if (width - @as(f64, @floatFromInt(len)) > @as(f64, @floatFromInt(limits.MAX_STRING_PAD))) {
+        return vm.fail(.RangeError, method ++ ": a width of {f} would add more than {d} characters", .{ value.fmtNumber(width_num), limits.MAX_STRING_PAD });
+    }
+    const missing: usize = @intFromFloat(width - @as(f64, @floatFromInt(len)));
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(vm.gc.trackingAllocator());
+    if (side == .left) try out.appendSlice(vm.gc.trackingAllocator(), str.chars);
+    var pad_chars = pad_view.iterator();
+    for (0..missing) |_| {
+        const ch = pad_chars.nextCodepointSlice() orelse blk: {
+            pad_chars = pad_view.iterator();
+            break :blk pad_chars.nextCodepointSlice().?;
+        };
+        try out.appendSlice(vm.gc.trackingAllocator(), ch);
+    }
+    if (side == .right) try out.appendSlice(vm.gc.trackingAllocator(), str.chars);
+    return vm.allocateStringTakeOwnership(try out.toOwnedSlice(vm.gc.trackingAllocator()));
 }
 
 /// String#replace(target, replacement)
@@ -127,12 +200,20 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "upcase", .func = common.wrapMethod(stringUpcase) },
     .{ .name = "downcase", .func = common.wrapMethod(stringDowncase) },
     .{ .name = "split", .func = common.wrapMethod(stringSplit) },
+    .{ .name = "chars", .func = common.wrapMethod(stringChars) },
+    .{ .name = "reverse", .func = common.wrapMethod(stringReverse) },
+    .{ .name = "include?", .func = common.wrapMethod(stringInclude) },
+    .{ .name = "rjust", .func = common.wrapMethod(stringRjust) },
+    .{ .name = "ljust", .func = common.wrapMethod(stringLjust) },
     .{ .name = "replace", .func = common.wrapMethod(stringReplace) },
     .{ .name = "to_f", .func = common.wrapMethod(stringToF) },
     .{ .name = "to_i", .func = common.wrapMethod(stringToI) },
     .{ .name = "trim", .func = common.wrapMethod(stringTrim) },
+    .{ .name = "strip", .func = common.wrapMethod(stringTrim) },
     .{ .name = "starts_with?", .func = common.wrapMethod(stringStartsWith) },
+    .{ .name = "start_with?", .func = common.wrapMethod(stringStartsWith) },
     .{ .name = "ends_with?", .func = common.wrapMethod(stringEndsWith) },
+    .{ .name = "end_with?", .func = common.wrapMethod(stringEndsWith) },
     .{ .name = "to_sym", .func = common.wrapMethod(stringToSym) },
     .{ .name = "to_s", .func = common.wrapMethod(stringToS) },
 };

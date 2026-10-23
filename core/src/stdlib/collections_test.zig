@@ -105,3 +105,16 @@ test "Map: filter, reject and transform_values make new Maps, the receiver as it
         .{ .src = comptime rescued("{ a: 1 }.filter"), .expected = .{ .str = "ArgumentError: Map#filter requires a block" } },
     });
 }
+
+test "String: chars, reverse and include? by character, rjust and ljust pad to a width" {
+    try expectScripts(&.{
+        .{ .src = "r = \"héllo\".chars.inspect", .expected = .{ .str = "[\"h\", \"é\", \"l\", \"l\", \"o\"]" }, .gc_stress = true },
+        .{ .src = "r = \"héllo\".reverse + \"|\" + \"\".reverse", .expected = .{ .str = "olléh|" } },
+        .{ .src = "r = [\"abc\".include?(\"bc\"), \"abc\".include?(\"x\"), \"abc\".include?(\"\")].inspect", .expected = .{ .str = "[true, false, true]" } },
+        .{ .src = "r = [\"7\".rjust(3, \"0\"), \"ab\".ljust(5, \"xy\"), \"abc\".rjust(2), \"é\".rjust(3), \"a\".ljust(2.9), \"x\".rjust(4, \"ab\")].join(\"|\")", .expected = .{ .str = "007|abxyx|abc|  é|a |abax" } },
+        .{ .src = comptime rescued("\"a\".rjust(3, \"\")"), .expected = .{ .str = "ArgumentError: rjust: the padding is empty" } },
+        .{ .src = comptime rescued("\"a\".ljust(Number::INFINITY)"), .expected = .{ .str = "ArgumentError: ljust: the width is a finite number, got Infinity" } },
+        // Ruby's names for trim, starts_with? and ends_with?
+        .{ .src = "r = [\"  a \".strip, \"abc\".start_with?(\"ab\"), \"abc\".end_with?(\"bc\"), \"abc\".end_with?(\"b\")].inspect", .expected = .{ .str = "[\"a\", true, true, false]" } },
+    });
+}

@@ -35,6 +35,7 @@ const CASES = .{
     .MAX_SEGMENTS = segments,
     .MAX_PATTERN_COUNT = patternCount,
     .MAX_RANGE_MATERIALIZE = rangeMaterialize,
+    .MAX_STRING_PAD = stringPad,
     .MAX_NEWTON_TRIALS = newtonTrials,
     .MAX_MARCHING_STEPS = marchingSteps,
     .MAX_SOURCE_BYTES = sourceBytes,
@@ -134,6 +135,10 @@ fn patternCount() !void {
 
 fn rangeMaterialize() !void {
     try expectRescued("(1..10_000_001).to_a", "ValueError: Range#to_a would build an array of 10000001 values (limit 10000000); iterate with each instead");
+}
+
+fn stringPad() !void {
+    try expectRescued("\"a\".rjust(1_000_002)", "RangeError: rjust: a width of 1000002 would add more than 1000000 characters");
 }
 
 fn newtonTrials() !void {

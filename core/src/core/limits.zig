@@ -48,6 +48,9 @@ pub const MAX_PATTERN_COUNT: usize = 10_000;
 // like a `while` loop. Building an array is bounded by memory instead: 10M values is
 // ~130 MB, and the native build has no memory limit by default.
 pub const MAX_RANGE_MATERIALIZE: usize = 10_000_000;
+// Most characters String#rjust and #ljust add. A label or a table column is far shorter,
+// and the padding is written in the native, where the instruction budget can't stop it.
+pub const MAX_STRING_PAD: usize = 1_000_000;
 // Upper bounds for the B-Rep solver iteration budgets set via CAD.config(brep: ...).
 // Both are per-call loops, so an unbounded user value turns one projection or
 // intersection into an effective hang. The caps sit 20x/200x above the defaults
