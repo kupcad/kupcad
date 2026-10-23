@@ -69,6 +69,14 @@ pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
     return value.Value.initNumber(kernel.volume(handle));
 }
 
+/// `sketch.area`: how much the sketch encloses, in mm² (its holes left out).
+pub fn sketchArea(vm: *VM, receiver: value.Value) !value.Value {
+    if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "area", receiver);
+    const handle = try vm.ensureConcreteCrossSection(receiver);
+    try vm.requireFeature(handle.engine, .sketch_measure);
+    return value.Value.initNumber(kernel.crossSectionArea(handle));
+}
+
 pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "surface_area", receiver);
     const handle = try vm.ensureConcrete(receiver);

@@ -93,3 +93,11 @@ test "paths: line_to, arc_to and tangent_arc_to go on from the end, a tangent ar
         .{ .src = comptime rescued("line([0, 0], [10, 0]).line_to(5)"), .expected = .{ .str = "TypeError: line_to expects an Array for point 0, got Number" } },
     });
 }
+
+test "paths: a path's bbox is its own, an arc's bend included" {
+    try expectScripts(&.{
+        .{ .src = "r = arc(center: [0, 0], r: 5, start: 0, sweep: 90).bbox.size", .expected = .{ .nums = &.{ 5, 5, 0 } } },
+        .{ .src = "r = (line([-1, 0], [1, 0]) + arc(r: 1, start: [1, 0], to: [-1, 0])).bbox.max", .expected = .{ .nums = &.{ 1, 1, 0 } } },
+        .{ .src = "r = polyline([[0, 0], [3, 4], [6, 0]]).bbox.size", .expected = .{ .nums = &.{ 6, 4, 0 } } },
+    });
+}

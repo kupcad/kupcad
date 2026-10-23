@@ -1045,6 +1045,38 @@ test "Stdlib: Math has modelling helpers: snap, remap, smoothstep, close? and gc
     });
 }
 
+test "Stdlib: cube and square take their sizes as an Array, regular_polygon its size across flats" {
+    try expectScripts(&.{
+        .{ .src = "r = cube([1, 2, 3]).bbox.size", .expected = .{ .nums = &.{ 1, 2, 3 } } },
+        .{ .src = "r = cube([1, 2, 3], true).bbox.min", .expected = .{ .nums = &.{ -0.5, -1, -1.5 } } },
+        .{ .src = "r = cube(size: [4, 5, 6]).bbox.size", .expected = .{ .nums = &.{ 4, 5, 6 } } },
+        .{ .src = "r = cube([2, 2, 2], round_r: 0.5).bbox.size", .expected = .{ .nums = &.{ 2, 2, 2 } } },
+        .{ .src = "r = square([2, 3]).bbox.size", .expected = .{ .nums = &.{ 2, 3, 0 } } },
+        .{ .src = "r = square(size: [2, 3], center: true).bbox.min", .expected = .{ .nums = &.{ -1, -1.5, 0 } } },
+        .{ .src = comptime rescued("cube([1, 2])"), .expected = .{ .str = "ValueError: cube expects the size to have 3 numbers, got 2" } },
+        .{ .src = comptime rescued("cube([1, -2, 3])"), .expected = .{ .str = "ValueError: cube expects y to be a finite number greater than zero, got -2" } },
+        .{ .src = comptime rescued("cube(size: \"x\")"), .expected = .{ .str = "TypeError: cube expects a number or an Array of sizes for size, got String" } },
+        .{ .src = comptime rescued("cube([1, 2, 3], true, 5)"), .expected = .{ .str = "ArgumentError: cube takes its sizes as an Array or as x, y, z: [w, d, h] and center, got 3 positional arguments" } },
+        // A keyword overrides a positional size, as it does a positional number
+        .{ .src = "r = square([1, 2], x: 3).bbox.size", .expected = .{ .nums = &.{ 3, 2, 0 } } },
+        // A hex nut by its wrench size: flats 10 apart, corners 10 / cos 30° apart
+        .{ .src = "s = regular_polygon(6, across_flats: 10).bbox.size\nr = [s[0].round(9), s[1].round(9)]", .expected = .{ .nums = &.{ 11.547005384, 10 } } },
+        .{ .src = comptime rescued("regular_polygon(5, across_flats: 10)"), .expected = .{ .str = "ArgumentError: regular_polygon takes across_flats: with an even number of sides (a hex nut's 6), got 5" } },
+        .{ .src = comptime rescued("regular_polygon(6, r: 5, across_flats: 10)"), .expected = .{ .str = "ArgumentError: regular_polygon takes r or across_flats, not both" } },
+        .{ .src = comptime rescued("regular_polygon(6, across_flats: -1)"), .expected = .{ .str = "ValueError: regular_polygon expects across_flats to be a finite number greater than zero, got -1" } },
+    });
+}
+
+test "Stdlib: a sketch's area, its holes left out" {
+    try expectScripts(&.{
+        .{ .src = "r = square(10).area", .expected = .{ .num = 100 } },
+        // A diamond of half-diagonal 2 (a circle drawn with 4 segments) cut out
+        .{ .src = "r = (square(10) - circle(r: 2, segments: 4).translate(5, 5)).area", .expected = .{ .num = 92 } },
+        .{ .src = comptime rescued("cube(1).area"), .expected = .{ .str = "NoMethodError: undefined method 'area' for Geometry" } },
+        .{ .src = comptime rescued("CAD.config(engine: :brep)\nsquare(2).area"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure sketches (bbox, align, center) yet; build this part with engine: :manifold" } },
+    });
+}
+
 test "Stdlib: CAD.preview? is false unless the host runs the script for a preview" {
     try expectScripts(&.{.{ .src = "r = CAD.preview?", .expected = .{ .boolean = false } }});
     var vm = try initVm();
@@ -1925,7 +1957,9 @@ test "Stdlib: geometry arguments reject non-number coordinates" {
         "cube(10, \"20\", 30)",
         "cube(10, 20, 30, \"yes\")",
         "cube(x: \"10\")",
-        "cube(size: [1, 2, 3])",
+        // size: takes a number or an Array of sizes (cube(size: [1, 2, 3]) is a box)
+        "cube(size: [1, \"2\", 3])",
+        "cube(size: :big)",
         "square(10, 10, 1)",
         "cylinder(d: \"4\", h: 2)",
         "cylinder(r: 1, h: 2, center: 1)",
@@ -2360,7 +2394,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cylinder(r: 1, bogus: 1)", .method = "cylinder", .accepted = "r, r1, r2, d, d1, d2, radius, h, center, round_r, chamfer, segments, sides" },
         .{ .src = "sphere(r: 1, bogus: 1)", .method = "sphere", .accepted = "r, d, radius, segments" },
         .{ .src = "circle(r: 1, bogus: 1)", .method = "circle", .accepted = "r, d, radius, segments, sides" },
-        .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius" },
+        .{ .src = "regular_polygon(bogus: 1)", .method = "regular_polygon", .accepted = "sides, r, d, radius, across_flats" },
         .{ .src = "torus(bogus: 1)", .method = "torus", .accepted = "major_r, minor_r, segments" },
         .{ .src = "polygon([[0,0],[1,0],[0,1]], bogus: 1)", .method = "polygon", .accepted = "paths" },
         .{ .src = "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ", bogus: 1)", .method = "polyhedron", .accepted = "points, faces" },
@@ -2579,6 +2613,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "repeat_polar", "c.repeat_polar(3)" },                .{ "material", "c.material(color: \"#ff0000\")" },
         .{ "highlight", "c.highlight" },                         .{ "ghost", "c.ghost" },
         .{ "named", "c.named(\"block\")" },                      .{ "bom", "c.bom" },
+        .{ "area", "s.area" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };

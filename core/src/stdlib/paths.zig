@@ -326,6 +326,14 @@ pub fn withMaterial(vm: *VM, receiver: value.Value, material_id: u32) !value.Val
 // --- Measures ---
 
 /// `start` and `end`: the path's ends as [x, y].
+/// `path.bbox`: the bounds of the path itself, its arcs' and curves' bends included (z 0,
+/// as a sketch's), measured from its segments, with no kernel.
+pub fn pathBBox(vm: *VM, receiver: value.Value) !value.Value {
+    const p = receiver.asPath();
+    const box = path_mod.bounds(p.start, p.segments);
+    return value.Value.initObj(&(try vm.gc.allocateBBox(vm, box.min[0], box.min[1], 0, box.max[0], box.max[1], 0)).obj);
+}
+
 pub fn pathStart(vm: *VM, receiver: value.Value) !value.Value {
     return pointArray(vm, receiver.asPath().start);
 }

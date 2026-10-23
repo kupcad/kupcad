@@ -43,6 +43,7 @@ pub const meshSimplify = advanced.meshSimplify;
 pub const meshBBox = inspect.meshBBox;
 pub const meshVolume = inspect.meshVolume;
 pub const meshSurfaceArea = inspect.meshSurfaceArea;
+pub const sketchArea = inspect.sketchArea;
 pub const meshMinGap = inspect.meshMinGap;
 pub const meshContains = inspect.meshContains;
 pub const meshRayCast = inspect.meshRayCast;

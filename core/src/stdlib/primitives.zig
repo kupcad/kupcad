@@ -23,6 +23,10 @@ const ALIAS_GROUPS = [_][]const []const u8{
     &.{ "size", "z" },
     // A corner is rounded or cut, not both (`round_r` silently won)
     &.{ "round_r", "chamfer" },
+    // A regular polygon's size, by its corners or by its flats
+    &.{ "r", "across_flats" },
+    &.{ "d", "across_flats" },
+    &.{ "radius", "across_flats" },
 };
 
 /// Smallest allowed text() flattening tolerance relative to the glyph size.
@@ -61,8 +65,8 @@ pub const CIRCLE = Signature{
 const REGULAR_POLYGON_SIDES = 6;
 pub const REGULAR_POLYGON = Signature{
     .positional = &.{ "sides", "r" },
-    .keywords = &.{ "sides", "r", "d", "radius" },
-    .sizes = &.{ "r", "d", "radius" },
+    .keywords = &.{ "sides", "r", "d", "radius", "across_flats" },
+    .sizes = &.{ "r", "d", "radius", "across_flats" },
 };
 pub const TORUS = Signature{
     .positional = &.{ "major_r", "minor_r" },
@@ -109,8 +113,11 @@ const GeomOptions = struct {
     /// cylinder a prism. Unlike `segments` (how finely a curve is drawn, which the B-Rep
     /// engine keeps exact), it is the shape itself, so it is the same on both engines.
     sides: ?i32 = null,
-    // Aliases, folded into the fields above by parseGeomOptions.
-    size: ?f64 = null,
+    /// A regular polygon's width between opposite flats (a nut's wrench size), for `r`.
+    across_flats: ?f64 = null,
+    // Aliases, folded into the fields above by parseGeomOptions (a `size` Array by the
+    // primitive, which knows how many it takes: sizeOf).
+    size: ?value.Value = null,
     d: ?f64 = null,
     d1: ?f64 = null,
     d2: ?f64 = null,
@@ -127,7 +134,12 @@ fn parseGeomOptions(comptime accepted: []const []const u8, base: GeomOptions, vm
     }
     var parsed = try arguments.parseKwargsOver(GeomOptions, base, accepted, vm, args, method);
     const opts = &parsed.opts;
-    if (opts.size) |size| opts.x, opts.y, opts.z = .{ size, size, size };
+    if (opts.size) |size| {
+        if (size.isNumber()) {
+            const n = try arguments.requireNumber(vm, size, method, "size");
+            opts.x, opts.y, opts.z = .{ n, n, n };
+        } else if (!size.isArray()) return vm.fail(.TypeError, "{s} expects a number or an Array of sizes for size, got {s}", .{ method, vm.typeName(size) });
+    }
     if (opts.d) |d| opts.r = d / 2.0;
     if (opts.d1) |d1| opts.r1 = d1 / 2.0;
     if (opts.d2) |d2| opts.r2 = d2 / 2.0;
@@ -143,6 +155,12 @@ fn acceptsAll(comptime accepted: []const []const u8, comptime names: []const []c
         } else return false;
     }
     return true;
+}
+
+/// The sizes an Array gives a box of `N` sides (`cube([w, d, h])`, `square([w, d])`), for
+/// x, y (and z).
+fn sizeOf(comptime N: usize, vm: *VM, size: value.Value, comptime method: []const u8) ![N]f64 {
+    return arguments.parseNumberArray(N, vm, size, .{ .method = method, .name = "the size", .elem = "a size", .index_label = "axis" }, N, 0);
 }
 
 /// Validates a user-supplied index into an array of length `len`.
@@ -227,13 +245,23 @@ fn buildRoundedRect(vm: *VM, x: f64, y: f64, center: bool, round_r: ?f64, chamfe
 pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
     const pos = arguments.positionalArgs(args);
     var base = GeomOptions{};
-    if (pos.len > 0) {
-        base.x = try arguments.requireNumber(vm, pos[0], "square", "x");
-        base.y = base.x;
+    if (pos.len > 0 and pos[0].isArray()) {
+        // square([w, d], center)
+        base.x, base.y = try sizeOf(2, vm, pos[0], "square");
+        if (pos.len > 1) base.center = try arguments.requireBool(vm, pos[1], "square", "center");
+        if (pos.len > 2) return vm.fail(.ArgumentError, "square takes its sizes as an Array or as x, y: [w, d] and center, got {d} positional arguments", .{pos.len});
+    } else {
+        if (pos.len > 0) {
+            base.x = try arguments.requireNumber(vm, pos[0], "square", "x");
+            base.y = base.x;
+        }
+        if (pos.len > 1) base.y = try arguments.requireNumber(vm, pos[1], "square", "y");
+        if (pos.len > 2) base.center = try arguments.requireBool(vm, pos[2], "square", "center");
     }
-    if (pos.len > 1) base.y = try arguments.requireNumber(vm, pos[1], "square", "y");
-    if (pos.len > 2) base.center = try arguments.requireBool(vm, pos[2], "square", "center");
-    const opts = (try parseGeomOptions(SQUARE.keywords, base, vm, args, "square")).opts;
+    var opts = (try parseGeomOptions(SQUARE.keywords, base, vm, args, "square")).opts;
+    if (opts.size) |size| if (size.isArray()) {
+        opts.x, opts.y = try sizeOf(2, vm, size, "square");
+    };
 
     try arguments.requirePositive(vm, opts.x, "square", "x");
     try arguments.requirePositive(vm, opts.y, "square", "y");
@@ -250,15 +278,25 @@ pub fn nativeSquare(vm: *VM, args: []const value.Value) !value.Value {
 pub fn nativeCube(vm: *VM, args: []const value.Value) !value.Value {
     const pos = arguments.positionalArgs(args);
     var base = GeomOptions{};
-    if (pos.len > 0) {
-        base.x = try arguments.requireNumber(vm, pos[0], "cube", "x");
-        base.y = base.x;
-        base.z = base.x;
+    if (pos.len > 0 and pos[0].isArray()) {
+        // cube([w, d, h], center), as OpenSCAD writes one
+        base.x, base.y, base.z = try sizeOf(3, vm, pos[0], "cube");
+        if (pos.len > 1) base.center = try arguments.requireBool(vm, pos[1], "cube", "center");
+        if (pos.len > 2) return vm.fail(.ArgumentError, "cube takes its sizes as an Array or as x, y, z: [w, d, h] and center, got {d} positional arguments", .{pos.len});
+    } else {
+        if (pos.len > 0) {
+            base.x = try arguments.requireNumber(vm, pos[0], "cube", "x");
+            base.y = base.x;
+            base.z = base.x;
+        }
+        if (pos.len > 1) base.y = try arguments.requireNumber(vm, pos[1], "cube", "y");
+        if (pos.len > 2) base.z = try arguments.requireNumber(vm, pos[2], "cube", "z");
+        if (pos.len > 3) base.center = try arguments.requireBool(vm, pos[3], "cube", "center");
     }
-    if (pos.len > 1) base.y = try arguments.requireNumber(vm, pos[1], "cube", "y");
-    if (pos.len > 2) base.z = try arguments.requireNumber(vm, pos[2], "cube", "z");
-    if (pos.len > 3) base.center = try arguments.requireBool(vm, pos[3], "cube", "center");
-    const opts = (try parseGeomOptions(CUBE.keywords, base, vm, args, "cube")).opts;
+    var opts = (try parseGeomOptions(CUBE.keywords, base, vm, args, "cube")).opts;
+    if (opts.size) |size| if (size.isArray()) {
+        opts.x, opts.y, opts.z = try sizeOf(3, vm, size, "cube");
+    };
 
     try arguments.requirePositive(vm, opts.x, "cube", "x");
     try arguments.requirePositive(vm, opts.y, "cube", "y");
@@ -456,8 +494,15 @@ pub fn nativeRegularPolygon(vm: *VM, args: []const value.Value) !value.Value {
     const opts = (try parseGeomOptions(REGULAR_POLYGON.keywords, base, vm, args, "regular_polygon")).opts;
     // `sides: nil` is a keyword not given, as for circle: the default, not a missing count
     const sides = try requireSides(vm, opts.sides orelse REGULAR_POLYGON_SIDES, opts, "regular_polygon");
-    try arguments.requirePositive(vm, opts.r, "regular_polygon", "radius");
-    return try vm.allocateCrossSection(try addRegularPolygon(vm, sides, opts.r));
+    var r = opts.r;
+    if (opts.across_flats) |across| {
+        // Opposite flats are parallel only with an even number of sides
+        if (@rem(sides, 2) != 0) return vm.fail(.ArgumentError, "regular_polygon takes across_flats: with an even number of sides (a hex nut's 6), got {d}", .{sides});
+        try arguments.requirePositive(vm, across, "regular_polygon", "across_flats");
+        r = across / (2 * @cos(std.math.pi / @as(f64, @floatFromInt(sides))));
+    }
+    try arguments.requirePositive(vm, r, "regular_polygon", "radius");
+    return try vm.allocateCrossSection(try addRegularPolygon(vm, sides, r));
 }
 
 pub fn nativeTorus(vm: *VM, args: []const value.Value) !value.Value {
