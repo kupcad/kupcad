@@ -12,7 +12,7 @@
 
 extern "C" {
     // Whether this C++ was compiled with its asserts: only Debug builds are (build.zig's
-    // cxxFlags adds -DNDEBUG otherwise, for Manifold, Clipper2, Draco and these bindings).
+    // cxxFlags adds -DNDEBUG otherwise, for Manifold, Draco and these bindings).
     bool kupcad_cpp_asserts_enabled() {
 #ifdef NDEBUG
         return false;

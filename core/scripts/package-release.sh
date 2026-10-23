@@ -18,7 +18,6 @@ out=$3
 # The license files of the vendored libraries, and where THIRD_PARTY_NOTICES.md says they are
 licenses=(
   "core/vendor/manifold/LICENSE:manifold"
-  "core/vendor/Clipper2/LICENSE:clipper2"
   "core/vendor/oneTBB/LICENSE.txt:onetbb"
   "core/vendor/oneTBB/third-party-programs.txt:onetbb"
   "core/vendor/draco/LICENSE:draco"

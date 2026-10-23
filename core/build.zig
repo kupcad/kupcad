@@ -7,12 +7,6 @@ const EXAMPLES = [_][]const u8{ "brep", "drone_motor_arm", "standoff", "text" };
 /// Variation tuples tatfi's gvar keeps on the stack before it takes the heap (its default).
 const TATFI_GVAR_STACK_TUPLES = 32;
 
-const clipper_sources = &[_][]const u8{
-    "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.engine.cpp",
-    "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.offset.cpp",
-    "vendor/Clipper2/CPP/Clipper2Lib/src/clipper.rectclip.cpp",
-};
-
 const manifold_sources = &[_][]const u8{
     "vendor/manifold/bindings/c/box.cpp",
     "vendor/manifold/bindings/c/conv.cpp",
@@ -321,7 +315,7 @@ pub fn build(b: *std.Build) void {
     build_info.addOption(bool, "tbb", enable_parallel and !is_wasm);
     mod.addOptions("build_info", build_info);
 
-    // The C and C++ libraries (Clipper2, Manifold, oneTBB, SQLite, Draco) and KupCAD's
+    // The C and C++ libraries (Manifold, oneTBB, SQLite, Draco) and KupCAD's
     // bindings to them, as one static library the module links. Outside the Zig module, a
     // fuzzing build (`zig build test --fuzz`), which instruments what the test compiles,
     // leaves them alone: clang's coverage hooks for C and C++ aren't in Zig's fuzzer.
@@ -331,7 +325,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .link_libcpp = true,
     });
-    native_mod.addIncludePath(b.path("vendor/Clipper2/CPP/Clipper2Lib/include"));
     native_mod.addIncludePath(b.path("vendor/manifold/include"));
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
@@ -340,16 +333,6 @@ pub fn build(b: *std.Build) void {
     native_mod.addIncludePath(b.path("vendor/sqlite"));
     native_mod.addIncludePath(b.path("src/bindings"));
     native_mod.addIncludePath(b.path("src"));
-
-    const clipper_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
-        &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
-    else
-        &.{ "-std=c++17", "-fno-exceptions" });
-
-    native_mod.addCSourceFiles(.{
-        .files = clipper_sources,
-        .flags = clipper_flags,
-    });
 
     native_mod.addCSourceFiles(.{
         .files = manifold_sources,
