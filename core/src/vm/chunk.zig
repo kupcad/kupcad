@@ -259,6 +259,17 @@ pub const ChunkRegistry = struct {
     }
 };
 
+/// The big-endian 16-bit operand at `at` of `code`, as the compiler writes one (a wide
+/// constant, slot or cache index).
+pub inline fn readU16(code: []const u8, at: usize) u16 {
+    return std.mem.readInt(u16, code[at..][0..2], .big);
+}
+
+/// The big-endian 32-bit operand at `at` of `code`: a jump offset.
+pub inline fn readU32(code: []const u8, at: usize) u32 {
+    return std.mem.readInt(u32, code[at..][0..4], .big);
+}
+
 pub const Chunk = struct {
     code: std.ArrayList(u8),
     inline_caches: std.ArrayList(InlineCache),

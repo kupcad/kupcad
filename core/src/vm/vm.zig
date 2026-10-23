@@ -662,10 +662,7 @@ pub const VM = struct {
                     self.push(exec_chunk.constants.items[const_idx]);
                 },
                 .op_constant_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.push(exec_chunk.constants.items[(high << 8) | low]);
+                    self.push(exec_chunk.constants.items[self.readOperand(exec_chunk, frame, true)]);
                 },
                 .op_get_local => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -673,10 +670,7 @@ pub const VM = struct {
                     self.push(self.getLocal(frame, slot));
                 },
                 .op_get_local_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.push(self.getLocal(frame, (high << 8) | low));
+                    self.push(self.getLocal(frame, self.readOperand(exec_chunk, frame, true)));
                 },
                 .op_set_local => {
                     const slot = exec_chunk.code.items[frame.ip];
@@ -684,10 +678,7 @@ pub const VM = struct {
                     self.setLocal(frame, slot, self.stack[self.stack_top - 1]);
                 },
                 .op_set_local_wide => {
-                    const high: usize = exec_chunk.code.items[frame.ip];
-                    const low: usize = exec_chunk.code.items[frame.ip + 1];
-                    frame.ip += 2;
-                    self.setLocal(frame, (high << 8) | low, self.stack[self.stack_top - 1]);
+                    self.setLocal(frame, self.readOperand(exec_chunk, frame, true), self.stack[self.stack_top - 1]);
                 },
                 .op_add, .op_subtract, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right => if (ended(self.executeBinaryArithmetic(op))) |res| return res,
                 .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_less, .op_greater, .op_less_equal, .op_greater_equal => if (ended(self.executeNumericBinary(op))) |res| return res,
@@ -1149,7 +1140,7 @@ pub const VM = struct {
         for (0..func_obj.upvalue_count) |i| {
             const is_local = exec_chunk.code.items[frame.ip];
             // 16-bit upvalue index
-            const index = (@as(u16, exec_chunk.code.items[frame.ip + 1]) << 8) | exec_chunk.code.items[frame.ip + 2];
+            const index = chunk.readU16(exec_chunk.code.items, frame.ip + 1);
             frame.ip += 3;
             closure.upvalues[i] = if (is_local == 1)
                 // Capture directly from the parent's stack slot
@@ -2977,10 +2968,8 @@ pub const VM = struct {
         _ = self;
         if (is_wide) {
             std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-            const high: u16 = exec_chunk.code.items[frame.ip];
-            const low: u16 = exec_chunk.code.items[frame.ip + 1];
-            frame.ip += 2;
-            return (high << 8) | low;
+            defer frame.ip += 2;
+            return chunk.readU16(exec_chunk.code.items, frame.ip);
         } else {
             std.debug.assert(frame.ip + 1 <= exec_chunk.code.items.len); // Hardened check
             const idx = exec_chunk.code.items[frame.ip];
@@ -2992,12 +2981,8 @@ pub const VM = struct {
     inline fn readJumpOffset(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) usize {
         _ = self;
         std.debug.assert(frame.ip + 4 <= exec_chunk.code.items.len); // Hardened check
-        const b3: usize = exec_chunk.code.items[frame.ip];
-        const b2: usize = exec_chunk.code.items[frame.ip + 1];
-        const b1: usize = exec_chunk.code.items[frame.ip + 2];
-        const b0: usize = exec_chunk.code.items[frame.ip + 3];
-        frame.ip += 4;
-        return (b3 << 24) | (b2 << 16) | (b1 << 8) | b0;
+        defer frame.ip += 4;
+        return chunk.readU32(exec_chunk.code.items, frame.ip);
     }
 
     inline fn executeCall(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
@@ -3777,10 +3762,7 @@ pub const VM = struct {
             const mid = low + (high - low) / 2;
             const idx = table_start + (mid * 6);
 
-            const const_high: u16 = exec_chunk.code.items[idx];
-            const const_low: u16 = exec_chunk.code.items[idx + 1];
-            const const_idx = (const_high << 8) | const_low;
-            const case_val = exec_chunk.constants.items[const_idx];
+            const case_val = exec_chunk.constants.items[chunk.readU16(exec_chunk.code.items, idx)];
 
             const case_type: u8 = if (case_val.isNumber()) 0 else 1;
 
@@ -3800,11 +3782,7 @@ pub const VM = struct {
                         // NaN equals no case (it is neither below nor above one either)
                         return .{ .matched = false, .jump_offset = 0 };
                     } else {
-                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
-                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
-                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
-                            @as(usize, exec_chunk.code.items[idx + 5]);
-                        return .{ .matched = true, .jump_offset = offset };
+                        return .{ .matched = true, .jump_offset = chunk.readU32(exec_chunk.code.items, idx + 2) };
                     }
                 } else {
                     const ts = test_val.asString().chars;
@@ -3815,11 +3793,7 @@ pub const VM = struct {
                     } else if (order == .gt) {
                         low = mid + 1;
                     } else {
-                        const offset = (@as(usize, exec_chunk.code.items[idx + 2]) << 24) |
-                            (@as(usize, exec_chunk.code.items[idx + 3]) << 16) |
-                            (@as(usize, exec_chunk.code.items[idx + 4]) << 8) |
-                            @as(usize, exec_chunk.code.items[idx + 5]);
-                        return .{ .matched = true, .jump_offset = offset };
+                        return .{ .matched = true, .jump_offset = chunk.readU32(exec_chunk.code.items, idx + 2) };
                     }
                 }
             }
@@ -4019,19 +3993,15 @@ pub const VM = struct {
     // --- Inline Caching Helpers ---
 
     inline fn readGlobalCache(exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.GlobalCache {
-        const idx = (@as(u16, exec_chunk.code.items[frame.ip]) << 8) | exec_chunk.code.items[frame.ip + 1];
-        frame.ip += 2;
-        return &exec_chunk.global_caches.items[idx];
+        defer frame.ip += 2;
+        return &exec_chunk.global_caches.items[chunk.readU16(exec_chunk.code.items, frame.ip)];
     }
 
     inline fn readInlineCache(self: *VM, exec_chunk: *chunk.Chunk, frame: *CallFrame) *chunk.InlineCache {
         _ = self;
         std.debug.assert(frame.ip + 2 <= exec_chunk.code.items.len); // Hardened check
-        const ic_high: u16 = exec_chunk.code.items[frame.ip];
-        const ic_low: u16 = exec_chunk.code.items[frame.ip + 1];
-        frame.ip += 2;
-        const ic_idx = (ic_high << 8) | ic_low;
-        return &exec_chunk.inline_caches.items[ic_idx];
+        defer frame.ip += 2;
+        return &exec_chunk.inline_caches.items[chunk.readU16(exec_chunk.code.items, frame.ip)];
     }
 
     /// Empties `ic` if a method table changed since it was filled.
