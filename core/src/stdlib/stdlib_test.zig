@@ -1396,6 +1396,44 @@ test "Stdlib: revolve takes segments and sizes them to the profile" {
     });
 }
 
+test "Stdlib: a revolve, a twist and a helix take their share of a full turn's segments" {
+    // A partial revolve got a full turn's segments, a helix 64 slices whatever its turns,
+    // and a twist without slices: one step
+    const fixed = "CAD.config(resolution: { segments: 24 })\n";
+    const by_size = "CAD.config(resolution: { min_angle: 1, min_length: 1 })\n";
+    const cases = [_]struct { src: []const u8, expected: i32 }{
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve", .expected = 24 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(-90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(720)", .expected = 24 }, // a full turn at most
+        .{ .src = fixed ++ "r = square(2).translate(x: 3).revolve(90, segments: 32)", .expected = 8 }, // per full turn
+        .{ .src = fixed ++ "r = circle(r: 1).translate(x: 3).helix(h: 20, twist: 3600)", .expected = 240 },
+        .{ .src = fixed ++ "r = square(1).helix(5, 90, 8)", .expected = 8 }, // slices: is the count itself
+        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90)", .expected = 6 },
+        .{ .src = fixed ++ "r = square(1).extrude(5, twist: 90, slices: 3)", .expected = 3 },
+        .{ .src = fixed ++ "r = square(1).extrude(5, scale: 0.5)", .expected = 0 }, // a taper needs no slices
+        // At the profile's farthest point: from the z axis for a twist (the corner [3, 3],
+        // 2π·4.24 / 1 → 27), its farthest x for a revolve about y (8: 2π·8 → 51, a
+        // quarter 13)
+        .{ .src = by_size ++ "r = square(6, center: true).extrude(5, twist: 360)", .expected = 27 },
+        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve", .expected = 51 },
+        .{ .src = by_size ++ "r = square(6, center: true).translate(x: 5).revolve(90)", .expected = 13 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("script: {s}\n", .{case.src});
+        var vm = try initVm();
+        defer vm.deinit();
+        try testing.expectEqual(InterpretResult.ok, try runOn(&vm, case.src));
+        const node = vm.dag_builder.nodes.items[vm.globals.get("r").?.asGeometry().dag_idx];
+        const count = switch (node.tag) {
+            .revolve => vm.dag_builder.getRevolvePayload(node).segments,
+            .extrude => vm.dag_builder.getExtrudePayload(node).slices,
+            else => return error.NotASweep,
+        };
+        try testing.expectEqual(case.expected, count);
+    }
+}
+
 test "Stdlib: material checks its color and factors" {
     try expectScripts(&.{
         // An invalid color used to export as white, and factors out of 0..1 were kept.
@@ -1573,7 +1611,8 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).extrude(5, twist: 90).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(10, round_r: 1).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("square(4).revolve(segments: 16).simplify"), .expected = brepLacks(.revolve) }, // was a 10 mm cube
-        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = "NotImplementedError: the brep engine can't measure the profile to choose revolve's segments yet; pass segments:" },
+        .{ .src = comptime rescued("square(4).revolve.simplify"), .expected = brepLacks(.revolve) }, // before measuring the profile for its segments
+        .{ .src = comptime rescued("square(4).helix(5, 90).simplify"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("square(10).loft(circle(4), 10).simplify"), .expected = brepLacks(.loft) }, // was a 10 mm cube
         .{ .src = comptime rescued("cylinder(h: 10, r1: 5, r2: 2).simplify"), .expected = brepLacks(.cone) }, // was a plain cylinder
         .{ .src = comptime rescued("cylinder(r: 5, h: 10, sides: 6).simplify"), .expected = brepLacks(.extrude) }, // a prism is an extrusion

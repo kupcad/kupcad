@@ -11,6 +11,7 @@ const HandleScope = @import("../vm/scope.zig").HandleScope;
 const util = @import("methods/util.zig");
 const sig = @import("method_signatures.zig");
 const path_mod = @import("../core/path.zig");
+const turnShare = @import("../core/engine_config.zig").turnShare;
 const Signature = @import("signature.zig").Signature;
 
 pub const LINE = Signature{ .positional = &.{ "from", "to" } };
@@ -174,11 +175,12 @@ pub fn pathMirror(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 // --- Into a Sketch ---
 
-/// The chords each segment is drawn with under the active resolution (0 for a line).
+/// The chords each segment is drawn with under the active resolution (0 for a line): an
+/// arc gets its circle's share.
 fn chordsOf(vm: *VM, segments: []const path_mod.Segment) ![]u32 {
     const chords = try vm.allocator.alloc(u32, segments.len);
     for (segments, chords) |segment, *count| {
-        count.* = if (segment.arc) |arc| path_mod.chordsFor(segment.angle, @intCast(util.autoSegments(vm, arc.radius))) else 0;
+        count.* = if (segment.arc) |arc| turnShare(@intCast(util.autoSegments(vm, arc.radius)), segment.angle / (2 * std.math.pi)) else 0;
     }
     return chords;
 }

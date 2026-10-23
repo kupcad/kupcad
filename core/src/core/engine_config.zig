@@ -7,6 +7,10 @@ const geom = @import("../kernel/geometry_handle.zig");
 const limits = @import("limits.zig");
 
 const MAX_SEGMENTS: u32 = limits.MAX_SEGMENTS;
+/// How close to a whole number a share of segments may be and still be that number: a
+/// quarter turn of a 32-segment circle is 8 segments, even where the ratio it came from
+/// was rounded a bit above 8.
+const SHARE_SLACK = 1e-9;
 
 /// How finely curves are cut into straight edges. Defined in Locus, which can't import
 /// KupCAD, so that its tessellator and the mesh engine follow one rule.
@@ -84,6 +88,16 @@ pub const EngineConfig = struct {
         return h.final();
     }
 };
+
+/// The segments a sweep of `turns` (a fraction or a multiple of a full turn, either way
+/// round) gets when a full turn gets `per_turn`: its share, rounded up, at least one,
+/// within MAX_SEGMENTS. OpenSCAD's rule for a partial rotate_extrude and a twisted
+/// linear_extrude, and how an arc gets its chords.
+pub fn turnShare(per_turn: u32, turns: f64) u32 {
+    const share = @as(f64, @floatFromInt(per_turn)) * @abs(turns);
+    const whole = @ceil(share - SHARE_SLACK * share);
+    return @intFromFloat(std.math.clamp(whole, 1, @as(f64, @floatFromInt(MAX_SEGMENTS))));
+}
 
 fn isPositive(x: f64) bool {
     return x > 0.0 and std.math.isFinite(x);

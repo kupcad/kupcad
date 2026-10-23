@@ -143,13 +143,6 @@ pub fn endOf(start: [2]f64, segments: []const Segment) [2]f64 {
     return if (segments.len == 0) start else segments[segments.len - 1].to;
 }
 
-/// How many chords an arc of `angle` radians gets when a full circle gets `per_turn`: its
-/// share, rounded up, at least one.
-pub fn chordsFor(angle: f64, per_turn: u32) u32 {
-    const share = @ceil(angle / (2 * std.math.pi) * @as(f64, @floatFromInt(per_turn)));
-    return @intFromFloat(@max(1, @min(share, @as(f64, @floatFromInt(per_turn)))));
-}
-
 /// Which of a path's points a segment drew: `count` from `first` (its end last; the start
 /// of the first segment is the path's start, point 0).
 pub const Range = struct { first: u32, count: u32 };
