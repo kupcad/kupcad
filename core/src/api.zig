@@ -40,8 +40,10 @@ pub const ParamValue = @import("core/param_values.zig").ParamValue;
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
 const MAX_FIX_PASSES = 10;
-/// How deep modelFingerprint follows Arrays of shapes inside Arrays (an Array can hold itself).
+/// How deep a model's Arrays of shapes inside Arrays are followed (an Array can hold itself).
 const MAX_MODEL_NESTING = 64;
+/// The most items an Array of the model may hold, so an item's number fits its path.
+const MAX_MODEL_ITEMS = 1_000_000_000;
 
 /// Formats a parsed Document; the caller owns the result. It is checked before it is
 /// returned: it must parse, mean the same program (tools/fmt/equivalence.zig) and keep
@@ -283,54 +285,120 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
 }
 
 /// The meshes of the model the script left: its ghosts (the display list), then its
-/// Solids (modelValues), each evaluated. The handles are borrowed (see VM.ensureConcrete).
+/// Solids (collectModel), each evaluated. The handles are borrowed (see VM.ensureConcrete).
 pub fn modelParts(allocator: std.mem.Allocator, vm: *VM, out: *std.ArrayList(geom.GeometryHandle)) !void {
-    try out.appendSlice(allocator, vm.display_list.items);
-    var single: [1]value.Value = undefined;
-    for (modelValues(vm, &single)) |part| {
-        if (part.isGeometry()) try out.append(allocator, try vm.ensureConcrete(part));
-    }
+    var model = try collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    try out.appendSlice(allocator, model.ghosts);
+    for (model.solids.items) |part| try out.append(allocator, try vm.ensureConcrete(part));
 }
 
-/// What the script left as its model: its final value, a Solid (in `single`), an Assembly's
-/// parts or an Array's items (the Solids among them are the model); none for anything else.
-pub fn modelValues(vm: *VM, single: *[1]value.Value) []const value.Value {
-    if (vm.stack_top == 0) return &.{};
+/// The shapes the script left as its model: its final value, a Solid or a Sketch, an
+/// Assembly's parts, or an Array's items, Arrays inside it included (they were dropped).
+/// `collectModel` fills it and `requireExportable` says whether a format can hold it.
+pub const Model = struct {
+    solids: std.ArrayList(value.Value) = .empty,
+    sketches: std.ArrayList(value.Value) = .empty,
+    /// The ghosts the script showed (the display list; borrowed from the VM).
+    ghosts: []const geom.GeometryHandle = &.{},
+    /// The model's name: its Assembly's, if it is one.
+    title: ?[]const u8 = null,
+
+    pub fn deinit(self: *Model, allocator: std.mem.Allocator) void {
+        self.solids.deinit(allocator);
+        self.sketches.deinit(allocator);
+    }
+};
+
+/// The model the script left, from its final value. A value that is no model raises in
+/// the VM (a TypeError saying what it is) and fails with error.RuntimeError: an item that
+/// isn't a shape, such as a Number, was silently left out, and nested Arrays with it.
+pub fn collectModel(allocator: std.mem.Allocator, vm: *VM) !Model {
+    var model: Model = .{ .ghosts = vm.display_list.items };
+    errdefer model.deinit(allocator);
+    if (vm.stack_top == 0) return model;
     const final_val = vm.stack[0];
-    if (final_val.isGeometry()) {
-        single.* = .{final_val};
-        return single;
+    if (final_val.isNil()) return model;
+    if (final_val.isAssembly()) model.title = final_val.asAssembly().name.chars;
+    var path = ItemPath{};
+    if (!try collectShapes(allocator, vm, &model, final_val, &path)) {
+        return vm.fail(.TypeError, "the script's last value ({s}) is not a model: end it with a Solid, a Sketch, an Assembly or an Array of them", .{vm.typeName(final_val)});
     }
-    if (final_val.isAssembly()) return final_val.asAssembly().parts.items.items;
-    if (final_val.isArray()) return final_val.asArray().items.items;
-    return &.{};
+    return model;
 }
 
-/// The Solids of the model the script left (modelValues), rooted by its final value. Caller
-/// owns the list.
-fn modelSolids(allocator: std.mem.Allocator, vm: *VM) ![]value.Value {
-    var single: [1]value.Value = undefined;
-    var solids: std.ArrayList(value.Value) = .empty;
-    errdefer solids.deinit(allocator);
-    for (modelValues(vm, &single)) |part| {
-        if (part.isGeometry()) try solids.append(allocator, part);
+/// Where an item is in the model's Arrays, for an error naming it: "item 2", "item 2.1".
+const ItemPath = struct {
+    buf: [MAX_MODEL_NESTING * ITEM_PATH_DIGITS]u8 = undefined,
+    len: usize = 0,
+
+    const ITEM_PATH_DIGITS = 12; // ".", then the digits of an index up to MAX_MODEL_ITEMS
+
+    fn push(self: *ItemPath, index: usize) void {
+        const written = std.fmt.bufPrint(self.buf[self.len..], "{s}{d}", .{ if (self.len == 0) "" else ".", index }) catch unreachable;
+        self.len += written.len;
     }
-    return solids.toOwnedSlice(allocator);
+
+    fn text(self: *const ItemPath) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
+
+/// Adds the shapes of `val` to `model`: a Solid, a Sketch, an Assembly's parts, or an
+/// Array's items (recursively). False for a value that is none of those at the top; inside
+/// an Array, such a value raises a TypeError naming its item.
+fn collectShapes(allocator: std.mem.Allocator, vm: *VM, model: *Model, val: value.Value, path: *ItemPath) !bool {
+    if (val.isGeometry()) {
+        try model.solids.append(allocator, val);
+    } else if (val.isCrossSection()) {
+        try model.sketches.append(allocator, val);
+    } else if (val.isAssembly()) {
+        for (val.asAssembly().parts.items.items) |part| try model.solids.append(allocator, part);
+    } else if (val.isArray()) {
+        if (path.len >= MAX_MODEL_NESTING * (ItemPath.ITEM_PATH_DIGITS - 1)) {
+            return vm.fail(.ValueError, "the model's Arrays nest deeper than {d} levels", .{MAX_MODEL_NESTING});
+        }
+        for (val.asArray().items.items, 1..) |item, index| {
+            if (index > MAX_MODEL_ITEMS) return vm.fail(.ValueError, "the model's Array holds more than {d} items", .{MAX_MODEL_ITEMS});
+            const mark = path.len;
+            defer path.len = mark;
+            path.push(index);
+            if (!try collectShapes(allocator, vm, model, item, path)) {
+                return vm.fail(.TypeError, "the model's item {s} ({s}) is not a shape: a model holds Solids, Sketches and Arrays of them", .{ path.text(), vm.typeName(item) });
+            }
+        }
+    } else return false;
+    return true;
 }
 
-/// The model's name: its Assembly's, if it is one.
-fn modelTitle(vm: *VM) ?[]const u8 {
-    if (vm.stack_top == 0 or !vm.stack[0].isAssembly()) return null;
-    return vm.stack[0].asAssembly().name.chars;
+/// Whether `format` can hold `model`; raises in the VM (and fails with error.RuntimeError)
+/// when it can't: a 3D format refuses a Sketch (extrude it) and a model with no Solid,
+/// unless the format shows ghosts and there are some.
+pub fn requireExportable(vm: *VM, model: *const Model, format: ExportFormat) !void {
+    comptime for (std.enums.values(ExportFormat)) |f| {
+        if (f.dimension() == .@"2d") @compileError("requireExportable has no rules for a 2D format yet");
+    };
+    switch (format.dimension()) {
+        .@"2d" => unreachable,
+        .@"3d" => {
+            if (model.sketches.items.len > 0) {
+                const which = if (model.solids.items.len == 0 and model.sketches.items.len == 1) "is" else "holds";
+                return vm.fail(.TypeError, "the model {s} a Sketch, which {s} (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid", .{ which, @tagName(format) });
+            }
+            if (model.solids.items.len == 0 and !(format.showsGhosts() and model.ghosts.len > 0)) {
+                return vm.fail(.GeometryError, "the model holds no Solid: nothing to write as {s}", .{@tagName(format)});
+            }
+        },
+    }
 }
 
-/// The parts list (stdlib/bom.zig) of the model the script left (modelValues), as
-/// `kupcad build --bom` writes it; error.NoGeometry when it holds no Solid.
+/// The parts list (stdlib/bom.zig) of the model the script left (collectModel), as
+/// `kupcad build --bom` writes it; raises in the VM when the model holds no Solid.
 pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    if (solids.len == 0) return error.NoGeometry;
-    const parts = try bom.collect(vm, allocator, solids);
+    var model = try collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    if (model.solids.items.len == 0) return vm.fail(.GeometryError, "the model holds no Solid: nothing for the parts list", .{});
+    const parts = try bom.collect(vm, allocator, model.solids.items);
     defer allocator.free(parts);
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
@@ -339,7 +407,9 @@ pub fn billOfMaterials(allocator: std.mem.Allocator, vm: *VM) ![]u8 {
 }
 
 /// The formats a model exports to. The tag names are what `kupcad build --format` and the
-/// browser build call them; the format travelled as a string, compared at every use.
+/// browser build call them; the format travelled as a string, compared at every use. What
+/// each can hold and needs is read from here (its dimension, extensions, Draco, engine),
+/// where it was spread over the CLI's tables and the exporters' checks.
 pub const ExportFormat = enum {
     stl,
     glb,
@@ -348,29 +418,107 @@ pub const ExportFormat = enum {
     /// 3D Manufacturing Format: each part once, placed once per copy (exporters/3d/threemf.zig).
     @"3mf",
 
+    /// What a format holds: a 3D format the model's Solids, a 2D one its Sketches.
+    pub const Dimension = enum { @"2d", @"3d" };
+
+    /// "stl, glb, gltf, step, 3mf", for messages.
+    pub const NAMES = blk: {
+        var list: []const u8 = "";
+        for (@typeInfo(ExportFormat).@"enum".field_names, 0..) |name, i| list = list ++ (if (i == 0) "" else ", ") ++ name;
+        break :blk list;
+    };
+
+    /// ".stl, .glb, .gltf, .step, .stp, .3mf", for messages.
+    pub const EXTENSIONS = blk: {
+        var list: []const u8 = "";
+        for (std.enums.values(ExportFormat)) |format| {
+            for (format.extensions()) |ext| list = list ++ (if (list.len == 0) "" else ", ") ++ ext;
+        }
+        break :blk list;
+    };
+
     /// The format named `name`, or null for a name that is none.
     pub fn parse(name: []const u8) ?ExportFormat {
         return std.meta.stringToEnum(ExportFormat, name);
     }
+
+    /// The format an output file's extension (`.stl`, in any case) implies, or null.
+    pub fn forExtension(ext: []const u8) ?ExportFormat {
+        for (std.enums.values(ExportFormat)) |format| {
+            for (format.extensions()) |candidate| {
+                if (std.ascii.eqlIgnoreCase(ext, candidate)) return format;
+            }
+        }
+        return null;
+    }
+
+    pub fn dimension(self: ExportFormat) Dimension {
+        return switch (self) {
+            .stl, .glb, .gltf, .step, .@"3mf" => .@"3d",
+        };
+    }
+
+    /// The file extensions written in it, the usual one first (`extension`).
+    pub fn extensions(self: ExportFormat) []const []const u8 {
+        return switch (self) {
+            .stl => &.{".stl"},
+            .glb => &.{".glb"},
+            .gltf => &.{".gltf"},
+            .step => &.{ ".step", ".stp" },
+            .@"3mf" => &.{".3mf"},
+        };
+    }
+
+    /// The extension a file written in it gets, with its dot.
+    pub fn extension(self: ExportFormat) []const u8 {
+        return self.extensions()[0];
+    }
+
+    /// Whether its meshes can be Draco-compressed (a glTF extension).
+    pub fn supportsDraco(self: ExportFormat) bool {
+        return switch (self) {
+            .glb, .gltf => true,
+            .stl, .step, .@"3mf" => false,
+        };
+    }
+
+    /// Whether it holds the ghosts the script showed beside the model: the viewer's
+    /// formats do, a file for a slicer or a CAD package doesn't.
+    pub fn showsGhosts(self: ExportFormat) bool {
+        return switch (self) {
+            .glb, .gltf => true,
+            .stl, .step, .@"3mf" => false,
+        };
+    }
+
+    /// The engine the script must run on for it, if it needs one: STEP needs exact
+    /// B-Rep geometry, not meshes.
+    pub fn requiredEngine(self: ExportFormat) ?geom.EngineType {
+        return switch (self) {
+            .step => .brep_native,
+            .stl, .glb, .gltf, .@"3mf" => null,
+        };
+    }
 };
 
-/// The model the script left (modelValues) in `format`, its ghosts (the display list) beside
-/// it where the format shows them. A failure the script can read about (an engine that
-/// can't mesh, a failed union) is raised in the VM first, so `vm.last_error` says what went
-/// wrong.
+/// The model the script left (collectModel) in `format`, its ghosts (the display list)
+/// beside it where the format shows them. A failure the script can read about (a model the
+/// format can't hold, an engine that can't mesh, a failed union) is raised in the VM first,
+/// so `vm.last_error` says what went wrong.
 pub fn exportModelFromVm(
     allocator: std.mem.Allocator,
     vm: *VM,
     format: ExportFormat,
     use_draco: bool,
 ) ![]const u8 {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    return exportSolids(allocator, vm, format, use_draco, solids, vm.display_list.items, modelTitle(vm));
+    var model = try collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    try requireExportable(vm, &model, format);
+    return exportSolids(allocator, vm, format, use_draco, model.solids.items, model.ghosts, model.title);
 }
 
 /// `solids` (rooted by the caller), with the meshes of `ghosts`, in `format`; `title` names
-/// a 3MF model. error.NoGeometry when there is nothing to write.
+/// a 3MF model. error.NoGeometry when what is written has no triangle.
 fn exportSolids(
     allocator: std.mem.Allocator,
     vm: *VM,
@@ -380,14 +528,10 @@ fn exportSolids(
     ghosts: []const geom.GeometryHandle,
     title: ?[]const u8,
 ) ![]const u8 {
-    if (solids.len == 0 and ghosts.len == 0) return error.NoGeometry;
     switch (format) {
         // The parts once each, placed per copy: the Solids themselves, not their meshes. The
         // ghosts are the viewer's, as in an STL.
-        .@"3mf" => {
-            if (solids.len == 0) return error.NoGeometry;
-            return threemf_exporter.build(allocator, vm, solids, title);
-        },
+        .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
         .step => {
             var handles = try handlesOf(allocator, vm, solids, ghosts);
             defer handles.deinit(allocator);
@@ -428,12 +572,14 @@ pub const PartFile = struct {
 };
 
 /// Each part of the model's parts list (stdlib/bom.zig) in `format`, without its placement:
-/// a file to print each from. error.NoGeometry when the model holds no Solid.
+/// a file to print each from. Raises in the VM when the format can't hold the model
+/// (requireExportable; a split has no ghosts to show).
 pub fn exportPartsFromVm(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, use_draco: bool) ![]PartFile {
-    const solids = try modelSolids(allocator, vm);
-    defer allocator.free(solids);
-    if (solids.len == 0) return error.NoGeometry;
-    const grouping = try bom.group(vm, allocator, solids);
+    var model = try collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    model.ghosts = &.{};
+    try requireExportable(vm, &model, format);
+    const grouping = try bom.group(vm, allocator, model.solids.items);
     defer grouping.deinit(allocator);
 
     var files: std.ArrayList(PartFile) = .empty;
@@ -514,10 +660,9 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
 
-    // STEP requires exact B-Rep geometry, not polygonal Manifold meshes
-    if (format == .step) {
+    if (format.requiredEngine()) |engine| {
         var settings = vm.config();
-        settings.engine = .brep_native;
+        settings.engine = engine;
         try vm.setConfig(settings);
     }
 

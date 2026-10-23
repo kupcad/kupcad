@@ -1,6 +1,7 @@
 //! `kupcad build`: runs a script with its parameter values (`-p`, `-P`) and the project's memory limit,
-//! then exports its final geometry as STL, GLB, glTF or STEP (B-Rep kernel for STEP), the
-//! format picked from `--format` or the `-o` extension. Entry points `execute` and `run`.
+//! then exports its model in a format of `api.ExportFormat` (STL, GLB, glTF, 3MF, STEP on
+//! the B-Rep kernel), picked from `--format` or the `-o` extension. Entry points `execute`
+//! and `run`.
 
 const std = @import("std");
 const api = @import("../api.zig");
@@ -27,10 +28,11 @@ pub const USAGE =
     \\
     \\Options:
     \\  -o, --output <file>       Output path; its extension picks the format
-    \\                            (.stl, .glb, .gltf, .step, .stp, .3mf)
-    \\  -f, --format <name>       stl, glb, gltf, step or 3mf (glb when there is no -o)
-    \\
-++ param_flags.USAGE ++
+    \\                            (
+++ Format.EXTENSIONS ++ ")\n" ++
+    \\  -f, --format <name>       
+++ Format.NAMES ++ " (glb when there is no -o)\n" ++
+    param_flags.USAGE ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
     \\      --bom <file.json>     Also write the model's parts list: each part, how many
     \\                            copies, its volume, size and mass
@@ -45,40 +47,8 @@ const Format = api.ExportFormat;
 
 /// Used only when no `-o` is given and no `--format` either.
 const DEFAULT_FORMAT: Format = .glb;
-
-/// Output file extensions (matched case-insensitively) and the format each implies, so
-/// `-o part.stl` writes STL instead of a mislabeled default-format file.
-const OUTPUT_EXTENSIONS = [_]struct { ext: []const u8, format: Format }{
-    .{ .ext = ".stl", .format = .stl },
-    .{ .ext = ".glb", .format = .glb },
-    .{ .ext = ".gltf", .format = .gltf },
-    .{ .ext = ".step", .format = .step },
-    .{ .ext = ".stp", .format = .step },
-    .{ .ext = ".3mf", .format = .@"3mf" },
-};
 /// The format `--split` writes its parts in, without `--format`: what a slicer reads.
 const DEFAULT_SPLIT_FORMAT: Format = .stl;
-
-/// "stl, glb, gltf, step", for error messages.
-const FORMAT_LIST = blk: {
-    var list: []const u8 = "";
-    for (@typeInfo(Format).@"enum".field_names, 0..) |name, i| list = list ++ (if (i == 0) "" else ", ") ++ name;
-    break :blk list;
-};
-
-/// ".stl, .glb, .gltf, .step, .stp", for error messages.
-const EXTENSION_LIST = blk: {
-    var list: []const u8 = "";
-    for (OUTPUT_EXTENSIONS, 0..) |entry, i| list = list ++ (if (i == 0) "" else ", ") ++ entry.ext;
-    break :blk list;
-};
-
-fn formatForExtension(ext: []const u8) ?Format {
-    for (OUTPUT_EXTENSIONS) |entry| {
-        if (std.ascii.eqlIgnoreCase(ext, entry.ext)) return entry.format;
-    }
-    return null;
-}
 
 /// Picks the export format. A recognized `-o` extension decides it, and an explicit
 /// `--format` must agree with it; an unrecognized extension needs `--format`. Without
@@ -87,7 +57,7 @@ fn formatForExtension(ext: []const u8) ?Format {
 fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter) ?Format {
     const path = output_path orelse return explicit orelse DEFAULT_FORMAT;
     const ext = std.fs.path.extension(path);
-    if (formatForExtension(ext)) |inferred| {
+    if (Format.forExtension(ext)) |inferred| {
         if (explicit) |chosen| {
             if (chosen != inferred) {
                 reporter.err("Error: --format {s} conflicts with output extension {s}\n", .{ @tagName(chosen), ext });
@@ -97,7 +67,7 @@ fn resolveFormat(explicit: ?Format, output_path: ?[]const u8, reporter: Reporter
         return inferred;
     }
     if (explicit) |chosen| return chosen;
-    reporter.err("Error: Cannot infer the format from output path '{s}'. Use an extension ({s}) or pass --format.\n", .{ path, EXTENSION_LIST });
+    reporter.err("Error: Cannot infer the format from output path '{s}'. Use an extension ({s}) or pass --format.\n", .{ path, Format.EXTENSIONS });
     return null;
 }
 
@@ -117,7 +87,7 @@ fn writeSplit(allocator: std.mem.Allocator, vm: *VM, dir: []const u8, format: Fo
     var names: PartFileNames = .{};
     defer names.deinit(allocator);
     for (files, 1..) |file, number| {
-        const name = try names.next(allocator, file.name, number, @tagName(format));
+        const name = try names.next(allocator, file.name, number, format.extension()[1..]);
         defer allocator.free(name);
         const path = try std.fs.path.join(allocator, &.{ dir, name });
         defer allocator.free(path);
@@ -256,7 +226,7 @@ fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter)
         } else if (std.mem.eql(u8, arg, "-f") or std.mem.eql(u8, arg, "--format")) {
             const name = flagValue(args, arg, "format", reporter) orelse return refuse(allocator, &options);
             explicit_format = Format.parse(name) orelse {
-                reporter.err("Error: Unsupported format '{s}'. Allowed: {s}\n", .{ name, FORMAT_LIST });
+                reporter.err("Error: Unsupported format '{s}'. Allowed: {s}\n", .{ name, Format.NAMES });
                 return refuse(allocator, &options);
             };
         } else if (std.mem.startsWith(u8, arg, "-")) {
@@ -302,9 +272,9 @@ fn settleFormat(options: *Options, explicit: ?Format, reporter: Reporter) bool {
         explicit orelse DEFAULT_SPLIT_FORMAT
     else
         resolveFormat(explicit, options.output_path, reporter) orelse return false;
-    // Draco is a glTF mesh-compression extension; the STL and STEP exporters would
-    // silently drop the request, so refuse it rather than pretend it was applied.
-    if (options.use_draco and options.format != .glb and options.format != .gltf) {
+    // Draco is a glTF mesh-compression extension; the other exporters would silently drop
+    // the request, so refuse it rather than pretend it was applied.
+    if (options.use_draco and !options.format.supportsDraco()) {
         reporter.err("Error: --draco only applies to glb and gltf output, not {s}\n", .{@tagName(options.format)});
         return false;
     }
@@ -329,9 +299,9 @@ fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: 
         return null;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
-    if (options.format == .step) {
+    if (options.format.requiredEngine()) |engine| {
         var settings = session.vm.config();
-        settings.engine = .brep_native;
+        settings.engine = engine;
         try session.vm.setConfig(settings);
     }
     return session;
@@ -360,11 +330,11 @@ fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, input_path: [
 /// reported, when it can't be exported. A failure the script can read about was raised
 /// (and reported) by the VM.
 fn writeModel(allocator: std.mem.Allocator, vm: *VM, options: *const Options, reporter: Reporter) !bool {
-    const format_name = @tagName(options.format);
+    const extension = options.format.extension();
     const generated = if (options.output_path == null) blk: {
         const stem = std.fs.path.stem(options.input_path);
-        const dir = std.fs.path.dirname(options.input_path) orelse break :blk try allocator.print("{s}.{s}", .{ stem, format_name });
-        break :blk try allocator.print("{s}{c}{s}.{s}", .{ dir, std.fs.path.sep, stem, format_name });
+        const dir = std.fs.path.dirname(options.input_path) orelse break :blk try allocator.print("{s}{s}", .{ stem, extension });
+        break :blk try allocator.print("{s}{c}{s}{s}", .{ dir, std.fs.path.sep, stem, extension });
     } else null;
     defer if (generated) |path| allocator.free(path);
     const path = options.output_path orelse generated.?;

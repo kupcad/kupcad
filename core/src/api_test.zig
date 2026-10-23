@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const api = @import("api.zig");
+const support = @import("test_support.zig");
 
 test "Formatter: formats raw KupCAD code to expected layout" {
     const input_code = @embedFile("fixtures/format_in.kup");
@@ -158,10 +159,54 @@ test "API: buildModel with a diagnostic sets no message when nothing was reporte
     defer diag.deinit(testing.allocator);
 
     try testing.expectError(
-        error.NoGeometry,
+        error.RuntimeError,
         api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl, .diagnostic = &diag }),
     );
-    try testing.expect(diag.message == null);
+    // The export's own report, not the rescued one
+    try testing.expectEqualStrings("TypeError: the script's last value (Number) is not a model: end it with a Solid, a Sketch, an Assembly or an Array of them", diag.message.?);
+}
+
+test "API: a model a format can't hold is refused with a message, never cut down to fit" {
+    // A Sketch beside Solids was dropped from the file, a Number or nil in the Array too,
+    // an Array inside the Array with everything in it, and a Sketch alone or a script
+    // ending in a Number failed with a bare NoGeometry.
+    const refused = [_]struct { source: []const u8, format: api.ExportFormat = .stl, message: []const u8 }{
+        .{ .source = "circle(r: 5)", .message = "TypeError: the model is a Sketch, which stl (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid" },
+        .{ .source = "[cube(1), circle(r: 1)]", .format = .glb, .message = "TypeError: the model holds a Sketch, which glb (a 3D format) can't hold: extrude it (.extrude(h)) to a Solid" },
+        .{ .source = "[cube(1), 1]", .message = "TypeError: the model's item 2 (Number) is not a shape: a model holds Solids, Sketches and Arrays of them" },
+        .{ .source = "[cube(1), [cube(2), nil]]", .message = "TypeError: the model's item 2.2 (nil) is not a shape: a model holds Solids, Sketches and Arrays of them" },
+        .{ .source = "\"model\"", .message = "TypeError: the script's last value (String) is not a model: end it with a Solid, a Sketch, an Assembly or an Array of them" },
+        .{ .source = "[]", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
+        .{ .source = "cube(1).ghost\nnil", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
+        .{ .source = "cube(1).ghost\nnil", .format = .@"3mf", .message = "GeometryError: the model holds no Solid: nothing to write as 3mf" },
+    };
+    for (refused) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var diag: api.BuildDiagnostic = .{};
+        defer diag.deinit(testing.allocator);
+        try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format, .diagnostic = &diag }));
+        try testing.expectEqualStrings(case.message, diag.message.?);
+    }
+    // Nested Arrays are the model too, and the viewer's formats take ghosts alone
+    const accepted = [_]struct { source: []const u8, format: api.ExportFormat = .stl }{
+        .{ .source = "[[cube(1), [cube(2)]], cube(3)]" },
+        .{ .source = "assemble(name: \"a\", parts: [cube(1)])" },
+        .{ .source = "cube(1).ghost\nnil", .format = .glb },
+    };
+    for (accepted) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        const bytes = try api.buildModel(testing.allocator, testing.io, case.source, .{ .format = case.format });
+        defer testing.allocator.free(bytes);
+        try testing.expect(bytes.len > 0);
+    }
+}
+
+test "API: the parts list of a model with no Solid is refused with a message" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm, "circle(r: 1)"));
+    try testing.expectError(error.RuntimeError, api.billOfMaterials(testing.allocator, &vm));
+    try testing.expectEqualStrings("GeometryError: the model holds no Solid: nothing for the parts list", vm.last_error.?);
 }
 
 test "API: buildModel with a diagnostic reports an error raised while exporting" {

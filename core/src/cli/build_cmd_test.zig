@@ -115,7 +115,8 @@ test "build_cmd: nonexistent input file fails" {
 test "build_cmd: script failures and empty exports return failure without writing output" {
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "x = undefined_var + 10\n", .message = "Build failed: " },
-        .{ .source = "x = 1\n", .message = "Export failed: error.NoGeometry\n" },
+        // The reason is the VM's report (a TypeError naming the value, see api_test)
+        .{ .source = "x = 1\n", .message = "Export failed: error.RuntimeError\n" },
     };
     for (cases) |case| {
         var fx = try Fixture.init(case.source);

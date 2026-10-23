@@ -119,8 +119,9 @@ fn exportAndCheck(source: []const u8) !struct { model: Model, xml: []u8 } {
     var model = try Model.parse(xml);
     errdefer model.deinit();
 
-    var single: [1]@import("../../core/value.zig").Value = undefined;
-    const solids = api.modelValues(&vm, &single);
+    var collected = try api.collectModel(testing.allocator, &vm);
+    defer collected.deinit(testing.allocator);
+    const solids = collected.solids.items;
     try testing.expectEqual(solids.len, model.items.items.len);
     for (solids, model.items.items) |solid, item| {
         const mesh = kernel.getMesh(testing.allocator, try vm.ensureConcrete(solid)) orelse return error.NoMesh;
@@ -177,5 +178,5 @@ test "3mf: a model with no Solid is no file" {
     var vm = try support.initVm();
     defer vm.deinit();
     try testing.expectEqual(.ok, try support.runOn(&vm, "x = 5"));
-    try testing.expectError(error.NoGeometry, api.exportModelFromVm(testing.allocator, &vm, .@"3mf", false));
+    try testing.expectError(error.RuntimeError, api.exportModelFromVm(testing.allocator, &vm, .@"3mf", false));
 }
