@@ -72,6 +72,7 @@ pub const CORPUS = [_][]const u8{
     @embedFile("../tools/lint/snapshots/param_order.kup"),
     @embedFile("../tools/lint/snapshots/segments_as_sides.kup"),
     @embedFile("../tools/lint/snapshots/self_subtraction.kup"),
+    @embedFile("../tools/lint/snapshots/shape_mismatch.kup"),
     @embedFile("../tools/lint/snapshots/suppressed_error.kup"),
     @embedFile("../tools/lint/snapshots/suppressions.kup"),
     @embedFile("../tools/lint/snapshots/syntax_error.kup"),

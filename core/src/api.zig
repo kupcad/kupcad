@@ -31,6 +31,7 @@ const sketch_circles = @import("vm/sketch_circles.zig");
 const log = std.log.scoped(.@"export");
 const HandleScope = @import("vm/scope.zig").HandleScope;
 const bom = @import("stdlib/bom.zig");
+const manifest = @import("stdlib/manifest.zig");
 const error_kind = @import("vm/error_kind.zig");
 const MaterialDef = @import("core/material.zig").MaterialDef;
 
@@ -409,8 +410,10 @@ pub fn requireExportable(vm: *VM, model: *const Model, format: ExportFormat) !vo
         },
         .@"3d" => {
             if (model.paths.items.len > 0) {
-                const which = if (model.shapeCount() == 1) "is" else "holds";
-                return vm.fail(.TypeError, "the model {s} a Path, which {s} (a 3D format) can't hold: close it (.close) into a Sketch or give it a width (.stroke(w)), then extrude it", .{ which, @tagName(format) });
+                if (model.paths.items.len == model.shapeCount()) {
+                    return vm.fail(.TypeError, "the model holds only open paths: {s} (a 3D format) needs Solids; {s}, then extrude it", .{ @tagName(format), manifest.OPEN_PATH_HINT });
+                }
+                return vm.fail(.TypeError, "the model holds a Path, which {s} (a 3D format) can't hold: {s}, then extrude it", .{ @tagName(format), manifest.OPEN_PATH_HINT });
             }
             if (model.sketches.items.len > 0) {
                 const which = if (model.solids.items.len == 0 and model.sketches.items.len == 1) "is" else "holds";

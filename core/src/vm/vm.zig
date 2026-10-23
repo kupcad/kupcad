@@ -2569,7 +2569,10 @@ pub const VM = struct {
 
         // Nothing answers it. The host's invoke handler only ever said this, and without one
         // the VM said "No invoke handler registered".
-        return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method_name_str, self.typeName(receiver) });
+        const type_name = self.typeName(receiver);
+        const hint: ?[]const u8 = if (self.host.missing_method_hint) |why| why(type_name, method_name_str) else null;
+        if (hint) |h| return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}: {s}", .{ method_name_str, type_name, h });
+        return self.raiseError(.NoMethodError, "undefined method '{s}' for {s}", .{ method_name_str, type_name });
     }
 
     inline fn executeUnpackSplat(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {

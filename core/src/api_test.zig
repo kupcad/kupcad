@@ -177,8 +177,8 @@ test "API: a model a format can't hold is refused with a message, never cut down
         .{ .source = "[cube(1), [cube(2), nil]]", .message = "TypeError: the model's item 2.2 (nil) is not a shape: a model holds Solids, Sketches, Paths and Arrays of them" },
         .{ .source = "\"model\"", .message = "TypeError: the script's last value (String) is not a model: end it with a Solid, a Sketch, a Path, an Assembly or an Array of them" },
         .{ .source = "[]", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
-        .{ .source = "line([0, 0], [1, 0])", .message = "TypeError: the model is a Path, which stl (a 3D format) can't hold: close it (.close) into a Sketch or give it a width (.stroke(w)), then extrude it" },
-        .{ .source = "[cube(1), line([0, 0], [1, 0])]", .format = .obj, .message = "TypeError: the model holds a Path, which obj (a 3D format) can't hold: close it (.close) into a Sketch or give it a width (.stroke(w)), then extrude it" },
+        .{ .source = "line([0, 0], [1, 0])", .message = "TypeError: the model holds only open paths: stl (a 3D format) needs Solids; a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first, then extrude it" },
+        .{ .source = "[cube(1), line([0, 0], [1, 0])]", .format = .obj, .message = "TypeError: the model holds a Path, which obj (a 3D format) can't hold: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first, then extrude it" },
         .{ .source = "cube(1).ghost\nnil", .message = "GeometryError: the model holds no Solid: nothing to write as stl" },
         .{ .source = "cube(1).ghost\nnil", .format = .@"3mf", .message = "GeometryError: the model holds no Solid: nothing to write as 3mf" },
     };

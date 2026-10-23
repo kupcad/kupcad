@@ -1,4 +1,4 @@
-//! Which expressions of a script are solids or sketches, as far as it says before it runs:
+//! Which expressions of a script are solids, sketches or paths, as far as it says before it runs:
 //! a primitive, a variable last assigned one, a method that keeps or makes one, a boolean of
 //! them. A rule feeds it the script's assignments in order (`observe`) and asks `of`.
 
@@ -6,7 +6,29 @@ const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const manifest = @import("../../stdlib/manifest.zig");
 
-pub const Shape = enum { solid, sketch };
+pub const Shape = enum {
+    solid,
+    sketch,
+    path,
+
+    /// The class a script sees the shape as.
+    pub fn className(self: Shape) []const u8 {
+        return switch (self) {
+            .solid => "Solid",
+            .sketch => "Sketch",
+            .path => "Path",
+        };
+    }
+
+    /// Which shapes' methods, as the manifest binds them.
+    pub fn on(self: Shape) manifest.On {
+        return switch (self) {
+            .solid => .solids,
+            .sketch => .sketches,
+            .path => .paths,
+        };
+    }
+};
 
 pub const Shapes = struct {
     /// Variables known to hold a solid or a sketch (the last assignment seen).
@@ -56,6 +78,7 @@ pub const Shapes = struct {
             .receiver => receiver,
             .solid => .solid,
             .sketch => .sketch,
+            .path => .path,
             else => null,
         };
     }

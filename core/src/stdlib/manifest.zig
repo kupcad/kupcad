@@ -299,6 +299,37 @@ pub fn methodSignatureOf(name: []const u8) ?*const Signature {
     return if (methodNamed(name)) |m| m.signature else null;
 }
 
+/// What to do about a shape that lacks a method it is often asked for: a Path for
+/// `extrude` or `revolve`, which need a closed shape.
+pub const OPEN_PATH_HINT = "a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first";
+
+/// Whether the shape method `name` is one of the shapes `on`'s (a Solid's `hull`, a
+/// Sketch's `extrude`, a Path's `close`); null when no shape has a method of that name.
+pub fn methodAllows(name: []const u8, on: On) ?bool {
+    var known = false;
+    for (&mesh_methods) |*m| {
+        if (!std.mem.eql(u8, m.name, name)) continue;
+        known = true;
+        if (m.isOn(on)) return true;
+    }
+    for (&path_methods) |*m| {
+        if (!std.mem.eql(u8, m.name, name)) continue;
+        known = true;
+        if (m.isOn(on)) return true;
+    }
+    return if (known) false else null;
+}
+
+/// Why `class` has no method `name`, when there is something to say: the VM adds it to
+/// the NoMethodError and the lint to its finding.
+pub fn missingMethodHint(class: []const u8, name: []const u8) ?[]const u8 {
+    if (!std.mem.eql(u8, class, "Path")) return null;
+    for ([_][]const u8{ "extrude", "revolve", "helix", "loft", "hull", "offset" }) |needs_region| {
+        if (std.mem.eql(u8, name, needs_region)) return OPEN_PATH_HINT;
+    }
+    return null;
+}
+
 /// A shape method named `name`: a solid's or a sketch's, else an assembly's (the exports
 /// they share are declared alike).
 fn methodNamed(name: []const u8) ?*const MeshMethod {

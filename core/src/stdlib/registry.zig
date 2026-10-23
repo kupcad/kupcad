@@ -170,6 +170,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     // Bind Host Platform Interface Hooks
     vm.host = .{
         .binary_handler = manifest.cadBinaryHandler,
+        .missing_method_hint = manifest.missingMethodHint,
         .print_handler = defaultPrintHandler,
         .mesh_destructor = kernel.destruct,
         .compile_module = module_compiler.compileModule,

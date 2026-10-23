@@ -21,6 +21,7 @@ const ParamOrderRule = @import("rules/param_order.zig").ParamOrderRule;
 const UnknownKeywordRule = @import("rules/unknown_keyword.zig").UnknownKeywordRule;
 const SegmentsAsSidesRule = @import("rules/segments_as_sides.zig").SegmentsAsSidesRule;
 const BrepUnsupportedRule = @import("rules/brep_unsupported.zig").BrepUnsupportedRule;
+const ShapeMismatchRule = @import("rules/shape_mismatch.zig").ShapeMismatchRule;
 const UnusedParamRule = @import("rules/unused_param.zig").UnusedParamRule;
 
 pub const LinterSeverity = enum {
@@ -113,6 +114,7 @@ pub const RuleSet = struct {
     @"unknown-keyword": UnknownKeywordRule = .{},
     @"segments-as-sides": SegmentsAsSidesRule = .{},
     @"brep-unsupported": BrepUnsupportedRule = .{},
+    @"shape-mismatch": ShapeMismatchRule = .{},
 
     pub const ids = @typeInfo(RuleSet).@"struct".field_names;
 

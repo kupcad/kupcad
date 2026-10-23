@@ -36,7 +36,8 @@ test "paths: what can't be a path is an error saying why" {
         .{ .src = rescued("line([0, 0], [1, 0]) + line([5, 5], [6, 5])"), .expected = .{ .str = "ValueError: '+' joins paths where one ends and the next starts: the first ends at [1, 0], the second starts at [5, 5]" } },
         .{ .src = rescued("arc(center: [0, 0], r: 1, start: 0, sweep: 90).scale(2, 1)"), .expected = .{ .str = "ValueError: scale can't scale a Path's arcs unevenly (an arc stays an arc): scale it the same in x and y, or close or stroke it first" } },
         .{ .src = rescued("line([0, 0], [1, 0]).close"), .expected = .{ .str = "ValueError: close needs a Path of at least 2 segments to enclose anything, got 1" } },
-        .{ .src = rescued("line([0, 0], [1, 0]).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Path" } },
+        .{ .src = rescued("line([0, 0], [1, 0]).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
+        .{ .src = rescued("line([0, 0], [1, 0]).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for Path" } },
         .{ .src = rescued("line([0, 0], [1, 0]) - line([1, 0], [2, 0])"), .expected = .{ .str = "TypeError: '-' can't combine Path and Path" } },
     });
 }

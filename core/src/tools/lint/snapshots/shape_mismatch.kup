@@ -1,0 +1,19 @@
+# A Path is open: it has no extrude, and no boolean with a Sketch or a Solid
+hook = line([0, 0], [10, 0]) + arc(center: [10, 5], r: 5, start: -90, sweep: 180)
+plate = square(20)
+block = cube(5)
+hook.extrude(3)
+hook.revolve(90)
+plate - hook
+block + hook
+hook - hook
+hook & plate
+plate.hull
+plate.volume
+block.extrude(1)
+# What a Path and a Sketch do have
+hook.close.extrude(3)
+hook.stroke(1).extrude(1)
+hook + hook.translate(x: 10)
+plate.offset(1)
+[plate, block]
