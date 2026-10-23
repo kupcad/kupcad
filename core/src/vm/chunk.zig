@@ -162,6 +162,82 @@ pub const OpCode = enum(u8) {
     op_return,
 };
 
+/// What follows an opcode in the code, in order: the one description of the bytecode's
+/// layout, which the verifier checks and the disassembler prints (`operandsOf`).
+pub const Operands = enum {
+    none,
+    /// A constant index, 1 byte or 2.
+    constant,
+    constant_wide,
+    /// A local slot, 1 byte or 2.
+    local,
+    local_wide,
+    /// An upvalue index, 1 byte.
+    upvalue,
+    /// A count (items, interpolated parts, names to unpack), 1 byte or 2.
+    count,
+    count_wide,
+    /// Two 1-byte counts: a splat's names before it and after it.
+    count_pair,
+    /// An argument count and a CallFlags byte.
+    call,
+    /// A 1-byte map slot, then a constant index of 1 byte or 2.
+    kwarg,
+    kwarg_wide,
+    /// A name constant of 1 byte or 2, then a 2-byte GlobalCache index.
+    global,
+    global_wide,
+    /// A name constant of 1 byte or 2, then a 2-byte InlineCache index.
+    property,
+    property_wide,
+    /// A name constant of 1 byte or 2, an argument count, a CallFlags byte, then a 2-byte
+    /// InlineCache index.
+    invoke,
+    invoke_wide,
+    /// The 2-byte slot of a loop's state (it spans two slots), then a 4-byte exit offset.
+    for_next,
+    /// A 4-byte offset from the end of the instruction, forward (`loop`: back).
+    jump,
+    loop,
+    /// A case table: a count of 1 byte or 2, the cases (a 2-byte constant and a 4-byte
+    /// offset each), then the default's offset.
+    switch_table,
+    switch_table_wide,
+    /// A function constant of 1 byte or 2, then per upvalue a local flag and a 2-byte index.
+    closure,
+    closure_wide,
+};
+
+pub fn operandsOf(op: OpCode) Operands {
+    return switch (op) {
+        .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block, .op_to_symbol => .none,
+        .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => .constant,
+        .op_constant_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => .constant_wide,
+        .op_get_local, .op_set_local => .local,
+        .op_get_local_wide, .op_set_local_wide => .local_wide,
+        .op_get_upvalue, .op_set_upvalue => .upvalue,
+        .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack => .count,
+        .op_build_array_wide, .op_build_map_wide => .count_wide,
+        .op_pack_splat, .op_unpack_splat => .count_pair,
+        .op_call, .op_yield, .op_super_invoke => .call,
+        .op_extract_kwarg => .kwarg,
+        .op_extract_kwarg_wide => .kwarg_wide,
+        .op_get_global, .op_define_global => .global,
+        .op_get_global_wide, .op_define_global_wide => .global_wide,
+        .op_get_property, .op_set_property, .op_get_ivar => .property,
+        .op_get_property_wide, .op_set_property_wide, .op_get_ivar_wide => .property_wide,
+        .op_invoke => .invoke,
+        .op_invoke_wide => .invoke_wide,
+        .op_for_next => .for_next,
+        .op_jump, .op_jump_if_false, .op_jump_if_nil, .op_jump_if_not_nil, .op_setup_rescue => .jump,
+        .op_loop => .loop,
+        .op_switch => .switch_table,
+        .op_switch_wide => .switch_table_wide,
+        .op_closure => .closure,
+        .op_closure_wide => .closure_wide,
+    };
+}
+
 /// Where one op_get_global or op_define_global site found its variable: the slot in the
 /// table the name resolved to there (VM.globalSlot), good while the VM's global generation
 /// is still `generation`. Every global read used to hash the name; in a loop of top-level
