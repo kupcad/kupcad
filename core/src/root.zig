@@ -48,6 +48,7 @@ test {
     _ = @import("core/error_codes_test.zig");
     _ = @import("core/visitor_test.zig");
     _ = @import("registration_test.zig");
+    _ = @import("layering_test.zig");
     _ = @import("tools/bench_test.zig");
     _ = @import("examples_test.zig");
     _ = @import("vm/dag_verifier_test.zig");
