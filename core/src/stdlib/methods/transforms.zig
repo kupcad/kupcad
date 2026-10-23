@@ -7,7 +7,6 @@ const geom = @import("../../core/geometry_handle.zig");
 const assembly = @import("../assembly.zig");
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
-const kernel = @import("../../kernel/kernel.zig");
 const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const limits = @import("../../core/limits.zig");

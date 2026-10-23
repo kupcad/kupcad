@@ -25,7 +25,6 @@ const bom = @import("bom.zig");
 const path_mod = @import("../core/path.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
-const debug_mod = @import("../cli/debugger.zig");
 
 pub const Category = enum {
     primitive_3d,

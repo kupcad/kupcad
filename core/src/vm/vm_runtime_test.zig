@@ -6,7 +6,6 @@ const testing = std.testing;
 const chunk = @import("chunk.zig");
 const registry = @import("../stdlib/registry.zig");
 const value = @import("../core/value.zig");
-const kernel = @import("../kernel/kernel.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../frontend/document.zig").Document;
 const geom = @import("../core/geometry_handle.zig");
