@@ -37,7 +37,7 @@ pub const Host = host_mod.Host;
 const NATIVE_STACK_RESERVE = 16;
 
 /// Names an error lists (a module's exports, a JsonObject's keys) before "...".
-const MAX_NAMES_LISTED = 8;
+pub const MAX_NAMES_LISTED = 8;
 /// Backtraces list at most this many frames (see VM.BacktraceLines).
 const MAX_BACKTRACE_FRAMES = 32;
 /// Room for one backtrace line such as "    from script:12:3:in 'name'".

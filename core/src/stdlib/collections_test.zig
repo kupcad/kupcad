@@ -75,3 +75,33 @@ test "Array: flat_map, sort_by, min_by, max_by and group_by call the block once 
         .{ .src = comptime rescued("[1, 2].min_by { |x| x == 2 ? Number::NAN : x }"), .expected = .{ .str = "MathError: min_by: the block gave NaN for the item at index 1" } },
     });
 }
+
+test "Map: size, fetch and dig read entries, nested ones included" {
+    const m = "m = { a: 1, b: [10, { c: \"deep\" }], \"s\" => 2 }\n";
+    try expectScripts(&.{
+        .{ .src = m ++ "r = [m.size, m.length, {}.size]", .expected = .{ .nums = &.{ 3, 3, 0 } } },
+        .{ .src = m ++ "r = [m.fetch(:a), m.fetch(:zz, 5), m.fetch(\"s\")]", .expected = .{ .nums = &.{ 1, 5, 2 } } },
+        // A default of nil is a default
+        .{ .src = m ++ "r = m.fetch(:zz, nil)", .expected = .nil },
+        .{ .src = comptime m ++ rescued("m.fetch(:zz)"), .expected = .{ .str = "KeyError: fetch: the Map has no key :zz (its keys: :a, :b, \"s\")" } },
+        .{ .src = comptime rescued("{}.fetch(1)"), .expected = .{ .str = "KeyError: fetch: the Map has no key 1 (it has none)" } },
+        .{ .src = comptime m ++ rescued("m.fetch(:a, 1, 2)"), .expected = .{ .str = "ArgumentError: fetch takes a key and at most one default, got 3 arguments" } },
+        .{ .src = m ++ "r = m.dig(:b, 1, :c)", .expected = .{ .str = "deep" } },
+        .{ .src = m ++ "r = m.dig(:b, -2)", .expected = .{ .num = 10 } },
+        // nil where a step finds nothing, as Ruby's; then the rest aren't looked for
+        .{ .src = m ++ "r = [m.dig(:x, :y), m.dig(:b, 5), m.dig(:b, 1, :zz)].inspect", .expected = .{ .str = "[nil, nil, nil]" } },
+        .{ .src = comptime m ++ rescued("m.dig(:a, :b)"), .expected = .{ .str = "TypeError: dig: Number has no entries to find :b in" } },
+        .{ .src = comptime m ++ rescued("m.dig(:b, :c)"), .expected = .{ .str = "TypeError: dig: an Array is indexed by an integer, got :c" } },
+        .{ .src = comptime m ++ rescued("m.dig(:b, 0.5)"), .expected = .{ .str = "TypeError: dig: an Array is indexed by an integer, got 0.5" } },
+    });
+}
+
+test "Map: filter, reject and transform_values make new Maps, the receiver as it was" {
+    try expectScripts(&.{
+        .{ .src = "m = { a: 1, b: \"x\", c: 3 }\nr = m.filter { |k, v| v.is_a?(Number) }.inspect + m.size.to_s", .expected = .{ .str = "{a: 1, c: 3}3" }, .gc_stress = true },
+        .{ .src = "r = { a: 1, b: 2 }.reject { |k, v| k == :a }.inspect", .expected = .{ .str = "{b: 2}" }, .gc_stress = true },
+        .{ .src = "r = { a: 1, b: 2 }.transform_values { |v| \"#{v * 10}\" }.inspect", .expected = .{ .str = "{a: \"10\", b: \"20\"}" }, .gc_stress = true },
+        .{ .src = "r = { a: 1 }.transform_values { |v| break 3 }", .expected = .{ .num = 3 } },
+        .{ .src = comptime rescued("{ a: 1 }.filter"), .expected = .{ .str = "ArgumentError: Map#filter requires a block" } },
+    });
+}

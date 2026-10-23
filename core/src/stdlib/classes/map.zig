@@ -1,9 +1,12 @@
-//! The Map class's methods (`keys`, `each`, `merge`, `get`, `symbolize_keys` and the rest),
-//! as a `methods` table of `common.MethodDef`, and `mapNew`, which registry.zig binds as
-//! `Map.new`.
+//! The Map class's methods (`keys`, `each`, `merge`, `get`, `fetch`, `dig`, `filter`,
+//! `transform_values`, `symbolize_keys` and the rest), as a `methods` table of
+//! `common.MethodDef`, and `mapNew`, which registry.zig binds as `Map.new`.
 
+const std = @import("std");
 const value = @import("../../core/value.zig");
-const VM = @import("../../vm/vm.zig").VM;
+const error_kind = @import("../../vm/error_kind.zig");
+const vm_mod = @import("../../vm/vm.zig");
+const VM = vm_mod.VM;
 const HandleScope = @import("../../vm/scope.zig").HandleScope;
 const common = @import("common.zig");
 const callBlock = @import("iteration.zig").callBlock;
@@ -183,6 +186,124 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     return value.Value.initObj(&new_map.obj);
 }
 
+/// Map#size / Map#length: how many entries it holds.
+pub fn mapSize(vm: *VM, map: *value.ObjMap) !value.Value {
+    _ = vm;
+    return value.Value.initNumber(@floatFromInt(map.map.count()));
+}
+
+/// Map#fetch(key, default) -> the value under `key`; without one, `default` when it is
+/// given (nil too), else a KeyError naming the key and the keys the Map has.
+pub fn mapFetch(vm: *VM, map: *value.ObjMap, key: value.Value, default: []const value.Value) !value.Value {
+    if (default.len > 1) return vm.fail(.ArgumentError, "fetch takes a key and at most one default, got {d} arguments", .{default.len + 1});
+    if (map.map.get(key)) |held| return held;
+    if (default.len > 0) return default[0];
+    const keys = map.map.keys();
+    return vm.fail(.KeyError, "fetch: the Map has no key {s} ({s}{s})", .{ shown(vm, key), if (keys.len > 0) "its keys: " else "it has none", shownList(vm, keys) });
+}
+
+/// Map#dig(key, *more) -> what the keys lead to, each a key into a Map (a String or a
+/// Symbol into a JsonObject) or an integer into an Array (negative from the end): nil
+/// where a step finds nothing, as Ruby's. A step into a value with no entries is a
+/// TypeError. (JsonObject#dig raises at a missing key instead, naming where in its file.)
+pub fn mapDig(vm: *VM, map: *value.ObjMap, first: value.Value, more: []const value.Value) !value.Value {
+    var current = try digStep(vm, value.Value.initObj(&map.obj), first);
+    for (more) |step| {
+        if (current.isNil()) break;
+        current = try digStep(vm, current, step);
+    }
+    return current;
+}
+
+fn digStep(vm: *VM, current: value.Value, step: value.Value) !value.Value {
+    if (current.isMap()) return current.asMap().map.get(step) orelse value.Value.initNil();
+    if (current.isJsonObject()) {
+        const held = vm.jsonObjectGet(current.asJsonObject(), step) catch return vm.fail(.TypeError, "dig: " ++ error_kind.JSON_KEY_FMT, .{vm.typeName(step)});
+        return held orelse value.Value.initNil();
+    }
+    if (current.isArray()) {
+        if (!step.isNumber() or @trunc(step.asNumber()) != step.asNumber()) return vm.fail(.TypeError, "dig: an Array is indexed by an integer, got {s}", .{shown(vm, step)});
+        const items = current.asArray().items.items;
+        const index = vm.resolveArrayIndex(items.len, step) catch return value.Value.initNil();
+        return items[index];
+    }
+    return vm.fail(.TypeError, "dig: {s} has no entries to find {s} in", .{ vm.typeName(current), shown(vm, step) });
+}
+
+/// `v` as `inspect` shows a built-in value (a script's `inspect` isn't called), in the
+/// scratch arena, for an error's message.
+fn shown(vm: *VM, v: value.Value) []const u8 {
+    var out: std.Io.Writer.Allocating = .init(vm.scratch_arena.allocator());
+    v.stringify(true, &out.writer) catch return "?";
+    return out.written();
+}
+
+/// `keys` as `shown` writes them, as an error lists them ("a, b", "..." past
+/// vm_mod.MAX_NAMES_LISTED).
+fn shownList(vm: *VM, keys: []const value.Value) []const u8 {
+    var out: std.Io.Writer.Allocating = .init(vm.scratch_arena.allocator());
+    for (keys[0..@min(keys.len, vm_mod.MAX_NAMES_LISTED)], 0..) |key, i| {
+        if (i > 0) out.writer.writeAll(", ") catch return "";
+        key.stringify(true, &out.writer) catch return "";
+    }
+    if (keys.len > vm_mod.MAX_NAMES_LISTED) out.writer.writeAll(", ...") catch return "";
+    return out.written();
+}
+
+/// Map#filter { |k, v| ... }: a new Map of the entries the block is truthy for.
+pub fn mapFilter(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
+    return keepEntries(vm, map, closure, true);
+}
+
+/// Map#reject { |k, v| ... }: a new Map of the entries the block is false or nil for.
+pub fn mapReject(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
+    return keepEntries(vm, map, closure, false);
+}
+
+fn keepEntries(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure, truthy: bool) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    const kept = try scope.map();
+    var i: usize = 0;
+    while (i < map.map.count()) : (i += 1) {
+        const key = map.map.keys()[i];
+        const val = map.map.values()[i];
+        // Rooted: the block may delete the entry
+        var held = HandleScope.init(vm);
+        defer held.deinit();
+        vm.push(key);
+        vm.push(val);
+        const res = switch (try callBlock(vm, closure, &.{ key, val })) {
+            .broke => |v| return v,
+            .value => |v| v,
+        };
+        if (res.isFalsey() != truthy) try kept.map.put(vm.gc.trackingAllocator(), key, val);
+    }
+    return value.Value.initObj(&kept.obj);
+}
+
+/// Map#transform_values { |v| ... }: a new Map of the same keys, each with what the block
+/// gives for its value.
+pub fn mapTransformValues(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    const out = try scope.map();
+    var i: usize = 0;
+    while (i < map.map.count()) : (i += 1) {
+        const key = map.map.keys()[i];
+        var held = HandleScope.init(vm);
+        defer held.deinit();
+        vm.push(key);
+        const result = switch (try callBlock(vm, closure, &.{map.map.values()[i]})) {
+            .broke => |v| return v,
+            .value => |v| v,
+        };
+        vm.push(result);
+        try out.map.put(vm.gc.trackingAllocator(), key, result);
+    }
+    return value.Value.initObj(&out.obj);
+}
+
 pub const methods = [_]common.MethodDef{
     .{ .name = "keys", .func = common.wrapMethod(mapKeys) },
     .{ .name = "values", .func = common.wrapMethod(mapValues) },
@@ -196,4 +317,11 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "symbolize_keys", .func = common.wrapMethod(mapSymbolizeKeys) },
     .{ .name = "stringify_keys", .func = common.wrapMethod(mapStringifyKeys) },
     .{ .name = "to_a", .func = common.wrapMethod(mapToA) },
+    .{ .name = "size", .func = common.wrapMethod(mapSize) },
+    .{ .name = "length", .func = common.wrapMethod(mapSize) },
+    .{ .name = "fetch", .func = common.wrapMethod(mapFetch) },
+    .{ .name = "dig", .func = common.wrapMethod(mapDig) },
+    .{ .name = "filter", .func = common.wrapMethod(mapFilter) },
+    .{ .name = "reject", .func = common.wrapMethod(mapReject) },
+    .{ .name = "transform_values", .func = common.wrapMethod(mapTransformValues) },
 };
