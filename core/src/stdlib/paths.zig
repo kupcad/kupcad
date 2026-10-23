@@ -11,6 +11,7 @@ const HandleScope = @import("../vm/scope.zig").HandleScope;
 const arguments = @import("arguments.zig");
 const path_mod = @import("../core/path.zig");
 const affine2 = @import("../core/affine2.zig");
+const transforms = @import("methods/transforms.zig");
 const turnShare = @import("../core/engine_config.zig").turnShare;
 const Signature = @import("signature.zig").Signature;
 
@@ -201,15 +202,10 @@ pub fn pathTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
     return transformed(vm, receiver, affine2.translation(vec[0], vec[1]), "translate");
 }
 
-/// `rotate(a)` in degrees about z, as a Sketch's.
+/// `rotate(a)` in degrees about z, `about:` a point [x, y] or the origin, as a Sketch's.
 pub fn pathRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try arguments.parseVec3(vm, args, 0.0, "rotate");
-    if (arguments.singleNumber(args)) {
-        const angle = vec[0]; // (written straight into `vec`, the aggregate read a cleared x)
-        vec = .{ 0.0, 0.0, angle };
-    }
-    if (vec[0] != 0.0 or vec[1] != 0.0) return vm.fail(.ValueError, "a Path can only rotate about z (it lies in the XY plane), got x {f} and y {f}", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
-    return transformed(vm, receiver, affine2.rotation(vec[2]), "rotate");
+    const turn = try transforms.parseRotation(vm, args, true, "a Path", "");
+    return transformed(vm, receiver, transforms.planarRotation(turn), "rotate");
 }
 
 pub fn pathScale(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {

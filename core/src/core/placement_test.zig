@@ -3,7 +3,8 @@
 
 const std = @import("std");
 const testing = std.testing;
-const Placement = @import("placement.zig").Placement;
+const placement_mod = @import("placement.zig");
+const Placement = placement_mod.Placement;
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("geometry_handle.zig");
 
@@ -72,4 +73,39 @@ test "placement: rotations and translations place a shape where the mesh engine 
         defer kernel.destruct(moved);
         try expectPlaces(Placement.translation(4, -5, 6).then(Placement.rotation(a[0], a[1], a[2])), base, moved);
     }
+}
+
+test "placement: a turn about any axis is the rotation of its three angles" {
+    const Case = struct { axis: [3]f64, deg: f64 };
+    const cases = [_]Case{
+        .{ .axis = .{ 1, 1, 1 }, .deg = 120 },
+        .{ .axis = .{ 0.3, -0.5, 2 }, .deg = 37 },
+        .{ .axis = .{ 1, 0, 0 }, .deg = -15 },
+        // Straight up or down in y: x and z turn about one line
+        .{ .axis = .{ 0, 1, 0 }, .deg = 90 },
+        .{ .axis = .{ 0, -3, 0 }, .deg = 90 },
+        .{ .axis = .{ 2, 1, 0 }, .deg = 200 },
+    };
+    const probes = [_][3]f64{ .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 }, .{ 1, 2, 3 } };
+    for (cases) |case| {
+        errdefer std.debug.print("axis {any} by {d}\n", .{ case.axis, case.deg });
+        const angles = placement_mod.eulerOfAxisAngle(case.axis, case.deg);
+        const turned = Placement.rotation(angles[0], angles[1], angles[2]);
+        // Rodrigues: v cos θ + (k × v) sin θ + k (k·v)(1 − cos θ)
+        const len = @sqrt(case.axis[0] * case.axis[0] + case.axis[1] * case.axis[1] + case.axis[2] * case.axis[2]);
+        const k = [3]f64{ case.axis[0] / len, case.axis[1] / len, case.axis[2] / len };
+        const theta = std.math.degreesToRadians(case.deg);
+        for (probes) |v| {
+            const kv = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
+            const kxv = [3]f64{ k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0] };
+            const got = turned.apply(v);
+            for (0..3) |i| {
+                const expected = v[i] * @cos(theta) + kxv[i] * @sin(theta) + k[i] * kv * (1 - @cos(theta));
+                try testing.expectApproxEqAbs(expected, got[i], 1e-12);
+            }
+        }
+    }
+    // A quarter turn about an axis stays the kernel's exact quarter turn
+    try testing.expectEqual([3]f64{ 0, 0, 90 }, placement_mod.eulerOfAxisAngle(.{ 0, 0, 1 }, 90));
+    try testing.expectEqual([3]f64{ 90, 0, 0 }, placement_mod.eulerOfAxisAngle(.{ 5, 0, 0 }, 90));
 }

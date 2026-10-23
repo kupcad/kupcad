@@ -259,8 +259,17 @@ pub fn trailingKwargs(args: []const value.Value) ?*value.ObjMap {
 /// (`translate([1, 2, 3])`), and/or `x:`, `y:`, `z:`; axes not given are `default_val`.
 pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: []const u8) ![VEC3_LEN]f64 {
     // Raw values, so a nil coordinate is a TypeError rather than an unset axis.
-    const parsed = try parseKwargsSubset(struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null }, &VEC3_NAMES, vm, args, method);
-    const positional = if (parsed.positional.len == 1 and parsed.positional[0].isArray()) parsed.positional[0].asArray().items.items else parsed.positional;
+    const parsed = try parseKwargsSubset(Vec3Keywords, &VEC3_NAMES, vm, args, method);
+    return vec3From(vm, parsed.positional, parsed.opts, default_val, method);
+}
+
+/// The x:, y: and z: keywords of a vector, raw (a nil one is a TypeError, not unset).
+pub const Vec3Keywords = struct { x: ?value.Value = null, y: ?value.Value = null, z: ?value.Value = null };
+
+/// The [x, y, z] that `positional` numbers (or one Array of them) and the keywords in
+/// `keywords` (any struct with Vec3Keywords' fields) give, an axis neither sets `default_val`.
+pub fn vec3From(vm: *VM, positional_args: []const value.Value, keywords: anytype, default_val: f64, method: []const u8) ![VEC3_LEN]f64 {
+    const positional = if (positional_args.len == 1 and positional_args[0].isArray()) positional_args[0].asArray().items.items else positional_args;
     if (positional.len > VEC3_LEN) {
         return vm.fail(.ArgumentError, "{s} expects at most {d} numbers (x, y, z), got {d}", .{ method, VEC3_LEN, positional.len });
     }
@@ -268,7 +277,7 @@ pub fn parseVec3(vm: *VM, args: []const value.Value, default_val: f64, method: [
     var vec: [VEC3_LEN]f64 = @splat(default_val);
     for (positional, 0..) |arg, i| vec[i] = try requireNumber(vm, arg, method, VEC3_NAMES[i]);
     inline for (VEC3_NAMES, 0..) |axis, i| {
-        if (@field(parsed.opts, axis)) |v| vec[i] = try requireNumber(vm, v, method, axis);
+        if (@field(keywords, axis)) |v| vec[i] = try requireNumber(vm, v, method, axis);
     }
     return vec;
 }

@@ -13,7 +13,7 @@ pub const SHAPES = Signature{ .rest = "shapes" };
 
 // --- Transforms ---
 pub const TRANSLATE = Signature{ .positional = &arguments.VEC3_NAMES, .keywords = &arguments.VEC3_NAMES };
-pub const ROTATE = TRANSLATE;
+pub const ROTATE = Signature{ .positional = &arguments.VEC3_NAMES, .keywords = &.{ "x", "y", "z", "angle", "axis", "about" } };
 pub const SCALE = TRANSLATE;
 pub const MIRROR = TRANSLATE;
 pub const RESIZE = Signature{ .positional = &.{"size"}, .keywords = &.{"auto"} };

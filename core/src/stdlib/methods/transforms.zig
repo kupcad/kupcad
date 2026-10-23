@@ -11,6 +11,7 @@ const arguments = @import("../arguments.zig");
 const sig = @import("../method_signatures.zig");
 const limits = @import("../../core/limits.zig");
 const affine2 = @import("../../core/affine2.zig");
+const placement = @import("../../core/placement.zig");
 
 // A Sketch lies in the XY plane, so its transforms stay in that plane. A component that
 // would move it out of the plane is a ValueError: it used to be dropped silently, so
@@ -39,31 +40,88 @@ pub fn meshTranslate(vm: *VM, receiver: value.Value, args: []const value.Value) 
 }
 
 /// `rotate(x, y, z)` in degrees, or `rotate(a)`: about z, for a Solid as for a Sketch
-/// (OpenSCAD's default; one angle used to mean x on a Solid and z on a Sketch).
+/// (OpenSCAD's default; one angle used to mean x on a Solid and z on a Sketch); `about:` a
+/// point turns it about that point, and a Solid turns `rotate(a, axis: [x, y, z])` about
+/// any axis (see parseRotation).
 pub fn meshRotate(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
-    var vec = try arguments.parseVec3(vm, args, 0.0, "rotate");
-    if (arguments.singleNumber(args)) {
-        const angle = vec[0]; // (written straight into `vec`, the aggregate read a cleared x)
-        vec = .{ 0.0, 0.0, angle };
-    }
     if (receiver.isGeometry()) {
-        const new_idx = try vm.dag_builder.addRotate(receiver.asGeometry().dag_idx, vec[0], vec[1], vec[2]);
-        return try vm.allocateGeometry(.{ .symbolic = new_idx });
+        const turn = try parseRotation(vm, args, false, "a Solid", "");
+        const a = turn.angles;
+        var node = receiver.asGeometry().dag_idx;
+        // About a point: there to the origin, turned, and back
+        if (turn.about) |p| node = try vm.dag_builder.addTranslate(node, -p[0], -p[1], -p[2]);
+        node = try vm.dag_builder.addRotate(node, a[0], a[1], a[2]);
+        if (turn.about) |p| node = try vm.dag_builder.addTranslate(node, p[0], p[1], p[2]);
+        return try vm.allocateGeometry(.{ .symbolic = node });
     } else if (receiver.isCrossSection()) {
-        const mat = affine2.rotation(try sketchRotation(vm, args, vec));
+        const mat = planarRotation(try parseRotation(vm, args, true, "a Sketch", "; extrude it to tilt it"));
         const new_idx = try vm.dag_builder.addCrossSectionTransform(receiver.asCrossSection().dag_idx, mat);
         return try vm.allocateCrossSection(new_idx);
     }
     return arguments.notDefinedFor(vm, "rotate", receiver);
 }
 
-/// A Sketch turns about z only: `rotate(a)`, `rotate(z: a)` or `rotate(0, 0, a)`, in degrees.
-fn sketchRotation(vm: *VM, args: []const value.Value, vec: [3]f64) !f64 {
-    _ = args;
-    if (vec[0] != 0.0 or vec[1] != 0.0) {
-        return vm.fail(.ValueError, "a Sketch can only rotate about z (it lies in the XY plane), got x {f} and y {f}; extrude it to tilt it", .{ value.fmtNumber(vec[0]), value.fmtNumber(vec[1]) });
+/// A turn as `rotate` is given it: the angles about x, y and z, in degrees, and the point
+/// it turns about (the origin when null).
+pub const Rotation = struct { angles: [3]f64, about: ?[3]f64 = null };
+
+const RotateOpts = struct {
+    x: ?value.Value = null,
+    y: ?value.Value = null,
+    z: ?value.Value = null,
+    angle: ?f64 = null,
+    axis: ?value.Value = null,
+    about: ?value.Value = null,
+};
+
+/// The turn `rotate`'s arguments ask for: `rotate(x, y, z)` (or an Array, or x:, y:, z:),
+/// `rotate(a)` or `rotate(angle: a)` about z, `rotate(a, axis: [x, y, z])` about that axis
+/// (right-handed; placement.eulerOfAxisAngle makes it the three angles), and `about: [x, y,
+/// z]` about that point. A `planar` shape (`what`, a Sketch or a Path) lies in the XY
+/// plane: it turns about z only, about a point [x, y]; `tilt_hint` says how to tilt one.
+pub fn parseRotation(vm: *VM, args: []const value.Value, planar: bool, comptime what: []const u8, comptime tilt_hint: []const u8) !Rotation {
+    const parsed = try arguments.parseKwargsSubset(RotateOpts, sig.ROTATE.keywords, vm, args, "rotate");
+    const o = parsed.opts;
+    const pos = parsed.positional;
+    const has_xyz = o.x != null or o.y != null or o.z != null;
+    var turn: Rotation = .{ .angles = @splat(0) };
+    if (o.axis) |axis_val| {
+        if (planar) return vm.fail(.ArgumentError, "rotate: " ++ what ++ " turns about z only (it lies in the XY plane), so it takes no axis:", .{});
+        if (has_xyz or pos.len > 1) return vm.fail(.ArgumentError, "rotate takes an angle with axis:, or angles x, y and z, not both", .{});
+        const axis = try arguments.parseNumberArray(3, vm, axis_val, .{ .method = "rotate", .name = "the axis" }, 3, 0);
+        try arguments.requireNonZeroVector(vm, axis, "rotate", "axis");
+        if (o.angle != null and pos.len > 0) return vm.fail(.ArgumentError, "rotate takes its angle once, as a number or angle:", .{});
+        const angle = o.angle orelse if (pos.len == 1) try arguments.requireNumber(vm, pos[0], "rotate", "angle") else return vm.fail(.ArgumentError, "rotate with axis: needs the angle to turn by, in degrees", .{});
+        turn.angles = placement.eulerOfAxisAngle(axis, angle);
+    } else if (o.angle) |angle| {
+        if (has_xyz or pos.len > 0) return vm.fail(.ArgumentError, "rotate takes angle: (about z, or axis:) or angles x, y and z, not both", .{});
+        turn.angles = .{ 0, 0, angle };
+    } else {
+        turn.angles = try arguments.vec3From(vm, pos, o, 0, "rotate");
+        // One bare angle turns about z (copied out first: the literal is written straight
+        // into `turn.angles`, and read a cleared x)
+        if (pos.len == 1 and pos[0].isNumber() and !has_xyz) {
+            const angle = turn.angles[0];
+            turn.angles = .{ 0, 0, angle };
+        }
     }
-    return vec[2];
+    if (planar and (turn.angles[0] != 0 or turn.angles[1] != 0)) {
+        return vm.fail(.ValueError, what ++ " can only rotate about z (it lies in the XY plane), got x {f} and y {f}" ++ tilt_hint, .{ value.fmtNumber(turn.angles[0]), value.fmtNumber(turn.angles[1]) });
+    }
+    if (o.about) |about_val| {
+        const p = try arguments.parseNumberArray(3, vm, about_val, .{ .method = "rotate", .name = "the point about:" }, 2, 0);
+        if (planar and p[2] != 0) return vm.fail(.ValueError, "rotate: " ++ what ++ " turns about a point [x, y] (it lies in the XY plane), got z {f}", .{value.fmtNumber(p[2])});
+        turn.about = p;
+    }
+    return turn;
+}
+
+/// The 2D matrix of a planar shape's turn (parseRotation's, about z): about its point when
+/// it has one, there to the origin, turned and back.
+pub fn planarRotation(turn: Rotation) affine2.Matrix {
+    const spin = affine2.rotation(turn.angles[2]);
+    const p = turn.about orelse return spin;
+    return affine2.compose(affine2.translation(p[0], p[1]), affine2.compose(spin, affine2.translation(-p[0], -p[1])));
 }
 
 /// `scale(x, y, z)`, `scale([x, y, z])`, `scale(x: 2)`, or `scale(s)`: the same factor on

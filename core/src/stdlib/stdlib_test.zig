@@ -1082,6 +1082,30 @@ test "Stdlib: a polyhedron's faces have three corners or more, a concave one cut
     });
 }
 
+test "Stdlib: rotate turns about a point or about any axis, and a copy turned so is the same part" {
+    try expectScripts(&.{
+        .{ .src = "r = cube(1).rotate(90).bbox.min", .expected = .{ .nums = &.{ -1, 0, 0 } } },
+        .{ .src = "r = cube(1).rotate(90, about: [1, 0, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = cube(1).rotate(0, 0, 90, about: [1, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = cube(1).rotate(90, axis: [1, 0, 0]).bbox.min", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        // A third of a turn about the diagonal takes x to y
+        .{ .src = "r = cube([2, 1, 1]).rotate(120, axis: [1, 1, 1]).bbox.size", .expected = .{ .nums = &.{ 1, 2, 1 } } },
+        .{ .src = "r = cube(1).rotate(angle: 45, axis: [0, 0, 1]).bbox.size.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 1.414213562, 1.414213562, 1 } } },
+        .{ .src = "r = cube(1).rotate(angle: 90).bbox.min", .expected = .{ .nums = &.{ -1, 0, 0 } } },
+        .{ .src = "r = square(1).rotate(90, about: [1, 0]).bbox.min.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 0, -1, 0 } } },
+        .{ .src = "r = line([0, 0], [1, 0]).rotate(90, about: [1, 0]).start.map { |v| v.round(9) }", .expected = .{ .nums = &.{ 1, -1 } } },
+        // Turned about an axis, a copy is still a rotate: one part, two copies
+        .{ .src = "c = cube([3, 2, 1]).named(\"block\")\nr = assemble(name: \"k\", parts: [c, c.rotate(70, axis: [1, 1, 0]).translate(9, 0, 0)]).bom.map { |row| row[:count] }", .expected = .{ .nums = &.{2} } },
+        .{ .src = comptime rescued("square(1).rotate(90, axis: [1, 0, 0])"), .expected = .{ .str = "ArgumentError: rotate: a Sketch turns about z only (it lies in the XY plane), so it takes no axis:" } },
+        .{ .src = comptime rescued("cube(1).rotate(1, 2, axis: [0, 0, 1])"), .expected = .{ .str = "ArgumentError: rotate takes an angle with axis:, or angles x, y and z, not both" } },
+        .{ .src = comptime rescued("cube(1).rotate(axis: [0, 0, 1])"), .expected = .{ .str = "ArgumentError: rotate with axis: needs the angle to turn by, in degrees" } },
+        .{ .src = comptime rescued("cube(1).rotate(45, axis: [0, 0, 0])"), .expected = .{ .str = "ValueError: rotate expects a non-zero axis, got [0, 0, 0]" } },
+        .{ .src = comptime rescued("square(1).rotate(90, about: [1, 0, 2])"), .expected = .{ .str = "ValueError: rotate: a Sketch turns about a point [x, y] (it lies in the XY plane), got z 2" } },
+        .{ .src = comptime rescued("cube(1).rotate(angle: 45, z: 3)"), .expected = .{ .str = "ArgumentError: rotate takes angle: (about z, or axis:) or angles x, y and z, not both" } },
+        .{ .src = comptime rescued("square(1).rotate(10, 0, 0)"), .expected = .{ .str = "ValueError: a Sketch can only rotate about z (it lies in the XY plane), got x 10 and y 0; extrude it to tilt it" } },
+    });
+}
+
 test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
     try expectScripts(&.{
         .{ .src = "r = square(1).repeat_linear(3, [2, 0]).area", .expected = .{ .num = 3 } },
@@ -2429,7 +2453,7 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "polyhedron(" ++ TETRA_PTS ++ ", " ++ TETRA_FACES ++ ", bogus: 1)", .method = "polyhedron", .accepted = "points, faces" },
         .{ .src = "text(\"A\", bogus: 1)", .method = "text", .accepted = "size, tolerance, font, halign, valign" },
         .{ .src = "cube(1).translate(bogus: 1)", .method = "translate", .accepted = "x, y, z" },
-        .{ .src = "cube(1).rotate(bogus: 1)", .method = "rotate", .accepted = "x, y, z" },
+        .{ .src = "cube(1).rotate(bogus: 1)", .method = "rotate", .accepted = "x, y, z, angle, axis, about" },
         .{ .src = "cube(1).scale(bogus: 1)", .method = "scale", .accepted = "x, y, z" },
         .{ .src = "cube(1).mirror(bogus: 1)", .method = "mirror", .accepted = "x, y, z" },
         .{ .src = "cube(1).resize([2], bogus: 1)", .method = "resize", .accepted = "auto" },
