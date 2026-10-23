@@ -225,6 +225,20 @@ test "SVG read: a symbol's and a nested svg's viewBox fit it to their box, as pr
     try expectRefused(MM ++ "<svg viewBox=\"0 0 1 1\" preserveAspectRatio=\"xMidYMid sometimes\"></svg></svg>", "line 1: the preserveAspectRatio \"xMidYMid sometimes\" of a <svg> isn't SVG's");
 }
 
+test "SVG read: a style sheet's rules fill or hide what they match, below a style and above an attribute" {
+    // As Illustrator writes one: classes in a CDATA section. The open path of `st0` is
+    // unfilled, a stroke; a style fills one; `st1` fills one whose attribute says none;
+    // a class hides one; a group's class reaches what is in it
+    const sheet = "<defs><style type=\"text/css\"><![CDATA[ .st0{fill:none;stroke:#000} .st1{fill:#f00} .hidden{display:none} ]]></style></defs>";
+    var drawing = try read(MM ++ sheet ++ "<path class=\"st0\" d=\"M0 0L10 0L10 10\"/><rect class=\"st1\" width=\"5\" height=\"5\"/>" ++
+        "<rect class=\"st1 hidden\" x=\"60\" width=\"5\" height=\"5\"/><path class=\"st0\" style=\"fill:#000\" d=\"M20 0L30 0L30 10\"/>" ++
+        "<path class=\"st1\" fill=\"none\" d=\"M40 0L50 0L50 10\"/><g class=\"st0\"><path d=\"M0 20L10 20L10 30\"/></g></svg>");
+    defer drawing.deinit();
+    try testing.expectEqual(@as(usize, 3), drawing.outlines.len);
+    try testing.expectEqual(@as(usize, 2), drawing.open_paths.len);
+    try expectPoint(.{ 0, -20 }, drawing.open_paths[1].start);
+}
+
 test "SVG read: uses that draw themselves, or more than they may, are refused" {
     try expectRefused(MM ++ "<g id=\"a\"><use href=\"#a\"/></g></svg>", "line 1: a <use> of \"#a\" within that element, which would draw itself forever");
     try expectRefused(MM ++ "<use href=\"parts.svg#bolt\"/></svg>", "line 1: a <use> of \"parts.svg#bolt\": only an element of the same file (\"#id\") is read");

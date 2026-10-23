@@ -7,7 +7,9 @@
 //! (`Z`, or its ends meet within the tolerance), or when its shape is filled (SVG closes
 //! it for the fill); an open one that isn't filled is a stroke alone, with no area: an
 //! open path of its own (a laser's score line). A `line` is one too. Text, images and what
-//! isn't drawn (`defs`, `clipPath`, `display: none`) are left out. A `use` draws the
+//! isn't drawn (`defs`, `clipPath`, `display: none`) are left out; whether a shape is
+//! filled or drawn is read from its `style`, the file's `<style>` rules (css.zig), then its
+//! attributes, as CSS ranks them. A `use` draws the
 //! element it names (`href="#id"`, in `defs` or anywhere) where it is, through its own
 //! transform and `x`, `y`, with the style it gives; a `symbol` is a group, sized by the
 //! use's `width` and `height` (or its own). The file's units become millimetres by its
@@ -26,6 +28,7 @@ const xml = @import("../xml.zig");
 const Tag = xml.Tag;
 const Scanner = xml.Scanner;
 const lineOf = xml.lineOf;
+const css = @import("css.zig");
 
 /// Millimetres in a CSS pixel, SVG's user unit when the file says nothing else.
 const MM_PER_PX = 25.4 / 96.0;
@@ -87,17 +90,15 @@ pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, di
     return drawing;
 }
 
-/// A property of `tag`'s `style` (`fill: none`), or else its attribute of that name: CSS
-/// wins over the presentation attribute.
-fn propertyOf(tag: Tag, name: []const u8) ?[]const u8 {
-    if (tag.attribute("style")) |style| {
-        var declarations = std.mem.splitScalar(u8, style, ';');
-        while (declarations.next()) |declaration| {
-            const colon = std.mem.findScalar(u8, declaration, ':') orelse continue;
-            if (std.mem.eql(u8, std.mem.trim(u8, declaration[0..colon], &std.ascii.whitespace), name)) return std.mem.trim(u8, declaration[colon + 1 ..], &std.ascii.whitespace);
-        }
+/// The text of the `<style>` element `tag` starts, up to its end tag (past a CDATA section
+/// in it, which may hold `<`).
+fn styleText(text: []const u8, tag: Tag) []const u8 {
+    var from = tag.end;
+    if (std.mem.findPos(u8, text, from, "<![CDATA[")) |cdata| {
+        const close = std.mem.findPos(u8, text, from, "</") orelse text.len;
+        if (cdata < close) from = std.mem.findPos(u8, text, cdata, "]]>") orelse text.len;
     }
-    return tag.attribute(name);
+    return text[tag.end .. std.mem.findPos(u8, text, from, "</") orelse text.len];
 }
 
 /// The tag that gives a drawn symbol's `name` (its width or height): the use's when it
@@ -139,11 +140,14 @@ const Reader = struct {
     use_root: ?Tag = null,
     /// How many elements `use`s have drawn
     cloned: usize = 0,
+    /// The rules of the file's `<style>` elements
+    sheet: css.Sheet = .{},
 
     fn readElements(self: *Reader) Error!void {
         var index = Scanner{ .text = self.text };
         while (try index.next(self.diag)) |tag| {
             if (tag.closing) continue;
+            if (std.mem.eql(u8, xml.localName(tag.name), "style") and !tag.self_closing) try self.sheet.add(self.arena, styleText(self.text, tag));
             const id = tag.attribute("id") orelse continue;
             const entry = try self.ids.getOrPut(self.arena, id);
             if (!entry.found_existing) entry.value_ptr.* = tag.offset;
@@ -194,6 +198,14 @@ const Reader = struct {
         try self.readTags(&scanner, true);
     }
 
+    /// A property of `tag`: its `style`'s declaration of it (`fill: none`), else the style
+    /// sheet's for it (css.zig), else its attribute of that name, as CSS ranks them.
+    fn property(self: *const Reader, tag: Tag, name: []const u8) ?[]const u8 {
+        if (tag.attribute("style")) |style| if (css.declared(style, name)) |v| return v;
+        const element = css.Element{ .name = xml.localName(tag.name), .id = tag.attribute("id"), .classes = tag.attribute("class") orelse "" };
+        return self.sheet.value(element, name) orelse tag.attribute(name);
+    }
+
     /// The frame `tag` opens, its shape (if it is one) read on the way.
     fn frameOf(self: *Reader, tag: Tag) Error!Frame {
         const parent: Frame = if (self.frames.items.len > 0) self.frames.items[self.frames.items.len - 1] else .{ .name = "", .matrix = affine2.identity, .filled = true, .skipped = false, .viewport = null };
@@ -212,7 +224,7 @@ const Reader = struct {
         const name = if (std.mem.startsWith(u8, tag.name, "svg:")) tag.name[4..] else tag.name;
         frame.skipped = true;
         if (std.mem.findScalar(u8, name, ':') != null or (UNDRAWN.has(name) and !symbol_drawn)) return frame;
-        if (propertyOf(tag, "display")) |display| {
+        if (self.property(tag, "display")) |display| {
             if (std.mem.eql(u8, display, "none")) return frame;
         }
         frame.skipped = false;
@@ -226,7 +238,7 @@ const Reader = struct {
             };
         }
         if (tag.attribute("transform")) |transform| frame.matrix = affine2.compose(frame.matrix, try self.transformOf(tag, transform));
-        if (propertyOf(tag, "fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
+        if (self.property(tag, "fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
         if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ lineOf(self.text, tag.offset), name });
 
         if (std.mem.eql(u8, name, "use")) {

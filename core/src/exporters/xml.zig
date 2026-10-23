@@ -13,7 +13,9 @@ pub const Tag = struct {
     attributes: []const u8,
     closing: bool,
     self_closing: bool,
+    /// Where its `<` is, and where what follows its `>` starts
     offset: usize,
+    end: usize,
 
     /// The value of the attribute `name`, as written.
     pub fn attribute(self: Tag, name: []const u8) ?[]const u8 {
@@ -106,7 +108,7 @@ pub const Scanner = struct {
         const self_closing = body.len > 0 and body[body.len - 1] == '/';
         if (self_closing) body = body[0 .. body.len - 1];
         const name_end = std.mem.findAny(u8, body, &std.ascii.whitespace) orelse body.len;
-        return .{ .name = body[0..name_end], .attributes = body[name_end..], .closing = closing, .self_closing = self_closing, .offset = open };
+        return .{ .name = body[0..name_end], .attributes = body[name_end..], .closing = closing, .self_closing = self_closing, .offset = open, .end = i + 1 };
     }
 };
 

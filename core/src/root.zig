@@ -101,6 +101,7 @@ test {
     _ = @import("exporters/2d/svg_test.zig");
     _ = @import("exporters/2d/dxf_test.zig");
     _ = @import("exporters/2d/dxf_read_test.zig");
+    _ = @import("exporters/2d/css_test.zig");
     _ = @import("exporters/2d/svg_read_test.zig");
     _ = @import("exporters/2d/curves_test.zig");
     _ = @import("exporters/2d/sketch_curves_test.zig");
