@@ -25,14 +25,14 @@ pub const REPEAT_POLAR = Signature{ .positional = &.{ "count", "angle" }, .keywo
 
 // --- Sweeps (of a sketch) ---
 pub const EXTRUDE = Signature{ .positional = &.{"h"}, .keywords = &.{ "h", "slices", "twist", "scale_x", "scale_y", "scale", "center" } };
-pub const REVOLVE = Signature{ .positional = &.{"deg"}, .keywords = &.{ "deg", "segments" } };
-pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "slices" } };
+pub const REVOLVE = Signature{ .positional = &.{"deg"}, .keywords = &.{ "deg", "angle", "segments" } };
+pub const HELIX = Signature{ .positional = &.{ "h", "twist", "slices" }, .keywords = &.{ "h", "twist", "pitch", "turns", "slices" } };
 pub const LOFT = Signature{ .positional = &.{ "target", "height" } };
 
 // --- Advanced ---
 pub const MINKOWSKI = Signature{ .positional = &.{"other"} };
-pub const TRIM_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" } };
-pub const SPLIT_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" }, .keywords = &.{ "nx", "ny", "nz", "offset" } };
+pub const TRIM_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset" }, .keywords = &.{ "nx", "ny", "nz", "offset", "normal" } };
+pub const SPLIT_BY_PLANE = TRIM_BY_PLANE;
 pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta", "join", "miter_limit", "segments" }, .solid_sizes = &.{"delta"} };
 pub const SLICE = Signature{ .positional = &.{"height"} };
 pub const PROJECT = Signature{ .keywords = &.{"cut"} };

@@ -912,7 +912,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 14), checked);
+    try std.testing.expectEqual(@as(usize, 15), checked);
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -1103,6 +1103,28 @@ test "Stdlib: rotate turns about a point or about any axis, and a copy turned so
         .{ .src = comptime rescued("square(1).rotate(90, about: [1, 0, 2])"), .expected = .{ .str = "ValueError: rotate: a Sketch turns about a point [x, y] (it lies in the XY plane), got z 2" } },
         .{ .src = comptime rescued("cube(1).rotate(angle: 45, z: 3)"), .expected = .{ .str = "ArgumentError: rotate takes angle: (about z, or axis:) or angles x, y and z, not both" } },
         .{ .src = comptime rescued("square(1).rotate(10, 0, 0)"), .expected = .{ .str = "ValueError: a Sketch can only rotate about z (it lies in the XY plane), got x 10 and y 0; extrude it to tilt it" } },
+    });
+}
+
+test "Stdlib: a plane's normal as an Array or keywords, a helix by pitch or turns, revolve's angle:" {
+    try expectScripts(&.{
+        // Every form of the plane z = 5
+        .{ .src = "r = cube(10).trim_by_plane(0, 0, 1, 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane([0, 0, 1], 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane(nz: 1, offset: 5).bbox.min[2].round(9)", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).trim_by_plane(normal: [0, 0, -1], offset: -5).bbox.max[2]", .expected = .{ .num = 5 } },
+        .{ .src = "r = cube(10).split_by_plane([0, 0, 1], 5).map { |p| p.volume.round(6) }", .expected = .{ .nums = &.{ 500, 500 } } },
+        .{ .src = "r = cube(10).split_by_plane(normal: [0, 0, 1], offset: 2).map { |p| p.volume.round(6) }", .expected = .{ .nums = &.{ 800, 200 } } },
+        .{ .src = comptime rescued("cube(10).trim_by_plane"), .expected = .{ .str = "ArgumentError: trim_by_plane needs the plane's normal: nx, ny, nz, or an Array [nx, ny, nz]" } },
+        .{ .src = comptime rescued("cube(10).trim_by_plane([0, 0, 1], normal: [0, 1, 0])"), .expected = .{ .str = "ArgumentError: trim_by_plane takes the normal once, as an Array or normal:" } },
+        .{ .src = comptime rescued("cube(10).split_by_plane(normal: [0, 0, 1], nz: 1)"), .expected = .{ .str = "ArgumentError: split_by_plane takes normal: or nx, ny, nz, not both" } },
+        // pitch 5 over 10 is two turns, the same solid as twist: 720
+        .{ .src = "p = square(2).translate(5, 0)\nr = p.helix(10, pitch: 5).volume.round(6) == p.helix(10, 720).volume.round(6) && p.helix(10, turns: 2).volume.round(6) == p.helix(10, 720).volume.round(6)", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("square(2).helix(10, twist: 90, pitch: 5)"), .expected = .{ .str = "ArgumentError: helix takes twist or pitch, not both" } },
+        .{ .src = comptime rescued("square(2).helix(10, 90, turns: 1)"), .expected = .{ .str = "ArgumentError: helix takes its twist positionally or as pitch: or turns:, not both" } },
+        .{ .src = comptime rescued("square(2).helix(10, pitch: 0)"), .expected = .{ .str = "ValueError: helix expects pitch to be a finite number greater than zero, got 0" } },
+        .{ .src = "p = square(2).translate(5, 0)\nr = p.revolve(angle: 90).volume == p.revolve(deg: 90).volume", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("square(2).translate(5, 0).revolve(deg: 90, angle: 90)"), .expected = .{ .str = "ArgumentError: revolve takes deg or angle, not both" } },
     });
 }
 
@@ -2460,10 +2482,10 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
         .{ .src = "cube(1).repeat_linear(2, bogus: 1)", .method = "repeat_linear", .accepted = "x, y, z" },
         .{ .src = "cube(1).repeat_polar(2, bogus: 1)", .method = "repeat_polar", .accepted = "angle" },
         .{ .src = "square(1).extrude(bogus: 1)", .method = "extrude", .accepted = "h, slices, twist, scale_x, scale_y, scale, center" },
-        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, segments" },
-        .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, slices" },
+        .{ .src = "square(1).revolve(bogus: 1)", .method = "revolve", .accepted = "deg, angle, segments" },
+        .{ .src = "square(1).helix(bogus: 1)", .method = "helix", .accepted = "h, twist, pitch, turns, slices" },
         .{ .src = "square(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
-        .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset" },
+        .{ .src = "cube(1).split_by_plane(bogus: 1)", .method = "split_by_plane", .accepted = "nx, ny, nz, offset, normal" },
         .{ .src = "cube(1).offset(bogus: 1)", .method = "offset", .accepted = "delta, join, miter_limit, segments" },
         .{ .src = "cube(1).project(bogus: 1)", .method = "project", .accepted = "cut" },
         .{ .src = "cube(1).material(bogus: 1)", .method = "material", .accepted = "color, alpha, roughness, metallic, transmission, density" },
@@ -2479,8 +2501,8 @@ test "Stdlib: unknown keywords are ArgumentErrors that list the accepted ones" {
     try expectScripts(&iter_cases);
 
     try expectScripts(&.{
-        // The typos that motivated the check.
-        .{ .src = comptime rescued("square(1).revolve(angle: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'angle' (it accepts: deg, segments)" } },
+        // The typos that motivated the check (revolve(angle:) was one, and is deg: now).
+        .{ .src = comptime rescued("square(1).revolve(degree: 90)"), .expected = .{ .str = "ArgumentError: revolve does not take a keyword 'degree' (it accepts: deg, angle, segments)" } },
         .{ .src = comptime rescued("cube(1).translate(X: 5)"), .expected = .{ .str = "ArgumentError: translate does not take a keyword 'X' (it accepts: x, y, z)" } },
         // Keywords valid for one primitive are not quietly accepted by another.
         .{ .src = comptime rescued("sphere(r: 5, h: 3)"), .expected = .{ .str = "ArgumentError: sphere does not take a keyword 'h' (it accepts: r, d, radius, segments)" } },

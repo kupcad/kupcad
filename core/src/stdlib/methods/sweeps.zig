@@ -53,11 +53,14 @@ pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 
 pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "revolve", receiver);
-    const RevolveOpts = struct { deg: f64 = 360.0, segments: i32 = 0 };
+    const RevolveOpts = struct { deg: f64 = 360.0, angle: ?f64 = null, segments: i32 = 0 };
     const pos = arguments.positionalArgs(args);
     var base = RevolveOpts{};
     if (pos.len > 0) base.deg = try arguments.requireNumber(vm, pos[0], "revolve", "deg");
-    const opts = (try arguments.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
+    try arguments.requireOneOf(vm, args, &.{ "deg", "angle" }, "revolve");
+    var opts = (try arguments.parseKwargsOver(RevolveOpts, base, sig.REVOLVE.keywords, vm, args, "revolve")).opts;
+    // angle: is deg: by the name repeat_polar's and rotate's angles have
+    if (opts.angle) |angle| opts.deg = angle;
     try arguments.requireSegmentCount(vm, opts.segments, "segments");
 
     // A full turn's segments, the script's or the resolution's at the profile's farthest
@@ -75,13 +78,24 @@ pub fn meshRevolve(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 pub fn meshHelix(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "helix", receiver);
 
-    const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, slices: i32 = 0 };
+    const HelixOpts = struct { h: f64 = 10.0, twist: f64 = 360.0, pitch: ?f64 = null, turns: ?f64 = null, slices: i32 = 0 };
     const pos = arguments.positionalArgs(args);
     var base = HelixOpts{};
     if (pos.len > 0) base.h = try arguments.requireNumber(vm, pos[0], "helix", "h");
     if (pos.len > 1) base.twist = try arguments.requireNumber(vm, pos[1], "helix", "twist");
     if (pos.len > 2) base.slices = try arguments.checkedInt(i32, vm, try arguments.requireNumber(vm, pos[2], "helix", "slices"), "slices");
-    const opts = (try arguments.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
+    inline for (.{ &.{ "twist", "pitch" }, &.{ "twist", "turns" }, &.{ "pitch", "turns" } }) |pair| try arguments.requireOneOf(vm, args, pair, "helix");
+    var opts = (try arguments.parseKwargsOver(HelixOpts, base, sig.HELIX.keywords, vm, args, "helix")).opts;
+    if ((opts.pitch != null or opts.turns != null) and pos.len > 1) return vm.fail(.ArgumentError, "helix takes its twist positionally or as pitch: or turns:, not both", .{});
+    // How far it rises per turn, or how many turns it makes over h: the twist they mean
+    if (opts.pitch) |pitch| {
+        try arguments.requirePositive(vm, pitch, "helix", "pitch");
+        opts.twist = opts.h / pitch * 360.0;
+    }
+    if (opts.turns) |turns| {
+        try arguments.requireFinite(vm, turns, "helix", "turns");
+        opts.twist = turns * 360.0;
+    }
 
     try arguments.requireSegmentCount(vm, opts.slices, "slices");
     const slices = try twistSlices(vm, receiver, opts.slices, opts.twist);

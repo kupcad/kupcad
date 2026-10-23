@@ -32,17 +32,59 @@ pub fn meshMinkowski(vm: *VM, receiver: *value.ObjGeometry, other: *value.ObjGeo
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-// Arguments arrive as raw Values (not f64) so a wrong type gets a TypeError naming it.
-pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, nx: value.Value, ny: value.Value, nz: value.Value, offset: ?value.Value) !value.Value {
-    const normal = [3]f64{
-        try arguments.requireNumber(vm, nx, "trim_by_plane", "nx"),
-        try arguments.requireNumber(vm, ny, "trim_by_plane", "ny"),
-        try arguments.requireNumber(vm, nz, "trim_by_plane", "nz"),
-    };
-    try arguments.requireNonZeroVector(vm, normal, "trim_by_plane", "plane normal");
-    const off = if (offset) |o| try arguments.requireNumber(vm, o, "trim_by_plane", "offset") else 0.0;
-    const new_idx = try vm.dag_builder.addTrimByPlane(receiver.dag_idx, normal[0], normal[1], normal[2], off);
+/// `trim_by_plane(nx, ny, nz, offset)`: the part of the solid on the side of the plane its
+/// normal points to, the plane `offset` along it from the origin (see parsePlane for the
+/// forms the plane takes).
+pub fn meshTrimByPlane(vm: *VM, receiver: *value.ObjGeometry, args: []const value.Value) !value.Value {
+    const nx, const ny, const nz, const off = try parsePlane(vm, args, null, "trim_by_plane");
+    const new_idx = try vm.dag_builder.addTrimByPlane(receiver.dag_idx, nx, ny, nz, off);
     return try vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// The plane [nx, ny, nz, offset] a plane method's arguments give: positionally (nx, ny,
+/// nz[, offset]) or ([nx, ny, nz][, offset]), or by keywords nx:, ny:, nz: or normal:,
+/// and offset: (0 unless given). Once any normal component is given the others are 0;
+/// with none, the normal is `default_normal`, or an error when there is none.
+pub fn parsePlane(vm: *VM, args: []const value.Value, default_normal: ?[3]f64, comptime method: []const u8) ![4]f64 {
+    const parsed = try arguments.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null, normal: ?value.Value = null }, sig.TRIM_BY_PLANE.keywords, vm, args, method);
+    const o = parsed.opts;
+    var pos = parsed.positional;
+    var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
+    var normal_given = false;
+    if (pos.len > 0 and pos[0].isArray()) {
+        // ([nx, ny, nz], offset)
+        if (o.normal != null) return vm.fail(.ArgumentError, method ++ " takes the normal once, as an Array or normal:", .{});
+        plane[0..3].* = try arguments.parseNumberArray(3, vm, pos[0], .{ .method = method, .name = "the plane normal" }, 3, 0);
+        normal_given = true;
+        pos = pos[1..];
+        if (pos.len > 1) return vm.fail(.ArgumentError, method ++ " expects ([nx, ny, nz], offset), got {d} arguments after the normal", .{pos.len});
+        if (pos.len == 1) plane[3] = try arguments.requireNumber(vm, pos[0], method, "offset");
+    } else {
+        if (pos.len != 0 and pos.len != PLANE_ARGS.len - 1 and pos.len != PLANE_ARGS.len) {
+            return vm.fail(.ArgumentError, method ++ " expects (nx, ny, nz[, offset]) or ([nx, ny, nz], offset), got {d} positional arguments", .{pos.len});
+        }
+        for (pos, 0..) |arg, i| plane[i] = try arguments.requireNumber(vm, arg, method, PLANE_ARGS[i]);
+        normal_given = pos.len > 0;
+    }
+    if (o.normal) |normal_val| {
+        if (normal_given or o.nx != null or o.ny != null or o.nz != null) return vm.fail(.ArgumentError, method ++ " takes normal: or nx, ny, nz, not both", .{});
+        plane[0..3].* = try arguments.parseNumberArray(3, vm, normal_val, .{ .method = method, .name = "the plane normal" }, 3, 0);
+        normal_given = true;
+    }
+    // Unset components are 0 once any is given: nz: 1 alone is the XY plane (it used to
+    // keep a default nx = 1, a diagonal plane)
+    inline for (PLANE_ARGS[0..3], 0..) |name, i| {
+        if (@field(o, name)) |n| {
+            plane[i] = n;
+            normal_given = true;
+        }
+    }
+    if (o.offset) |off| plane[3] = off;
+    if (!normal_given) {
+        plane[0..3].* = default_normal orelse return vm.fail(.ArgumentError, method ++ " needs the plane's normal: nx, ny, nz, or an Array [nx, ny, nz]", .{});
+    }
+    try arguments.requireNonZeroVector(vm, plane[0..3].*, method, "plane normal");
+    return plane;
 }
 
 /// Offset corner styles; the values are the kernel's join_type codes.
@@ -161,26 +203,8 @@ pub fn meshOnFace(vm: *VM, receiver: *value.ObjGeometry, dir_arg: value.Value) !
 pub fn meshSplitByPlane(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "split_by_plane", receiver);
 
-    const parsed = try arguments.parseKwargsSubset(struct { nx: ?f64 = null, ny: ?f64 = null, nz: ?f64 = null, offset: ?f64 = null }, sig.SPLIT_BY_PLANE.keywords, vm, args, "split_by_plane");
-    const positional = parsed.positional;
-    if (positional.len != 0 and positional.len != PLANE_ARGS.len - 1 and positional.len != PLANE_ARGS.len) {
-        return vm.fail(.ArgumentError, "split_by_plane expects (nx, ny, nz[, offset]), got {d} positional arguments", .{positional.len});
-    }
-
-    // Unset normal components are 0 once any is given, so split_by_plane(nz: 1)
-    // means the XY plane (it used to keep the default nx = 1, a diagonal plane).
-    var plane = [PLANE_ARGS.len]f64{ 0.0, 0.0, 0.0, 0.0 };
-    var normal_given = positional.len > 0;
-    for (positional, 0..) |arg, i| plane[i] = try arguments.requireNumber(vm, arg, "split_by_plane", PLANE_ARGS[i]);
-    inline for (PLANE_ARGS, 0..) |name, i| {
-        if (@field(parsed.opts, name)) |n| {
-            plane[i] = n;
-            if (i < 3) normal_given = true;
-        }
-    }
-    if (!normal_given) plane[0] = 1.0; // Default: split at the YZ plane.
-    const nx, const ny, const nz, const offset = plane;
-    try arguments.requireNonZeroVector(vm, .{ nx, ny, nz }, "split_by_plane", "plane normal");
+    // Without a normal, at the YZ plane
+    const nx, const ny, const nz, const offset = try parsePlane(vm, args, .{ 1, 0, 0 }, "split_by_plane");
 
     const target_idx = receiver.asGeometry().dag_idx;
 
