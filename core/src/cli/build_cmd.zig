@@ -70,9 +70,7 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var disk = NativeVfs.init(reporter.io, std.Io.Dir.cwd());
     var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
     defer manager.deinit();
-    const session = try openSession(allocator, &manager, &options, reporter) orelse return .failure;
-    if (!try evaluate(allocator, session, options.input_path, reporter)) return .failure;
-
+    const session = try runScript(allocator, &manager, options.input_path, &options.params, &options.exports, reporter) orelse return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }
 
@@ -116,26 +114,27 @@ fn refuse(allocator: std.mem.Allocator, options: *Options) ?Options {
     return null;
 }
 
-/// The session the script runs in, set up as `options` and the project ask: the parameter
-/// values, the terminal debugger, the project's memory limit (`vm_memory_limit` in
-/// .kupcad.json) and, for STEP, the exact B-Rep engine. Null, the failure reported, when it
-/// can't be.
-fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: *Options, reporter: Reporter) !?*ScriptSession {
+/// Runs the script at `input_path` in a session of `manager`, set up as the command and
+/// the project ask: `params` (which the session takes), the terminal debugger, the
+/// project's memory limit (`vm_memory_limit` in .kupcad.json) and the engine `exports`
+/// need (STEP's exact B-Rep). The session, its model built; null, the failure reported,
+/// when it can't be set up or the script doesn't parse, compile or run.
+pub fn runScript(allocator: std.mem.Allocator, manager: *SessionManager, input_path: []const u8, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !?*ScriptSession {
     const io = reporter.io;
-    const session = manager.getOrInitializeSession(options.input_path) catch |err| {
+    const session = manager.getOrInitializeSession(input_path) catch |err| {
         reporter.err("Failed to initialize session: {}\n", .{err});
         return null;
     };
-    session.setParams(&options.params);
+    session.setParams(params);
     session.vm.debugger_handler = debugger.terminalDebugger(io);
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-    const config = ProjectConfig.forScript(io, allocator, options.input_path, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, options.input_path, where.line, where.column, ProjectConfig.describeError(err) });
+    const config = ProjectConfig.forScript(io, allocator, input_path, &where) catch |err| {
+        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, input_path, where.line, where.column, ProjectConfig.describeError(err) });
         return null;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
-    try options.exports.prepare(&session.vm);
-    return session;
+    if (exports) |e| try e.prepare(&session.vm);
+    return if (try evaluate(allocator, session, input_path, reporter)) session else null;
 }
 
 /// Runs the script at `input_path` and the modules it imports, dependencies first; false,
