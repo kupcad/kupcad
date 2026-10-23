@@ -8,7 +8,6 @@ const value = @import("../core/value.zig");
 const util = @import("methods/util.zig");
 const Signature = @import("signature.zig").Signature;
 const VM = @import("../vm/vm.zig").VM;
-const tatfi = @import("tatfi");
 const text_mod = @import("../core/text.zig");
 const limits = @import("../core/limits.zig");
 const affine2 = @import("../core/affine2.zig");
@@ -539,7 +538,7 @@ pub fn nativePolyhedron(vm: *VM, args: []const value.Value) !value.Value {
 }
 
 /// The font `text` draws in, and its name for errors.
-const TextFont = struct { face: tatfi.Face, name: []const u8 };
+const TextFont = struct { face: text_mod.Face, name: []const u8 };
 
 /// The font `font:` names: an embedded one by name (a String or a Symbol; nil is sans), or a
 /// Font a script imported, whose face borrows its bytes (the argument keeps it alive).

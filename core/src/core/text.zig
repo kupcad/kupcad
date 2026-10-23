@@ -9,6 +9,9 @@ const tatfi = @import("tatfi");
 const bezier = @import("bezier.zig");
 const Kerning = @import("kerning.zig").Kerning;
 
+/// A parsed font (tatfi's), which the functions here draw with; their callers name it so.
+pub const Face = tatfi.Face;
+
 /// The names `text(font:)` takes for the embedded fonts: each font's own, then its aliases.
 const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
     .{ .name = "sans", .key = .sans },
