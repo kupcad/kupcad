@@ -1,7 +1,7 @@
 //! The terminal debugger a script's `debugger` call opens: `debuggerLoop` reads commands
 //! (`.step`, `.continue`, `.locals`, `.stack`, `.globals`) or expressions to evaluate in
 //! the paused frame, with line editing and history. `terminalDebugger` picks it when stdin
-//! is a terminal; `nativeDebugger` is the built-in that calls the VM's handler.
+//! is a terminal; the `debugger` built-in (stdlib/diagnostics.zig) calls the VM's handler.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -424,11 +424,4 @@ pub fn debuggerLoop(vm: *VM) void {
 pub fn terminalDebugger(io: std.Io) ?*const fn (vm: *VM) void {
     const interactive = std.Io.File.stdin().isTty(io) catch false;
     return if (interactive) debuggerLoop else null;
-}
-
-pub fn nativeDebugger(vm: *VM) !value.Value {
-    const open = vm.debugger_handler orelse return value.Value.initNil();
-    vm.debugger_step_handler = open;
-    open(vm);
-    return value.Value.initNil();
 }

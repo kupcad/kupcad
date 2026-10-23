@@ -16,7 +16,7 @@ const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const diagnostic_report = @import("diagnostic_report.zig");
 const session_mod = @import("../daemon/session.zig");
-const debug = @import("../stdlib/debug.zig");
+const debugger = @import("debugger.zig");
 const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const VM = @import("../vm/vm.zig").VM;
@@ -365,7 +365,7 @@ fn openSession(allocator: std.mem.Allocator, manager: *SessionManager, options: 
         return null;
     };
     session.setParams(&options.params);
-    session.vm.debugger_handler = debug.terminalDebugger(io);
+    session.vm.debugger_handler = debugger.terminalDebugger(io);
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(io, allocator, options.input_path, &where) catch |err| {
         reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, options.input_path, where.line, where.column, ProjectConfig.describeError(err) });

@@ -25,7 +25,7 @@ const bom = @import("bom.zig");
 const path_mod = @import("../core/path.zig");
 const diagnostics_mod = @import("diagnostics.zig");
 const params_mod = @import("params.zig");
-const debug_mod = @import("debug.zig");
+const debug_mod = @import("../cli/debugger.zig");
 
 pub const Category = enum {
     primitive_3d,
@@ -140,7 +140,7 @@ pub const global_functions = [_]GlobalFunction{
     .{ .name = "puts", .func = common.wrapGlobal(io_mod.nativePuts), .category = .io, .result = .nothing },
     .{ .name = "print", .func = common.wrapGlobal(io_mod.nativePrint), .category = .io, .result = .nothing },
     .{ .name = "inspect", .func = common.wrapGlobal(io_mod.nativeInspect), .category = .io, .result = .varies },
-    .{ .name = "debugger", .func = common.wrapGlobal(debug_mod.nativeDebugger), .category = .io, .result = .nothing },
+    .{ .name = "debugger", .func = common.wrapGlobal(diagnostics_mod.nativeDebugger), .category = .io, .result = .nothing },
     .{ .name = "param", .func = common.wrapGlobal(params_mod.nativeParam), .category = .io, .result = .varies },
     .{ .name = "assert", .func = common.wrapGlobal(diagnostics_mod.nativeAssert), .category = .io, .result = .nothing },
     .{ .name = "warn", .func = common.wrapGlobal(diagnostics_mod.nativeWarn), .category = .io, .result = .nothing },

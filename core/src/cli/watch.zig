@@ -12,7 +12,7 @@ const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const SessionManager = @import("../daemon/session_manager.zig").SessionManager;
-const debug = @import("../stdlib/debug.zig");
+const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const api = @import("../api.zig");
@@ -91,7 +91,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer manager.release(lease);
     const session = lease.session;
     session.setParams(&options.params);
-    session.vm.debugger_handler = debug.terminalDebugger(init.io);
+    session.vm.debugger_handler = debugger.terminalDebugger(init.io);
     // A long-lived session caps the script heap: the project's `vm_memory_limit`, else the
     // interactive default, so a runaway loop ends with an error instead of the machine.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
