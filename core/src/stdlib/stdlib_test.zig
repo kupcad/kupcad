@@ -1248,6 +1248,11 @@ test "Stdlib: a Sketch sweeps along points in space, its frame turned only by th
         .{ .src = PROFILE ++ "r = prof.sweep([[0, 0, 0], [10, 0, 0], [10, 10, 0], [0, 10, 0], [0, 0, 0]], segments: 64).volume", .expected = .{ .num = 152 + 4 * wedge } },
         // A turn of a helix in 24 lines: the tube's area times their length
         .{ .src = "coil = (0..24).map { |i| a = i * 15.0; [10 * Math.cosd(a), 10 * Math.sind(a), a / 72] }\nc = circle(r: 1, segments: 32)\nv = c.sweep(coil, segments: 256).volume\nr = (v / (c.area * 24 * Math.sqrt((20 * Math.sind(7.5)) ** 2 + (5 / 24.0) ** 2)) - 1).abs < 1e-3", .expected = .{ .boolean = true } },
+        // One solid, its pieces fused: a coil is a tube (genus 0), a closed loop off any
+        // plane a ring (genus 1), the profile twisted along it to meet itself. Its pieces
+        // only met, by faces each placed by its own transform, and came out as dozens
+        .{ .src = "coil = (0..12).map { |i| a = i * 15.0; [10 * Math.cosd(a), 10 * Math.sind(a), a / 72] }\nt = circle(r: 1, segments: 16).sweep(coil)\nr = [t.genus, t.decompose.length]", .expected = .{ .nums = &.{ 0, 1 } } },
+        .{ .src = PROFILE ++ "seam = (0..40).map { |i| t = i * 9.0; [10 * Math.cosd(t) + 3 * Math.cosd(3 * t), 10 * Math.sind(t) - 3 * Math.sind(3 * t), 4 * Math.sind(2 * t)] }\nring = prof.scale(0.5).sweep(seam)\nr = [ring.genus, ring.decompose.length]", .expected = .{ .nums = &.{ 1, 1 } } },
         .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0]])"), .expected = .{ .str = "ValueError: sweep needs at least 2 points to follow, got 1" } },
         .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0], [1, 0, 0]])"), .expected = .{ .str = "ValueError: sweep point 2 repeats the one before it, [1, 0, 0]" } },
         .{ .src = comptime rescued(PROFILE ++ "prof.sweep([[0, 0, 0], [1, 0, 0, 1]])"), .expected = .{ .str = "ValueError: sweep expects point 1 to have 2 to 3 numbers, got 4" } },

@@ -15,16 +15,13 @@ const error_kind = @import("../../vm/error_kind.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const path_mod = @import("../../core/path.zig");
 const vec3 = @import("../../core/vec3.zig");
+const frames = @import("../../core/frames.zig");
 const limits = @import("../../core/limits.zig");
 
 /// The axis a sweep turns the profile about: revolve's y, a twist's z.
 const Axis = enum { y, z };
 
-/// A turn (radians) this small at a path's joint is none: no corner to fill.
-const STRAIGHT_TURN = 1e-9;
-/// A direction this close to straight up or down (its z) starts a sweep's profile with its
-/// y along y, as up can't be across it.
-const VERTICAL_SLACK = 1e-9;
+const Frame = frames.Frame;
 
 pub fn meshExtrude(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "extrude", receiver);
@@ -150,30 +147,8 @@ pub fn meshSweep(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     return try vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, pieces.items) });
 }
 
-/// The profile's directions in space: its x along `u`, its y along `v`, swept along u × v.
-const Frame = struct {
-    u: [3]f64,
-    v: [3]f64,
-
-    /// The frame for a path leaving along `t` (a unit vector): `v` as near up (z) as `t`
-    /// allows, or y for a path straight up or down, and `u` to the path's left.
-    fn along(t: [3]f64) Frame {
-        const up: [3]f64 = if (@abs(t[2]) > 1 - VERTICAL_SLACK) .{ 0, 1, 0 } else .{ 0, 0, 1 };
-        const v = vec3.normalize(vec3.sub(up, vec3.scale(t, vec3.dot(up, t))));
-        return .{ .u = vec3.cross(v, t), .v = v };
-    }
-
-    /// The frame turned `angle` radians about the unit `axis` (Rodrigues' rotation).
-    fn turned(self: Frame, axis: [3]f64, angle: f64) Frame {
-        return .{ .u = rotated(self.u, axis, angle), .v = rotated(self.v, axis, angle) };
-    }
-};
-
-fn rotated(w: [3]f64, axis: [3]f64, angle: f64) [3]f64 {
-    const c = @cos(angle);
-    const s = @sin(angle);
-    return vec3.add(vec3.add(vec3.scale(w, c), vec3.scale(vec3.cross(axis, w), s)), vec3.scale(axis, vec3.dot(axis, w) * (1 - c)));
-}
+/// Which ends of a sweep's piece meet another piece (a corner or a segment after it).
+const Joints = struct { start: bool, end: bool };
 
 /// A point of the XY plane in space.
 fn flat(p: [2]f64) [3]f64 {
@@ -197,20 +172,20 @@ const Sweep = struct {
         for (p.segments, 0..) |segment, k| {
             if (segment.cubic != null) return self.vm.fail(.ValueError, "sweep follows lines and arcs, and segment {d} of the path is a curve", .{k});
             const t_in = flat(path_mod.startTangent(from, segment));
-            try pieces.append(self.vm.allocator, if (segment.arc) |arc| try self.arcPiece(from, segment, arc, k) else try self.linePiece(flat(from), flat(segment.to), Frame.along(t_in)));
             const next = if (k + 1 < p.segments.len) p.segments[k + 1] else if (closed) p.segments[0] else null;
+            const joints = Joints{ .start = k > 0 or closed, .end = next != null };
+            try pieces.append(self.vm.allocator, if (segment.arc) |arc| try self.arcPiece(from, segment, arc, k, joints) else try self.linePiece(flat(from), flat(segment.to), Frame.along(t_in), 0, joints));
             if (next) |n| {
                 // In the plane, the profile stands up from the path at every point
                 const t1 = flat(path_mod.endTangent(from, &.{segment}).?);
-                const turn = try self.corner(flat(segment.to), t1, flat(path_mod.startTangent(segment.to, n)), Frame.along(t1));
-                if (turn.piece) |c| try pieces.append(self.vm.allocator, c);
+                if (try self.corner(flat(segment.to), t1, flat(path_mod.startTangent(segment.to, n)), Frame.along(t1))) |c| try pieces.append(self.vm.allocator, c);
             }
             from = segment.to;
         }
     }
 
-    /// Along a polyline of points in space, the profile's frame carried through each
-    /// corner by its turn.
+    /// Along a polyline of points in space, in the frames core/frames.zig carries along it
+    /// (a closed loop's twisted to meet itself), each segment twisting by its share.
     fn alongPoints(self: Sweep, pieces: *std.ArrayList(u32), items: []const value.Value) !void {
         const vm = self.vm;
         if (items.len < 2) return vm.fail(.ValueError, "sweep needs at least 2 points to follow, got {d}", .{items.len});
@@ -224,15 +199,16 @@ const Sweep = struct {
             }
         }
         const segments = points.len - 1;
-        const closed = segments >= 2 and std.math.sqrt(distanceSq(points[segments], points[0])) <= vm.config().tolerance;
-        var frame = Frame.along(direction(points[0], points[1]));
-        for (0..segments) |k| {
-            try pieces.append(vm.allocator, try self.linePiece(points[k], points[k + 1], frame));
+        const closed = segments >= 2 and std.math.sqrt(frames.distanceSq(points[segments], points[0])) <= vm.config().tolerance;
+        const legs = try frames.legs(vm.allocator, points, closed);
+        defer vm.allocator.free(legs);
+        for (legs, 0..) |leg, k| {
+            const joints = Joints{ .start = k > 0 or closed, .end = k + 1 < segments or closed };
+            try pieces.append(vm.allocator, try self.linePiece(points[k], points[k + 1], leg.frame, leg.twist, joints));
             if (k + 1 == segments and !closed) break;
             const next = (k + 1) % segments;
-            const turn = try self.corner(points[k + 1], direction(points[k], points[k + 1]), direction(points[next], points[next + 1]), frame);
-            if (turn.piece) |c| try pieces.append(vm.allocator, c);
-            frame = turn.frame;
+            const t = frames.direction(points[k], points[k + 1]);
+            if (try self.corner(points[k + 1], t, frames.direction(points[next], points[next + 1]), leg.frame.turned(t, leg.twist))) |c| try pieces.append(vm.allocator, c);
         }
     }
 
@@ -244,21 +220,37 @@ const Sweep = struct {
         return most;
     }
 
-    /// The profile extruded from `a` to `b`: its x along the frame's u, its y along v,
-    /// its extrusion along the line.
-    fn linePiece(self: Sweep, a: [3]f64, b: [3]f64, frame: Frame) !u32 {
-        const len = std.math.sqrt(distanceSq(a, b));
-        const t = direction(a, b);
+    /// The profile extruded from `a` to `b`: its x along the frame's u, its y along v, its
+    /// extrusion along the line, turning `twist` radians about it (from u toward v) on the
+    /// way, in slices of the twist's share of a turn's segments; on past `a` and `b` into
+    /// the joints there by the overlap, twisting on as it does.
+    fn linePiece(self: Sweep, a: [3]f64, b: [3]f64, frame: Frame, twist: f64, joints: Joints) !u32 {
+        const len = std.math.sqrt(frames.distanceSq(a, b));
+        const t = frames.direction(a, b);
+        const back = if (joints.start) self.overlap() else 0;
+        const on = len + back + (if (joints.end) self.overlap() else 0);
+        const per_length = twist / len;
+        const start = vec3.sub(a, vec3.scale(t, back));
+        const turned = frame.turned(t, -per_length * back);
         const dag = &self.vm.dag_builder;
-        const solid = try dag.addExtrude(self.profile, len, 0, 0, 1, 1);
-        const u = frame.u;
-        const v = frame.v;
-        return dag.addTransformMatrix(solid, .{ u[0], u[1], u[2], v[0], v[1], v[2], t[0], t[1], t[2], a[0], a[1], a[2] });
+        const degrees = per_length * on * 180 / std.math.pi;
+        const slices: i32 = if (twist == 0) 0 else try self.segmentsFor(self.farthest(), @abs(degrees));
+        const solid = try dag.addExtrude(self.profile, on, slices, degrees, 1, 1);
+        const u = turned.u;
+        const v = turned.v;
+        return dag.addTransformMatrix(solid, .{ u[0], u[1], u[2], v[0], v[1], v[2], t[0], t[1], t[2], start[0], start[1], start[2] });
+    }
+
+    /// How far a piece reaches into the joint with the next: the tolerance. Pieces that
+    /// only meet there, along faces each placed by its own transform, differ by rounding
+    /// and were left as separate solids touching (a helix's tube came out as dozens).
+    fn overlap(self: Sweep) f64 {
+        return self.vm.config().tolerance;
     }
 
     /// The profile revolved about the arc's centre, through its sweep: at the radius less
     /// its x on a counter-clockwise arc (the left is inward), plus it on a clockwise one.
-    fn arcPiece(self: Sweep, from: [2]f64, segment: path_mod.Segment, arc: path_mod.Arc, k: usize) !u32 {
+    fn arcPiece(self: Sweep, from: [2]f64, segment: path_mod.Segment, arc: path_mod.Arc, k: usize, joints: Joints) !u32 {
         const left = self.reach(1, 0);
         const right = self.reach(-1, 0);
         const inward = if (segment.ccw) left else right;
@@ -267,12 +259,16 @@ const Sweep = struct {
         }
         const dag = &self.vm.dag_builder;
         const placed = try dag.addCrossSectionTransform(self.profile, if (segment.ccw) .{ -1, 0, 0, 1, arc.radius, 0 } else .{ 1, 0, 0, 1, arc.radius, 0 });
-        const degrees = segment.angle * 180 / std.math.pi;
+        // On past its ends into the joints by the overlap, at the profile's nearest radius
+        const past = self.overlap() / (arc.radius - inward);
+        const before = if (joints.start) past else 0;
+        const after = if (joints.end) past else 0;
+        const degrees = (segment.angle + before + after) * 180 / std.math.pi;
         const solid = try dag.addRevolve(placed, try self.segmentsFor(arc.radius + @max(left, right), degrees), degrees);
         // Revolved counter-clockwise from +x: turned to the arc's start, or for a clockwise
         // arc, to its end, from which it runs counter-clockwise back to the start
         const start = std.math.atan2(from[1] - arc.center[1], from[0] - arc.center[0]);
-        const angle = if (segment.ccw) start else start - segment.angle;
+        const angle = if (segment.ccw) start - before else start - segment.angle - after;
         const c = @cos(angle);
         const s = @sin(angle);
         return dag.addTransformMatrix(solid, .{ c, s, 0, -s, c, 0, 0, 0, 1, arc.center[0], arc.center[1], 0 });
@@ -280,31 +276,33 @@ const Sweep = struct {
 
     /// The corner at `p` where the path, coming in along `t1` with the profile in `frame`,
     /// leaves along `t2`: the profile's outer side turned about the bend's axis through `p`
-    /// by the turn (no piece where the path goes on straight or the profile has no outer
-    /// side), and the frame turned with it. A path that doubles back turns about the
-    /// profile's y.
-    fn corner(self: Sweep, p: [3]f64, t1: [3]f64, t2: [3]f64, frame: Frame) !struct { piece: ?u32, frame: Frame } {
-        const bend = vec3.cross(t1, t2);
-        const sin = std.math.sqrt(vec3.dot(bend, bend));
-        const angle = std.math.atan2(sin, vec3.dot(t1, t2));
-        if (angle <= STRAIGHT_TURN) return .{ .piece = null, .frame = frame };
-        const axis = if (sin > STRAIGHT_TURN) vec3.scale(bend, 1 / sin) else frame.v;
+    /// by the turn; null where the path goes on straight or the profile has no outer side.
+    /// A path that doubles back turns about the profile's y.
+    fn corner(self: Sweep, p: [3]f64, t1: [3]f64, t2: [3]f64, frame: Frame) !?u32 {
+        const bend = frames.bendAt(t1, t2, frame.v);
+        if (bend.angle == 0) return null;
+        const axis = bend.axis;
         // Away from the bend's inside, in its plane: where the gap opens
         const outer = vec3.scale(vec3.cross(axis, t1), -1);
-        const turned = frame.turned(axis, angle);
         // The profile's coordinates along the outer direction and the axis
         const r = [2]f64{ vec3.dot(frame.u, outer), vec3.dot(frame.v, outer) };
         const h = [2]f64{ vec3.dot(frame.u, axis), vec3.dot(frame.v, axis) };
         const reach_out = self.reach(r[0], r[1]);
-        if (!(reach_out > 0)) return .{ .piece = null, .frame = turned };
+        if (!(reach_out > 0)) return null;
         const dag = &self.vm.dag_builder;
         // The kernel's revolve keeps the profile's positive x: its outer side's
         const facing = try dag.addCrossSectionTransform(self.profile, .{ r[0], h[0], r[1], h[1], 0, 0 });
-        const degrees = angle * 180 / std.math.pi;
+        const degrees = bend.angle * 180 / std.math.pi;
         const solid = try dag.addRevolve(facing, try self.segmentsFor(reach_out, degrees), degrees);
         // The revolve's x out, its y along the way in (where its turn heads), its z the axis
-        const piece = try dag.addTransformMatrix(solid, .{ outer[0], outer[1], outer[2], t1[0], t1[1], t1[2], axis[0], axis[1], axis[2], p[0], p[1], p[2] });
-        return .{ .piece = piece, .frame = turned };
+        return try dag.addTransformMatrix(solid, .{ outer[0], outer[1], outer[2], t1[0], t1[1], t1[2], axis[0], axis[1], axis[2], p[0], p[1], p[2] });
+    }
+
+    /// How far the profile reaches from its origin, the axis a twist turns it about.
+    fn farthest(self: Sweep) f64 {
+        var most: f64 = 0;
+        for (self.points) |p| most = @max(most, std.math.hypot(p[0], p[1]));
+        return most;
     }
 
     /// The segments a revolve through `degrees` gets at `radius`: its share of a full turn's.
@@ -313,16 +311,6 @@ const Sweep = struct {
         return @intCast(turnShare(@intCast(per_turn), degrees / 360.0));
     }
 };
-
-fn distanceSq(a: [3]f64, b: [3]f64) f64 {
-    const d = vec3.sub(b, a);
-    return vec3.dot(d, d);
-}
-
-/// The unit vector from `a` to `b`, two different points.
-fn direction(a: [3]f64, b: [3]f64) [3]f64 {
-    return vec3.normalize(vec3.sub(b, a));
-}
 
 /// The slices a twist of `twist_degrees` is cut into: the script's `slices`, or with none
 /// (0), the twist's share of a full turn at the profile's farthest point from the z axis.
