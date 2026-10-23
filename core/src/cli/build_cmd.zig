@@ -1,7 +1,9 @@
-//! `kupcad build`: runs a script with its parameter values (`-p`, `-P`) and the project's memory limit,
-//! then exports its model in a format of `api.ExportFormat` (STL, GLB, glTF, 3MF, STEP on
-//! the B-Rep kernel), picked from `--format` or the `-o` extension. Entry points `execute`
-//! and `run`.
+//! `kupcad build`: runs a script with its parameter values (`-p`, `-P`) and the project's
+//! memory limit, then exports its model in a format of `api.ExportFormat` (STL, GLB, glTF,
+//! 3MF, OBJ, STEP on the B-Rep kernel, and the drawings SVG and DXF), picked from
+//! `--format` or the `-o` extension, written as its flags say (`--draco`, `--draco-bits`,
+//! `--mtl`, `--stroke-width`); `--split` writes a file per part (PartFileNames names
+//! them) and `--bom` the parts list beside it. Entry points `execute` and `run`.
 
 const std = @import("std");
 const api = @import("../api.zig");

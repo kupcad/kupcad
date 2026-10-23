@@ -114,9 +114,9 @@ KupCAD employs a **Segregated Data-Oriented Design (DOD) Tracing Garbage Collect
 flowchart TD
     subgraph VMSpace ["VM Memory Space"]
         subgraph GC ["Segregated DOD GC Engine (memory.GC)"]
-            Meta["Metadata:<br/>• strings, symbols, functions<br/>• classes, modules, closures, upvalues"]
-            Data["Data:<br/>• arrays, maps, ranges, bboxes"]
-            Geom["Geometry:<br/>• geometries, cross_sections<br/>• assemblies, workplanes"]
+            Meta["Metadata:<br/>• strings, symbols, functions<br/>• classes, modules, instances<br/>• closures, upvalues, bound_methods"]
+            Data["Data:<br/>• arrays, maps, json_objects<br/>• ranges, bboxes, fonts"]
+            Geom["Geometry:<br/>• geometries, cross_sections, paths<br/>• assemblies, workplanes"]
         end
     end
 
@@ -128,7 +128,7 @@ A `Value` is 8 bytes, NaN-boxed (`core/value.zig`): a number is its IEEE 754 bit
 
 ### Segregated DOD Object Tracking
 
-Instead of a single heterogeneous linked list, `memory.GC` organizes object allocations into 18 dedicated `ArrayListUnmanaged` arrays (`strings`, `geometries`, `closures`, `instances`, etc.).
+Instead of a single heterogeneous linked list, `memory.GC` keeps one `std.ArrayList` per object type (`strings`, `geometries`, `closures`, `instances`, and so on, as the diagram groups them; `workplanes` stays though the scripts can't make one yet).
 
 * **Built-ins arena:** objects that live as long as the VM are allocated from `GC.builtins`, an arena freed with the GC: every native (they all come from the standard library's tables) and the static names the library registers methods, classes and constants under (`GC.internStatic`, `VM.staticString`, which intern the literal without copying it). They are created marked and kept out of the sweep lists, so the mark phase passes over them (they reference no other object) and no sweep frees them; a script string with the same text is the static string. A VM makes about 100 allocations before it runs anything, where one per native and per name would be about 850.
 
@@ -250,6 +250,7 @@ pub const Host = struct {
     mesh_destructor: ?*const fn (handle: GeometryHandle) void = null,
     compile_module: ?*const fn (vm: *VM, path: []const u8, source: []const u8, namespace: *value.Namespace) anyerror!*chunk.Chunk = null,
     print_handler: ?*const fn (vm: *VM, message: []const u8) void = null,
+    missing_method_hint: ?*const fn (class: []const u8, name: []const u8) ?[]const u8 = null,
 };
 
 ```
@@ -257,6 +258,7 @@ pub const Host = struct {
 * `print_handler`: Intercepts calls from `puts()`, `print()`, and `inspect()`. Routes output to stdout in CLI mode or UI widgets in WebAssembly/GUI modes.
 * `binary_handler`: Handles CSG binary operations between geometry objects.
 * `mesh_destructor`: Called when `ObjGeometry` handles are freed by the GC to release C++ mesh memory.
+* `missing_method_hint`: What to add to a `NoMethodError` when the embedder knows why the method is missing (the standard library's `manifest.missingMethodHint`: a Path asked to extrude).
 * `compile_module`: Compiles an imported module (`import "lib.kup"`) into its own namespace (`compiler/module_compiler.zig`, registered by the standard library). The VM reads the file, checks the cache, the depth limit and cycles, verifies and runs the chunk; parsing and compiling are the host's, so the VM doesn't import the compiler (they imported each other).
 
 ### Parameter Values
@@ -331,7 +333,7 @@ pub const GeometryHandle = struct {
 
 ### Backend Engine Drivers
 
-* **Manifold Driver (`kernel/engines/manifold/driver.zig`):** Translates calls into C FFI bindings (`bindings/manifold/manifold.zig`), communicating with the C++ Manifold mesh library.
+* **Manifold Driver (`kernel/engines/manifold/driver.zig`):** Translates calls into C FFI bindings (`bindings/manifold.zig`), communicating with the C++ Manifold mesh library.
 * **Native B-Rep Driver (`kernel/engines/brep/driver.zig`):** Executes exact boundary representation operations using topological structures (`Vertex`, `Edge`, `Face`, `Solid`). Locus is unfinished: most of its operations are still stubs, so the driver's `supports` lists what is real (cubes, cylinders, polyhedra, sketches, hulls of flat-faced solids, STEP export) and everything else is refused before it runs (see *Engine features* below). A copy (`BrepSolid.clone`) duplicates the solid's arenas, NURBS data included (an identity transform would keep only points, lines and planes).
 
 ### Ownership & Engine Rules

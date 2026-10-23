@@ -1,7 +1,10 @@
-//! The table of built-ins: the global functions (`global_functions`) and the Solid, Sketch
-//! and assembly methods (`mesh_methods`, `assembly_methods`), each with its category,
-//! signature and result kind, from which the compiler's intrinsics, the LSP's completions and
-//! the lint's lookups are derived; and `cadBinaryHandler`, which turns `+ - &` into booleans.
+//! The table of built-ins: the global functions (`global_functions`) and the Solid, Sketch,
+//! Path and assembly methods (`mesh_methods`, `path_methods`, `assembly_methods`), each with
+//! its category, signature, result kind and the shapes it is bound for, from which the
+//! compiler's intrinsics, the LSP's completions and the lint's lookups are derived
+//! (`methodAllows`); what a Path can't do and why (`OPEN_PATH_HINT`, `missingMethodHint`);
+//! and `cadBinaryHandler`, which turns `+ - &` into booleans, and `+` of two Paths into a
+//! join.
 
 const std = @import("std");
 const common = @import("classes/common.zig");

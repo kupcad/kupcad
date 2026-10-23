@@ -1,6 +1,8 @@
-//! The script's file methods: `export_stl`, `export_gltf` and `export_step` on a Solid or an
-//! Assembly, and `import_stl` / `import_step` / `import_font` (`import_json` is in json.zig). The formats themselves are in exporters/3d
-//! (stl.zig, gltf.zig, step.zig), which knew nothing of scripts until these lived there.
+//! The script's file methods: `export_stl`, `export_gltf`, `export_step`, `export_3mf` and
+//! `export_obj` on a Solid or an Assembly, `export_svg` and `export_dxf` on any shape (a
+//! drawing, through api.exportDrawing), and `import_stl` / `import_step` / `import_font`
+//! (`import_json` is in json.zig). The formats themselves are in exporters/3d and
+//! exporters/2d, which know nothing of scripts.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
