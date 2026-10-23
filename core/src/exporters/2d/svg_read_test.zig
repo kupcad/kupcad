@@ -173,10 +173,61 @@ test "SVG read: a use draws the element it names where it is, through its move a
     try expectPoint(.{ 5, -5 }, styled.outlines[1].segments[0].arc.?.center);
 }
 
+/// The box `drawing`'s outline `i` spans: its least x and y, then its greatest.
+fn boxOf(drawing: svg_read.Drawing, i: usize) [4]f64 {
+    const box = path.bounds(drawing.outlines[i].start, drawing.outlines[i].segments);
+    return .{ box.min[0], box.min[1], box.max[0], box.max[1] };
+}
+
+fn expectBox(expected: [4]f64, actual: [4]f64) !void {
+    for (expected, actual) |e, a| try testing.expectApproxEqAbs(e, a, 1e-9);
+}
+
+test "SVG read: a symbol's and a nested svg's viewBox fit it to their box, as preserveAspectRatio says" {
+    // An icon of 24 drawn 12 wide at (10, 10), the y of the drawing turned over
+    const icon = "<symbol id=\"i\" viewBox=\"0 0 24 24\"><rect width=\"24\" height=\"24\"/></symbol>";
+    var sprite = try read(MM ++ icon ++ "<use href=\"#i\" x=\"10\" y=\"10\" width=\"12\" height=\"12\"/><use href=\"#i\"/><use href=\"#i\" width=\"0\"/></svg>");
+    defer sprite.deinit();
+    try expectBox(.{ 10, -22, 22, -10 }, boxOf(sprite, 0));
+    // Without a size, all of the drawing's viewport; of no size, nothing
+    try expectBox(.{ 0, -100, 100, 0 }, boxOf(sprite, 1));
+    try testing.expectEqual(@as(usize, 2), sprite.outlines.len);
+    // A box twice as wide as it is high in a square: met (in the middle, or at the start),
+    // sliced, or stretched
+    const wide = "<symbol id=\"w\" viewBox=\"0 0 20 10\"{s}><rect width=\"20\" height=\"10\"/></symbol><use href=\"#w\" width=\"10\" height=\"10\"/></svg>";
+    const fits = [_]struct { attribute: []const u8, box: [4]f64 }{
+        .{ .attribute = "", .box = .{ 0, -7.5, 10, -2.5 } },
+        .{ .attribute = " preserveAspectRatio=\"xMinYMin\"", .box = .{ 0, -5, 10, 0 } },
+        .{ .attribute = " preserveAspectRatio=\"xMidYMid slice\"", .box = .{ -5, -10, 15, 0 } },
+        .{ .attribute = " preserveAspectRatio=\"none\"", .box = .{ 0, -10, 10, 0 } },
+    };
+    for (fits) |fit| {
+        const text = try std.fmt.allocPrint(testing.allocator, MM ++ wide, .{fit.attribute});
+        defer testing.allocator.free(text);
+        var drawing = try read(text);
+        defer drawing.deinit();
+        try expectBox(fit.box, boxOf(drawing, 0));
+    }
+    // A nested svg: at its x and y, scaled into its box; a percentage is of the viewport
+    // it is in
+    var nested = try read(MM ++ "<svg x=\"50\" width=\"20\" height=\"20\" viewBox=\"0 0 10 10\"><rect width=\"10\" height=\"10\"/></svg>" ++
+        "<svg x=\"50%\" y=\"50%\" width=\"10%\" height=\"10%\" viewBox=\"0 0 1 1\"><rect width=\"1\" height=\"1\"/></svg></svg>");
+    defer nested.deinit();
+    try expectBox(.{ 50, -20, 70, 0 }, boxOf(nested, 0));
+    try expectBox(.{ 50, -60, 60, -50 }, boxOf(nested, 1));
+    // Stretched unevenly, a circle is an ellipse's cubics
+    var stretched = try read(MM ++ "<symbol id=\"c\" viewBox=\"-1 -1 2 2\" preserveAspectRatio=\"none\"><circle r=\"1\"/></symbol><use href=\"#c\" width=\"4\" height=\"2\"/></svg>");
+    defer stretched.deinit();
+    try expectBox(.{ 0, -2, 4, 0 }, boxOf(stretched, 0));
+    try testing.expect(stretched.outlines[0].segments[0].cubic != null);
+
+    try expectRefused("<svg>" ++ icon ++ "<use href=\"#i\"/></svg>", "line 1: the width of a <symbol> is the drawing's or a share of it, and the drawing has no size: give the <svg> a viewBox");
+    try expectRefused(MM ++ "<svg viewBox=\"0 0 1 1\" preserveAspectRatio=\"xMidYMid sometimes\"></svg></svg>", "line 1: the preserveAspectRatio \"xMidYMid sometimes\" of a <svg> isn't SVG's");
+}
+
 test "SVG read: uses that draw themselves, or more than they may, are refused" {
     try expectRefused(MM ++ "<g id=\"a\"><use href=\"#a\"/></g></svg>", "line 1: a <use> of \"#a\" within that element, which would draw itself forever");
     try expectRefused(MM ++ "<use href=\"parts.svg#bolt\"/></svg>", "line 1: a <use> of \"parts.svg#bolt\": only an element of the same file (\"#id\") is read");
-    try expectRefused(MM ++ "<symbol id=\"s\" viewBox=\"0 0 1 1\"/><use href=\"#s\"/></svg>", "line 1: a <symbol> with a viewBox isn't read yet");
     // Three uses of two of three squares each: 18 elements drawn, of a cap of 10
     var diag: svg_read.Diagnostic = .{};
     const nested = MM ++ "<defs><g id=\"a\"><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/></g>" ++

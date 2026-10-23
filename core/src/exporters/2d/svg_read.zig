@@ -8,10 +8,13 @@
 //! it for the fill); an open one that isn't filled is a stroke alone, with no area: an
 //! open path of its own (a laser's score line). A `line` is one too. Text, images and what
 //! isn't drawn (`defs`, `clipPath`, `display: none`) are left out. A `use` draws the
-//! element it names (`href="#id"`, in `defs` or anywhere, a `symbol` as a group) where it
-//! is, through its own transform and `x`, `y`, with the style it gives. The file's units become millimetres by
-//! its `width` and `viewBox` (a user unit is a CSS pixel, 1/96 inch, without them), and
-//! its y, which runs down the page, is turned over about its origin. The writer is svg.zig.
+//! element it names (`href="#id"`, in `defs` or anywhere) where it is, through its own
+//! transform and `x`, `y`, with the style it gives; a `symbol` is a group, sized by the
+//! use's `width` and `height` (or its own). The file's units become millimetres by its
+//! `width` and `viewBox` (a user unit is a CSS pixel, 1/96 inch, without them), and its y,
+//! which runs down the page, is turned over about its origin; a nested `svg` and a drawn
+//! `symbol` with a `viewBox` fit it to their own box as SVG does (`preserveAspectRatio`),
+//! their content not clipped to it. The writer is svg.zig.
 
 const std = @import("std");
 const path = @import("../../core/path.zig");
@@ -40,6 +43,13 @@ const GROUPS = std.StaticStringMap(void).initComptime(.{ .{"g"}, .{"a"}, .{"swit
 const MAX_NESTING = 256;
 /// Radii this close (relatively) are one circle's.
 const ROUND_SLACK = 1e-12;
+/// Where `preserveAspectRatio` puts a viewBox in its viewport, along x and y: 0 at the
+/// start, 1/2 the middle, 1 the end.
+const ALIGNS = std.StaticStringMap([2]f64).initComptime(.{
+    .{ "xMinYMin", .{ 0, 0 } },   .{ "xMidYMin", .{ 0.5, 0 } },   .{ "xMaxYMin", .{ 1, 0 } },
+    .{ "xMinYMid", .{ 0, 0.5 } }, .{ "xMidYMid", .{ 0.5, 0.5 } }, .{ "xMaxYMid", .{ 1, 0.5 } },
+    .{ "xMinYMax", .{ 0, 1 } },   .{ "xMidYMax", .{ 0.5, 1 } },   .{ "xMaxYMax", .{ 1, 1 } },
+});
 
 pub const Options = struct {
     /// How far apart a subpath's ends can be and still close it.
@@ -163,6 +173,13 @@ const Scanner = struct {
     }
 };
 
+/// The tag that gives a drawn symbol's `name` (its width or height): the use's when it
+/// gives one, else the symbol's own (a nested svg's, with no use).
+fn sizedBy(use: ?Tag, tag: Tag, name: []const u8) Tag {
+    if (use) |u| if (u.attribute(name) != null) return u;
+    return tag;
+}
+
 fn lineOf(text: []const u8, offset: usize) usize {
     return std.mem.countScalar(u8, text[0..offset], '\n') + 1;
 }
@@ -176,6 +193,9 @@ const Frame = struct {
     filled: bool,
     /// Its content isn't drawn
     skipped: bool,
+    /// The size of the viewport it is in, in that viewport's user units (what a nested
+    /// viewport's percentages are of); null when the drawing gives it none
+    viewport: ?[2]f64,
 };
 
 const Reader = struct {
@@ -191,8 +211,9 @@ const Reader = struct {
     ids: std.StringHashMapUnmanaged(usize) = .empty,
     /// The ids the `use`s being drawn name, innermost last
     using: std.ArrayList([]const u8) = .empty,
-    /// The element about to be drawn is a `use`'s: a `symbol` is drawn as a group
-    use_root: bool = false,
+    /// The `use` whose element is about to be drawn: a `symbol` is drawn as a group, sized
+    /// by the use's `width` and `height`
+    use_root: ?Tag = null,
     /// How many elements `use`s have drawn
     cloned: usize = 0,
 
@@ -245,19 +266,20 @@ const Reader = struct {
         defer _ = self.frames.pop();
         try self.using.append(self.arena, id);
         defer _ = self.using.pop();
-        self.use_root = true;
+        self.use_root = tag;
         var scanner = Scanner{ .text = self.text, .pos = at };
         try self.readTags(&scanner, true);
     }
 
     /// The frame `tag` opens, its shape (if it is one) read on the way.
     fn frameOf(self: *Reader, tag: Tag) Error!Frame {
-        const parent: Frame = if (self.frames.items.len > 0) self.frames.items[self.frames.items.len - 1] else .{ .name = "", .matrix = affine2.identity, .filled = true, .skipped = false };
+        const parent: Frame = if (self.frames.items.len > 0) self.frames.items[self.frames.items.len - 1] else .{ .name = "", .matrix = affine2.identity, .filled = true, .skipped = false, .viewport = null };
         var frame = parent;
         frame.name = tag.name;
         // A symbol a use draws is a group; anywhere else it is a definition
-        const symbol_drawn = self.use_root and std.mem.eql(u8, tag.name, "symbol");
-        self.use_root = false;
+        const use = self.use_root;
+        self.use_root = null;
+        const symbol_drawn = use != null and std.mem.eql(u8, tag.name, "symbol");
         if (parent.skipped) return frame;
         if (self.using.items.len > 0) {
             self.cloned += 1;
@@ -271,8 +293,15 @@ const Reader = struct {
             if (std.mem.eql(u8, display, "none")) return frame;
         }
         frame.skipped = false;
-        if (symbol_drawn and tag.attribute("viewBox") != null) return self.diag.fail("line {d}: a <symbol> with a viewBox isn't read yet", .{lineOf(self.text, tag.offset)});
-        if (std.mem.eql(u8, name, "svg")) frame.matrix = try self.viewport(tag, parent);
+        if (std.mem.eql(u8, name, "svg") and !self.seen_root) {
+            frame.matrix, frame.viewport = try self.rootViewport(tag);
+        } else if (std.mem.eql(u8, name, "svg") or symbol_drawn) {
+            // A viewport of no size draws nothing
+            frame.matrix, frame.viewport = try self.nestedViewport(tag, parent, if (symbol_drawn) use else null) orelse {
+                frame.skipped = true;
+                return frame;
+            };
+        }
         if (tag.attribute("transform")) |transform| frame.matrix = affine2.compose(frame.matrix, try self.transformOf(tag, transform));
         if (tag.property("fill")) |fill| frame.filled = !std.mem.eql(u8, fill, "none");
         if (!self.seen_root) return self.diag.fail("line {d}: a <{s}> comes before the <svg> element", .{ lineOf(self.text, tag.offset), name });
@@ -300,33 +329,96 @@ const Reader = struct {
         return frame;
     }
 
-    /// The matrix of an `svg` element: the root's from its user units to millimetres (by
-    /// its width over its viewBox's), y turned over; a nested one's moved to its x and y.
-    fn viewport(self: *Reader, tag: Tag, parent: Frame) Error!affine2.Matrix {
-        const line = lineOf(self.text, tag.offset);
-        if (self.seen_root) {
-            if (tag.attribute("viewBox") != null) return self.diag.fail("line {d}: a nested <svg> with a viewBox isn't read yet", .{line});
-            const x = try self.length(tag, "x") orelse 0;
-            const y = try self.length(tag, "y") orelse 0;
-            return affine2.compose(parent.matrix, affine2.translation(x, y));
-        }
+    /// The root `svg`'s matrix, from its user units to millimetres (by its width over its
+    /// viewBox's), y turned over about its origin, and its viewport's size in user units
+    /// (its viewBox's, or its width and height without one).
+    fn rootViewport(self: *Reader, tag: Tag) Error!struct { affine2.Matrix, ?[2]f64 } {
         self.seen_root = true;
+        const width = try self.rootSize(tag, "width");
+        const height = try self.rootSize(tag, "height");
+        const box = try self.viewBoxOf(tag) orelse {
+            const size: ?[2]f64 = if (width != null and height != null) .{ width.? / MM_PER_PX, height.? / MM_PER_PX } else null;
+            return .{ .{ MM_PER_PX, 0, 0, -MM_PER_PX, 0, 0 }, size };
+        };
+        // Fitted whole, as preserveAspectRatio's default has it: the smaller scale
         var mm_per_unit: f64 = MM_PER_PX;
-        if (tag.attribute("viewBox")) |box| {
-            var numbers = Numbers{ .text = box };
-            var values: [4]f64 = undefined;
-            for (&values) |*v| v.* = numbers.number() orelse return self.diag.fail("line {d}: its viewBox \"{s}\" isn't four numbers", .{ line, box });
-            if (!(values[2] > 0 and values[3] > 0)) return self.diag.fail("line {d}: its viewBox \"{s}\" has no area", .{ line, box });
-            const width = try self.rootSize(tag, "width");
-            const height = try self.rootSize(tag, "height");
-            // Fitted whole, as preserveAspectRatio's default has it: the smaller scale
-            if (width != null or height != null) {
-                const sx = if (width) |w| w / values[2] else std.math.inf(f64);
-                const sy = if (height) |h| h / values[3] else std.math.inf(f64);
-                mm_per_unit = @min(sx, sy);
-            }
+        if (width != null or height != null) {
+            const sx = if (width) |w| w / box[2] else std.math.inf(f64);
+            const sy = if (height) |h| h / box[3] else std.math.inf(f64);
+            mm_per_unit = @min(sx, sy);
         }
-        return .{ mm_per_unit, 0, 0, -mm_per_unit, 0, 0 };
+        return .{ .{ mm_per_unit, 0, 0, -mm_per_unit, 0, 0 }, .{ box[2], box[3] } };
+    }
+
+    /// The matrix and viewport size of a nested `svg`, or of a `symbol` a `use` draws (its
+    /// width and height the use's when it gives them): its box at its x and y, of its width
+    /// and height (all of the viewport it is in without them), and with a viewBox that
+    /// fitted into the box as `preserveAspectRatio` says. Null for a box of no area, which
+    /// draws nothing.
+    fn nestedViewport(self: *Reader, tag: Tag, parent: Frame, use: ?Tag) Error!?struct { affine2.Matrix, [2]f64 } {
+        const x = try self.viewportLength(tag, "x", parent.viewport, 0) orelse 0;
+        const y = try self.viewportLength(tag, "y", parent.viewport, 1) orelse 0;
+        const width = try self.viewportLength(sizedBy(use, tag, "width"), "width", parent.viewport, 0) orelse (try self.viewportSize(tag, "width", parent.viewport))[0];
+        const height = try self.viewportLength(sizedBy(use, tag, "height"), "height", parent.viewport, 1) orelse (try self.viewportSize(tag, "height", parent.viewport))[1];
+        if (!(width > 0 and height > 0)) return null;
+        const box = try self.viewBoxOf(tag) orelse return .{ affine2.compose(parent.matrix, affine2.translation(x, y)), .{ width, height } };
+        var sx = width / box[2];
+        var sy = height / box[3];
+        var tx = x - box[0] * sx;
+        var ty = y - box[1] * sy;
+        if (try self.alignOf(tag)) |fit| {
+            const s = if (fit.slice) @max(sx, sy) else @min(sx, sy);
+            sx = s;
+            sy = s;
+            tx = x - box[0] * s + (width - box[2] * s) * fit.at[0];
+            ty = y - box[1] * s + (height - box[3] * s) * fit.at[1];
+        }
+        return .{ affine2.compose(parent.matrix, .{ sx, 0, 0, sy, tx, ty }), .{ box[2], box[3] } };
+    }
+
+    /// `tag`'s viewBox (its x, y, width and height), null without one.
+    fn viewBoxOf(self: *Reader, tag: Tag) Error!?[4]f64 {
+        const box = tag.attribute("viewBox") orelse return null;
+        const line = lineOf(self.text, tag.offset);
+        var numbers = Numbers{ .text = box };
+        var values: [4]f64 = undefined;
+        for (&values) |*v| v.* = numbers.number() orelse return self.diag.fail("line {d}: its viewBox \"{s}\" isn't four numbers", .{ line, box });
+        if (!(values[2] > 0 and values[3] > 0)) return self.diag.fail("line {d}: its viewBox \"{s}\" has no area", .{ line, box });
+        return values;
+    }
+
+    /// Where `tag`'s `preserveAspectRatio` puts its viewBox in its box, uniformly scaled
+    /// to fit inside it (`meet`, the default) or to cover it (`slice`); null for `none`,
+    /// stretched to fill it.
+    fn alignOf(self: *Reader, tag: Tag) Error!?struct { at: [2]f64, slice: bool } {
+        const text = tag.attribute("preserveAspectRatio") orelse return .{ .at = .{ 0.5, 0.5 }, .slice = false };
+        var words = std.mem.tokenizeAny(u8, text, &std.ascii.whitespace);
+        var word = words.next() orelse "";
+        // `defer` is for an image's own ratio, which a drawing hasn't
+        if (std.mem.eql(u8, word, "defer")) word = words.next() orelse "";
+        const fit = words.next() orelse "meet";
+        const slice = std.mem.eql(u8, fit, "slice");
+        if (words.next() != null or (!slice and !std.mem.eql(u8, fit, "meet"))) return self.badAlign(tag, text);
+        if (std.mem.eql(u8, word, "none")) return null;
+        return .{ .at = ALIGNS.get(word) orelse return self.badAlign(tag, text), .slice = slice };
+    }
+
+    fn badAlign(self: *Reader, tag: Tag, text: []const u8) error{InvalidDrawing} {
+        return self.diag.fail("line {d}: the preserveAspectRatio \"{s}\" of a <{s}> isn't SVG's", .{ lineOf(self.text, tag.offset), text, tag.name });
+    }
+
+    /// The attribute `name` of `tag`, a viewport's x, y, width or height, in user units:
+    /// a length, or a percentage of `viewport`'s size along `axis` (0 x, 1 y). Null without it.
+    fn viewportLength(self: *Reader, tag: Tag, name: []const u8, viewport: ?[2]f64, axis: u1) Error!?f64 {
+        const text = std.mem.trim(u8, tag.attribute(name) orelse return null, &std.ascii.whitespace);
+        if (!std.mem.endsWith(u8, text, "%")) return try self.lengthOf(tag, name, text);
+        const share = std.fmt.parseFloat(f64, text[0 .. text.len - 1]) catch return self.diag.fail("line {d}: the {s} \"{s}\" of a <{s}> isn't a length", .{ lineOf(self.text, tag.offset), name, text, tag.name });
+        return share / 100 * (try self.viewportSize(tag, name, viewport))[axis];
+    }
+
+    /// The size of `viewport`, the one `tag` is in, which its `name` is (a share of).
+    fn viewportSize(self: *Reader, tag: Tag, name: []const u8, viewport: ?[2]f64) Error![2]f64 {
+        return viewport orelse self.diag.fail("line {d}: the {s} of a <{s}> is the drawing's or a share of it, and the drawing has no size: give the <svg> a viewBox", .{ lineOf(self.text, tag.offset), name, tag.name });
     }
 
     /// The root's `width` or `height` in millimetres; null without one, or with a
