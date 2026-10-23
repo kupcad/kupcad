@@ -18,6 +18,7 @@ const VM = @import("../vm/vm.zig").VM;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const ScriptSession = @import("../session/session.zig").ScriptSession;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
+const MeshPart = @import("../exporters/3d/mesh_part.zig").MeshPart;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
@@ -272,7 +273,7 @@ pub const SessionPreview = struct {
             logger.warn("the viewport can't show this model: the {s} engine can't {s} yet", .{ handle.engine.scriptName(), kernel.Feature.mesh.describe() });
             return .nothing;
         }
-        const parts = [_]gltf.Part{.{ .handle = handle }};
+        const parts = [_]MeshPart{.{ .handle = handle }};
         const glb = gltf.buildGltfBuffer(allocator, self.session.vm.materials.items, &parts, null, .glb) catch |err| {
             logger.warn("Failed to build the preview's GLB: {}", .{err});
             return .nothing;

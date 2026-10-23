@@ -6,9 +6,9 @@
 
 const std = @import("std");
 const kernel = @import("../../kernel/kernel.zig");
-const geom = @import("../../core/geometry_handle.zig");
 const draco = @import("../../bindings/draco.zig");
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
+const MeshPart = @import("mesh_part.zig").MeshPart;
 const material_groups = @import("material_groups.zig");
 
 // --- GLTF & Draco Configuration Constants ---
@@ -121,15 +121,13 @@ pub const Container = enum {
 };
 
 /// A part of the file: its mesh, and the name its node gets (null for a ghost's).
-pub const Part = struct { handle: geom.GeometryHandle, name: ?[]const u8 = null };
-
 /// The parts as glTF in `container`, their meshes compressed with Draco, positions
 /// quantized to `draco_bits` bits, unless that is null; `materials` are what the meshes'
 /// material slots index (kernel.materialSlot), the VM's.
 pub fn buildGltfBuffer(
     allocator: std.mem.Allocator,
     materials: []const MaterialDef,
-    model: []const Part,
+    model: []const MeshPart,
     draco_bits: ?u8,
     container: Container,
 ) ![]const u8 {
@@ -182,7 +180,7 @@ const Parts = struct {
 
     /// Meshes `part` and adds its vertices and its primitives; one with no vertices has
     /// no mesh in the file.
-    fn add(self: *Parts, allocator: std.mem.Allocator, part: Part) !void {
+    fn add(self: *Parts, allocator: std.mem.Allocator, part: MeshPart) !void {
         const handle = part.handle;
         // A part the kernel can't mesh is an error: skipping it exported a model without it.
         if (!kernel.supports(handle.engine, .mesh)) return error.EngineCannotTessellate;

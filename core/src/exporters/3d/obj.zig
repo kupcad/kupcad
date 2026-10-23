@@ -1,6 +1,6 @@
-//! OBJ export: `build` writes a model as Wavefront OBJ, one `o` object per Solid, named as
-//! the parts list names its copies (parts_mod.CopyNames: the part's name, numbered from its second
-//! copy on). The vertices are in millimetres and Z up, as the script made them (OBJ has no unit
+//! OBJ export: `build` writes a model as Wavefront OBJ, one `o` object per part, by the name
+//! it is given (export.zig names each copy as the parts list does: the part's name,
+//! numbered from its second copy on). The vertices are in millimetres and Z up, as the script made them (OBJ has no unit
 //! or up axis), and each face carries its own normal so a viewer keeps CAD edges sharp. No
 //! material is named unless a library is asked for: most tools apply their own, and a `.mtl`
 //! beside the file breaks when the file is moved. With one, `buildMaterialLibrary` writes
@@ -8,12 +8,10 @@
 //! ambient.
 
 const std = @import("std");
-const value = @import("../../core/value.zig");
-const VM = @import("../../vm/vm.zig").VM;
 const kernel = @import("../../kernel/kernel.zig");
 const vec3 = @import("../../core/vec3.zig");
-const parts_mod = @import("../parts.zig");
 const material_groups = @import("material_groups.zig");
+const MeshPart = @import("mesh_part.zig").MeshPart;
 const MaterialDef = @import("../../core/material.zig").MaterialDef;
 
 const HEADER = "# KupCAD Export\n# millimetres, Z up\n";
@@ -22,16 +20,11 @@ const HEADER = "# KupCAD Export\n# millimetres, Z up\n";
 const DEFAULT_MATERIAL_NAME = "default";
 const DEFAULT_GREY = 0.8;
 
-/// `solids` (rooted by the caller) as OBJ text, owned by `allocator`; `title` is a comment
-/// at the top (an assembly's name). With `mtl_name`, the file names that library
-/// (`mtllib`) and each run of faces its material. error.NoGeometry when no Solid has a
-/// triangle.
-pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
-    const grouping = try parts_mod.group(vm, allocator, solids);
-    defer grouping.deinit(allocator);
-    var names = try parts_mod.CopyNames.init(allocator, &grouping);
-    defer names.deinit(allocator);
-
+/// `parts` as OBJ text, owned by `allocator`; their engine must tessellate (the caller
+/// checks). `title` is a comment at the top (an assembly's name). With `mtl_name`, the file
+/// names that library (`mtllib`) and each run of faces its material. error.NoGeometry when
+/// no part has a triangle.
+pub fn build(allocator: std.mem.Allocator, parts: []const MeshPart, title: ?[]const u8, mtl_name: ?[]const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
     const w = &out.writer;
@@ -50,19 +43,17 @@ pub fn build(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value,
     // OBJ indexes vertices and normals from 1, across every object in the file
     var vertices_written: u32 = 0;
     var normals_written: u32 = 0;
-    for (solids, grouping.copies) |solid, copy| {
-        const handle = try vm.ensureConcrete(solid);
-        try vm.requireFeature(handle.engine, .mesh);
-        const mesh = kernel.getMesh(allocator, handle) orelse return error.MeshExtractionFailed;
+    for (parts) |part| {
+        const mesh = kernel.getMesh(allocator, part.handle) orelse return error.MeshExtractionFailed;
         defer allocator.free(mesh.vert_props);
         defer allocator.free(mesh.tri_verts);
         if (mesh.tri_verts.len == 0) continue;
 
-        const name = try names.next(allocator, copy);
-        defer allocator.free(name);
-        try w.writeAll("o ");
-        try writeLineText(w, name);
-        try w.writeByte('\n');
+        if (part.name) |name| {
+            try w.writeAll("o ");
+            try writeLineText(w, name);
+            try w.writeByte('\n');
+        }
         var v: usize = 0;
         while (v < mesh.vert_props.len) : (v += mesh.num_prop) {
             const p = mesh.vert_props[v..][0..3];

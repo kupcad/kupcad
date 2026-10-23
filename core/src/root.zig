@@ -85,6 +85,7 @@ test {
     // exports
     _ = @import("exporters/3d/gltf_test.zig");
     _ = @import("exporters/3d/stl_test.zig");
+    _ = @import("exporters/3d/obj_test.zig");
     _ = @import("exporters/zip_test.zig");
     _ = @import("exporters/3d/threemf_test.zig");
     _ = @import("exporters/3d/obj_test.zig");

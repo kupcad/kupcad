@@ -1,8 +1,9 @@
 //! The model written as a file: `exportModelFromVm` in any format, a drawing of shapes
 //! (`exportDrawing`, built by `drawingOf` from the kernel's outlines and the curves the
-//! sketches define), the Solids in a 3D format (glTF's parts named as the parts list names
-//! them, `gltfParts`), each part on its own (`exportPartsFromVm`, `kupcad build --split`)
-//! and an OBJ's material library.
+//! sketches define), the Solids in a 3D format (glTF's and OBJ's parts named as the parts
+//! list names them, `namedParts`), each part on its own (`exportPartsFromVm`, `kupcad build
+//! --split`) and an OBJ's material library. The writers take what this evaluates (kernel
+//! handles, names, materials); the script's errors are raised here.
 
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
@@ -23,6 +24,7 @@ const gltf_exporter = @import("3d/gltf.zig");
 const step_exporter = @import("3d/step.zig");
 const threemf_exporter = @import("3d/threemf.zig");
 const obj_exporter = @import("3d/obj.zig");
+const MeshPart = @import("3d/mesh_part.zig").MeshPart;
 const svg_exporter = @import("2d/svg.zig");
 const dxf_exporter = @import("2d/dxf.zig");
 const drawing_mod = @import("2d/drawing.zig");
@@ -179,7 +181,12 @@ fn exportSolids(
         // The parts once each, placed per copy: the Solids themselves, not their meshes. The
         // ghosts are the viewer's, as in an STL.
         .@"3mf" => return threemf_exporter.build(allocator, vm, solids, title),
-        .obj => return obj_exporter.build(allocator, vm, solids, title, options.mtl_name),
+        .obj => {
+            var parts = try namedParts(allocator, vm, solids, &.{});
+            defer parts.deinit();
+            for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
+            return obj_exporter.build(allocator, parts.items, title, options.mtl_name);
+        },
         .svg, .dxf => unreachable, // 2D: exportDrawing
         .step => {
             var handles = try model_mod.handlesOf(allocator, vm, solids, ghosts);
@@ -200,7 +207,7 @@ fn exportSolids(
             };
         },
         .glb, .gltf => {
-            var parts = try gltfParts(allocator, vm, solids, ghosts);
+            var parts = try namedParts(allocator, vm, solids, ghosts);
             defer parts.deinit();
             for (parts.items) |part| try vm.requireFeature(part.handle.engine, .mesh);
             const container: gltf_exporter.Container = if (format == .gltf) .gltf else .glb;
@@ -227,22 +234,22 @@ fn requireExactParts(vm: *VM, handles: []const geom.GeometryHandle) error{Runtim
     }
 }
 
-/// The parts of a glTF: `ghosts`, unnamed, then `solids`, evaluated and named as the parts
-/// list names their copies (parts_mod.CopyNames). Owned by `allocator`, the names included; the
-/// handles are borrowed (see VM.ensureConcrete).
-pub const GltfParts = struct {
+/// The parts of a glTF or an OBJ: `ghosts`, unnamed, then `solids`, evaluated and named as
+/// the parts list names their copies (parts_mod.CopyNames). Owned by `allocator`, the names
+/// included; the handles are borrowed (see VM.ensureConcrete).
+const NamedParts = struct {
     arena: std.heap.ArenaAllocator,
-    items: []gltf_exporter.Part,
+    items: []MeshPart,
 
-    pub fn deinit(self: *GltfParts) void {
+    fn deinit(self: *NamedParts) void {
         self.arena.deinit();
     }
 };
 
-pub fn gltfParts(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !GltfParts {
+fn namedParts(allocator: std.mem.Allocator, vm: *VM, solids: []const value.Value, ghosts: []const geom.GeometryHandle) !NamedParts {
     var arena = std.heap.ArenaAllocator.init(allocator);
     errdefer arena.deinit();
-    const items = try arena.allocator().alloc(gltf_exporter.Part, ghosts.len + solids.len);
+    const items = try arena.allocator().alloc(MeshPart, ghosts.len + solids.len);
     for (ghosts, items[0..ghosts.len]) |ghost, *item| item.* = .{ .handle = ghost };
     const grouping = try parts_mod.group(vm, allocator, solids);
     defer grouping.deinit(allocator);

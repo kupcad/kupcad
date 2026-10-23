@@ -1,5 +1,6 @@
 const std = @import("std");
 const gltf = @import("gltf.zig");
+const MeshPart = @import("mesh_part.zig").MeshPart;
 const registry = @import("../../stdlib/registry.zig");
 const dag_evaluator = @import("../../vm/dag_evaluator.zig");
 const VM = @import("../../vm/vm.zig").VM;
@@ -22,7 +23,7 @@ test "GLTF: Zero-Copy GLB export generates valid binary container" {
     const cube_idx = try vm.dag_builder.addCube(10.0, 10.0, 10.0, true);
     const handle = try dag_evaluator.evaluateDAG(&vm, cube_idx);
 
-    const parts = [_]gltf.Part{.{ .handle = handle }};
+    const parts = [_]MeshPart{.{ .handle = handle }};
     const glb_bytes = try gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb);
     defer std.testing.allocator.free(glb_bytes);
 
@@ -337,7 +338,7 @@ test "GLTF: a part the engine can't tessellate is an error, not left out of the 
     try vm.setConfig(.{ .engine = .brep_native });
     const brep_part = try dag_evaluator.evaluateDAG(&vm, try vm.dag_builder.addCube(10.0, 10.0, 10.0, true));
 
-    const parts = [_]gltf.Part{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
+    const parts = [_]MeshPart{ .{ .handle = mesh_part }, .{ .handle = brep_part } };
     try std.testing.expectError(error.EngineCannotTessellate, gltf.buildGltfBuffer(std.testing.allocator, vm.materials.items, &parts, null, .glb));
 }
 
