@@ -1,6 +1,6 @@
 //! Where the language server runs scripts: the preview of the document the viewport shows,
-//! its frame (preview/frame.zig), what each module's run warned of, and the run its hovers
-//! read values from.
+//! its frame (preview/frame.zig), what the modules that ran warned of, and the run its
+//! hovers read values from.
 //! `Preview` is what the handler (lsp.zig) calls. `SessionPreview` does the work in this
 //! process, over a `ScriptSession`; the server runs it in a worker process (lsp_worker.zig),
 //! so a run that crashes (an abort in the C++ kernel, which no Zig code can catch) ends the

@@ -1,8 +1,10 @@
 //! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
-//! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints,
-//! the `kupcad.setParams` command) and, through a `Preview` (lsp_preview.zig), runs the last
-//! edited document for the viewport WebSocket server (viewport_ws.zig) and for hovers: in a
-//! worker process (lsp_worker.zig), so a script whose run crashes leaves the server running.
+//! requests (hover, completion, formatting, diagnostics with what the runs warned of, code
+//! actions, symbols, inlay hints, go to definition, the `kupcad.setParams` and
+//! `kupcad.preview` commands) and, through a `Preview` (lsp_preview.zig), runs the document
+//! the viewport shows (the one last edited, or the one a front end chose) for the viewport
+//! WebSocket server (viewport_ws.zig), and for hovers: in a worker process (lsp_worker.zig),
+//! so a script whose run crashes leaves the server running.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -1154,10 +1156,12 @@ pub const Handler = struct {
     /// Replaces the diagnostics the editor shows for `uri` (none clears them).
     fn publishDiagnostics(self: *Handler, arena: std.mem.Allocator, uri: []const u8, diagnostics: []const PublishedDiagnostic) !void {
         const Params = struct { uri: []const u8, diagnostics: []const PublishedDiagnostic };
+        // A run's warning has no code: the field is left out, which LSP's optional means
+        // (`"code": null` is no string or number)
         try self.transport.writeNotification(self.io, arena, "textDocument/publishDiagnostics", Params, .{
             .uri = uri,
             .diagnostics = diagnostics,
-        }, .{});
+        }, .{ .emit_null_optional_fields = false });
     }
 
     /// The editor's answer to a request: the server's own (sendRequest) need saying only

@@ -880,6 +880,8 @@ test "LSP: what a run warned of is a diagnostic on the line of its call, beside 
     try testing.expectEqual(@as(u32, 3), shown[1].range.start.line);
     try testing.expectEqual(@as(u32, 2), shown[1].severity);
     try testing.expect(std.mem.find(u8, shown[1].message, "brep") != null);
+    // It has no code, and says none: `"code": null` is no code
+    try testing.expectEqual(@as(usize, 0), server.sent("\"code\":null"));
 
     // Edited, its lines may have moved: the warning goes until the next run says it again
     try server.change(URI, "unused = 1\n\nCAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
