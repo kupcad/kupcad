@@ -1,0 +1,84 @@
+# KupCAD front ends
+
+Everything in `packages/` is JavaScript (typed by JSDoc) and Svelte, built with Vite and tested
+with Vitest, in one pnpm workspace. The geometry, the language and the language server live in `core/` (Zig); the
+packages here are the ways a person reaches them: the VS Code extension, the playground on the
+docs site, and later a desktop app and a PWA. They are built from shared pieces so that a viewer
+or a parameter panel is written once.
+
+See [architecture.md](architecture.md) for how the pieces fit and why.
+
+## The packages
+
+| Package | npm name | What it is | Depends on |
+|---|---|---|---|
+| `kupcad-protocol` | `@kupcad/protocol` | The types every package agrees on: a built model, a parameter schema, a finding, the messages between a host and a viewer. No dependencies, no runtime code to speak of. | — |
+| `kupcad-wasm` | `@kupcad/wasm` | The core compiled to WebAssembly (`kupcad.wasm`, built by `core/build.zig`) with a typed JavaScript API around its exports, and a Web Worker wrapper so a build never blocks the page. | protocol |
+| `kupcad-viewer` | `@kupcad/viewer` | The 3D viewer: a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking; and a thin Svelte component around it. | protocol, three |
+| `kupcad-ui` | `@kupcad/ui` | The Svelte components a KupCAD host shows beside its editor: the viewer pane with its toolbar, the parameter panel, presets, the log, and the theme tokens they share. | protocol, viewer |
+| `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting, indentation, the findings of `check` as gutter marks, and later a language-server client. For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
+| `kupcad-playground` | `@kupcad/playground` | Editor on the left, viewer on the right, parameters below, all running on `@kupcad/wasm` in the browser. One Svelte component the docs site embeds, and the heart of the PWA. | wasm, editor, ui |
+| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, ui |
+| `kupcad-tree-sitter` | — | The tree-sitter grammar, for editors that highlight with it. | — |
+| `kupcad-app` (later) | private | The desktop app (Tauri): a native `kupcad` binary, `@kupcad/ui`, and an editor with the language server. | ui, viewer |
+| `kupcad-pwa` (later) | private | The web app: the playground with files, projects and exports, installable. | playground |
+
+Libraries are published to npm under `@kupcad`; apps are `"private": true`. A package is published
+only when another repository would use it: the docs site uses the playground, a third-party tool
+may use the wasm or the viewer.
+
+## Working on them
+
+```sh
+pnpm install                       # once; builds nothing from core
+pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into its package
+pnpm -r build                      # every package, in dependency order
+pnpm -r test                       # every package's Vitest suite
+pnpm --filter @kupcad/viewer dev   # one package's dev server or watch
+```
+
+Each package has the same shape:
+
+```
+kupcad-<name>/
+  package.json        name, exports, scripts: build, dev, test, check
+  README.md           what it is and how to use it (the npm page for a published one)
+  src/                the code; src/index.js is the public API
+  src/types.d.ts      the shapes JSDoc can't say well (unions, generics), when a package has them
+  src/**/*.test.js    tests beside what they test
+  vite.config.js      library mode for a library, an app build for an app
+  jsconfig.json       extends the root jsconfig
+```
+
+Conventions, held by the root config and CI:
+
+* **JavaScript, typed by JSDoc, and checked.** No TypeScript sources and no compile step for
+  types, but `tsc --noEmit` runs over every package (`checkJs`, `strict`) in `pnpm check`, so a
+  wrong `@param` fails CI as a wrong type would. A published package's `.d.ts` is generated from
+  the JSDoc, so its users get the types anyway.
+* **Svelte 5** (runes) for components, their `<script>` plain JavaScript with JSDoc. A component
+  package is built with `@sveltejs/package`, so it ships `.svelte` sources and `.d.ts`, and the
+  host's Vite compiles them: one Svelte runtime per app, not one per package.
+* **Vitest** for every package; `@testing-library/svelte` for components; a Web Worker and WebGL
+  are stubbed in unit tests, and the viewer has a Playwright smoke test in a real browser.
+* **oxlint and oxfmt** from the root, run by `pnpm check`; CI refuses what they would change.
+  (Whether oxfmt formats `.svelte` templates is checked at setup; if not, `.svelte` files alone
+  go through `prettier-plugin-svelte`.)
+* **Styling:** the published components (`ui`, `viewer`, `editor`, `playground`) use scoped
+  Svelte CSS over the shared `--kc-*` tokens and nothing else, so they drop into any host, the
+  VS Code webview included, without a CSS build. An app (the playground page, the PWA, the
+  desktop shell) may add Tailwind for its own layout.
+* **Changesets** for versions and changelogs: a change to a published package comes with a
+  changeset file; `release` bumps and publishes. `@kupcad/wasm` is the exception: its version
+  is the core's, published by the core's release workflow from the same tag.
+* **Workspace dependencies** are `workspace:*`, so a package always builds against the sibling
+  it sits beside, and `pnpm publish` writes the real version.
+
+## Where things come from
+
+* The wasm module is built by `core/build.zig`; `@kupcad/wasm` only wraps it.
+* The `kupcad` binary the extension and the desktop app run is a GitHub release asset
+  (`kupcad_<version>_<os>_<arch>.tar.gz` or `.zip`, with `checksums.txt`), built by
+  `.github/workflows/release.yml`.
+* The syntax highlighting of the extension is `syntaxes/kupcad.tmLanguage.json`, generated from
+  the grammar by `pnpm build:core:grammar`.
