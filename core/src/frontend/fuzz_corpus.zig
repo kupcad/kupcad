@@ -27,6 +27,9 @@ pub const CORPUS = [_][]const u8{
     // goes on past comments and a blank line, its comments formatted the same twice
     "()() +=-W",
     "I_;we --\n# k kupcad:disable-line unused-variable -- kept\n\n# Hides the next line only.\n# kupcad:disable-next-line unused-variable\nhie that hpcad:disable param-order -- this file\nearly = par",
+    // The nightly fuzzer's find of 2026-10-24: a symbol after `!` and a `;`, which the
+    // formatter wrote against the `!`, where the lexer read a colon as after a name's `!`
+    "!;:\"tab\\t#{1 + 1}\" == :'a\\'b'\nt = { :\"k #{s}\" => :\"#{:\"x\"}\" }.i",
     "x = 1 + 2 * (3 - 4) / 5 % 6 ** 2\ny = -x\nz = !true && false || nil",
     "s = \"a #{1 + 2} b\\n\\t\"\nt = 'raw #{x}'\nu = :sym\nv = :\"with space\"",
     "h = <<~EOS\n  line #{1}\n  two\nEOS\nputs(h)",

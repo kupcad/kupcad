@@ -820,6 +820,20 @@ test "KupCAD Lexer: Uppercase percent array literals (%W and %I)" {
     });
 }
 
+test "Lexer: a `:` after the `!` or `?` operator starts a symbol, and after a name ending in one is a colon" {
+    // `!:a` lexed as `!`, `:`, `a`, the colon of `valid?:`: the formatter writes `!` against
+    // its operand, so `!;:a` formatted to a program that didn't parse (the nightly fuzzer)
+    try expectTokens("!:a", &.{ t(.bang, "!"), t(.symbol, "a"), t(.eof, "") });
+    try expectTokens("x ?:a : :b", &.{
+        t(.ident, "x"), t(.question, "?"), t(.symbol, "a"), t(.colon, ":"), t(.symbol, "b"), t(.eof, ""),
+    });
+    try expectTokens("f(valid?: 1, save!: 2)", &.{
+        t(.ident, "f"),  t(.l_paren, "("), t(.ident, "valid?"), t(.colon, ":"),
+        t(.number, "1"), t(.comma, ","),   t(.ident, "save!"),  t(.colon, ":"),
+        t(.number, "2"), t(.r_paren, ")"), t(.eof, ""),
+    });
+}
+
 test "KupCAD Lexer: Symbols with predicate and bang suffixes" {
     try expectTokens("[:valid?, :destroy!, :width=]", &.{
         t(.l_bracket, "["),     t(.symbol, "valid?"), t(.comma, ","),

@@ -1108,6 +1108,13 @@ test "Formatter: a single-quoted or %q string keeps its text, backslashes and al
     try expectStableFormat("u = %q'it\\'s'\n", "u = %q'it\\'s'\n");
 }
 
+test "Formatter: a symbol after `!` or `not` is written against the `!`, and reads back" {
+    // `!:a` read back as `!`, `:`, `a`, so `!;:a` formatted to a program that didn't parse
+    // (the nightly fuzzer)
+    try expectStableFormat("x = !;:a\n", "x = !:a\n");
+    try expectStableFormat("y = not :\"b c\"\n", "y = !:\"b c\"\n");
+}
+
 test "Formatter: a quoted symbol named with colons keeps its name" {
     // The parser dropped a leading colon of the name, so `:":"` was the empty symbol and
     // formatted to a lone `:`, which doesn't parse (found by the nightly fuzzer).

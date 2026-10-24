@@ -175,9 +175,9 @@ pub const Lexer = struct {
     brace_depth: u32 = 0,
     interp_stack: [64]InterpState,
     interp_depth: usize = 0,
-    /// The last token was `.`, `&.` or `def`: a word now names a method, so `x.class`,
-    /// `r.end` and `def end` lex an identifier, not a keyword (as in Ruby).
-    expect_method_name: bool = false,
+    /// The last token's tag: what comes next can depend on it (expectsMethodName, and a `:`
+    /// after `!` or `?` in consumeSymbolOrColon).
+    prev_tag: Tag = .newline,
     /// Where the body of the `.heredoc` token `next` returned last starts, and its length.
     heredoc_body_start: usize = 0,
     heredoc_body_len: usize = 0,
@@ -203,11 +203,17 @@ pub const Lexer = struct {
             tok.tag = .runs_into_heredoc;
             self.skipHeredocBodies();
         }
-        self.expect_method_name = switch (tok.tag) {
+        self.prev_tag = tok.tag;
+        return tok;
+    }
+
+    /// The last token was `.`, `&.` or `def`: a word now names a method, so `x.class`,
+    /// `r.end` and `def end` lex an identifier, not a keyword (as in Ruby).
+    fn expectsMethodName(self: *const Lexer) bool {
+        return switch (self.prev_tag) {
             .dot, .ampersand_dot, .keyword_def => true,
             else => false,
         };
-        return tok;
     }
 
     fn scan(self: *Lexer) Token {
@@ -552,7 +558,7 @@ pub const Lexer = struct {
         var tag = if (is_constant) Tag.constant else Tag.ident;
         if (keywords.get(lexeme)) |kw_tag| {
             // `self` stays a keyword after `def`, for `def self.name`.
-            if (!self.expect_method_name or kw_tag == .keyword_self) tag = kw_tag;
+            if (!self.expectsMethodName() or kw_tag == .keyword_self) tag = kw_tag;
         }
         return .{ .tag = tag, .loc = start_loc, .lexeme = lexeme };
     }
@@ -571,6 +577,15 @@ pub const Lexer = struct {
         return self.consumeStringBody(content_loc, true, quote, quote, 1);
     }
 
+    /// Whether `prev`, the byte before a `:` and the last of a token of `prev_tag`, ends a
+    /// name, so the `:` touching it is a colon (`width:`, `valid?:`). `!` and `?` end a name
+    /// (`save!`, `valid?`) and are operators too: after the operator, `!:a` is not of a symbol,
+    /// and the formatter writes `!` and `not` against their operand so.
+    fn endsName(prev: u8, prev_tag: Tag) bool {
+        if (prev == '!' or prev == '?') return prev_tag == .ident or prev_tag == .constant or prev_tag == .symbol;
+        return isIdentChar(prev);
+    }
+
     fn consumeSymbolOrColon(self: *Lexer, start_loc: common_token.Location) Token {
         self.advance(); // consume ':'
         if (self.index < self.buffer.len and self.peek() == ':') {
@@ -580,7 +595,7 @@ pub const Lexer = struct {
         var is_symbol = true;
         if (self.index >= 2) {
             const prev = self.buffer[self.index - 2];
-            if (isIdentChar(prev) or prev == '"' or prev == '\'' or prev == ']' or prev == ')' or prev == '}') {
+            if (endsName(prev, self.prev_tag) or prev == '"' or prev == '\'' or prev == ']' or prev == ')' or prev == '}') {
                 is_symbol = false;
             }
         }
