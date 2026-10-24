@@ -494,6 +494,9 @@ describe('Viewer', () => {
       viewer.setRenderMode(mode);
       expect(viewer.renderMode).toBe(mode);
     }
+    expect(viewer.edges).toBe(true);
+    viewer.setEdges(false);
+    expect(viewer.edges).toBe(false);
     viewer.setEnvironment('none');
     expect(viewer.environment).toBe('none');
     await nextFrame();

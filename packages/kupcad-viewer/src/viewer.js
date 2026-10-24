@@ -124,6 +124,8 @@ export class Viewer extends EventTarget {
   #plate;
   /** @type {RenderMode} */
   #renderMode = 'solid';
+  /** The shapes' edges are drawn (a wireframe's always are). */
+  #edges = true;
   /** @type {Projection} */
   #projection = 'perspective';
   /** The named view the camera looks from, or null for none (turned by hand). @type {View | null} */
@@ -196,6 +198,9 @@ export class Viewer extends EventTarget {
 
   get renderMode() {
     return this.#renderMode;
+  }
+  get edges() {
+    return this.#edges;
   }
   get projection() {
     return this.#projection;
@@ -299,6 +304,16 @@ export class Viewer extends EventTarget {
     this.#renderMode = mode;
     this.#applyRenderMode();
     this.#applySection();
+    this.#invalidate();
+  }
+
+  /**
+   * Draws the shapes' edges, or not (a wireframe's are drawn whatever this says).
+   * @param {boolean} visible
+   */
+  setEdges(visible) {
+    this.#edges = visible;
+    this.#applyRenderMode();
     this.#invalidate();
   }
 
@@ -502,7 +517,7 @@ export class Viewer extends EventTarget {
   }
 
   #applyRenderMode() {
-    applyRenderMode(this.#model, this.#renderMode);
+    applyRenderMode(this.#model, this.#renderMode, this.#edges);
   }
 
   #applySelection() {

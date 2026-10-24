@@ -25,16 +25,16 @@ describe('applyRenderMode', () => {
     const plate = scene.shapes.find((shape) => shape.part === 'plate');
     const ghost = scene.shapes.find((shape) => shape.ghost);
     if (!plate || !ghost) throw new Error('no plate or ghost');
-    applyRenderMode(scene, 'xray');
+    applyRenderMode(scene, 'xray', true);
     expect(materialOf(plate)).toMatchObject({
       transparent: true,
       opacity: XRAY_OPACITY,
       depthWrite: false,
     });
-    applyRenderMode(scene, 'wireframe');
+    applyRenderMode(scene, 'wireframe', true);
     expect(materialOf(plate).visible).toBe(false);
     expect(plate.edges?.visible).toBe(true);
-    applyRenderMode(scene, 'solid');
+    applyRenderMode(scene, 'solid', true);
     expect(materialOf(plate)).toMatchObject({
       visible: true,
       transparent: false,
@@ -43,6 +43,20 @@ describe('applyRenderMode', () => {
     });
     // A ghost keeps its own look
     expect(materialOf(ghost)).toMatchObject({ visible: true, opacity: GHOST_OPACITY });
+  });
+
+  it("draws the edges or not, as asked, but always a wireframe's, which is nothing else", async () => {
+    const scene = await partsScene();
+    const plate = scene.shapes.find((shape) => shape.part === 'plate');
+    if (!plate) throw new Error('no plate');
+    applyRenderMode(scene, 'solid', false);
+    expect(plate.edges?.visible).toBe(false);
+    applyRenderMode(scene, 'xray', false);
+    expect(plate.edges?.visible).toBe(false);
+    applyRenderMode(scene, 'wireframe', false);
+    expect(plate.edges?.visible).toBe(true);
+    applyRenderMode(scene, 'solid', true);
+    expect(plate.edges?.visible).toBe(true);
   });
 });
 

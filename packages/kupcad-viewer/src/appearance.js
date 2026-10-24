@@ -13,12 +13,15 @@ export const SELECTION_TINT = 0.45;
 
 /**
  * Draws the model's shapes as `mode` says: as they are, see-through, or not at all but for their
- * edges (the mesh stays, for picking, and its edges with it).
+ * edges (the mesh stays, for picking, and its edges with it); their edges with them when
+ * `edges`, and always in a wireframe, which is nothing else.
  * @param {SceneModel | null} model
  * @param {RenderMode} mode
+ * @param {boolean} edges
  */
-export function applyRenderMode(model, mode) {
+export function applyRenderMode(model, mode, edges) {
   for (const shape of model?.shapes ?? []) {
+    if (shape.edges) shape.edges.visible = edges || mode === 'wireframe';
     if (shape.ghost) continue;
     const material = /** @type {MeshStandardMaterial} */ (shape.mesh.material);
     const xray = mode === 'xray';

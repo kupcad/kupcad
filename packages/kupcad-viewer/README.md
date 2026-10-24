@@ -11,6 +11,7 @@ const viewer = new Viewer(canvas, { theme: DARK, environment: 'grid' });
 await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a preview frame; false
 // when a model asked for later replaced it before it was shown
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
+viewer.setEdges(false); // the shapes' edges hidden (a wireframe's stay)
 viewer.setCamera({ projection: 'orthographic', view: 'front' }); // moves there, framing the model
 viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as a view cube's corner does
 viewer.fit(); viewer.zoom(1.25); // fits the model from where it looks; zooms in (out, below 1)
