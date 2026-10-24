@@ -113,8 +113,15 @@ describe('Viewer', () => {
   it('frames the first model, draws once a frame, and picks its parts', async () => {
     const { viewer, drawn } = viewerOn();
     await viewer.setModel(await modelOf(BLOCK));
+    // Whatever was asked so far is drawn: the viewer made, then the model shown, in one frame or
+    // two, as fast as the core built the model (on CI, a frame came between)
     await nextFrame();
-    expect(drawn.renders).toBe(1);
+    const before = drawn.renders;
+    viewer.setRenderMode('xray');
+    viewer.setEnvironment('plate');
+    viewer.select('block');
+    await nextFrame();
+    expect(drawn.renders).toBe(before + 1);
     // The camera looks at the model from the iso view: its centre is the canvas's
     expect(viewer.partAt(WIDTH / 2, HEIGHT / 2)).toBe('block');
     expect(viewer.partAt(5, 5)).toBeNull();
