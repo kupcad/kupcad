@@ -192,6 +192,24 @@ test "LSP preview: each document runs with its own values, and a refused one is 
     try testing.expectEqual(@as(i64, 2), (try frameOf(arena.allocator(), &preview, "a.kup")).header.params.values.object.get("w").?.integer);
 }
 
+test "LSP preview: a frame's values are its document's own parameters, the same whether its imports ran or came from the cache" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    try preview.update("lib.kup", "side = param(:t, default: 3)\nexport side\n");
+
+    // The first run imports lib.kup afresh; main.kup edited, the second from the VM's cache
+    const main_source = "import { side } from \"./lib.kup\"\ncube(param(:w, default: 2) + side)\n";
+    for ([_][]const u8{ main_source, main_source ++ "\n" }) |source| {
+        try preview.update("main.kup", source);
+        const values = (try frameOf(arena.allocator(), &preview, "main.kup")).header.params.values.object;
+        try testing.expectEqual(@as(usize, 1), values.count());
+        try testing.expectEqual(@as(i64, 2), values.get("w").?.integer);
+    }
+}
+
 test "LSP preview: each run's warnings are its own, the same on every run" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

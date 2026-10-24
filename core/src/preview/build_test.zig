@@ -125,7 +125,7 @@ test "preview: a script that doesn't parse or compile says why, and where" {
     try testing.expect(std.mem.find(u8, compile.@"error".?.message, "cube") != null);
 }
 
-test "preview: Sketches beside Solids, and Solids that are empty, are said in warnings" {
+test "preview: Sketches beside Solids, and a model that is empty, are said in warnings" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const mixed = (try preview(arena.allocator(), "[cube(1), square(2)]", "")).header;
@@ -134,10 +134,14 @@ test "preview: Sketches beside Solids, and Solids that are empty, are said in wa
     try testing.expect(std.mem.find(u8, mixed.warnings[0].message, "1 Sketches and Paths") != null);
     try testing.expect(mixed.warnings[0].line == null);
 
-    const empty = try preview(arena.allocator(), "cube(1) - cube(2, center: true).translate(x: 0.5, y: 0.5, z: 0.5)", "");
-    try testing.expectEqualStrings("none", empty.header.kind);
-    try testing.expect(empty.header.@"error" == null);
-    try testing.expect(std.mem.find(u8, empty.header.warnings[0].message, "empty") != null);
+    // An export raises for either: the preview shows nothing and says so
+    for ([_][]const u8{ "cube(1) - cube(2, center: true).translate(x: 0.5, y: 0.5, z: 0.5)", "circle(r: 1) - circle(r: 2)" }) |source| {
+        const empty = try preview(arena.allocator(), source, "");
+        try testing.expectEqualStrings("none", empty.header.kind);
+        try testing.expect(empty.header.@"error" == null);
+        try testing.expectEqual(@as(usize, 1), empty.header.warnings.len);
+        try testing.expect(std.mem.find(u8, empty.header.warnings[0].message, "empty") != null);
+    }
 }
 
 test "preview: a warning the run gave says where" {
@@ -150,6 +154,12 @@ test "preview: a warning the run gave says where" {
     try testing.expect(std.mem.find(u8, warnings[0].message, "brep") != null);
     try testing.expectEqual(@as(?u32, 3), warnings[0].line);
     try testing.expect(warnings[0].column != null);
+}
+
+test "preview: the run is a preview (CAD.preview?), where a script can lighten its model" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    try testing.expectEqualStrings("3d", (try preview(arena.allocator(), "CAD.preview? ? cube(1) : square(1)", "")).header.kind);
 }
 
 test "preview: a document that ends in no model shows its ghosts, or nothing, and no error" {

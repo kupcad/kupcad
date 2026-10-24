@@ -23,8 +23,8 @@ const LinePosition = @import("../vm/run_report.zig").LinePosition;
 
 /// What a frame says of a run that failed with no message of its own.
 const FAILED_WITHOUT_MESSAGE = "the script failed";
-/// The warning of a model whose Solids hold no triangle.
-const EMPTY_MODEL = "the model's Solids are empty: there is nothing to show";
+/// The warning of a model whose Solids hold no triangle, or whose Sketches no outline.
+const EMPTY_MODEL = "the model is empty: there is nothing to show";
 
 /// The script a frame is of.
 pub const Script = struct {
@@ -52,12 +52,15 @@ pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const vm = run.vm;
-    var header = try headerOf(arena, script, try valuesOf(arena, vm));
+    var header = try headerOf(arena, script);
+    header.params.values = try valuesOf(arena, vm, header.params.schema);
     header.timing.runMs = stopwatch.milliseconds(run.run_ns);
     var warnings: std.ArrayList(frame.Warning) = .empty;
     for (vm.report.warnings.items) |w| try warnings.append(arena, warningOf(w.message, w.position));
 
     var clock = stopwatch.Stopwatch.start(vm.io);
+    // What a run that still succeeded reported failed nothing: an error of showing it is new
+    if (run.ok) vm.clearLastError();
     const view: Shown = if (run.ok) shown(arena, vm, &warnings) catch |err| switch (err) {
         // Raised in the VM: why is its last error
         error.RuntimeError => .failed,
@@ -80,17 +83,17 @@ pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
 pub fn ofFailure(allocator: std.mem.Allocator, script: Script, failure: frame.Failure) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
-    var header = try headerOf(arena_state.allocator(), script, .{});
+    var header = try headerOf(arena_state.allocator(), script);
     header.@"error" = failure;
     return frame.encode(allocator, header, "");
 }
 
-/// The header of `script`'s frame with the parameter values a run took, showing nothing yet.
-fn headerOf(arena: std.mem.Allocator, script: Script, values: param_values.ParamValues) !frame.Header {
+/// The header of `script`'s frame with its schema, showing nothing yet and no values taken.
+fn headerOf(arena: std.mem.Allocator, script: Script) !frame.Header {
     return .{
         .document = script.name,
         .kind = .none,
-        .params = .{ .schema = try extractor.extractSchema(arena, script.doc, script.source), .values = values },
+        .params = .{ .schema = try extractor.extractSchema(arena, script.doc, script.source), .values = .{} },
         .timing = .{ .runMs = 0, .renderMs = 0 },
     };
 }
@@ -131,10 +134,10 @@ const Shown = union(enum) {
 };
 
 /// The model the run left: its Solids (and ghosts) as GLB, else its Sketches and Paths as
-/// SVG, else nothing. Sketches beside Solids aren't shown, and Solids that are empty show
-/// nothing: a warning says so. A document that ends in no model at all (a module of
-/// definitions) shows its ghosts, or nothing, where an export would refuse it. Owned by
-/// `arena`.
+/// SVG, else nothing. Sketches beside Solids aren't shown, and a model that is empty (no
+/// triangle, no outline) shows nothing: a warning says so, where an export raises. A
+/// document that ends in no model at all (a module of definitions) shows its ghosts, or
+/// nothing, where an export would refuse it. Owned by `arena`.
 fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warning)) !Shown {
     const model: model_mod.Model = if (model_mod.isModel(model_mod.finalValue(vm))) try model_mod.collectModel(arena, vm) else .{ .ghosts = vm.display_list.items };
     const flat = model.sketches.items.len + model.paths.items.len;
@@ -153,8 +156,12 @@ fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warni
         return .{ .model = .{ .kind = .@"3d", .parts = try partsOf(arena, vm, model.solids.items), .body = glb } };
     }
     if (flat > 0) {
-        const svg = try export_mod.exportShapes(arena, vm, .svg, .{}, .{ .sketches = model.sketches.items, .paths = model.paths.items });
-        return .{ .model = .{ .kind = .@"2d", .body = svg } };
+        const drawing = try export_mod.drawingOf(arena, vm, model.sketches.items, &.{}, model.paths.items);
+        if (drawing.bounds == null) {
+            try warnings.append(arena, warningOf(EMPTY_MODEL, null));
+            return .{ .model = .{ .kind = .none } };
+        }
+        return .{ .model = .{ .kind = .@"2d", .body = try export_mod.writeDrawing(arena, .svg, .{}, &drawing) } };
     }
     return .{ .model = .{ .kind = .none } };
 }
@@ -183,13 +190,18 @@ fn hexColor(arena: std.mem.Allocator, material: MaterialDef) ![]const u8 {
     return arena.print("#{x:0>2}{x:0>2}{x:0>2}", .{ material.rgb[0], material.rgb[1], material.rgb[2] });
 }
 
-/// The value each parameter took in the run, in the order it declared them. A number no
-/// JSON can hold (an infinite default) is left out.
-fn valuesOf(arena: std.mem.Allocator, vm: *const VM) !param_values.ParamValues {
-    var values: param_values.ParamValues = .{};
+/// The value each of the script's own parameters (its schema's, in its order) took in the
+/// run: the panel's, not one its imports declared. A number no JSON can hold (an infinite
+/// default) is left out, and so is a parameter the run didn't reach.
+fn valuesOf(arena: std.mem.Allocator, vm: *const VM, schema: extractor.UiSchema) !param_values.ParamValues {
+    var declared: std.StringHashMapUnmanaged(value.Value) = .empty;
     for (vm.param_registry.items(.name), vm.param_registry.items(.current_value)) |name, v| {
-        const taken = paramValue(v) orelse continue;
-        try values.put(arena, name.asSymbol().chars, taken);
+        try declared.put(arena, name.asSymbol().chars, v);
+    }
+    var values: param_values.ParamValues = .{};
+    for (schema.parameters) |spec| {
+        const taken = paramValue(declared.get(spec.name) orelse continue) orelse continue;
+        try values.put(arena, spec.name, taken);
     }
     return values;
 }

@@ -92,9 +92,15 @@ fn exportDrawing(allocator: std.mem.Allocator, vm: *VM, format: ExportFormat, op
     var drawing = try drawingOf(allocator, vm, sketches, solids, paths);
     defer drawing.deinit(allocator);
     if (drawing.bounds == null) return vm.fail(.GeometryError, "the model's shapes have no outline (empty sketches): nothing to draw as {s}", .{@tagName(format)});
+    return writeDrawing(allocator, format, options, &drawing);
+}
+
+/// `drawing` written in `format` (SVG or DXF) as `options` say; error.NoGeometry for one
+/// with no point.
+pub fn writeDrawing(allocator: std.mem.Allocator, format: ExportFormat, options: ExportOptions, drawing: *const drawing_mod.Drawing) ![]const u8 {
     return switch (format) {
-        .svg => svg_exporter.build(allocator, &drawing, options.stroke_width),
-        .dxf => dxf_exporter.build(allocator, &drawing),
+        .svg => svg_exporter.build(allocator, drawing, options.stroke_width),
+        .dxf => dxf_exporter.build(allocator, drawing),
         .stl, .glb, .gltf, .step, .@"3mf", .obj => unreachable, // 3D: exportSolids
     };
 }
