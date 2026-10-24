@@ -1,0 +1,28 @@
+{
+  "name": "@kupcad/protocol",
+  "version": "0.1.0",
+  "description": "The shapes the KupCAD core sends its front ends (preview frames, parameter schemas, findings) and the functions that read them.",
+  "license": "AGPL-3.0-only",
+  "files": [
+    "src",
+    "!src/**/*.test.js",
+    "!src/fixtures"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.js",
+    "./types": {
+      "types": "./src/types.d.ts"
+    }
+  },
+  "scripts": {
+    "check": "tsc -p jsconfig.json",
+    "test": "vitest run",
+    "fixtures": "node scripts/capture-fixtures.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "vitest": "^5.0.5"
+  }
+}

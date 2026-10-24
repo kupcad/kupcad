@@ -1,0 +1,54 @@
+{
+  "protocolVersion": 1,
+  "document": "file:///work/solid.kup",
+  "kind": "3d",
+  "parts": [
+    {
+      "name": "plate",
+      "count": 1,
+      "nodes": ["plate"],
+      "color": null,
+      "opacity": 1
+    },
+    {
+      "name": "bolt",
+      "count": 2,
+      "nodes": ["bolt", "bolt_2"],
+      "color": "#cc3333",
+      "opacity": 1
+    }
+  ],
+  "warnings": [],
+  "params": {
+    "schema": {
+      "meta": {
+        "title": "Bracket",
+        "description": null,
+        "author": null
+      },
+      "parameters": [
+        {
+          "name": "width",
+          "type": "number",
+          "default_value": 20,
+          "validate": {
+            "min": 10,
+            "max": null,
+            "in": null
+          },
+          "step": null,
+          "unit": "mm",
+          "group": "Size"
+        }
+      ]
+    },
+    "values": {
+      "width": 25
+    }
+  },
+  "error": null,
+  "timing": {
+    "runMs": 1.25,
+    "renderMs": 0.5
+  }
+}

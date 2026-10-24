@@ -1,0 +1,154 @@
+// The shapes the core sends its front ends, field for field as core/src/preview/frame.zig,
+// tools/lint/finding.zig, tools/doc/extractor.zig and version.zig write them. A field the core
+// may leave out is null, never missing.
+
+/** A preview frame's JSON header (`preview_wasm`, the language server's viewport socket). */
+export interface FrameHeader {
+  protocolVersion: number;
+  /**
+   * What the host calls the document: the URI the editor opened it by, which `kupcad.setParams`
+   * takes; null from `preview_wasm`.
+   */
+  document: string | null;
+  kind: Kind;
+  /** A 3D model's parts; empty otherwise. */
+  parts: Part[];
+  warnings: Warning[];
+  params: { schema: UiSchema; values: ParamValues };
+  /** Why the run failed (`kind` is then 'none'), or null. */
+  error: Failure | null;
+  /** Milliseconds spent running the script and making the body. */
+  timing: { runMs: number; renderMs: number };
+}
+
+/** What a frame's body holds: GLB, SVG, or nothing. */
+export type Kind = '3d' | '2d' | 'none';
+
+/** A part of a 3D model: the Solids that are copies of one another. */
+export interface Part {
+  name: string;
+  count: number;
+  /** The GLB's nodes of its copies, by name: "bolt", "bolt_2". */
+  nodes: string[];
+  /** "#rrggbb", or null for a part without a colour of its own. */
+  color: string | null;
+  opacity: number;
+}
+
+/**
+ * A warning of the run, where the script was: 1-based line and column (UTF-8 bytes), null where
+ * it wasn't running (a warning while the model was meshed).
+ */
+export interface Warning {
+  message: string;
+  line: number | null;
+  column: number | null;
+}
+
+/** Why a run failed, where, and the parameter whose value it refused. */
+export interface Failure extends Warning {
+  param: string | null;
+}
+
+/** What a frame shows: its body, typed by its kind. */
+export type Model =
+  /** export_gltf's GLB, each copy of a part a node named as `Part.nodes` says. */
+  | { kind: '3d'; glb: Uint8Array; parts: Part[] }
+  /** export_svg's drawing, each shape a path with its name as its id. */
+  | { kind: '2d'; svg: string }
+  | { kind: 'none' };
+
+/** A frame read (`readFrame`): its header, and its model. */
+export interface Preview {
+  header: FrameHeader;
+  model: Model;
+}
+
+/** `kupcad doc`'s schema, as `extract_params_wasm` and every frame give it. */
+export interface UiSchema {
+  meta: Meta;
+  parameters: ParamSpec[];
+}
+
+/** A script's `@title`, `@description` and `@author` comments. */
+export interface Meta {
+  title: string | null;
+  description: string | null;
+  author: string | null;
+}
+
+/** One `param(:name, default: ...)` of a script. */
+export interface ParamSpec {
+  name: string;
+  /** A Symbol parameter is a 'string' with its choices in `validate.in`. */
+  type: 'number' | 'string' | 'boolean';
+  /** Null when the default is computed. */
+  default_value: number | string | boolean | null;
+  validate: {
+    min: number | null;
+    max: number | null;
+    /** The allowed values, when the script lists them as literals. */
+    in: (number | string | boolean)[] | null;
+  };
+  step: number | null;
+  unit: string | null;
+  group: string | null;
+}
+
+/** Parameter values by name, as a host gives them and a frame says a run took them. */
+export type ParamValues = Record<string, number | string | boolean>;
+
+/**
+ * A place in a source: 1-based lines and columns (UTF-8 bytes), and the byte offset and length
+ * an editor counting from the start wants.
+ */
+export interface Range {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  offset: number;
+  length: number;
+}
+
+/** A finding of `check`, as `check_code_wasm` gives it. */
+export interface Finding extends Range {
+  severity: 'error' | 'warning' | 'info';
+  /** Null for a syntax or compile error. */
+  rule: string | null;
+  code: string;
+  message: string;
+  fix: Fix | null;
+}
+
+export interface Fix {
+  title: string;
+  /** It keeps the model the same, so `check --fix` applies it. */
+  safe: boolean;
+  edits: (Range & { text: string })[];
+}
+
+/** A finding of `kupcad check --format json`: the file's path, then the finding. */
+export interface CheckFinding extends Finding {
+  path: string;
+}
+
+/** `kupcad version --json`, and `version_wasm`. */
+export interface VersionInfo {
+  version: string;
+  protocolVersion: number;
+  os: string;
+  arch: string;
+}
+
+/** The language server's `kupcad/viewportReady` notification. */
+export interface ViewportReady {
+  port: number;
+  protocolVersion: number;
+}
+
+/** The one argument of the language server's `kupcad.setParams` command. */
+export interface SetParamsArgument {
+  uri: string;
+  values: ParamValues;
+}

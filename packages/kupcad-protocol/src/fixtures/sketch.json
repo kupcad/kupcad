@@ -1,0 +1,23 @@
+{
+  "protocolVersion": 1,
+  "document": "file:///work/sketch.kup",
+  "kind": "2d",
+  "parts": [],
+  "warnings": [],
+  "params": {
+    "schema": {
+      "meta": {
+        "title": null,
+        "description": null,
+        "author": null
+      },
+      "parameters": []
+    },
+    "values": {}
+  },
+  "error": null,
+  "timing": {
+    "runMs": 1.25,
+    "renderMs": 0.5
+  }
+}

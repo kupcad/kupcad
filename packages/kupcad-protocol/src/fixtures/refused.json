@@ -1,0 +1,42 @@
+{
+  "protocolVersion": 1,
+  "document": "file:///work/refused.kup",
+  "kind": "none",
+  "parts": [],
+  "warnings": [],
+  "params": {
+    "schema": {
+      "meta": {
+        "title": null,
+        "description": null,
+        "author": null
+      },
+      "parameters": [
+        {
+          "name": "width",
+          "type": "number",
+          "default_value": 20,
+          "validate": {
+            "min": 10,
+            "max": null,
+            "in": null
+          },
+          "step": null,
+          "unit": null,
+          "group": null
+        }
+      ]
+    },
+    "values": {}
+  },
+  "error": {
+    "message": "ValueError: parameter :width value 5 is below its minimum 10",
+    "line": 1,
+    "column": 49,
+    "param": "width"
+  },
+  "timing": {
+    "runMs": 1.25,
+    "renderMs": 0.5
+  }
+}

@@ -1,8 +1,8 @@
 # platform specific
 .DS_Store
 
-# nodejs
-/node_modules
+# nodejs (the root's and each package's)
+node_modules/
 
 # release archives (core/scripts/package-release.sh)
 /dist/
