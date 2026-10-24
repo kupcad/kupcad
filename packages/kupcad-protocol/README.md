@@ -28,7 +28,7 @@ client.sendRequest('workspace/executeCommand', {
 ## What it holds
 
 * `src/types.d.ts` (`@kupcad/protocol/types`): `FrameHeader`, `Part`, `Warning`, `Failure`,
-  `Model`, `Preview`, `UiSchema`, `ParamSpec`, `ParamValues`, `Finding`, `CheckFinding`,
+  `Model`, `Preview`, `UiSchema`, `ParamSpec`, `ParamValues`, `ExportFormat`, `Finding`, `CheckFinding`,
   `VersionInfo`, `ViewportReady`, `SetParamsArgument`. Field for field what the core writes; a
   field it may leave out is `null`, never missing.
 * `readFrame(bytes)`: a frame (`ArrayBuffer` or `Uint8Array`) as a `Preview`, its GLB a view on

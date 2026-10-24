@@ -95,6 +95,9 @@ export interface ParamSpec {
   group: string | null;
 }
 
+/** What a model is written as (`kupcad build -f`, `build_model_wasm`): core/src/exporters/format.zig. */
+export type ExportFormat = 'stl' | 'glb' | 'gltf' | 'step' | '3mf' | 'obj' | 'svg' | 'dxf';
+
 /** Parameter values by name, as a host gives them and a frame says a run took them. */
 export type ParamValues = Record<string, number | string | boolean>;
 
