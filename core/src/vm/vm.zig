@@ -4072,10 +4072,14 @@ pub const VM = struct {
         self.last_error_position = self.currentPosition();
     }
 
+    /// Forgets what failed the run so far: its error, where it was, and the parameter whose
+    /// value it refused (a rescue handled the error, or the run went on to succeed). A refused
+    /// value rescued stayed named, and the panel marked it beside the run's next error.
     pub fn clearLastError(self: *VM) void {
         if (self.last_error) |msg| self.allocator.free(msg);
         self.last_error = null;
         self.last_error_position = null;
+        self.report.forgetRefusal(self.allocator);
     }
 
     /// The backtrace lines of the current frames, innermost first, formatted into a reused

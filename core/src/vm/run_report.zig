@@ -31,6 +31,11 @@ pub const RunReport = struct {
     pub fn clear(self: *RunReport, allocator: std.mem.Allocator) void {
         for (self.warnings.items) |w| allocator.free(w.message);
         self.warnings.clearRetainingCapacity();
+        self.forgetRefusal(allocator);
+    }
+
+    /// Forgets the parameter named as the one that stopped the run: its error was rescued.
+    pub fn forgetRefusal(self: *RunReport, allocator: std.mem.Allocator) void {
         if (self.refused_param) |name| allocator.free(name);
         self.refused_param = null;
     }

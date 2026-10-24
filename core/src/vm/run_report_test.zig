@@ -175,3 +175,15 @@ test "run report: a warning or an error in a call is placed at the call, not at 
     try testing.expectEqual(.runtime_error, try run(&vm, "x = 1\ny = cube(\"a\")\n"));
     try testing.expectEqual(run_report.LinePosition{ .line = 2, .column = 5 }, vm.last_error_position.?);
 }
+
+test "run report: a refused value whose error was rescued names no parameter" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const refused_then_rescued = "w = begin\n  param(:width, default: 5, validate: { min: 10 })\nrescue\n  10\nend\n";
+    try testing.expectEqual(.ok, try run(&vm, refused_then_rescued));
+    try testing.expect(vm.report.refused_param == null);
+    // A later error isn't the refusal's
+    vm.resetRunOutput();
+    try testing.expectEqual(.runtime_error, try run(&vm, refused_then_rescued ++ "raise \"boom\"\n"));
+    try testing.expect(vm.report.refused_param == null);
+}
