@@ -17,6 +17,7 @@ const freeFiles = lsp_preview.freeFiles;
 const SessionPreview = lsp_preview.SessionPreview;
 const Outcome = lsp_preview.Outcome;
 const Target = lsp_preview.Target;
+const Want = lsp_preview.Want;
 const ModuleWarnings = lsp_preview.ModuleWarnings;
 const OutcomeTag = std.meta.Tag(Outcome);
 
@@ -41,7 +42,7 @@ pub const Kind = enum(u8) {
     update,
     /// path.
     remove,
-    /// u8 want_frame, u32 path length, path, the document's URI.
+    /// u8 the frame wanted (Want), u32 path length, path, the document's URI.
     evaluate,
     /// u32 node index, path.
     hover,
@@ -197,8 +198,9 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
         },
         .evaluate => {
             if (frame.payload.len < 1) return error.BadFrame;
+            const want = std.enums.fromInt(Want, frame.payload[0]) orelse return error.BadFrame;
             const parts = try splitPrefixed(frame.payload[1..]);
-            const outcome = preview.evaluate(allocator, .{ .module_path = parts[0], .uri = parts[1] }, frame.payload[0] != 0);
+            const outcome = preview.evaluate(allocator, .{ .module_path = parts[0], .uri = parts[1] }, want);
             switch (outcome) {
                 .frame => |bytes| {
                     defer allocator.free(bytes);
@@ -452,10 +454,10 @@ pub const WorkerPreview = struct {
         return std.json.parseFromSliceLeaky([]const ModuleWarnings, arena, reply.payload, .{ .allocate = .alloc_always });
     }
 
-    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
         const module_path = target.module_path;
         const w = self.running() catch return .crashed;
-        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@intFromBool(want_frame)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }) catch |err| return self.ended(w, err, module_path);
+        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@backingInt(want)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }) catch |err| return self.ended(w, err, module_path);
         // The inbox sets `cancel` while this waits; it is passed on as it is set.
         var forwarder = self.io.concurrent(forwardCancel, .{ self, w }) catch null;
         const reply = readFrame(&w.reader.interface, self.allocator);
@@ -469,6 +471,7 @@ pub const WorkerPreview = struct {
             .nothing => .nothing,
             .cancelled => .cancelled,
             .crashed => .crashed,
+            .unchanged => .unchanged,
         };
     }
 
@@ -589,8 +592,8 @@ pub const WorkerPreview = struct {
     fn takeRunWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
         return cast(ptr).takeRunWarnings(arena);
     }
-    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
-        return cast(ptr).evaluate(allocator, target, want_frame);
+    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
+        return cast(ptr).evaluate(allocator, target, want);
     }
     fn hoverFactsImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8 {
         return cast(ptr).hoverFacts(allocator, module_path, node);

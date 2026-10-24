@@ -5,6 +5,7 @@ const lsp_worker = @import("lsp_worker.zig");
 const lsp_preview = @import("lsp_preview.zig");
 const SessionPreview = lsp_preview.SessionPreview;
 const OutcomeTag = std.meta.Tag(lsp_preview.Outcome);
+const Want = lsp_preview.Want;
 const preview_frame = @import("../preview/frame.zig");
 
 /// What the editor calls part.kup, the document these tests evaluate.
@@ -39,7 +40,7 @@ test "lsp worker: serve answers updates, an evaluation, a hover and a removal in
     var requests: std.Io.Writer.Allocating = .init(testing.allocator);
     defer requests.deinit();
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
-    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{1}, &u32Bytes(path.len), path, URI });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{@backingInt(Want.any)}, &u32Bytes(path.len), path, URI });
     // The assignment's node: the hover is about `a`.
     var doc = try @import("../api.zig").Document.parse(testing.allocator, source);
     defer doc.deinit();
@@ -86,7 +87,7 @@ test "lsp worker: a worker that dies is a crash for the preview, and the next us
     const preview = worker.preview();
     try preview.update("part.kup", "cube(1)\n");
     for (0..2) |_| {
-        try testing.expectEqual(OutcomeTag.crashed, std.meta.activeTag(preview.evaluate(testing.allocator, .{ .module_path = "part.kup", .uri = URI }, true)));
+        try testing.expectEqual(OutcomeTag.crashed, std.meta.activeTag(preview.evaluate(testing.allocator, .{ .module_path = "part.kup", .uri = URI }, .any)));
         try testing.expect(worker.pid() == null);
     }
     try testing.expect(try preview.hoverFacts(testing.allocator, "part.kup", @fromBackingInt(0)) == null);
@@ -99,7 +100,7 @@ test "lsp worker: the files a run read reach the server, and a change to one run
     var requests: std.Io.Writer.Allocating = .init(testing.allocator);
     defer requests.deinit();
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
-    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{0}, &u32Bytes(path.len), path, URI });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{@backingInt(Want.none)}, &u32Bytes(path.len), path, URI });
     try lsp_worker.writeFrame(&requests.writer, .files_read, &.{});
     try lsp_worker.writeFrame(&requests.writer, .file_changed, &.{"a.json"});
     try lsp_worker.writeFrame(&requests.writer, .file_changed, &.{"unread.json"});
@@ -148,7 +149,7 @@ test "lsp worker: serve gives a document its values, which its next frame runs w
     defer requests.deinit();
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, "cube(param(:w, default: 2))\n" });
     try lsp_worker.writeFrame(&requests.writer, .set_params, &.{ &u32Bytes(path.len), path, "{\"w\":3}" });
-    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{1}, &u32Bytes(path.len), path, URI });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{@backingInt(Want.any)}, &u32Bytes(path.len), path, URI });
     try lsp_worker.writeFrame(&requests.writer, .set_params, &.{ &u32Bytes(path.len), path, "[3]" });
 
     var preview: SessionPreview = undefined;
@@ -180,7 +181,7 @@ test "lsp worker: what each module's run warned of reaches the server, placed" {
     var requests: std.Io.Writer.Allocating = .init(testing.allocator);
     defer requests.deinit();
     try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
-    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{0}, &u32Bytes(path.len), path, URI });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{@backingInt(Want.none)}, &u32Bytes(path.len), path, URI });
     try lsp_worker.writeFrame(&requests.writer, .run_warnings, &.{});
 
     var preview: SessionPreview = undefined;
@@ -201,4 +202,29 @@ test "lsp worker: what each module's run warned of reaches the server, placed" {
     try testing.expectEqual(@as(usize, 1), parsed.value.len);
     try testing.expectEqualStrings(path, parsed.value[0].module_path);
     try testing.expectEqual(@as(?u32, 3), parsed.value[0].warnings[0].line);
+}
+
+test "lsp worker: a frame the server was given isn't sent again for viewers that have it" {
+    const path = "part.kup";
+    var requests: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer requests.deinit();
+    try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, "cube(2)\n" });
+    for (0..2) |_| try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{@backingInt(Want.new)}, &u32Bytes(path.len), path, URI });
+
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    var in: std.Io.Reader = .fixed(requests.written());
+    var replies: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer replies.deinit();
+    try lsp_worker.serve(testing.io, testing.allocator, &preview, &in, &replies.writer);
+
+    var out: std.Io.Reader = .fixed(replies.written());
+    testing.allocator.free((try lsp_worker.readFrame(&out, testing.allocator)).payload);
+    const first = try lsp_worker.readFrame(&out, testing.allocator);
+    defer testing.allocator.free(first.payload);
+    try testing.expectEqual(@backingInt(OutcomeTag.frame), first.payload[0]);
+    const second = try lsp_worker.readFrame(&out, testing.allocator);
+    defer testing.allocator.free(second.payload);
+    try testing.expectEqualSlices(u8, &.{@backingInt(OutcomeTag.unchanged)}, second.payload);
 }

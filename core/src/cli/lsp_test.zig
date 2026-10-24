@@ -688,6 +688,8 @@ test "LSP: kupcad.setParams and kupcad.preview refuse arguments of another shape
 /// A viewport whose one viewer is the test: the frames sent, kept.
 const Viewers = struct {
     frames: std.ArrayList([]u8) = .empty,
+    /// How many are connected.
+    count: usize = 1,
 
     const VTABLE: Viewport.VTable = .{ .viewers = viewers, .send = send };
 
@@ -695,8 +697,9 @@ const Viewers = struct {
         return .{ .ptr = self, .vtable = &VTABLE, .port = 9001 };
     }
 
-    fn viewers(_: *anyopaque) usize {
-        return 1;
+    fn viewers(ptr: *anyopaque) usize {
+        const self: *Viewers = @ptrCast(@alignCast(ptr));
+        return self.count;
     }
 
     fn send(ptr: *anyopaque, frame: []const u8) anyerror!void {
@@ -784,6 +787,32 @@ test "LSP: a frame the viewers have isn't sent again, unless one asks for it" {
     try testing.expectEqual(@as(usize, 1), viewers.frames.items.len);
     // A viewer just opened asks, and is sent it
     try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try testing.expectEqual(@as(usize, 2), viewers.frames.items.len);
+    try testing.expectEqualSlices(u8, viewers.frames.items[0], viewers.frames.items[1]);
+}
+
+test "LSP: viewers that connect after none was watching are sent the frame, though it didn't change" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.open(MAIN_URI, "cube(2)\n");
+    try server.open(LIB_URI, "x = 1\n");
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), viewers.frames.items.len);
+
+    // They left, and an edit was evaluated without them
+    viewers.count = 0;
+    try server.change(LIB_URI, "x = 2\n");
+    server.settle();
+    // Back: the next evaluation gives them the frame, which nothing changed
+    viewers.count = 1;
+    try server.change(LIB_URI, "x = 3\n");
     server.settle();
     try testing.expectEqual(@as(usize, 2), viewers.frames.items.len);
     try testing.expectEqualSlices(u8, viewers.frames.items[0], viewers.frames.items[1]);

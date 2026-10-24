@@ -22,7 +22,7 @@ fn frameOf(arena: std.mem.Allocator, preview: *SessionPreview, comptime module_p
 }
 
 fn frameFor(arena: std.mem.Allocator, preview: *SessionPreview, of: Target) !Read {
-    const bytes = switch (preview.evaluate(arena, of, true)) {
+    const bytes = switch (preview.evaluate(arena, of, .any)) {
         .frame => |b| b,
         else => return error.TestExpectedFrame,
     };
@@ -57,6 +57,22 @@ test "LSP preview: a document's frame, made by its run and kept while nothing it
     try testing.expect(std.mem.find(u8, flat.body, "<svg") != null);
 }
 
+test "LSP preview: a frame given isn't given again for viewers that have it, unless asked for" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    try preview.update("part.kup", "cube(2)\n");
+    const first = preview.evaluate(a, target("part.kup"), .new).frame;
+    try testing.expectEqual(.unchanged, std.meta.activeTag(preview.evaluate(a, target("part.kup"), .new)));
+    // A viewer asked for it
+    try testing.expectEqualSlices(u8, first, preview.evaluate(a, target("part.kup"), .any).frame);
+    try preview.update("part.kup", "cube(3)\n");
+    try testing.expectEqual(.frame, std.meta.activeTag(preview.evaluate(a, target("part.kup"), .new)));
+}
+
 test "LSP preview: no frame while no viewer watches, and the next one wanted runs the document again" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -64,11 +80,11 @@ test "LSP preview: no frame while no viewer watches, and the next one wanted run
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
     try preview.update("part.kup", "cube(2)\n");
-    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), false)));
+    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), .none)));
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "part.kup")).header.kind);
     // A document closed, that nothing imports, has none
     try preview.remove("part.kup");
-    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), true)));
+    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), .any)));
 }
 
 test "LSP preview: a document that doesn't parse, compile or run says why, and where, in its frame" {
@@ -148,7 +164,7 @@ test "LSP preview: a run a message stopped leaves no frame, and the next run mak
 
     // As the inbox does when a message arrives during the run
     preview.session.vm.cancel_token.store(true, .release);
-    try testing.expectEqual(.cancelled, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), true)));
+    try testing.expectEqual(.cancelled, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), .any)));
     try testing.expect(preview.frame == null);
     preview.session.vm.cancel_token.store(false, .release);
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "part.kup")).header.kind);

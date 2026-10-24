@@ -44,6 +44,19 @@ pub const Outcome = union(enum) {
     cancelled,
     /// The process running it ended (the worker's, which the server replaces).
     crashed,
+    /// The frame is the one last given (nothing the document reads changed), and a new one
+    /// was wanted: the viewers have it.
+    unchanged,
+};
+
+/// What an evaluation's caller wants of the document's frame.
+pub const Want = enum(u8) {
+    /// None: no viewer is watching.
+    none,
+    /// One unless it is the frame last given: the viewers have that one.
+    new,
+    /// The frame, though it was given before: a viewer asked for it.
+    any,
 };
 
 /// The document a preview is of: its path in the project, which the session knows it by, and
@@ -78,7 +91,7 @@ pub const Preview = struct {
         fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
         takeRunWarnings: *const fn (ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings,
-        evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome,
+        evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want: Want) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
         cancelToken: *const fn (ptr: *anyopaque) *std.atomic.Value(bool),
         takeCrash: *const fn (ptr: *anyopaque) ?[]const u8,
@@ -131,10 +144,10 @@ pub const Preview = struct {
     }
 
     /// Runs `target` and the modules it imports, as far as they changed, and gives its frame
-    /// (`nothing` in its place unless `want_frame`: no viewer is watching); `cancelToken`
-    /// stops it.
-    pub fn evaluate(self: Preview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
-        return self.vtable.evaluate(self.ptr, allocator, target, want_frame);
+    /// as `want` says (`nothing` for `none`: no viewer is watching; `unchanged` for `new`,
+    /// when it is the frame last given); `cancelToken` stops it.
+    pub fn evaluate(self: Preview, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
+        return self.vtable.evaluate(self.ptr, allocator, target, want);
     }
 
     /// What a run of `module_path` knows about the value at `node` of its syntax tree, as
@@ -194,6 +207,8 @@ pub const SessionPreview = struct {
         /// The name the frame gives its document.
         uri: []u8,
         bytes: []u8,
+        /// An evaluation gave it: one that wants a new frame isn't given it again.
+        given: bool = false,
     };
 
     const Round = struct {
@@ -375,8 +390,9 @@ pub const SessionPreview = struct {
     /// run, made while the VM held what the run left (`ran`); the last one, when nothing it
     /// reads changed; or why it didn't run, when it or a module it imports doesn't parse or
     /// compile, or a module it imports fails.
-    pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+    pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
         const module_path = target.module_path;
+        const want_frame = want != .none;
         self.useParamsOf(module_path) catch |err| return notEvaluated(module_path, err);
         // The frame is made by a run: the last run made none (no viewer was watching), or
         // was of another document
@@ -395,9 +411,13 @@ pub const SessionPreview = struct {
         if (!want_frame) return .nothing;
         const round = self.round.?;
         if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, target, err, round.last_import);
-        // Of this run, or of the last when nothing it reads changed
-        const frame = self.frame orelse return .nothing;
-        return .{ .frame = allocator.dupe(u8, frame.bytes) catch return .nothing };
+        // Of this run, or of the last when nothing it reads changed: not copied again for
+        // viewers that have it
+        const frame = if (self.frame) |*kept| kept else return .nothing;
+        if (want == .new and frame.given) return .unchanged;
+        const bytes = allocator.dupe(u8, frame.bytes) catch return .nothing;
+        frame.given = true;
+        return .{ .frame = bytes };
     }
 
     fn notEvaluated(module_path: []const u8, err: anyerror) Outcome {
@@ -549,8 +569,8 @@ pub const SessionPreview = struct {
     fn takeRunWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
         return cast(ptr).takeRunWarnings(arena);
     }
-    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
-        return cast(ptr).evaluate(allocator, target, want_frame);
+    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
+        return cast(ptr).evaluate(allocator, target, want);
     }
     fn hoverFactsImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8 {
         return cast(ptr).hoverFacts(allocator, module_path, node);

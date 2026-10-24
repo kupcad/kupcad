@@ -261,11 +261,12 @@ pub const Handler = struct {
     preview_chosen: bool = false,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
-    /// The hash of the last frame the viewers were sent: the same frame (nothing the document
-    /// reads changed) isn't sent again.
+    /// The hash of the last frame the viewers were sent: the same frame (a run that made it
+    /// again) isn't sent again.
     sent_frame: ?u64 = null,
-    /// A viewer asked for the frame (`kupcad.preview`): the next is sent, the same or not.
-    frame_asked: bool = false,
+    /// The viewers may lack the frame: one asked for it (`kupcad.preview`), or there were none
+    /// to send the last to. The next is sent, the same or not.
+    frame_owed: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -344,19 +345,23 @@ pub const Handler = struct {
     }
 
     /// Evaluates the preview and sends the shown document's frame (preview/frame.zig) to the
-    /// viewport, unless the viewers have it already and none asked for it. An edit that
+    /// viewport, unless the viewers have it already (the preview says `unchanged`, or it is
+    /// the frame last sent) and can't lack it. An edit that
     /// arrives meanwhile cancels it (the inbox sets the preview's cancel token).
     pub fn evaluatePreview(self: *Handler) void {
         defer self.tellOfCrash();
         self.preview_pending = false;
         const target = self.previewed orelse return;
         const viewport = if (self.viewport) |v| (if (v.viewers() > 0) v else null) else null;
-        switch (self.preview.evaluate(self.allocator, target, viewport != null)) {
+        // None watching: whoever connects next lacks the frame
+        if (viewport == null) self.frame_owed = true;
+        const want: lsp_preview.Want = if (viewport == null) .none else if (self.frame_owed) .any else .new;
+        switch (self.preview.evaluate(self.allocator, target, want)) {
             .frame => |bytes| {
                 defer self.allocator.free(bytes);
                 self.sendFrame(viewport.?, bytes);
             },
-            .nothing => {},
+            .nothing, .unchanged => {},
             // Stopped by a message: run again once the editor is quiet. The modules it
             // finished stay evaluated, so the next run picks up where it stopped (and
             // tells which files they all read).
@@ -401,17 +406,17 @@ pub const Handler = struct {
         return null;
     }
 
-    /// Gives the viewers `frame`, unless it is the one they were last sent (the document's
-    /// run was kept: nothing it reads changed) and none asked for it.
+    /// Gives the viewers `frame`, unless it is the one they were last sent (a run made the
+    /// same frame again) and they can't lack it (frame_owed).
     fn sendFrame(self: *Handler, viewport: Viewport, frame: []const u8) void {
         const hash = std.hash.Wyhash.hash(0, frame);
-        if (!self.frame_asked and self.sent_frame == hash) return;
+        if (!self.frame_owed and self.sent_frame == hash) return;
         viewport.send(frame) catch |err| {
             logger.warn("Viewport broadcast failed: {}", .{err});
             return;
         };
         self.sent_frame = hash;
-        self.frame_asked = false;
+        self.frame_owed = false;
     }
 
     /// Asks the editor to watch the files the preview's runs read as data (`import_json`,
@@ -712,7 +717,7 @@ pub const Handler = struct {
     fn choosePreview(self: *Handler, arena: std.mem.Allocator, uri: []const u8) !void {
         try self.showDocument(uri, try self.modulePath(arena, uri));
         self.preview_chosen = true;
-        self.frame_asked = true;
+        self.frame_owed = true;
         self.preview_pending = true;
     }
 
