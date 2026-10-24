@@ -164,3 +164,14 @@ test "run report: an error raised in an imported module's code is placed at the 
     try testing.expectEqual(.runtime_error, try run(&uncaught, "import { boom } from \"./boom.kup\"\nx = 1\nboom\n"));
     try testing.expectEqual(@as(u32, 3), uncaught.last_error_position.?.line);
 }
+
+test "run report: a warning or an error in a call is placed at the call, not at its last argument" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    // It was column 23, the colour's
+    try testing.expectEqual(.ok, try run(&vm, "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n"));
+    try testing.expectEqual(run_report.LinePosition{ .line = 3, .column = 1 }, vm.report.warnings.items[0].position.?);
+    vm.resetRunOutput();
+    try testing.expectEqual(.runtime_error, try run(&vm, "x = 1\ny = cube(\"a\")\n"));
+    try testing.expectEqual(run_report.LinePosition{ .line = 2, .column = 5 }, vm.last_error_position.?);
+}

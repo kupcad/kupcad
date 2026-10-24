@@ -1585,6 +1585,10 @@ pub const Compiler = struct {
     fn compileMethodCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const mc = self.tree.methodCall(node);
         const func_name = self.tree.getString(mc.method_name);
+        // Where the call is: its instruction, emitted after its receiver and arguments, is
+        // put back there (callAt), so a run's error or warning in the call is placed at the
+        // call and not at its last argument
+        const call_offset = self.current_source_offset;
 
         // Fast-path: compile `obj.nil?` directly into op_is_nil
         if (std.mem.eql(u8, func_name, "nil?") and mc.receiver != .none) {
@@ -1602,8 +1606,10 @@ pub const Compiler = struct {
                     if (args.len > 1) {
                         // `raise Klass, "msg"` raises Klass.new("msg"); the message was dropped.
                         try self.compileNode(args[1].value);
+                        self.callAt(call_offset);
                         try self.emitInvoke("new", .{ .count = 1 });
                     }
+                    self.callAt(call_offset);
                     try self.emitOp(.op_throw);
                     self.simulatePush(1); // Dead code equilibrium
                     return;
@@ -1616,6 +1622,7 @@ pub const Compiler = struct {
                     // yield calls the method's own block; it cannot hand that block one.
                     if (call.flags.has_block) return error.UnexpectedBlock;
 
+                    self.callAt(call_offset);
                     try self.emitCall(.op_yield, call);
                     self.simulatePop(call.count); // Yield consumes the args
                     self.simulatePush(1); // Yield returns the block's result
@@ -1657,6 +1664,7 @@ pub const Compiler = struct {
         }
 
         const call = try self.compileCallArguments(self.tree.getNamedArgs(mc.args), mc.block);
+        self.callAt(call_offset);
 
         if (mc.receiver == .none) {
             try self.emitCall(.op_call, call);
@@ -1666,6 +1674,11 @@ pub const Compiler = struct {
             try self.emitInvoke(func_name, call);
             if (mc.is_safe) self.patchJump(safe_jump);
         }
+    }
+
+    /// Puts what is emitted next at `offset`, a call's position, after its operands put theirs.
+    fn callAt(self: *Compiler, offset: u32) void {
+        self.current_source_offset = offset;
     }
 
     /// `receiver.name(args)`, the receiver and arguments already on the stack.
@@ -1876,6 +1889,7 @@ pub const Compiler = struct {
 
     fn compileSuperCall(self: *Compiler, node: *const ast.Node) CompileError!void {
         const sc = self.tree.superCall(node);
+        const call_offset = self.current_source_offset;
         if (!self.insideDef()) return self.fail(error.OutsideMethod, "super can only be used inside a def", .{});
         // The method's receiver: in a block, through its self upvalue (slot 0 there is the block).
         try self.emitPushSelf();
@@ -1919,6 +1933,7 @@ pub const Compiler = struct {
             call = try self.compileCallArguments(self.tree.getNamedArgs(sc.args), sc.block);
         }
 
+        self.callAt(call_offset);
         try self.emitCall(.op_super_invoke, call);
 
         // Pop the arguments + the implicit `self` receiver
