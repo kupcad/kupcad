@@ -26,7 +26,10 @@ import { ownMaterials } from './model.js';
 /** @import { Material, Sphere } from 'three' */
 /** @import { Section, SceneModel, Theme } from './types.js' */
 
-/** The order things are drawn in while a section is on: stencil counts, the cap, the model. */
+/**
+ * The order things are drawn in: the stencil counts, the cap where they say the plane is inside
+ * a solid, then the model (always last, the others drawn only while a section is on).
+ */
 export const RENDER_ORDER = { stencil: 1, cap: 1.1, model: 2 };
 /** The axis each section is across, as the direction it cuts away. */
 const AXES = { x: new Vector3(1, 0, 0), y: new Vector3(0, 1, 0), z: new Vector3(0, 0, 1) };
@@ -43,6 +46,13 @@ export class SectionView {
   cap;
   /** The stencil counters added under each solid mesh: taken away with the section. */
   #counters = /** @type {Group[]} */ ([]);
+  /** The model they count for: a section moved over it keeps them. @type {SceneModel | null} */
+  #counted = null;
+  /** The counters' back faces count up, their front faces down; every counter shares these. */
+  #counting = [
+    counterMaterial(BackSide, IncrementWrapStencilOp, this.plane),
+    counterMaterial(FrontSide, DecrementWrapStencilOp, this.plane),
+  ];
 
   /** @param {Theme} theme */
   constructor(theme) {
@@ -60,8 +70,6 @@ export class SectionView {
     this.cap = new Mesh(new PlaneGeometry(1, 1), material);
     this.cap.renderOrder = RENDER_ORDER.cap;
     this.cap.visible = false;
-    // The next frame counts afresh
-    this.cap.onAfterRender = (renderer) => renderer.clearStencil();
   }
 
   /** @param {string} color */
@@ -70,7 +78,9 @@ export class SectionView {
   }
 
   /**
-   * Cuts `model` at `section`, or takes the cut away (null).
+   * Cuts `model` at `section`, or takes the cut away (null). A section moved over the same
+   * model moves the plane alone: its counters stay, and the materials' programs (a material
+   * clipping, or not, is a program of its own), where every move of the offset made them again.
    * @param {Section | null} section
    * @param {SceneModel | null} model
    * @param {Sphere} bounds the model's, which the cap must cover
@@ -79,13 +89,6 @@ export class SectionView {
    *   edges)
    */
   apply(section, model, bounds, { capped, also }) {
-    for (const counters of this.#counters) {
-      counters.removeFromParent();
-      for (const counter of counters.children) {
-        /** @type {Material} */ (/** @type {Mesh} */ (counter).material).dispose();
-      }
-    }
-    this.#counters = [];
     const cut = section && model?.kind === '3d' ? { section, model } : null;
     this.clipping = cut !== null;
     if (cut) {
@@ -95,17 +98,13 @@ export class SectionView {
     }
     this.cap.visible = cut !== null && capped;
     for (const material of [...(model ? ownMaterials(model) : []), ...also]) {
-      material.clippingPlanes = cut ? [this.plane] : null;
+      const clips = material.clippingPlanes !== null && material.clippingPlanes.length > 0;
+      if (clips === this.clipping) continue;
+      material.clippingPlanes = this.clipping ? [this.plane] : null;
       material.needsUpdate = true;
     }
+    this.#count(cut && capped ? cut.model : null);
     if (!cut || !capped) return;
-
-    for (const shape of cut.model.shapes) {
-      if (shape.ghost) continue;
-      const counters = stencilCounters(shape.mesh, this.plane);
-      shape.mesh.add(counters);
-      this.#counters.push(counters);
-    }
     // Centred where the model's centre meets the plane, the cap covers the cut wherever it is
     const size = bounds.radius * CAP_REACH;
     this.cap.scale.set(size, size, 1);
@@ -116,37 +115,52 @@ export class SectionView {
   dispose() {
     this.cap.geometry.dispose();
     /** @type {Material} */ (this.cap.material).dispose();
+    for (const material of this.#counting) material.dispose();
+  }
+
+  /**
+   * Puts the stencil counters under the solid meshes of `model`, or takes them away (null):
+   * the ones there already stay.
+   * @param {SceneModel | null} model
+   */
+  #count(model) {
+    if (model === this.#counted) return;
+    for (const counters of this.#counters) counters.removeFromParent();
+    this.#counters = [];
+    this.#counted = model;
+    for (const shape of model?.shapes ?? []) {
+      if (shape.ghost) continue;
+      const counters = new Group();
+      for (const material of this.#counting) {
+        const counter = new Mesh(shape.mesh.geometry, material);
+        counter.renderOrder = RENDER_ORDER.stencil;
+        counters.add(counter);
+      }
+      shape.mesh.add(counters);
+      this.#counters.push(counters);
+    }
   }
 }
 
 /**
- * Two invisible copies of `mesh`, clipped at `plane`: its back faces counting up in the
- * stencil buffer, its front faces down.
- * @param {Mesh} mesh
+ * The material of a stencil counter, an invisible copy of a solid clipped at `plane`: its
+ * faces on `side` change the count by `op`.
+ * @param {import('three').Side} side
+ * @param {import('three').StencilOp} op
  * @param {Plane} plane
- * @returns {Group}
+ * @returns {MeshBasicMaterial}
  */
-function stencilCounters(mesh, plane) {
-  const counters = new Group();
-  for (const [side, op] of /** @type {const} */ ([
-    [BackSide, IncrementWrapStencilOp],
-    [FrontSide, DecrementWrapStencilOp],
-  ])) {
-    const material = new MeshBasicMaterial({
-      side,
-      clippingPlanes: [plane],
-      depthWrite: false,
-      depthTest: false,
-      colorWrite: false,
-      stencilWrite: true,
-      stencilFunc: AlwaysStencilFunc,
-      stencilFail: op,
-      stencilZFail: op,
-      stencilZPass: op,
-    });
-    const counter = new Mesh(mesh.geometry, material);
-    counter.renderOrder = RENDER_ORDER.stencil;
-    counters.add(counter);
-  }
-  return counters;
+function counterMaterial(side, op, plane) {
+  return new MeshBasicMaterial({
+    side,
+    clippingPlanes: [plane],
+    depthWrite: false,
+    depthTest: false,
+    colorWrite: false,
+    stencilWrite: true,
+    stencilFunc: AlwaysStencilFunc,
+    stencilFail: op,
+    stencilZFail: op,
+    stencilZPass: op,
+  });
 }

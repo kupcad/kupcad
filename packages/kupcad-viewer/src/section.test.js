@@ -1,4 +1,13 @@
-import { Group, LineBasicMaterial, Sphere, Vector3 } from 'three';
+import {
+  BoxGeometry,
+  Color,
+  Group,
+  LineBasicMaterial,
+  Mesh,
+  MeshStandardMaterial,
+  Sphere,
+  Vector3,
+} from 'three';
 import { expect, it } from 'vitest';
 import { SectionView } from './section.js';
 import { LIGHT } from './theme.js';
@@ -49,4 +58,30 @@ it("doesn't cut a drawing, and takes the cut away with the section", () => {
   view.apply(null, SOLIDS, new Sphere(new Vector3(), 10), options);
   expect(view.clipping).toBe(false);
   expect(edges.clippingPlanes).toBeNull();
+});
+
+it("moves the plane alone over the same model: its counters stay, and its materials' programs", () => {
+  const view = new SectionView(LIGHT);
+  const mesh = new Mesh(new BoxGeometry(10, 10, 10), new MeshStandardMaterial());
+  const model = /** @type {SceneModel} */ ({
+    kind: '3d',
+    root: new Group().add(mesh),
+    shapes: [{ mesh, edges: null, part: 'box', ghost: false, color: new Color(), opacity: 1 }],
+    edgeMaterial: new LineBasicMaterial(),
+  });
+  const bounds = new Sphere(new Vector3(), 10);
+  const options = { capped: true, also: [] };
+  view.apply({ axis: 'z', offset: 0 }, model, bounds, options);
+  const counters = [...mesh.children];
+  const version = mesh.material.version;
+  view.apply({ axis: 'z', offset: 3 }, model, bounds, options);
+  expect(mesh.children).toEqual(counters);
+  // A material made to update compiles its program again
+  expect(mesh.material.version).toBe(version);
+  expect(view.cap.position.z).toBe(3);
+  // Cut no more, it stops clipping, once
+  view.apply(null, model, bounds, options);
+  expect(mesh.children).toEqual([]);
+  expect(mesh.material.clippingPlanes).toBeNull();
+  expect(mesh.material.version).toBe(version + 1);
 });
