@@ -13,6 +13,7 @@ const ParamValues = @import("../core/param_values.zig").ParamValues;
 const Header = struct {
     document: ?[]const u8,
     kind: []const u8,
+    warnings: []const struct { message: []const u8, line: ?u32 },
     @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
     params: struct { values: std.json.Value },
 };
@@ -189,4 +190,21 @@ test "LSP preview: each document runs with its own values, and a refused one is 
     try preview.remove("a.kup");
     try preview.update("a.kup", "cube(param(:w, default: 2, validate: { min: 1 }))\n");
     try testing.expectEqual(@as(i64, 2), (try frameOf(arena.allocator(), &preview, "a.kup")).header.params.values.object.get("w").?.integer);
+}
+
+test "LSP preview: each run's warnings are its own, the same on every run" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n";
+    // The second run, edited, finds the Solid built by the first in the result cache
+    for ([_][]const u8{ source, source ++ "\n" }) |edited| {
+        try preview.update("part.kup", edited);
+        const warnings = (try frameOf(arena.allocator(), &preview, "part.kup")).header.warnings;
+        try testing.expectEqual(@as(usize, 1), warnings.len);
+        try testing.expectEqual(@as(?u32, 3), warnings[0].line);
+    }
 }

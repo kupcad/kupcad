@@ -140,6 +140,18 @@ test "preview: Sketches beside Solids, and Solids that are empty, are said in wa
     try testing.expect(std.mem.find(u8, empty.header.warnings[0].message, "empty") != null);
 }
 
+test "preview: a warning the run gave says where" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    // The engine can't keep the material line 3 gives
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\n";
+    const warnings = (try preview(arena.allocator(), source, "")).header.warnings;
+    try testing.expectEqual(@as(usize, 1), warnings.len);
+    try testing.expect(std.mem.find(u8, warnings[0].message, "brep") != null);
+    try testing.expectEqual(@as(?u32, 3), warnings[0].line);
+    try testing.expect(warnings[0].column != null);
+}
+
 test "preview: a document that ends in no model shows its ghosts, or nothing, and no error" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

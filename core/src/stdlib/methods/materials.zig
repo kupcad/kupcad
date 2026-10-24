@@ -51,8 +51,25 @@ pub fn meshMaterial(vm: *VM, receiver: value.Value, args: []const value.Value) !
 
     if (receiver.isCrossSection()) return vm.allocateCrossSection(try vm.dag_builder.addSketchMaterial(receiver.asCrossSection().dag_idx, material_id));
     if (receiver.isPath()) return paths.withMaterial(vm, receiver, material_id);
-    const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    return solidWithMaterial(vm, receiver, material_id);
+}
+
+/// The Solid `solid` tagged with the VM's material `material_id`. An engine that can't keep
+/// materials warns here, where the script gives one, not when the Solid is built: a run
+/// that finds it built already (the session's result cache) would say nothing, and one
+/// that first builds it to export it would say nowhere.
+fn solidWithMaterial(vm: *VM, solid: value.Value, material_id: u32) !value.Value {
+    vm.warnUnsupported(vm.settingsOf(solid).engine, .materials);
+    const new_idx = try vm.dag_builder.addSetMaterial(solid.asGeometry().dag_idx, material_id);
+    return vm.allocateGeometry(.{ .symbolic = new_idx });
+}
+
+/// The Solid `solid` tagged for the viewer to show as `role` (a highlight, a ghost): the
+/// viewer gives it its look.
+fn solidWithRole(vm: *VM, solid: value.Value, role: material.MaterialRole) !value.Value {
+    const material_id: u32 = @intCast(vm.materials.items.len);
+    try vm.materials.append(vm.allocator, .{ .role = role });
+    return solidWithMaterial(vm, solid, material_id);
 }
 
 /// Material factors are fractions: `roughness: 5` used to be accepted as is.
@@ -80,26 +97,14 @@ fn appendToDisplayList(vm: *VM, ghost_geom: value.Value) !void {
 pub fn meshHighlight(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "highlight", receiver);
 
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    // Pure semantic tagging. Let the viewer handle the visuals.
-    try vm.materials.append(vm.allocator, .{ .role = .highlight });
-
-    const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    return solidWithRole(vm, receiver, .highlight);
 }
 
 pub fn meshGhost(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "ghost", receiver);
 
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    // Pure semantic tagging
-    try vm.materials.append(vm.allocator, .{ .role = .ghost });
-
-    const new_idx = try vm.dag_builder.addSetMaterial(receiver.asGeometry().dag_idx, material_id);
-    const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
-
     // Force JIT evaluation and push directly to the standalone display list
-    try appendToDisplayList(vm, ghost_geom);
+    try appendToDisplayList(vm, try solidWithRole(vm, receiver, .ghost));
 
     // The shape itself, unchanged: the ghost is the copy on the display list. It returned
     // nil, so `env = part.ghost` lost the shape it showed.
@@ -113,11 +118,7 @@ pub fn globalHighlight(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     const result = try vm.callClosureSync(try arguments.requireBlock(vm, block, "highlight"), &.{});
     try requireSolidResult(vm, result, "highlight");
 
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    try vm.materials.append(vm.allocator, .{ .role = .highlight });
-
-    const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
-    return try vm.allocateGeometry(.{ .symbolic = new_idx });
+    return solidWithRole(vm, result, .highlight);
 }
 
 /// The block of `highlight { }` or `ghost { }` must give the Solid to show: anything else
@@ -132,13 +133,7 @@ pub fn globalGhost(vm: *VM, block: ?*value.ObjClosure) !value.Value {
     const result = try vm.callClosureSync(try arguments.requireBlock(vm, block, "ghost"), &.{});
     try requireSolidResult(vm, result, "ghost");
 
-    const material_id: u32 = @intCast(vm.materials.items.len);
-    try vm.materials.append(vm.allocator, .{ .role = .ghost });
-
-    const new_idx = try vm.dag_builder.addSetMaterial(result.asGeometry().dag_idx, material_id);
-    const ghost_geom = try vm.allocateGeometry(.{ .symbolic = new_idx });
-
-    try appendToDisplayList(vm, ghost_geom);
+    try appendToDisplayList(vm, try solidWithRole(vm, result, .ghost));
 
     return value.Value.initNil();
 }

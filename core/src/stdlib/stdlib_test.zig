@@ -2092,14 +2092,15 @@ test "Stdlib: a material on a B-Rep part is a warning, given once, not dropped s
     var vm = try initVm();
     defer vm.deinit();
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm, "cube(10).material(color: \"#FF0000\").simplify"));
-    try testing.expect(!vm.warned_features.contains(.materials)); // Manifold keeps materials
+    try testing.expectEqual(@as(usize, 0), vm.report.warnings.items.len); // Manifold keeps materials
 
+    // When the script gives it, whether or not the run builds the part
     try testing.expectEqual(InterpretResult.ok, try runOn(&vm,
         \\CAD.config(engine: :brep)
-        \\a = cube(10).material(color: "#FF0000").simplify
-        \\b = cube(5).material(color: "#00FF00").simplify
+        \\a = cube(10).material(color: "#FF0000")
+        \\b = cube(5).highlight.simplify
     ));
-    try testing.expect(vm.warned_features.contains(.materials));
+    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
 }
 
 test "Stdlib: geometry arguments reject non-number coordinates" {

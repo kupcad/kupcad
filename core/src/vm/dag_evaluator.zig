@@ -542,7 +542,6 @@ fn executeLabel(vm: *VM, v_stack: *IntermediateStack, node: dag.DAGNode) !void {
         .geometry => |solid| {
             if (node.tag == .set_material) {
                 const p = vm.dag_builder.getMaterialPayload(node);
-                vm.warnUnsupported(solid.engine, .materials);
                 return pushSolid(vm, v_stack, node.tag, kernel.setMaterial(solid, p.material_id));
             }
             try pushSolid(vm, v_stack, node.tag, kernel.clone(solid));
