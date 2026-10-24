@@ -52,7 +52,9 @@ it('makes a Viewer on its canvas, in the state its props give, binds the part cl
   const canvas = /** @type {HTMLCanvasElement} */ (container.querySelector('canvas'));
   expect(canvas.getAttribute('aria-label')).toBe('The model');
   for (const type of ['pointerdown', 'pointerup']) {
-    canvas.dispatchEvent(Object.assign(new Event(type), { offsetX: 0.5, offsetY: 0.5 }));
+    canvas.dispatchEvent(
+      Object.assign(new Event(type), { offsetX: 0.5, offsetY: 0.5, isPrimary: true, button: 0 }),
+    );
   }
   expect(selected).toBe('block');
 

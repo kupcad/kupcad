@@ -24,7 +24,7 @@
    * @property {ViewerOptions} [options] what the Viewer is made with (its renderer, Draco's path)
    * @property {string} [label] what the canvas is, for a screen reader
    * @property {(viewer: Viewer) => void} [onmodel] a model is shown: what follows it (its
-   *   bounds) can be read
+   *   bounds) can be read. Not for one a later model replaced before it was shown
    * @property {(error: unknown) => void} [onerror] a model it couldn't show; without it, the
    *   error is thrown on, unhandled
    */
@@ -66,7 +66,9 @@
   $effect(() => {
     const shown = viewer;
     shown?.setModel(model).then(
-      () => onmodel?.(shown),
+      (isShown) => {
+        if (isShown) onmodel?.(shown);
+      },
       (error) => {
         if (!onerror) throw error;
         onerror(error);

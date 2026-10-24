@@ -128,9 +128,11 @@ describe('Viewer', () => {
     viewer.addEventListener('select', (event) => {
       said.push(/** @type {CustomEvent<{ part: string | null }>} */ (event).detail.part);
     });
-    /** @param {string} type @param {number} x @param {number} y */
-    const pointer = (type, x, y) => {
-      canvas.dispatchEvent(Object.assign(new Event(type), { offsetX: x, offsetY: y }));
+    /** @param {string} type @param {number} x @param {number} y @param {number} [button] */
+    const pointer = (type, x, y, button = 0) => {
+      canvas.dispatchEvent(
+        Object.assign(new Event(type), { offsetX: x, offsetY: y, isPrimary: true, button }),
+      );
     };
     pointer('pointerdown', WIDTH / 2, HEIGHT / 2);
     pointer('pointerup', WIDTH / 2 + 1, HEIGHT / 2);
@@ -141,6 +143,10 @@ describe('Viewer', () => {
     expect(said).toEqual(['block']);
     pointer('pointerdown', 5, 5);
     pointer('pointerup', 5, 5);
+    expect(said).toEqual(['block', null]);
+    // The right button pans
+    pointer('pointerdown', WIDTH / 2, HEIGHT / 2, 2);
+    pointer('pointerup', WIDTH / 2, HEIGHT / 2, 2);
     expect(said).toEqual(['block', null]);
   });
 
@@ -278,7 +284,11 @@ describe('Viewer', () => {
       modelOf('cube(1).named("first")'),
       modelOf('cube(1).named("second")'),
     ]);
-    await Promise.all([viewer.setModel(first), viewer.setModel(second)]);
+    // The first is said not to be shown: a host waits for neither in vain
+    expect(await Promise.all([viewer.setModel(first), viewer.setModel(second)])).toEqual([
+      false,
+      true,
+    ]);
     viewer.fit();
     expect(viewer.partAt(WIDTH / 2, HEIGHT / 2)).toBe('second');
   });
@@ -298,6 +308,17 @@ describe('Viewer', () => {
     expect(draco.made - before.made).toBe(1);
     viewer.dispose();
     expect(draco.disposed - before.disposed).toBe(1);
+  });
+
+  it('makes no Draco decoder for a viewer disposed while its module loads', async () => {
+    const { viewer } = viewerOn({ dracoDecoderPath: '/draco/' });
+    const before = { ...draco };
+    const model = await modelOf('cube(1)');
+    const loading = viewer.setModel(model);
+    viewer.dispose();
+    expect(await loading).toBe(false);
+    // One made then would be freed by nobody
+    expect(draco.made - before.made).toBe(0);
   });
 
   it('says why a screenshot failed when the canvas gives no image', async () => {

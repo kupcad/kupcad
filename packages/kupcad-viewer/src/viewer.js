@@ -207,7 +207,8 @@ export class Viewer extends EventTarget {
    * a drawing as the last solid was seen. A selection whose part is gone is dropped, with a
    * 'select' event.
    * @param {Model | null} model
-   * @returns {Promise<void>}
+   * @returns {Promise<boolean>} whether it is shown: not when a later model was asked for
+   *   before it was ready, or the viewer was disposed
    * @throws {ViewerError} for a Draco-compressed model without `dracoDecoderPath`
    */
   async setModel(model) {
@@ -215,7 +216,7 @@ export class Viewer extends EventTarget {
     const built = model ? await this.#build(model) : null;
     if (load !== this.#loads || this.#disposed) {
       if (built) disposeScene(built);
-      return;
+      return false;
     }
     const before = this.#model;
     if (before) {
@@ -250,6 +251,7 @@ export class Viewer extends EventTarget {
     this.#applySection();
     this.#invalidate();
     if (dropped) this.#said(null);
+    return true;
   }
 
   /** @param {RenderMode} mode */
@@ -436,8 +438,11 @@ export class Viewer extends EventTarget {
       const decoderPath = this.#options.dracoDecoderPath;
       if (decoderPath) {
         const { DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js');
-        this.#draco = new DRACOLoader().setDecoderPath(decoderPath);
-        loader.setDRACOLoader(this.#draco);
+        // Disposed while its module loaded: a decoder made now would keep its workers for good
+        if (!this.#disposed) {
+          this.#draco = new DRACOLoader().setDecoderPath(decoderPath);
+          loader.setDRACOLoader(this.#draco);
+        }
       }
       return loader;
     })();
@@ -545,9 +550,13 @@ export class Viewer extends EventTarget {
     this.#renderer.render(this.#scene, this.#camera);
   }
 
-  /** @param {PointerEvent} event */
+  /**
+   * A click selects with the main button of the first pointer: the others pan and zoom.
+   * @param {PointerEvent} event
+   */
   #pointerDown(event) {
-    this.#down = { x: event.offsetX, y: event.offsetY };
+    this.#down =
+      event.isPrimary && event.button === 0 ? { x: event.offsetX, y: event.offsetY } : null;
   }
 
   /** @param {PointerEvent} event */

@@ -8,11 +8,13 @@ and part picking. A class any host can own, and a Svelte component around it.
 import { Viewer, DARK } from '@kupcad/viewer';
 
 const viewer = new Viewer(canvas, { theme: DARK, environment: 'grid' });
-await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a preview frame
+await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a preview frame; false
+// when a model asked for later replaced it before it was shown
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
 viewer.setCamera({ projection: 'orthographic', view: 'front' }); // frames the model from there
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
-viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click, or null
+viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click (the main
+// button; the others pan and zoom), or null
 viewer.select('bolt'); // tints every copy of the part
 viewer.bounds; // { min, max } in mm: what a section's offset ranges over
 const png = await viewer.screenshot();
@@ -45,9 +47,9 @@ const png = await viewer.screenshot();
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
   `--vscode-*` variables).
 
-The component's canvas is named for a screen reader by `label` ("The model" by default). Without
-`onerror`, a model it can't show is an unhandled rejection; an error of `onmodel`'s is never
-passed to `onerror`.
+The component's canvas is named for a screen reader by `label` ("The model" by default). `onmodel` is called for each model shown, not for one a later model replaced before it
+was. Without `onerror`, a model it can't show is an unhandled rejection; an error of `onmodel`'s
+is never passed to `onerror`.
 
 A host's tests that mount the viewer under jsdom add `@kupcad/viewer/testing` to Vitest's
 `setupFiles`: what jsdom lacks of a browser and the viewer uses. Its `stubRenderer()` draws in
