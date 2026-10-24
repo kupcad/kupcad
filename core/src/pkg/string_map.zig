@@ -29,10 +29,5 @@ pub fn putOwned(allocator: std.mem.Allocator, map: *StringMap, key: []const u8, 
 
 /// Frees every key and value of `map`, then the map.
 pub fn deinitOwned(allocator: std.mem.Allocator, map: *StringMap) void {
-    var it = map.iterator();
-    while (it.next()) |entry| {
-        allocator.free(entry.key_ptr.*);
-        allocator.free(entry.value_ptr.*);
-    }
-    map.deinit();
+    owned_keys.deinit(map, allocator, .owned);
 }

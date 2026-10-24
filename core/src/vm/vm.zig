@@ -404,12 +404,7 @@ pub const VM = struct {
         self.module_namespaces.deinit(self.allocator);
         for (self.owned_global_keys.items) |key| self.allocator.free(key);
         self.owned_global_keys.deinit(self.allocator);
-        var cached_modules = self.modules.iterator();
-        while (cached_modules.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.modules.deinit(self.allocator);
+        owned_keys.deinit(&self.modules, self.allocator, .owned);
         self.strings.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
         self.frames.deinit(self.allocator);
@@ -1474,11 +1469,7 @@ pub const VM = struct {
     /// Drops the module imported from `path`, so the next import of it runs its new
     /// source (the session, when that file was edited).
     pub fn forgetModule(self: *VM, path: []const u8) void {
-        if (self.modules.fetchRemove(path)) |kv| {
-            self.allocator.free(kv.key);
-            var cached = kv.value;
-            cached.deinit(self.allocator);
-        }
+        if (self.modules.fetchRemove(path)) |kv| owned_keys.freeEntry(self.allocator, kv, .owned);
     }
 
     /// Declares a parameter for this run (`param(...)`, or an import from the cache declaring

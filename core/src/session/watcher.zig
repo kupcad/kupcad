@@ -58,9 +58,7 @@ pub const Watcher = struct {
     pub fn deinit(self: *Watcher) void {
         const allocator = self.session.allocator;
         self.mtimes.deinit(allocator);
-        var paths = self.data_mtimes.keyIterator();
-        while (paths.next()) |path| allocator.free(path.*);
-        self.data_mtimes.deinit(allocator);
+        owned_keys.deinit(&self.data_mtimes, allocator, .borrowed);
     }
 
     /// Builds (or rebuilds) the workspace and reports how it went; false when it failed.

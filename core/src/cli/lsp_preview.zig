@@ -209,12 +209,7 @@ pub const SessionPreview = struct {
     pub fn deinit(self: *SessionPreview) void {
         self.dropHover();
         self.dropFrame();
-        var params = self.params.iterator();
-        while (params.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.params.deinit(self.allocator);
+        owned_keys.deinit(&self.params, self.allocator, .owned);
         self.session.deinit();
         self.documents.deinit();
         if (self.workspace_dir) |d| d.close(self.io);
@@ -260,11 +255,7 @@ pub const SessionPreview = struct {
     pub fn remove(self: *SessionPreview, module_path: []const u8) !void {
         self.dropHover();
         if (self.keepsFrameOf(module_path)) self.dropFrame();
-        if (self.params.fetchRemove(module_path)) |kv| {
-            self.allocator.free(kv.key);
-            var values = kv.value;
-            values.deinit(self.allocator);
-        }
+        if (self.params.fetchRemove(module_path)) |kv| owned_keys.freeEntry(self.allocator, kv, .owned);
         try self.session.removeModule(module_path);
         _ = self.documents.deleteFile(module_path);
         try self.session.loadImports();

@@ -17,3 +17,40 @@ pub fn getOrPutOwned(map: anytype, allocator: std.mem.Allocator, key: []const u8
     }
     return gop;
 }
+
+/// What a map owns besides its keys.
+pub const Values = enum {
+    /// Nothing: numbers, Values the GC keeps.
+    borrowed,
+    /// Each value: a slice is freed, a struct deinited with the allocator.
+    owned,
+};
+
+/// Frees what `map` owns, its keys and, as `values` says, its values, and the map: a
+/// managed or unmanaged string hash map, or a string array hash map.
+pub fn deinit(map: anytype, allocator: std.mem.Allocator, comptime values: Values) void {
+    var it = map.iterator();
+    while (it.next()) |entry| {
+        allocator.free(entry.key_ptr.*);
+        if (values == .owned) freeValue(allocator, entry.value_ptr);
+    }
+    if (@hasField(@TypeOf(map.*), "unmanaged")) map.deinit() else map.deinit(allocator);
+}
+
+/// Frees what the entry `kv`, taken out of such a map (`fetchRemove`, `fetchSwapRemove`),
+/// owned: its key and, as `values` says, its value.
+pub fn freeEntry(allocator: std.mem.Allocator, kv: anytype, comptime values: Values) void {
+    allocator.free(kv.key);
+    var v = kv.value;
+    if (values == .owned) freeValue(allocator, &v);
+}
+
+fn freeValue(allocator: std.mem.Allocator, v: anytype) void {
+    const V = @TypeOf(v.*);
+    switch (@typeInfo(V)) {
+        .pointer => |p| if (p.size == .slice) return allocator.free(v.*),
+        .@"struct" => if (@hasDecl(V, "deinit")) return v.deinit(allocator),
+        else => {},
+    }
+    @compileError("an owned value is a slice or has a pub deinit(allocator), not " ++ @typeName(V));
+}

@@ -178,9 +178,7 @@ pub const Namespace = struct {
     }
 
     pub fn deinit(self: *Namespace, allocator: std.mem.Allocator) void {
-        var it = self.globals.keyIterator();
-        while (it.next()) |key| allocator.free(key.*);
-        self.globals.deinit(allocator);
+        owned_keys.deinit(&self.globals, allocator, .borrowed);
     }
 };
 

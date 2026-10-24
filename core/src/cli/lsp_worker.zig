@@ -335,18 +335,8 @@ pub const WorkerPreview = struct {
             self.allocator.destroy(w);
             self.worker = null;
         }
-        var it = self.documents.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.documents.deinit(self.allocator);
-        var params = self.params.iterator();
-        while (params.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            self.allocator.free(entry.value_ptr.*);
-        }
-        self.params.deinit(self.allocator);
+        owned_keys.deinit(&self.documents, self.allocator, .owned);
+        owned_keys.deinit(&self.params, self.allocator, .owned);
         if (self.root) |r| self.allocator.free(r);
         self.crash.deinit(self.allocator);
     }
@@ -402,14 +392,8 @@ pub const WorkerPreview = struct {
     }
 
     pub fn remove(self: *WorkerPreview, module_path: []const u8) !void {
-        if (self.documents.fetchSwapRemove(module_path)) |kv| {
-            self.allocator.free(kv.key);
-            self.allocator.free(kv.value);
-        }
-        if (self.params.fetchRemove(module_path)) |kv| {
-            self.allocator.free(kv.key);
-            self.allocator.free(kv.value);
-        }
+        if (self.documents.fetchSwapRemove(module_path)) |kv| owned_keys.freeEntry(self.allocator, kv, .owned);
+        if (self.params.fetchRemove(module_path)) |kv| owned_keys.freeEntry(self.allocator, kv, .owned);
         if (self.worker) |w| self.tell(w, module_path, .remove, &.{module_path}) catch {};
     }
 
