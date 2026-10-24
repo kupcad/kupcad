@@ -32,6 +32,8 @@ const RULES = [_]Rule{
     .{ .path = "exporters/xml.zig", .may_import = &.{"exporters/diagnostic.zig"} },
     .{ .path = "pkg/", .may_import = &.{ "pkg/", "core/", "vfs/", "log.zig" } },
     .{ .path = "tools/", .may_import = &.{ "tools/", "core/", "frontend/", "kernel/", "stdlib/", "vm/", "compiler/" } },
+    // The preview frame (frame.zig) and its making from a run
+    .{ .path = "preview/", .may_import = &.{ "preview/", "core/", "frontend/", "vm/", "kernel/", "exporters/", "tools/doc/" } },
     .{ .path = "session/", .may_import = &.{ "session/", "core/", "frontend/", "compiler/", "vm/", "kernel/", "stdlib/", "vfs/", "api.zig" } },
 };
 

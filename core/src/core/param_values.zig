@@ -1,7 +1,8 @@
 //! The values a host gives a script's parameters (`param(:name, default: ...)`): `kupcad
 //! build -p name=text` and `-P file.json`, the API's BuildOptions, wasm's build. `ParamValues`
 //! holds them by name; the VM receives them in its `params` Map (api.injectParams), and
-//! `param()` reads each by the type its default declares.
+//! `param()` reads each by the type its default declares. A preview frame gives the values a
+//! run took back as the same JSON (`jsonStringify`, the inverse of `putJson`).
 
 const std = @import("std");
 const json_input = @import("json_input.zig");
@@ -47,6 +48,21 @@ pub const ParamValues = struct {
             };
         }
         gop.value_ptr.* = owned;
+    }
+
+    /// The values as the JSON object putJson reads: names to numbers, booleans and strings,
+    /// in their order.
+    pub fn jsonStringify(self: ParamValues, jw: *std.json.Stringify) !void {
+        try jw.beginObject();
+        for (self.map.keys(), self.map.values()) |name, v| {
+            try jw.objectField(name);
+            switch (v) {
+                .number => |n| try jw.write(n),
+                .boolean => |b| try jw.write(b),
+                .text => |t| try jw.write(t),
+            }
+        }
+        try jw.endObject();
     }
 
     /// Sets the parameters a JSON object of names and values gives (a `-P` file), over any

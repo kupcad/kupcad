@@ -84,3 +84,22 @@ test "ParamValues: refusing a file frees what it had set" {
     defer if (why) |w| testing.allocator.free(w);
     try testing.expectError(error.InvalidParams, values.putJson(testing.allocator, "{\"a\": \"text\", \"b\": [1]}", &why));
 }
+
+test "ParamValues: written as JSON, they read back the same, in their order" {
+    var values: ParamValues = .{};
+    defer values.deinit(testing.allocator);
+    try values.put(testing.allocator, "width", .{ .number = 12.5 });
+    try values.put(testing.allocator, "hollow", .{ .boolean = true });
+    try values.put(testing.allocator, "material", .{ .text = "PETG \"pro\"" });
+    const text = try std.json.Stringify.valueAlloc(testing.allocator, values, .{});
+    defer testing.allocator.free(text);
+    try testing.expectEqualStrings("{\"width\":12.5,\"hollow\":true,\"material\":\"PETG \\\"pro\\\"\"}", text);
+
+    var back: ParamValues = .{};
+    defer back.deinit(testing.allocator);
+    var why: ?[]u8 = null;
+    try back.putJson(testing.allocator, text, &why);
+    try testing.expectEqual(values.map.count(), back.map.count());
+    for (values.map.keys(), back.map.keys()) |a, b| try testing.expectEqualStrings(a, b);
+    try testing.expectEqualStrings("PETG \"pro\"", back.map.get("material").?.text);
+}

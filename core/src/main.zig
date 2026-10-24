@@ -1,8 +1,8 @@
 //! The `kupcad` executable: dispatches the first argument to a subcommand from `COMMANDS`
-//! (build, watch, check, fmt, doc, pkg, lsp, dev) and answers `--help` and `--version`.
+//! (build, watch, check, fmt, doc, pkg, lsp, dev, version) and answers `--help` and
+//! `--version`.
 
 const std = @import("std");
-const build_info = @import("build_info");
 const build_cmd = @import("cli/build_cmd.zig");
 const fmt_cmd = @import("cli/fmt.zig");
 const check_cmd = @import("cli/check.zig");
@@ -12,6 +12,7 @@ const pkg_cmd = @import("cli/pkg_cmd.zig");
 const dev_cmd = @import("cli/dev.zig");
 const watch_cmd = @import("cli/watch.zig");
 const run_cmd = @import("cli/run_cmd.zig");
+const version_cmd = @import("cli/version_cmd.zig");
 const outcome_mod = @import("cli/outcome.zig");
 const Outcome = outcome_mod.Outcome;
 const log_helpers = @import("log.zig");
@@ -43,22 +44,21 @@ pub const COMMANDS = [_]Command{
     .{ .name = "pkg", .summary = "Manage dependencies (init, add, install, prune, doctor)", .usage = pkg_cmd.USAGE, .run = pkg_cmd.execute },
     .{ .name = "lsp", .summary = "Start the Language Server over stdio", .usage = lsp_cmd.USAGE, .run = runLsp },
     .{ .name = "dev", .summary = "Developer tools and compiler debugging utilities", .usage = dev_cmd.USAGE, .run = dev_cmd.execute },
+    .{ .name = "version", .summary = "Show the version (--json: with the protocol and platform)", .usage = version_cmd.USAGE, .run = version_cmd.execute },
 };
 
 pub const USAGE = blk: {
     var text: []const u8 = "Usage: kupcad <command> [options]\n\nCommands:\n";
-    for (COMMANDS) |c| text = text ++ std.fmt.comptimePrint("  {s: <6} {s}\n", .{ c.name, c.summary });
+    for (COMMANDS) |c| text = text ++ std.fmt.comptimePrint("  {s: <7} {s}\n", .{ c.name, c.summary });
     break :blk text ++ "\nOptions:\n  -h, --help     Show this help\n  -V, --version  Show the kupcad version\n\nRun 'kupcad <command> --help' for a command's options.\n";
 };
-
-pub const VERSION_TEXT = "kupcad " ++ build_info.version ++ "\n";
 
 const GlobalFlag = enum { help, version };
 
 fn globalFlag(arg: []const u8) ?GlobalFlag {
     const flags = [_]struct { []const u8, GlobalFlag }{
         .{ "-h", .help },    .{ "--help", .help },       .{ "help", .help },
-        .{ "-V", .version }, .{ "--version", .version }, .{ "version", .version },
+        .{ "-V", .version }, .{ "--version", .version },
     };
     for (flags) |f| if (std.mem.eql(u8, arg, f[0])) return f[1];
     return null;
@@ -97,7 +97,7 @@ fn dispatch(init: std.process.Init) !Outcome {
     if (globalFlag(name)) |flag| {
         log_helpers.printStdout(init.io, "{s}", .{switch (flag) {
             .help => USAGE,
-            .version => VERSION_TEXT,
+            .version => version_cmd.TEXT,
         }});
         return .success;
     }
@@ -122,4 +122,5 @@ test {
     _ = @import("cli/lsp_test.zig");
     _ = @import("cli/lsp_inbox_test.zig");
     _ = @import("cli/lsp_worker_test.zig");
+    _ = @import("cli/version_cmd_test.zig");
 }

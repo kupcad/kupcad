@@ -28,10 +28,12 @@ const viewport_ws = @import("viewport_ws.zig");
 const ViewportWsServer = viewport_ws.ViewportWsServer;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
+const preview_frame = @import("../preview/frame.zig");
 
 const logger = std.log.scoped(.lsp);
 
-/// Custom notification telling the editor where the viewport WebSocket listens.
+/// Custom notification telling the editor where the viewport WebSocket listens, and which
+/// version of the protocol its frames are (preview/frame.zig): `ViewportReady`.
 pub const VIEWPORT_READY_NOTIFICATION = "kupcad/viewportReady";
 /// Environment variable overriding the preferred viewport port ("0" = always ephemeral).
 pub const VIEWPORT_PORT_ENV = "KUPCAD_VIEWPORT_PORT";
@@ -139,6 +141,13 @@ pub fn globEscaped(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     };
     return out.toOwnedSlice(allocator);
 }
+
+/// `kupcad/viewportReady`'s params: the port the viewport socket bound, and the protocol
+/// version of what it sends.
+pub const ViewportReady = struct {
+    port: u16,
+    protocolVersion: u32 = preview_frame.PROTOCOL_VERSION,
+};
 
 /// A diagnostic as `textDocument/publishDiagnostics` sends it.
 const PublishedDiagnostic = struct {
@@ -432,8 +441,7 @@ pub const Handler = struct {
         // Tell the editor which port the viewport actually bound (it may be ephemeral), so the
         // extension never has to hard-code it. Sent after `initialized` per LSP lifecycle rules.
         const ws = self.ws_server orelse return;
-        const Params = struct { port: u16 };
-        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, Params, .{ .port = ws.port }, .{}) catch |err| {
+        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, ViewportReady, .{ .port = ws.port }, .{}) catch |err| {
             logger.warn("Failed to announce viewport port: {}", .{err});
         };
     }

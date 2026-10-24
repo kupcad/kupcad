@@ -588,3 +588,19 @@ test "LSP: a module a document imports, changed on disk while not open, updates 
     try testing.expect(server.handler.preview_pending);
     try testing.expect(server.preview.session.workspace.path_to_id.get("hw.kup") == null);
 }
+
+test "LSP: viewportReady gives the socket's port and the protocol version of its frames" {
+    var ws = try @import("viewport_ws.zig").ViewportWsServer.init(testing.allocator, testing.io, 0);
+    defer ws.deinit();
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    server.handler.ws_server = &ws;
+    server.handler.initialized(server.arena.allocator(), .{});
+    const Notification = struct { method: []const u8, params: @import("lsp.zig").ViewportReady };
+    const parsed = try std.json.parseFromSlice(Notification, testing.allocator, server.outbox.last(), .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    try testing.expectEqualStrings(@import("lsp.zig").VIEWPORT_READY_NOTIFICATION, parsed.value.method);
+    try testing.expectEqual(ws.port, parsed.value.params.port);
+    try testing.expectEqual(@import("../preview/frame.zig").PROTOCOL_VERSION, parsed.value.params.protocolVersion);
+}
