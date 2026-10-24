@@ -821,3 +821,21 @@ test "ScriptSession: an import runs with the default settings, not its importer'
     const main_id = session.workspace.path_to_id.get("main.kup").?;
     try testing.expectEqual(.manifold, session.nodes.items[@backingInt(main_id)].cached_handle.?.engine);
 }
+
+test "ScriptSession: a module's run's warnings are kept with it, until its next run" {
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    session.vm.mute_errors = true; // the engine's warning would print to the test log
+    const id = try session.workspace.addModule("part.kup", "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+    const node = &session.nodes.items[@backingInt(id)];
+    try testing.expectEqual(@as(usize, 1), node.warnings.items.len);
+    try testing.expectEqual(@as(u32, 3), node.warnings.items[0].position.?.line);
+
+    try session.workspace.updateModuleSource(id, "cube(1)\n");
+    try session.markFileEdited("part.kup");
+    try session.evaluateWorkspace();
+    try testing.expectEqual(@as(usize, 0), node.warnings.items.len);
+}

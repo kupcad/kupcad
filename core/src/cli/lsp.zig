@@ -29,6 +29,7 @@ const ViewportWsServer = viewport_ws.ViewportWsServer;
 const project_config = @import("config.zig");
 const ProjectConfig = project_config.ProjectConfig;
 const preview_frame = @import("../preview/frame.zig");
+const FrameWarning = preview_frame.Warning;
 
 const logger = std.log.scoped(.lsp);
 
@@ -73,8 +74,34 @@ pub const DocumentBuffer = struct {
     module_path: []const u8,
     source: []const u8,
     doc: ?api.Document = null,
+    /// What its last run warned of (Preview.runWarnings), each message owned, shown beside
+    /// its lint findings until an edit moves the lines they are on.
+    run_warnings: []FrameWarning = &.{},
+
+    /// Takes a copy of `warnings` as its run's, in place of the last.
+    fn setRunWarnings(self: *DocumentBuffer, allocator: std.mem.Allocator, warnings: []const FrameWarning) !void {
+        const copy = try allocator.alloc(FrameWarning, warnings.len);
+        var copied: usize = 0;
+        errdefer {
+            for (copy[0..copied]) |w| allocator.free(w.message);
+            allocator.free(copy);
+        }
+        for (copy, warnings) |*to, from| {
+            to.* = .{ .message = try allocator.dupe(u8, from.message), .line = from.line, .column = from.column };
+            copied += 1;
+        }
+        self.forgetRunWarnings(allocator);
+        self.run_warnings = copy;
+    }
+
+    fn forgetRunWarnings(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
+        for (self.run_warnings) |w| allocator.free(w.message);
+        allocator.free(self.run_warnings);
+        self.run_warnings = &.{};
+    }
 
     pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
+        self.forgetRunWarnings(allocator);
         allocator.free(self.uri);
         allocator.free(self.module_path);
         allocator.free(self.source);
@@ -348,6 +375,37 @@ pub const Handler = struct {
             .crashed => return,
         }
         self.watchFilesRead();
+        self.showRunWarnings();
+    }
+
+    /// Shows what the runs warned of on the open documents they are of: a document whose
+    /// warnings changed has its diagnostics published again, its lint findings with them.
+    fn showRunWarnings(self: *Handler) void {
+        var arena_state = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+        const modules = self.preview.runWarnings(arena) catch |err| {
+            logger.warn("Could not read what the runs warned of: {}", .{err});
+            return;
+        };
+        for (modules) |module| {
+            const buf = self.bufferOf(module.module_path) orelse continue;
+            if (sameWarnings(buf.run_warnings, module.warnings)) continue;
+            buf.setRunWarnings(self.allocator, module.warnings) catch |err| {
+                logger.warn("Could not keep what {s} warned of: {}", .{ module.module_path, err });
+                continue;
+            };
+            self.runDiagnostics(arena, buf) catch |err| logger.warn("Could not publish {s}'s diagnostics: {}", .{ buf.uri, err });
+        }
+    }
+
+    /// The open document the session knows as `module_path`, if one is.
+    fn bufferOf(self: *Handler, module_path: []const u8) ?*DocumentBuffer {
+        var buffers = self.files.valueIterator();
+        while (buffers.next()) |buf| {
+            if (std.mem.eql(u8, buf.module_path, module_path)) return buf;
+        }
+        return null;
     }
 
     /// Gives the viewers `frame`, unless it is the one they were last sent (the document's
@@ -589,6 +647,8 @@ pub const Handler = struct {
                     if (self.files.getPtr(params.textDocument.uri)) |buf| {
                         self.allocator.free(buf.source);
                         if (buf.doc) |*d| d.deinit();
+                        // Its lines moved: its next run says what it warns of now
+                        buf.forgetRunWarnings(self.allocator);
 
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
@@ -1036,7 +1096,7 @@ pub const Handler = struct {
 
     /// Publishes the diagnostics of `buf`, from the document parsed when it arrived (every
     /// request reads that one; the linter used to parse the text again, and each request
-    /// built its own line index).
+    /// built its own line index): its lint findings, and what its last run warned of.
     fn runDiagnostics(self: *Handler, arena: std.mem.Allocator, buf: *const DocumentBuffer) !void {
         const doc = &(buf.doc orelse return);
         const config = self.projectConfig(arena, buf.uri);
@@ -1068,6 +1128,19 @@ pub const Handler = struct {
                 .message = d.message,
                 .source = "kupcad",
                 .code = d.code(),
+            });
+        }
+        // A warning is placed from its call to the end of that line; one with no place (the
+        // model was being meshed) is the viewer's to show
+        for (buf.run_warnings) |w| {
+            const line = w.line orelse continue;
+            const start = line_index.offsetOf(line, w.column orelse 1) orelse continue;
+            const end = line_index.offsetOf(line, std.math.maxInt(u32)) orelse continue;
+            try lsp_diags.append(arena, .{
+                .range = .{ .start = self.lspPosition(line_index, start), .end = self.lspPosition(line_index, end) },
+                .severity = 2,
+                .message = w.message,
+                .source = "kupcad",
             });
         }
         try self.publishDiagnostics(arena, buf.uri, lsp_diags.items);
@@ -1109,6 +1182,15 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
     if (builtin.target.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
     return path;
+}
+
+/// Whether two runs warned of the same, at the same places.
+fn sameWarnings(a: []const FrameWarning, b: []const FrameWarning) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (!std.mem.eql(u8, x.message, y.message) or x.line != y.line or x.column != y.column) return false;
+    }
+    return true;
 }
 
 /// What a `kupcad.setParams` is given: the document's URI, and its values.

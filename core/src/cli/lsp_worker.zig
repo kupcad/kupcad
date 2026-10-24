@@ -17,6 +17,7 @@ const freeFiles = lsp_preview.freeFiles;
 const SessionPreview = lsp_preview.SessionPreview;
 const Outcome = lsp_preview.Outcome;
 const Target = lsp_preview.Target;
+const ModuleWarnings = lsp_preview.ModuleWarnings;
 const OutcomeTag = std.meta.Tag(Outcome);
 
 const logger = std.log.scoped(.lsp);
@@ -49,7 +50,8 @@ pub const Kind = enum(u8) {
     /// To set_root, update, remove and set_params: u8 0 (done) or 1 (failed). To evaluate:
     /// u8 the outcome's tag, then the preview frame's bytes for a frame. To hover: u8 0
     /// (doesn't compile) or 1, then the facts. To file_changed: u8 1 when a module read the
-    /// file, else 0 (failed too). To files_read: the paths, PATH_SEPARATOR between them.
+    /// file, else 0 (failed too). To files_read: the paths, PATH_SEPARATOR between them. To
+    /// run_warnings: the modules' warnings as JSON (`[]ModuleWarnings`).
     reply,
     // Added after the first kinds, whose values stay as they were.
     /// path: a file changed on disk.
@@ -58,6 +60,8 @@ pub const Kind = enum(u8) {
     files_read,
     /// u32 path length, path, the values as a JSON object (ParamValues.jsonStringify).
     set_params,
+    /// (empty) What each module's last run warned of.
+    run_warnings,
     _,
 };
 
@@ -183,6 +187,12 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
             const joined = try joinPaths(allocator, files);
             defer allocator.free(joined);
             try writeFrame(output, .reply, &.{joined});
+        },
+        .run_warnings => {
+            var arena = std.heap.ArenaAllocator.init(allocator);
+            defer arena.deinit();
+            const json = try std.json.Stringify.valueAlloc(arena.allocator(), try preview.runWarnings(arena.allocator()), .{});
+            try writeFrame(output, .reply, &.{json});
         },
         .evaluate => {
             if (frame.payload.len < 1) return error.BadFrame;
@@ -349,6 +359,7 @@ pub const WorkerPreview = struct {
             .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
+            .runWarnings = runWarningsImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -427,6 +438,17 @@ pub const WorkerPreview = struct {
         };
         defer self.allocator.free(reply.payload);
         return splitPaths(allocator, reply.payload);
+    }
+
+    /// None while no worker runs: a new one has run nothing yet.
+    pub fn runWarnings(self: *WorkerPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+        const w = self.worker orelse return &.{};
+        const reply = self.request(w, .run_warnings, &.{}) catch |err| {
+            _ = self.ended(w, err, "what the runs warned of");
+            return &.{};
+        };
+        defer self.allocator.free(reply.payload);
+        return std.json.parseFromSliceLeaky([]const ModuleWarnings, arena, reply.payload, .{ .allocate = .alloc_always });
     }
 
     pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
@@ -562,6 +584,9 @@ pub const WorkerPreview = struct {
     }
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
+    }
+    fn runWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
+        return cast(ptr).runWarnings(arena);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
         return cast(ptr).evaluate(allocator, target, want_frame);

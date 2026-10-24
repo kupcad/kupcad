@@ -1,5 +1,6 @@
-//! Where the language server runs scripts: the preview of the last edited document, whose
-//! frame (preview/frame.zig) the viewport shows, and the run its hovers read values from.
+//! Where the language server runs scripts: the preview of the document the viewport shows,
+//! its frame (preview/frame.zig), what each module's run warned of, and the run its hovers
+//! read values from.
 //! `Preview` is what the handler (lsp.zig) calls. `SessionPreview` does the work in this
 //! process, over a `ScriptSession`; the server runs it in a worker process (lsp_worker.zig),
 //! so a run that crashes (an abort in the C++ kernel, which no Zig code can catch) ends the
@@ -25,6 +26,7 @@ const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ParamValues = api.ParamValues;
+const FrameWarning = @import("../preview/frame.zig").Warning;
 
 const logger = std.log.scoped(.lsp);
 /// What a document runs with before kupcad.setParams gives it values: its defaults.
@@ -51,6 +53,13 @@ pub const Target = struct {
     uri: []const u8,
 };
 
+/// What a module's last run warned of: its path in the project, and each warning, placed as
+/// a frame places them (the module's own lines). JSON as the worker sends it.
+pub const ModuleWarnings = struct {
+    module_path: []const u8,
+    warnings: []const FrameWarning,
+};
+
 /// Frees what Preview.filesRead gave.
 pub fn freeFiles(allocator: std.mem.Allocator, files: []const []u8) void {
     for (files) |path| allocator.free(path);
@@ -68,6 +77,7 @@ pub const Preview = struct {
         setParams: *const fn (ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void,
         fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
+        runWarnings: *const fn (ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings,
         evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
         cancelToken: *const fn (ptr: *anyopaque) *std.atomic.Value(bool),
@@ -109,6 +119,12 @@ pub const Preview = struct {
     /// to watch.
     pub fn filesRead(self: Preview, allocator: std.mem.Allocator) ![][]u8 {
         return self.vtable.filesRead(self.ptr, allocator);
+    }
+
+    /// What each module that ran warned of in its last run (none, for one that warned of
+    /// nothing), owned by `arena`: the editor shows an open document's as diagnostics.
+    pub fn runWarnings(self: Preview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+        return self.vtable.runWarnings(self.ptr, arena);
     }
 
     /// Runs `target` and the modules it imports, as far as they changed, and gives its frame
@@ -223,6 +239,7 @@ pub const SessionPreview = struct {
             .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
+            .runWarnings = runWarningsImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -305,6 +322,21 @@ pub const SessionPreview = struct {
         _ = try self.session.workspace.upsertModule(path, source);
         try self.session.loadImports();
         try self.session.markFileEdited(path);
+    }
+
+    pub fn runWarnings(self: *SessionPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+        const ws = &self.session.workspace;
+        const modules = try arena.alloc(ModuleWarnings, self.session.nodes.items.len);
+        for (modules, ws.modules.items[0..modules.len], self.session.nodes.items) |*out, module, node| {
+            const warnings = try arena.alloc(FrameWarning, node.warnings.items.len);
+            for (warnings, node.warnings.items) |*placed, w| placed.* = .{
+                .message = try arena.dupe(u8, w.message),
+                .line = if (w.position) |p| p.line else null,
+                .column = if (w.position) |p| p.column else null,
+            };
+            out.* = .{ .module_path = try arena.dupe(u8, module.path), .warnings = warnings };
+        }
+        return modules;
     }
 
     pub fn filesRead(self: *SessionPreview, allocator: std.mem.Allocator) ![][]u8 {
@@ -501,6 +533,9 @@ pub const SessionPreview = struct {
     }
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
+    }
+    fn runWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
+        return cast(ptr).runWarnings(arena);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
         return cast(ptr).evaluate(allocator, target, want_frame);

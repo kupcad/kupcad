@@ -67,6 +67,15 @@ pub const LineIndex = struct {
         return .{ .line = self.getLine(offset) + 1, .column = self.getUtf8Column(offset) + 1 };
     }
 
+    /// The offset of the place `humanPosition` gives as `line` and `column` (1-based, a UTF-8
+    /// column), the column held to its line's text; null for a line the source hasn't.
+    pub fn offsetOf(self: *const LineIndex, line: u32, column: u32) ?u32 {
+        if (line == 0 or line > self.line_starts.len) return null;
+        const text = self.lineText(self.source, line - 1);
+        const start = self.line_starts[line - 1];
+        return start + @min(column -| 1, @as(u32, @intCast(text.len)));
+    }
+
     /// Returns the 0-indexed UTF-8 byte column.
     /// (Use this if the LSP client successfully negotiates "utf-8" PositionEncodingKind).
     pub fn getUtf8Column(self: *const LineIndex, offset: u32) u32 {

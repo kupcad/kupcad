@@ -173,3 +173,32 @@ test "lsp worker: serve gives a document its values, which its next frame runs w
     defer testing.allocator.free(refused.payload);
     try testing.expectEqualSlices(u8, &.{1}, refused.payload);
 }
+
+test "lsp worker: what each module's run warned of reaches the server, placed" {
+    const path = "part.kup";
+    const source = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n";
+    var requests: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer requests.deinit();
+    try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, source });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{0}, &u32Bytes(path.len), path, URI });
+    try lsp_worker.writeFrame(&requests.writer, .run_warnings, &.{});
+
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    var in: std.Io.Reader = .fixed(requests.written());
+    var replies: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer replies.deinit();
+    try lsp_worker.serve(testing.io, testing.allocator, &preview, &in, &replies.writer);
+
+    var out: std.Io.Reader = .fixed(replies.written());
+    for (0..2) |_| testing.allocator.free((try lsp_worker.readFrame(&out, testing.allocator)).payload);
+    const reply = try lsp_worker.readFrame(&out, testing.allocator);
+    defer testing.allocator.free(reply.payload);
+    const parsed = try std.json.parseFromSlice([]const lsp_preview.ModuleWarnings, testing.allocator, reply.payload, .{});
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 1), parsed.value.len);
+    try testing.expectEqualStrings(path, parsed.value[0].module_path);
+    try testing.expectEqual(@as(?u32, 3), parsed.value[0].warnings[0].line);
+}

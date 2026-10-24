@@ -421,7 +421,7 @@ Before `@kupcad/protocol` is written, so its types mirror real output. Each is s
 | Parameters from the editor (done) | `cli/lsp.zig` | A `kupcad.setParams` command (`workspace/executeCommand`: lsp_kit answers a custom request with null), `[{ uri, values }]`, that re-runs the preview with the values; the new frame carries what came of them. |
 | Machine-readable version (done) | `cli/version_cmd.zig`, `cli/lsp.zig` | `kupcad version --json` (`version`, `protocolVersion`, `os`, `arch`), and `protocolVersion` in `kupcad/viewportReady`. |
 | The document shown (done) | `cli/lsp.zig` | A `kupcad.preview` command, `[{ uri }]`: the viewport shows that document whatever is edited (a library edited shows its importer), and sends its frame to a viewer that asks; a frame the viewers have isn't sent again. |
-| Warnings as diagnostics | `cli/lsp.zig` | The run's warnings published at the call's line, for the Problems view. After the above. |
+| Warnings as diagnostics (done) | `cli/lsp.zig`, `session/session.zig` | Each module's last run warnings, published with its lint findings from the call to the end of its line, for the Problems view; an edit drops them until the next run. |
 | Part → source | `exporters/3d/gltf.zig` | Each part node's `extras` carry the file and line of its `named`, for click-to-source. Later. |
 | Publish the wasm | `.github/workflows/release.yml` | A job that builds `kupcad.wasm`, runs `@kupcad/wasm`'s tests against it and publishes the package from the tag. |
 

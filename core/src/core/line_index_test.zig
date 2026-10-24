@@ -71,3 +71,17 @@ test "LineIndex: humanPosition is the 1-based line and UTF-8 column compilers pr
     try testing.expectEqual(@as(u32, 2), eq.line);
     try testing.expectEqual(@as(u32, 4), eq.column);
 }
+
+test "LineIndex: offsetOf is humanPosition's way back, a column held to its line" {
+    const source = "x = 1\ncube(2) # é\n";
+    const index = try LineIndex.init(testing.allocator, source);
+    defer index.deinit(testing.allocator);
+    for ([_]u32{ 0, 4, 6, 10, 15 }) |offset| {
+        const at = index.humanPosition(offset);
+        try testing.expectEqual(@as(?u32, offset), index.offsetOf(at.line, at.column));
+    }
+    // Past its line's end, its last character; past the last line, nothing
+    try testing.expectEqual(@as(?u32, 5), index.offsetOf(1, 40));
+    try testing.expectEqual(@as(?u32, null), index.offsetOf(4, 1));
+    try testing.expectEqual(@as(?u32, null), index.offsetOf(0, 1));
+}

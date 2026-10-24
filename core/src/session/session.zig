@@ -22,6 +22,7 @@ const geom = @import("../core/geometry_handle.zig");
 const Stopwatch = @import("../core/stopwatch.zig").Stopwatch;
 const VM = @import("../vm/vm.zig").VM;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const RunWarning = @import("../vm/run_report.zig").Warning;
 
 const Workspace = workspace.Workspace;
 const ModuleId = workspace.ModuleId;
@@ -41,6 +42,9 @@ pub const SessionNode = struct {
     /// The files the module's last run read as data (VM.files_read), owned: a change to one
     /// runs it again though its source is the same.
     files_read: std.ArrayList([]u8) = .empty,
+    /// What the module's last run warned of (VM.report), each message owned: an editor
+    /// shows them beside its lint findings.
+    warnings: std.ArrayList(RunWarning) = .empty,
     /// It runs again though its source is the same: a file it read changed
     /// (ScriptSession.markDataFileEdited), or its host wants what a run leaves
     /// (ScriptSession.runAgain). Cleared once it ran without an error, so a failed run runs
@@ -52,6 +56,22 @@ pub const SessionNode = struct {
         self.cached_handle = null;
         self.forgetFilesRead(allocator);
         self.files_read.deinit(allocator);
+        self.forgetWarnings(allocator);
+        self.warnings.deinit(allocator);
+    }
+
+    fn forgetWarnings(self: *SessionNode, allocator: std.mem.Allocator) void {
+        for (self.warnings.items) |w| allocator.free(w.message);
+        self.warnings.clearRetainingCapacity();
+    }
+
+    /// Takes what `vm`'s run warned of as this module's, in place of the last run's.
+    fn rememberWarnings(self: *SessionNode, allocator: std.mem.Allocator, vm: *const VM) !void {
+        self.forgetWarnings(allocator);
+        try self.warnings.ensureTotalCapacity(allocator, vm.report.warnings.items.len);
+        for (vm.report.warnings.items) |w| {
+            self.warnings.appendAssumeCapacity(.{ .message = try allocator.dupe(u8, w.message), .position = w.position });
+        }
     }
 
     fn forgetFilesRead(self: *SessionNode, allocator: std.mem.Allocator) void {
@@ -440,6 +460,7 @@ pub const ScriptSession = struct {
         const run_ns = clock.lap();
         // A failed run is watched too: fixing the file it couldn't read runs it again
         try node.rememberFilesRead(self.allocator, &self.vm);
+        try node.rememberWarnings(self.allocator, &self.vm);
         if (self.observer) |o| o.ran(o.context, .{ .path = mod.path, .source = mod.source, .doc = &doc, .vm = &self.vm, .ok = result == .ok, .run_ns = run_ns });
         if (result != .ok) return error.RuntimeError;
 

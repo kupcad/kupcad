@@ -781,3 +781,41 @@ test "LSP: without kupcad.preview, the document last edited is shown" {
     server.settle();
     try testing.expectEqualStrings(LIB_URI, (try viewers.last(server.arena.allocator())).document.?);
 }
+
+/// What a test reads of a published diagnostic.
+const Diagnostic = struct { range: struct { start: struct { line: u32, character: u32 } }, severity: u32, message: []const u8 };
+
+/// The diagnostics last published for `uri`, read into `arena`.
+fn diagnosticsOf(server: *const Server, arena: std.mem.Allocator, uri: []const u8) ![]const Diagnostic {
+    const Published = struct { method: []const u8, params: struct { uri: []const u8, diagnostics: []const Diagnostic } };
+    var at = server.outbox.messages.items.len;
+    while (at > 0) {
+        at -= 1;
+        const message = std.json.parseFromSliceLeaky(Published, arena, server.outbox.messages.items[at], .{ .ignore_unknown_fields = true }) catch continue;
+        if (std.mem.eql(u8, message.method, "textDocument/publishDiagnostics") and std.mem.eql(u8, message.params.uri, uri)) return message.params.diagnostics;
+    }
+    return error.TestExpectedDiagnostics;
+}
+
+test "LSP: what a run warned of is a diagnostic on the line of its call, beside the lint findings, until an edit" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    const arena = server.arena.allocator();
+    // An unused variable (a lint finding) and a material the B-Rep engine can't keep
+    try server.open(URI, "unused = 1\nCAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, URI)).len);
+    server.settle();
+    const shown = try diagnosticsOf(&server, arena, URI);
+    try testing.expectEqual(@as(usize, 2), shown.len);
+    try testing.expectEqual(@as(u32, 3), shown[1].range.start.line);
+    try testing.expectEqual(@as(u32, 2), shown[1].severity);
+    try testing.expect(std.mem.find(u8, shown[1].message, "brep") != null);
+
+    // Edited, its lines may have moved: the warning goes until the next run says it again
+    try server.change(URI, "unused = 1\n\nCAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n");
+    try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, URI)).len);
+    server.settle();
+    try testing.expectEqual(@as(u32, 4), (try diagnosticsOf(&server, arena, URI))[1].range.start.line);
+}
