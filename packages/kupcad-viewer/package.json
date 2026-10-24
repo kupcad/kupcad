@@ -8,10 +8,14 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.js",
-    "./Viewer.svelte": {
-      "svelte": "./src/Viewer.svelte",
-      "default": "./src/Viewer.svelte"
-    }
+    "./svelte": {
+      "svelte": "./src/svelte.js",
+      "default": "./src/svelte.js"
+    },
+    "./types": {
+      "types": "./src/types.d.ts"
+    },
+    "./testing": "./src/testing.js"
   },
   "scripts": {
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",

@@ -22,6 +22,8 @@
    * @property {string | null} [selected] the part selected; bindable
    * @property {Viewer | null} [viewer] the Viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the Viewer is made with (its renderer, Draco's path)
+   * @property {(viewer: Viewer) => void} [onmodel] a model is shown: what follows it (its
+   *   bounds) can be read
    * @property {(error: unknown) => void} [onerror] a model it couldn't show
    */
 
@@ -36,6 +38,7 @@
     selected = $bindable(null),
     viewer = $bindable(null),
     options = {},
+    onmodel,
     onerror,
   } = $props();
 
@@ -58,7 +61,11 @@
   });
 
   $effect(() => {
-    viewer?.setModel(model).catch((error) => onerror?.(error));
+    const shown = viewer;
+    shown
+      ?.setModel(model)
+      .then(() => onmodel?.(shown))
+      .catch((error) => onerror?.(error));
   });
   $effect(() => {
     if (theme) viewer?.setTheme(theme);

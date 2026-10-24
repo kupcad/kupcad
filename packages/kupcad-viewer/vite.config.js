@@ -7,6 +7,9 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.js'],
-    setupFiles: ['src/test-setup.js'],
+    setupFiles: ['src/testing.js'],
+    // Imported by Node itself: under jsdom, Vite would make the module's URL of its wasm one its
+    // dev server serves, and the tests run none
+    server: { deps: { external: [/kupcad-wasm\/src/] } },
   },
 });

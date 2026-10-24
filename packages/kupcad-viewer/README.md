@@ -20,11 +20,11 @@ const png = await viewer.screenshot();
 
 ```svelte
 <script>
-  import Viewer from '@kupcad/viewer/Viewer.svelte';
+  import { Viewer } from '@kupcad/viewer/svelte';
   let selected = $state(null);
 </script>
 
-<Viewer model={preview.model} renderMode="solid" bind:selected />
+<Viewer model={preview.model} renderMode="solid" bind:selected onmodel={(viewer) => viewer.bounds} />
 ```
 
 * **The model:** each copy of a part is a node of the GLB named as the frame's `parts[].nodes`
@@ -39,6 +39,9 @@ const png = await viewer.screenshot();
   are; the decoder is loaded only when a model needs it.
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
   `--vscode-*` variables).
+
+A host's tests that mount the viewer under jsdom add `@kupcad/viewer/testing` to Vitest's
+`setupFiles`: what jsdom lacks of a browser and the viewer uses.
 
 Tests: the scene logic in Node (jsdom), with a stand-in for WebGL and models the real core makes
 through `@kupcad/wasm`; and a smoke test in headless Chromium (`pnpm test:browser`) that draws

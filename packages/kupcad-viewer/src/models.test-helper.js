@@ -1,22 +1,13 @@
 // Models as the core makes them, for the tests: previews of scripts by the real module.
 
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createKupcad } from '@kupcad/wasm';
 
 /** @import { Model } from '@kupcad/protocol/types' */
 
-/**
- * The module @kupcad/wasm ships, by its path: under jsdom, Vite makes the package's own URL of
- * it one its dev server would serve, and the tests run none.
- */
-const WASM = resolve(dirname(fileURLToPath(import.meta.url)), '../../kupcad-wasm/dist/kupcad.wasm');
-
 /** @type {Promise<import('@kupcad/wasm').Kupcad> | null} */
 let core = null;
 
-const start = () => createKupcad({ wasm: readFileSync(WASM), log: () => {} });
+const start = () => createKupcad({ log: () => {} });
 
 /**
  * The model the core's preview of `source` shows.
