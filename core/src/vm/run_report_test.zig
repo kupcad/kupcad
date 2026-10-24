@@ -39,6 +39,16 @@ test "run report: warnings past the most kept are freed, and a refusal replaces 
     try testing.expect(report.refused_param == null);
 }
 
+test "run report: a warning is kept once a run, wherever it is given again" {
+    var report: RunReport = .{};
+    defer report.deinit(testing.allocator);
+    try report.addWarning(testing.allocator, try testing.allocator.dupe(u8, "mended 'a.stl'"), .{ .line = 2, .column = 1 });
+    try report.addWarning(testing.allocator, try testing.allocator.dupe(u8, "mended 'a.stl'"), .{ .line = 7, .column = 1 });
+    try report.addWarning(testing.allocator, try testing.allocator.dupe(u8, "mended 'b.stl'"), .{ .line = 7, .column = 1 });
+    try testing.expectEqual(@as(usize, 2), report.warnings.items.len);
+    try testing.expectEqual(@as(u32, 2), report.warnings.items[0].position.?.line);
+}
+
 test "run report: a warning is kept at the line the script was at" {
     const expected = support.expectWarnings();
     defer expected.restore();
@@ -90,4 +100,67 @@ test "run report: a run's parameters are its own, after the output is reset" {
     try testing.expectEqual(@as(usize, 0), vm.param_registry.len);
     try testing.expectEqual(.runtime_error, try run(&vm, "w = param(:width)\n"));
     try testing.expect(std.mem.startsWith(u8, vm.last_error.?, "NameError: parameter :width is used before it is defined"));
+}
+
+/// The modules the script imports, by path.
+const MODULES = [_]struct { path: []const u8, source: []const u8 }{
+    // Its function warns of what it is given: the script's call is where
+    .{ .path = "tint.kup", .source = "def tinted(s)\n  s.material(color: \"#3333cc\")\nend\nexport tinted\n" },
+    // It warns as it runs: the script's import is where
+    .{ .path = "shaded.kup", .source = "CAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n" },
+    .{ .path = "boom.kup", .source = "def boom\n  raise \"boom\"\nend\nexport boom\n" },
+};
+
+/// A VM whose file system has MODULES.
+fn importingVm(files: *MemoryVfs) !VM {
+    var vm = try support.initVm();
+    errdefer vm.deinit();
+    for (MODULES) |module| try files.vfs().writeFile(module.path, module.source);
+    vm.vfs = files.vfs();
+    return vm;
+}
+
+test "run report: what an imported module's function warns of is placed at the script's call of it" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var vm = try importingVm(&files);
+    defer vm.deinit();
+    // The module's offset of its warning is on the script's line 1: it was placed there
+    try testing.expectEqual(.ok, try run(&vm, "CAD.config(engine: :brep)\nimport { tinted } from \"./tint.kup\"\nx = 1\ny = 2\npart = tinted(cube(1))\n"));
+    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expectEqual(@as(u32, 5), vm.report.warnings.items[0].position.?.line);
+}
+
+test "run report: what a module warns of as it runs is placed at its import, and given again by an import from the cache, once" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var vm = try importingVm(&files);
+    defer vm.deinit();
+    const script = "x = 1\nimport { shade } from \"./shaded.kup\"\nimport \"./shaded.kup\"\n";
+    try testing.expectEqual(.ok, try run(&vm, script));
+    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expect(std.mem.find(u8, vm.report.warnings.items[0].message, "brep") != null);
+    try testing.expectEqual(@as(u32, 2), vm.report.warnings.items[0].position.?.line);
+
+    // The session's next run: the module comes from the cache, and doesn't run
+    vm.resetRunOutput();
+    try testing.expectEqual(.ok, try run(&vm, script));
+    try testing.expectEqual(@as(usize, 1), vm.report.warnings.items.len);
+    try testing.expectEqual(@as(u32, 2), vm.report.warnings.items[0].position.?.line);
+}
+
+test "run report: an error raised in an imported module's code is placed at the script's call, its backtrace naming the module" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var vm = try importingVm(&files);
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try run(&vm, "import { boom } from \"./boom.kup\"\ntrace = begin\n  boom\nrescue => e\n  e.backtrace\nend\n"));
+    const trace = (vm.globals.get("trace") orelse return error.MissingGlobal).asArray().items.items;
+    try testing.expectEqualStrings("    from boom.kup:in 'boom'", trace[0].asString().chars);
+    try testing.expect(std.mem.startsWith(u8, trace[1].asString().chars, "    from script:3:"));
+
+    var uncaught = try importingVm(&files);
+    defer uncaught.deinit();
+    try testing.expectEqual(.runtime_error, try run(&uncaught, "import { boom } from \"./boom.kup\"\nx = 1\nboom\n"));
+    try testing.expectEqual(@as(u32, 3), uncaught.last_error_position.?.line);
 }

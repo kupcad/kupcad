@@ -258,7 +258,8 @@ pub const VM = struct {
     /// stack, so the natives it passes through find the stack as they left it.
     pending_break: ?PendingBreak = null,
 
-    /// Features already warned about (warnUnsupported), so each is reported once per run.
+    /// Features already warned about (warnUnsupported) this run: a material on every part
+    /// formats its warning once (the report would keep it once anyway).
     warned_features: std.EnumSet(kernel.Feature) = .empty,
     /// What the run warned of, and the parameter whose value stopped it (vm/run_report.zig).
     report: RunReport = .{},
@@ -1456,14 +1457,18 @@ pub const VM = struct {
     /// as they stand when it ended, those of `param_declarations` from `declared_from` on.
     /// The key is an owned copy: the path comes from a constant ObjString that can be swept
     /// while the cache entry lives on.
-    fn cacheModule(self: *VM, path: []const u8, exports: value.Value, declared_from: usize) !void {
+    fn cacheModule(self: *VM, path: []const u8, exports: value.Value, declared_from: usize, warned_from: usize) !void {
+        var cached: parameters.CachedModule = .{ .exports = exports };
+        errdefer cached.deinit(self.allocator);
         const declared = self.param_declarations.items[declared_from..];
-        var params = try std.ArrayList(parameters.ParamRegistry).initCapacity(self.allocator, declared.len);
-        errdefer params.deinit(self.allocator);
-        for (declared) |index| params.appendAssumeCapacity(self.param_registry.get(index));
+        try cached.params.ensureTotalCapacity(self.allocator, declared.len);
+        for (declared) |index| cached.params.appendAssumeCapacity(self.param_registry.get(index));
+        const warned = self.report.warnings.items[warned_from..];
+        try cached.warnings.ensureTotalCapacity(self.allocator, warned.len);
+        for (warned) |w| cached.warnings.appendAssumeCapacity(try self.allocator.dupe(u8, w.message));
         const gop = try owned_keys.getOrPutOwned(&self.modules, self.allocator, path);
         if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
-        gop.value_ptr.* = .{ .exports = exports, .params = params };
+        gop.value_ptr.* = cached;
     }
 
     /// Drops the module imported from `path`, so the next import of it runs its new
@@ -1554,10 +1559,11 @@ pub const VM = struct {
         return self.globals.getPtr(name);
     }
 
-    fn newModuleNamespace(self: *VM) !*value.Namespace {
+    fn newModuleNamespace(self: *VM, path: []const u8) !*value.Namespace {
         try self.module_namespaces.ensureUnusedCapacity(self.allocator, 1);
         const ns = try self.allocator.create(value.Namespace);
-        ns.* = .{};
+        errdefer self.allocator.destroy(ns);
+        ns.* = .{ .path = try self.allocator.dupe(u8, path) };
         self.module_namespaces.appendAssumeCapacity(ns);
         return ns;
     }
@@ -1667,6 +1673,13 @@ pub const VM = struct {
         self.report.addWarning(self.allocator, message, self.currentPosition()) catch {};
     }
 
+    /// Keeps a warning a module gave when it ran, where the script is now (its import from
+    /// the cache): logged then, it isn't again.
+    fn warnAgain(self: *VM, message: []const u8) void {
+        const owned = self.allocator.dupe(u8, message) catch return;
+        self.report.addWarning(self.allocator, owned, self.currentPosition()) catch {};
+    }
+
     /// The settings in force (CAD.config / CAD.with_config).
     pub fn config(self: *const VM) EngineConfig {
         return self.dag_builder.settings(self.config_stack.items[self.config_stack.items.len - 1]);
@@ -1681,14 +1694,26 @@ pub const VM = struct {
         return self.dag_builder.settings(self.dag_builder.nodes.items[node].settings);
     }
 
-    /// Where the script is running, as a person counts it (1-based line and column); null
-    /// before it runs, or without the line index of its source.
+    /// Where the script is running, as a person counts it (1-based line and column): in its
+    /// own code, so what an imported module's code does is placed at the script's import or
+    /// call that ran it (the line index is the script's, and the module's offsets aren't in
+    /// it). Null before it runs, or without the line index of its source.
     pub fn currentPosition(self: *const VM) ?LinePosition {
-        if (self.frames.items.len == 0) return null;
-        const offset = self.frames.items[self.frames.items.len - 1].sourceOffset() orelse return null;
         const li = self.line_index orelse return null;
-        const at = li.humanPosition(offset);
+        const frame = self.innermostScriptFrame() orelse return null;
+        const at = li.humanPosition(frame.sourceOffset() orelse return null);
         return .{ .line = at.line, .column = at.column };
+    }
+
+    /// The innermost frame running the script's own code, not an imported module's.
+    fn innermostScriptFrame(self: *const VM) ?*const CallFrame {
+        var i = self.frames.items.len;
+        while (i > 0) {
+            i -= 1;
+            const frame = &self.frames.items[i];
+            if (frame.closure.function.namespace == null) return frame;
+        }
+        return null;
     }
 
     pub const LinePosition = run_report.LinePosition;
@@ -2288,8 +2313,10 @@ pub const VM = struct {
         const path_str = path_val.asString().chars;
 
         // 1. Check Module Cache: its code doesn't run again, but its parameters are declared
+        // and its warnings given, here
         if (self.modules.getPtr(path_str)) |cached| {
             for (cached.params.items) |param| self.declareParam(param) catch |err| return self.allocationFailed(err);
+            for (cached.warnings.items) |message| self.warnAgain(message);
             self.push(cached.exports);
             return null;
         }
@@ -2315,7 +2342,7 @@ pub const VM = struct {
 
         // 3. Compile it into its own top-level scope: its variables, defs and
         // classes live there, and only exported names reach the importer.
-        const namespace = self.newModuleNamespace() catch |err| return self.allocationFailed(err);
+        const namespace = self.newModuleNamespace(path_str) catch |err| return self.allocationFailed(err);
         const compile_module = self.host.compile_module orelse {
             if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
             return null;
@@ -2370,9 +2397,11 @@ pub const VM = struct {
         self.dag_builder.current_settings = self.run_settings;
         defer self.restoreConfig(settings_depth, settings_in_force);
 
-        // 6. Execute synchronously, noting where the parameters it declares begin
+        // 6. Execute synchronously, noting where the parameters it declares and the warnings
+        // it gives begin
         const import_depth = self.frames.items.len;
         const declared_from = self.param_declarations.items.len;
+        const warned_from = self.report.warnings.items.len;
         // The module's own value is no part of what it gives: its exports are
         _ = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
@@ -2399,7 +2428,7 @@ pub const VM = struct {
         if (final_res.isModule()) final_res.asModule().exports_of = path_val.asString();
 
         // 7. Cache the actual finalized module and yield result
-        self.cacheModule(path_str, final_res, declared_from) catch |err| return self.allocationFailed(err);
+        self.cacheModule(path_str, final_res, declared_from, warned_from) catch |err| return self.allocationFailed(err);
         self.push(final_res);
         return null;
     }
@@ -4056,6 +4085,10 @@ pub const VM = struct {
             const frame = &self.vm.frames.items[self.remaining];
             const source_offset = frame.sourceOffset().?;
             const func_name = if (frame.closure.function.name) |n| n.chars else "script";
+            // An imported module's offsets aren't in the script's line index: its path is named
+            if (frame.closure.function.namespace) |module| {
+                return std.mem.print(&self.buf, "    from {s}:in '{s}'", .{ module.path, func_name }) catch "    from unknown";
+            }
             const line = if (self.vm.line_index) |li| at: {
                 const at = li.humanPosition(source_offset);
                 break :at std.mem.print(&self.buf, "    from script:{d}:{d}:in '{s}'", .{ at.line, at.column, func_name });

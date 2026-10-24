@@ -5,8 +5,8 @@
 
 const std = @import("std");
 
-/// How many warnings a run keeps: one warning at every pass of a loop keeps the first ones,
-/// and the log has them all.
+/// How many warnings a run keeps: a warning that differs at every pass of a loop keeps the
+/// first ones, and the log has them all.
 pub const MAX_WARNINGS = 100;
 
 /// A place in the running document: its 1-based line, and its 1-based column in UTF-8 bytes.
@@ -35,12 +35,20 @@ pub const RunReport = struct {
         self.refused_param = null;
     }
 
-    /// Keeps `message` (owned by `allocator`, which the report takes) at `position`; past
-    /// MAX_WARNINGS it is freed instead.
+    /// Keeps `message` (owned by `allocator`, which the report takes) at `position`; one kept
+    /// already, word for word, is freed instead (a run warns of a thing once: a loop's pass,
+    /// a module imported twice), and so is one past MAX_WARNINGS.
     pub fn addWarning(self: *RunReport, allocator: std.mem.Allocator, message: []u8, position: ?LinePosition) !void {
-        if (self.warnings.items.len >= MAX_WARNINGS) return allocator.free(message);
+        if (self.warnings.items.len >= MAX_WARNINGS or self.has(message)) return allocator.free(message);
         errdefer allocator.free(message);
         try self.warnings.append(allocator, .{ .message = message, .position = position });
+    }
+
+    fn has(self: *const RunReport, message: []const u8) bool {
+        for (self.warnings.items) |kept| {
+            if (std.mem.eql(u8, kept.message, message)) return true;
+        }
+        return false;
     }
 
     /// Notes that the value of the parameter `name` stopped the run.

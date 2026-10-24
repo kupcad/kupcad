@@ -167,6 +167,8 @@ pub const ObjFunction = struct {
 /// names cross files. Owned by the VM (VM.module_namespaces); values are GC roots.
 pub const Namespace = struct {
     globals: std.StringHashMapUnmanaged(Value) = .empty,
+    /// The path the module was imported by, owned: a backtrace names it for its frames.
+    path: []const u8 = "",
 
     pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
         (try owned_keys.getOrPutOwned(&self.globals, allocator, name)).value_ptr.* = val;
@@ -179,6 +181,7 @@ pub const Namespace = struct {
 
     pub fn deinit(self: *Namespace, allocator: std.mem.Allocator) void {
         owned_keys.deinit(&self.globals, allocator, .borrowed);
+        allocator.free(self.path);
     }
 };
 
