@@ -1,11 +1,11 @@
 import { Box3, Mesh } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GHOST_OPACITY, isDracoCompressed, sceneOf } from './model.js';
 import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { LIGHT } from './theme.js';
 
-/** @import { MeshStandardMaterial } from 'three' */
+/** @import { MeshBasicMaterial, MeshStandardMaterial } from 'three' */
 /** @import { SceneModel } from './types.js' */
 /** @import { Vector3 } from 'three' */
 
@@ -46,11 +46,25 @@ describe('sceneOf a GLB', () => {
     // Each copy has a material of its own, so tinting one part leaves the others
     expect(bolts[0].mesh.material).not.toBe(bolts[1].mesh.material);
     expect(bolts.every((shape) => shape.edges !== null)).toBe(true);
+    // Drawn behind their edges, which would be lost in them at the same depth
+    expect(
+      bolts.every(
+        (shape) => /** @type {MeshStandardMaterial} */ (shape.mesh.material).polygonOffset,
+      ),
+    ).toBe(true);
     const ghost = scene.shapes.find((shape) => shape.ghost);
     const material = /** @type {MeshStandardMaterial} */ (ghost?.mesh.material);
     expect(material.transparent).toBe(true);
     expect(material.opacity).toBe(GHOST_OPACITY);
     expect(ghost?.edges).toBeNull();
+  });
+
+  it("knows a part whose name the loader changes, by its GLB node's", async () => {
+    // The loader names the objects "Lid_v20" and "abc1"
+    const scene = await sceneOfScript(
+      '[cube(1).named("Lid v2.0"), cube(2).translate(x: 5).named("a/b:c[1]")]',
+    );
+    expect(scene.shapes.map((shape) => shape.part)).toEqual(['Lid v2.0', 'a/b:c[1]']);
   });
 
   it('tells a Draco-compressed GLB', async () => {
@@ -64,7 +78,11 @@ describe('sceneOf a GLB', () => {
 
 describe('sceneOf an SVG', () => {
   it('draws each filled shape on the XY plane, Y up again, named by its id, with its outline', async () => {
+    // three.js warns of a deprecated call, as of SVGLoader.createShapes
+    const warn = vi.spyOn(console, 'warn');
     const scene = await sceneOfScript('[square(10).named("plate"), line([0, 0], [5, 5])]');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
     expect(scene.kind).toBe('2d');
     const plate = scene.shapes.find((shape) => shape.part === 'plate');
     if (!plate) throw new Error('no plate');
@@ -73,6 +91,7 @@ describe('sceneOf an SVG', () => {
     const box = new Box3().setFromObject(plate.mesh);
     expect(mm(box.min)).toEqual([0, 0, 0]);
     expect(mm(box.max)).toEqual([10, 10, 0]);
+    expect(/** @type {MeshBasicMaterial} */ (plate.mesh.material).polygonOffset).toBe(true);
     // The open line is drawn, not filled: no shape of its own
     expect(scene.shapes).toHaveLength(1);
   });

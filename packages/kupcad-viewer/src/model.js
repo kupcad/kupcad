@@ -29,6 +29,11 @@ import { disposeGeometries } from './dispose.js';
 const EDGE_ANGLE_DEG = 20;
 /** A ghost is seen through. */
 export const GHOST_OPACITY = 0.2;
+/**
+ * A shape's faces are drawn this far behind its edges (in depth, as a factor of their slope
+ * and in its smallest steps), so the edges, at the same depth, aren't lost in the faces.
+ */
+const FACES_BEHIND_EDGES = { polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
 /** The extension a GLB built with `--draco` uses. */
 const DRACO_EXTENSION = 'KHR_draco_mesh_compression';
 /** A GLB's header (magic, version, length), then its JSON chunk's length and type. */
@@ -79,11 +84,20 @@ async function solids(glb, parts, loader, theme) {
     scene.applyMatrix4(new Matrix4().copy(root.matrix).invert());
   }
   const partOf = new Map(parts.flatMap((part) => part.nodes.map((node) => [node, part.name])));
+  // The loader sanitizes the objects' names ("Lid v2.0" is "Lid_v20"): the GLB's are the parts'
+  const nodes = /** @type {{ name?: string }[]} */ (gltf.parser.json.nodes ?? []);
+  /** @param {Object3D} object */
+  const nodeName = (object) => {
+    const index = gltf.parser.associations.get(object)?.nodes;
+    return index === undefined ? undefined : nodes[index]?.name;
+  };
   const edgeMaterial = new LineBasicMaterial({ color: theme.edges });
   /** @type {Shape[]} */
   const shapes = [];
   scene.traverse((object) => {
-    if (object instanceof Mesh) shapes.push(solidShape(object, partOf, edgeMaterial, theme));
+    if (object instanceof Mesh) {
+      shapes.push(solidShape(object, partOf, nodeName, edgeMaterial, theme));
+    }
   });
   const root = new Group();
   root.add(scene);
@@ -95,11 +109,12 @@ async function solids(glb, parts, loader, theme) {
  * and its edges; a ghost seen through, in the theme's colour.
  * @param {Mesh} mesh
  * @param {Map<string, string>} partOf
+ * @param {(object: Object3D) => string | undefined} nodeName
  * @param {LineBasicMaterial} edgeMaterial
  * @param {Theme} theme
  * @returns {Shape}
  */
-function solidShape(mesh, partOf, edgeMaterial, theme) {
+function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
   const material = /** @type {import('three').MeshStandardMaterial} */ (
     /** @type {Material} */ (mesh.material).clone()
   );
@@ -119,12 +134,13 @@ function solidShape(mesh, partOf, edgeMaterial, theme) {
       opacity: GHOST_OPACITY,
     };
   }
+  Object.assign(material, FACES_BEHIND_EDGES);
   const edges = new LineSegments(new EdgesGeometry(mesh.geometry, EDGE_ANGLE_DEG), edgeMaterial);
   mesh.add(edges);
   return {
     mesh,
     edges,
-    part: nameAbove(mesh, partOf),
+    part: partAbove(mesh, partOf, nodeName),
     ghost,
     color: material.color.clone(),
     opacity: material.opacity,
@@ -135,11 +151,13 @@ function solidShape(mesh, partOf, edgeMaterial, theme) {
  * The part of the nearest node above `object` (itself first) that is a copy of one.
  * @param {Object3D} object
  * @param {Map<string, string>} partOf
+ * @param {(object: Object3D) => string | undefined} nodeName the GLB's name of an object's node
  * @returns {string | null}
  */
-function nameAbove(object, partOf) {
+function partAbove(object, partOf, nodeName) {
   for (let at = /** @type {Object3D | null} */ (object); at; at = at.parent) {
-    const part = partOf.get(at.name);
+    const name = nodeName(at);
+    const part = name === undefined ? undefined : partOf.get(name);
     if (part !== undefined) return part;
   }
   return null;
@@ -174,8 +192,9 @@ function drawing(svg, theme) {
       side: DoubleSide,
       transparent: opacity < 1,
       opacity,
+      ...FACES_BEHIND_EDGES,
     });
-    const mesh = new Mesh(new ShapeGeometry(SVGLoader.createShapes(path)), material);
+    const mesh = new Mesh(new ShapeGeometry(path.toShapes()), material);
     mesh.add(edges);
     root.add(mesh);
     const id = /** @type {Element | undefined} */ (path.userData?.node)?.getAttribute('id');
