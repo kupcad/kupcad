@@ -1,25 +1,10 @@
 // Models as the core makes them, for the tests: previews of scripts by the real module.
 
-import { createKupcad } from '@kupcad/wasm';
+import { testCore } from '@kupcad/wasm/testing';
 
 /** @import { Model } from '@kupcad/protocol/types' */
 
-/** @type {Promise<import('@kupcad/wasm').Kupcad> | null} */
-let core = null;
-
-const start = () => createKupcad({ log: () => {} });
-
-/**
- * The model the core's preview of `source` shows.
- * @param {string} source
- * @returns {Promise<Model>}
- */
-export async function modelOf(source) {
-  core ??= start();
-  const { header, model } = await (await core).preview(source);
-  if (header.error) throw new Error(`the test's script failed: ${header.error.message}`);
-  return model;
-}
+export { modelOf } from '@kupcad/wasm/testing';
 
 /**
  * A model built with Draco-compressed meshes.
@@ -27,8 +12,7 @@ export async function modelOf(source) {
  * @returns {Promise<Model>}
  */
 export async function dracoModelOf(source) {
-  core ??= start();
-  const glb = await (await core).build(source, { format: 'glb', draco: true });
+  const glb = await (await testCore()).build(source, { format: 'glb', draco: true });
   return { kind: '3d', glb, parts: [] };
 }
 

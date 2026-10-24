@@ -7,7 +7,7 @@ import { ProtocolError } from '@kupcad/protocol';
 import { KupcadCrashError, KupcadError } from './errors.js';
 
 /** @import { Finding, Preview, UiSchema, VersionInfo } from '@kupcad/protocol/types' */
-/** @import { BuildOptions, CallOptions, FromWorker, KupcadApi, KupcadFiles, Method, PreviewOptions, SentError, WorkerLike, WorkerOptions } from './types.js' */
+/** @import { BuildOptions, CallOptions, FromWorker, KupcadApi, KupcadFiles, Method, PreviewOptions, SentError, ToWorker, WorkerLike, WorkerOptions, WorkerWasmSource } from './types.js' */
 
 /**
  * @typedef {object} Call
@@ -22,6 +22,8 @@ import { KupcadCrashError, KupcadError } from './errors.js';
 
 /** @type {() => WorkerLike} */
 const moduleWorker = () => new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+/** Why a worker failed when its error says nothing: its script didn't load, most often. */
+const SILENT_FAILURE = 'it failed without a message (its script may not have loaded)';
 
 /**
  * The core in a Web Worker.
@@ -57,7 +59,7 @@ export class KupcadWorker {
   /** @param {WorkerOptions} options */
   constructor(options) {
     this.#spawn = options.worker ?? moduleWorker;
-    this.#wasm = options.wasm instanceof URL ? options.wasm.href : options.wasm;
+    this.#wasm = postable(options.wasm);
     this.#log = options.log ?? ((line) => console.debug(line));
     this.files = {
       put: (path, data) => {
@@ -183,7 +185,15 @@ export class KupcadWorker {
     worker.addEventListener('error', (event) => {
       event.preventDefault();
       if (worker === this.#worker) {
-        this.#fail(new KupcadCrashError(`the kupcad worker failed: ${event.message}`));
+        this.#fail(
+          new KupcadCrashError(`the kupcad worker failed: ${event.message || SILENT_FAILURE}`),
+        );
+      }
+    });
+    // A reply that couldn't be read would leave its call waiting for good
+    worker.addEventListener('messageerror', () => {
+      if (worker === this.#worker) {
+        this.#fail(new KupcadCrashError("the kupcad worker sent a message that couldn't be read"));
       }
     });
     worker.postMessage({ type: 'init', wasm: this.#wasm, files: [...this.#files] });
@@ -252,6 +262,18 @@ export class KupcadWorker {
     this.#worker = null;
     worker.terminate();
   }
+}
+
+/**
+ * The module as the worker is given it: a URL as its href, a relative one resolved against the
+ * page (the worker would resolve it against its own script's).
+ * @param {WorkerWasmSource | undefined} wasm
+ * @returns {Extract<ToWorker, { type: 'init' }>['wasm']}
+ */
+function postable(wasm) {
+  if (wasm instanceof URL) return wasm.href;
+  if (typeof wasm === 'string' && globalThis.location) return new URL(wasm, location.href).href;
+  return wasm;
 }
 
 /**

@@ -17,7 +17,11 @@
     }
   },
   "exports": {
-    ".": "./src/index.js"
+    ".": "./src/index.js",
+    "./types": {
+      "types": "./src/types.d.ts"
+    },
+    "./testing": "./src/testing.js"
   },
   "scripts": {
     "build": "node scripts/copy-wasm.js",

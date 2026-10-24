@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProtocolError } from '@kupcad/protocol';
 import { createKupcad, createKupcadWorker, KupcadCrashError, KupcadError } from './index.js';
 import { serve } from './serve.js';
@@ -56,6 +56,28 @@ const counted = (counts) => async (options) => {
 };
 
 const silent = () => {};
+
+/**
+ * A stand-in for a worker that never answers: what the client posts it, and its listeners, to
+ * fire as a Web Worker would.
+ */
+function silentWorker() {
+  /** @type {unknown[]} */
+  const posted = [];
+  /** @type {Record<string, (event: any) => void>} */
+  const listeners = {};
+  /** @type {WorkerLike} */
+  const worker = {
+    postMessage: (message) => posted.push(message),
+    addEventListener: (/** @type {string} */ type, /** @type {any} */ listener) => {
+      listeners[type] = listener;
+    },
+    terminate: () => {},
+  };
+  return { worker, posted, listeners };
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe('createKupcadWorker', () => {
   it("gives the core's results from the worker, its refusals as KupcadErrors", async () => {
@@ -143,6 +165,33 @@ describe('createKupcadWorker', () => {
     await expect(kupcad.build('cube(1)')).rejects.toBeInstanceOf(KupcadCrashError);
     expect((await kupcad.version()).arch).toBe('wasm32');
     expect(started.map((worker) => worker.terminated)).toEqual([true, true, false]);
+    kupcad.terminate();
+  });
+
+  it("refuses the running call as a crash when the worker fails, or sends what can't be read", async () => {
+    const failing = silentWorker();
+    const kupcad = createKupcadWorker({ worker: () => failing.worker, log: silent });
+    const failed = kupcad.version();
+    failing.listeners.error({ message: '', preventDefault() {} });
+    await expect(failed).rejects.toThrow(
+      new KupcadCrashError(
+        'the kupcad worker failed: it failed without a message (its script may not have loaded)',
+      ),
+    );
+
+    const garbled = silentWorker();
+    const other = createKupcadWorker({ worker: () => garbled.worker, log: silent });
+    const unread = other.version();
+    garbled.listeners.messageerror({});
+    await expect(unread).rejects.toBeInstanceOf(KupcadCrashError);
+  });
+
+  it("gives the worker a relative module URL as the page's, not its own script's", () => {
+    vi.stubGlobal('location', new URL('https://example.com/app/index.html'));
+    const { worker, posted } = silentWorker();
+    const kupcad = createKupcadWorker({ wasm: './kupcad.wasm', worker: () => worker, log: silent });
+    void kupcad.version().catch(() => {});
+    expect(posted[0]).toMatchObject({ type: 'init', wasm: 'https://example.com/app/kupcad.wasm' });
     kupcad.terminate();
   });
 

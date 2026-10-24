@@ -91,14 +91,12 @@ export interface KupcadExports {
   clear_vfs_wasm(): void;
 }
 
-/** Where a worker's module comes from: what can be posted to it. */
-export type WorkerWasmSource = WebAssembly.Module | BufferSource | URL | string;
+/** Where a worker's module comes from: what can be posted to it (not a Response). */
+export type WorkerWasmSource = Exclude<WasmSource, Response>;
 
-export interface WorkerOptions {
-  /** The module; by default the kupcad.wasm this package ships. */
+export interface WorkerOptions extends Omit<CreateOptions, 'wasm'> {
+  /** The module; by default the kupcad.wasm this package ships. A relative URL is the page's. */
   wasm?: WorkerWasmSource;
-  /** Where the module's log goes, a line at a time (a failure is thrown too); by default console.debug. */
-  log?: (line: string) => void;
   /** Starts a worker running src/worker.js; by default a module Web Worker. */
   worker?: () => WorkerLike;
 }
@@ -124,7 +122,8 @@ export interface SentError {
 export type ToWorker =
   | {
       type: 'init';
-      wasm: WebAssembly.Module | BufferSource | string | undefined;
+      /** A URL as its href. */
+      wasm: Exclude<WorkerWasmSource, URL> | undefined;
       files: [string, Uint8Array | string][];
     }
   | { type: 'call'; id: number; method: Method; args: unknown[] };
@@ -139,6 +138,7 @@ export interface WorkerLike {
   postMessage(message: ToWorker): void;
   addEventListener(type: 'message', listener: (event: MessageEvent<FromWorker>) => void): void;
   addEventListener(type: 'error', listener: (event: ErrorEvent) => void): void;
+  addEventListener(type: 'messageerror', listener: (event: MessageEvent) => void): void;
   terminate(): void;
 }
 

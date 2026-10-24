@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, ProtocolError } from '@kupcad/protocol';
 import { createKupcad, Kupcad, KupcadCrashError, KupcadError } from './index.js';
+import { WasiExit } from './wasi.js';
 
 /** @import { KupcadExports } from './types.js' */
 
@@ -188,6 +189,18 @@ describe('a module that stops', () => {
   it('is a crash, for the call it stopped in and every call after', async () => {
     const stopped = new Kupcad(trapping());
     await expect(stopped.check('x')).rejects.toBeInstanceOf(KupcadCrashError);
+    await expect(stopped.format('x')).rejects.toBeInstanceOf(KupcadCrashError);
+  });
+
+  it('by exiting (WASI proc_exit) is a crash too, saying how it exited', async () => {
+    const exits = trapping();
+    exits.check_code_wasm = () => {
+      throw new WasiExit(3);
+    };
+    const stopped = new Kupcad(exits);
+    await expect(stopped.check('x')).rejects.toThrow(
+      new KupcadCrashError('kupcad.wasm stopped: kupcad.wasm exited with code 3'),
+    );
     await expect(stopped.format('x')).rejects.toBeInstanceOf(KupcadCrashError);
   });
 });

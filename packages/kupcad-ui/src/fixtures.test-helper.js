@@ -1,31 +1,7 @@
 // What the core gives the panels, for the tests: the real module's schema of a script and its
 // preview.
 
-import { createKupcad } from '@kupcad/wasm';
-
-/** @import { Model, UiSchema } from '@kupcad/protocol/types' */
-
-/** @type {ReturnType<typeof createKupcad> | null} */
-let core = null;
-const started = () => (core ??= createKupcad({ log: () => {} }));
-
-/**
- * @param {string} source
- * @returns {Promise<UiSchema>}
- */
-export async function schemaOf(source) {
-  return (await started()).params(source);
-}
-
-/**
- * @param {string} source
- * @returns {Promise<Model>}
- */
-export async function modelOf(source) {
-  const { header, model } = await (await started()).preview(source);
-  if (header.error) throw new Error(`the test's script failed: ${header.error.message}`);
-  return model;
-}
+export { modelOf, schemaOf } from '@kupcad/wasm/testing';
 
 /** A script with a parameter of each kind, in groups. */
 export const BRACKET = `# @title Bracket

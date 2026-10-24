@@ -31,9 +31,11 @@ await kupcad.files.put('plate.dxf', bytes); // what the script imports
   and a worker of the host's own. `Kupcad.fromExports(exports)` takes a module the host
   instantiated itself.
 
-Both take `wasm` (the module: a URL, its bytes, a `Response` or a compiled `WebAssembly.Module`;
-by default the `kupcad.wasm` this package ships) and `log` (where the module's log goes, a line
-at a time; by default `console.debug`).
+Both take `wasm` (the module: a URL, its bytes or a compiled `WebAssembly.Module`, and for
+`createKupcad` a fetch `Response` too, which can't be posted to a worker; by default the
+`kupcad.wasm` this package ships) and `log` (where the module's log goes, a line at a time; by
+default `console.debug`). A worker is given a relative URL resolved against the page, as the
+page means it.
 
 ## What a call can fail with
 
@@ -41,8 +43,9 @@ at a time; by default `console.debug`).
   (`1:6: Expected 'r_paren' ...`) or run (`RuntimeError: boom`), values it refused
   (`parameters: ...`), a format it doesn't write. A preview doesn't throw for these: its frame
   says why.
-* `KupcadCrashError`: the module stopped. A worker is replaced on the next call; a module of
-  `createKupcad` is made again.
+* `KupcadCrashError`: the module stopped (a trap, or an exit), or the worker failed (its script
+  didn't load, or it sent what couldn't be read). A worker is replaced on the next call; a module
+  of `createKupcad` is made again.
 * `ProtocolError` (@kupcad/protocol's): the module speaks a protocol version this package doesn't
   read.
 
@@ -57,3 +60,8 @@ the core's, which the tests hold it to.
 
 The threaded build of the core (`-Dwasm_threads`) isn't shipped yet: it needs a host that runs
 its threads in workers and pages served cross-origin isolated.
+
+`@kupcad/wasm/types` has the API's types (`KupcadApi`, the options, the worker's messages).
+`@kupcad/wasm/testing` is for the tests of a package that shows what the core makes: the real
+module, made once a test process (`testCore`), and `modelOf` and `schemaOf` of a script, a
+script that fails failing the test.
