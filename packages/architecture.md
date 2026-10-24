@@ -465,8 +465,10 @@ the truth.
    `@kupcad/wasm` with its worker and tests, the wasm publish job.
 2. **Viewer and panels:** `@kupcad/viewer` (GLB, modes, camera, section, picking; SVG once the core
    sends it), `@kupcad/ui`'s `ViewerPane` and `ParamsPanel`.
-3. **The extension:** the binary manager, the viewer panel on the new components, parameters and
-   presets, export and print, the core's `kupcad/preview`. This is the
-   first thing a user installs, so it comes before the web hosts.
+3. **The extension** (done): the binary manager, the viewer panel on the new components,
+   parameters and presets, export and print, the core's `kupcad.preview` and the run's warnings
+   as diagnostics. This is the first thing a user installs, so it comes before the web hosts.
+   Left for later: a part clicked in the viewer taking the editor to where it was named (the
+   GLB's part extras, section 8).
 4. **The playground** and the docs site that embeds it.
 5. **The PWA, then the desktop app**, which reuse everything above.
