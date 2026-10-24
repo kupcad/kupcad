@@ -599,8 +599,8 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     const UPDATE = 1;
     const EVALUATE = 3;
     const CANCEL = 5;
-    const MESH = 0;
-    const CANCELLED = 3;
+    const FRAME = 0;
+    const CANCELLED = 2;
 
     const path = "part.kup";
     try worker.sendFrame(UPDATE, &.{ &u32Le(path.len), path, "a = cube(2)\n" });
@@ -610,8 +610,11 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     try worker.sendFrame(EVALUATE, &.{ &.{1}, path });
     const evaluated = try worker.receiveFrame();
     defer testing.allocator.free(evaluated);
-    try testing.expectEqual(@as(u8, MESH), evaluated[0]);
-    try testing.expectEqualStrings("glTF", evaluated[1..5]);
+    // The preview frame: its header's length, the header, the model as GLB
+    try testing.expectEqual(@as(u8, FRAME), evaluated[0]);
+    const header_len = std.mem.readInt(u32, evaluated[1..5], .little);
+    try testing.expect(std.mem.find(u8, evaluated[5..][0..header_len], "\"kind\":\"3d\"") != null);
+    try testing.expectEqualStrings("glTF", evaluated[5 + header_len ..][0..4]);
 
     // A run that never ends stops when the server says so, not at the instruction limit.
     try worker.sendFrame(UPDATE, &.{ &u32Le(path.len), path, "while true\nend\n" });

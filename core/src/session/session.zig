@@ -2,7 +2,8 @@
 //! output, the files its last run read as data and the reverse import graph, marks an
 //! edited file (a module or a data file) and its importers stale, and evaluates only those
 //! again, stopping early where an output's hash is unchanged. Used by the LSP, `kupcad
-//! watch` and `kupcad build`.
+//! watch` and `kupcad build`. A `RunObserver` is told of each run while the VM still holds
+//! what it left: the language server's preview makes its frame there.
 
 const std = @import("std");
 const workspace = @import("../frontend/workspace.zig");
@@ -18,6 +19,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const registry = @import("../stdlib/registry.zig");
 const kernel = @import("../kernel/kernel.zig");
 const geom = @import("../core/geometry_handle.zig");
+const Stopwatch = @import("../core/stopwatch.zig").Stopwatch;
 const VM = @import("../vm/vm.zig").VM;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 
@@ -40,8 +42,9 @@ pub const SessionNode = struct {
     /// runs it again though its source is the same.
     files_read: std.ArrayList([]u8) = .empty,
     /// It runs again though its source is the same: a file it read changed
-    /// (ScriptSession.markDataFileEdited). Cleared once it ran without an error, so a failed
-    /// run runs again next time and isn't taken for its last output.
+    /// (ScriptSession.markDataFileEdited), or its host wants what a run leaves
+    /// (ScriptSession.runAgain). Cleared once it ran without an error, so a failed run runs
+    /// again next time and isn't taken for its last output.
     must_run: bool = false,
 
     pub fn deinit(self: *SessionNode, allocator: std.mem.Allocator) void {
@@ -81,6 +84,28 @@ pub const Failure = struct {
     diagnostics: []common_errors.Diagnostic,
 };
 
+/// A module's run, as the session's observer learns of it.
+pub const ModuleRun = struct {
+    path: []const u8,
+    source: []const u8,
+    /// The parse the run compiled.
+    doc: *const api.Document,
+    /// Holds what the run left, until the session goes on.
+    vm: *VM,
+    /// It ended without an error; else the VM's last error says why.
+    ok: bool,
+    /// How long it ran, in nanoseconds.
+    run_ns: u64,
+};
+
+/// Told of every module the session runs, right after the run: the VM still holds what it
+/// left (its last value, ghosts, materials and report), of which the session keeps only a
+/// copy of the shape. It mustn't change the session.
+pub const RunObserver = struct {
+    context: *anyopaque,
+    ran: *const fn (context: *anyopaque, run: ModuleRun) void,
+};
+
 pub const ScriptSession = struct {
     allocator: std.mem.Allocator,
     workspace: Workspace,
@@ -101,6 +126,8 @@ pub const ScriptSession = struct {
     /// injects them after registering the standard library, which makes a fresh `params` map
     /// (injecting once, before evaluating, used to be wiped by it).
     params: ParamValues = .{},
+
+    observer: ?RunObserver = null,
 
     /// A session whose scripts read and write files through `files`: the disk for `kupcad
     /// build` and `watch`, the LSP's read-only sandbox, `.none` for no files at all.
@@ -250,13 +277,21 @@ pub const ScriptSession = struct {
     /// their source is the same. False when no module read it.
     pub fn markDataFileEdited(self: *ScriptSession, path: []const u8) !bool {
         var found = false;
-        for (self.nodes.items, 0..) |*node, i| {
+        for (self.nodes.items, 0..) |node, i| {
             if (!node.hasRead(path)) continue;
-            node.must_run = true;
-            try self.markFileEdited(self.workspace.modules.items[i].path);
+            try self.runAgain(self.workspace.modules.items[i].path);
             found = true;
         }
         return found;
+    }
+
+    /// Makes the module at `path` run at the next evaluation though nothing it reads changed
+    /// (its importers run after it if its output changes): a host wants what a run leaves
+    /// besides the output the session keeps (the language server's preview, its frame).
+    pub fn runAgain(self: *ScriptSession, path: []const u8) !void {
+        const id = self.workspace.path_to_id.get(path) orelse return error.UnknownModule;
+        self.nodes.items[@backingInt(id)].must_run = true;
+        try self.markFileEdited(path);
     }
 
     /// Forgets the module at `path` (an editor closed it): its cached output and its place in
@@ -394,9 +429,12 @@ pub const ScriptSession = struct {
         };
 
         self.vm.resetRunOutput();
+        var clock = Stopwatch.start(self.vm.io);
         const result = self.vm.interpret(&out_chunk);
+        const run_ns = clock.lap();
         // A failed run is watched too: fixing the file it couldn't read runs it again
         try node.rememberFilesRead(self.allocator, &self.vm);
+        if (self.observer) |o| o.ran(o.context, .{ .path = mod.path, .source = mod.source, .doc = &doc, .vm = &self.vm, .ok = result == .ok, .run_ns = run_ns });
         if (result != .ok) return error.RuntimeError;
 
         // Borrowed: owned by vm.dag_cache (ensureConcrete) or by vm.display_list.

@@ -25,7 +25,6 @@ const export_mod = @import("exporters/export.zig");
 const geom = @import("core/geometry_handle.zig");
 const preview_build = @import("preview/build.zig");
 const Stopwatch = @import("core/stopwatch.zig").Stopwatch;
-const LinePosition = @import("vm/run_report.zig").LinePosition;
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -432,8 +431,7 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     if (doc.diagnostics.len > 0) {
-        const found = doc.diagnostics[0];
-        return preview_build.ofFailure(allocator, &doc, source, found.message, positionOf(&doc, found.loc.offset));
+        return preview_build.ofFailure(allocator, &doc, source, preview_build.failureOfDiagnostic(&doc, doc.diagnostics[0]));
     }
     var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params });
     defer vm.deinit();
@@ -448,7 +446,7 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
         const found = comp.errorDiagnostic() orelse return err;
-        return preview_build.ofFailure(allocator, &doc, source, found.message, positionOf(&doc, found.loc.offset));
+        return preview_build.ofFailure(allocator, &doc, source, preview_build.failureOfDiagnostic(&doc, found));
     };
     var clock = Stopwatch.start(io);
     const ok = vm.interpret(&program) == .ok;
@@ -460,12 +458,7 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
 pub fn previewFailure(allocator: std.mem.Allocator, source: []const u8, message: []const u8) ![]u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    return preview_build.ofFailure(allocator, &doc, source, message, null);
-}
-
-fn positionOf(doc: *const Document, offset: u32) LinePosition {
-    const at = doc.line_index.humanPosition(offset);
-    return .{ .line = at.line, .column = at.column };
+    return preview_build.ofFailure(allocator, &doc, source, .{ .message = message });
 }
 
 /// Copies the VM's record of the error that failed it; null if there is none or on OOM,

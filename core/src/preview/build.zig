@@ -3,13 +3,15 @@
 //! does), the parts, the warnings, the parameters (the schema `kupcad doc` gives and the
 //! values the run took) and why it failed, if it did. `ofRun` makes one from a VM right after
 //! it ran, while it still holds what the run left; `ofFailure` one for a script that didn't
-//! get to run (it doesn't parse or compile, or its host refused its parameter values).
+//! get to run (it doesn't parse or compile, or its host refused its parameter values), and
+//! `ofImportFailure` one for a script a module it imports stopped.
 
 const std = @import("std");
 const frame = @import("frame.zig");
 const VM = @import("../vm/vm.zig").VM;
 const value = @import("../core/value.zig");
 const Document = @import("../frontend/document.zig").Document;
+const Diagnostic = @import("../core/errors.zig").Diagnostic;
 const extractor = @import("../tools/doc/extractor.zig");
 const model_mod = @import("../exporters/model.zig");
 const export_mod = @import("../exporters/export.zig");
@@ -71,18 +73,45 @@ pub fn ofRun(allocator: std.mem.Allocator, run: Run) ![]u8 {
     return frame.encode(allocator, header, "");
 }
 
-/// The frame of a script that didn't get to run: its schema, as far as it parses, and why,
-/// at `position` when it is known.
-pub fn ofFailure(allocator: std.mem.Allocator, doc: *const Document, source: []const u8, message: []const u8, position: ?LinePosition) ![]u8 {
+/// The frame of a script that didn't get to run: its schema, as far as it parses, and why.
+pub fn ofFailure(allocator: std.mem.Allocator, doc: *const Document, source: []const u8, failure: frame.Failure) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     return frame.encode(allocator, .{
         .kind = .none,
         .params = .{ .schema = try extractor.extractSchema(arena, doc, source), .values = .{} },
-        .@"error" = .{ .message = message, .line = lineOf(position), .column = columnOf(position), .param = null },
+        .@"error" = failure,
         .timing = .{ .runMs = 0, .renderMs = 0 },
     }, "");
+}
+
+/// The frame of a script that didn't run because the module it imports at `module_path`
+/// failed, as `failure` says in that module's lines: the message names the module and the
+/// place, and the line and column, which would be the script's, are left out.
+pub fn ofImportFailure(allocator: std.mem.Allocator, doc: *const Document, source: []const u8, module_path: []const u8, failure: frame.Failure) ![]u8 {
+    const message = if (failure.line) |line|
+        try std.fmt.allocPrint(allocator, "{s}:{d}:{d}: {s}", .{ module_path, line, failure.column orelse 1, failure.message })
+    else
+        try std.fmt.allocPrint(allocator, "{s}: {s}", .{ module_path, failure.message });
+    defer allocator.free(message);
+    return ofFailure(allocator, doc, source, .{ .message = message });
+}
+
+/// Why a script doesn't parse or compile: `diagnostic`, placed in `doc`.
+pub fn failureOfDiagnostic(doc: *const Document, diagnostic: Diagnostic) frame.Failure {
+    const at = doc.line_index.humanPosition(diagnostic.loc.offset);
+    return .{ .message = diagnostic.message, .line = at.line, .column = at.column };
+}
+
+/// Why a run failed: the VM's last error, where it was, and the parameter it refused.
+pub fn failureOf(vm: *const VM) frame.Failure {
+    return .{
+        .message = vm.last_error orelse FAILED_WITHOUT_MESSAGE,
+        .line = lineOf(vm.last_error_position),
+        .column = columnOf(vm.last_error_position),
+        .param = vm.report.refused_param,
+    };
 }
 
 /// What a frame shows of a run: its model (a kind of body, its parts, the body), or that
@@ -161,16 +190,6 @@ fn paramValue(v: value.Value) ?param_values.ParamValue {
     if (v.isBool()) return .{ .boolean = v.asBool() };
     if (v.nameChars()) |text| return .{ .text = text };
     return null;
-}
-
-/// Why the run failed: the VM's last error, where it was, and the parameter it refused.
-fn failureOf(vm: *const VM) frame.Failure {
-    return .{
-        .message = vm.last_error orelse FAILED_WITHOUT_MESSAGE,
-        .line = lineOf(vm.last_error_position),
-        .column = columnOf(vm.last_error_position),
-        .param = vm.report.refused_param,
-    };
 }
 
 fn warningOf(message: []const u8, position: ?LinePosition) frame.Warning {

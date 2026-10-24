@@ -2,7 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const lsp_worker = @import("lsp_worker.zig");
-const SessionPreview = @import("lsp_preview.zig").SessionPreview;
+const lsp_preview = @import("lsp_preview.zig");
+const SessionPreview = lsp_preview.SessionPreview;
+const OutcomeTag = std.meta.Tag(lsp_preview.Outcome);
+const preview_frame = @import("../preview/frame.zig");
 
 fn u32Bytes(n: u32) [4]u8 {
     var b: [4]u8 = undefined;
@@ -55,8 +58,10 @@ test "lsp worker: serve answers updates, an evaluation, a hover and a removal in
     try testing.expectEqualSlices(u8, &.{0}, updated.payload);
     const evaluated = try lsp_worker.readFrame(&out, testing.allocator);
     defer testing.allocator.free(evaluated.payload);
-    try testing.expectEqual(@as(u8, 0), evaluated.payload[0]); // mesh
-    try testing.expectEqualStrings("glTF", evaluated.payload[1..5]);
+    try testing.expectEqual(@backingInt(OutcomeTag.frame), evaluated.payload[0]);
+    const frame = try preview_frame.split(evaluated.payload[1..]);
+    try testing.expect(std.mem.find(u8, frame.header, "\"kind\":\"3d\"") != null);
+    try testing.expectEqualStrings("glTF", frame.body[0..4]);
     const hovered = try lsp_worker.readFrame(&out, testing.allocator);
     defer testing.allocator.free(hovered.payload);
     try testing.expectEqual(@as(u8, 1), hovered.payload[0]);
@@ -78,7 +83,7 @@ test "lsp worker: a worker that dies is a crash for the preview, and the next us
     const preview = worker.preview();
     try preview.update("part.kup", "cube(1)\n");
     for (0..2) |_| {
-        try testing.expectEqual(std.meta.Tag(@import("lsp_preview.zig").Outcome).crashed, std.meta.activeTag(preview.evaluate(testing.allocator, "part.kup", true)));
+        try testing.expectEqual(OutcomeTag.crashed, std.meta.activeTag(preview.evaluate(testing.allocator, "part.kup", true)));
         try testing.expect(worker.pid() == null);
     }
     try testing.expect(try preview.hoverFacts(testing.allocator, "part.kup", @fromBackingInt(0)) == null);
@@ -109,7 +114,7 @@ test "lsp worker: the files a run read reach the server, and a change to one run
 
     var out: std.Io.Reader = .fixed(replies.written());
     // Updated, evaluated (nothing to show: no mesh wanted), the files, a file it read, one it didn't
-    const expected = [_][]const u8{ &.{0}, &.{@backingInt(std.meta.Tag(@import("lsp_preview.zig").Outcome).nothing)}, "a.json\x00b.json", &.{1}, &.{0} };
+    const expected = [_][]const u8{ &.{0}, &.{@backingInt(OutcomeTag.nothing)}, "a.json\x00b.json", &.{1}, &.{0} };
     for (expected) |payload| {
         const reply = try lsp_worker.readFrame(&out, testing.allocator);
         defer testing.allocator.free(reply.payload);
@@ -126,7 +131,7 @@ test "lsp worker: the paths of a files_read reply read back as they were sent" {
         const joined = try lsp_worker.joinPaths(testing.allocator, files);
         defer testing.allocator.free(joined);
         const read = try lsp_worker.splitPaths(testing.allocator, joined);
-        defer @import("lsp_preview.zig").freeFiles(testing.allocator, read);
+        defer lsp_preview.freeFiles(testing.allocator, read);
         try testing.expectEqual(files.len, read.len);
         for (files, read) |want, got| try testing.expectEqualStrings(want, got);
     }

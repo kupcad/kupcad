@@ -1,6 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
-const ScriptSession = @import("session.zig").ScriptSession;
+const session_mod = @import("session.zig");
+const ScriptSession = session_mod.ScriptSession;
+const finalValue = @import("../exporters/model.zig").finalValue;
 const kernel = @import("../kernel/kernel.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const api = @import("../api.zig");
@@ -632,4 +634,86 @@ test "ScriptSession: evaluateWithImports runs a module and what it imports, and 
     // The whole workspace still stops at it
     try testing.expectError(error.ParseError, session.evaluateWorkspace());
     try testing.expectError(error.UnknownModule, session.evaluateWithImports("missing.kup"));
+}
+
+/// What an observer was told of each run: the module, whether it ran without an error, and
+/// the number it left last, read from the VM as the run left it.
+const Seen = struct {
+    runs: std.ArrayList(Run) = .empty,
+
+    const Run = struct { path: []const u8, ok: bool, last: ?f64 };
+
+    fn observer(self: *Seen) session_mod.RunObserver {
+        return .{ .context = self, .ran = ran };
+    }
+
+    fn ran(context: *anyopaque, run: session_mod.ModuleRun) void {
+        const self: *Seen = @ptrCast(@alignCast(context));
+        const last = finalValue(run.vm);
+        self.runs.append(testing.allocator, .{
+            .path = run.path,
+            .ok = run.ok,
+            .last = if (last.isNumber()) last.asNumber() else null,
+        }) catch @panic("out of memory");
+    }
+};
+
+test "ScriptSession: an observer is told of each run, with what the run left, failed runs too" {
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    session.vm.mute_errors = true; // the failed run's error would print to the test log
+    var seen: Seen = .{};
+    defer seen.runs.deinit(testing.allocator);
+    session.observer = seen.observer();
+
+    const id = try session.workspace.addModule("a.kup", "x = 2\nx * 3\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+    try testing.expectEqual(@as(usize, 1), seen.runs.items.len);
+    try testing.expectEqualStrings("a.kup", seen.runs.items[0].path);
+    try testing.expect(seen.runs.items[0].ok);
+    try testing.expectEqual(@as(?f64, 6), seen.runs.items[0].last);
+
+    // Up to date, it doesn't run; a module that doesn't parse doesn't run either
+    try session.evaluateWorkspace();
+    try session.workspace.updateModuleSource(id, "x = (\n");
+    try session.markFileEdited("a.kup");
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    try testing.expectEqual(@as(usize, 1), seen.runs.items.len);
+
+    try session.workspace.updateModuleSource(id, "raise \"boom\"\n");
+    try session.markFileEdited("a.kup");
+    try testing.expectError(error.RuntimeError, session.evaluateWorkspace());
+    try testing.expectEqual(@as(usize, 2), seen.runs.items.len);
+    try testing.expect(!seen.runs.items[1].ok);
+}
+
+test "ScriptSession: runAgain runs a module whose inputs are the same, and its importers if its output changed" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    var seen: Seen = .{};
+    defer seen.runs.deinit(testing.allocator);
+    session.observer = seen.observer();
+
+    const lib_source = "side = 3\nexport side\n";
+    try files.vfs().writeFile("lib.kup", lib_source);
+    _ = try session.workspace.addModule("lib.kup", lib_source);
+    _ = try session.workspace.addModule("main.kup", "import { side } from \"./lib.kup\"\ncube(side)\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+    try testing.expectEqual(@as(usize, 2), seen.runs.items.len);
+
+    // Its output is the same, so main.kup doesn't run again
+    try session.runAgain("lib.kup");
+    try session.evaluateWorkspace();
+    try testing.expectEqual(@as(usize, 3), seen.runs.items.len);
+    try testing.expectEqualStrings("lib.kup", seen.runs.items[2].path);
+    try session.runAgain("main.kup");
+    try session.evaluateWorkspace();
+    try testing.expectEqualStrings("main.kup", seen.runs.items[3].path);
+    try testing.expectError(error.UnknownModule, session.runAgain("missing.kup"));
 }

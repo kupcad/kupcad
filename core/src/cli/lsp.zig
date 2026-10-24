@@ -251,19 +251,20 @@ pub const Handler = struct {
         try self.preview.setRoot(trimmed);
     }
 
-    /// Evaluates the preview and streams the edited document's mesh to the viewport. An edit
-    /// that arrives meanwhile cancels it (the inbox sets the preview's cancel token).
+    /// Evaluates the preview and sends the edited document's frame (preview/frame.zig) to the
+    /// viewport. An edit that arrives meanwhile cancels it (the inbox sets the preview's
+    /// cancel token).
     pub fn evaluatePreview(self: *Handler) void {
         defer self.tellOfCrash();
         self.preview_pending = false;
         const module_path = self.preview_module orelse return;
         const viewer = if (self.ws_server) |ws| (if (ws.clientCount() > 0) ws else null) else null;
         switch (self.preview.evaluate(self.allocator, module_path, viewer != null)) {
-            .mesh => |glb| {
-                defer self.allocator.free(glb);
-                viewer.?.broadcastBinary(glb) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
+            .frame => |bytes| {
+                defer self.allocator.free(bytes);
+                viewer.?.broadcastBinary(bytes) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
             },
-            .nothing, .failed => {},
+            .nothing => {},
             // Stopped by a message: run again once the editor is quiet. The modules it
             // finished stay evaluated, so the next run picks up where it stopped (and
             // tells which files they all read).

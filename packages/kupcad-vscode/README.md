@@ -8,7 +8,8 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
 * Syntax highlighting and language configuration for `.kup`.
 * Diagnostics and hover information from the language server.
 * `KupCAD: Open Viewer` opens a viewport panel that connects to the language server's local
-  WebSocket and receives the current model as GLB whenever the document changes.
+  WebSocket and receives a preview frame whenever the document changes: a JSON header (the
+  parts, warnings, parameters and any error) and the model as GLB, or SVG for a 2D model.
 
 ## Requirements
 

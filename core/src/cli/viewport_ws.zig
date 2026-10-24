@@ -1,6 +1,7 @@
 //! The WebSocket server the editor's viewport connects to on 127.0.0.1: the HTTP upgrade
 //! handshake with its origin check, frame encoding, and `ViewportWsServer`, which sends every
-//! client the preview's model as GLB (`broadcastBinary`). Started by cli/lsp.zig.
+//! client the preview's frames (preview/frame.zig: a JSON header, then the model as GLB or
+//! SVG) as binary messages (`broadcastBinary`). Started by cli/lsp.zig.
 
 const std = @import("std");
 
@@ -192,7 +193,7 @@ const Client = struct {
     cond: std.Io.Condition = .init,
     upgraded: bool = false,
     closed: bool = false,
-    /// Single-slot mailbox: the viewport only needs the newest mesh, so a slow client drops
+    /// Single-slot mailbox: the viewport only needs the newest preview, so a slow client drops
     /// stale frames instead of building an unbounded queue or blocking the broadcaster.
     pending: ?*SharedFrame = null,
 

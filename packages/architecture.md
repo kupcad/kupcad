@@ -235,14 +235,14 @@ src/
   webview/                runs in the panel (browser)
     App.svelte            ViewerPane + ParamsPanel + LogPanel from @kupcad/ui
     bridge.js             postMessage in, protocol messages out, typed both ways
-    socket.js             the viewport WebSocket: GLB frames from the language server
+    socket.js             the viewport WebSocket: preview frames from the language server
   shared/                 message types the two sides share, if any beyond the protocol's
 ```
 
 Data flow:
 
 * **The model** reaches the webview straight from the language server over the local WebSocket
-  it already opens (`cli/viewport_ws.zig`: origin-checked, GLB frames on each change), not
+  it already opens (`cli/viewport_ws.zig`: origin-checked, a preview frame on each change), not
   through the extension host: a model can be megabytes and the host has no reason to copy it. The
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.

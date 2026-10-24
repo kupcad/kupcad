@@ -68,9 +68,9 @@ pub const Params = struct {
 /// refused, for a front end's control to show.
 pub const Failure = struct {
     message: []const u8,
-    line: ?u32,
-    column: ?u32,
-    param: ?[]const u8,
+    line: ?u32 = null,
+    column: ?u32 = null,
+    param: ?[]const u8 = null,
 };
 
 /// Milliseconds spent running the script and making the body.

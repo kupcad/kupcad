@@ -21,7 +21,7 @@ const logger = std.log.scoped(.lsp);
 /// The flag `kupcad lsp` takes to be the worker.
 pub const WORKER_FLAG = "--preview-worker";
 const HEADER_BYTES = 5;
-/// The largest frame either side accepts: a model's GLB can be large, a frame's length
+/// The largest frame either side accepts: a preview frame's GLB can be large, a length
 /// longer than this is a corrupt stream.
 const MAX_FRAME_BYTES: u32 = 1 << 30;
 const IO_BUFFER_BYTES = 64 * 1024;
@@ -37,14 +37,14 @@ pub const Kind = enum(u8) {
     update,
     /// path.
     remove,
-    /// u8 want_mesh, path.
+    /// u8 want_frame, path.
     evaluate,
     /// u32 node index, path.
     hover,
     /// (empty) Stops the running evaluation; no reply.
     cancel,
     /// To set_root, update and remove: u8 0 (done) or 1 (failed). To evaluate: u8 the
-    /// outcome's tag, then the GLB for a mesh. To hover: u8 0 (doesn't compile) or 1, then
+    /// outcome's tag, then the preview frame's bytes for a frame. To hover: u8 0 (doesn't compile) or 1, then
     /// the facts. To file_changed: u8 1 when a module read the file, else 0 (failed too). To
     /// files_read: the paths, PATH_SEPARATOR between them.
     reply,
@@ -179,9 +179,9 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
             if (frame.payload.len < 1) return error.BadFrame;
             const outcome = preview.evaluate(allocator, frame.payload[1..], frame.payload[0] != 0);
             switch (outcome) {
-                .mesh => |glb| {
-                    defer allocator.free(glb);
-                    try writeFrame(output, .reply, &.{ &.{@backingInt(OutcomeTag.mesh)}, glb });
+                .frame => |bytes| {
+                    defer allocator.free(bytes);
+                    try writeFrame(output, .reply, &.{ &.{@backingInt(OutcomeTag.frame)}, bytes });
                 },
                 else => try writeFrame(output, .reply, &.{&.{@backingInt(std.meta.activeTag(outcome))}}),
             }
@@ -399,9 +399,9 @@ pub const WorkerPreview = struct {
         return splitPaths(allocator, reply.payload);
     }
 
-    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
+    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
         const w = self.running() catch return .crashed;
-        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@intFromBool(want_mesh)}, module_path }) catch |err| return self.ended(w, err, module_path);
+        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@intFromBool(want_frame)}, module_path }) catch |err| return self.ended(w, err, module_path);
         // The inbox sets `cancel` while this waits; it is passed on as it is set.
         var forwarder = self.io.concurrent(forwardCancel, .{ self, w }) catch null;
         const reply = readFrame(&w.reader.interface, self.allocator);
@@ -411,9 +411,8 @@ pub const WorkerPreview = struct {
         if (frame.kind != .reply or frame.payload.len < 1) return self.ended(w, error.BadFrame, module_path);
         const tag = std.enums.fromInt(OutcomeTag, frame.payload[0]) orelse return self.ended(w, error.BadFrame, module_path);
         return switch (tag) {
-            .mesh => .{ .mesh = allocator.dupe(u8, frame.payload[1..]) catch return .nothing },
+            .frame => .{ .frame = allocator.dupe(u8, frame.payload[1..]) catch return .nothing },
             .nothing => .nothing,
-            .failed => .failed,
             .cancelled => .cancelled,
             .crashed => .crashed,
         };
@@ -524,8 +523,8 @@ pub const WorkerPreview = struct {
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
     }
-    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
-        return cast(ptr).evaluate(allocator, module_path, want_mesh);
+    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
+        return cast(ptr).evaluate(allocator, module_path, want_frame);
     }
     fn hoverFactsImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8 {
         return cast(ptr).hoverFacts(allocator, module_path, node);

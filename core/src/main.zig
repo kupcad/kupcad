@@ -121,6 +121,7 @@ test {
     _ = @import("cli/lsp.zig");
     _ = @import("cli/lsp_test.zig");
     _ = @import("cli/lsp_inbox_test.zig");
+    _ = @import("cli/lsp_preview_test.zig");
     _ = @import("cli/lsp_worker_test.zig");
     _ = @import("cli/version_cmd_test.zig");
 }
