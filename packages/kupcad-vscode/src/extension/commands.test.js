@@ -144,6 +144,10 @@ describe('export', () => {
     await commands.executeCommand(EXPORT_COMMAND);
     expect(fake.messages[0].text).toBe('Open a KupCAD script to build it.');
 
+    fake.activeDocument = documentAt('/Untitled-1', 'kupcad', 'untitled');
+    await commands.executeCommand(EXPORT_COMMAND);
+    expect(fake.messages[1].text).toBe('Save Untitled-1 to a file first: kupcad builds files.');
+
     resetFake();
     registered({ kupcad: null });
     fake.activeDocument = documentAt('/work/part.kup');

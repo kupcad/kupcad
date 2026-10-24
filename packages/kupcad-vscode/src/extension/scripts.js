@@ -1,10 +1,19 @@
-// What the extension says of the KupCAD scripts it works on: their language, their names, and
-// that there is no kupcad to run them with.
+// What the extension says of the KupCAD scripts it works on: their language, that they are
+// files, their names, and that there is no kupcad to run them with.
 
-/** @import { Uri } from 'vscode' */
+/** @import { TextDocument, Uri } from 'vscode' */
 
 export const LANGUAGE_ID = 'kupcad';
+/** The scheme of the documents kupcad runs: files, not an untitled one or a diff's. */
+export const FILE_SCHEME = 'file';
 const EXTENSION = /\.kup$/;
+
+/**
+ * Whether `document` is a KupCAD script in a file: one the language server runs.
+ * @param {Pick<TextDocument, 'languageId' | 'uri'>} document
+ */
+export const isScriptFile = (document) =>
+  document.languageId === LANGUAGE_ID && document.uri.scheme === FILE_SCHEME;
 
 /**
  * The file a script's URI names: the last part of its path.

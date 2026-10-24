@@ -12,6 +12,7 @@ import {
   VIEWPORT_READY_NOTIFICATION,
 } from '@kupcad/protocol';
 import { errorText } from '../errors.js';
+import { FILE_SCHEME, LANGUAGE_ID } from './scripts.js';
 
 /** @import { ParamValues, ViewportReady } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
@@ -157,7 +158,7 @@ export class LanguageServer {
       'KupCAD Language Server',
       { run, debug: run },
       {
-        documentSelector: [{ scheme: 'file', language: 'kupcad' }],
+        documentSelector: [{ scheme: FILE_SCHEME, language: LANGUAGE_ID }],
         synchronize: { fileEvents: watcher },
         outputChannel: log,
       },

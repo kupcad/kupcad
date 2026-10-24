@@ -2,15 +2,15 @@
 // Its page (src/webview/) gets the model straight from the language server's viewport socket;
 // the panel tells it which document it shows and the values the document's parameters take,
 // and passes on what it asks: a frame (`ready`), new values, a screenshot to save. It keeps the
-// document's presets (presets.js): their names for the page, one applied, the panel's values
-// saved as one.
+// document's presets (presets-file.js): their names for the page, again when their file changes,
+// one applied, the panel's values saved as one.
 
 import * as vscode from 'vscode';
 import { isViewerMessage } from '@kupcad/protocol';
 import { errorText } from '../errors.js';
 import { EXPORT_COMMAND, PRINT_COMMAND } from './commands.js';
-import { presetsPathOf, readPresets, writePresets } from './presets.js';
-import { fileName, LANGUAGE_ID, scriptName } from './scripts.js';
+import { PresetsFile } from './presets-file.js';
+import { fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
@@ -22,11 +22,10 @@ export const VIEW_TYPE = 'kupcad.viewer';
 const TITLE = 'KupCAD Viewer';
 /** Where the built page is, under the extension. */
 export const PAGE_DIR = 'dist-webview';
-const PRESETS_GLOB = '**/*.presets.json';
 const REPLACE = 'Replace';
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+/** @param {string} uri a script's */
+const presetsFileOf = (uri) => new PresetsFile(vscode.Uri.parse(uri));
 
 /**
  * @typedef {object} PanelOptions
@@ -46,6 +45,8 @@ export class ViewerPanel {
   #shown = null;
   /** @type {vscode.Disposable[]} */
   #disposables = [];
+  /** The watch of the shown document's presets file. @type {vscode.Disposable | null} */
+  #presetsWatch = null;
   #closed = false;
 
   /**
@@ -79,18 +80,6 @@ export class ViewerPanel {
       options.server.onViewport(() => this.#render()),
       panel.onDidDispose(() => this.#disposed()),
     );
-    // A presets file edited, made or removed outside the panel
-    const presetsFiles = vscode.workspace.createFileSystemWatcher(PRESETS_GLOB);
-    const changed = (/** @type {vscode.Uri} */ file) => {
-      if (this.#shown && file.path === this.#presetsFile(this.#shown.uri).path)
-        void this.#tellPresets();
-    };
-    this.#disposables.push(
-      presetsFiles,
-      presetsFiles.onDidChange(changed),
-      presetsFiles.onDidCreate(changed),
-      presetsFiles.onDidDelete(changed),
-    );
     this.#render();
     const active = vscode.window.activeTextEditor;
     if (active) this.show(active.document);
@@ -111,15 +100,19 @@ export class ViewerPanel {
   }
 
   /**
-   * Shows `document`, if it is a KupCAD script; another document leaves the one shown.
+   * Shows `document`, if it is a KupCAD script in a file (the server runs no other); another
+   * document leaves the one shown.
    * @param {vscode.TextDocument} document
    */
   show(document) {
-    if (document.languageId !== LANGUAGE_ID) return;
+    if (!isScriptFile(document)) return;
     const uri = document.uri.toString();
     if (this.#shown?.uri === uri) return;
     this.#shown = { uri, name: fileName(document.uri) };
     this.#panel.title = `${TITLE}: ${this.#shown.name}`;
+    // Its presets file edited, made or removed outside the panel
+    this.#presetsWatch?.dispose();
+    this.#presetsWatch = new PresetsFile(document.uri).watch(() => void this.#tellPresets());
     this.#tellDocument();
     this.#ask(this.#options.server.preview(uri), 'show');
   }
@@ -201,12 +194,13 @@ export class ViewerPanel {
   async #tellPresets() {
     if (!this.#shown) return;
     const { uri } = this.#shown;
+    const file = presetsFileOf(uri);
     /** @type {string[]} */
     let names = [];
     try {
-      names = Object.keys(await this.#presetsOf(uri));
+      names = Object.keys(await file.read());
     } catch (error) {
-      this.#options.log.warn(`${this.#presetsFile(uri).path} can't be read: ${errorText(error)}`);
+      this.#options.log.warn(`${file.uri.path} can't be read: ${errorText(error)}`);
     }
     this.#post({ type: 'presets', uri, names });
   }
@@ -217,18 +211,18 @@ export class ViewerPanel {
    * @param {string} name
    */
   async #applyPreset(uri, name) {
+    const file = presetsFileOf(uri);
     /** @type {Presets} */
     let presets;
     try {
-      presets = await this.#presetsOf(uri);
+      presets = await file.read();
     } catch (error) {
-      void vscode.window.showErrorMessage(
-        `${this.#presetsFile(uri).path} can't be read: ${errorText(error)}`,
-      );
+      void vscode.window.showErrorMessage(`${file.name} can't be read: ${errorText(error)}`);
       return;
     }
+    // Gone meanwhile, or a name no preset has (`constructor` is none)
+    if (!Object.hasOwn(presets, name)) return;
     const values = presets[name];
-    if (!values) return;
     this.#options.values.set(uri, values);
     this.#post({ type: 'overrides', uri, values });
     this.#ask(this.#options.server.setParams(uri, values), 'applyPreset');
@@ -241,66 +235,41 @@ export class ViewerPanel {
    * @param {ParamValues} values
    */
   async #savePreset(uri, values) {
-    const file = this.#presetsFile(uri);
-    /** @type {Presets} */
-    let presets;
-    try {
-      presets = await this.#presetsOf(uri);
-    } catch (error) {
-      void vscode.window.showErrorMessage(
-        `${file.path} can't be read, so the preset wasn't saved: ${errorText(error)}`,
-      );
-      return;
-    }
+    const file = presetsFileOf(uri);
     const typed = await vscode.window.showInputBox({
       title: 'Save the parameters as a preset',
-      prompt: `Kept in ${fileName(file)}, beside the script`,
+      prompt: `Kept in ${file.name}, beside the script`,
       placeHolder: 'Small',
       validateInput: (text) => (text.trim() ? null : 'A preset needs a name'),
     });
     const name = typed?.trim();
     if (!name) return;
-    if (Object.hasOwn(presets, name)) {
-      const chosen = await vscode.window.showWarningMessage(
-        `The preset "${name}" is there already: replace it?`,
-        { modal: true },
-        REPLACE,
+    try {
+      // The file as it is once the name is chosen: it may have been edited meanwhile
+      if (Object.hasOwn(await file.read(), name)) {
+        const chosen = await vscode.window.showWarningMessage(
+          `The preset "${name}" is there already: replace it?`,
+          { modal: true },
+          REPLACE,
+        );
+        if (chosen !== REPLACE) return;
+      }
+      await file.put(name, values);
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `The preset "${name}" wasn't saved in ${file.name}: ${errorText(error)}`,
       );
-      if (chosen !== REPLACE) return;
+      return;
     }
-    await vscode.workspace.fs.writeFile(
-      file,
-      encoder.encode(writePresets({ ...presets, [name]: values })),
-    );
     await this.#tellPresets();
   }
 
   /**
-   * The presets of the document at `uri`: none without a file.
-   * @param {string} uri
-   * @returns {Promise<Presets>}
-   * @throws {Error} for a file that can't be read as presets
+   * Tells the page `message`, unless the panel was closed meanwhile (a file read on).
+   * @param {HostMessage} message
    */
-  async #presetsOf(uri) {
-    /** @type {Uint8Array} */
-    let bytes;
-    try {
-      bytes = await vscode.workspace.fs.readFile(this.#presetsFile(uri));
-    } catch (error) {
-      if (/** @type {{ code?: string }} */ (error).code === 'FileNotFound') return {};
-      throw error;
-    }
-    return readPresets(decoder.decode(bytes));
-  }
-
-  /** @param {string} uri the document's */
-  #presetsFile(uri) {
-    const script = vscode.Uri.parse(uri);
-    return script.with({ path: presetsPathOf(script.path) });
-  }
-
-  /** @param {HostMessage} message */
   #post(message) {
+    if (this.#closed) return;
     void this.#panel.webview.postMessage(message);
   }
 
@@ -321,7 +290,13 @@ export class ViewerPanel {
       filters: { 'PNG image': ['png'] },
     });
     if (!target) return;
-    await vscode.workspace.fs.writeFile(target, Buffer.from(png, 'base64'));
+    try {
+      await vscode.workspace.fs.writeFile(target, Buffer.from(png, 'base64'));
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `The screenshot wasn't saved in ${fileName(target)}: ${errorText(error)}`,
+      );
+    }
   }
 
   /** The folder of the document shown, else the workspace's. */
@@ -334,5 +309,7 @@ export class ViewerPanel {
     this.#closed = true;
     for (const disposable of this.#disposables) disposable.dispose();
     this.#disposables = [];
+    this.#presetsWatch?.dispose();
+    this.#presetsWatch = null;
   }
 }

@@ -160,12 +160,24 @@ class Webview {
   cspSource = 'vscode-resource:';
   /** What the extension posted the page. @type {unknown[]} */
   posted = [];
-  html = '';
+  /** Whether its panel was closed: VS Code throws on using it then. */
+  disposed = false;
+  #html = '';
   #received = new EventEmitter();
   onDidReceiveMessage = this.#received.event;
 
+  get html() {
+    return this.#html;
+  }
+
+  set html(html) {
+    this.#assertLive();
+    this.#html = html;
+  }
+
   /** @param {unknown} message */
   postMessage(message) {
+    this.#assertLive();
     this.posted.push(message);
     return Promise.resolve(true);
   }
@@ -181,6 +193,10 @@ class Webview {
    */
   receive(message) {
     this.#received.fire(message);
+  }
+
+  #assertLive() {
+    if (this.disposed) throw new Error('Webview is disposed');
   }
 }
 
@@ -206,6 +222,8 @@ class WebviewPanel {
   }
 
   dispose() {
+    if (this.webview.disposed) return;
+    this.webview.disposed = true;
     this.#disposed.fire();
   }
 }

@@ -21,7 +21,7 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
   (`bracket.kup`'s in `bracket.presets.json`, `{ "presets": { "Small": { "width": 20 } } }`, to
   read, edit and commit with the script). The viewer lists them above the parameters: one chosen
   runs the script with its values; `Save as preset…` keeps the values set in the panel under a
-  name (asking before replacing one). An edit of the file shows at once.
+  name (asking before replacing one). An edit of the file shows at once, wherever the script is.
 * **Export and print** (`KupCAD: Export…`, `KupCAD: Print…`, a `.kup` editor's title bar, or the
   viewer's toolbar): the script is built by `kupcad build` with the values its parameters have in
   the viewer, so what is written is what the CLI builds. Export asks the format (STL, 3MF, STEP,
@@ -76,6 +76,8 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
 
 * The language server evaluates documents on a read-only virtual filesystem: a `.kup` file cannot
   write to disk (`export_*`) just by being opened.
+* A downloaded `kupcad` is checked against its release's `checksums.txt`: that catches a download
+  broken on the way, not a release replaced on GitHub (both files come from it).
 * The viewport socket only listens on `127.0.0.1` and only accepts connections whose `Origin` is a
   VS Code webview. The viewer's page runs under a strict Content Security Policy: no script but
   its own (nonced), no inline style, and no network but that socket.
@@ -97,10 +99,10 @@ Two programs, built separately by Vite:
   restarts and stops one after another, the values every script was given sent again to a server
   that (re)started, the viewport's port from `kupcad/viewportReady`, and the server's
   `kupcad.preview` and `kupcad.setParams` commands), `viewer-panel.js` is the viewer's webview
-  panel (`ViewerPanel`: it follows the editor, tells the page the document it shows and asks the
-  server for its frame, gives the server the panel's values, and saves a screenshot),
-  `presets.js` reads and writes a script's presets file (the panel lists, applies and saves
-  them), `commands.js` exports and prints (over `export.js`: the formats, `kupcad build`'s
+  panel (`ViewerPanel`: it follows the editor to a script in a file, tells the page the document
+  it shows and asks the server for its frame, gives the server the panel's values, and saves a
+  screenshot), `presets.js` says what a script's presets file holds and `presets-file.js` reads,
+  writes and watches it (the panel lists, applies and saves them), `commands.js` exports and prints (over `export.js`: the formats, `kupcad build`'s
   arguments, why a build failed, opening a slicer), `values.js` keeps the values each script was
   given, which the server runs it with and an export builds it with, and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,

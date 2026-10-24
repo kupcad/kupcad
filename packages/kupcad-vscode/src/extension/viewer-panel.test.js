@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The module Vitest gives the code as `vscode`
 import {
   commands,
@@ -8,6 +8,7 @@ import {
   resetFake,
   Uri,
   window,
+  workspace,
 } from './testing/vscode.js';
 import { readPresets, writePresets } from './presets.js';
 import { ScriptValues } from './values.js';
@@ -82,6 +83,7 @@ function open(server = serverAt(9001)) {
 }
 
 beforeEach(() => resetFake());
+afterEach(() => vi.restoreAllMocks());
 
 describe('ViewerPanel', () => {
   it('opens on the script the editor shows, and asks the server for its frame', () => {
@@ -104,11 +106,15 @@ describe('ViewerPanel', () => {
     );
   });
 
-  it('follows the editor to another script, and stays on it for another kind of file', () => {
+  it('follows the editor to another script, and stays on it for anything the server runs not', () => {
     fake.activeDocument = PART;
     const { webview, server } = open();
     fake.showEditor(documentAt('/work/lid.kup'));
     fake.showEditor(documentAt('/work/notes.md', 'markdown'));
+    fake.showEditor(documentAt('/Untitled-1', 'kupcad', 'untitled'));
+    fake.showEditor(documentAt('/work/part.kup', 'kupcad', 'git'));
+    // The panel itself focused: no editor is
+    fake.showEditor(undefined);
     fake.showEditor(documentAt('/work/lid.kup'));
     expect(webview.posted.at(-1)).toEqual({
       type: 'document',
@@ -161,6 +167,24 @@ describe('ViewerPanel', () => {
     await vi.waitFor(() => expect(log.lines).toContain('error: show: the server stopped'));
   });
 
+  it("says why a screenshot wasn't saved", async () => {
+    fake.activeDocument = PART;
+    const { webview } = open();
+    vi.spyOn(workspace.fs, 'writeFile').mockRejectedValueOnce(
+      new Error('EACCES: permission denied'),
+    );
+    fake.saveAnswer = Uri.file('/work/part.png');
+    webview.receive({ type: 'screenshot', png: btoa('PNG') });
+    await vi.waitFor(() =>
+      expect(fake.messages).toContainEqual(
+        expect.objectContaining({
+          level: 'error',
+          text: "The screenshot wasn't saved in part.png: EACCES: permission denied",
+        }),
+      ),
+    );
+  });
+
   it('saves a screenshot where the user says, and nothing when the dialog is cancelled', async () => {
     fake.activeDocument = PART;
     const { webview } = open();
@@ -173,15 +197,21 @@ describe('ViewerPanel', () => {
     expect(new TextDecoder().decode(fake.files.get('/work/part.png'))).toBe('PNG');
   });
 
-  it('stops following the editor once closed', () => {
+  it('stops following the editor once closed, and tells the page nothing a read finds after', async () => {
+    presetsOnDisk({ Small: { w: 1 } });
     fake.activeDocument = PART;
     const { panel, server, webview } = open();
+    // Closed while the presets file is read
     panel.dispose();
     expect(panel.closed).toBe(true);
     fake.showEditor(documentAt('/work/lid.kup'));
     server.restart(9100);
+    fake.fileChanged(PRESETS);
+    await new Promise((resolve) => setTimeout(resolve));
     expect(server.asked).toEqual([['preview', PART_URI]]);
     expect(webview.html).not.toContain('9100');
+    expect(postedOf(webview, 'presets')).toEqual([]);
+    expect(fake.watchers).toEqual([]);
   });
 });
 
@@ -206,6 +236,22 @@ describe('ViewerPanel presets', () => {
     });
   });
 
+  it("watches the shown script's presets file alone, wherever the script is", async () => {
+    fake.activeDocument = PART;
+    const { webview } = open();
+    await vi.waitFor(() => expect(postedOf(webview, 'presets')).toHaveLength(1));
+    fake.showEditor(documentAt('/elsewhere/lid.kup'));
+    await vi.waitFor(() => expect(postedOf(webview, 'presets')).toHaveLength(2));
+    // part.kup isn't shown any more
+    fake.fileChanged(PRESETS);
+    fake.fileChanged('/elsewhere/lid.presets.json');
+    await vi.waitFor(() => expect(postedOf(webview, 'presets')).toHaveLength(3));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(postedOf(webview, 'presets')).toHaveLength(3);
+    expect(postedOf(webview, 'presets')[2]).toMatchObject({ uri: 'file:///elsewhere/lid.kup' });
+    expect(fake.watchers).toHaveLength(1);
+  });
+
   it("applies a preset: the server runs with its values, and the page's panel shows them", async () => {
     presetsOnDisk({ Small: { w: 1, label: 'S' } });
     fake.activeDocument = PART;
@@ -217,6 +263,17 @@ describe('ViewerPanel presets', () => {
     expect(postedOf(webview, 'overrides')).toEqual([
       { type: 'overrides', uri: PART_URI, values: { w: 1, label: 'S' } },
     ]);
+  });
+
+  it('applies no preset of a name the file has not', async () => {
+    presetsOnDisk({ Small: { w: 1 } });
+    fake.activeDocument = PART;
+    const { webview, server, values } = open();
+    webview.receive({ type: 'applyPreset', uri: PART_URI, name: 'constructor' });
+    webview.receive({ type: 'applyPreset', uri: PART_URI, name: 'Large' });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(server.asked).toEqual([['preview', PART_URI]]);
+    expect(values.has(PART_URI)).toBe(false);
   });
 
   it("saves the panel's values as a preset under the name given, asking before replacing one", async () => {
@@ -245,6 +302,34 @@ describe('ViewerPanel presets', () => {
     expect(presetsOf()).toEqual({ Small: { w: 2 }, Large: { w: 9 } });
   });
 
+  it('keeps what was written to the presets file while the user named the preset', async () => {
+    presetsOnDisk({ Small: { w: 1 } });
+    fake.activeDocument = PART;
+    const { webview } = open();
+    vi.spyOn(window, 'showInputBox').mockImplementationOnce(async () => {
+      presetsOnDisk({ Small: { w: 1 }, Medium: { w: 5 } });
+      return 'Large';
+    });
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 9 } });
+    await vi.waitFor(() =>
+      expect(presetsOf()).toEqual({ Small: { w: 1 }, Medium: { w: 5 }, Large: { w: 9 } }),
+    );
+  });
+
+  it("says why a preset wasn't written", async () => {
+    fake.activeDocument = PART;
+    const { webview } = open();
+    vi.spyOn(workspace.fs, 'writeFile').mockRejectedValueOnce(new Error('EROFS: read-only'));
+    fake.inputAnswer = 'Small';
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 1 } });
+    await vi.waitFor(() =>
+      expect(fake.messages[0]).toMatchObject({
+        level: 'error',
+        text: 'The preset "Small" wasn\'t saved in part.presets.json: EROFS: read-only',
+      }),
+    );
+  });
+
   it("lists none of a presets file it can't read, says why, and saves nothing over it", async () => {
     fake.files.set(PRESETS, new TextEncoder().encode('{'));
     fake.activeDocument = PART;
@@ -255,9 +340,12 @@ describe('ViewerPanel presets', () => {
     expect(log.lines[0]).toMatch(/part\.presets\.json can't be read: it is no JSON/);
     fake.inputAnswer = 'Small';
     webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 1 } });
-    await vi.waitFor(() => expect(fake.messages[0]?.text).toMatch(/so the preset wasn't saved/));
+    await vi.waitFor(() =>
+      expect(fake.messages[0]?.text).toMatch(
+        /^The preset "Small" wasn't saved in part\.presets\.json: it is no JSON/,
+      ),
+    );
     expect(new TextDecoder().decode(fake.files.get(PRESETS))).toBe('{');
-    expect(fake.inputs).toHaveLength(0);
   });
 });
 

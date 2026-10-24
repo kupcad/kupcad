@@ -345,8 +345,10 @@ src/
     viewer-panel.js       the webview panel: it follows the editor, bridges the page's messages
     webview-html.js       the page's HTML and its CSP
     commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf) and print, over export.js
+    scripts.js            a script: its language, a file's (no untitled one), its names
     values.js             the values each script was given: the server runs it, an export builds it, with them
     presets.js            parameter presets as <script>.presets.json beside the file
+    presets-file.js       that file read, a preset put in it, and watched (a RelativePattern)
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
   webview/                runs in the panel (browser)
     App.svelte            ViewerPane + ParamsPanel from @kupcad/ui, the run's problems
@@ -362,8 +364,9 @@ Data flow:
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.
 * **Presets** are named sets of a script's values in `<name>.presets.json` beside it
-  (`presets.js`, JSON a person edits and commits): the host reads them and tells the page their
-  names, again when the file changes on disk; a preset applied is given to the server as the panel's
+  (`presets.js`, JSON a person edits and commits): the host reads them (`PresetsFile`) and tells
+  the page their names, again when the shown script's file changes on disk (watched by its folder,
+  so a script outside the workspace has its own); a preset applied is given to the server as the panel's
   values are; `Save as preset…` writes the panel's values under the name the user gives.
 * **Parameters** go the other way: the panel's values → bridge → extension host →
   `kupcad.setParams` command (`workspace/executeCommand`) to the language server, which re-runs the preview with them.

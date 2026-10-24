@@ -15,7 +15,7 @@ import {
   startApart,
 } from './export.js';
 import { errorText } from '../errors.js';
-import { fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
+import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { ScriptValues } from './values.js' */
@@ -133,7 +133,7 @@ async function scriptToBuild(options, given) {
     void vscode.window.showInformationMessage('Open a KupCAD script to build it.');
     return null;
   }
-  if (document.uri.scheme !== 'file') {
+  if (document.uri.scheme !== FILE_SCHEME) {
     void vscode.window.showInformationMessage(
       `Save ${scriptName(document.uri)} to a file first: kupcad builds files.`,
     );
