@@ -63,11 +63,12 @@ describe('export', () => {
         cwd: '/work',
       },
     ]);
-    expect(fake.progress[0].title).toBe('Exporting part as 3MF');
+    expect(fake.progress[0]).toMatchObject({ title: 'Exporting part as 3MF', cancellable: true });
     expect(fake.messages[0]).toEqual({
       level: 'information',
       text: 'Exported part.3mf.',
       buttons: ['Reveal'],
+      modal: false,
     });
     expect(revealed).toHaveLength(1);
   });
@@ -108,7 +109,7 @@ describe('export', () => {
     fake.saveAnswer = Uri.file('/out/part.stl');
     await commands.executeCommand(EXPORT_COMMAND);
     expect(builds).toHaveLength(0);
-    expect(fake.messages[0]).toMatchObject({ level: 'warning', buttons: ['Save'] });
+    expect(fake.messages[0]).toMatchObject({ level: 'warning', buttons: ['Save'], modal: true });
     fake.answer = 'Save';
     await commands.executeCommand(EXPORT_COMMAND);
     expect(part.saves).toBe(1);

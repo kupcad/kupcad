@@ -231,7 +231,7 @@ describe('ViewerPanel presets', () => {
     fake.inputAnswer = 'Small';
     webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 2 } });
     await vi.waitFor(() => expect(fake.messages).toHaveLength(1));
-    expect(fake.messages[0]).toMatchObject({ level: 'warning', buttons: ['Replace'] });
+    expect(fake.messages[0]).toMatchObject({ level: 'warning', buttons: ['Replace'], modal: true });
     expect(presetsOf().Small).toEqual({ w: 1 });
     fake.answer = 'Replace';
     webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 2 } });

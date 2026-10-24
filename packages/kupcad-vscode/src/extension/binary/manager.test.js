@@ -108,7 +108,11 @@ describe('BinaryManager.server', () => {
     });
     expect(installed).toEqual(['0.1.4']);
     expect(fake.progress).toEqual([
-      { title: 'Downloading kupcad 0.1.4', reports: [{ increment: 50 }, { increment: 50 }] },
+      {
+        title: 'Downloading kupcad 0.1.4',
+        cancellable: false,
+        reports: [{ increment: 50 }, { increment: 50 }],
+      },
     ]);
   });
 
@@ -147,7 +151,12 @@ describe('BinaryManager.server', () => {
     });
     expect(await chosen.manager.server()).toEqual(mine);
     expect(fake.messages).toEqual([
-      { level: 'warning', text: 'kupcad.serverPath (/opt/kupcad) is kupcad 0.3.0', buttons: [] },
+      {
+        level: 'warning',
+        text: 'kupcad.serverPath (/opt/kupcad) is kupcad 0.3.0',
+        buttons: [],
+        modal: false,
+      },
     ]);
 
     resetFake();
@@ -181,6 +190,7 @@ describe('BinaryManager.checkForUpdates', () => {
       level: 'information',
       text: 'kupcad 0.1.3 is out (this is 0.1.2).',
       buttons: ['Update'],
+      modal: false,
     });
 
     fake.answer = 'Update';

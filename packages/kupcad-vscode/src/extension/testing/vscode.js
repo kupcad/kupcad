@@ -74,6 +74,32 @@ export class Uri {
   }
 }
 
+export class Disposable {
+  /** @param {() => void} callOnDispose */
+  constructor(callOnDispose) {
+    this.dispose = callOnDispose;
+  }
+
+  /** @param {...{ dispose(): unknown }} disposables */
+  static from(...disposables) {
+    return new Disposable(() => {
+      for (const disposable of disposables) disposable.dispose();
+    });
+  }
+}
+
+/** A glob relative to a folder: a file there, say, wherever the workspace is. */
+export class RelativePattern {
+  /**
+   * @param {Uri} base
+   * @param {string} pattern
+   */
+  constructor(base, pattern) {
+    this.baseUri = base;
+    this.pattern = pattern;
+  }
+}
+
 export const ViewColumn = { One: 1, Beside: -2 };
 export const ProgressLocation = { SourceControl: 1, Window: 10, Notification: 15 };
 
@@ -108,13 +134,14 @@ export function memento() {
 export const ExtensionMode = { Production: 1, Development: 2, Test: 3 };
 
 /**
- * A document open in an editor.
+ * A document open in an editor: a file's, or one of another scheme (`untitled`, a diff's `git`).
  * @param {string} file
  * @param {string} [languageId]
+ * @param {string} [scheme]
  */
-export function documentAt(file, languageId = 'kupcad') {
+export function documentAt(file, languageId = 'kupcad', scheme = 'file') {
   const document = {
-    uri: Uri.file(file),
+    uri: Uri.file(file).with({ scheme }),
     fileName: file,
     languageId,
     isDirty: false,
@@ -125,15 +152,15 @@ export function documentAt(file, languageId = 'kupcad') {
       return true;
     },
   };
-  fake.documents.set(document.uri.path, document);
+  fake.documents.set(document.uri.toString(), document);
   return document;
 }
 
 class Webview {
-  html = '';
   cspSource = 'vscode-resource:';
   /** What the extension posted the page. @type {unknown[]} */
   posted = [];
+  html = '';
   #received = new EventEmitter();
   onDidReceiveMessage = this.#received.event;
 
@@ -208,13 +235,13 @@ export const fake = {
   panels: [],
   /** @type {Map<string, (...args: any[]) => any>} */
   commands: new Map(),
-  /** @type {{ level: string, text: string, buttons: string[] }[]} */
+  /** @type {{ level: string, text: string, buttons: string[], modal: boolean }[]} */
   messages: [],
   /** The button the user picks on a message: one of its buttons, or none (dismissed). @type {string | undefined} */
   answer: undefined,
   /** What was opened outside VS Code. @type {string[]} */
   opened: [],
-  /** The progress notifications' titles, and what each reported. @type {{ title: string, reports: unknown[] }[]} */
+  /** The progress notifications: their titles, whether they can be cancelled, and what each reported. @type {{ title: string, cancellable: boolean, reports: unknown[] }[]} */
   progress: [],
   /** @type {Map<string, Uint8Array>} the file system: what was there, and what was written, by path */
   files: new Map(),
@@ -222,9 +249,9 @@ export const fake = {
   inputAnswer: undefined,
   /** The input boxes shown, by their options. @type {object[]} */
   inputs: [],
-  /** @type {{ changed: EventEmitter, created: EventEmitter, deleted: EventEmitter }[]} */
+  /** The file watchers not disposed, each with the glob of the paths it watches. @type {{ glob: string, changed: EventEmitter, created: EventEmitter, deleted: EventEmitter }[]} */
   watchers: [],
-  /** The documents open, by path. @type {Map<string, ReturnType<typeof documentAt>>} */
+  /** The documents open, by URI. @type {Map<string, ReturnType<typeof documentAt>>} */
   documents: new Map(),
   /** The label the user picks in a quick pick, or none (dismissed). @type {string | undefined} */
   pick: undefined,
@@ -252,11 +279,13 @@ export const fake = {
   },
 
   /**
-   * A file changed on disk, as a watcher hears it.
+   * A file changed on disk, as the watchers of its path hear it.
    * @param {string} file
    */
   fileChanged(file) {
-    for (const watcher of this.watchers) watcher.changed.fire(Uri.file(file));
+    for (const watcher of this.watchers) {
+      if (path.posix.matchesGlob(file, watcher.glob)) watcher.changed.fire(Uri.file(file));
+    }
   },
   /** @type {Record<string, unknown>} the settings, by their full name */
   settings: {},
@@ -269,12 +298,12 @@ export const fake = {
   logs: [],
 
   /**
-   * The editor shows `document`.
-   * @param {ReturnType<typeof documentAt>} document
+   * The editor shows `document`, or none has the focus (a panel has it, say).
+   * @param {ReturnType<typeof documentAt> | undefined} document
    */
   showEditor(document) {
     this.activeDocument = document;
-    this.activeEditorChanged.fire({ document });
+    this.activeEditorChanged.fire(document && { document });
   },
 };
 
@@ -310,7 +339,10 @@ const say =
   (level) =>
   async (/** @type {string} */ text, /** @type {unknown[]} */ ...rest) => {
     const buttons = /** @type {string[]} */ (rest.filter((item) => typeof item === 'string'));
-    fake.messages.push({ level, text, buttons });
+    const options = /** @type {{ modal?: boolean } | undefined} */ (
+      rest.find((item) => typeof item === 'object')
+    );
+    fake.messages.push({ level, text, buttons, modal: options?.modal === true });
     return buttons.includes(/** @type {string} */ (fake.answer)) ? fake.answer : undefined;
   };
 
@@ -343,11 +375,15 @@ export const window = {
     return fake.inputAnswer;
   },
   /**
-   * @param {{ title: string }} options
+   * @param {{ title: string, cancellable?: boolean }} options
    * @param {(progress: { report(value: unknown): void }, token: { onCancellationRequested: EventEmitter['event'] }) => Promise<unknown>} task
    */
   async withProgress(options, task) {
-    const shown = { title: options.title, reports: /** @type {unknown[]} */ ([]) };
+    const shown = {
+      title: options.title,
+      cancellable: options.cancellable === true,
+      reports: /** @type {unknown[]} */ ([]),
+    };
     fake.progress.push(shown);
     const cancelled = new EventEmitter();
     fake.cancellations.push(cancelled);
@@ -380,7 +416,8 @@ export const workspace = {
     };
   },
   /** @param {Uri} uri */
-  openTextDocument: async (uri) => fake.documents.get(uri.path) ?? documentAt(uri.path),
+  openTextDocument: async (uri) =>
+    fake.documents.get(uri.toString()) ?? documentAt(uri.path, 'kupcad', uri.scheme),
   get workspaceFolders() {
     return [{ uri: Uri.file('/work') }];
   },
@@ -399,8 +436,13 @@ export const workspace = {
       return bytes;
     },
   },
-  createFileSystemWatcher() {
+  /** @param {string | RelativePattern} pattern a glob of the workspace's paths, or one in a folder */
+  createFileSystemWatcher(pattern) {
     const watcher = {
+      glob:
+        typeof pattern === 'string'
+          ? pattern
+          : path.posix.join(pattern.baseUri.path, pattern.pattern),
       changed: new EventEmitter(),
       created: new EventEmitter(),
       deleted: new EventEmitter(),
@@ -410,7 +452,7 @@ export const workspace = {
       onDidChange: watcher.changed.event,
       onDidCreate: watcher.created.event,
       onDidDelete: watcher.deleted.event,
-      dispose() {},
+      dispose: () => (fake.watchers = fake.watchers.filter((w) => w !== watcher)),
     };
   },
 };
@@ -425,8 +467,13 @@ export const commands = {
     return { dispose: () => fake.commands.delete(id) };
   },
   /**
+   * Runs the command registered as `id`: VS Code rejects one that isn't.
    * @param {string} id
    * @param {...any} args
    */
-  executeCommand: async (id, ...args) => fake.commands.get(id)?.(...args),
+  executeCommand: async (id, ...args) => {
+    const run = fake.commands.get(id);
+    if (!run) throw new Error(`command '${id}' not found`);
+    return run(...args);
+  },
 };
