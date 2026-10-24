@@ -854,3 +854,29 @@ test "ScriptSession: a module calls a def by its bare name, its own or an import
     try editMain(&session, main_source ++ "\n");
     try testing.expectApproxEqAbs(@as(f64, 8), mainVolume(&session), 1e-9);
 }
+
+test "ScriptSession: a module edited again and again keeps one namespace, its old versions' freed" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    const main_source = "import { part, grow } from \"./lib.kup\"\ngrow(part)\n";
+    try runLibAndMain(&session, &files, "part = cube(1)\ndef grow(s)\n  s.scale(2)\nend\nexport part\nexport grow\n", main_source);
+    const lib_id = session.workspace.path_to_id.get("lib.kup").?;
+    // A collection at every allocation: nothing a run or an import still uses is freed
+    session.vm.gc.stress = true;
+    defer session.vm.gc.stress = false;
+    for (2..6) |side| {
+        const source = try std.fmt.allocPrint(testing.allocator, "part = cube({d})\ndef grow(s)\n  s.scale(2)\nend\nexport part\nexport grow\n", .{side});
+        defer testing.allocator.free(source);
+        try files.vfs().writeFile("lib.kup", source);
+        try session.workspace.updateModuleSource(lib_id, source);
+        try session.markFileEdited("lib.kup");
+        try session.evaluateWorkspace();
+        session.vm.gc.collectGarbage(&session.vm, false);
+        // Each import of it made one, and every version's stayed
+        try testing.expectEqual(@as(usize, 1), session.vm.module_namespaces.items.len);
+        const grown: f64 = @floatFromInt(2 * side);
+        try testing.expectApproxEqAbs(grown * grown * grown, mainVolume(&session), 1e-9);
+    }
+}

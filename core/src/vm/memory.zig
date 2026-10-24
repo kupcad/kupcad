@@ -573,9 +573,10 @@ pub const GC = struct {
         }
         var shadowed_it = vm.shadowed_builtins.valueIterator();
         while (shadowed_it.next()) |val| self.markValue(val.*);
+        // A module's namespace lives while a function of its module does (blackenObject), or
+        // while its import runs
         for (vm.module_namespaces.items) |ns| {
-            var ns_it = ns.globals.valueIterator();
-            while (ns_it.next()) |val| self.markValue(val.*);
+            if (ns.pinned) self.markNamespace(ns);
         }
 
         for (vm.param_registry.items(.name), vm.param_registry.items(.current_value), vm.param_registry.items(.choices)) |name, val, choices| {
@@ -596,6 +597,13 @@ pub const GC = struct {
         self.markValue(name);
         self.markValue(val);
         if (choices) |arr| self.markObject(&arr.obj);
+    }
+
+    fn markNamespace(self: *GC, ns: *value.Namespace) void {
+        if (ns.is_marked) return;
+        ns.is_marked = true;
+        var values = ns.globals.valueIterator();
+        while (values.next()) |val| self.markValue(val.*);
     }
 
     fn markValue(self: *GC, val: value.Value) void {
@@ -653,6 +661,7 @@ pub const GC = struct {
             .function => {
                 const func = obj.as(value.ObjFunction);
                 if (func.name) |name| self.markObject(&name.obj);
+                if (func.namespace) |ns| self.markNamespace(ns);
                 if (func.chunk) |c_ptr| {
                     const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(c_ptr));
                     for (exec_chunk.constants.items) |val| self.markValue(val);
@@ -771,6 +780,7 @@ pub const GC = struct {
         self.sweepList(vm, value.ObjWorkplane, &self.workplanes);
         self.sweepList(vm, value.ObjFont, &self.fonts);
         self.sweepList(vm, value.ObjRandom, &self.randoms);
+        sweepNamespaces(vm);
 
         // --- CACHE EVICTION ---
         // Results no live solid or sketch refers to. Without room to work it out, nothing
@@ -787,6 +797,28 @@ pub const GC = struct {
         }
         self.evictUnreferenced(geom.GeometryHandle, &vm.dag_cache, &live, kernel.destruct);
         self.evictUnreferenced(geom.CrossSectionHandle, &vm.cs_cache, &live, kernel.destructCrossSection);
+    }
+
+    /// Frees the namespaces of the modules no live function is of, whose import isn't running:
+    /// a module edited in a long session is imported again, and every version's namespace
+    /// stayed, its top-level values (its shapes) with it.
+    fn sweepNamespaces(vm: *VM) void {
+        var freed = false;
+        var i: usize = 0;
+        while (i < vm.module_namespaces.items.len) {
+            const ns = vm.module_namespaces.items[i];
+            if (ns.is_marked or ns.pinned) {
+                ns.is_marked = false;
+                i += 1;
+                continue;
+            }
+            _ = vm.module_namespaces.swapRemove(i);
+            ns.deinit(vm.allocator);
+            vm.allocator.destroy(ns);
+            freed = true;
+        }
+        // Its slots were some site's, a site of a function swept with it
+        if (freed) vm.globalsChanged();
     }
 
     /// Destroys the results in `cache` whose node isn't `live`, and drops them.

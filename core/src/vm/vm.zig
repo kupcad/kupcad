@@ -1445,7 +1445,7 @@ pub const VM = struct {
     }
 
     /// A new generation of the global tables' layout: every site looks its name up again.
-    fn globalsChanged(self: *VM) void {
+    pub fn globalsChanged(self: *VM) void {
         self.global_generation = next_global_generation.fetchAdd(1, .monotonic);
     }
 
@@ -2365,6 +2365,8 @@ pub const VM = struct {
         // 3. Compile it into its own top-level scope: its variables, defs and
         // classes live there, and only exported names reach the importer.
         const namespace = self.newModuleNamespace(path_str) catch |err| return self.allocationFailed(err);
+        namespace.pinned = true;
+        defer namespace.pinned = false;
         const compile_module = self.host.compile_module orelse {
             if (self.raiseError(.ImportError, "this host can't compile modules, so '{s}' can't be imported", .{path_str}) != .ok) return .runtime_error;
             return null;
@@ -2401,6 +2403,11 @@ pub const VM = struct {
 
         // Root func while allocateClosure may collect
         self.push(value.Value.initObj(&func.obj));
+        // Its constants are marked through func from here on. Left in the registry of chunks
+        // being compiled, whose constants are roots, it kept a module's `def`s, and through
+        // their `self` (the module's script closure) func and the chunk again: nothing a
+        // module made was ever collected
+        heap_chunk.untrack();
         const closure = self.gc.allocateClosure(self, func) catch |err| return self.allocationFailed(err);
         _ = self.pop();
 

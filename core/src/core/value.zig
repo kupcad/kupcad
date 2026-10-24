@@ -164,11 +164,16 @@ pub const ObjFunction = struct {
 
 /// The top-level variables of one imported module. Each module gets its own, so its
 /// top-level names never leak into (or get overwritten by) the importer: only exported
-/// names cross files. Owned by the VM (VM.module_namespaces); values are GC roots.
+/// names cross files. Owned by the VM (VM.module_namespaces), which the collector frees one
+/// from once no function of its module lives and its import isn't running.
 pub const Namespace = struct {
     globals: std.StringHashMapUnmanaged(Value) = .empty,
     /// The path the module was imported by, owned: a backtrace names it for its frames.
     path: []const u8 = "",
+    /// Reached by the collection running: a live function is of its module, or it is pinned.
+    is_marked: bool = false,
+    /// Its import is running (compiled into, then run): kept though no function of it lives yet.
+    pinned: bool = false,
 
     pub fn define(self: *Namespace, allocator: std.mem.Allocator, name: []const u8, val: Value) !void {
         (try owned_keys.getOrPutOwned(&self.globals, allocator, name)).value_ptr.* = val;

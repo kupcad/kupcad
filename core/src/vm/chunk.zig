@@ -431,8 +431,14 @@ pub const Chunk = struct {
         return idx;
     }
 
-    pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
+    /// Leaves the registry: a function owns the chunk, compiled, and marks its constants
+    /// while it lives.
+    pub fn untrack(self: *Chunk) void {
         if (self.registry) |r| r.untrack(self);
+    }
+
+    pub fn free(self: *Chunk, allocator: std.mem.Allocator) void {
+        self.untrack();
         self.code.deinit(allocator);
         self.inline_caches.deinit(allocator);
         self.global_caches.deinit(allocator);
