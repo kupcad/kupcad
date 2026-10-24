@@ -13,6 +13,6 @@ export default defineConfig({
       external: ['vscode', 'path', 'fs', 'crypto', 'vscode-languageclient/node'],
     },
     sourcemap: true,
-    minify: false
-  }
+    minify: false,
+  },
 });

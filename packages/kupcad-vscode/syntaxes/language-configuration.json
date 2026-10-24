@@ -3,18 +3,9 @@
     "lineComment": "#"
   },
   "brackets": [
-    [
-      "{",
-      "}"
-    ],
-    [
-      "[",
-      "]"
-    ],
-    [
-      "(",
-      ")"
-    ]
+    ["{", "}"],
+    ["[", "]"],
+    ["(", ")"]
   ],
   "autoClosingPairs": [
     {
@@ -32,23 +23,17 @@
     {
       "open": "\"",
       "close": "\"",
-      "notIn": [
-        "string"
-      ]
+      "notIn": ["string"]
     },
     {
       "open": "'",
       "close": "'",
-      "notIn": [
-        "string"
-      ]
+      "notIn": ["string"]
     },
     {
       "open": "|",
       "close": "|",
-      "notIn": [
-        "string"
-      ]
+      "notIn": ["string"]
     }
   ],
   "surroundingPairs": [

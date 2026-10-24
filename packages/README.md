@@ -33,7 +33,10 @@ may use the wasm or the viewer.
 pnpm install                       # once; builds nothing from core
 pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into its package
 pnpm -r build                      # every package, in dependency order
-pnpm -r test                       # every package's Vitest suite
+pnpm test:packages                 # every package's Vitest suite
+pnpm check                         # oxlint, oxfmt --check, and tsc over every package (CI's gate)
+pnpm fmt                           # format what oxfmt would change
+pnpm changeset                     # describe a change to a published package
 pnpm --filter @kupcad/viewer dev   # one package's dev server or watch
 ```
 
@@ -47,23 +50,28 @@ kupcad-<name>/
   src/types.d.ts      the shapes JSDoc can't say well (unions, generics), when a package has them
   src/**/*.test.js    tests beside what they test
   vite.config.js      library mode for a library, an app build for an app
-  jsconfig.json       extends the root jsconfig
+  jsconfig.json       extends the root jsconfig.base.json
 ```
 
 Conventions, held by the root config and CI:
 
 * **JavaScript, typed by JSDoc, and checked.** No TypeScript sources and no compile step for
-  types, but `tsc --noEmit` runs over every package (`checkJs`, `strict`) in `pnpm check`, so a
-  wrong `@param` fails CI as a wrong type would. A published package's `.d.ts` is generated from
-  the JSDoc, so its users get the types anyway.
+  types, but each package's `check` runs `tsc` over it (`checkJs`, `strict`, from
+  `jsconfig.base.json`) in `pnpm check`, so a wrong `@param` fails CI as a wrong type would.
+  The compiler is TypeScript 7, the native one; it reads JSDoc, `@import` and unions as 5.x did
+  and emits `.d.ts` from JavaScript, so a published package's types are generated from its
+  JSDoc and its users get them anyway.
 * **Svelte 5** (runes) for components, their `<script>` plain JavaScript with JSDoc. A component
   package is built with `@sveltejs/package`, so it ships `.svelte` sources and `.d.ts`, and the
   host's Vite compiles them: one Svelte runtime per app, not one per package.
 * **Vitest** for every package; `@testing-library/svelte` for components; a Web Worker and WebGL
   are stubbed in unit tests, and the viewer has a Playwright smoke test in a real browser.
-* **oxlint and oxfmt** from the root, run by `pnpm check`; CI refuses what they would change.
-  (Whether oxfmt formats `.svelte` templates is checked at setup; if not, `.svelte` files alone
-  go through `prettier-plugin-svelte`.)
+* **oxlint and oxfmt** from the root (`.oxlintrc.json`, `.oxfmtrc.json`, versions pinned), run by
+  `pnpm check`; CI refuses what they would change. oxlint denies its `correctness` and
+  `suspicious` rules, warnings included. oxfmt formats the packages' JavaScript and JSON (100
+  columns, single quotes) and leaves Markdown and the generated grammar alone. It doesn't
+  format `.svelte` files, so they will go through `prettier-plugin-svelte` alone, set up with
+  the first component.
 * **Styling:** the published components (`ui`, `viewer`, `editor`, `playground`) use scoped
   Svelte CSS over the shared `--kc-*` tokens and nothing else, so they drop into any host, the
   VS Code webview included, without a CSS build. An app (the playground page, the PWA, the

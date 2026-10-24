@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "singleQuote": true,
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/dist-webview/**",
+    "**/*.md",
+    "packages/kupcad-tree-sitter/**",
+    "packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json"
+  ]
+}

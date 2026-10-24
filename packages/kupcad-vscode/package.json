@@ -1,21 +1,35 @@
 {
   "name": "@kupcad/vscode",
   "displayName": "kupcad-vscode",
-  "description": "KupCAD - code to CAD language",
   "version": "0.1.0",
-  "type": "module",
-  "main": "./dist/extension.cjs",
-  "publisher": "kupcad",
-  "engines": {
-    "vscode": "^1.125.0"
-  },
+  "description": "KupCAD - code to CAD language",
   "categories": [
-    "Programming Languages",
     "Formatters",
     "Linters",
+    "Programming Languages",
     "Visualization"
   ],
-  "activationEvents": [],
+  "publisher": "kupcad",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "scripts": {
+    "dev:backend": "vite build --config vite.config.node.js --watch",
+    "dev:frontend": "vite --config webview/vite.config.js",
+    "watch": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "build": "vite build --config vite.config.node.js && vite build --config webview/vite.config.js",
+    "test": "vitest run",
+    "check": "tsc -p jsconfig.json"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^10.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "@types/vscode": "~1.125.0",
+    "concurrently": "^10.0.6",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  },
   "contributes": {
     "commands": [
       {
@@ -62,20 +76,8 @@
       }
     ]
   },
-  "scripts": {
-    "dev:backend": "vite build --config vite.config.node.js --watch",
-    "dev:frontend": "vite --config webview/vite.config.js",
-    "watch": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
-    "build": "vite build --config vite.config.node.js && vite build --config webview/vite.config.js",
-    "test": "vitest",
-    "test:ui": "vitest --ui"
-  },
-  "devDependencies": {
-    "concurrently": "^10.0.6",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.5"
-  },
-  "dependencies": {
-    "vscode-languageclient": "^10.1.2"
+  "activationEvents": [],
+  "engines": {
+    "vscode": "^1.125.0"
   }
 }

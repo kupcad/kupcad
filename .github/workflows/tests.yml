@@ -10,6 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  # The front ends (packages/): oxlint, oxfmt and tsc over every package, then their tests.
+  packages:
+    name: Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: packages-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/setup@v3
+        with:
+          version: '^11.25'
+          runtime: node@24
+          cache: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint, format and type-check
+        run: pnpm check
+
+      - name: Run the packages' tests
+        run: pnpm test:packages
+
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

@@ -14,9 +14,18 @@
     "check:examples": "cd core && zig build && ./zig-out/bin/kupcad fmt --check src/frontend/fuzz_corpus/canonical && ./zig-out/bin/kupcad check --max-warnings 0 src/frontend/fuzz_corpus",
     "test:wasm": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug --summary all",
     "test:wasm:safe": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=safe --summary all",
-    "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all"
+    "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all",
+    "check": "pnpm lint && pnpm fmt:check && pnpm -r check",
+    "lint": "oxlint --deny-warnings packages",
+    "fmt": "oxfmt packages",
+    "fmt:check": "oxfmt --check packages",
+    "test:packages": "pnpm -r test"
   },
   "devDependencies": {
-    "gltf-validator": "2.0.0-dev.3.10"
+    "@changesets/cli": "3.0.3",
+    "gltf-validator": "2.0.0-dev.3.10",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
+    "typescript": "7.0.2"
   }
 }

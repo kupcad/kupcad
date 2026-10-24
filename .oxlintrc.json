@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "oxc", "unicorn", "import", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "env": {
+    "es2024": true
+  },
+  "ignorePatterns": ["**/dist/**", "**/dist-webview/**", "packages/kupcad-tree-sitter/**"]
+}
