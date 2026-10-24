@@ -52,6 +52,12 @@ jobs:
       - name: Run the packages' tests
         run: pnpm test:packages
 
+      # The viewer drawn by headless Chromium's WebGL, the model made by the core in the page
+      - name: Run the packages' browser tests
+        run: |
+          pnpm --filter @kupcad/viewer exec playwright install --with-deps chromium
+          pnpm test:browser
+
   test:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}

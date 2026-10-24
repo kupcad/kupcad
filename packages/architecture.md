@@ -219,13 +219,13 @@ A class, not a component, so any framework (or none: the webview of an editor th
 can own it:
 
 ```js
-const viewer = new Viewer(canvas, { theme, environment: 'grid' | 'plate' | 'none' });
-viewer.setModel(model);              // a Model: GLB parsed with GLTFLoader (+ DRACOLoader lazily), or SVG as lines
+const viewer = new Viewer(canvas, { theme, environment: 'grid' | 'plate' | 'none', plate, dracoDecoderPath });
+await viewer.setModel(model);        // a Model: GLB parsed with GLTFLoader (+ DRACOLoader lazily), or SVG drawn on XY
 viewer.setRenderMode('solid' | 'xray' | 'wireframe');
 viewer.setCamera({ projection: 'perspective' | 'orthographic', view: 'iso' | 'top' | ... });
-viewer.setSection({ axis: 'z', offset });   // a clipping plane, with the cut faces capped
-viewer.select(partName); viewer.on('select', ...)   // picking by raycast, highlighting the part's node
-viewer.fit(); viewer.resize(); viewer.dispose();
+viewer.setSection({ axis: 'z', offset, flip });   // a clipping plane, with the cut faces capped
+viewer.select(partName); viewer.addEventListener('select', ...)   // picking by raycast, tinting the part
+viewer.partAt(x, y); viewer.fit(); viewer.resize(); viewer.screenshot(); viewer.dispose();
 ```
 
 Decisions in it:
@@ -242,14 +242,19 @@ Decisions in it:
   (laser parts, DXF/SVG imports) gets a preview at all: a `2d` frame's body is that SVG.
 * **Keeps its own state out of the DOM:** render mode, camera, section and selection are
   properties; the toolbar that sets them is `@kupcad/ui`'s. The Svelte wrapper,
-  `<Viewer model={...} bind:camera ...>`, is thirty lines.
+  `<Viewer model={...} renderMode bind:selected bind:viewer ...>`, is a few lines.
+* **The script's coordinates:** the core writes the GLB in metres and Y up under one root node;
+  the viewer undoes its transform, so the scene is in millimetres and Z up, and a view, a section
+  axis, the grid and a drawing mean what they mean in the script.
 * **Themes** are a small object (background, grid, default material, selection) that hosts map
   their tokens into; the VS Code webview maps `--vscode-*` variables.
 
-Tested two ways: the scene logic (what nodes a model becomes, picking math, section plane,
-camera framing) under Vitest with a stubbed renderer; and a Playwright smoke test that renders
-a known GLB in headless Chromium and compares a screenshot, so a three.js upgrade that breaks
-rendering is caught.
+Tested two ways: the scene logic (what nodes a model becomes, picking, section plane, camera
+framing, render modes and selection) under Vitest with a stubbed renderer, on models the real
+core makes through `@kupcad/wasm`; and a Playwright smoke test that draws what the core makes in
+the page with headless Chromium's WebGL and reads the pixels back (a part's colour, the
+background, a section, its cap), so a three.js upgrade that breaks rendering is caught. Reading
+pixels, rather than comparing a screenshot, holds on any machine's GPU.
 
 ## 5. `@kupcad/ui`
 

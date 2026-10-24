@@ -1,0 +1,48 @@
+// Models as the core makes them, for the tests: previews of scripts by the real module.
+
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createKupcad } from '@kupcad/wasm';
+
+/** @import { Model } from '@kupcad/protocol/types' */
+
+/**
+ * The module @kupcad/wasm ships, by its path: under jsdom, Vite makes the package's own URL of
+ * it one its dev server would serve, and the tests run none.
+ */
+const WASM = resolve(dirname(fileURLToPath(import.meta.url)), '../../kupcad-wasm/dist/kupcad.wasm');
+
+/** @type {Promise<import('@kupcad/wasm').Kupcad> | null} */
+let core = null;
+
+const start = () => createKupcad({ wasm: readFileSync(WASM), log: () => {} });
+
+/**
+ * The model the core's preview of `source` shows.
+ * @param {string} source
+ * @returns {Promise<Model>}
+ */
+export async function modelOf(source) {
+  core ??= start();
+  const { header, model } = await (await core).preview(source);
+  if (header.error) throw new Error(`the test's script failed: ${header.error.message}`);
+  return model;
+}
+
+/**
+ * A model built with Draco-compressed meshes.
+ * @param {string} source
+ * @returns {Promise<Model>}
+ */
+export async function dracoModelOf(source) {
+  core ??= start();
+  const glb = await (await core).build(source, { format: 'glb', draco: true });
+  return { kind: '3d', glb, parts: [] };
+}
+
+/** A plate and two copies of a red bolt, beside a ghost. */
+export const PARTS = `bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
+cube(10).translate(z: 1).ghost
+[cube([20, 10, 2]).named("plate"), bolt.translate(x: 3, y: 5, z: 2), bolt.translate(x: 15, y: 5, z: 2)]
+`;

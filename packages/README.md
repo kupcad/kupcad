@@ -34,6 +34,7 @@ pnpm install                       # once; builds nothing from core
 pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into its package
 pnpm -r build                      # every package, in dependency order
 pnpm test:packages                 # every package's Vitest suite
+pnpm test:browser                  # the viewer in headless Chromium (Playwright)
 pnpm check                         # oxlint, oxfmt --check, and tsc over every package (CI's gate)
 pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
@@ -50,8 +51,13 @@ kupcad-<name>/
   src/types.d.ts      the shapes JSDoc can't say well (unions, generics), when a package has them
   src/**/*.test.js    tests beside what they test
   vite.config.js      library mode for a library, an app build for an app
-  jsconfig.json       extends the root jsconfig.base.json
+  jsconfig.json       extends the root jsconfig.base.json; sets maxNodeModuleJsDepth to 0
 ```
+
+A file named `jsconfig.json` gets TypeScript's defaults for a JavaScript project over what it
+extends, `maxNodeModuleJsDepth: 2` among them, which type-checks the dependencies' own JavaScript
+(a `punycode` that pnpm hoists, read in place of `@types/node`'s declaration). So each package's
+sets it to 0 itself.
 
 Conventions, held by the root config and CI:
 
@@ -71,8 +77,8 @@ Conventions, held by the root config and CI:
   `pnpm check`; CI refuses what they would change. oxlint denies its `correctness` and
   `suspicious` rules, warnings included. oxfmt formats the packages' JavaScript and JSON (100
   columns, single quotes) and leaves Markdown and the generated grammar alone. It doesn't
-  format `.svelte` files, so they will go through `prettier-plugin-svelte` alone, set up with
-  the first component.
+  format `.svelte` files: Prettier with `prettier-plugin-svelte` does, in the same style, and
+  `svelte-check` type-checks a Svelte package (its `check`) where `tsc` would miss them.
 * **Styling:** the published components (`ui`, `viewer`, `editor`, `playground`) use scoped
   Svelte CSS over the shared `--kc-*` tokens and nothing else, so they drop into any host, the
   VS Code webview included, without a CSS build. An app (the playground page, the PWA, the
