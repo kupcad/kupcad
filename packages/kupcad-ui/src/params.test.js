@@ -3,6 +3,7 @@ import { BRACKET, schemaOf } from './fixtures.test-helper.js';
 import {
   controlOf,
   groupsOf,
+  isOverridden,
   shownValue,
   validate,
   withOverride,
@@ -51,6 +52,18 @@ describe('the controls', () => {
     // A false set in the panel is a value, not none
     expect(shownValue(await spec('hollow'), { hollow: false }, { hollow: true })).toBe(false);
   });
+});
+
+it("reads a parameter named like an Object's member as any other: its own value, set or not", async () => {
+  const { parameters } = await schemaOf(
+    'constructor = param(:constructor, default: 3)\ncube(constructor)\n',
+  );
+  const [named] = parameters;
+  // `{}.constructor` is Object, and `"constructor" in {}` true
+  expect(shownValue(named, {}, {})).toBe(3);
+  expect(isOverridden({}, 'constructor')).toBe(false);
+  expect(isOverridden({ constructor: 4 }, 'constructor')).toBe(true);
+  expect(shownValue(named, { constructor: 4 }, {})).toBe(4);
 });
 
 describe('validate', () => {

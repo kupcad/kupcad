@@ -3,5 +3,5 @@
 
 export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
-export { controlOf, groupsOf, shownValue, validate } from './params.js';
+export { controlOf, groupsOf, isOverridden, shownValue, validate } from './params.js';
 export { themeFromTokens, watchTokens } from './theme.js';

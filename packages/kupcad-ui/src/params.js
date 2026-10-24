@@ -52,8 +52,25 @@ export function groupsOf(parameters) {
  * @returns {Value | null}
  */
 export function shownValue(spec, overrides, values) {
-  return overrides[spec.name] ?? values[spec.name] ?? spec.default_value;
+  return ownValue(overrides, spec.name) ?? ownValue(values, spec.name) ?? spec.default_value;
 }
+
+/**
+ * Whether the panel sets the parameter `name`: by its own key, so a parameter named like an
+ * Object's member (`constructor`) isn't taken for set.
+ * @param {ParamValues} overrides
+ * @param {string} name
+ */
+export const isOverridden = (overrides, name) => Object.hasOwn(overrides, name);
+
+/**
+ * The value `values` holds under `name` itself, not one an Object has (`constructor` read a
+ * function).
+ * @param {ParamValues} values
+ * @param {string} name
+ * @returns {Value | undefined}
+ */
+const ownValue = (values, name) => (Object.hasOwn(values, name) ? values[name] : undefined);
 
 /**
  * What a control gave, as the parameter's value, or why the script wouldn't take it.

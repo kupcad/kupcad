@@ -7,7 +7,7 @@
 -->
 <script>
   import ParamField from './ParamField.svelte';
-  import { groupsOf, shownValue, withOverride, withoutOverride } from './params.js';
+  import { groupsOf, isOverridden, shownValue, withOverride, withoutOverride } from './params.js';
 
   /** @import { Failure, ParamValues, UiSchema } from '@kupcad/protocol/types' */
 
@@ -42,7 +42,7 @@
         <ParamField
           {spec}
           value={shownValue(spec, overrides, values)}
-          overridden={spec.name in overrides}
+          overridden={isOverridden(overrides, spec.name)}
           refused={error?.param === spec.name ? error.message : null}
           onset={(value) => change(withOverride(overrides, spec.name, value))}
           onrevert={() => change(withoutOverride(overrides, spec.name))}
