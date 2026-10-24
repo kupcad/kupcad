@@ -55,6 +55,22 @@ const counted = (counts) => async (options) => {
   });
 };
 
+/**
+ * The real core, refusing to keep `huge.bin` as it would a file past its memory.
+ * @param {CreateOptions} options
+ * @returns {Promise<KupcadApi>}
+ */
+async function refusingHuge(options) {
+  const kupcad = await createKupcad(options);
+  const put = kupcad.files.put;
+  kupcad.files.put = async (path, data) => {
+    if (path === 'huge.bin')
+      throw new KupcadError("kupcad.wasm couldn't keep huge.bin: out of memory");
+    return put(path, data);
+  };
+  return kupcad;
+}
+
 const silent = () => {};
 
 /**
@@ -230,6 +246,45 @@ describe('createKupcadWorker', () => {
     const kupcad = createKupcadWorker({ wasm: './kupcad.wasm', worker: () => worker, log: silent });
     void kupcad.version().catch(() => {});
     expect(posted[0]).toMatchObject({ type: 'init', wasm: 'https://example.com/app/kupcad.wasm' });
+    kupcad.terminate();
+  });
+
+  it("refuses a call it can't send, and sends the next: no worker started, arguments that can't be posted", async () => {
+    const { spawn } = inProcess(createKupcad);
+    let starts = 0;
+    const flaky = () => {
+      starts += 1;
+      if (starts === 1) throw new Error('Worker blocked by the page');
+      return spawn();
+    };
+    const kupcad = createKupcadWorker({ worker: flaky, log: silent });
+    const blocked = kupcad.format('x=1');
+    const after = kupcad.format('y=2');
+    await expect(blocked).rejects.toThrow('Worker blocked by the page');
+    expect(await after).toBe('y = 2\n');
+
+    // A function is no value a worker can be posted
+    const options = /** @type {any} */ ({ params: { width: () => 3 } });
+    await expect(kupcad.preview('cube(1)', options)).rejects.toThrow(/clone/i);
+    expect(await kupcad.format('z=3')).toBe('z = 3\n');
+    kupcad.terminate();
+  });
+
+  it('gives a new worker none of the files the last one refused', async () => {
+    const { spawn, started } = inProcess(refusingHuge);
+    const kupcad = createKupcadWorker({ worker: spawn, log: silent });
+    await expect(kupcad.files.put('huge.bin', new Uint8Array(8))).rejects.toBeInstanceOf(
+      KupcadError,
+    );
+    await kupcad.files.put('size.json', '{"side": 3}');
+    // The worker stopped: the next starts with the files kept, and starts
+    const controller = new AbortController();
+    const running = kupcad.check('x = 1', { signal: controller.signal });
+    controller.abort();
+    await expect(running).rejects.toThrow(/abort/i);
+    const stl = await kupcad.build('cube(import_json("size.json")[:side])', { format: 'stl' });
+    expect(stl.byteLength).toBeGreaterThan(84);
+    expect(started).toHaveLength(2);
     kupcad.terminate();
   });
 

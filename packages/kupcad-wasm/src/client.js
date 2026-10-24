@@ -49,7 +49,7 @@ export class KupcadWorker {
   /** @type {Call | null} */
   #running = null;
   #nextId = 1;
-  /** The files put, by path: what a new worker is given. @type {Map<string, Uint8Array | string>} */
+  /** The files the worker kept, by path: what a new worker is given. @type {Map<string, Uint8Array | string>} */
   #files = new Map();
   /** @type {Error | null} */
   #terminated = null;
@@ -61,14 +61,16 @@ export class KupcadWorker {
     this.#spawn = options.worker ?? moduleWorker;
     this.#wasm = postable(options.wasm);
     this.#log = options.log ?? ((line) => console.debug(line));
+    // Kept once the worker took them: one it refused, given to every new worker, failed
+    // each one's start
     this.files = {
-      put: (path, data) => {
+      put: async (path, data) => {
+        await this.#call('putFile', [path, data]);
         this.#files.set(path, data);
-        return this.#call('putFile', [path, data]);
       },
-      clear: () => {
+      clear: async () => {
+        await this.#call('clearFiles', []);
         this.#files.clear();
-        return this.#call('clearFiles', []);
       },
     };
   }
@@ -160,18 +162,27 @@ export class KupcadWorker {
     });
   }
 
-  /** Sends the next call when none runs, starting a worker if none does. */
+  /**
+   * Sends the next call when none runs, starting a worker if none does. One that can't be
+   * sent (no worker starts, or its arguments can't be posted) is refused, and the next goes:
+   * it was taken for running, and every call after waited for good.
+   */
   #pump() {
-    if (this.#running) return;
-    const next = this.#queue.shift();
-    if (!next) return;
-    this.#running = next;
-    this.#ensureWorker().postMessage({
-      type: 'call',
-      id: next.id,
-      method: next.method,
-      args: next.args,
-    });
+    while (!this.#running) {
+      const next = this.#queue.shift();
+      if (!next) return;
+      try {
+        this.#ensureWorker().postMessage({
+          type: 'call',
+          id: next.id,
+          method: next.method,
+          args: next.args,
+        });
+        this.#running = next;
+      } catch (error) {
+        this.#settle(next, () => next.reject(error));
+      }
+    }
   }
 
   /** @returns {WorkerLike} */
@@ -196,7 +207,12 @@ export class KupcadWorker {
         this.#fail(new KupcadCrashError("the kupcad worker sent a message that couldn't be read"));
       }
     });
-    worker.postMessage({ type: 'init', wasm: this.#wasm, files: [...this.#files] });
+    try {
+      worker.postMessage({ type: 'init', wasm: this.#wasm, files: [...this.#files] });
+    } catch (error) {
+      worker.terminate();
+      throw error;
+    }
     this.#worker = worker;
     return worker;
   }

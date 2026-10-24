@@ -25,8 +25,10 @@ await kupcad.files.put('plate.dxf', bytes); // what the script imports
 * `createKupcadWorker(options)` runs the core in a module Web Worker. Calls run one at a time,
   the next waiting its turn. A call's `signal` (an `AbortSignal`) drops it while it waits, and
   stops the worker while it runs: a script can't be stopped inside the module, so the worker is
-  ended and a new one starts with the next call, given the files put so far. A worker whose core
-  stopped (a trap) is replaced the same way. `terminate()` ends it for good.
+  ended and a new one starts with the next call, given the files the last one kept (a put it
+  refused isn't given again). A worker whose core stopped (a trap) is replaced the same way. A
+  call that can't be sent (the worker doesn't start, or its arguments can't be posted to one) is
+  refused with why, and the next goes. `terminate()` ends it for good.
 * `createKupcad(options)` instantiates the core in this thread: the same calls, for Node, tests
   and a worker of the host's own. `Kupcad.fromExports(exports)` takes a module the host
   instantiated itself.

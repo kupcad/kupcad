@@ -199,7 +199,9 @@ await kupcad.files.put('plate.dxf', bytes); await kupcad.files.clear()  // the V
   Worker, passing buffers as transferables, with one call in flight and the next queued (a build
   can take seconds; the page must not freeze). A call's `AbortSignal` drops it while it waits and
   stops the worker while it runs, which is what the core's instruction cap can't do from
-  outside; the next call starts a worker given the files put so far, as after a crash. The
+  outside; the next call starts a worker given the files the last one kept, as after a crash (a
+  file it refused, given again, failed every new worker's start). A call that can't be posted
+  (no worker starts, arguments a worker can't be given) is refused, and the queue goes on. The
   worker's side (`serve`) and the client's are tested over a `MessageChannel` with the real
   module, the worker itself being a stand-in in Node.
 * **WASI** is the package's own (`src/wasi.js`): the module imports it, a browser has none, and
