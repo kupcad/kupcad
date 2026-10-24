@@ -1,4 +1,4 @@
-import { Color, MeshStandardMaterial, PlaneGeometry } from 'three';
+import { Color, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { GHOST_OPACITY } from './model.js';
 import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
@@ -6,7 +6,7 @@ import { stubRenderer } from './testing.js';
 import { DARK, LIGHT } from './theme.js';
 import { Viewer, ViewerError } from './viewer.js';
 
-/** @import { Camera, Mesh, Object3D, Scene } from 'three' */
+/** @import { Camera, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, Scene } from 'three' */
 /** @import { ViewerOptions } from './types.js' */
 
 const WIDTH = 800;
@@ -84,6 +84,27 @@ function planesOf(scene, width) {
     }
   });
   return found;
+}
+
+/**
+ * How far in front of the camera the next frame is drawn from each corner of the 256 mm plate
+ * lies (behind it, below 0), and the camera.
+ * @param {{ scene: Object3D | null, camera: Camera | null }} drawn
+ */
+async function plateDepths(drawn) {
+  const scene = await sceneDrawn(drawn);
+  const camera = /** @type {OrthographicCamera | PerspectiveCamera} */ (drawn.camera);
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld();
+  const [plate] = planesOf(scene, 256);
+  const position = plate.getAttribute('position');
+  /** @type {number[]} */
+  const depths = [];
+  for (let i = 0; i < position.count; i++) {
+    const corner = new Vector3().fromBufferAttribute(position, i);
+    depths.push(-corner.applyMatrix4(camera.matrixWorldInverse).z);
+  }
+  return { camera, depths };
 }
 
 const BLOCK = 'cube(20, center: true).named("block")';
@@ -208,6 +229,29 @@ describe('Viewer', () => {
     await viewer.setModel(await modelOf('cube(40)'));
     await nextFrame();
     expect(camera.position.toArray()).toEqual(framed.toArray());
+  });
+
+  it('gives a solid after a drawing the camera the last solid was seen with', async () => {
+    const { viewer } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    viewer.setCamera({ view: 'front' });
+    await viewer.setModel(await modelOf('square(10)'));
+    expect([viewer.projection, viewer.view]).toEqual(['orthographic', 'top']);
+    await viewer.setModel(await modelOf(BLOCK));
+    expect([viewer.projection, viewer.view]).toEqual(['perspective', 'front']);
+  });
+
+  it("draws a small model's plate whole, through either camera", async () => {
+    const { viewer, drawn } = viewerOn({ environment: 'plate' });
+    await viewer.setModel(await modelOf('cube(2)'));
+    viewer.setCamera({ projection: 'orthographic' });
+    const orthographic = await plateDepths(drawn);
+    // An orthographic camera draws what is behind it too
+    expect(Math.min(...orthographic.depths)).toBeGreaterThanOrEqual(orthographic.camera.near);
+    expect(Math.max(...orthographic.depths)).toBeLessThanOrEqual(orthographic.camera.far);
+    viewer.setCamera({ projection: 'perspective' });
+    const perspective = await plateDepths(drawn);
+    expect(Math.max(...perspective.depths)).toBeLessThanOrEqual(perspective.camera.far);
   });
 
   it('picks the part behind a ghost, which is seen through', async () => {

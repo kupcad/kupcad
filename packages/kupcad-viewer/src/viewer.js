@@ -16,6 +16,7 @@ import {
   PerspectiveCamera,
   Raycaster,
   Scene,
+  Sphere,
   Vector2,
   WebGLRenderer,
 } from 'three';
@@ -38,9 +39,8 @@ const FOV_DEG = 35;
 const DEFAULT_PLATE = { width: 256, depth: 256 };
 /** A pointer that moves less than this between down and up clicked, rather than dragged. */
 const CLICK_SLOP_PX = 4;
-/** The perspective camera's near and far planes, as factors of the model's radius. */
+/** The perspective camera's near plane, as a factor of the model's radius. */
 const NEAR_FACTOR = 0.01;
-const FAR_FACTOR = 1000;
 /** The orthographic camera stands this many radii from the model's centre. */
 const ORTHO_STANDOFF = 4;
 /** The lights: an even fill, and one from the camera. */
@@ -95,6 +95,10 @@ export class Viewer extends EventTarget {
   #model = null;
   /** The kind of the last model shown, which a model of nothing (one that failed) leaves. @type {SceneModel['kind'] | null} */
   #shownKind = null;
+  /** The camera a solid was last seen with, which a drawing (from the top, orthographic) leaves. @type {{ projection: Projection, view: View }} */
+  #solidCamera = { projection: 'perspective', view: 'iso' };
+  /** Around the model and what it stands on: what the camera's depth takes in. */
+  #sceneSphere = new Sphere();
   /** @type {Theme} */
   #theme;
   /** @type {Environment} */
@@ -142,7 +146,10 @@ export class Viewer extends EventTarget {
     this.#renderer.setPixelRatio(globalThis.devicePixelRatio ?? 1);
     for (const camera of [this.#perspective, this.#orthographic]) camera.up.set(0, 0, 1);
     this.#controls = new OrbitControls(this.#camera, canvas);
-    this.#controls.addEventListener('change', () => this.#invalidate());
+    this.#controls.addEventListener('change', () => {
+      this.#fitDepth();
+      this.#invalidate();
+    });
     this.#sectionView = new SectionView(this.#theme);
     this.#scene.add(
       this.#content,
@@ -196,8 +203,9 @@ export class Viewer extends EventTarget {
   /**
    * Shows `model` in place of the last one (null, or a model of kind 'none', shows nothing).
    * The camera stays where it is, unless the model is the first, or of another kind than the
-   * last one shown (a drawing is seen from the top, orthographic): then it frames it. A
-   * selection whose part is gone is dropped, with a 'select' event.
+   * last one shown: then it frames it, a drawing from the top, orthographic, and a solid after
+   * a drawing as the last solid was seen. A selection whose part is gone is dropped, with a
+   * 'select' event.
    * @param {Model | null} model
    * @returns {Promise<void>}
    * @throws {ViewerError} for a Draco-compressed model without `dracoDecoderPath`
@@ -227,8 +235,14 @@ export class Viewer extends EventTarget {
     this.#rebuildEnvironment();
     if (built && built.kind !== this.#shownKind) {
       if (built.kind === '2d') {
+        if (this.#shownKind === '3d') {
+          this.#solidCamera = { projection: this.#projection, view: this.#view };
+        }
         this.#useProjection('orthographic');
         this.#view = 'top';
+      } else if (this.#shownKind === '2d') {
+        this.#useProjection(this.#solidCamera.projection);
+        this.#view = this.#solidCamera.view;
       }
       this.fit();
     }
@@ -251,7 +265,7 @@ export class Viewer extends EventTarget {
    * @param {{ projection?: Projection, view?: View }} camera
    */
   setCamera({ projection, view }) {
-    if (projection && projection !== this.#projection) this.#useProjection(projection);
+    if (projection) this.#useProjection(projection);
     if (view) {
       this.#view = view;
       this.fit();
@@ -313,18 +327,16 @@ export class Viewer extends EventTarget {
       const distance = perspectiveDistance(sphere, FOV_DEG, aspect);
       this.#perspective.position.copy(sphere.center).addScaledVector(direction, distance);
       this.#perspective.near = Math.max(sphere.radius * NEAR_FACTOR, 0.01);
-      this.#perspective.far = sphere.radius * FAR_FACTOR + distance;
     } else {
       this.#halfHeight = orthographicHalfHeight(sphere, aspect);
       this.#orthographic.zoom = 1;
       this.#orthographic.position
         .copy(sphere.center)
         .addScaledVector(direction, sphere.radius * ORTHO_STANDOFF);
-      this.#orthographic.near = 0;
-      this.#orthographic.far = sphere.radius * ORTHO_STANDOFF * 2;
     }
     this.#controls.target.copy(sphere.center);
     this.#camera.lookAt(sphere.center);
+    this.#fitDepth();
     this.#updateProjection();
     this.#controls.update();
     this.#invalidate();
@@ -450,9 +462,25 @@ export class Viewer extends EventTarget {
   #rebuildEnvironment() {
     disposeObject(this.#environment);
     this.#environment.clear();
-    this.#environment.add(
-      environmentOf(this.#environmentKind, this.#modelBox(), this.#plate, this.#theme),
-    );
+    const box = this.#modelBox();
+    this.#environment.add(environmentOf(this.#environmentKind, box, this.#plate, this.#theme));
+    this.#sceneSphere = boundsOf(box.union(new Box3().setFromObject(this.#environment)));
+    this.#fitDepth();
+  }
+
+  /**
+   * The camera's near and far planes, so the model and what it stands on are drawn whole from
+   * where it looks: an orthographic camera's near plane may lie behind it, a perspective
+   * one's stays where `fit` put it. They were the model's alone, so a small model's plate was
+   * cut off past the far plane, and behind an orthographic camera.
+   */
+  #fitDepth() {
+    const target = this.#controls.target;
+    const reach = target.distanceTo(this.#sceneSphere.center) + this.#sceneSphere.radius;
+    const distance = this.#camera.position.distanceTo(target);
+    if (this.#camera === this.#orthographic) this.#orthographic.near = distance - reach;
+    this.#camera.far = distance + reach;
+    this.#camera.updateProjectionMatrix();
   }
 
   /** @returns {Box3} */
@@ -465,6 +493,7 @@ export class Viewer extends EventTarget {
    * @param {Projection} projection
    */
   #useProjection(projection) {
+    if (projection === this.#projection) return;
     const target = this.#controls.target;
     const from = this.#camera;
     const direction = from.position.clone().sub(target).normalize();
@@ -474,8 +503,6 @@ export class Viewer extends EventTarget {
       this.#halfHeight = distance * halfTan;
       this.#orthographic.zoom = 1;
       this.#orthographic.position.copy(target).addScaledVector(direction, distance);
-      this.#orthographic.near = 0;
-      this.#orthographic.far = distance * 2 + this.#halfHeight * ORTHO_STANDOFF;
       this.#camera = this.#orthographic;
     } else {
       const distance = this.#halfHeight / this.#orthographic.zoom / halfTan;
@@ -485,6 +512,7 @@ export class Viewer extends EventTarget {
     this.#projection = projection;
     this.#camera.lookAt(target);
     this.#controls.object = this.#camera;
+    this.#fitDepth();
     this.#updateProjection();
     this.#controls.update();
   }

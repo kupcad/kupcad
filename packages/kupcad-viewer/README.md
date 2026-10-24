@@ -31,8 +31,10 @@ const png = await viewer.screenshot();
   say, so the viewer knows every mesh's part; ghosts are seen through and can't be picked. A
   drawing is seen from the top, orthographic, each filled shape named by its id. A model that
   follows keeps the camera where it is, a model of nothing between them too (one that failed);
-  the first, or one of another kind than the last shown, is framed. A model without the selected
-  part drops the selection, with a `select` event of null.
+  the first, or one of another kind than the last shown, is framed, a solid after a drawing as
+  the last solid was seen. The camera's depth takes in the model and what it stands on, however
+  small the model and wherever the camera moves. A model without the selected part drops the
+  selection, with a `select` event of null.
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
   solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it
