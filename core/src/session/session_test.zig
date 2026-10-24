@@ -735,3 +735,55 @@ test "ScriptSession: runAgain runs a module whose inputs are the same, and its i
     try testing.expectEqualStrings("main.kup", seen.runs.items[3].path);
     try testing.expectError(error.UnknownModule, session.runAgain("missing.kup"));
 }
+
+/// lib.kup and main.kup added to `session`, over `files`, and run once: main.kup imports
+/// lib.kup through the VM, which caches it.
+fn runLibAndMain(session: *ScriptSession, files: *MemoryVfs, lib_source: []const u8, main_source: []const u8) !void {
+    try files.vfs().writeFile("lib.kup", lib_source);
+    _ = try session.workspace.addModule("lib.kup", lib_source);
+    _ = try session.workspace.addModule("main.kup", main_source);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+}
+
+/// main.kup's source replaced, and the workspace evaluated: lib.kup, unchanged, comes from
+/// the VM's import cache.
+fn editMain(session: *ScriptSession, source: []const u8) !void {
+    try session.workspace.updateModuleSource(session.workspace.path_to_id.get("main.kup").?, source);
+    try session.markFileEdited("main.kup");
+    try session.evaluateWorkspace();
+}
+
+fn mainVolume(session: *ScriptSession) f64 {
+    const id = session.workspace.path_to_id.get("main.kup").?;
+    return kernel.volume(session.nodes.items[@backingInt(id)].cached_handle.?);
+}
+
+test "ScriptSession: an import from the VM's cache declares its module's parameters again" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    try runLibAndMain(&session, &files, "side = param(:t, default: 3)\nexport side\n", "import { side } from \"./lib.kup\"\ncube(param(:t))\n");
+    try testing.expectApproxEqAbs(@as(f64, 27), mainVolume(&session), 1e-9);
+
+    // param(:t) raised a NameError: the run's registry starts empty, and the cache hit
+    // declared nothing
+    try editMain(&session, "import { side } from \"./lib.kup\"\ncube(param(:t) + 1)\n");
+    try testing.expectApproxEqAbs(@as(f64, 64), mainVolume(&session), 1e-9);
+}
+
+test "ScriptSession: a parameter an import declares again takes the import's declaration from the VM's cache too" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    try runLibAndMain(&session, &files, "side = param(:t, default: 3)\nexport side\n", "param(:t, default: 1)\nimport { side } from \"./lib.kup\"\ncube(param(:t))\n");
+    try testing.expectApproxEqAbs(@as(f64, 27), mainVolume(&session), 1e-9);
+
+    // The cache kept the parameters the registry grew by, and :t, declared first by
+    // main.kup, wasn't among them: it was main.kup's default of 1
+    try editMain(&session, "param(:t, default: 1)\nimport { side } from \"./lib.kup\"\ncube(param(:t) + 1)\n");
+    try testing.expectApproxEqAbs(@as(f64, 64), mainVolume(&session), 1e-9);
+}

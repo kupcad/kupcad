@@ -21,3 +21,16 @@ pub const ParamRegistry = struct {
 };
 
 pub const ParamList = std.MultiArrayList(ParamRegistry);
+
+/// A module in the VM's import cache: what it exports, and the parameters declared while it
+/// ran (its own `param(...)` calls and its imports'). An import served from the cache doesn't
+/// run the module's code, so it declares these again: a run that imports it reads them as one
+/// that ran it does.
+pub const CachedModule = struct {
+    exports: value.Value,
+    params: std.ArrayList(ParamRegistry) = .empty,
+
+    pub fn deinit(self: *CachedModule, allocator: std.mem.Allocator) void {
+        self.params.deinit(allocator);
+    }
+};

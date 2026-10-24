@@ -547,8 +547,9 @@ pub const GC = struct {
         // Import cache: a module's result is only referenced from here once its
         // top-level closure has returned, and later imports push it straight from the cache.
         var modules_it = vm.modules.valueIterator();
-        while (modules_it.next()) |val| {
-            self.markValue(val.*);
+        while (modules_it.next()) |cached| {
+            self.markValue(cached.exports);
+            for (cached.params.items) |param| self.markParam(param.name, param.current_value, param.choices);
         }
 
         // --- Protect static interned strings ---
@@ -577,10 +578,8 @@ pub const GC = struct {
             while (ns_it.next()) |val| self.markValue(val.*);
         }
 
-        for (vm.param_registry.items(.name)) |name| self.markValue(name);
-        for (vm.param_registry.items(.current_value)) |val| self.markValue(val);
-        for (vm.param_registry.items(.choices)) |choice| {
-            if (choice) |arr| self.markObject(&arr.obj);
+        for (vm.param_registry.items(.name), vm.param_registry.items(.current_value), vm.param_registry.items(.choices)) |name, val, choices| {
+            self.markParam(name, val, choices);
         }
 
         if (vm.string_class) |c| self.markObject(&c.obj);
@@ -590,6 +589,13 @@ pub const GC = struct {
         if (vm.symbol_class) |c| self.markObject(&c.obj);
         if (vm.boolean_class) |c| self.markObject(&c.obj);
         if (vm.bbox_class) |c| self.markObject(&c.obj);
+    }
+
+    /// A declared parameter's values: in the run's registry, or in an import cached with it.
+    fn markParam(self: *GC, name: value.Value, val: value.Value, choices: ?*value.ObjArray) void {
+        self.markValue(name);
+        self.markValue(val);
+        if (choices) |arr| self.markObject(&arr.obj);
     }
 
     fn markValue(self: *GC, val: value.Value) void {

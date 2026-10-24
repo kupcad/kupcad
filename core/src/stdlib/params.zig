@@ -116,25 +116,15 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
         } else return refuse(vm, sym_chars, .ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
     }
 
-    // --- DOD REGISTRY UPSERT ---
-    if (vm.param_lookup.get(sym_key)) |idx| {
-        vm.param_registry.items(.param_type)[idx] = p_type;
-        vm.param_registry.items(.min_val)[idx] = min_val;
-        vm.param_registry.items(.max_val)[idx] = max_val;
-        vm.param_registry.items(.current_value)[idx] = injected_val;
-    } else {
-        const new_idx = vm.param_registry.items(.name).len;
-        try vm.param_registry.append(vm.allocator, .{
-            .name = sym_key,
-            .param_type = p_type,
-            .current_value = injected_val,
-            .min_val = min_val,
-            .max_val = max_val,
-            .choices = null, // Extractor schema handles serialization; runtime just needs validation block
-        });
-        // Cache the index for O(1) reads
-        try vm.param_lookup.put(vm.allocator, sym_key, new_idx);
-    }
+    // Choices aren't kept: the extractor's schema lists them, and the run checked the value
+    try vm.declareParam(.{
+        .name = sym_key,
+        .param_type = p_type,
+        .current_value = injected_val,
+        .min_val = min_val,
+        .max_val = max_val,
+        .choices = null,
+    });
 
     return injected_val;
 }
@@ -166,14 +156,15 @@ fn readBoolean(val: value.Value) ?bool {
 
 /// The TypeError for a value parameter `name` can't take: "parameter :w expects a number,
 /// got "abc"", the text quoted as `-p` gave it.
-fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{ RuntimeError, OutOfMemory } {
+fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{RuntimeError} {
     if (got.isString()) return refuse(vm, name, .TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
     return refuse(vm, name, .TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, arguments.typeName(vm, got) });
 }
 
 /// The error of the value parameter `name` refused, `kind` saying `fmt`, with the
 /// parameter noted in the run's report as the one that stopped it.
-fn refuse(vm: *VM, name: []const u8, comptime kind: vm_mod.ErrorKind, comptime fmt: []const u8, args: anytype) error{ RuntimeError, OutOfMemory } {
-    try vm.report.refuse(vm.allocator, name);
+fn refuse(vm: *VM, name: []const u8, comptime kind: vm_mod.ErrorKind, comptime fmt: []const u8, args: anytype) error{RuntimeError} {
+    // The report only names it: out of memory, the run still fails with its own error
+    vm.report.refuse(vm.allocator, name) catch {};
     return vm.fail(kind, fmt, args);
 }

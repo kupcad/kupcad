@@ -285,7 +285,7 @@ pub const Host = struct {
 * `binary_handler`: Handles CSG binary operations between geometry objects.
 * `mesh_destructor`: Called when `ObjGeometry` handles are freed by the GC to release C++ mesh memory.
 * `missing_method_hint`: What to add to a `NoMethodError` when the embedder knows why the method is missing (the standard library's `manifest.missingMethodHint`: a Path asked to extrude).
-* `compile_module`: Compiles an imported module (`import "lib.kup"`) into its own namespace (`compiler/module_compiler.zig`, registered by the standard library). The VM reads the file, checks the cache, the depth limit and cycles, verifies and runs the chunk; parsing and compiling are the host's, so the VM doesn't import the compiler (they imported each other).
+* `compile_module`: Compiles an imported module (`import "lib.kup"`) into its own namespace (`compiler/module_compiler.zig`, registered by the standard library). The VM reads the file, checks the cache, the depth limit and cycles, verifies and runs the chunk; parsing and compiling are the host's, so the VM doesn't import the compiler (they imported each other). The cache (`vm.modules`, a `parameters.CachedModule` each) keeps its exports and the parameters it declared as they stood when it ended (`VM.param_declarations`, a parameter declared again included), which a cache hit declares again (`VM.declareParam`), so a run's `param(:name)` reads, and the parameters it lists, are the same whichever way its imports came.
 
 ### What a Run Reports
 

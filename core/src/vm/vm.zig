@@ -168,7 +168,7 @@ pub const VM = struct {
     shadowed_builtins: std.StringHashMapUnmanaged(value.Value) = .empty,
     // One top-level namespace per imported module (see value.Namespace).
     module_namespaces: std.ArrayList(*value.Namespace) = .empty,
-    modules: std.StringHashMapUnmanaged(value.Value),
+    modules: std.StringHashMapUnmanaged(parameters.CachedModule),
     strings: std.StringHashMapUnmanaged(*value.ObjString),
     symbols: std.StringHashMapUnmanaged(*value.ObjSymbol),
 
@@ -176,6 +176,9 @@ pub const VM = struct {
     rescue_frames: std.ArrayList(RescueFrame) = .empty,
     param_registry: parameters.ParamList = .{},
     param_lookup: std.AutoHashMapUnmanaged(value.Value, usize) = .empty,
+    /// The registry index each declaration of this run set, in order (`declareParam`): an
+    /// import caches those its run made, a parameter declared again among them.
+    param_declarations: std.ArrayList(usize) = .empty,
 
     materials: std.ArrayList(material_mod.MaterialDef) = .empty,
     display_list: std.ArrayList(geom.GeometryHandle) = .empty,
@@ -335,6 +338,7 @@ pub const VM = struct {
                 .rescue_frames = rescue_frames,
                 .param_registry = .{},
                 .param_lookup = .empty,
+                .param_declarations = .empty,
                 .host = .{},
                 .materials = .empty,
                 .display_list = .empty,
@@ -397,8 +401,11 @@ pub const VM = struct {
         self.module_namespaces.deinit(self.allocator);
         for (self.owned_global_keys.items) |key| self.allocator.free(key);
         self.owned_global_keys.deinit(self.allocator);
-        var module_keys = self.modules.keyIterator();
-        while (module_keys.next()) |key| self.allocator.free(key.*);
+        var cached_modules = self.modules.iterator();
+        while (cached_modules.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(self.allocator);
+        }
         self.modules.deinit(self.allocator);
         self.strings.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
@@ -406,6 +413,7 @@ pub const VM = struct {
         self.rescue_frames.deinit(self.allocator);
         self.param_registry.deinit(self.allocator);
         self.param_lookup.deinit(self.allocator);
+        self.param_declarations.deinit(self.allocator);
         self.config_stack.deinit(self.allocator);
         self.unwind_stack.deinit(self.allocator);
         self.report.deinit(self.allocator);
@@ -1446,16 +1454,44 @@ pub const VM = struct {
         return true;
     }
 
-    /// Import cache insert. Keys are owned copies: the path slice comes from a
-    /// constant ObjString that can be swept while the cache entry lives on.
-    fn cacheModule(self: *VM, path: []const u8, val: value.Value) !void {
-        (try owned_keys.getOrPutOwned(&self.modules, self.allocator, path)).value_ptr.* = val;
+    /// Caches the module imported from `path`: its exports, and the parameters it declared
+    /// as they stand when it ended, those of `param_declarations` from `declared_from` on.
+    /// The key is an owned copy: the path comes from a constant ObjString that can be swept
+    /// while the cache entry lives on.
+    fn cacheModule(self: *VM, path: []const u8, exports: value.Value, declared_from: usize) !void {
+        const declared = self.param_declarations.items[declared_from..];
+        var params = try std.ArrayList(parameters.ParamRegistry).initCapacity(self.allocator, declared.len);
+        errdefer params.deinit(self.allocator);
+        for (declared) |index| params.appendAssumeCapacity(self.param_registry.get(index));
+        const gop = try owned_keys.getOrPutOwned(&self.modules, self.allocator, path);
+        if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
+        gop.value_ptr.* = .{ .exports = exports, .params = params };
     }
 
     /// Drops the module imported from `path`, so the next import of it runs its new
     /// source (the session, when that file was edited).
     pub fn forgetModule(self: *VM, path: []const u8) void {
-        if (self.modules.fetchRemove(path)) |kv| self.allocator.free(kv.key);
+        if (self.modules.fetchRemove(path)) |kv| {
+            self.allocator.free(kv.key);
+            var cached = kv.value;
+            cached.deinit(self.allocator);
+        }
+    }
+
+    /// Declares a parameter for this run (`param(...)`, or an import from the cache declaring
+    /// its module's again): a new one is added, one declared already takes the new
+    /// declaration's type, range and value.
+    pub fn declareParam(self: *VM, entry: parameters.ParamRegistry) !void {
+        try self.param_declarations.ensureUnusedCapacity(self.allocator, 1);
+        if (self.param_lookup.get(entry.name)) |index| {
+            self.param_registry.set(index, entry);
+            self.param_declarations.appendAssumeCapacity(index);
+            return;
+        }
+        try self.param_registry.append(self.allocator, entry);
+        errdefer self.param_registry.shrinkRetainingCapacity(self.param_registry.len - 1);
+        try self.param_lookup.put(self.allocator, entry.name, self.param_registry.len - 1);
+        self.param_declarations.appendAssumeCapacity(self.param_registry.len - 1);
     }
 
     /// Global assignment from bytecode. Like the import cache, new keys are owned
@@ -1563,6 +1599,7 @@ pub const VM = struct {
         // were read by `param(:name)` and listed as this run's
         self.param_registry.clearRetainingCapacity();
         self.param_lookup.clearRetainingCapacity();
+        self.param_declarations.clearRetainingCapacity();
     }
 
     fn forgetFilesRead(self: *VM) void {
@@ -2225,9 +2262,10 @@ pub const VM = struct {
         const path_val = exec_chunk.constants.items[path_idx];
         const path_str = path_val.asString().chars;
 
-        // 1. Check Module Cache
-        if (self.modules.get(path_str)) |cached_mod| {
-            self.push(cached_mod);
+        // 1. Check Module Cache: its code doesn't run again, but its parameters are declared
+        if (self.modules.getPtr(path_str)) |cached| {
+            for (cached.params.items) |param| self.declareParam(param) catch |err| return self.allocationFailed(err);
+            self.push(cached.exports);
             return null;
         }
         if (self.loading_modules.contains(path_str)) {
@@ -2298,8 +2336,9 @@ pub const VM = struct {
         self.loading_modules.put(self.allocator, path_str, {}) catch |err| return self.allocationFailed(err);
         defer _ = self.loading_modules.remove(path_str);
 
-        // 6. Execute synchronously
+        // 6. Execute synchronously, noting where the parameters it declares begin
         const import_depth = self.frames.items.len;
+        const declared_from = self.param_declarations.items.len;
         // The module's own value is no part of what it gives: its exports are
         _ = self.callClosureSync(closure, &[_]value.Value{}) catch |err| {
             if (err == error.ExecutionLimitExceeded) return .execution_limit_exceeded;
@@ -2326,7 +2365,7 @@ pub const VM = struct {
         if (final_res.isModule()) final_res.asModule().exports_of = path_val.asString();
 
         // 7. Cache the actual finalized module and yield result
-        self.cacheModule(path_str, final_res) catch |err| return self.allocationFailed(err);
+        self.cacheModule(path_str, final_res, declared_from) catch |err| return self.allocationFailed(err);
         self.push(final_res);
         return null;
     }
