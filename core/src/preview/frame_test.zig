@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const frame = @import("frame.zig");
 const ParamValues = @import("../core/param_values.zig").ParamValues;
+const test_support = @import("../test_support.zig");
 
 test "frame: a header and a body come apart as they went in, the header's fields the protocol's" {
     var values: ParamValues = .{};
@@ -23,26 +24,16 @@ test "frame: a header and a body come apart as they went in, the header's fields
     const parts = try frame.split(bytes);
     try testing.expectEqualStrings(body, parts.body);
     // Read back strictly, as a front end's types would: a field renamed or added fails
-    const Json = struct {
-        protocolVersion: u32,
-        document: ?[]const u8,
-        kind: []const u8,
-        parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64 },
-        warnings: []const struct { message: []const u8, line: ?u32, column: ?u32 },
-        params: struct { schema: std.json.Value, values: struct { width: f64, material: []const u8 } },
-        @"error": ?std.json.Value,
-        timing: struct { runMs: f64, renderMs: f64 },
-    };
-    const parsed = try std.json.parseFromSlice(Json, testing.allocator, parts.header, .{});
-    defer parsed.deinit();
-    const h = parsed.value;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const h = (try test_support.readFrame(arena.allocator(), bytes)).header;
     try testing.expectEqual(frame.PROTOCOL_VERSION, h.protocolVersion);
     try testing.expectEqualStrings("file:///work/box.kup", h.document.?);
     try testing.expectEqualStrings("3d", h.kind);
     try testing.expectEqualStrings("lid_2", h.parts[0].nodes[1]);
     try testing.expectEqual(@as(?u32, 3), h.warnings[0].line);
-    try testing.expectEqual(@as(f64, 20), h.params.values.width);
-    try testing.expectEqualStrings("PLA", h.params.values.material);
+    try testing.expectEqual(@as(i64, 20), h.params.values.object.get("width").?.integer);
+    try testing.expectEqualStrings("PLA", h.params.values.object.get("material").?.string);
     try testing.expectEqualStrings("Box", h.params.schema.object.get("meta").?.object.get("title").?.string);
     try testing.expect(h.@"error" == null);
 }

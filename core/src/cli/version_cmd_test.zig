@@ -3,7 +3,6 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const version_cmd = @import("version_cmd.zig");
 const Args = @import("args.zig").Args;
-const Reporter = @import("reporter.zig").Reporter;
 const frame = @import("../preview/frame.zig");
 
 /// What `kupcad version` with `items` prints, and how it ends.

@@ -611,15 +611,13 @@ fn previewOf(src: []const u8, params: []const u8) !struct { kind: []const u8, me
     var len: usize = 0;
     const res = wasm.preview_wasm(src.ptr, src.len, params.ptr, params.len, &len) orelse return error.PreviewFailed;
     defer wasm.wasm_free(@constCast(res), len);
-    const parts = try preview_frame.split(res[0..len]);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     errdefer arena.deinit();
-    const Header = struct { kind: []const u8, @"error": ?struct { message: []const u8 } };
-    const header = try std.json.parseFromSliceLeaky(Header, arena.allocator(), parts.header, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+    const read = try kupcad.test_support.readFrame(arena.allocator(), res[0..len]);
     return .{
-        .kind = header.kind,
-        .message = if (header.@"error") |e| e.message else null,
-        .glb = parts.body.len >= 4 and std.mem.eql(u8, parts.body[0..4], "glTF"),
+        .kind = read.header.kind,
+        .message = if (read.header.@"error") |e| e.message else null,
+        .glb = std.mem.startsWith(u8, read.body, "glTF"),
         .arena = arena,
     };
 }

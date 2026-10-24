@@ -6,21 +6,10 @@ const testing = std.testing;
 const api = @import("../api.zig");
 const frame = @import("frame.zig");
 const ParamValues = @import("../core/param_values.zig").ParamValues;
-
-/// The header as a front end's types read it: a field renamed or added fails.
-const Header = struct {
-    protocolVersion: u32,
-    document: ?[]const u8,
-    kind: []const u8,
-    parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64 },
-    warnings: []const struct { message: []const u8, line: ?u32, column: ?u32 },
-    params: struct { schema: std.json.Value, values: std.json.Value },
-    @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
-    timing: struct { runMs: f64, renderMs: f64 },
-};
+const test_support = @import("../test_support.zig");
 
 /// A frame read back: its header, and its body, both owned by the arena.
-const Read = struct { header: Header, body: []const u8 };
+const Read = struct { header: test_support.FrameHeader, body: []const u8 };
 
 /// The frame of `source` with `params` (a JSON object, or empty), read back into `arena`.
 fn preview(arena: std.mem.Allocator, source: []const u8, params: []const u8) !Read {
@@ -30,11 +19,8 @@ fn preview(arena: std.mem.Allocator, source: []const u8, params: []const u8) !Re
     if (params.len > 0) try values.putJson(testing.allocator, params, &why);
     const bytes = try api.previewScript(testing.allocator, testing.io, source, .{ .params = &values });
     defer testing.allocator.free(bytes);
-    const parts = try frame.split(bytes);
-    return .{
-        .header = try std.json.parseFromSliceLeaky(Header, arena, try arena.dupe(u8, parts.header), .{ .allocate = .alloc_always }),
-        .body = try arena.dupe(u8, parts.body),
-    };
+    const read = try test_support.readFrame(arena, bytes);
+    return .{ .header = read.header, .body = try arena.dupe(u8, read.body) };
 }
 
 /// The names of the nodes of a GLB: its JSON chunk's `nodes`, the named ones.
@@ -184,7 +170,7 @@ test "preview: a refusal before the run keeps the schema and says why" {
     defer arena.deinit();
     const bytes = try api.previewFailure(testing.allocator, "w = param(:width, default: 2)\ncube(w)\n", "parameters: line 1, column 2: invalid JSON");
     defer testing.allocator.free(bytes);
-    const h = try std.json.parseFromSliceLeaky(Header, arena.allocator(), (try frame.split(bytes)).header, .{ .allocate = .alloc_always });
+    const h = (try test_support.readFrame(arena.allocator(), bytes)).header;
     try testing.expectEqualStrings("none", h.kind);
     try testing.expectEqualStrings("parameters: line 1, column 2: invalid JSON", h.@"error".?.message);
     try testing.expect(h.@"error".?.line == null);

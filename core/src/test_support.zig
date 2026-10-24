@@ -12,6 +12,27 @@ const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
 const value = @import("core/value.zig");
 const disassembler = @import("tools/dev/disassembler.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
+const preview_frame = @import("preview/frame.zig");
+
+/// A preview frame's header as a front end's types read it (@kupcad/protocol's), strictly:
+/// a field renamed or added fails the test that reads it.
+pub const FrameHeader = struct {
+    protocolVersion: u32,
+    document: ?[]const u8,
+    kind: []const u8,
+    parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64 },
+    warnings: []const struct { message: []const u8, line: ?u32, column: ?u32 },
+    params: struct { schema: std.json.Value, values: std.json.Value },
+    @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
+    timing: struct { runMs: f64, renderMs: f64 },
+};
+
+/// The frame `bytes` read back: its header (FrameHeader) owned by `arena`, its body
+/// borrowed from `bytes`.
+pub fn readFrame(arena: std.mem.Allocator, bytes: []const u8) !struct { header: FrameHeader, body: []const u8 } {
+    const split = try preview_frame.split(bytes);
+    return .{ .header = try std.json.parseFromSliceLeaky(FrameHeader, arena, split.header, .{ .allocate = .alloc_always }), .body = split.body };
+}
 
 /// Kernel-computed numbers (volumes, bounds) are compared with this absolute tolerance.
 pub const NUMBER_TOLERANCE = 1e-9;

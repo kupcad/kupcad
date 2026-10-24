@@ -6,19 +6,10 @@ const testing = std.testing;
 const lsp_preview = @import("lsp_preview.zig");
 const SessionPreview = lsp_preview.SessionPreview;
 const Target = lsp_preview.Target;
-const preview_frame = @import("../preview/frame.zig");
 const ParamValues = @import("../core/param_values.zig").ParamValues;
+const test_support = @import("../test_support.zig");
 
-/// What these tests read of a frame's header.
-const Header = struct {
-    document: ?[]const u8,
-    kind: []const u8,
-    warnings: []const struct { message: []const u8, line: ?u32 },
-    @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
-    params: struct { values: std.json.Value },
-};
-
-const Read = struct { header: Header, bytes: []const u8, body: []const u8 };
+const Read = struct { header: test_support.FrameHeader, bytes: []const u8, body: []const u8 };
 
 /// The document at `module_path`, as an editor opens it from the folder /work.
 fn target(comptime module_path: []const u8) Target {
@@ -35,9 +26,8 @@ fn frameFor(arena: std.mem.Allocator, preview: *SessionPreview, of: Target) !Rea
         .frame => |b| b,
         else => return error.TestExpectedFrame,
     };
-    const parts = try preview_frame.split(bytes);
-    const header = try std.json.parseFromSliceLeaky(Header, arena, parts.header, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
-    return .{ .header = header, .bytes = bytes, .body = parts.body };
+    const read = try test_support.readFrame(arena, bytes);
+    return .{ .header = read.header, .bytes = bytes, .body = read.body };
 }
 
 test "LSP preview: a document's frame, made by its run and kept while nothing it reads changes" {

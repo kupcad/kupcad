@@ -96,10 +96,10 @@ pub fn encode(allocator: std.mem.Allocator, header: Header, body: []const u8) ![
 }
 
 /// A frame's header (JSON text) and body, borrowed from `bytes`.
-pub const Parts = struct { header: []const u8, body: []const u8 };
+pub const Split = struct { header: []const u8, body: []const u8 };
 
 /// `bytes` as a frame's header and body; error.BadFrame when its length doesn't fit.
-pub fn split(bytes: []const u8) error{BadFrame}!Parts {
+pub fn split(bytes: []const u8) error{BadFrame}!Split {
     if (bytes.len < LENGTH_BYTES) return error.BadFrame;
     const header_len = std.mem.readInt(u32, bytes[0..LENGTH_BYTES], .little);
     if (header_len > bytes.len - LENGTH_BYTES) return error.BadFrame;

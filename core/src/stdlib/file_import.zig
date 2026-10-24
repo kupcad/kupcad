@@ -2,7 +2,6 @@
 //! ImportError naming it when it can't be read or is past its limit, and the ImportError of
 //! what a reader's Diagnostic says.
 
-const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
 const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
 

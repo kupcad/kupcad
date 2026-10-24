@@ -5,7 +5,6 @@
 const std = @import("std");
 const build_info = @import("build_info");
 const Info = @import("../version.zig").Info;
-const log_helpers = @import("../log.zig");
 pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const Reporter = @import("reporter.zig").Reporter;

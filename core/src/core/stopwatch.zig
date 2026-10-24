@@ -21,6 +21,7 @@ pub const Stopwatch = struct {
     }
 };
 
+/// `ns` nanoseconds in milliseconds, as a report or a frame's timing gives them.
 pub fn milliseconds(ns: u64) f64 {
     return @as(f64, @floatFromInt(ns)) / NS_PER_MS;
 }
