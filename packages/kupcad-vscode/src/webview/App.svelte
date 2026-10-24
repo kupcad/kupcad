@@ -73,8 +73,9 @@
           open: () => host.post({ type: 'ready' }),
           state: (open) => (connected = open),
           frame: (next) => {
-            // The socket sends every viewer the shown document's frame: one of another is late
-            if (shown && next.header.document !== shown.uri) return;
+            // The socket sends every viewer the frame of the document the server shows: one of
+            // another (late, or with none shown here) isn't this page's
+            if (next.header.document !== shown?.uri) return;
             preview = next;
           },
           problem: (message) => host.post({ type: 'problem', message }),

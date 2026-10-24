@@ -112,6 +112,23 @@ describe('App', () => {
     expect(/** @type {HTMLInputElement} */ (screen.getByLabelText('width')).value).toBe('20');
   });
 
+  it('shows no model when it shows no document: none told yet, or none any more', async () => {
+    const viewer = page();
+    viewer.socket.on.state(true);
+    viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+    await tick();
+    expect(status()).toBe('Open a .kup file to see its model.');
+    expect(screen.queryByLabelText('Parameters')).toBeNull();
+
+    await viewer.tell({ type: 'document', document: PART });
+    viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+    await tick();
+    expect(screen.queryByLabelText('Parameters')).not.toBeNull();
+    await viewer.tell({ type: 'document', document: null });
+    expect(status()).toBe('Open a .kup file to see its model.');
+    expect(screen.queryByLabelText('Parameters')).toBeNull();
+  });
+
   it("gives the host the panel's values for the document, and shows the ones the host gives", async () => {
     const viewer = page();
     await viewer.tell({ type: 'document', document: PART });
