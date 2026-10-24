@@ -30,10 +30,12 @@ export class Uri {
   /**
    * @param {string} scheme
    * @param {string} uriPath
+   * @param {string} [authority] the host, for a URL
    */
-  constructor(scheme, uriPath) {
+  constructor(scheme, uriPath, authority = '') {
     this.scheme = scheme;
     this.path = uriPath;
+    this.authority = authority;
   }
 
   /** @param {string} file */
@@ -44,7 +46,7 @@ export class Uri {
   /** @param {string} text */
   static parse(text) {
     const url = new URL(text);
-    return new Uri(url.protocol.slice(0, -1), decodeURIComponent(url.pathname));
+    return new Uri(url.protocol.slice(0, -1), decodeURIComponent(url.pathname), url.host);
   }
 
   /**
@@ -52,7 +54,7 @@ export class Uri {
    * @param {...string} parts
    */
   static joinPath(base, ...parts) {
-    return new Uri(base.scheme, path.posix.join(base.path, ...parts));
+    return new Uri(base.scheme, path.posix.join(base.path, ...parts), base.authority);
   }
 
   get fsPath() {
@@ -60,11 +62,41 @@ export class Uri {
   }
 
   toString() {
-    return `${this.scheme}://${this.path}`;
+    return `${this.scheme}://${this.authority}${this.path}`;
   }
 }
 
 export const ViewColumn = { One: 1, Beside: -2 };
+export const ProgressLocation = { SourceControl: 1, Window: 10, Notification: 15 };
+
+export const env = {
+  /** @param {Uri} uri */
+  openExternal: async (uri) => {
+    fake.opened.push(uri.toString());
+    return true;
+  },
+};
+
+/** A store of what the extension keeps between sessions (its globalState). */
+export function memento() {
+  /** @type {Map<string, unknown>} */
+  const kept = new Map();
+  return {
+    kept,
+    /**
+     * @param {string} key
+     * @param {unknown} [fallback]
+     */
+    get: (key, fallback) => (kept.has(key) ? kept.get(key) : fallback),
+    /**
+     * @param {string} key
+     * @param {unknown} value
+     */
+    update: async (key, value) => {
+      kept.set(key, value);
+    },
+  };
+}
 export const ExtensionMode = { Production: 1, Development: 2, Test: 3 };
 
 /**
@@ -98,7 +130,7 @@ class Webview {
 
   /** @param {Uri} uri */
   asWebviewUri(uri) {
-    return new Uri('https', `/webview${uri.path}`);
+    return new Uri('https', uri.path, 'webview');
   }
 
   /**
@@ -161,8 +193,14 @@ export const fake = {
   panels: [],
   /** @type {Map<string, (...args: any[]) => any>} */
   commands: new Map(),
-  /** @type {{ level: string, text: string }[]} */
+  /** @type {{ level: string, text: string, buttons: string[] }[]} */
   messages: [],
+  /** The button the user picks on a message: one of its buttons, or none (dismissed). @type {string | undefined} */
+  answer: undefined,
+  /** What was opened outside VS Code. @type {string[]} */
+  opened: [],
+  /** The progress notifications' titles, and what each reported. @type {{ title: string, reports: unknown[] }[]} */
+  progress: [],
   /** @type {Map<string, Uint8Array>} the files written, by path */
   written: new Map(),
   /** @type {Record<string, unknown>} the settings, by their full name */
@@ -189,6 +227,9 @@ export function resetFake() {
   fake.panels = [];
   fake.commands = new Map();
   fake.messages = [];
+  fake.answer = undefined;
+  fake.opened = [];
+  fake.progress = [];
   fake.written = new Map();
   fake.settings = {};
   fake.saveAnswer = undefined;
@@ -198,10 +239,12 @@ export function resetFake() {
 }
 
 /** @param {string} level */
-const say = (level) => async (/** @type {string} */ text) => {
-  fake.messages.push({ level, text });
-  return undefined;
-};
+const say =
+  (level) =>
+  async (/** @type {string} */ text, /** @type {string[]} */ ...buttons) => {
+    fake.messages.push({ level, text, buttons });
+    return buttons.includes(/** @type {string} */ (fake.answer)) ? fake.answer : undefined;
+  };
 
 export const window = {
   get activeTextEditor() {
@@ -226,6 +269,15 @@ export const window = {
     return channel;
   },
   showSaveDialog: async () => fake.saveAnswer,
+  /**
+   * @param {{ title: string }} options
+   * @param {(progress: { report(value: unknown): void }) => Promise<unknown>} task
+   */
+  async withProgress(options, task) {
+    const shown = { title: options.title, reports: /** @type {unknown[]} */ ([]) };
+    fake.progress.push(shown);
+    return task({ report: (value) => shown.reports.push(value) });
+  },
   showErrorMessage: say('error'),
   showWarningMessage: say('warning'),
   showInformationMessage: say('information'),

@@ -19,25 +19,52 @@ import {
 const VIEWPORT_PORT_ENV = 'KUPCAD_VIEWPORT_PORT';
 const EXECUTE_COMMAND = 'workspace/executeCommand';
 
+/**
+ * @typedef {object} ServerOptions
+ * @property {string} serverPath
+ * @property {number} viewportPort the port its socket tries first
+ * @property {vscode.LogOutputChannel} log
+ */
+
 /** @implements {ServerLink} */
 export class LanguageServer {
+  /** @type {ServerOptions} */
+  #options;
   /** @type {LanguageClient} */
   #client;
   /** @type {number | null} */
   #viewportPort = null;
   #viewport = new vscode.EventEmitter();
 
+  /** @param {ServerOptions} options */
+  constructor(options) {
+    this.#options = options;
+    this.#client = this.#clientOf(options.serverPath);
+  }
+
   /**
-   * @param {{ serverPath: string, viewportPort: number, log: vscode.LogOutputChannel }} options
+   * Runs the kupcad at `serverPath` from now on (an update): the documents are opened in it
+   * again, and the viewer follows its socket.
+   * @param {string} serverPath
    */
-  constructor({ serverPath, viewportPort, log }) {
+  async restart(serverPath) {
+    await this.#client.stop();
+    this.#viewportPort = null;
+    this.#options = { ...this.#options, serverPath };
+    this.#client = this.#clientOf(serverPath);
+    await this.#client.start();
+  }
+
+  /** @param {string} serverPath */
+  #clientOf(serverPath) {
+    const { viewportPort, log } = this.#options;
     const run = {
       command: serverPath,
       args: ['lsp'],
       transport: TransportKind.stdio,
       options: { env: { ...process.env, [VIEWPORT_PORT_ENV]: String(viewportPort) } },
     };
-    this.#client = new LanguageClient(
+    const client = new LanguageClient(
       'kupcad',
       'KupCAD Language Server',
       { run, debug: run },
@@ -47,9 +74,10 @@ export class LanguageServer {
         outputChannel: log,
       },
     );
-    this.#client.onNotification(VIEWPORT_READY_NOTIFICATION, (/** @type {ViewportReady} */ ready) =>
+    client.onNotification(VIEWPORT_READY_NOTIFICATION, (/** @type {ViewportReady} */ ready) =>
       this.#viewportReady(ready),
     );
+    return client;
   }
 
   get viewportPort() {

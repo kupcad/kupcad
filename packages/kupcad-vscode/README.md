@@ -18,14 +18,27 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
   checked against the parameter's range first; one the run refuses is marked. Why a run failed,
   and what it warned of with no line to show it on, are shown over the model.
 
-## Requirements
+## The `kupcad` it runs
 
-A `kupcad` executable (built from the repository: `cd core && zig build`). The extension looks for
-it in this order:
+The extension ships no binary: it runs the `kupcad` it finds, or installs one. In this order:
 
-1. the `kupcad.serverPath` setting,
-2. `kupcad` on `PATH`,
-3. the monorepo development build at `core/zig-out/bin/kupcad` (only when running from the repo).
+1. the `kupcad.serverPath` setting, whatever its version (a warning says when it is one the
+   extension doesn't declare it runs with);
+2. its own install, in VS Code's storage for the extension: the newest one there;
+3. `kupcad` on `PATH`;
+4. the monorepo's build at `core/zig-out/bin/kupcad` (when the extension runs from a checkout).
+
+Each of the last three is asked its version (`kupcad version --json`) and run only when it is in
+the range the extension declares (`kupcad.core` in its package.json) and speaks its protocol, so
+an old `kupcad` on `PATH` never runs under a newer extension. When none fits, the newest release
+in range is downloaded from GitHub (a progress notification shows it), checked against the
+release's `checksums.txt` before it is unpacked, and installed; if that fails, the message says
+why and offers the releases page and the setting.
+
+Once a day (and on `KupCAD: Check for Updates`) the extension's own install looks for a newer
+release in range, and installs it and restarts the server with it, or asks first when
+`kupcad.binary.autoUpdate` is off. A newer release out of range says the extension needs
+updating first. A `kupcad` from the setting, `PATH` or a checkout is updated where it came from.
 
 ## Extension Settings
 
@@ -35,6 +48,9 @@ it in this order:
 * `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` =
   always pick a free port). If the port is taken, the server falls back to a free one and the
   viewer follows it.
+* `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
+  instead of asking.
+* `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.
 
 ## Security notes
 
@@ -54,6 +70,9 @@ it in this order:
 Two programs, built separately by Vite:
 
 * **The host** (`src/extension/`, Node, in VS Code's extension host): `main.js` activates it,
+  `binary/` finds or installs the `kupcad` it runs (`BinaryManager`, over pure modules: the
+  version range, the releases list with its ETag, the archive's name per platform, its checksum,
+  unpacking a `.tar.gz` or `.zip` with Node's zlib, the resolution order),
   `server.js` starts the language server (`LanguageServer`: the language client, the viewport's
   port from `kupcad/viewportReady`, and the server's `kupcad.preview` and `kupcad.setParams`
   commands), `viewer-panel.js` is the viewer's webview panel (`ViewerPanel`: it follows the

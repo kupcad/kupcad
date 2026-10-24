@@ -43,6 +43,11 @@
         "title": "Open Viewer",
         "category": "KupCAD",
         "icon": "$(preview)"
+      },
+      {
+        "command": "kupcad.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "KupCAD"
       }
     ],
     "menus": {
@@ -61,7 +66,21 @@
           "type": "string",
           "default": "",
           "scope": "machine",
-          "description": "Absolute path to the `kupcad` executable. When empty, `kupcad` is looked up on PATH, then the monorepo dev build."
+          "description": "Absolute path to the `kupcad` executable, run whatever its version. When empty, the extension runs its own install (downloading the newest release it runs with), else `kupcad` on PATH, else the monorepo's build, each only when its version is one the extension runs with."
+        },
+        "kupcad.binary.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Install a newer release of kupcad at once when one is out (looked for once a day), instead of asking first. Only the extension's own install is updated."
+        },
+        "kupcad.binary.channel": {
+          "type": "string",
+          "enum": [
+            "stable",
+            "prerelease"
+          ],
+          "default": "stable",
+          "description": "Which releases of kupcad the extension installs: `prerelease` takes the release candidates too."
         },
         "kupcad.viewport.port": {
           "type": "integer",
@@ -96,5 +115,8 @@
   "activationEvents": [],
   "engines": {
     "vscode": "^1.125.0"
+  },
+  "kupcad": {
+    "core": ">=0.1.0 <0.2.0"
   }
 }

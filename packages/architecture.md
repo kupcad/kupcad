@@ -374,33 +374,40 @@ Data flow:
 
 #### The binary manager (`src/extension/binary/`)
 
-The extension ships no binary; it fetches the release it was built for.
+The extension ships no binary; it fetches a release of the core it runs with.
 
-1. **Resolve**, in order: the `kupcad.serverPath` setting; the managed install in the extension's
-   global storage (`<globalStorage>/bin/<version>/kupcad`); `kupcad` on `PATH`; the repo's
-   `core/zig-out/bin/kupcad` in development. Whatever is found is asked `kupcad --version` and
-   must satisfy the range the extension declares (`"kupcad": { "core": ">=0.2.0 <0.3.0" }` in
-   its `package.json`); one that doesn't is skipped with a message, so an old binary on `PATH`
-   never silently runs under a newer extension.
-2. **Download** when nothing fits: the GitHub release of the newest version in range
-   (`GET /repos/kupcad/kupcad/releases`, no token, with ETag caching), the asset for this platform
-   (`kupcad_<version>_<os>_<arch>.tar.gz`, `.zip` on Windows; `os` and `arch` from
-   `process.platform`/`process.arch`), verified against the release's `checksums.txt` (SHA-256)
-   before it is unpacked, unpacked into the versioned directory, made executable, and asked its
-   version once more. A progress notification shows the download; a failure (offline, no asset for
-   the platform, a checksum that doesn't match) names what to do: set `kupcad.serverPath`, or
-   install from the releases page.
-3. **Update**: once a day on activation (and on the `KupCAD: Check for Updates` command) the
-   releases list is read again; a newer version in range offers "Update" (download, then restart
-   the server), a newer version out of range says the extension itself needs updating. Setting
-   `kupcad.binary.autoUpdate` (default `true`) takes the prompt out. Prereleases are taken only
-   with `kupcad.binary.channel: "prerelease"`.
-4. **Compatibility is checked twice**: by version range before the server starts, and by
-   `PROTOCOL_VERSION` in `kupcad/viewportReady` once it has, for the webview's sake.
+1. **Resolve** (`resolve.js`), in order: the `kupcad.serverPath` setting, run whatever its
+   version (a warning says when it is out of range: the user chose it; one that isn't kupcad is
+   an error with the setting to open); the newest of the extension's own installs
+   (`<globalStorage>/bin/<version>/kupcad`); `kupcad` on `PATH`; the repo's
+   `core/zig-out/bin/kupcad` in development. Each of those three is asked `kupcad version --json`
+   (`probe.js`) and run only when its version is in the range the extension declares
+   (`"kupcad": { "core": ">=0.1.0 <0.2.0" }` in its `package.json`; a pre-release is in range when
+   the release it leads to is, `versions.js`) and it speaks the extension's protocol; one that
+   doesn't is skipped with a note in the log, so an old binary on `PATH` never silently runs
+   under a newer extension.
+2. **Download** when nothing fits (`install.js`): the newest release in range
+   (`GET /repos/kupcad/kupcad/releases`, no token, an ETag kept so an unchanged list costs
+   nothing, `releases.js`), the archive for this platform (`kupcad_<version>_<os>_<arch>.tar.gz`,
+   `.zip` on Windows, `os` and `arch` from `process.platform`/`process.arch`, `assets.js`),
+   verified against the release's `checksums.txt` (SHA-256) before it is unpacked, its binary taken
+   out with Node's zlib alone (`archive.js`: ustar, or a zip stored or deflated) into a folder that
+   takes the version's name only once it is whole. A progress notification shows the download; a
+   failure (offline, no archive for the platform, a checksum that doesn't match) says what went
+   wrong and offers the releases page and the setting.
+3. **Update** (`BinaryManager.checkForUpdates`): once a day on activation (and on the
+   `KupCAD: Check for Updates` command) the releases list is read again; a newer version in range
+   is installed and the server restarted on it (`LanguageServer.restart`), or offered first with
+   `kupcad.binary.autoUpdate` off; a newer version out of range says the extension itself needs
+   updating. Prereleases are taken only with `kupcad.binary.channel: "prerelease"`. Only the
+   extension's own install is updated: one from the setting, `PATH` or a checkout is the user's.
+4. **Compatibility is checked twice**: by version range and protocol before the server starts,
+   and by `PROTOCOL_VERSION` in `kupcad/viewportReady` once it has, for the webview's sake.
 
-All of this is pure functions over a small `fetch`/`fs` interface, so it is unit-tested without the
-network: asset naming per platform, range checks, checksum verification, the resolution order,
-what each failure says.
+Everything but `manager.js` is a pure function over `fetch`, the file system or a process, so it
+is tested without the network or VS Code: asset naming per platform, range checks, checksum
+verification, unpacking real archives, the resolution order, what each failure says. The manager
+is tested against the stand-in for VS Code's API, its finding, releases and installing replaced.
 
 #### Why not bundle the binary?
 

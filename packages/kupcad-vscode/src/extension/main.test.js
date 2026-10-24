@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The module Vitest gives the code as `vscode`
-import { commands, EventEmitter, fake, resetFake, Uri } from './testing/vscode.js';
+import { commands, EventEmitter, fake, memento, resetFake, Uri } from './testing/vscode.js';
 import { activate, deactivate, OPEN_VIEWER_COMMAND } from './main.js';
 import { PAGE_DIR } from './viewer-panel.js';
 
@@ -27,14 +27,41 @@ vi.mock('./server.js', () => ({
     async stop() {
       this.stopped = true;
     }
+    /** @param {string} next */
+    async restart(next) {
+      this.restartedOn = next;
+    }
     async preview() {}
     async setParams() {}
   },
 }));
 
-/** Where `kupcad` is found: a file the test makes, or nowhere. @type {string | undefined} */
-let serverPath;
-vi.mock('./binary/resolve.js', () => ({ resolveServerPath: () => serverPath }));
+/** What the binary manager finds, and the updates it installs, as the test sets them. */
+const binaries = vi.hoisted(() => ({
+  /** @type {{ path: string, version: string, source: string } | null} */
+  found: null,
+  /** @type {(string | null)[]} what each look for an update installs */
+  updates: /** @type {(string | null)[]} */ ([]),
+  /** @type {boolean[]} */
+  asked: /** @type {boolean[]} */ ([]),
+}));
+vi.mock('./binary/manager.js', () => ({
+  CHECK_FOR_UPDATES_COMMAND: 'kupcad.checkForUpdates',
+  BinaryManager: class {
+    /** @param {object} options */
+    constructor(options) {
+      this.options = options;
+    }
+    async server() {
+      return binaries.found;
+    }
+    /** @param {{ asked: boolean }} how */
+    async checkForUpdates({ asked }) {
+      binaries.asked.push(asked);
+      return binaries.updates.shift() ?? null;
+    }
+  },
+}));
 
 /** An extension installed in a folder of its own, its page built. */
 function extension() {
@@ -44,6 +71,9 @@ function extension() {
   return {
     extensionPath: dir,
     extensionUri: Uri.file(dir),
+    globalStorageUri: Uri.file(path.join(dir, 'storage')),
+    globalState: memento(),
+    extension: { packageJSON: { kupcad: { core: '>=0.1.0 <0.2.0' } } },
     subscriptions: /** @type {{ dispose(): void }[]} */ ([]),
   };
 }
@@ -54,10 +84,15 @@ let context;
 beforeEach(() => {
   resetFake();
   servers.length = 0;
-  serverPath = '/usr/local/bin/kupcad';
+  binaries.found = { path: '/usr/local/bin/kupcad', version: '0.1.0', source: 'path' };
+  binaries.updates = [];
+  binaries.asked = [];
   context = extension();
 });
-afterEach(() => fs.rmSync(context.extensionPath, { recursive: true, force: true }));
+afterEach(async () => {
+  await deactivate();
+  fs.rmSync(context.extensionPath, { recursive: true, force: true });
+});
 
 describe('activate', () => {
   it('starts the language server found, on the viewport port the settings give', async () => {
@@ -85,13 +120,21 @@ describe('activate', () => {
     expect(fake.panels).toHaveLength(2);
   });
 
-  it('says where to put kupcad when none is found, and when the viewer is asked for', async () => {
-    serverPath = undefined;
+  it('starts no server when the manager has none, and says so when the viewer is asked for', async () => {
+    binaries.found = null;
     await activate(/** @type {any} */ (context));
     await commands.executeCommand(OPEN_VIEWER_COMMAND);
     expect(servers).toHaveLength(0);
     expect(fake.panels).toHaveLength(0);
-    expect(fake.messages.map((m) => m.level)).toEqual(['error', 'error']);
-    expect(fake.messages[0].text).toMatch(/kupcad\.serverPath/);
+    expect(fake.messages[0].text).toMatch(/language server isn't running/);
+  });
+
+  it('runs the kupcad an update installed: the daily look, and one asked for', async () => {
+    binaries.updates = ['/storage/bin/0.1.3/kupcad', '/storage/bin/0.1.4/kupcad'];
+    await activate(/** @type {any} */ (context));
+    await vi.waitFor(() => expect(servers[0].restartedOn).toBe('/storage/bin/0.1.3/kupcad'));
+    await commands.executeCommand('kupcad.checkForUpdates');
+    expect(servers[0].restartedOn).toBe('/storage/bin/0.1.4/kupcad');
+    expect(binaries.asked).toEqual([false, true]);
   });
 });

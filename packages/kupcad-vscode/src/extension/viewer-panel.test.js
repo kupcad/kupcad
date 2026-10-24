@@ -75,7 +75,7 @@ describe('ViewerPanel', () => {
     expect(webview.html).toContain('connect-src ws://127.0.0.1:9001');
     expect(webview.html).toContain('<meta name="kupcad-viewport" content="ws://127.0.0.1:9001">');
     expect(webview.html).toMatch(
-      /<script nonce="[^"]+" type="module" src="https:\/\/\/webview\/ext\/dist-webview\/main.js">/,
+      /<script nonce="[^"]+" type="module" src="https:\/\/webview\/ext\/dist-webview\/main.js">/,
     );
   });
 
