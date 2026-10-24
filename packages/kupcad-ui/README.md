@@ -47,6 +47,10 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   left unset, it uses its own colours. The pane follows them as the page changes them
   (`watchTokens`: its root's or body's class or style, or the colour scheme), as VS Code does
   when its theme is switched.
+* **Controls**: a button, select or field the panels draw is a `.kc-control` (`controls.css`,
+  which `tokens.css` brings): a host's own take the class to look alike, the `actions` it puts
+  in the pane's toolbar among them, which the pane's own styles, scoped to its markup, never
+  reached.
 
 Tests mount the panels under jsdom (@kupcad/viewer's `testing` setup and its `stubRenderer`),
 with the schemas and models the real core gives through @kupcad/wasm.

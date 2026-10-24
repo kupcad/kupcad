@@ -1,0 +1,24 @@
+/*
+  A control as the panels draw theirs (a button, a select, a field), by the --kc-* tokens: what a
+  host gives its own beside them to look alike, a toolbar's actions say. A panel's own styles are
+  scoped to its markup, so a host's buttons in a panel's toolbar got none of them.
+*/
+.kc-control {
+  font: inherit;
+  color: var(--kc-fg);
+  background: var(--kc-input-bg);
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius);
+  padding: 2px 8px;
+}
+
+button.kc-control,
+select.kc-control {
+  cursor: pointer;
+}
+
+.kc-control[aria-pressed='true'] {
+  color: var(--kc-accent-fg);
+  background: var(--kc-accent);
+  border-color: var(--kc-accent);
+}

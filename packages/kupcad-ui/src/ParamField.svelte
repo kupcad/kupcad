@@ -64,6 +64,7 @@
 {#snippet numberInput()}
   <input
     {id}
+    class="kc-control"
     type="number"
     min={spec.validate.min}
     max={spec.validate.max}
@@ -94,6 +95,7 @@
     {:else if control === 'select'}
       <select
         {id}
+        class="kc-control"
         onchange={(event) => {
           const index = Number(event.currentTarget.value);
           commit(/** @type {Value[]} */ (spec.validate.in)[index]);
@@ -115,7 +117,14 @@
         {...described}
       />
     {:else}
-      <input {id} type="text" value={value ?? ''} onchange={fromInput} {...described} />
+      <input
+        {id}
+        class="kc-control"
+        type="text"
+        value={value ?? ''}
+        onchange={fromInput}
+        {...described}
+      />
     {/if}
     {#if spec.unit}<span class="unit">{spec.unit}</span>{/if}
     {#if overridden}
@@ -153,15 +162,9 @@
     flex: 1;
     min-width: 4em;
   }
-  input:not([type='checkbox']):not([type='range']),
-  select {
+  .kc-control {
     min-width: 0;
     width: 5em;
-    font: inherit;
-    color: var(--kc-fg);
-    background: var(--kc-input-bg);
-    border: 1px solid var(--kc-border);
-    border-radius: var(--kc-radius);
     padding: 2px 4px;
   }
   input[type='text'] {

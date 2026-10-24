@@ -1,8 +1,11 @@
 /*
   The --kc-* tokens the panels are styled by, light and dark as the page's colour scheme is. A
   host sets its own on top (vscode.css maps VS Code's). --kc-viewer-* (background, grid, plate,
-  edges, selection, cap, ghost) theme the viewer; left unset, it uses its own colours.
+  edges, selection, cap, ghost) theme the viewer; left unset, it uses its own colours. A control
+  of a host's own takes the panels' look by the class .kc-control (controls.css).
 */
+@import './controls.css';
+
 :root {
   --kc-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --kc-font-size: 13px;

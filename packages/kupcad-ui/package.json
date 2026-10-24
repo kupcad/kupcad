@@ -14,7 +14,8 @@
       "default": "./src/index.js"
     },
     "./tokens.css": "./src/tokens.css",
-    "./vscode.css": "./src/vscode.css"
+    "./vscode.css": "./src/vscode.css",
+    "./controls.css": "./src/controls.css"
   },
   "scripts": {
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",

@@ -223,6 +223,10 @@ it('asks the host to export or print the document shown', async () => {
   const viewer = page();
   expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();
   await viewer.tell({ type: 'document', document: PART });
+  // In the viewer's toolbar, they look as its own controls do
+  for (const name of ['Export…', 'Print']) {
+    expect(screen.getByRole('button', { name }).classList.contains('kc-control')).toBe(true);
+  }
   await fireEvent.click(screen.getByRole('button', { name: 'Export…' }));
   await fireEvent.click(screen.getByRole('button', { name: 'Print' }));
   expect(viewer.posted.slice(-2)).toEqual([

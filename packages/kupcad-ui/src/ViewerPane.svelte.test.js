@@ -79,6 +79,13 @@ describe('ViewerPane', () => {
 
   it("sets the viewer's render mode, projection, floor and view from its toolbar", async () => {
     const { viewer } = await pane();
+    // Drawn as .kc-control, the look a host's own actions in it take
+    for (const control of [
+      screen.getByRole('button', { name: 'Fit' }),
+      screen.getByRole('combobox', { name: 'View' }),
+    ]) {
+      expect(control.classList.contains('kc-control')).toBe(true);
+    }
     await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
     expect(viewer.renderMode).toBe('xray');
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Orthographic' }));

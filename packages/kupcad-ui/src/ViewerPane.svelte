@@ -1,7 +1,7 @@
 <!--
   @component
   The viewer with its toolbar (render mode, view, projection, floor, a section through the
-  model, fit, screenshot) and the model's parts, a click on one selecting its copies as a click
+  model, fit, screenshot, and a host's own actions, which take the toolbar's look by .kc-control) and the model's parts, a click on one selecting its copies as a click
   in the viewer does. Themed by the --kc-viewer-* tokens unless given a `theme`.
 -->
 <script>
@@ -103,6 +103,7 @@
       {#each RENDER_MODES as mode (mode)}
         <button
           type="button"
+          class="kc-control"
           aria-pressed={renderMode === mode}
           onclick={() => (renderMode = mode)}
         >
@@ -112,7 +113,7 @@
     </div>
     <label>
       View
-      <select bind:value={view} onchange={() => viewer?.setCamera({ view })}>
+      <select class="kc-control" bind:value={view} onchange={() => viewer?.setCamera({ view })}>
         {#each VIEW_NAMES as view (view)}
           <option value={view}>{view}</option>
         {/each}
@@ -121,7 +122,7 @@
     <label><input type="checkbox" bind:checked={orthographic} /> Orthographic</label>
     <label>
       Floor
-      <select bind:value={environment}>
+      <select class="kc-control" bind:value={environment}>
         {#each Object.entries(FLOOR_LABELS) as [value, label] (value)}
           <option {value}>{label}</option>
         {/each}
@@ -129,7 +130,12 @@
     </label>
     <label><input type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label>
     {#if sectioned && span}
-      <select aria-label="Section axis" bind:value={axis} onchange={centreSection}>
+      <select
+        class="kc-control"
+        aria-label="Section axis"
+        bind:value={axis}
+        onchange={centreSection}
+      >
         {#each AXES as name (name)}
           <option value={name}>{name.toUpperCase()}</option>
         {/each}
@@ -143,9 +149,9 @@
         bind:value={offset}
       />
     {/if}
-    <button type="button" onclick={() => viewer?.fit()}>Fit</button>
+    <button type="button" class="kc-control" onclick={() => viewer?.fit()}>Fit</button>
     {#if onscreenshot}
-      <button type="button" onclick={screenshot}>Screenshot</button>
+      <button type="button" class="kc-control" onclick={screenshot}>Screenshot</button>
     {/if}
     {@render actions?.()}
   </div>
@@ -207,16 +213,6 @@
   .segments {
     display: flex;
   }
-  button,
-  select {
-    font: inherit;
-    color: var(--kc-fg);
-    background: var(--kc-input-bg);
-    border: 1px solid var(--kc-border);
-    border-radius: var(--kc-radius);
-    padding: 2px 8px;
-    cursor: pointer;
-  }
   .segments button {
     border-radius: 0;
   }
@@ -253,12 +249,16 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    border-color: transparent;
+    font: inherit;
+    color: var(--kc-fg);
+    border: 1px solid transparent;
+    border-radius: var(--kc-radius);
+    padding: 2px 8px;
     background: none;
     text-align: left;
+    cursor: pointer;
   }
-  /* After the parts' buttons, which it presses too */
-  button[aria-pressed='true'] {
+  .parts button[aria-pressed='true'] {
     color: var(--kc-accent-fg);
     background: var(--kc-accent);
     border-color: var(--kc-accent);

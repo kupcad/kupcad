@@ -135,8 +135,8 @@
     >
       {#snippet actions()}
         {#if shown}
-          <button type="button" onclick={() => run('export')}>Export…</button>
-          <button type="button" onclick={() => run('print')}>Print</button>
+          <button type="button" class="kc-control" onclick={() => run('export')}>Export…</button>
+          <button type="button" class="kc-control" onclick={() => run('print')}>Print</button>
         {/if}
       {/snippet}
     </ViewerPane>
@@ -160,7 +160,12 @@
   {#if header && parameters.length > 0}
     <aside class="params" aria-label="Parameters">
       <div class="presets">
-        <select aria-label="Preset" disabled={presets.length === 0} onchange={applyPreset}>
+        <select
+          class="kc-control"
+          aria-label="Preset"
+          disabled={presets.length === 0}
+          onchange={applyPreset}
+        >
           <option value="" selected disabled>
             {presets.length > 0 ? 'Apply a preset…' : 'No presets'}
           </option>
@@ -168,7 +173,7 @@
             <option value={name}>{name}</option>
           {/each}
         </select>
-        <button type="button" onclick={savePreset}>Save as preset…</button>
+        <button type="button" class="kc-control" onclick={savePreset}>Save as preset…</button>
       </div>
       <ParamsPanel
         schema={header.params.schema}
@@ -216,15 +221,6 @@
   .presets select {
     flex: 1;
     min-width: 0;
-  }
-  .presets select,
-  .presets button {
-    font: inherit;
-    color: var(--kc-fg);
-    background: var(--kc-input-bg);
-    border: 1px solid var(--kc-border);
-    border-radius: var(--kc-radius);
-    padding: 2px 6px;
   }
   .status {
     position: absolute;
