@@ -90,8 +90,9 @@ pub const Preview = struct {
         return self.vtable.filesRead(self.ptr, allocator);
     }
 
-    /// Runs what changed and gives the model of `module_path` (`nothing` in its place unless
-    /// `want_mesh`: no viewer is watching); `cancelToken` stops it.
+    /// Runs `module_path` and the modules it imports, as far as they changed, and gives its
+    /// model (`nothing` in its place unless `want_mesh`: no viewer is watching);
+    /// `cancelToken` stops it.
     pub fn evaluate(self: Preview, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
         return self.vtable.evaluate(self.ptr, allocator, module_path, want_mesh);
     }
@@ -251,16 +252,18 @@ pub const SessionPreview = struct {
         return std.mem.order(u8, a, b) == .lt;
     }
 
-    /// Evaluates what changed (modules it finished stay evaluated, even when a message
-    /// stops it) and builds the model of `module_path` as GLB.
+    /// Evaluates `module_path` and the modules it imports, as far as they changed (modules it
+    /// finished stay evaluated, even when a message stops it), and builds its model as GLB.
     pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, module_path: []const u8, want_mesh: bool) Outcome {
-        self.session.evaluateUntilCancelled() catch |err| switch (err) {
+        self.session.evaluateWithImports(module_path) catch |err| switch (err) {
             // A script that doesn't parse, compile or run is the user's to fix, not a fault.
             error.ParseError, error.CompileError, error.RuntimeError => {
                 logger.debug("{s} did not evaluate: {}", .{ module_path, err });
                 return if (self.cancelled()) .cancelled else .failed;
             },
             error.Canceled => return .cancelled,
+            // The document was closed, and nothing open imports it
+            error.UnknownModule => return .nothing,
             else => {
                 logger.warn("Session evaluation failed: {}", .{err});
                 return .failed;

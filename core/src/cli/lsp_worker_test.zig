@@ -117,7 +117,7 @@ test "lsp worker: the files a run read reach the server, and a change to one run
         try testing.expectEqualSlices(u8, payload, reply.payload);
     }
     const node = preview.session.nodes.items[0];
-    try testing.expect(node.is_stale and node.data_changed);
+    try testing.expect(node.is_stale and node.must_run);
 }
 
 test "lsp worker: the paths of a files_read reply read back as they were sent" {

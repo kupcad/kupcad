@@ -39,8 +39,10 @@ pub const SessionNode = struct {
     /// The files the module's last run read as data (VM.files_read), owned: a change to one
     /// runs it again though its source is the same.
     files_read: std.ArrayList([]u8) = .empty,
-    /// One of `files_read` changed since the last run (ScriptSession.markDataFileEdited).
-    data_changed: bool = false,
+    /// It runs again though its source is the same: a file it read changed
+    /// (ScriptSession.markDataFileEdited). Cleared once it ran without an error, so a failed
+    /// run runs again next time and isn't taken for its last output.
+    must_run: bool = false,
 
     pub fn deinit(self: *SessionNode, allocator: std.mem.Allocator) void {
         if (self.cached_handle) |h| kernel.destruct(h);
@@ -57,7 +59,6 @@ pub const SessionNode = struct {
     /// Takes the files `vm`'s run read as this module's, in place of the last run's.
     fn rememberFilesRead(self: *SessionNode, allocator: std.mem.Allocator, vm: *const VM) !void {
         self.forgetFilesRead(allocator);
-        self.data_changed = false;
         try self.files_read.ensureTotalCapacity(allocator, vm.files_read.count());
         var paths = vm.files_read.keyIterator();
         while (paths.next()) |path| self.files_read.appendAssumeCapacity(try allocator.dupe(u8, path.*));
@@ -251,7 +252,7 @@ pub const ScriptSession = struct {
         var found = false;
         for (self.nodes.items, 0..) |*node, i| {
             if (!node.hasRead(path)) continue;
-            node.data_changed = true;
+            node.must_run = true;
             try self.markFileEdited(self.workspace.modules.items[i].path);
             found = true;
         }
@@ -281,21 +282,48 @@ pub const ScriptSession = struct {
     pub fn evaluateWorkspace(self: *ScriptSession) !void {
         // A `cancel` from before this evaluation doesn't stop it.
         self.vm.cancel_token.store(false, .release);
-        return self.evaluateUntilCancelled();
+        return self.evaluateModules(null);
     }
 
-    /// `evaluateWorkspace` without clearing an earlier `cancel` first, for a host that clears
-    /// it itself under the lock it cancels under, so a cancel can't fall in between and be
-    /// lost (the LSP's inbox). A cancelled evaluation leaves the rest of the modules stale.
-    pub fn evaluateUntilCancelled(self: *ScriptSession) !void {
+    /// Evaluates the module at `path` and the modules it imports, the rest staying as they
+    /// are: the language server shows one document of the many open, and one that doesn't
+    /// parse stopped another's preview. An earlier `cancel` isn't cleared first, for a host
+    /// that clears it itself under the lock it cancels under, so a cancel can't fall in
+    /// between and be lost (the LSP's inbox). A cancelled evaluation leaves the rest stale.
+    pub fn evaluateWithImports(self: *ScriptSession, path: []const u8) !void {
+        const id = self.workspace.path_to_id.get(path) orelse return error.UnknownModule;
+        var needed = try self.withImports(id);
+        defer needed.deinit(self.allocator);
+        return self.evaluateModules(&needed);
+    }
+
+    /// Evaluates the modules, dependencies first: those in `only` (by index), or all.
+    fn evaluateModules(self: *ScriptSession, only: ?*const std.bit_set.Dynamic) !void {
         self.clearFailure();
 
         const sorted = try self.workspace.sortModules();
         defer self.allocator.free(sorted);
 
         for (sorted) |mod_id| {
+            if (only) |needed| if (!needed.isSet(@backingInt(mod_id))) continue;
             try self.evaluateModule(mod_id);
         }
+    }
+
+    /// The indices of the module `id` and of every module it imports, directly or not.
+    fn withImports(self: *ScriptSession, id: ModuleId) !std.bit_set.Dynamic {
+        var found = try std.bit_set.Dynamic.initEmpty(self.allocator, self.workspace.modules.items.len);
+        errdefer found.deinit(self.allocator);
+        var pending: std.ArrayList(ModuleId) = .empty;
+        defer pending.deinit(self.allocator);
+        try pending.append(self.allocator, id);
+        while (pending.pop()) |current| {
+            const index = @backingInt(current);
+            if (found.isSet(index)) continue;
+            found.set(index);
+            try pending.appendSlice(self.allocator, self.workspace.modules.items[index].deps.items);
+        }
+        return found;
     }
 
     pub fn evaluateModule(self: *ScriptSession, mod_id: ModuleId) !void {
@@ -311,7 +339,7 @@ pub const ScriptSession = struct {
         const current_source_hash = s_hasher.final();
 
         var needs_recompile = false;
-        if (node.source_hash != current_source_hash or node.data_changed) {
+        if (node.source_hash != current_source_hash or node.must_run) {
             needs_recompile = true;
         } else if (node.output_hash == 0) {
             needs_recompile = true;
@@ -395,6 +423,7 @@ pub const ScriptSession = struct {
             if (new_handle) |h| kernel.destruct(h);
             node.verified_at = self.global_revision;
             node.source_hash = current_source_hash;
+            node.must_run = false;
             node.is_stale = false;
             return;
         }
@@ -407,6 +436,7 @@ pub const ScriptSession = struct {
         node.source_hash = current_source_hash;
         node.changed_at = self.global_revision;
         node.verified_at = self.global_revision;
+        node.must_run = false;
         node.is_stale = false;
     }
 

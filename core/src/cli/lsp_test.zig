@@ -250,7 +250,7 @@ test "LSP: hovering a document that doesn't compile neither runs it nor logs an 
     try testing.expect(server.preview.hover.?.run == null);
 }
 
-test "LSP: open documents import each other, and editing one re-evaluates its importers" {
+test "LSP: open documents import each other, and one previewed again runs with its import's edit" {
     // Documents were known by their URIs, which no import names: an import read the file
     // from wherever the server started, never the open (unsaved) one, and editing it
     // left the files importing it stale.
@@ -267,9 +267,27 @@ test "LSP: open documents import each other, and editing one re-evaluates its im
     try testing.expectEqualSlices(@TypeOf(hw_id), &.{hw_id}, server.preview.session.workspace.modules.items[@backingInt(main_id)].deps.items);
     try testing.expectApproxEqAbs(@as(f64, 8), kernel.volume(server.preview.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
 
+    // The edited document is the one previewed, and runs with what it imports; its importer
+    // runs with the edit once it is previewed again
     try server.change("file:///work/parts/hw.kup", "def bolt\n  cube(3)\nend\nexport bolt\n");
     server.settle();
+    try testing.expect(server.preview.session.nodes.items[@backingInt(main_id)].is_stale);
+    try server.change("file:///work/parts/main.kup", "import { bolt } from \"./hw.kup\"\nbolt()\n");
+    server.settle();
     try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(server.preview.session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+}
+
+test "LSP: a document that doesn't parse doesn't stop the preview of another" {
+    // The preview ran every open document, and stopped at the first that failed
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.open("file:///work/part.kup", "cube(1)\n");
+    try server.open("file:///work/broken.kup", "cube(\n");
+    try server.change("file:///work/part.kup", "cube(2)\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 8), try server.volumeOf("part.kup"), 1e-9);
 }
 
 test "LSP: hovers are answered from one run of the document, until something changes" {
@@ -574,6 +592,7 @@ test "LSP: a module a document imports, changed on disk while not open, updates 
 
     // Open, its text is what the preview reads, not the disk; closed, the disk again
     try server.open(hw_uri, "def bolt\n  cube(4)\nend\nexport bolt\n");
+    try server.change(main_uri, "import { bolt } from \"./hw.kup\"\nbolt()\n");
     server.settle();
     try testing.expectApproxEqAbs(@as(f64, 64), try server.volumeOf("main.kup"), 1e-9);
     try server.changeWatched(hw_uri);

@@ -393,7 +393,7 @@ test "ScriptSession: a data file a module read runs it, and its importers, again
     try testing.expect(main_node.is_stale);
     try session.evaluateWorkspace();
     try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(main_node.cached_handle.?), 1e-9);
-    try testing.expect(!lib_node.data_changed);
+    try testing.expect(!lib_node.must_run);
 }
 
 test "ScriptSession: removeModule drops its output and the modules after it keep theirs" {
@@ -589,4 +589,47 @@ test "ScriptSession: a module that exports the same Font again stops the re-eval
     try chain.edit("a.kup", "import brand from \"./Test.otf\" # the same font\nexport brand\n");
     try testing.expectEqual(@as(u64, 1), chain.node("a.kup").changed_at);
     try testing.expectEqual(@as(u64, 1), chain.node("b.kup").changed_at);
+}
+
+test "ScriptSession: a module whose data broke runs again, not taken for its last output" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    session.vm.mute_errors = true; // the failed runs' errors would print to the test log
+    try files.vfs().writeFile("size.json", "{\"side\": 2}");
+    _ = try session.workspace.addModule("a.kup", "cube(import_json(\"size.json\")[:side])\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    // The second evaluation took it for up to date, its last cube still its output
+    try files.vfs().writeFile("size.json", "{");
+    try testing.expect(try session.markDataFileEdited("size.json"));
+    try testing.expectError(error.RuntimeError, session.evaluateWorkspace());
+    try testing.expectError(error.RuntimeError, session.evaluateWorkspace());
+}
+
+test "ScriptSession: evaluateWithImports runs a module and what it imports, and another that fails doesn't stop it" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+
+    const lib_source = "side = 3\nexport side\n";
+    try files.vfs().writeFile("lib.kup", lib_source);
+    const broken_id = try session.workspace.addModule("broken.kup", "cube(\n");
+    const lib_id = try session.workspace.addModule("lib.kup", lib_source);
+    const main_id = try session.workspace.addModule("main.kup", "import { side } from \"./lib.kup\"\ncube(side)\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+
+    try session.evaluateWithImports("main.kup");
+    try testing.expect(!session.nodes.items[@backingInt(lib_id)].is_stale);
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(session.nodes.items[@backingInt(main_id)].cached_handle.?), 1e-9);
+    try testing.expect(session.nodes.items[@backingInt(broken_id)].is_stale);
+
+    // The whole workspace still stops at it
+    try testing.expectError(error.ParseError, session.evaluateWorkspace());
+    try testing.expectError(error.UnknownModule, session.evaluateWithImports("missing.kup"));
 }
