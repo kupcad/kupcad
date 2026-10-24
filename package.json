@@ -26,6 +26,6 @@
     "gltf-validator": "2.0.0-dev.3.10",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
-    "typescript": "7.0.2"
+    "typescript": "6.0.3"
   }
 }

@@ -58,9 +58,10 @@ Conventions, held by the root config and CI:
 * **JavaScript, typed by JSDoc, and checked.** No TypeScript sources and no compile step for
   types, but each package's `check` runs `tsc` over it (`checkJs`, `strict`, from
   `jsconfig.base.json`) in `pnpm check`, so a wrong `@param` fails CI as a wrong type would.
-  The compiler is TypeScript 7, the native one; it reads JSDoc, `@import` and unions as 5.x did
-  and emits `.d.ts` from JavaScript, so a published package's types are generated from its
-  JSDoc and its users get them anyway.
+  The compiler is TypeScript 6, the last written in JavaScript: the Svelte tools (`svelte-check`,
+  `@sveltejs/package`) use its API, which TypeScript 7, the native one, doesn't have yet. It
+  emits `.d.ts` from JavaScript, so a published package's types are generated from its JSDoc
+  and its users get them anyway.
 * **Svelte 5** (runes) for components, their `<script>` plain JavaScript with JSDoc. A component
   package is built with `@sveltejs/package`, so it ships `.svelte` sources and `.d.ts`, and the
   host's Vite compiles them: one Svelte runtime per app, not one per package.
