@@ -46,66 +46,129 @@ Three rules keep it this shape:
 
 ## 2. `@kupcad/protocol`
 
-The shapes live in `types.d.ts` (unions read badly as `@typedef`s) and the functions in
-`index.js` with JSDoc; the package publishes both.
+The shapes the core sends, as it sends them, and the few pure functions every host needs to read
+them. The shapes live in `src/types.d.ts` (unions read badly as `@typedef`s), exported as
+`@kupcad/protocol/types`; the functions in `src/index.js`, typed by JSDoc against them. It
+depends on nothing and runs nothing.
 
 ```ts
-// types.d.ts (the shapes; the code is JavaScript with JSDoc against them)
-/** What a build gave: a solid model, a drawing, or nothing to show. */
+// src/types.d.ts: field for field what core/src/preview/frame.zig, tools/lint/finding.zig,
+// tools/doc/extractor.zig and version.zig write. A field the core may leave out is `null`,
+// never missing.
+
+/** A preview frame's JSON header (`preview_wasm`, the language server's viewport socket). */
+export interface FrameHeader {
+  protocolVersion: number;
+  /** What the host calls the document: the URI the editor opened it by, which
+   *  `kupcad.setParams` takes; null from `preview_wasm`. */
+  document: string | null;
+  kind: '3d' | '2d' | 'none';
+  /** A 3D model's parts; empty otherwise. */
+  parts: Part[];
+  warnings: Warning[];
+  params: { schema: UiSchema; values: ParamValues };
+  /** Why the run failed (`kind` is then 'none'), or null. */
+  error: Failure | null;
+  timing: { runMs: number; renderMs: number };
+}
+export interface Part {
+  name: string; count: number;
+  /** The GLB's nodes of its copies, by name: "bolt", "bolt_2". */
+  nodes: string[];
+  color: string | null;          // "#rrggbb"
+  opacity: number;
+}
+/** Lines and columns are 1-based, columns in UTF-8 bytes; null where the script wasn't running. */
+export interface Warning { message: string; line: number | null; column: number | null }
+export interface Failure extends Warning { param: string | null }   // the parameter refused
+
+/** What a frame shows: its body, typed by its kind. */
 export type Model =
-  | { kind: '3d'; glb: ArrayBuffer; parts: Part[] }       // export_gltf's GLB, each part a node
-  | { kind: '2d'; svg: string; parts: Part[] }            // export_svg's drawing
-  | { kind: 'none'; reason: 'no-model' | 'failed' };
+  | { kind: '3d'; glb: Uint8Array; parts: Part[] }   // export_gltf's GLB, each copy a named node
+  | { kind: '2d'; svg: string }                      // export_svg's drawing, each shape's name its id
+  | { kind: 'none' };
+/** A frame read: its header, and its model. */
+export interface Preview { header: FrameHeader; model: Model }
 
-export interface Part { name: string; copies: number; material?: Rgba }
-
-/** kupcad doc's schema, as extract_params_wasm and the LSP give it. */
+/** `kupcad doc`'s schema, as extract_params_wasm and every frame give it. */
 export interface UiSchema { meta: Meta; parameters: ParamSpec[] }
+export interface Meta { title: string | null; description: string | null; author: string | null }
 export interface ParamSpec {
-  name: string; type: 'number' | 'string' | 'boolean' | 'symbol';
-  default_value: unknown; validate: { min?: number; max?: number; in?: unknown[] };
-  step?: number; unit?: string; group?: string;
+  name: string;
+  type: 'number' | 'string' | 'boolean';   // a Symbol parameter is a 'string' with `validate.in`
+  default_value: number | string | boolean | null;   // null when the default is computed
+  validate: { min: number | null; max: number | null; in: (number | string | boolean)[] | null };
+  step: number | null; unit: string | null; group: string | null;
 }
 export type ParamValues = Record<string, number | string | boolean>;
 
-/** check_code_wasm's findings and the LSP's diagnostics, one shape. */
-export interface Finding { line: number; col: number; offset: number; length: number;
-                           severity: 'error' | 'warning' | 'info'; code: string; message: string }
+/** check_code_wasm's findings; `check --format json` adds the file's `path`. */
+export interface Finding extends Range {
+  severity: 'error' | 'warning' | 'info';
+  rule: string | null;                   // null for a syntax or compile error
+  code: string; message: string;
+  fix: { title: string; safe: boolean; edits: (Range & { text: string })[] } | null;
+}
+export interface CheckFinding extends Finding { path: string }
+/** 1-based lines and columns (UTF-8 bytes), and the byte offset and length an editor counting
+ *  from the start wants. */
+export interface Range {
+  line: number; column: number; endLine: number; endColumn: number; offset: number; length: number;
+}
 
-/** What a host tells a viewer, and what a viewer tells its host (section 6). */
-export type HostToViewer = ... ; export type ViewerToHost = ... ;
+/** `kupcad version --json` and version_wasm. */
+export interface VersionInfo { version: string; protocolVersion: number; os: string; arch: string }
+/** The language server's `kupcad/viewportReady` notification. */
+export interface ViewportReady { port: number; protocolVersion: number }
+/** The one argument of the `kupcad.setParams` command (`workspace/executeCommand`). */
+export interface SetParamsArgument { uri: string; values: ParamValues }
 ```
 
 ```js
-// index.js
-/** @param {unknown} message @returns {message is import('./types').HostToViewer} */
-export function isHostMessage(message) { ... }
+// src/index.js
+export const PROTOCOL_VERSION = 1;
+export const VIEWPORT_READY_NOTIFICATION = 'kupcad/viewportReady';
+export const SET_PARAMS_COMMAND = 'kupcad.setParams';
+export function isCompatible(protocolVersion) { ... }   // this package reads that version
+export function readFrame(bytes) { ... }                // ArrayBuffer | Uint8Array -> Preview
+export class ProtocolError extends Error { ... }        // a frame this package can't read
 ```
 
-Versioned: `PROTOCOL_VERSION` is bumped when a message changes shape, and a host and a viewer
-that don't agree say so instead of showing nothing (the extension's webview and the language
-server compare theirs through `kupcad/viewportReady`).
+`readFrame` splits a frame as `preview/frame.zig` writes it (a u32 little-endian header length,
+the header, the body), refuses one whose `protocolVersion` it doesn't know or whose length or kind
+doesn't hold up, and gives the body as the model its kind says (the GLB as a view on the bytes, not
+a copy). Versioned: `PROTOCOL_VERSION` goes up when a shape changes, and a host and a viewer that
+don't agree say so instead of showing nothing (the extension's webview and the language server
+compare theirs through `kupcad/viewportReady`, a playground through `version_wasm`). A field
+added as optional (`document`) needs no new version.
+
+The messages between a host and a viewer (the extension's webview bridge) join the package with
+the first host that sends them (section 9, step 3); until then nothing would check them against a
+real sender.
 
 ## 3. `@kupcad/wasm`
 
 The core's exports are plain C-style functions over linear memory (`core/src/wasm.zig`:
-`build_model_wasm`, `check_code_wasm`, `format_code_wasm`, `extract_params_wasm`,
-`put_file_wasm`, `clear_vfs_wasm`, `wasm_alloc`/`wasm_free`, `get_last_error`). This package is
-the typed face over them:
+`preview_wasm`, `build_model_wasm`, `check_code_wasm`, `format_code_wasm`,
+`extract_params_wasm`, `version_wasm`, `put_file_wasm`, `clear_vfs_wasm`,
+`wasm_alloc`/`wasm_free`, `get_last_error`). This package is the typed face over them:
 
 ```js
 const kupcad = await createKupcad({ wasm: url | ArrayBuffer });   // instantiates once
-await kupcad.build(source, { params, format: 'glb', draco: false }) // -> ArrayBuffer
+await kupcad.preview(source, { params })   // -> Preview (protocol's readFrame of preview_wasm)
+await kupcad.build(source, { params, format: 'glb', draco: false }) // -> Uint8Array
 await kupcad.check(source)   // -> Finding[]
 await kupcad.format(source)  // -> string
 await kupcad.params(source)  // -> UiSchema
+kupcad.version()             // -> VersionInfo (version_wasm), checked against PROTOCOL_VERSION
 kupcad.files.put('plate.dxf', bytes); kupcad.files.clear()          // the VFS imports read
 ```
 
 * **Memory** is handled inside: strings and buffers are copied in with `wasm_alloc`, results
   copied out and freed, errors read from `get_last_error` and thrown as `KupcadError` with the
   core's message (a syntax error's `line:col`, a runtime error's text, `parameters:` for a bad
-  value).
+  value). A preview doesn't throw for the script's faults: a script that fails, or values the
+  core refuses, is a frame whose `error` says why, as from the language server.
 * **A worker wrapper**, `createKupcadWorker()`, gives the same API but runs the module in a Web
   Worker, passing buffers as transferables, with one call in flight and the next queued (a build
   can take seconds; the page must not freeze). A build can be cancelled by terminating and
@@ -116,7 +179,8 @@ kupcad.files.put('plate.dxf', bytes); kupcad.files.clear()          // the VFS i
   headers allow.
 * **Versioning:** the package version is the core's (`build.zig.zon`), and the release workflow
   publishes it from the same tag that builds the binaries, with npm provenance. `kupcad.version()`
-  returns it, so a playground can show which core it runs.
+  returns the module's own (`version_wasm`), so a playground loading the module from a URL can
+  show which core it runs, and refuses a module whose `protocolVersion` it doesn't know.
 
 Tests drive the real module (Vitest in Node instantiates wasm): a build gives a GLB, an error
 gives its message, the VFS round trips, and memory doesn't grow over repeated builds (the core's
@@ -148,8 +212,7 @@ Decisions in it:
   decoded only when a model carries it (the decoder is loaded on demand).
 * **A drawing is drawn in the same scene**, as line geometry on the XY plane from the SVG's
   paths, with the camera dropped to a top orthographic view. That is how a Sketch or a Path
-  (laser parts, DXF/SVG imports) gets a preview at all; today the language server sends only GLB
-  (section 8 lists the core work).
+  (laser parts, DXF/SVG imports) gets a preview at all: a `2d` frame's body is that SVG.
 * **Keeps its own state out of the DOM:** render mode, camera, section and selection are
   properties; the toolbar that sets them is `@kupcad/ui`'s. The Svelte wrapper,
   `<Viewer model={...} bind:camera ...>`, is thirty lines.
