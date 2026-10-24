@@ -1,7 +1,10 @@
 /*
   The --kc-* tokens as VS Code's theme sets its own, for the extension's webview: the panels and
-  the viewer follow the editor's theme.
+  the viewer follow the editor's theme. The defaults underneath give what VS Code has no token
+  for (the radius, the gap). The accent is a button's colours, a pair VS Code keeps legible.
 */
+@import './tokens.css';
+
 :root {
   --kc-font: var(--vscode-font-family);
   --kc-font-size: var(--vscode-font-size);
@@ -10,7 +13,7 @@
   --kc-muted: var(--vscode-descriptionForeground);
   --kc-border: var(--vscode-panel-border, var(--vscode-widget-border));
   --kc-input-bg: var(--vscode-input-background);
-  --kc-accent: var(--vscode-focusBorder);
+  --kc-accent: var(--vscode-button-background);
   --kc-accent-fg: var(--vscode-button-foreground);
   --kc-error: var(--vscode-errorForeground);
 

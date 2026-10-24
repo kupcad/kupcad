@@ -51,11 +51,38 @@ describe('ParamsPanel', () => {
     expect(screen.queryByRole('button', { name: 'Revert width' })).toBeNull();
   });
 
-  it("refuses a value outside the script's range, saying why, and gives nothing", async () => {
+  it("refuses a value outside the script's range, saying why on the control, and gives nothing", async () => {
     const changes = await panel();
     await fireEvent.change(numberField('width'), { target: { value: '5' } });
-    expect(screen.getByRole('alert').textContent).toBe('must be at least 10');
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toBe('must be at least 10');
     expect(changes).toEqual([]);
+    expect(numberField('width').getAttribute('aria-invalid')).toBe('true');
+    expect(numberField('width').getAttribute('aria-describedby')).toBe(alert.id);
+  });
+
+  it('takes the refusal away with the value it was given for: a revert', async () => {
+    await panel();
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    await fireEvent.change(numberField('width'), { target: { value: '5' } });
+    expect(screen.getByRole('alert')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Revert width' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(numberField('width').hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  it('shows no choice for a parameter without one yet, until one is chosen', async () => {
+    /** @type {ParamValues[]} */
+    const changes = [];
+    const source =
+      'k = :m4\nsize = param(:size, default: k, validate: { in: [:m3, :m4] })\ncube(1)\n';
+    render(ParamsPanel, {
+      props: { schema: await schemaOf(source), onchange: (overrides) => changes.push(overrides) },
+    });
+    const size = /** @type {HTMLSelectElement} */ (screen.getByLabelText('size'));
+    expect(size.selectedOptions[0].textContent).toBe('');
+    await fireEvent.change(size, { target: { value: '0' } });
+    expect(changes).toEqual([{ size: 'm3' }]);
   });
 
   it('gives a listed choice as listed, and a toggle as a boolean', async () => {

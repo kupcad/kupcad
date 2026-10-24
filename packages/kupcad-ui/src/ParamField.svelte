@@ -24,24 +24,55 @@
   let { spec, value, overridden, refused, onset, onrevert } = $props();
 
   const id = $props.id();
+  const errorId = `${id}-error`;
   const control = $derived(controlOf(spec));
-  /** Why the value last given isn't one the script takes, until one is. */
-  let invalid = $state(/** @type {string | null} */ (null));
+  /**
+   * Why the value last given isn't one the script takes, and the value shown then: another
+   * (a revert, the next run's) takes it away.
+   */
+  let refusal = $state(/** @type {{ why: string, shown: Value | null } | null} */ (null));
+  const invalid = $derived(refusal?.shown === value ? refusal.why : null);
+  const message = $derived(invalid ?? refused);
+  /** What ties the control to its message, while there is one. */
+  const described = $derived(
+    message === null ? {} : { 'aria-invalid': true, 'aria-describedby': errorId },
+  );
+  const chosen = $derived(
+    (spec.validate.in ?? []).findIndex((choice) => String(choice) === String(value)),
+  );
 
   /** @param {Value} input */
   function commit(input) {
     const result = validate(spec, input);
     if ('error' in result) {
-      invalid = result.error;
+      refusal = { why: result.error, shown: value };
       return;
     }
-    invalid = null;
+    refusal = null;
     onset(result.value);
+  }
+
+  function revert() {
+    refusal = null;
+    onrevert();
   }
 
   /** @param {Event} event */
   const fromInput = (event) => commit(/** @type {HTMLInputElement} */ (event.currentTarget).value);
 </script>
+
+{#snippet numberInput()}
+  <input
+    {id}
+    type="number"
+    min={spec.validate.min}
+    max={spec.validate.max}
+    step={spec.step ?? 'any'}
+    value={value ?? ''}
+    onchange={fromInput}
+    {...described}
+  />
+{/snippet}
 
 <div class="field" class:overridden>
   <label for={id}>{spec.name}</label>
@@ -55,26 +86,11 @@
         value={value ?? ''}
         aria-label="{spec.name} slider"
         onchange={fromInput}
+        {...described}
       />
-      <input
-        {id}
-        type="number"
-        min={spec.validate.min}
-        max={spec.validate.max}
-        step={spec.step ?? 'any'}
-        value={value ?? ''}
-        onchange={fromInput}
-      />
+      {@render numberInput()}
     {:else if control === 'number'}
-      <input
-        {id}
-        type="number"
-        min={spec.validate.min}
-        max={spec.validate.max}
-        step={spec.step ?? 'any'}
-        value={value ?? ''}
-        onchange={fromInput}
-      />
+      {@render numberInput()}
     {:else if control === 'select'}
       <select
         {id}
@@ -82,9 +98,12 @@
           const index = Number(event.currentTarget.value);
           commit(/** @type {Value[]} */ (spec.validate.in)[index]);
         }}
+        {...described}
       >
+        <!-- No choice yet (the script computes its default, and no run took one) -->
+        {#if chosen === -1}<option value="" selected disabled></option>{/if}
         {#each spec.validate.in ?? [] as choice, index (index)}
-          <option value={index} selected={String(choice) === String(value)}>{choice}</option>
+          <option value={index} selected={index === chosen}>{choice}</option>
         {/each}
       </select>
     {:else if control === 'toggle'}
@@ -93,19 +112,20 @@
         type="checkbox"
         checked={value === true}
         onchange={(event) => commit(event.currentTarget.checked)}
+        {...described}
       />
     {:else}
-      <input {id} type="text" value={value ?? ''} onchange={fromInput} />
+      <input {id} type="text" value={value ?? ''} onchange={fromInput} {...described} />
     {/if}
     {#if spec.unit}<span class="unit">{spec.unit}</span>{/if}
     {#if overridden}
-      <button type="button" class="revert" aria-label="Revert {spec.name}" onclick={onrevert}>
+      <button type="button" class="revert" aria-label="Revert {spec.name}" onclick={revert}>
         ↺
       </button>
     {/if}
   </div>
-  {#if invalid ?? refused}
-    <p class="error" role="alert">{invalid ?? refused}</p>
+  {#if message !== null}
+    <p class="error" id={errorId} role="alert">{message}</p>
   {/if}
 </div>
 

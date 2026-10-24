@@ -8,16 +8,16 @@
   import { onMount } from 'svelte';
   import { RENDER_MODES, VIEW_NAMES } from '@kupcad/viewer';
   import { Viewer } from '@kupcad/viewer/svelte';
-  import { themeFromTokens } from './theme.js';
+  import { watchTokens } from './theme.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
-  /** @import { Axis, Bounds, Environment, RenderMode, Theme, ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { Axis, Bounds, Environment, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
 
   /**
    * @typedef {object} Props
    * @property {Model | null} [model]
-   * @property {Theme} [theme] by default the --kc-viewer-* tokens'
+   * @property {Theme} [theme] by default the --kc-viewer-* tokens', followed as they change
    * @property {string | null} [selected] the part selected; bindable
    * @property {ViewerClass | null} [viewer] the viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the viewer is made with
@@ -50,6 +50,7 @@
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
   let renderMode = $state(/** @type {RenderMode} */ ('solid'));
   let orthographic = $state(false);
+  let view = $state(/** @type {View} */ ('iso'));
   let environment = $state(/** @type {Environment} */ ('grid'));
   let sectioned = $state(false);
   let axis = $state(/** @type {Axis} */ ('z'));
@@ -61,14 +62,20 @@
   const span = $derived(bounds ? { min: bounds.min[along], max: bounds.max[along] } : null);
   const section = $derived(sectioned && span ? { axis, offset } : null);
 
-  onMount(() => {
-    tokenTheme = themeFromTokens(root);
-  });
+  onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
 
-  /** @param {ViewerClass} shown */
+  /**
+   * A model is shown: the toolbar says how the viewer looks at it (a drawing is seen from the
+   * top, orthographic), and the section is put across its middle, unless one is on where the
+   * model still reaches (an edit of the script keeps the cut where the user put it).
+   * @param {ViewerClass} shown
+   */
   function modelShown(shown) {
+    orthographic = shown.projection === 'orthographic';
+    view = shown.view;
     bounds = shown.bounds;
-    centreSection();
+    const kept = sectioned && span && offset >= span.min && offset <= span.max;
+    if (!kept) centreSection();
   }
 
   /** Puts the section across the middle of the model, along its axis. */
@@ -83,7 +90,7 @@
 </script>
 
 <div class="kc-viewer-pane" bind:this={root}>
-  <div class="toolbar" role="toolbar" aria-label="Viewer">
+  <div class="toolbar">
     <div class="segments" role="group" aria-label="Render mode">
       {#each RENDER_MODES as mode (mode)}
         <button
@@ -97,10 +104,7 @@
     </div>
     <label>
       View
-      <select
-        onchange={(event) =>
-          viewer?.setCamera({ view: /** @type {any} */ (event.currentTarget.value) })}
-      >
+      <select bind:value={view} onchange={() => viewer?.setCamera({ view })}>
         {#each VIEW_NAMES as view (view)}
           <option value={view}>{view}</option>
         {/each}
@@ -213,11 +217,6 @@
   .segments button:last-child {
     border-radius: 0 var(--kc-radius) var(--kc-radius) 0;
   }
-  button[aria-pressed='true'] {
-    color: var(--kc-accent-fg);
-    background: var(--kc-accent);
-    border-color: var(--kc-accent);
-  }
   label {
     display: flex;
     align-items: center;
@@ -249,9 +248,11 @@
     background: none;
     text-align: left;
   }
-  .parts button[aria-pressed='true'] {
+  /* After the parts' buttons, which it presses too */
+  button[aria-pressed='true'] {
     color: var(--kc-accent-fg);
     background: var(--kc-accent);
+    border-color: var(--kc-accent);
   }
   .swatch {
     width: 10px;
