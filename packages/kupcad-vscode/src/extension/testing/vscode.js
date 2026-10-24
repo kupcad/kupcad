@@ -57,6 +57,14 @@ export class Uri {
     return new Uri(base.scheme, path.posix.join(base.path, ...parts), base.authority);
   }
 
+  /**
+   * This URI with the parts given changed.
+   * @param {{ scheme?: string, path?: string }} change
+   */
+  with(change) {
+    return new Uri(change.scheme ?? this.scheme, change.path ?? this.path, this.authority);
+  }
+
   get fsPath() {
     return this.path;
   }

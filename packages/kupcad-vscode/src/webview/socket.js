@@ -3,6 +3,7 @@
 // up yet) is opened again, a little later each time.
 
 import { readFrame } from '@kupcad/protocol';
+import { errorText } from '../errors.js';
 
 /** @import { Preview } from '@kupcad/protocol/types' */
 
@@ -46,7 +47,7 @@ export function connectViewport(url, on, platform = {}) {
       try {
         on.frame(readFrame(data));
       } catch (error) {
-        on.problem(error instanceof Error ? error.message : String(error));
+        on.problem(errorText(error));
       }
     });
     socket.addEventListener('close', () => {

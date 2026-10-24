@@ -3,6 +3,7 @@
 // `{ "presets": { "Small": { "width": 20 } } }`. Free of the `vscode` import.
 
 import { isParamValues } from '@kupcad/protocol';
+import { errorText } from '../errors.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
 
@@ -37,7 +38,7 @@ export function readPresets(text) {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new PresetsError(`it is no JSON (${error instanceof Error ? error.message : error})`);
+    throw new PresetsError(`it is no JSON (${errorText(error)})`);
   }
   const presets = /** @type {{ presets?: unknown } | null} */ (parsed)?.presets;
   if (typeof presets !== 'object' || presets === null || Array.isArray(presets)) {

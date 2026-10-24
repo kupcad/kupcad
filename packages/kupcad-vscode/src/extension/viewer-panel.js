@@ -7,8 +7,10 @@
 
 import * as vscode from 'vscode';
 import { isViewerMessage } from '@kupcad/protocol';
+import { errorText } from '../errors.js';
 import { EXPORT_COMMAND, PRINT_COMMAND } from './commands.js';
 import { presetsPathOf, readPresets, writePresets } from './presets.js';
+import { fileName, LANGUAGE_ID, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
@@ -17,7 +19,6 @@ import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 /** @import { ScriptValues } from './values.js' */
 
 export const VIEW_TYPE = 'kupcad.viewer';
-const LANGUAGE_ID = 'kupcad';
 const TITLE = 'KupCAD Viewer';
 /** Where the built page is, under the extension. */
 export const PAGE_DIR = 'dist-webview';
@@ -116,7 +117,7 @@ export class ViewerPanel {
     if (document.languageId !== LANGUAGE_ID) return;
     const uri = document.uri.toString();
     if (this.#shown?.uri === uri) return;
-    this.#shown = { uri, name: basename(document.uri) };
+    this.#shown = { uri, name: fileName(document.uri) };
     this.#panel.title = `${TITLE}: ${this.#shown.name}`;
     this.#tellDocument();
     this.#ask(this.#options.server.preview(uri), 'show');
@@ -252,7 +253,7 @@ export class ViewerPanel {
     }
     const typed = await vscode.window.showInputBox({
       title: 'Save the parameters as a preset',
-      prompt: `Kept in ${file.path.slice(file.path.lastIndexOf('/') + 1)}, beside the script`,
+      prompt: `Kept in ${fileName(file)}, beside the script`,
       placeHolder: 'Small',
       validateInput: (text) => (text.trim() ? null : 'A preset needs a name'),
     });
@@ -294,8 +295,7 @@ export class ViewerPanel {
   /** @param {string} uri the document's */
   #presetsFile(uri) {
     const script = vscode.Uri.parse(uri);
-    const name = presetsPathOf(script.path).slice(script.path.lastIndexOf('/') + 1);
-    return vscode.Uri.joinPath(script, '..', name);
+    return script.with({ path: presetsPathOf(script.path) });
   }
 
   /**
@@ -325,7 +325,7 @@ export class ViewerPanel {
 
   /** @param {string} png the image's bytes in base64 */
   async #saveScreenshot(png) {
-    const name = this.#shown?.name.replace(/\.kup$/, '') ?? 'model';
+    const name = this.#shown ? scriptName(vscode.Uri.parse(this.#shown.uri)) : 'model';
     const target = await vscode.window.showSaveDialog({
       defaultUri: vscode.Uri.joinPath(this.#folder(), `${name}.png`),
       filters: { 'PNG image': ['png'] },
@@ -346,9 +346,3 @@ export class ViewerPanel {
     this.#disposables = [];
   }
 }
-
-/** @param {vscode.Uri} uri */
-const basename = (uri) => uri.path.slice(uri.path.lastIndexOf('/') + 1);
-
-/** @param {unknown} error */
-const errorText = (error) => (error instanceof Error ? error.message : String(error));

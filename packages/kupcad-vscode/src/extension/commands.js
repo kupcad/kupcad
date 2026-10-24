@@ -14,16 +14,15 @@ import {
   slicerCommand,
   startApart,
 } from './export.js';
+import { errorText } from '../errors.js';
+import { fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
 /** @import { ScriptValues } from './values.js' */
 
 export const EXPORT_COMMAND = 'kupcad.export';
 export const PRINT_COMMAND = 'kupcad.print';
-const LANGUAGE_ID = 'kupcad';
 const SAVE = 'Save';
 const REVEAL = 'Reveal';
-const NOT_RUNNING =
-  "KupCAD's language server isn't running, nor its kupcad to build with: the KupCAD output says why.";
 
 /**
  * @typedef {object} CommandOptions
@@ -55,7 +54,7 @@ async function exportScript(options, given) {
   const ready = await scriptToBuild(options, given);
   if (!ready) return;
   const { document, kupcad } = ready;
-  const name = scriptName(document);
+  const name = scriptName(document.uri);
   const choice = await vscode.window.showQuickPick(
     FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
     { title: `Export ${name}`, placeHolder: 'The format' },
@@ -76,7 +75,7 @@ async function exportScript(options, given) {
   );
   if (!built) return;
   const chosen = await vscode.window.showInformationMessage(
-    `Exported ${path.basename(target.fsPath)}.`,
+    `Exported ${fileName(target)}.`,
     REVEAL,
   );
   if (chosen === REVEAL) await vscode.commands.executeCommand('revealFileInOS', target);
@@ -99,7 +98,7 @@ async function printScript(options, given) {
     kupcad,
     document,
     output,
-    `Preparing ${scriptName(document)} for printing`,
+    `Preparing ${scriptName(document.uri)} for printing`,
   );
   if (!built) return;
   const slicer = vscode.workspace.getConfiguration('kupcad').get('print.slicer');
@@ -136,7 +135,7 @@ async function scriptToBuild(options, given) {
   }
   if (document.uri.scheme !== 'file') {
     void vscode.window.showInformationMessage(
-      `Save ${scriptName(document)} to a file first: kupcad builds files.`,
+      `Save ${scriptName(document.uri)} to a file first: kupcad builds files.`,
     );
     return null;
   }
@@ -147,7 +146,7 @@ async function scriptToBuild(options, given) {
   }
   if (document.isDirty) {
     const chosen = await vscode.window.showWarningMessage(
-      `${scriptName(document)} has changes not saved, and kupcad builds the file: save it first?`,
+      `${scriptName(document.uri)} has changes not saved, and kupcad builds the file: save it first?`,
       { modal: true },
       SAVE,
     );
@@ -201,16 +200,10 @@ function build(options, kupcad, document, output, title) {
         if (stop.signal.aborted) return false;
         options.log.error(`kupcad ${args.join(' ')}: ${errorText(error)}`);
         void vscode.window.showErrorMessage(
-          `${scriptName(document)} couldn't be built: ${errorText(error)}`,
+          `${scriptName(document.uri)} couldn't be built: ${errorText(error)}`,
         );
         return false;
       }
     },
   );
 }
-
-/** @param {vscode.TextDocument} document */
-const scriptName = (document) => path.basename(document.uri.fsPath).replace(/\.kup$/, '');
-
-/** @param {unknown} error */
-const errorText = (error) => (error instanceof Error ? error.message : String(error));

@@ -5,6 +5,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { errorText } from '../../errors.js';
 import { extractFile } from './archive.js';
 import { assetFor, CHECKSUMS, checksumOf, sha256 } from './assets.js';
 
@@ -84,9 +85,7 @@ async function download(get, url, progress) {
   try {
     response = await get(url);
   } catch (error) {
-    throw new InstallError(
-      `couldn't download ${url}: ${error instanceof Error ? error.message : error}`,
-    );
+    throw new InstallError(`couldn't download ${url}: ${errorText(error)}`);
   }
   if (!response.ok || !response.body) {
     throw new InstallError(`couldn't download ${url}: the server answered ${response.status}`);

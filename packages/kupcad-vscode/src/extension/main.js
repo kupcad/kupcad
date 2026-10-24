@@ -6,15 +6,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, CHECK_FOR_UPDATES_COMMAND } from './binary/manager.js';
+import { errorText } from '../errors.js';
 import { registerExportCommands } from './commands.js';
 import { LanguageServer } from './server.js';
+import { NOT_RUNNING } from './scripts.js';
 import { ScriptValues } from './values.js';
 import { PAGE_DIR, ViewerPanel } from './viewer-panel.js';
 
 export const OPEN_VIEWER_COMMAND = 'kupcad.openViewer';
 /** The viewport socket's port the server tries first, unless the settings say another. */
 const DEFAULT_VIEWPORT_PORT = 9001;
-const NOT_RUNNING = "KupCAD's language server isn't running: the KupCAD output says why.";
 
 /** The extension's settings, as they are now. */
 const settings = () => vscode.workspace.getConfiguration('kupcad');
@@ -85,7 +86,7 @@ export async function activate(context) {
   try {
     await server.start();
   } catch (error) {
-    const why = error instanceof Error ? error.message : String(error);
+    const why = errorText(error);
     void vscode.window.showErrorMessage(`The KupCAD language server didn't start: ${why}`);
     return;
   }

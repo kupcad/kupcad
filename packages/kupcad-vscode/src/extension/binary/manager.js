@@ -3,6 +3,7 @@
 // the user sees of it: a download's progress, why one failed and what to do, an update to take.
 
 import * as vscode from 'vscode';
+import { errorText } from '../../errors.js';
 import { install as installRelease } from './install.js';
 import { probe as probeVersion } from './probe.js';
 import { newestInRange, readReleases as readReleaseList, RELEASES_PAGE } from './releases.js';
@@ -234,6 +235,3 @@ export class BinaryManager {
     if (chosen === OPEN_SETTINGS) await this.#openSettings();
   }
 }
-
-/** @param {unknown} error */
-const errorText = (error) => (error instanceof Error ? error.message : String(error));

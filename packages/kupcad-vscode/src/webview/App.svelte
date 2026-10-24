@@ -10,6 +10,7 @@
 <script>
   import { onMount } from 'svelte';
   import { ParamsPanel, ViewerPane } from '@kupcad/ui';
+  import { errorText } from '../errors.js';
   import { toBase64 } from './base64.js';
   import { connectViewport } from './socket.js';
 
@@ -119,7 +120,7 @@
 
   /** @param {unknown} error */
   function failed(error) {
-    host.post({ type: 'problem', message: error instanceof Error ? error.message : String(error) });
+    host.post({ type: 'problem', message: errorText(error) });
   }
 </script>
 
