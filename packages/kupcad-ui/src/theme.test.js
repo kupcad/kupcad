@@ -1,6 +1,6 @@
 import { DARK, LIGHT } from '@kupcad/viewer';
 import { expect, it, vi } from 'vitest';
-import { themeFromTokens, watchTokens } from './theme.js';
+import { themeFromTokens, viewerColor, watchTokens } from './theme.js';
 
 it("takes the viewer's colours from the --kc-viewer-* tokens, its own where one is unset", () => {
   const element = document.createElement('div');
@@ -55,4 +55,46 @@ it("takes the viewer's dark colours for the tokens unset, in a dark colour schem
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+/**
+ * A 2D context as a browser's reads a colour: the colours `drawn` knows (their pixel's sRGB)
+ * taken as the fill, and any other leaving the fill as it was.
+ * @param {Record<string, [number, number, number, number]>} drawn
+ */
+function browserContext(drawn) {
+  let fill = '#000000';
+  /** @type {[number, number, number, number]} */
+  let pixel = [0, 0, 0, 0];
+  return {
+    get fillStyle() {
+      return fill;
+    },
+    set fillStyle(color) {
+      if (Object.hasOwn(drawn, color) || color === '#000000' || color === '#ffffff') fill = color;
+    },
+    clearRect() {
+      pixel = [0, 0, 0, 0];
+    },
+    fillRect() {
+      pixel = drawn[fill] ?? pixel;
+    },
+    getImageData: () => /** @type {ImageData} */ ({ data: new Uint8ClampedArray(pixel) }),
+  };
+}
+
+it('reads a colour as the browser draws it, opaque, and none it reads not', () => {
+  // As Chromium draws them: the fill keeps the first two as they are, which three.js reads not
+  const context = /** @type {any} */ (
+    browserContext({
+      'color-mix(in srgb, red, blue)': [128, 0, 128, 255],
+      'oklch(0.6 0.15 250)': [39, 132, 213, 255],
+      'rgba(10, 20, 30, 0.5)': [10, 20, 30, 128],
+    })
+  );
+  expect(viewerColor('color-mix(in srgb, red, blue)', context)).toBe('#800080');
+  expect(viewerColor('oklch(0.6 0.15 250)', context)).toBe('#2784d5');
+  expect(viewerColor('rgba(10, 20, 30, 0.5)', context)).toBe('#0a141e');
+  expect(viewerColor('no colour', context)).toBe('');
+  expect(viewerColor('', context)).toBe('');
 });

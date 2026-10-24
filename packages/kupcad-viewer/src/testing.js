@@ -1,8 +1,8 @@
 // For a host's tests of the viewer. Imported (a Vitest `setupFiles` entry, say), it gives jsdom
 // what a browser has and the viewer uses: the component watches its canvas's size, the camera's
 // controls capture the pointer while it drags, and a screenshot reads the canvas as an image,
-// which jsdom draws none of: here an empty PNG. `stubRenderer` draws in place of WebGL, which
-// jsdom lacks.
+// which jsdom draws none of: here an empty PNG. A canvas has no context, as jsdom's has none, but
+// quietly (jsdom says "not implemented" when asked). `stubRenderer` draws in place of WebGL.
 
 /** @import { Camera, Object3D } from 'three' */
 /** @import { RendererLike } from './types.js' */
@@ -16,6 +16,10 @@ globalThis.ResizeObserver ??= class {
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.hasPointerCapture ??= () => false;
+
+HTMLCanvasElement.prototype.getContext = /** @type {HTMLCanvasElement['getContext']} */ (
+  () => null
+);
 
 /** @type {HTMLCanvasElement['toBlob']} */
 HTMLCanvasElement.prototype.toBlob = function toBlob(callback, type = 'image/png') {

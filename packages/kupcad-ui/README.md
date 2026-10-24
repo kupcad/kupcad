@@ -43,8 +43,9 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   to send to the core.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.
-  `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads a hex colour's alpha away);
-  left unset, it uses its own colours. The pane follows them as the page changes them
+  `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads each as the page draws it,
+  opaque: any CSS colour, a `color-mix()` or an `oklch()` too, which three.js can't read); left
+  unset, or set to no colour, it uses its own colours. The pane follows them as the page changes them
   (`watchTokens`: its root's or body's class or style, or the colour scheme), as VS Code does
   when its theme is switched.
 * **Controls**: a button, select or field the panels draw is a `.kc-control` (`controls.css`,
