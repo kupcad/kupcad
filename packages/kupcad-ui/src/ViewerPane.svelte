@@ -53,7 +53,8 @@
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
   let renderMode = $state(/** @type {RenderMode} */ ('solid'));
   let orthographic = $state(false);
-  let view = $state(/** @type {View} */ ('iso'));
+  /** The named view the viewer looks from: none once it was turned by hand. */
+  let view = $state(/** @type {View | null} */ ('iso'));
   let environment = $state(/** @type {Environment} */ ('grid'));
   let sectioned = $state(false);
   let axis = $state(/** @type {Axis} */ ('z'));
@@ -70,6 +71,19 @@
   const section = $derived(sectioned && span ? { axis, offset } : null);
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
+
+  // The view follows the viewer's: its keys, and a turn by hand, change it too
+  $effect(() => {
+    const shown = viewer;
+    if (!shown) return;
+    shown.addEventListener('view', followView);
+    return () => shown.removeEventListener('view', followView);
+  });
+
+  /** @param {Event} event the viewer's 'view' */
+  function followView(event) {
+    view = /** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view;
+  }
 
   /**
    * A model is shown: the toolbar says how the viewer looks at it (a drawing is seen from the
@@ -113,7 +127,13 @@
     </div>
     <label>
       View
-      <select class="kc-control" bind:value={view} onchange={() => viewer?.setCamera({ view })}>
+      <select
+        class="kc-control"
+        bind:value={view}
+        onchange={() => {
+          if (view) viewer?.setCamera({ view });
+        }}
+      >
         {#each VIEW_NAMES as view (view)}
           <option value={view}>{view}</option>
         {/each}

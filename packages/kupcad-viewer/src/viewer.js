@@ -3,7 +3,8 @@
 // (render mode, camera, section, selection, environment) that the host's toolbar sets, and it
 // renders when one changes or the camera moves, not every frame. A click on a part selects it
 // and says so (a 'select' event, `detail.part` its name, or null), as does a model without the
-// selected part.
+// selected part. The camera moves to a view over a moment (motion.js); turned by hand, it is in
+// no named view, which a 'view' event says. Its keys are Orca Slicer's.
 
 import {
   AmbientLight,
@@ -12,6 +13,7 @@ import {
   DirectionalLight,
   Group,
   LineBasicMaterial,
+  MOUSE,
   OrthographicCamera,
   PerspectiveCamera,
   Raycaster,
@@ -27,10 +29,13 @@ import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './
 import { disposeObject } from './dispose.js';
 import { environmentOf } from './environment.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
+import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
 import { RENDER_ORDER, SectionView } from './section.js';
 import { LIGHT } from './theme.js';
 
+/** @import { Vector3 } from 'three' */
 /** @import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js' */
+/** @import { Pose } from './motion.js' */
 /** @import { Model } from '@kupcad/protocol/types' */
 /** @import { Bounds, Environment, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
 
@@ -46,6 +51,18 @@ const ORTHO_STANDOFF = 4;
 /** The lights: an even fill, and one from the camera. */
 const AMBIENT_INTENSITY = 0.9;
 const HEADLIGHT_INTENSITY = 2.2;
+/** The views by key, Orca Slicer's (Ctrl or Cmd with a digit, or the digit alone): 0 its default. */
+const VIEW_KEYS = /** @type {Record<string, View>} */ ({
+  0: 'iso',
+  1: 'top',
+  2: 'bottom',
+  3: 'front',
+  4: 'back',
+  5: 'left',
+  6: 'right',
+});
+/** What `I` zooms in by, and `O` out. */
+const ZOOM_STEP = 1.25;
 
 /** The render modes and views a toolbar offers, in order. */
 export const RENDER_MODES = /** @type {const} */ (['solid', 'xray', 'wireframe']);
@@ -95,8 +112,8 @@ export class Viewer extends EventTarget {
   #model = null;
   /** The kind of the last model shown, which a model of nothing (one that failed) leaves. @type {SceneModel['kind'] | null} */
   #shownKind = null;
-  /** The camera a solid was last seen with, which a drawing (from the top, orthographic) leaves. @type {{ projection: Projection, view: View }} */
-  #solidCamera = { projection: 'perspective', view: 'iso' };
+  /** The camera a solid was last seen with, which a drawing (from the top, orthographic) leaves. @type {{ projection: Projection, view: View | null, direction: Vector3 }} */
+  #solidCamera = { projection: 'perspective', view: 'iso', direction: VIEWS.iso.clone() };
   /** Around the model and what it stands on: what the camera's depth takes in. */
   #sceneSphere = new Sphere();
   /** @type {Theme} */
@@ -109,8 +126,10 @@ export class Viewer extends EventTarget {
   #renderMode = 'solid';
   /** @type {Projection} */
   #projection = 'perspective';
-  /** @type {View} */
+  /** The named view the camera looks from, or null for none (turned by hand). @type {View | null} */
   #view = 'iso';
+  /** The camera's move under way, if one. @type {CameraMove | null} */
+  #move = null;
   /** @type {Section | null} */
   #section = null;
   /** @type {string | null} */
@@ -146,8 +165,13 @@ export class Viewer extends EventTarget {
     this.#renderer.setPixelRatio(globalThis.devicePixelRatio ?? 1);
     for (const camera of [this.#perspective, this.#orthographic]) camera.up.set(0, 0, 1);
     this.#controls = new OrbitControls(this.#camera, canvas);
+    // Orca Slicer's: the middle button pans, as the right one does
+    this.#controls.mouseButtons.MIDDLE = MOUSE.PAN;
+    // Taken by hand: a move under way stops where it is
+    this.#controls.addEventListener('start', () => (this.#move = null));
     this.#controls.addEventListener('change', () => {
       this.#fitDepth();
+      this.#noteTurned();
       this.#invalidate();
     });
     this.#sectionView = new SectionView(this.#theme);
@@ -162,9 +186,12 @@ export class Viewer extends EventTarget {
     const { signal } = this.#listeners;
     canvas.addEventListener('pointerdown', (event) => this.#pointerDown(event), { signal });
     canvas.addEventListener('pointerup', (event) => this.#pointerUp(event), { signal });
+    canvas.addEventListener('keydown', (event) => this.#keyDown(event), { signal });
+    // Its keys work once it has the focus, which a click gives it
+    if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     this.setTheme(this.#theme);
     this.resize();
-    this.fit();
+    this.#frameFrom(VIEWS.iso, false);
   }
 
   get renderMode() {
@@ -173,6 +200,7 @@ export class Viewer extends EventTarget {
   get projection() {
     return this.#projection;
   }
+  /** The named view the camera looks from, or null when it was turned by hand. */
   get view() {
     return this.#view;
   }
@@ -242,15 +270,22 @@ export class Viewer extends EventTarget {
     if (built && built.kind !== this.#shownKind) {
       if (built.kind === '2d') {
         if (this.#shownKind === '3d') {
-          this.#solidCamera = { projection: this.#projection, view: this.#view };
+          this.#solidCamera = {
+            projection: this.#projection,
+            view: this.#view,
+            direction: this.#direction(),
+          };
         }
         this.#useProjection('orthographic');
-        this.#view = 'top';
+        this.#setView('top');
+        this.#frameFrom(VIEWS.top, false);
       } else if (this.#shownKind === '2d') {
         this.#useProjection(this.#solidCamera.projection);
-        this.#view = this.#solidCamera.view;
+        this.#setView(this.#solidCamera.view);
+        this.#frameFrom(this.#solidCamera.direction, false);
+      } else {
+        this.#frameFrom(this.#direction(), false);
       }
-      this.fit();
     }
     if (built) this.#shownKind = built.kind;
     this.#applySection();
@@ -268,15 +303,45 @@ export class Viewer extends EventTarget {
   }
 
   /**
-   * Looks with `projection`, and from `view`, framing the model.
+   * Looks with `projection`, and from `view`, the camera moving there and framing the model.
    * @param {{ projection?: Projection, view?: View }} camera
    */
   setCamera({ projection, view }) {
     if (projection) this.#useProjection(projection);
     if (view) {
-      this.#view = view;
-      this.fit();
+      this.#setView(view);
+      this.#frameFrom(VIEWS[view], true);
     }
+    this.#invalidate();
+  }
+
+  /**
+   * Looks from `direction` (from the model toward the camera, Z up: `[1, -1, 1]` is the iso
+   * view, `[0, 0, 1]` the top), the camera moving there and framing the model: a view cube's
+   * face, edge or corner. A named view's direction is that view.
+   * @param {readonly [number, number, number]} direction
+   */
+  lookFrom(direction) {
+    const turned = unit(direction);
+    const view = VIEW_NAMES.find((name) => sameDirection(VIEWS[name], turned)) ?? null;
+    this.#setView(view);
+    this.#frameFrom(view ? VIEWS[view] : turned, true);
+  }
+
+  /**
+   * Zooms in by `factor` (out, below 1) toward what the camera looks at.
+   * @param {number} factor
+   */
+  zoom(factor) {
+    this.#settleMove();
+    if (this.#camera === this.#orthographic) {
+      this.#orthographic.zoom *= factor;
+    } else {
+      const target = this.#controls.target;
+      this.#perspective.position.sub(target).divideScalar(factor).add(target);
+    }
+    this.#fitDepth();
+    this.#controls.update();
     this.#invalidate();
   }
 
@@ -325,28 +390,9 @@ export class Viewer extends EventTarget {
     this.#invalidate();
   }
 
-  /** Frames the model from the current view. */
+  /** Frames the whole model from where the camera looks now (its angle kept), moving there. */
   fit() {
-    const sphere = boundsOf(this.#modelBox());
-    const direction = VIEWS[this.#view];
-    const aspect = this.#width / this.#height;
-    if (this.#camera === this.#perspective) {
-      const distance = perspectiveDistance(sphere, FOV_DEG, aspect);
-      this.#perspective.position.copy(sphere.center).addScaledVector(direction, distance);
-      this.#perspective.near = Math.max(sphere.radius * NEAR_FACTOR, 0.01);
-    } else {
-      this.#halfHeight = orthographicHalfHeight(sphere, aspect);
-      this.#orthographic.zoom = 1;
-      this.#orthographic.position
-        .copy(sphere.center)
-        .addScaledVector(direction, sphere.radius * ORTHO_STANDOFF);
-    }
-    this.#controls.target.copy(sphere.center);
-    this.#camera.lookAt(sphere.center);
-    this.#fitDepth();
-    this.#updateProjection();
-    this.#controls.update();
-    this.#invalidate();
+    this.#frameFrom(this.#direction(), true);
   }
 
   /**
@@ -407,6 +453,7 @@ export class Viewer extends EventTarget {
   }
 
   dispose() {
+    if (this.#disposed) return;
     this.#disposed = true;
     if (this.#frame) cancelAnimationFrame(this.#frame);
     this.#listeners.abort();
@@ -499,11 +546,116 @@ export class Viewer extends EventTarget {
   }
 
   /**
+   * The way the camera looks from, from what it looks at: the way it moves to, while it moves.
+   * @returns {Vector3}
+   */
+  #direction() {
+    if (this.#move) return this.#move.to.direction.clone();
+    return this.#camera.position.clone().sub(this.#controls.target).normalize();
+  }
+
+  /**
+   * Where the camera stands now.
+   * @returns {Pose}
+   */
+  #pose() {
+    const target = this.#controls.target.clone();
+    const offset = this.#camera.position.clone().sub(target);
+    return {
+      target,
+      direction: offset.clone().normalize(),
+      distance: offset.length(),
+      halfHeight: this.#halfHeight / this.#orthographic.zoom,
+    };
+  }
+
+  /**
+   * Where the camera stands to show the whole model from `direction`.
+   * @param {Vector3} direction
+   * @returns {Pose}
+   */
+  #framing(direction) {
+    const sphere = boundsOf(this.#modelBox());
+    const aspect = this.#width / this.#height;
+    const perspective = this.#camera === this.#perspective;
+    if (perspective) this.#perspective.near = Math.max(sphere.radius * NEAR_FACTOR, 0.01);
+    return {
+      target: sphere.center.clone(),
+      direction: direction.clone(),
+      distance: perspective
+        ? perspectiveDistance(sphere, FOV_DEG, aspect)
+        : sphere.radius * ORTHO_STANDOFF,
+      halfHeight: orthographicHalfHeight(sphere, aspect),
+    };
+  }
+
+  /**
+   * Frames the model from `direction`: over a move when `moving` (unless the page asks for
+   * reduced motion), at once otherwise.
+   * @param {Vector3} direction
+   * @param {boolean} moving
+   */
+  #frameFrom(direction, moving) {
+    const to = this.#framing(direction);
+    const ms = moving ? this.#motionMs() : 0;
+    this.#move = ms > 0 ? new CameraMove(this.#pose(), to, performance.now(), ms) : null;
+    if (!this.#move) this.#standAt(to, true);
+    this.#invalidate();
+  }
+
+  /** How long a move takes: none when the page asks for reduced motion. */
+  #motionMs() {
+    const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    return reduced ? 0 : (this.#options.motionMs ?? MOTION_MS);
+  }
+
+  /**
+   * Stands the camera at `pose`; `settled` when it stays there: the controls take it up.
+   * @param {Pose} pose
+   * @param {boolean} settled
+   */
+  #standAt(pose, settled) {
+    this.#controls.target.copy(pose.target);
+    this.#camera.position.copy(pose.target).addScaledVector(pose.direction, pose.distance);
+    this.#halfHeight = pose.halfHeight;
+    this.#orthographic.zoom = 1;
+    this.#camera.lookAt(pose.target);
+    this.#fitDepth();
+    this.#updateProjection();
+    if (settled) this.#controls.update();
+  }
+
+  /** Ends a move under way where it was going. */
+  #settleMove() {
+    const move = this.#move;
+    if (!move) return;
+    this.#move = null;
+    this.#standAt(move.to, true);
+  }
+
+  /**
+   * The view is `view` from now on, which a 'view' event says when it changed.
+   * @param {View | null} view
+   */
+  #setView(view) {
+    if (view === this.#view) return;
+    this.#view = view;
+    this.dispatchEvent(new CustomEvent('view', { detail: { view } }));
+  }
+
+  /** Turned by hand away from its named view, the camera is in none. */
+  #noteTurned() {
+    if (this.#move || this.#view === null) return;
+    if (!sameDirection(this.#direction(), VIEWS[this.#view])) this.#setView(null);
+  }
+
+  /**
    * Looks through the other camera, from where this one looks and seeing as much.
    * @param {Projection} projection
    */
   #useProjection(projection) {
     if (projection === this.#projection) return;
+    this.#settleMove();
     const target = this.#controls.target;
     const from = this.#camera;
     const direction = from.position.clone().sub(target).normalize();
@@ -550,6 +702,12 @@ export class Viewer extends EventTarget {
   }
 
   #render() {
+    if (this.#move) {
+      const { pose, done } = this.#move.at(performance.now());
+      if (done) this.#move = null;
+      this.#standAt(pose, done);
+      if (!done) this.#invalidate();
+    }
     this.#headlight.position.copy(this.#camera.position);
     this.#headlight.target.position.copy(this.#controls.target);
     this.#renderer.render(this.#scene, this.#camera);
@@ -562,6 +720,23 @@ export class Viewer extends EventTarget {
   #pointerDown(event) {
     this.#down =
       event.isPrimary && event.button === 0 ? { x: event.offsetX, y: event.offsetY } : null;
+  }
+
+  /**
+   * Orca Slicer's keys: a digit (with Ctrl or Cmd, or alone) looks from a view, `F` fits the
+   * model, `I` and `O` zoom in and out. Another key is left to the page.
+   * @param {KeyboardEvent} event
+   */
+  #keyDown(event) {
+    if (event.altKey || event.shiftKey) return;
+    const view = Object.hasOwn(VIEW_KEYS, event.key) ? VIEW_KEYS[event.key] : null;
+    const key = event.ctrlKey || event.metaKey ? null : event.key.toLowerCase();
+    if (view) this.setCamera({ view });
+    else if (key === 'f') this.fit();
+    else if (key === 'i') this.zoom(ZOOM_STEP);
+    else if (key === 'o') this.zoom(1 / ZOOM_STEP);
+    else return;
+    event.preventDefault();
   }
 
   /** @param {PointerEvent} event */

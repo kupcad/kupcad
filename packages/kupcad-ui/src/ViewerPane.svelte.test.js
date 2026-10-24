@@ -98,6 +98,12 @@ describe('ViewerPane', () => {
       target: { value: 'front' },
     });
     expect(viewer.view).toBe('front');
+    // A key the viewer takes (Orca Slicer's Ctrl+1, the top) shows in the toolbar
+    const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
+    await fireEvent.keyDown(canvas, { key: '1', ctrlKey: true });
+    expect(
+      /** @type {HTMLSelectElement} */ (screen.getByRole('combobox', { name: 'View' })).value,
+    ).toBe('top');
   });
 
   it('cuts a section across the middle of the model, along the axis chosen', async () => {

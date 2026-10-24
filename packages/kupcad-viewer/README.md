@@ -11,7 +11,9 @@ const viewer = new Viewer(canvas, { theme: DARK, environment: 'grid' });
 await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a preview frame; false
 // when a model asked for later replaced it before it was shown
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
-viewer.setCamera({ projection: 'orthographic', view: 'front' }); // frames the model from there
+viewer.setCamera({ projection: 'orthographic', view: 'front' }); // moves there, framing the model
+viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as a view cube's corner does
+viewer.fit(); viewer.zoom(1.25); // fits the model from where it looks; zooms in (out, below 1)
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
 viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click (the main
 // button; the others pan and zoom), or null
@@ -38,6 +40,12 @@ const png = await viewer.screenshot();
   the last solid was seen. The camera's depth takes in the model and what it stands on, however
   small the model and wherever the camera moves. A model without the selected part drops the
   selection, with a `select` event of null.
+* **The camera** moves to a view over a moment (`motionMs`, 250 by default; at once when the page
+  asks for reduced motion), turning round the model. Turned by hand it is in no named view (`view`
+  is null), which a `view` event says, as it says every change. Its controls are Orca Slicer's:
+  the left button turns, the middle and right ones pan, the wheel zooms; once it has the focus (a
+  click gives it), `0`–`6` (alone, or with Ctrl or Cmd) look from the iso, top, bottom, front,
+  back, left and right, `F` fits, `I` and `O` zoom in and out.
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
   solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it

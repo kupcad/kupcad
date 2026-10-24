@@ -1,5 +1,5 @@
 import { Color, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GHOST_OPACITY } from './model.js';
 import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { stubRenderer } from './testing.js';
@@ -7,7 +7,7 @@ import { DARK, LIGHT } from './theme.js';
 import { Viewer, ViewerError } from './viewer.js';
 
 /** @import { Camera, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, Scene } from 'three' */
-/** @import { ViewerOptions } from './types.js' */
+/** @import { View, ViewerOptions } from './types.js' */
 
 const WIDTH = 800;
 const HEIGHT = 600;
@@ -29,13 +29,15 @@ vi.mock('three/addons/loaders/DRACOLoader.js', () => ({
 }));
 
 /**
- * A viewer on a canvas of WIDTH × HEIGHT, drawing with a stand-in for WebGL.
+ * A viewer on a canvas of WIDTH × HEIGHT, drawing with a stand-in for WebGL; its camera moves at
+ * once unless `options` give it time.
  * @param {ViewerOptions} [options]
  */
 function viewerOn(options = {}) {
   const { renderer, drawn } = stubRenderer();
   const canvas = document.createElement('canvas');
-  const viewer = new Viewer(canvas, { ...options, renderer });
+  const viewer = new Viewer(canvas, { motionMs: 0, ...options, renderer });
+  made.push(viewer);
   viewer.resize(WIDTH, HEIGHT);
   return { viewer, canvas, drawn };
 }
@@ -108,6 +110,12 @@ async function plateDepths(drawn) {
 }
 
 const BLOCK = 'cube(20, center: true).named("block")';
+
+/** The viewers a test made: disposed after it, so none of their controls hears the next test's pointer. @type {Viewer[]} */
+const made = [];
+afterEach(() => {
+  for (const viewer of made.splice(0)) viewer.dispose();
+});
 
 describe('Viewer', () => {
   it('frames the first model, draws once a frame, and picks its parts', async () => {
@@ -267,6 +275,129 @@ describe('Viewer', () => {
     viewer.setCamera({ projection: 'perspective' });
     const perspective = await plateDepths(drawn);
     expect(Math.max(...perspective.depths)).toBeLessThanOrEqual(perspective.camera.far);
+  });
+
+  it('moves the camera to a view over a moment, and at once when the page asks for less motion', async () => {
+    const { viewer, drawn } = viewerOn({ motionMs: 100 });
+    await viewer.setModel(await modelOf(BLOCK));
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    // The block is centred on the origin, which the camera looks at
+    const looking = () => camera.position.clone().normalize();
+    viewer.setCamera({ view: 'top' });
+    expect(viewer.view).toBe('top');
+    await nextFrame();
+    expect(looking().z).toBeLessThan(0.99);
+    await vi.waitFor(() => expect(looking().z).toBeGreaterThan(0.999));
+    vi.stubGlobal('matchMedia', (/** @type {string} */ query) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+    }));
+    try {
+      viewer.setCamera({ view: 'front' });
+      expect(
+        looking()
+          .toArray()
+          .map((v) => Math.round(v * 1000) / 1000 + 0),
+      ).toEqual([0, -1, 0]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('looks from any direction, a named view by its name, and says when the view changes', async () => {
+    const { viewer, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    /** @type {(View | null)[]} */
+    const views = [];
+    viewer.addEventListener('view', (event) => {
+      views.push(/** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view);
+    });
+    viewer.lookFrom([0, 0, 1]);
+    viewer.lookFrom([1, 1, 1]);
+    viewer.lookFrom([1, -1, 1]);
+    expect(views).toEqual(['top', null, 'iso']);
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    expect(
+      camera.position
+        .clone()
+        .normalize()
+        .dot(new Vector3(1, -1, 1).normalize()),
+    ).toBeCloseTo(1, 6);
+  });
+
+  it('fits the model from where the camera looks, and zooms in and out', async () => {
+    const { viewer, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    viewer.lookFrom([1, 1, 1]);
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    const framed = camera.position.clone();
+    viewer.zoom(2);
+    expect(camera.position.length()).toBeCloseTo(framed.length() / 2, 6);
+    viewer.fit();
+    // The angle kept, the distance the framing's again
+    expect(camera.position.distanceTo(framed)).toBeCloseTo(0, 6);
+  });
+
+  it("takes Orca Slicer's keys once it has the focus: views, fit, zoom", async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    expect(canvas.tabIndex).toBe(0);
+    /** @param {string} key @param {KeyboardEventInit} [more] */
+    const press = (key, more = {}) => {
+      const event = new KeyboardEvent('keydown', { key, cancelable: true, ...more });
+      canvas.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(press('1', { ctrlKey: true })).toBe(true);
+    expect(viewer.view).toBe('top');
+    expect(press('3')).toBe(true);
+    expect(viewer.view).toBe('front');
+    expect(press('6', { metaKey: true })).toBe(true);
+    expect(viewer.view).toBe('right');
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    const framed = camera.position.length();
+    expect(press('i')).toBe(true);
+    expect(camera.position.length()).toBeLessThan(framed);
+    expect(press('F')).toBe(true);
+    expect(camera.position.length()).toBeCloseTo(framed, 6);
+    // Left to the page: another key, or one with Alt or Shift
+    expect(press('x')).toBe(false);
+    expect(press('1', { altKey: true })).toBe(false);
+    expect(viewer.view).toBe('right');
+  });
+
+  it('is in no named view once turned by hand, and pans with the middle button', async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    // jsdom lays nothing out: the controls turn and pan by the canvas's height
+    Object.defineProperty(canvas, 'clientHeight', { value: HEIGHT });
+    Object.defineProperty(canvas, 'clientWidth', { value: WIDTH });
+    /** @param {number} button @param {number} dx */
+    const drag = (button, dx) => {
+      const at = { pointerId: 1, pointerType: 'mouse', button, clientX: 100, clientY: 100 };
+      canvas.dispatchEvent(Object.assign(new Event('pointerdown'), at));
+      document.dispatchEvent(Object.assign(new Event('pointermove'), { ...at, clientX: 100 + dx }));
+      document.dispatchEvent(Object.assign(new Event('pointerup'), { ...at, clientX: 100 + dx }));
+    };
+    /** @type {(View | null)[]} */
+    const views = [];
+    viewer.addEventListener('view', (event) => {
+      views.push(/** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view);
+    });
+    drag(0, 80);
+    expect(viewer.view).toBeNull();
+    expect(views).toEqual([null]);
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    const turned = camera.position.clone().normalize();
+    // A pan moves the camera across, its direction the same
+    const before = camera.position.clone();
+    drag(1, 80);
+    expect(camera.position.distanceTo(before)).toBeGreaterThan(0.1);
+    expect(camera.position.clone().sub(before).dot(turned)).toBeCloseTo(0, 6);
   });
 
   it('picks the part behind a ghost, which is seen through', async () => {

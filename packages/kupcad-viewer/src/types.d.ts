@@ -62,6 +62,11 @@ export interface ViewerOptions {
   dracoDecoderPath?: string;
   /** Makes the renderer for the canvas; by default a WebGLRenderer. */
   renderer?: (canvas: HTMLCanvasElement) => RendererLike;
+  /**
+   * How long the camera takes to move to a view, in ms; 0 moves it at once, as a page that asks
+   * for reduced motion does. By default 250.
+   */
+  motionMs?: number;
 }
 
 /** A shape the viewer shows: a solid's copy of a part, a ghost, or a drawing's filled shape. */
