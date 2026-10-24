@@ -1,7 +1,6 @@
 {
   "extends": "../../jsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
     "lib": ["es2023", "dom"],
     "maxNodeModuleJsDepth": 0
   },

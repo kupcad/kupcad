@@ -1,7 +1,6 @@
 {
   "extends": "../../jsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"],
     "resolveJsonModule": true,
     "maxNodeModuleJsDepth": 0
   },

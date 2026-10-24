@@ -1,7 +1,8 @@
 {
   "name": "@kupcad/vscode",
-  "displayName": "kupcad-vscode",
+  "displayName": "KupCAD",
   "version": "0.1.0",
+  "private": true,
   "description": "KupCAD - code to CAD language",
   "categories": [
     "Formatters",
@@ -24,11 +25,11 @@
     "vscode-languageclient": "^10.1.2"
   },
   "devDependencies": {
-    "@types/node": "^24.19.1",
+    "@types/node": "catalog:",
     "@types/vscode": "~1.125.0",
     "concurrently": "^10.0.6",
-    "vite": "^8.3.4",
-    "vitest": "^5.0.5"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   },
   "contributes": {
     "commands": [

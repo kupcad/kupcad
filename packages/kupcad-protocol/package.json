@@ -22,7 +22,7 @@
     "fixtures": "node scripts/capture-fixtures.js"
   },
   "devDependencies": {
-    "@types/node": "^24.19.1",
-    "vitest": "^5.0.5"
+    "@types/node": "catalog:",
+    "vitest": "catalog:"
   }
 }

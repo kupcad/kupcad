@@ -16,9 +16,9 @@
     "test:wasm:safe": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=safe --summary all",
     "test:wasm:threads": "cd core && zig build test-wasm -Dtarget=wasm32-wasi -Doptimize=debug -Dwasm_threads=true --summary all",
     "check": "pnpm lint && pnpm fmt:check && pnpm -r check",
-    "lint": "oxlint --deny-warnings packages",
-    "fmt": "oxfmt packages && prettier --write 'packages/**/*.svelte'",
-    "fmt:check": "oxfmt --check packages && prettier --check 'packages/**/*.svelte'",
+    "lint": "oxlint --deny-warnings packages vitest.svelte.js",
+    "fmt": "oxfmt packages vitest.svelte.js && prettier --write 'packages/**/*.svelte'",
+    "fmt:check": "oxfmt --check packages vitest.svelte.js && prettier --check 'packages/**/*.svelte'",
     "test:packages": "pnpm -r test",
     "test:browser": "pnpm -r --if-present test:browser"
   },
@@ -29,7 +29,7 @@
     "oxlint": "1.89.0",
     "prettier": "3.9.10",
     "prettier-plugin-svelte": "4.1.1",
-    "svelte": "5.57.2",
+    "svelte": "catalog:",
     "typescript": "6.0.3"
   }
 }

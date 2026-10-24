@@ -32,30 +32,31 @@ may use the wasm or the viewer.
 ```sh
 pnpm install                       # once; builds nothing from core
 pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into its package
-pnpm -r build                      # every package, in dependency order
+pnpm -r build                      # what builds: the module copied into @kupcad/wasm, the extension
 pnpm test:packages                 # every package's Vitest suite
 pnpm test:browser                  # the viewer in headless Chromium (Playwright)
 pnpm check                         # oxlint, oxfmt --check, and tsc over every package (CI's gate)
 pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
-pnpm --filter @kupcad/viewer dev   # one package's dev server or watch
+pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
 ```
 
 Each package has the same shape:
 
 ```
 kupcad-<name>/
-  package.json        name, exports, scripts: build, dev, test, check
+  package.json        name, exports, scripts: test, check, and build where something is built
   README.md           what it is and how to use it (the npm page for a published one)
   src/                the code; src/index.js is the public API
   src/types.d.ts      the shapes JSDoc can't say well (unions, generics), when a package has them
   src/**/*.test.js    tests beside what they test
-  vite.config.js      library mode for a library, an app build for an app
+  vite.config.js      its Vitest config (a Svelte package's spreads the root vitest.svelte.js)
   jsconfig.json       extends the root jsconfig.base.json; sets maxNodeModuleJsDepth to 0
 ```
 
-A file named `jsconfig.json` gets TypeScript's defaults for a JavaScript project over what it
-extends, `maxNodeModuleJsDepth: 2` among them, which type-checks the dependencies' own JavaScript
+The base gives every package Node's types (its configs and tests run in Node). A file named
+`jsconfig.json` gets TypeScript's defaults for a JavaScript project over what it extends,
+`maxNodeModuleJsDepth: 2` among them, which type-checks the dependencies' own JavaScript
 (a `punycode` that pnpm hoists, read in place of `@types/node`'s declaration). So each package's
 sets it to 0 itself.
 
@@ -66,11 +67,13 @@ Conventions, held by the root config and CI:
   `jsconfig.base.json`) in `pnpm check`, so a wrong `@param` fails CI as a wrong type would.
   The compiler is TypeScript 6, the last written in JavaScript: the Svelte tools (`svelte-check`,
   `@sveltejs/package`) use its API, which TypeScript 7, the native one, doesn't have yet. It
-  emits `.d.ts` from JavaScript, so a published package's types are generated from its JSDoc
-  and its users get them anyway.
+  emits `.d.ts` from JavaScript, so a package, once published, can ship types generated from
+  its JSDoc.
 * **Svelte 5** (runes) for components, their `<script>` plain JavaScript with JSDoc. A component
-  package is built with `@sveltejs/package`, so it ships `.svelte` sources and `.d.ts`, and the
-  host's Vite compiles them: one Svelte runtime per app, not one per package.
+  package ships its `.svelte` sources, which the host's Vite compiles: one Svelte runtime per
+  app, not one per package. Nothing is built for the packages inside the monorepo, which import
+  each other's sources; a package published will be built with `@sveltejs/package`, for its
+  `.d.ts`.
 * **Vitest** for every package; `@testing-library/svelte` for components; a Web Worker and WebGL
   are stubbed in unit tests, and the viewer has a Playwright smoke test in a real browser.
 * **oxlint and oxfmt** from the root (`.oxlintrc.json`, `.oxfmtrc.json`, versions pinned), run by
@@ -84,10 +87,13 @@ Conventions, held by the root config and CI:
   VS Code webview included, without a CSS build. An app (the playground page, the PWA, the
   desktop shell) may add Tailwind for its own layout.
 * **Changesets** for versions and changelogs: a change to a published package comes with a
-  changeset file; `release` bumps and publishes. `@kupcad/wasm` is the exception: its version
-  is the core's, published by the core's release workflow from the same tag.
+  changeset file; `release` bumps and publishes. `@kupcad/wasm` is the exception, which
+  Changesets ignores (`.changeset/config.json`): its version is the core's, published by the
+  core's release workflow from the same tag.
 * **Workspace dependencies** are `workspace:*`, so a package always builds against the sibling
-  it sits beside, and `pnpm publish` writes the real version.
+  it sits beside, and `pnpm publish` writes the real version. The tools several packages use
+  (Vite, Vitest, Svelte and its checker, jsdom, Node's types) take their version from pnpm's
+  `catalog:` in `pnpm-workspace.yaml`, one version for all; a peer range stays the package's.
 
 ## Where things come from
 

@@ -6,6 +6,6 @@
   "commit": false,
   "fixed": [],
   "linked": [],
-  "ignore": [],
+  "ignore": ["@kupcad/wasm"],
   "updateInternalDependencies": "patch"
 }
