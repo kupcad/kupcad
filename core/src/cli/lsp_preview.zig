@@ -85,7 +85,8 @@ pub const Preview = struct {
         return self.vtable.update(self.ptr, module_path, source);
     }
 
-    /// The document's values too are forgotten.
+    /// Forgets the document at `module_path` (the editor closed it), and its values: one
+    /// another document imports is read from disk again.
     pub fn remove(self: Preview, module_path: []const u8) !void {
         return self.vtable.remove(self.ptr, module_path);
     }
@@ -181,9 +182,10 @@ pub const SessionPreview = struct {
         wants_frame: bool,
         /// The target ran: `frame` is of this run, unless none was wanted or it couldn't be made.
         target_ran: bool = false,
-        /// A module the target imports whose run failed, which stopped the evaluation before
-        /// the target (the workspace's path).
-        failed_import: ?[]const u8 = null,
+        /// The last module the target imports that ran (the workspace's path): when the
+        /// evaluation stops with a runtime error before the target ran, the one that failed, in
+        /// its run or in making its output.
+        last_import: ?[]const u8 = null,
     };
 
     /// `read_workspace`: imports may read the files under the working directory (until
@@ -361,7 +363,7 @@ pub const SessionPreview = struct {
         };
         if (!want_frame) return .nothing;
         const round = self.round.?;
-        if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, target, err, round.failed_import);
+        if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, target, err, round.last_import);
         // Of this run, or of the last when nothing it reads changed
         const frame = self.frame orelse return .nothing;
         return .{ .frame = allocator.dupe(u8, frame.bytes) catch return .nothing };
@@ -381,13 +383,17 @@ pub const SessionPreview = struct {
         const is_target = std.mem.eql(u8, run.path, round.target.module_path);
         if (is_target or self.keepsFrameOf(run.path)) self.dropFrame();
         if (!is_target) {
-            if (!run.ok) round.failed_import = run.path;
+            round.last_import = run.path;
             return;
         }
         round.target_ran = true;
         // A run a message stopped is shown by the next one
         if (!round.wants_frame or self.cancelled()) return;
-        self.keepFrame(round.target.uri, run) catch |err| logger.warn("Could not make the preview of {s}: {}", .{ run.path, err });
+        self.keepFrame(round.target.uri, run) catch |err| switch (err) {
+            // A message stopped it while it meshed: the next run shows it
+            error.Canceled => {},
+            else => logger.warn("Could not make the preview of {s}: {}", .{ run.path, err }),
+        };
     }
 
     fn keepFrame(self: *SessionPreview, uri: []const u8, run: ModuleRun) !void {
@@ -420,12 +426,12 @@ pub const SessionPreview = struct {
     }
 
     /// The frame of `target`, which didn't run because the evaluation stopped with `err`.
-    fn stopped(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, err: anyerror, failed_import: ?[]const u8) Outcome {
+    fn stopped(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, err: anyerror, last_import: ?[]const u8) Outcome {
         const ws = &self.session.workspace;
         const id = ws.path_to_id.get(target.module_path) orelse return .nothing;
         const module = &ws.modules.items[@backingInt(id)];
         const script: preview_build.Script = .{ .doc = &module.doc, .source = module.source, .name = target.uri };
-        const made = self.stoppedFrame(allocator, script, id, err, failed_import) catch |e| {
+        const made = self.stoppedFrame(allocator, script, id, err, last_import) catch |e| {
             logger.warn("Could not make the preview of {s}: {}", .{ target.module_path, e });
             return .nothing;
         };
@@ -433,11 +439,12 @@ pub const SessionPreview = struct {
     }
 
     /// Why `script`, the module `id`, didn't run: it doesn't parse or compile, or a module it
-    /// imports doesn't (the session's failure), or failed to run (`failed_import`, the VM's
-    /// last error). Null when nothing says why.
-    fn stoppedFrame(self: *SessionPreview, allocator: std.mem.Allocator, script: preview_build.Script, id: ModuleId, err: anyerror, failed_import: ?[]const u8) !?[]u8 {
+    /// imports doesn't (the session's failure), or the last import that ran failed, in its
+    /// run or in making its output (`last_import`, the VM's last error). Null when nothing
+    /// says why.
+    fn stoppedFrame(self: *SessionPreview, allocator: std.mem.Allocator, script: preview_build.Script, id: ModuleId, err: anyerror, last_import: ?[]const u8) !?[]u8 {
         if (err == error.RuntimeError) {
-            const path = failed_import orelse return null;
+            const path = last_import orelse return null;
             return try preview_build.ofImportFailure(allocator, script, path, preview_build.failureOf(&self.session.vm));
         }
         const failure = self.session.failure orelse return null;

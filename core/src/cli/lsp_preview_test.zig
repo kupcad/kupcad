@@ -135,7 +135,14 @@ test "LSP preview: a module the document imports that fails is named in its fram
     try testing.expect(std.mem.startsWith(u8, raised.@"error".?.message, "lib.kup:2:"));
     try testing.expect(std.mem.find(u8, raised.@"error".?.message, "no side") != null);
 
-    // Fixed, the document runs with it
+    // It runs, and its model, built after the run, fails: the engines don't mix
+    try preview.update("lib.kup", "part = cube(10).decompose[0]\nCAD.config(engine: :brep)\nside = 2\nexport side\npart + cube(1)\n");
+    const unbuilt = (try frameOf(arena.allocator(), &preview, "main.kup")).header;
+    try testing.expect(std.mem.startsWith(u8, unbuilt.@"error".?.message, "lib.kup"));
+    try testing.expect(std.mem.find(u8, unbuilt.@"error".?.message, "can't combine manifold and brep") != null);
+
+    // Fixed, the document runs with it, and with the default engine: the import's
+    // CAD.config was its last run's
     try preview.update("lib.kup", "side = 2\nexport side\n");
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "main.kup")).header.kind);
 }
@@ -208,6 +215,24 @@ test "LSP preview: a frame's values are its document's own parameters, the same 
         try testing.expectEqual(@as(usize, 1), values.count());
         try testing.expectEqual(@as(i64, 2), values.get("w").?.integer);
     }
+}
+
+test "LSP preview: the frame kept of a module is dropped when it runs again as another's import" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // main.kup's compile error would print to the test log
+    try preview.update("lib.kup", "side = param(:t, default: 1)\nexport side\ncube(side)\n");
+    try testing.expectEqual(@as(i64, 1), (try frameOf(arena.allocator(), &preview, "lib.kup")).header.params.values.object.get("t").?.integer);
+
+    // lib.kup runs, edited, for main.kup, which then doesn't compile: no frame of main.kup
+    // takes the place of lib.kup's, and lib.kup is up to date when it is shown again
+    try preview.update("lib.kup", "side = param(:t, default: 2)\nexport side\ncube(side)\n");
+    try preview.update("main.kup", "import { side } from \"./lib.kup\"\ncube = 5\n");
+    try testing.expect((try frameOf(arena.allocator(), &preview, "main.kup")).header.@"error" != null);
+    try testing.expectEqual(@as(i64, 2), (try frameOf(arena.allocator(), &preview, "lib.kup")).header.params.values.object.get("t").?.integer);
 }
 
 test "LSP preview: each run's warnings are its own, the same on every run" {
