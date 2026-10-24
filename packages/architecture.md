@@ -338,17 +338,18 @@ Two programs in one package, built separately by Vite:
 ```
 src/
   extension/              runs in the extension host (Node)
-    main.js               activate: binary, client, commands
+    main.js               activate: the server, the commands
     binary/               finding, downloading and updating `kupcad` (below)
-    client.js             the LanguageClient and the custom notifications
-    viewer-panel.js       the webview panel: HTML, CSP, the message bridge
-    commands/             open viewer, export (stl, 3mf, obj, svg, dxf, step), print, set params
+    server.js             the LanguageClient, kupcad/viewportReady, kupcad.preview and setParams
+    viewer-panel.js       the webview panel: it follows the editor, bridges the page's messages
+    webview-html.js       the page's HTML and its CSP
+    commands/             export (stl, 3mf, obj, svg, dxf, step), print
     presets.js            parameter presets as <script>.presets.json beside the file
+    testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
   webview/                runs in the panel (browser)
-    App.svelte            ViewerPane + ParamsPanel + LogPanel from @kupcad/ui
-    bridge.js             postMessage in, protocol messages out, typed both ways
+    App.svelte            ViewerPane + ParamsPanel from @kupcad/ui, the run's problems
+    bridge.js             postMessage in and out, as the protocol's HostMessage and ViewerMessage
     socket.js             the viewport WebSocket: preview frames from the language server
-  shared/                 message types the two sides share, if any beyond the protocol's
 ```
 
 Data flow:

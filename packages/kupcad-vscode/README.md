@@ -1,20 +1,27 @@
 # KupCAD for VS Code
 
 Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, backed by the
-`kupcad lsp` language server.
+`kupcad lsp` language server, and a viewer of the model a script builds.
 
 ## Features
 
 * Syntax highlighting and language configuration for `.kup`.
-* Diagnostics and hover information from the language server.
-* `KupCAD: Open Viewer` opens a viewport panel that connects to the language server's local
-  WebSocket and receives a preview frame whenever the document changes: a JSON header (the
-  parts, warnings, parameters and any error) and the model as GLB, or SVG for a 2D model.
+* Diagnostics as you type (the lint findings, and what a run warned of, on the line of its call),
+  hovers, go to definition, inlay hints, symbols, formatting and quick fixes, from the language
+  server.
+* **The viewer** (`KupCAD: Open Viewer`, or the button in a `.kup` editor's title bar): the model
+  of the script the editor shows, beside it, following the editor from script to script. It
+  comes straight from the language server's local socket, a new one each time the script, or a
+  module it imports, changes. Solid, x-ray and wireframe, the standard views, a section through
+  the model, the parts with their colours and copies (a click selects a part), and a screenshot.
+  The script's parameters are a panel beside it: a value set there runs the script again with it,
+  checked against the parameter's range first; one the run refuses is marked. Why a run failed,
+  and what it warned of with no line to show it on, are shown over the model.
 
 ## Requirements
 
-A `kupcad` executable (built from the repository: `cd core && zig build`). The extension looks for it
-in this order:
+A `kupcad` executable (built from the repository: `cd core && zig build`). The extension looks for
+it in this order:
 
 1. the `kupcad.serverPath` setting,
 2. `kupcad` on `PATH`,
@@ -22,35 +29,58 @@ in this order:
 
 ## Extension Settings
 
-* `kupcad.serverPath` (machine scope): absolute path to the `kupcad` executable. Empty means "look it
-  up as above". Machine scope means a workspace's `.vscode/settings.json` cannot point the extension at
-  an arbitrary binary.
-* `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` = always
-  pick a free port). If the port is taken, the server falls back to a free one and the extension follows
-  it automatically.
+* `kupcad.serverPath` (machine scope): absolute path to the `kupcad` executable. Empty means "look
+  it up as above". Machine scope means a workspace's `.vscode/settings.json` cannot point the
+  extension at an arbitrary binary.
+* `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` =
+  always pick a free port). If the port is taken, the server falls back to a free one and the
+  viewer follows it.
 
 ## Security notes
 
-* The language server evaluates documents on a read-only virtual filesystem: a `.kup` file cannot write
-  to disk (`export_*`) just by being opened.
+* The language server evaluates documents on a read-only virtual filesystem: a `.kup` file cannot
+  write to disk (`export_*`) just by being opened.
 * The viewport socket only listens on `127.0.0.1` and only accepts connections whose `Origin` is a
-  VS Code webview (or the local dev server during development); the webview itself runs under a strict,
-  nonce-based Content Security Policy.
+  VS Code webview. The viewer's page runs under a strict Content Security Policy: no script but
+  its own (nonced), no inline style, and no network but that socket.
 
 ## Known Issues
 
-* The viewport webview front-end is a stub: the panel opens, receives the socket URL, and the server
-  streams models, but there is no renderer yet.
-* B-Rep (`CAD.config(engine: :brep)`) is in progress; use the default Manifold engine for previews.
+* B-Rep (`CAD.config(engine: :brep)`) is in progress: the viewer can't show a B-Rep model (it
+  can't be meshed yet), and says so.
+
+## How it is built
+
+Two programs, built separately by Vite:
+
+* **The host** (`src/extension/`, Node, in VS Code's extension host): `main.js` activates it,
+  `server.js` starts the language server (`LanguageServer`: the language client, the viewport's
+  port from `kupcad/viewportReady`, and the server's `kupcad.preview` and `kupcad.setParams`
+  commands), `viewer-panel.js` is the viewer's webview panel (`ViewerPanel`: it follows the
+  editor, tells the page the document it shows and asks the server for its frame, gives the
+  server the panel's values, again to a server that restarted, and saves a screenshot), and
+  `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
+  the language client in it.
+* **The page** (`src/webview/`, in the panel): `App.svelte` is `@kupcad/ui`'s viewer pane and
+  parameter panel; `socket.js` reads the server's frames (`@kupcad/protocol`'s `readFrame`),
+  opening the socket again when it closes; `bridge.js` talks to the host. Built into
+  `dist-webview/`.
+
+The model never passes through the host: a frame can be megabytes, and the page reads it from
+the socket itself. The host and the page say the rest to each other in `@kupcad/protocol`'s
+`HostMessage` and `ViewerMessage`, each side checking what arrives.
 
 ## Development
 
 ```sh
 pnpm install
-pnpm --filter @kupcad/vscode build     # bundles dist/extension.cjs and dist-webview/
-pnpm --filter @kupcad/vscode watch     # rebuild on change
-pnpm --filter @kupcad/vscode test      # vitest unit tests (webview helpers)
+pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/
+pnpm --filter @kupcad/vscode watch     # both, rebuilt as they change
+pnpm --filter @kupcad/vscode test      # the host's tests in Node, the page's under jsdom
+pnpm --filter @kupcad/vscode check     # svelte-check over both
 ```
 
-`test/extension.test.js` is a VS Code-hosted test (`@vscode/test-cli`, see `.vscode-test.mjs`) and is
-excluded from vitest.
+Run it with F5 (an Extension Development Host) after a build; with `watch` running, a change to
+the host needs the window reloaded, one to the page `Developer: Reload Webviews`. The host's tests
+run against a stand-in for VS Code's API (`src/extension/testing/vscode.js`, which Vitest gives
+the code as `vscode`); the page's mount it on models the real core makes (`@kupcad/wasm`).

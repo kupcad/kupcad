@@ -1,7 +1,8 @@
 {
   "extends": "../../jsconfig.base.json",
   "compilerOptions": {
+    "lib": ["es2023", "dom"],
     "maxNodeModuleJsDepth": 0
   },
-  "include": ["src", "test", "*.config.js", "vite.config.node.js", "webview/vite.config.js"]
+  "include": ["src", "*.config.js"]
 }

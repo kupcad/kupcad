@@ -1,6 +1,7 @@
 {
   "name": "kupcad",
   "license": "AGPL-3.0-only",
+  "type": "module",
   "scripts": {
     "build:core:wasm": "cd core && zig build -Dtarget=wasm32-wasi -Doptimize=safe",
     "build:core:wasm:threads": "cd core && zig build -Dtarget=wasm32-wasi -Doptimize=safe -Dwasm_threads=true",

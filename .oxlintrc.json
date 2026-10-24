@@ -7,7 +7,9 @@
   },
   "rules": {
     // Meant for window.postMessage: a Worker's and a MessagePort's take no target origin
-    "unicorn/require-post-message-target-origin": "off"
+    "unicorn/require-post-message-target-origin": "off",
+    // A stylesheet is imported for what it does to the page
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css"] }]
   },
   "env": {
     "es2024": true

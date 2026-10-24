@@ -14,30 +14,46 @@
   "type": "module",
   "main": "./dist/extension.cjs",
   "scripts": {
-    "dev:backend": "vite build --config vite.config.node.js --watch",
-    "dev:frontend": "vite --config webview/vite.config.js",
-    "watch": "concurrently \"npm:dev:backend\" \"npm:dev:frontend\"",
-    "build": "vite build --config vite.config.node.js && vite build --config webview/vite.config.js",
+    "build": "vite build --config vite.config.extension.js && vite build --config vite.config.webview.js",
+    "watch": "concurrently \"vite build --config vite.config.extension.js --watch\" \"vite build --config vite.config.webview.js --watch\"",
     "test": "vitest run",
-    "check": "tsc -p jsconfig.json"
-  },
-  "dependencies": {
-    "vscode-languageclient": "^10.1.2"
+    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings"
   },
   "devDependencies": {
+    "@kupcad/protocol": "workspace:*",
+    "@kupcad/ui": "workspace:*",
+    "@kupcad/viewer": "workspace:*",
+    "@kupcad/wasm": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@testing-library/svelte": "catalog:",
     "@types/node": "catalog:",
     "@types/vscode": "~1.125.0",
     "concurrently": "^10.0.6",
+    "jsdom": "catalog:",
+    "svelte": "catalog:",
+    "svelte-check": "catalog:",
     "vite": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "vscode-languageclient": "^10.1.2"
   },
   "contributes": {
     "commands": [
       {
-        "command": "kupcad.showUI",
-        "title": "KupCAD: Open Viewer"
+        "command": "kupcad.openViewer",
+        "title": "Open Viewer",
+        "category": "KupCAD",
+        "icon": "$(preview)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "kupcad.openViewer",
+          "when": "resourceLangId == kupcad",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "KupCAD",
       "properties": {

@@ -153,11 +153,25 @@ importers:
         version: 5.0.5(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(yaml@2.9.1))
 
   packages/kupcad-vscode:
-    dependencies:
-      vscode-languageclient:
-        specifier: ^10.1.2
-        version: 10.1.2
     devDependencies:
+      '@kupcad/protocol':
+        specifier: workspace:*
+        version: link:../kupcad-protocol
+      '@kupcad/ui':
+        specifier: workspace:*
+        version: link:../kupcad-ui
+      '@kupcad/viewer':
+        specifier: workspace:*
+        version: link:../kupcad-viewer
+      '@kupcad/wasm':
+        specifier: workspace:*
+        version: link:../kupcad-wasm
+      '@sveltejs/vite-plugin-svelte':
+        specifier: 'catalog:'
+        version: 7.3.1(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(yaml@2.9.1))
+      '@testing-library/svelte':
+        specifier: 'catalog:'
+        version: 5.4.2(svelte@5.57.2)(vite@8.3.5(@types/node@24.19.2)(yaml@2.9.1))(vitest@5.0.5(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(yaml@2.9.1)))
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.2
@@ -167,12 +181,24 @@ importers:
       concurrently:
         specifier: ^10.0.6
         version: 10.0.6
+      jsdom:
+        specifier: 'catalog:'
+        version: 30.1.3
+      svelte:
+        specifier: 'catalog:'
+        version: 5.57.2
+      svelte-check:
+        specifier: 'catalog:'
+        version: 4.7.7(picomatch@4.0.7)(svelte@5.57.2)(typescript@6.0.3)
       vite:
         specifier: 'catalog:'
         version: 8.3.5(@types/node@24.19.2)(yaml@2.9.1)
       vitest:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@24.19.2)(jsdom@30.1.3)(vite@8.3.5(@types/node@24.19.2)(yaml@2.9.1))
+      vscode-languageclient:
+        specifier: ^10.1.2
+        version: 10.1.2
 
   packages/kupcad-wasm:
     dependencies:
