@@ -27,7 +27,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 * **`ViewerPane`**: @kupcad/viewer with a toolbar (render mode, view, orthographic, floor, a
   section through the model along an axis, fit, screenshot) and the model's parts, each with its
   colour and copies; a click on one selects its copies, as a click in the viewer does
-  (`bind:selected`). `bind:viewer` gives the viewer itself. The toolbar shows how the viewer
+  (`bind:selected`). `bind:viewer` gives the viewer itself, and an `actions` snippet a host's
+  own buttons at the toolbar's end (the VS Code extension's Export and Print). The toolbar shows how the viewer
   looks (a drawing switches it to the top view, orthographic), and a section stays where it was
   put through an edit of the script, while the model still reaches it.
 * **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a

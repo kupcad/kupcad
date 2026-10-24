@@ -73,7 +73,7 @@ export const env = {
   /** @param {Uri} uri */
   openExternal: async (uri) => {
     fake.opened.push(uri.toString());
-    return true;
+    return fake.opens;
   },
 };
 
@@ -105,13 +105,20 @@ export const ExtensionMode = { Production: 1, Development: 2, Test: 3 };
  * @param {string} [languageId]
  */
 export function documentAt(file, languageId = 'kupcad') {
-  return {
+  const document = {
     uri: Uri.file(file),
     fileName: file,
     languageId,
     isDirty: false,
-    save: async () => true,
+    saves: 0,
+    async save() {
+      document.saves += 1;
+      document.isDirty = false;
+      return true;
+    },
   };
+  fake.documents.set(document.uri.path, document);
+  return document;
 }
 
 class Webview {
@@ -209,6 +216,21 @@ export const fake = {
   inputs: [],
   /** @type {{ changed: EventEmitter, created: EventEmitter, deleted: EventEmitter }[]} */
   watchers: [],
+  /** The documents open, by path. @type {Map<string, ReturnType<typeof documentAt>>} */
+  documents: new Map(),
+  /** The label the user picks in a quick pick, or none (dismissed). @type {string | undefined} */
+  pick: undefined,
+  /** The quick picks shown: their items' labels. @type {string[][]} */
+  picks: [],
+  /** Whether opening a file outside VS Code works. */
+  opens: true,
+  /** The progress notifications running, to cancel. @type {EventEmitter[]} */
+  cancellations: [],
+
+  /** The user cancels the progress notifications running. */
+  cancelProgress() {
+    for (const cancelled of this.cancellations) cancelled.fire();
+  },
 
   /**
    * A file changed on disk, as a watcher hears it.
@@ -248,6 +270,11 @@ export function resetFake() {
   fake.inputAnswer = undefined;
   fake.inputs = [];
   fake.watchers = [];
+  fake.documents = new Map();
+  fake.pick = undefined;
+  fake.picks = [];
+  fake.opens = true;
+  fake.cancellations = [];
   fake.settings = {};
   fake.saveAnswer = undefined;
   fake.activeDocument = undefined;
@@ -297,12 +324,22 @@ export const window = {
   },
   /**
    * @param {{ title: string }} options
-   * @param {(progress: { report(value: unknown): void }) => Promise<unknown>} task
+   * @param {(progress: { report(value: unknown): void }, token: { onCancellationRequested: EventEmitter['event'] }) => Promise<unknown>} task
    */
   async withProgress(options, task) {
     const shown = { title: options.title, reports: /** @type {unknown[]} */ ([]) };
     fake.progress.push(shown);
-    return task({ report: (value) => shown.reports.push(value) });
+    const cancelled = new EventEmitter();
+    fake.cancellations.push(cancelled);
+    return task(
+      { report: (value) => shown.reports.push(value) },
+      { onCancellationRequested: cancelled.event },
+    );
+  },
+  /** @param {{ label: string }[]} items */
+  showQuickPick: async (items) => {
+    fake.picks.push(items.map((item) => item.label));
+    return items.find((item) => item.label === fake.pick);
   },
   showErrorMessage: say('error'),
   showWarningMessage: say('warning'),
@@ -320,6 +357,8 @@ export const workspace = {
       get: (key, fallback) => fake.settings[`${section}.${key}`] ?? fallback,
     };
   },
+  /** @param {Uri} uri */
+  openTextDocument: async (uri) => fake.documents.get(uri.path) ?? documentAt(uri.path),
   get workspaceFolders() {
     return [{ uri: Uri.file('/work') }];
   },

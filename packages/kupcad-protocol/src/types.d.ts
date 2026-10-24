@@ -186,6 +186,9 @@ export type ViewerMessage =
   | { type: 'applyPreset'; uri: string; name: string }
   /** The panel's values are kept as one of the document's presets: the host asks its name. */
   | { type: 'savePreset'; uri: string; values: ParamValues }
+  /** The document is exported (the host asks the format and where), or printed, with its values. */
+  | { type: 'export'; uri: string }
+  | { type: 'print'; uri: string }
   /** A screenshot, a PNG's bytes in base64, for the host to save. */
   | { type: 'screenshot'; png: string }
   /** Something the viewer couldn't do, for the host's log. */

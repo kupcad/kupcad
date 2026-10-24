@@ -104,6 +104,14 @@
       host.post({ type: 'savePreset', uri: shown.uri, values: $state.snapshot(overrides) });
   }
 
+  /**
+   * Asks the host to export the shown document, or to print it, with its values.
+   * @param {'export' | 'print'} command
+   */
+  function run(command) {
+    if (shown) host.post({ type: command, uri: shown.uri });
+  }
+
   /** @param {Blob} image */
   async function screenshot(image) {
     host.post({ type: 'screenshot', png: toBase64(new Uint8Array(await image.arrayBuffer())) });
@@ -122,7 +130,14 @@
       options={viewerOptions}
       onscreenshot={screenshot}
       onerror={failed}
-    />
+    >
+      {#snippet actions()}
+        {#if shown}
+          <button type="button" onclick={() => run('export')}>Export…</button>
+          <button type="button" onclick={() => run('print')}>Print</button>
+        {/if}
+      {/snippet}
+    </ViewerPane>
     {#if status}
       <p class="status">{status}</p>
     {/if}

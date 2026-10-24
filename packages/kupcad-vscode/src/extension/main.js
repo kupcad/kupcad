@@ -6,7 +6,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, CHECK_FOR_UPDATES_COMMAND } from './binary/manager.js';
+import { registerExportCommands } from './commands.js';
 import { LanguageServer } from './server.js';
+import { ScriptValues } from './values.js';
 import { PAGE_DIR, ViewerPanel } from './viewer-panel.js';
 
 export const OPEN_VIEWER_COMMAND = 'kupcad.openViewer';
@@ -40,6 +42,7 @@ export async function activate(context) {
 
   /** @type {ViewerPanel | null} */
   let viewer = null;
+  const values = new ScriptValues();
   const pagePath = path.join(context.extensionPath, PAGE_DIR, 'index.html');
   context.subscriptions.push(
     vscode.commands.registerCommand(OPEN_VIEWER_COMMAND, () => {
@@ -53,6 +56,7 @@ export async function activate(context) {
       }
       viewer = ViewerPanel.open({
         server,
+        values,
         extensionUri: context.extensionUri,
         page: () => fs.readFileSync(pagePath, 'utf8'),
         log,
@@ -61,6 +65,12 @@ export async function activate(context) {
     vscode.commands.registerCommand(CHECK_FOR_UPDATES_COMMAND, async () =>
       restartOn(await binaries.checkForUpdates({ asked: true })),
     ),
+    ...registerExportCommands({
+      kupcad: () => server?.serverPath ?? null,
+      values,
+      shown: () => (viewer?.closed ? null : (viewer?.shown?.uri ?? null)),
+      log,
+    }),
   );
 
   // The manager says why when there is none

@@ -15,6 +15,7 @@ vi.mock('./server.js', () => ({
     constructor(options) {
       this.options = options;
       this.viewportPort = 9001;
+      this.serverPath = /** @type {{ serverPath: string }} */ (options).serverPath;
       this.started = false;
       this.stopped = false;
       this.viewport = new EventEmitter();

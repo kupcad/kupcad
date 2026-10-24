@@ -201,3 +201,15 @@ describe('App presets', () => {
     expect(picker.options[0].textContent?.trim()).toBe('No presets');
   });
 });
+
+it('asks the host to export or print the document shown', async () => {
+  const viewer = page();
+  expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();
+  await viewer.tell({ type: 'document', document: PART });
+  await fireEvent.click(screen.getByRole('button', { name: 'Export…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Print' }));
+  expect(viewer.posted.slice(-2)).toEqual([
+    { type: 'export', uri: PART.uri },
+    { type: 'print', uri: PART.uri },
+  ]);
+});

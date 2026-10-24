@@ -344,7 +344,8 @@ src/
     server.js             the LanguageClient, kupcad/viewportReady, kupcad.preview and setParams
     viewer-panel.js       the webview panel: it follows the editor, bridges the page's messages
     webview-html.js       the page's HTML and its CSP
-    commands/             export (stl, 3mf, obj, svg, dxf, step), print
+    commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf) and print, over export.js
+    values.js             the values each script was given: the server runs it, an export builds it, with them
     presets.js            parameter presets as <script>.presets.json beside the file
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
   webview/                runs in the panel (browser)
@@ -372,8 +373,11 @@ Data flow:
   warnings (a mended mesh, an engine without a feature) join them on the line of the call that
   caused them (core work, section 8).
 * **Export and print** run the binary, not the server: `kupcad build <file> -o <path> -p ...`
-  with the panel's current values, so what is exported is what the CLI would build. Print writes
-  a 3MF to a temp file and opens it with the configured slicer or the OS's handler.
+  with the panel's current values (`ScriptValues`, which the viewer and the commands share), so
+  what is exported is what the CLI would build; a script with unsaved changes is saved first, on
+  the user's word. Print writes a 3MF to a temp file and opens it with the configured slicer
+  (`kupcad.print.slicer`) or the OS's handler. A failed build says the first line of why
+  (`whyItFailed`: not the log, the backtrace or the summary).
 * **Click a part** in the viewer and the editor jumps to where it was named (needs source
   locations in the GLB's part metadata: core work).
 

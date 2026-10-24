@@ -80,6 +80,11 @@ export class LanguageServer {
     return client;
   }
 
+  /** The kupcad running now. */
+  get serverPath() {
+    return this.#options.serverPath;
+  }
+
   get viewportPort() {
     return this.#viewportPort;
   }

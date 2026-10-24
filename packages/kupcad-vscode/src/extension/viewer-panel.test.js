@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The module Vitest gives the code as `vscode`
-import { documentAt, EventEmitter, fake, resetFake, Uri, window } from './testing/vscode.js';
+import {
+  commands,
+  documentAt,
+  EventEmitter,
+  fake,
+  resetFake,
+  Uri,
+  window,
+} from './testing/vscode.js';
 import { readPresets, writePresets } from './presets.js';
+import { ScriptValues } from './values.js';
 import { ViewerPanel } from './viewer-panel.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
@@ -61,6 +70,7 @@ function open(server = serverAt(9001)) {
   const log = window.createOutputChannel();
   const panel = ViewerPanel.open({
     server,
+    values: new ScriptValues(),
     // The stand-ins are what the panel uses of VS Code's types
     extensionUri: /** @type {any} */ (Uri.file('/ext')),
     page: () => PAGE,
@@ -246,5 +256,28 @@ describe('ViewerPanel presets', () => {
     await vi.waitFor(() => expect(fake.messages[0]?.text).toMatch(/so the preset wasn't saved/));
     expect(new TextDecoder().decode(fake.files.get(PRESETS))).toBe('{');
     expect(fake.inputs).toHaveLength(0);
+  });
+});
+
+describe('ViewerPanel export and print', () => {
+  it('runs the export and print commands on the script the page asks for', async () => {
+    /** @type {unknown[][]} */
+    const ran = [];
+    commands.registerCommand('kupcad.export', (/** @type {unknown} */ uri) =>
+      ran.push(['export', uri]),
+    );
+    commands.registerCommand('kupcad.print', (/** @type {unknown} */ uri) =>
+      ran.push(['print', uri]),
+    );
+    fake.activeDocument = PART;
+    const { webview } = open();
+    webview.receive({ type: 'export', uri: PART_URI });
+    webview.receive({ type: 'print', uri: PART_URI });
+    await vi.waitFor(() =>
+      expect(ran).toEqual([
+        ['export', PART_URI],
+        ['print', PART_URI],
+      ]),
+    );
   });
 });

@@ -13,6 +13,7 @@
   /** @import { Model, Part } from '@kupcad/protocol/types' */
   /** @import { Axis, Bounds, Environment, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
+  /** @import { Snippet } from 'svelte' */
 
   /**
    * @typedef {object} Props
@@ -22,6 +23,7 @@
    * @property {ViewerClass | null} [viewer] the viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the viewer is made with
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
+   * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export, print)
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
    */
 
@@ -33,6 +35,7 @@
     viewer = $bindable(null),
     options = {},
     onscreenshot,
+    actions,
     onerror,
   } = $props();
 
@@ -139,6 +142,7 @@
     {#if onscreenshot}
       <button type="button" onclick={screenshot}>Screenshot</button>
     {/if}
+    {@render actions?.()}
   </div>
   <div class="body">
     <div class="canvas">

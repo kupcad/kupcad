@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { stubRenderer } from '@kupcad/viewer/testing';
-import { tick } from 'svelte';
+import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bound } from './bound.test-helper.svelte.js';
 import { modelOf, PARTS } from './fixtures.test-helper.js';
@@ -153,6 +153,27 @@ describe('ViewerPane', () => {
     const fit = vi.spyOn(viewer, 'fit');
     await fireEvent.click(screen.getByRole('button', { name: 'Fit' }));
     expect(fit).toHaveBeenCalledOnce();
+  });
+
+  it("ends its toolbar with the host's own buttons", async () => {
+    const viewer = bound(/** @type {Viewer | null} */ (null));
+    render(ViewerPane, {
+      props: {
+        model: await modelOf(PARTS),
+        options: { renderer: stubRenderer().renderer },
+        actions: createRawSnippet(() => ({
+          render: () => '<button type="button">Export…</button>',
+        })),
+        get viewer() {
+          return viewer.value;
+        },
+        set viewer(made) {
+          viewer.value = made;
+        },
+      },
+    });
+    const toolbar = /** @type {HTMLElement} */ (document.querySelector('.toolbar'));
+    expect(toolbar.lastElementChild?.textContent).toBe('Export…');
   });
 
   it('gives a screenshot to its host', async () => {

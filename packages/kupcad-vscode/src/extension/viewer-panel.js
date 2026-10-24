@@ -7,12 +7,14 @@
 
 import * as vscode from 'vscode';
 import { isViewerMessage } from '@kupcad/protocol';
+import { EXPORT_COMMAND, PRINT_COMMAND } from './commands.js';
 import { presetsPathOf, readPresets, writePresets } from './presets.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
 /** @import { Presets } from './presets.js' */
+/** @import { ScriptValues } from './values.js' */
 
 export const VIEW_TYPE = 'kupcad.viewer';
 const LANGUAGE_ID = 'kupcad';
@@ -28,6 +30,7 @@ const decoder = new TextDecoder();
 /**
  * @typedef {object} PanelOptions
  * @property {ServerLink} server
+ * @property {ScriptValues} values the values each script's parameters were given
  * @property {vscode.Uri} extensionUri
  * @property {() => string} page the built page's HTML
  * @property {vscode.LogOutputChannel} log
@@ -40,8 +43,6 @@ export class ViewerPanel {
   #options;
   /** @type {ShownDocument | null} */
   #shown = null;
-  /** The values the viewer gave each document's parameters, by URI: given again to a server that restarted. @type {Map<string, ParamValues>} */
-  #overrides = new Map();
   /** @type {vscode.Disposable[]} */
   #disposables = [];
   #closed = false;
@@ -160,7 +161,7 @@ export class ViewerPanel {
         if (this.#shown) this.#ask(this.#options.server.preview(this.#shown.uri), 'ready');
         return;
       case 'setParams':
-        this.#overrides.set(message.uri, message.values);
+        this.#options.values.set(message.uri, message.values);
         this.#ask(this.#options.server.setParams(message.uri, message.values), 'setParams');
         return;
       case 'applyPreset':
@@ -168,6 +169,12 @@ export class ViewerPanel {
         return;
       case 'savePreset':
         void this.#savePreset(message.uri, message.values);
+        return;
+      case 'export':
+        void vscode.commands.executeCommand(EXPORT_COMMAND, message.uri);
+        return;
+      case 'print':
+        void vscode.commands.executeCommand(PRINT_COMMAND, message.uri);
         return;
       case 'screenshot':
         void this.#saveScreenshot(message.png);
@@ -181,8 +188,10 @@ export class ViewerPanel {
   /** Tells the page the document shown, the values its panel holds for it, and its presets. */
   #tellDocument() {
     this.#post({ type: 'document', document: this.#shown });
-    const values = this.#shown && this.#overrides.get(this.#shown.uri);
-    if (this.#shown && values) this.#post({ type: 'overrides', uri: this.#shown.uri, values });
+    if (this.#shown && this.#options.values.has(this.#shown.uri)) {
+      const { uri } = this.#shown;
+      this.#post({ type: 'overrides', uri, values: this.#options.values.of(uri) });
+    }
     void this.#tellPresets();
   }
 
@@ -218,7 +227,7 @@ export class ViewerPanel {
     }
     const values = presets[name];
     if (!values) return;
-    this.#overrides.set(uri, values);
+    this.#options.values.set(uri, values);
     this.#post({ type: 'overrides', uri, values });
     this.#ask(this.#options.server.setParams(uri, values), 'applyPreset');
   }
@@ -295,7 +304,7 @@ export class ViewerPanel {
    */
   #serverStarted() {
     this.#render();
-    for (const [uri, values] of this.#overrides) {
+    for (const [uri, values] of this.#options.values.entries()) {
       this.#ask(this.#options.server.setParams(uri, values), 'setParams');
     }
   }
