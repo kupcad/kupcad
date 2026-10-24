@@ -58,11 +58,6 @@ pub const Model = struct {
     }
 };
 
-/// The value the script left last, nil when it left none.
-pub fn finalValue(vm: *const VM) value.Value {
-    return if (vm.stack_top > 0) vm.stack[0] else value.Value.initNil();
-}
-
 /// Whether `val` is what a script ends with to leave a model (collectModel may still refuse
 /// an item of an Array): a Solid, a Sketch, a Path, an Assembly, an Array, or nil for none.
 pub fn isModel(val: value.Value) bool {
@@ -75,7 +70,7 @@ pub fn isModel(val: value.Value) bool {
 pub fn collectModel(allocator: std.mem.Allocator, vm: *VM) !Model {
     var model: Model = .{ .ghosts = vm.display_list.items };
     errdefer model.deinit(allocator);
-    const final_val = finalValue(vm);
+    const final_val = vm.finalValue();
     if (final_val.isNil()) return model;
     if (final_val.isAssembly()) model.title = final_val.asAssembly().name.chars;
     var path = ItemPath{};

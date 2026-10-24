@@ -110,6 +110,11 @@ pub fn ofImportFailure(allocator: std.mem.Allocator, script: Script, module_path
     return ofFailure(allocator, script, .{ .message = message });
 }
 
+/// The frame of a script that doesn't parse or compile, as `diagnostic` says in its lines.
+pub fn ofDiagnostic(allocator: std.mem.Allocator, script: Script, diagnostic: Diagnostic) ![]u8 {
+    return ofFailure(allocator, script, failureOfDiagnostic(script.doc, diagnostic));
+}
+
 /// Why a script doesn't parse or compile: `diagnostic`, placed in `doc`.
 pub fn failureOfDiagnostic(doc: *const Document, diagnostic: Diagnostic) frame.Failure {
     const at = doc.line_index.humanPosition(diagnostic.loc.offset);
@@ -139,7 +144,7 @@ const Shown = union(enum) {
 /// document that ends in no model at all (a module of definitions) shows its ghosts, or
 /// nothing, where an export would refuse it. Owned by `arena`.
 fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warning)) !Shown {
-    const model: model_mod.Model = if (model_mod.isModel(model_mod.finalValue(vm))) try model_mod.collectModel(arena, vm) else .{ .ghosts = vm.display_list.items };
+    const model: model_mod.Model = if (model_mod.isModel(vm.finalValue())) try model_mod.collectModel(arena, vm) else .{ .ghosts = vm.display_list.items };
     const flat = model.sketches.items.len + model.paths.items.len;
     if (model.solids.items.len > 0 or model.ghosts.len > 0) {
         if (flat > 0) {

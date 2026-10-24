@@ -15,7 +15,6 @@ const extractor = @import("tools/doc/extractor.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
 const ReadOnlyVfs = @import("vfs/readonly.zig").ReadOnlyVfs;
 const NativeVfs = @import("vfs/native.zig").NativeVfs;
-const limits = @import("core/limits.zig");
 const Formatter = @import("tools/fmt/formatter.zig").Formatter;
 const equivalence = @import("tools/fmt/equivalence.zig");
 const Linter = @import("tools/lint/linter.zig").Linter;
@@ -204,17 +203,13 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     defer doc.deinit();
     if (doc.diagnostics.len > 0) return null;
 
-    var vm = try VM.init(allocator, io);
-    defer vm.deinit();
-    vm.mute_errors = true;
     // Its imports are read from the disk, as `kupcad check` runs it
     var disk = NativeVfs.init(io, std.Io.Dir.cwd());
     var sandbox = ReadOnlyVfs.init(disk.vfs(), null);
-    vm.vfs = sandbox.vfs();
-    vm.line_index = &doc.line_index;
-    vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
-    vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
-    try registry.registerStandardLibrary(&vm);
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = sandbox.vfs() });
+    defer vm.deinit();
+    vm.mute_errors = true;
+    vm.useInteractiveLimits();
     vm.host.print_handler = null; // puts, print, inspect, benchmark
 
     var program = chunk.Chunk.init();
@@ -225,7 +220,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     if (vm.interpret(&program) != .ok) return null;
 
     var hasher = std.hash.Wyhash.init(0);
-    if (vm.stack_top > 0 and !hashShapes(&hasher, &vm, vm.stack[0], 0)) return null;
+    if (!hashShapes(&hasher, &vm, vm.finalValue(), 0)) return null;
     for (vm.display_list.items) |ghost| {
         if (!(kernel.hashMesh(&hasher, allocator, ghost) catch return null)) hasher.update(std.mem.asBytes(&ghost.engine));
     }
@@ -426,27 +421,22 @@ pub const PreviewOptions = struct {
 pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u8, options: PreviewOptions) ![]u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    if (doc.diagnostics.len > 0) {
-        return preview_build.ofFailure(allocator, .{ .doc = &doc, .source = source }, preview_build.failureOfDiagnostic(&doc, doc.diagnostics[0]));
-    }
+    const script: preview_build.Script = .{ .doc = &doc, .source = source };
+    if (doc.diagnostics.len > 0) return preview_build.ofDiagnostic(allocator, script, doc.diagnostics[0]);
     var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params });
     defer vm.deinit();
     vm.mute_errors = true;
     vm.previewing = true;
-    vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
-    vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+    vm.useInteractiveLimits();
 
     var program = chunk.Chunk.init();
     defer program.free(allocator);
     var comp = Compiler.forDocument(allocator, &doc, &program, &vm);
     defer comp.deinit();
-    comp.compile(doc.tree.root) catch |err| {
-        const found = comp.errorDiagnostic() orelse return err;
-        return preview_build.ofFailure(allocator, .{ .doc = &doc, .source = source }, preview_build.failureOfDiagnostic(&doc, found));
-    };
+    comp.compile(doc.tree.root) catch |err| return preview_build.ofDiagnostic(allocator, script, comp.errorDiagnostic() orelse return err);
     var clock = Stopwatch.start(io);
     const ok = vm.interpret(&program) == .ok;
-    return preview_build.ofRun(allocator, .{ .doc = &doc, .source = source }, .{ .vm = &vm, .ok = ok, .run_ns = clock.lap() });
+    return preview_build.ofRun(allocator, script, .{ .vm = &vm, .ok = ok, .run_ns = clock.lap() });
 }
 
 /// The preview frame of `source` refused before it ran, for `message` (a host's parameter

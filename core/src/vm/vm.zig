@@ -1581,6 +1581,19 @@ pub const VM = struct {
         self.gc.max_memory_limit = bytes;
     }
 
+    /// The value the script left last (its model, as a host reads it), nil when it left none.
+    pub fn finalValue(self: *const VM) value.Value {
+        return if (self.stack_top > 0) self.stack[0] else value.Value.initNil();
+    }
+
+    /// The limits of a run someone waits on (an editor's preview and hovers, the browser's,
+    /// a check's comparing of its fixes): a script that loops or grows forever stops with
+    /// an error instead of hanging them.
+    pub fn useInteractiveLimits(self: *VM) void {
+        self.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
+        self.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+    }
+
     pub fn resetStack(self: *VM) void {
         self.shrinkStack(0);
         self.clearUnwindState();

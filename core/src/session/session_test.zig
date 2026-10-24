@@ -2,7 +2,6 @@ const std = @import("std");
 const testing = std.testing;
 const session_mod = @import("session.zig");
 const ScriptSession = session_mod.ScriptSession;
-const finalValue = @import("../exporters/model.zig").finalValue;
 const kernel = @import("../kernel/kernel.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const api = @import("../api.zig");
@@ -667,7 +666,7 @@ const Seen = struct {
 
     fn ran(context: *anyopaque, run: session_mod.ModuleRun) void {
         const self: *Seen = @ptrCast(@alignCast(context));
-        const last = finalValue(run.vm);
+        const last = run.vm.finalValue();
         self.runs.append(testing.allocator, .{
             .path = run.path,
             .ok = run.ok,

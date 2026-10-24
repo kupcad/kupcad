@@ -11,7 +11,6 @@ const ast = @import("../core/ast.zig");
 const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
-const limits = @import("../core/limits.zig");
 const owned_keys = @import("../core/owned_keys.zig");
 const registry = @import("../stdlib/registry.zig");
 const preview_build = @import("../preview/build.zig");
@@ -203,8 +202,7 @@ pub const SessionPreview = struct {
         self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), if (self.workspace) |*w| w.vfs() else null);
         self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.observer = .{ .context = self, .ran = ranImpl };
-        self.session.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
-        self.session.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        self.session.vm.useInteractiveLimits();
         self.session.vm.previewing = true;
     }
 
@@ -555,8 +553,7 @@ pub const HoverRun = struct {
         errdefer self.vm.deinit();
         self.vm.vfs = sandbox;
         self.vm.mute_errors = true; // its errors are the document's diagnostics
-        self.vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
-        self.vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+        self.vm.useInteractiveLimits();
         // Hovers read the run the preview shows
         self.vm.previewing = true;
         try registry.registerStandardLibrary(&self.vm);

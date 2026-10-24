@@ -136,8 +136,8 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     if (profile_out) |w| try profiler.dumpProfile(w);
 
     var evaluated = false;
-    if (evaluate and vm.stack_top > 0 and vm.stack[0].isGeometry()) {
-        _ = try vm.ensureConcrete(vm.stack[0]);
+    if (evaluate and vm.finalValue().isGeometry()) {
+        _ = try vm.ensureConcrete(vm.finalValue());
         evaluated = true;
         ns.set(.evaluate, clock.lap());
     }
