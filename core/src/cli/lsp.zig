@@ -1,8 +1,8 @@
 //! `kupcad lsp`: the language server on stdin and stdout. `Handler` answers the editor's
-//! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints)
-//! and, through a `Preview` (lsp_preview.zig), runs the last edited document for the
-//! viewport WebSocket server (viewport_ws.zig) and for hovers: in a worker process
-//! (lsp_worker.zig), so a script whose run crashes leaves the server running.
+//! requests (hover, completion, formatting, diagnostics, code actions, symbols, inlay hints,
+//! the `kupcad.setParams` command) and, through a `Preview` (lsp_preview.zig), runs the last
+//! edited document for the viewport WebSocket server (viewport_ws.zig) and for hovers: in a
+//! worker process (lsp_worker.zig), so a script whose run crashes leaves the server running.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -43,6 +43,9 @@ const REQUEST_ID_PREFIX = "kupcad/";
 /// The registration the data-file watchers are made under (Handler.watchFilesRead).
 const WATCH_REGISTRATION_ID = REQUEST_ID_PREFIX ++ "data-files";
 const WATCHED_FILES_METHOD = "workspace/didChangeWatchedFiles";
+/// The command (`workspace/executeCommand`) a front end gives a document's parameters values
+/// with: `[{"uri": "file:///...", "values": {"width": 40}}]`.
+pub const SET_PARAMS_COMMAND = "kupcad.setParams";
 
 pub const USAGE =
     \\Usage: kupcad lsp
@@ -435,6 +438,7 @@ pub const Handler = struct {
             },
             .documentSymbolProvider = .{ .bool = true },
             .codeActionProvider = .{ .bool = true },
+            .executeCommandProvider = .{ .commands = &.{SET_PARAMS_COMMAND} },
         };
     }
 
@@ -532,6 +536,30 @@ pub const Handler = struct {
         // A document another one imports is read from disk now, which may differ from the
         // text the editor had
         if (self.preview_module != null) self.preview_pending = true;
+    }
+
+    /// `kupcad.setParams` (SET_PARAMS_COMMAND): the document at `uri` runs with `values`, a
+    /// JSON object of names and values as `kupcad build -P` reads, from now on (its preview
+    /// and its hovers; another call replaces them). A document the preview shows runs again,
+    /// and its frame says what came of them. An unknown command, or arguments of another
+    /// shape, is error.InvalidParams, the reason logged.
+    pub fn @"workspace/executeCommand"(
+        self: *Handler,
+        arena: std.mem.Allocator,
+        params: lsp.types.workspace.execute_command.Params,
+    ) !?lsp.types.LSPAny {
+        if (!std.mem.eql(u8, params.command, SET_PARAMS_COMMAND)) {
+            logger.warn("Unknown command: {s}", .{params.command});
+            return error.InvalidParams;
+        }
+        const set = try setParamsArgument(arena, params.arguments orelse &.{});
+        const module_path = try self.modulePath(arena, set.uri);
+        defer self.tellOfCrash();
+        try self.preview.setParams(module_path, &set.values);
+        if (self.preview_module) |shown| {
+            if (std.mem.eql(u8, shown, module_path)) self.preview_pending = true;
+        }
+        return null;
     }
 
     /// A file was saved, created or deleted on disk: one the editor watches for the preview
@@ -981,6 +1009,34 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
     if (builtin.target.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
     return path;
+}
+
+/// What a `kupcad.setParams` is given: the document's URI, and its values.
+const SetParams = struct { uri: []const u8, values: api.ParamValues };
+
+/// The one argument of a `kupcad.setParams`, owned by `arena`; error.InvalidParams, the reason
+/// logged, for arguments of another shape or a value no parameter takes.
+fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value) !SetParams {
+    const Argument = struct { uri: []const u8, values: std.json.Value };
+    const parsed: ?Argument = if (arguments.len == 1) std.json.parseFromValueLeaky(Argument, arena, arguments[0], .{ .ignore_unknown_fields = true }) catch null else null;
+    const argument = parsed orelse {
+        logger.warn("{s} takes one argument, {{\"uri\": ..., \"values\": {{...}}}}", .{SET_PARAMS_COMMAND});
+        return error.InvalidParams;
+    };
+    const object = switch (argument.values) {
+        .object => |o| o,
+        else => {
+            logger.warn("{s}: the values are no JSON object of names and values", .{SET_PARAMS_COMMAND});
+            return error.InvalidParams;
+        },
+    };
+    var values: api.ParamValues = .{};
+    var why: ?[]u8 = null;
+    values.putObject(arena, object, &why) catch |err| {
+        if (why) |reason| logger.warn("{s}: {s}", .{ SET_PARAMS_COMMAND, reason });
+        return err;
+    };
+    return .{ .uri = argument.uri, .values = values };
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {

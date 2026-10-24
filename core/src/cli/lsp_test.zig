@@ -6,6 +6,7 @@ const testing = std.testing;
 const lsp = @import("lsp");
 const Handler = @import("lsp.zig").Handler;
 const documentPath = @import("lsp.zig").documentPath;
+const SET_PARAMS_COMMAND = @import("lsp.zig").SET_PARAMS_COMMAND;
 const FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const kernel = @import("../kernel/kernel.zig");
@@ -116,6 +117,13 @@ const Server = struct {
         var count: usize = 0;
         for (self.outbox.messages.items) |m| count += @intFromBool(std.mem.find(u8, m, text) != null);
         return count;
+    }
+
+    /// The editor runs `kupcad.setParams` with `arguments` (JSON text of the arguments' array).
+    fn setParams(self: *Server, arguments: []const u8) !void {
+        const arena = self.arena.allocator();
+        const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, arguments, .{});
+        _ = try self.handler.@"workspace/executeCommand"(arena, .{ .command = SET_PARAMS_COMMAND, .arguments = parsed.array.items });
     }
 
     fn volumeOf(self: *Server, module_path: []const u8) !f64 {
@@ -622,4 +630,46 @@ test "LSP: viewportReady gives the socket's port and the protocol version of its
     try testing.expectEqualStrings(@import("lsp.zig").VIEWPORT_READY_NOTIFICATION, parsed.value.method);
     try testing.expectEqual(ws.port, parsed.value.params.port);
     try testing.expectEqual(@import("../preview/frame.zig").PROTOCOL_VERSION, parsed.value.params.protocolVersion);
+}
+
+test "LSP: kupcad.setParams gives a document values, and the preview of it runs again with them" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try testing.expectEqualStrings(SET_PARAMS_COMMAND, Handler.serverCapabilities(.@"utf-16").executeCommandProvider.?.commands[0]);
+    try server.open("file:///work/other.kup", "cube(1)\n");
+    try server.open(URI, "a = cube(param(:w, default: 2))\n");
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 8), try server.volumeOf("part.kup"), 1e-9);
+
+    try server.setParams("[{\"uri\": \"" ++ URI ++ "\", \"values\": {\"w\": 3}}]");
+    try testing.expect(server.handler.preview_pending);
+    server.settle();
+    try testing.expectApproxEqAbs(@as(f64, 27), try server.volumeOf("part.kup"), 1e-9);
+    // A hover reads a run with them too
+    try testing.expect(std.mem.find(u8, server.hover(URI, 0, 0).?, "**Volume:** `27.00`") != null);
+
+    // Values for a document the preview doesn't show wait for it
+    try server.setParams("[{\"uri\": \"file:///work/other.kup\", \"values\": {\"w\": 4}}]");
+    try testing.expect(!server.handler.preview_pending);
+}
+
+test "LSP: kupcad.setParams refuses arguments of another shape, and an unknown command is refused" {
+    const warnings = @import("../test_support.zig").expectWarnings(); // each refusal is logged with why
+    defer warnings.restore();
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "cube(param(:w, default: 2))\n");
+    server.settle();
+    const refused = [_][]const u8{
+        "[]",
+        "[{\"uri\": \"" ++ URI ++ "\"}]",
+        "[{\"uri\": \"" ++ URI ++ "\", \"values\": [3]}]",
+        "[{\"uri\": \"" ++ URI ++ "\", \"values\": {\"w\": [3]}}]",
+    };
+    for (refused) |arguments| try testing.expectError(error.InvalidParams, server.setParams(arguments));
+    try testing.expect(!server.handler.preview_pending);
+    try testing.expectError(error.InvalidParams, server.handler.@"workspace/executeCommand"(server.arena.allocator(), .{ .command = "kupcad.unknown" }));
 }

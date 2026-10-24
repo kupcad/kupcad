@@ -366,6 +366,24 @@ test "ScriptSession: params reach param() on every evaluation" {
     try testing.expectApproxEqAbs(@as(f64, 125.0), kernel.volume(node.cached_handle.?), 1e-4);
 }
 
+test "ScriptSession: new parameters run every module again, though no source changed" {
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    const a_id = try session.workspace.addModule("a.kup", "cube(param(:w, default: 2))\n");
+    const b_id = try session.workspace.addModule("b.kup", "cube(param(:w, default: 2) + 1)\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    var params: api.ParamValues = .{};
+    defer params.deinit(testing.allocator);
+    try params.put(testing.allocator, "w", .{ .number = 3 });
+    session.setParams(&params);
+    try session.evaluateWorkspace();
+    try testing.expectApproxEqAbs(@as(f64, 27), kernel.volume(session.nodes.items[@backingInt(a_id)].cached_handle.?), 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 64), kernel.volume(session.nodes.items[@backingInt(b_id)].cached_handle.?), 1e-9);
+}
+
 test "ScriptSession: a data file a module read runs it, and its importers, again when it changes" {
     var session = try ScriptSession.init(testing.allocator, testing.io, .none);
     defer session.deinit();

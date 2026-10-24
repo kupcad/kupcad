@@ -9,6 +9,8 @@
 
 const std = @import("std");
 const ast = @import("../core/ast.zig");
+const owned_keys = @import("../core/owned_keys.zig");
+const ParamValues = @import("../core/param_values.zig").ParamValues;
 const lsp_preview = @import("lsp_preview.zig");
 const Preview = lsp_preview.Preview;
 const freeFiles = lsp_preview.freeFiles;
@@ -43,16 +45,18 @@ pub const Kind = enum(u8) {
     hover,
     /// (empty) Stops the running evaluation; no reply.
     cancel,
-    /// To set_root, update and remove: u8 0 (done) or 1 (failed). To evaluate: u8 the
-    /// outcome's tag, then the preview frame's bytes for a frame. To hover: u8 0 (doesn't compile) or 1, then
-    /// the facts. To file_changed: u8 1 when a module read the file, else 0 (failed too). To
-    /// files_read: the paths, PATH_SEPARATOR between them.
+    /// To set_root, update, remove and set_params: u8 0 (done) or 1 (failed). To evaluate:
+    /// u8 the outcome's tag, then the preview frame's bytes for a frame. To hover: u8 0
+    /// (doesn't compile) or 1, then the facts. To file_changed: u8 1 when a module read the
+    /// file, else 0 (failed too). To files_read: the paths, PATH_SEPARATOR between them.
     reply,
     // Added after the first kinds, whose values stay as they were.
     /// path: a file changed on disk.
     file_changed,
     /// (empty) The files the runs read as data.
     files_read,
+    /// u32 path length, path, the values as a JSON object (ParamValues.jsonStringify).
+    set_params,
     _,
 };
 
@@ -161,6 +165,10 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
             try replyStatus(output, preview.update(parts[0], parts[1]));
         },
         .remove => try replyStatus(output, preview.remove(frame.payload)),
+        .set_params => {
+            const parts = try splitPrefixed(frame.payload);
+            try replyStatus(output, setParams(allocator, preview, parts[0], parts[1]));
+        },
         .file_changed => {
             const affected = preview.fileChanged(frame.payload) catch |err| blk: {
                 logger.warn("Preview worker: {s} changed: {}", .{ frame.payload, err });
@@ -199,6 +207,17 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
         },
         .cancel, .reply, _ => return error.BadFrame,
     }
+}
+
+/// The document at `module_path` runs with the values `json` holds, as a WorkerPreview
+/// wrote them.
+fn setParams(allocator: std.mem.Allocator, preview: *SessionPreview, module_path: []const u8, json: []const u8) !void {
+    var values: ParamValues = .{};
+    defer values.deinit(allocator);
+    var why: ?[]u8 = null;
+    defer if (why) |w| allocator.free(w);
+    try values.putJson(allocator, json, &why);
+    try preview.setParams(module_path, &values);
 }
 
 fn replyStatus(output: *std.Io.Writer, result: anyerror!void) !void {
@@ -275,8 +294,9 @@ const WorkerInbox = struct {
 // --- The server's side ---
 
 /// A `Preview` whose work a worker process does. The worker starts on first use, in the
-/// server's working directory, and is given the workspace root and every open document; one
-/// that ended (it crashed, or was killed) is replaced the same way on the next use.
+/// server's working directory, and is given the workspace root, every open document and the
+/// values they run with; one that ended (it crashed, or was killed) is replaced the same way
+/// on the next use.
 pub const WorkerPreview = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -285,6 +305,9 @@ pub const WorkerPreview = struct {
     root: ?[]u8 = null,
     /// The open documents by module path, to give a new worker (keys and values owned).
     documents: std.array_hash_map.String([]u8) = .empty,
+    /// The values documents run with, by module path, as the JSON a new worker is given
+    /// (keys and values owned).
+    params: std.StringHashMapUnmanaged([]u8) = .empty,
     worker: ?*Worker = null,
     cancel: std.atomic.Value(bool) = .init(false),
     /// What the last worker was running when it ended, until `takeCrash` hands it out.
@@ -316,6 +339,12 @@ pub const WorkerPreview = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.documents.deinit(self.allocator);
+        var params = self.params.iterator();
+        while (params.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.params.deinit(self.allocator);
         if (self.root) |r| self.allocator.free(r);
         self.crash.deinit(self.allocator);
     }
@@ -325,6 +354,7 @@ pub const WorkerPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
+            .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
@@ -374,7 +404,21 @@ pub const WorkerPreview = struct {
             self.allocator.free(kv.key);
             self.allocator.free(kv.value);
         }
+        if (self.params.fetchRemove(module_path)) |kv| {
+            self.allocator.free(kv.key);
+            self.allocator.free(kv.value);
+        }
         if (self.worker) |w| self.tell(w, module_path, .remove, &.{module_path}) catch {};
+    }
+
+    pub fn setParams(self: *WorkerPreview, module_path: []const u8, values: *const ParamValues) !void {
+        const json = try std.json.Stringify.valueAlloc(self.allocator, values.*, .{});
+        errdefer self.allocator.free(json);
+        const gop = try owned_keys.getOrPutOwned(&self.params, self.allocator, module_path);
+        if (gop.found_existing) self.allocator.free(gop.value_ptr.*);
+        gop.value_ptr.* = json;
+        // A worker that ended is told them when it is replaced.
+        if (self.worker) |w| self.tellParams(w, module_path, json) catch {};
     }
 
     /// A worker that isn't running has run nothing that read it: the next one reads it anew.
@@ -449,11 +493,17 @@ pub const WorkerPreview = struct {
         if (self.root) |root| try self.tell(w, root, .set_root, &.{root});
         var it = self.documents.iterator();
         while (it.next()) |entry| try self.tellUpdate(w, entry.key_ptr.*, entry.value_ptr.*);
+        var params = self.params.iterator();
+        while (params.next()) |entry| try self.tellParams(w, entry.key_ptr.*, entry.value_ptr.*);
         return w;
     }
 
     fn tellUpdate(self: *WorkerPreview, w: *Worker, module_path: []const u8, source: []const u8) !void {
         try self.tell(w, module_path, .update, &.{ &u32Bytes(@intCast(module_path.len)), module_path, source });
+    }
+
+    fn tellParams(self: *WorkerPreview, w: *Worker, module_path: []const u8, json: []const u8) !void {
+        try self.tell(w, module_path, .set_params, &.{ &u32Bytes(@intCast(module_path.len)), module_path, json });
     }
 
     /// Sends a request about `subject` whose reply is only whether it worked; a worker that
@@ -516,6 +566,9 @@ pub const WorkerPreview = struct {
     }
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
+    }
+    fn setParamsImpl(ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void {
+        return cast(ptr).setParams(module_path, values);
     }
     fn fileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!bool {
         return cast(ptr).fileChanged(path);

@@ -1,5 +1,6 @@
 //! The values a host gives a script's parameters (`param(:name, default: ...)`): `kupcad
-//! build -p name=text` and `-P file.json`, the API's BuildOptions, wasm's build. `ParamValues`
+//! build -p name=text` and `-P file.json`, the API's BuildOptions, wasm's build and preview,
+//! the language server's `kupcad.setParams`. `ParamValues`
 //! holds them by name; the VM receives them in its `params` Map (api.injectParams), and
 //! `param()` reads each by the type its default declares. A preview frame gives the values a
 //! run took back as the same JSON (`jsonStringify`, the inverse of `putJson`).
@@ -50,6 +51,24 @@ pub const ParamValues = struct {
         gop.value_ptr.* = owned;
     }
 
+    /// A copy, owned by `allocator`.
+    pub fn clone(self: ParamValues, allocator: std.mem.Allocator) !ParamValues {
+        var copy: ParamValues = .{};
+        errdefer copy.deinit(allocator);
+        for (self.map.keys(), self.map.values()) |name, v| try copy.put(allocator, name, v);
+        return copy;
+    }
+
+    /// Whether `other` gives the same names the same values, in the same order (the order
+    /// they reach the script in).
+    pub fn eql(self: ParamValues, other: ParamValues) bool {
+        if (self.map.count() != other.map.count()) return false;
+        for (self.map.keys(), self.map.values(), other.map.keys(), other.map.values()) |name, v, other_name, other_v| {
+            if (!std.mem.eql(u8, name, other_name) or !valueEql(v, other_v)) return false;
+        }
+        return true;
+    }
+
     /// The values as the JSON object putJson reads: names to numbers, booleans and strings,
     /// in their order.
     pub fn jsonStringify(self: ParamValues, jw: *std.json.Stringify) !void {
@@ -87,6 +106,13 @@ pub const ParamValues = struct {
                 return error.InvalidParams;
             },
         };
+        return self.putObject(allocator, object, why);
+    }
+
+    /// Sets the parameters a parsed JSON object gives (its strings copied), over any they
+    /// had; a value no parameter takes is refused as putJson refuses it.
+    pub fn putObject(self: *ParamValues, allocator: std.mem.Allocator, object: std.json.ObjectMap, why: *?[]u8) !void {
+        why.* = null;
         for (object.keys(), object.values()) |name, v| {
             const param = paramValue(v) orelse {
                 why.* = allocator.print("parameter '{s}' is {s}; a parameter takes a number, a string, true or false", .{ name, kindOf(v) }) catch null;
@@ -96,6 +122,14 @@ pub const ParamValues = struct {
         }
     }
 };
+
+fn valueEql(a: ParamValue, b: ParamValue) bool {
+    return switch (a) {
+        .number => |n| b == .number and b.number == n,
+        .boolean => |flag| b == .boolean and b.boolean == flag,
+        .text => |t| b == .text and std.mem.eql(u8, b.text, t),
+    };
+}
 
 fn freeValue(allocator: std.mem.Allocator, v: ParamValue) void {
     switch (v) {

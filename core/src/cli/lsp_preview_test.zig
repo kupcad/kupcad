@@ -5,6 +5,7 @@ const std = @import("std");
 const testing = std.testing;
 const SessionPreview = @import("lsp_preview.zig").SessionPreview;
 const preview_frame = @import("../preview/frame.zig");
+const ParamValues = @import("../core/param_values.zig").ParamValues;
 
 /// What these tests read of a frame's header.
 const Header = struct {
@@ -136,4 +137,39 @@ test "LSP preview: a run a message stopped leaves no frame, and the next run mak
     try testing.expect(preview.frame == null);
     preview.session.vm.cancel_token.store(false, .release);
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "part.kup")).header.kind);
+}
+
+/// Gives the document at `module_path` the values of the JSON object `json`.
+fn setParams(preview: *SessionPreview, module_path: []const u8, json: []const u8) !void {
+    var values: ParamValues = .{};
+    defer values.deinit(testing.allocator);
+    var why: ?[]u8 = null;
+    try values.putJson(testing.allocator, json, &why);
+    try preview.setParams(module_path, &values);
+}
+
+test "LSP preview: each document runs with its own values, and a refused one is named in its frame" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the refused value's error would print to the test log
+    try preview.update("a.kup", "cube(param(:w, default: 2, validate: { min: 1 }))\n");
+    try preview.update("b.kup", "square(param(:w, default: 1))\n");
+
+    try setParams(&preview, "a.kup", "{\"w\": 3}");
+    try testing.expectEqual(@as(i64, 3), (try frameOf(arena.allocator(), &preview, "a.kup")).header.params.values.object.get("w").?.integer);
+    // The session runs b.kup with its own (none), and a.kup with its values again after it
+    try testing.expectEqual(@as(i64, 1), (try frameOf(arena.allocator(), &preview, "b.kup")).header.params.values.object.get("w").?.integer);
+    try testing.expectEqual(@as(i64, 3), (try frameOf(arena.allocator(), &preview, "a.kup")).header.params.values.object.get("w").?.integer);
+
+    try setParams(&preview, "a.kup", "{\"w\": 0}");
+    const refused = (try frameOf(arena.allocator(), &preview, "a.kup")).header;
+    try testing.expectEqualStrings("w", refused.@"error".?.param.?);
+
+    // A document closed forgets its values
+    try preview.remove("a.kup");
+    try preview.update("a.kup", "cube(param(:w, default: 2, validate: { min: 1 }))\n");
+    try testing.expectEqual(@as(i64, 2), (try frameOf(arena.allocator(), &preview, "a.kup")).header.params.values.object.get("w").?.integer);
 }

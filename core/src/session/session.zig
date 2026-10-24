@@ -143,11 +143,17 @@ pub const ScriptSession = struct {
     }
 
     /// Replaces the parameters with `params`, which the session takes: the caller's copy is
-    /// emptied. They must have been made with the session's allocator.
+    /// emptied. They must have been made with the session's allocator. Any module may read
+    /// them, so every module runs again at the next evaluation.
     pub fn setParams(self: *ScriptSession, params: *ParamValues) void {
         self.params.deinit(self.allocator);
         self.params = params.*;
         params.* = .{};
+        self.global_revision += 1;
+        for (self.nodes.items) |*node| {
+            node.must_run = true;
+            node.is_stale = true;
+        }
     }
 
     pub fn deinit(self: *ScriptSession) void {

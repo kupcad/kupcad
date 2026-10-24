@@ -12,6 +12,7 @@ const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const limits = @import("../core/limits.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 const registry = @import("../stdlib/registry.zig");
 const preview_build = @import("../preview/build.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -24,8 +25,11 @@ const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const Vfs = @import("../vfs/vfs.zig").Vfs;
+const ParamValues = api.ParamValues;
 
 const logger = std.log.scoped(.lsp);
+/// What a document runs with before kupcad.setParams gives it values: its defaults.
+const NO_PARAMS: ParamValues = .{};
 
 /// How a preview's evaluation ended.
 pub const Outcome = union(enum) {
@@ -55,6 +59,7 @@ pub const Preview = struct {
         setRoot: *const fn (ptr: *anyopaque, root: []const u8) anyerror!void,
         update: *const fn (ptr: *anyopaque, module_path: []const u8, source: []const u8) anyerror!void,
         remove: *const fn (ptr: *anyopaque, module_path: []const u8) anyerror!void,
+        setParams: *const fn (ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void,
         fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
         evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome,
@@ -73,8 +78,15 @@ pub const Preview = struct {
         return self.vtable.update(self.ptr, module_path, source);
     }
 
+    /// The document's values too are forgotten.
     pub fn remove(self: Preview, module_path: []const u8) !void {
         return self.vtable.remove(self.ptr, module_path);
+    }
+
+    /// The document at `module_path` runs with `values` from now on (kupcad.setParams), in
+    /// place of any it was given: its preview, and the run its hovers read.
+    pub fn setParams(self: Preview, module_path: []const u8, values: *const ParamValues) !void {
+        return self.vtable.setParams(self.ptr, module_path, values);
     }
 
     /// The file at `path` (its path in the project) changed on disk: a module a document
@@ -137,6 +149,8 @@ pub const SessionPreview = struct {
     /// The frame of a module's last run, kept while no other run of it was made: a module
     /// that is up to date doesn't run again to be shown again.
     frame: ?Frame = null,
+    /// The values each document runs with (setParams), by module path, keys owned.
+    params: std.StringHashMapUnmanaged(ParamValues) = .empty,
     /// What the evaluation running now is for, and what the session's observer saw of it.
     round: ?Round = null,
 
@@ -186,6 +200,12 @@ pub const SessionPreview = struct {
     pub fn deinit(self: *SessionPreview) void {
         self.dropHover();
         self.dropFrame();
+        var params = self.params.iterator();
+        while (params.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.params.deinit(self.allocator);
         self.session.deinit();
         self.documents.deinit();
         if (self.workspace_dir) |d| d.close(self.io);
@@ -196,6 +216,7 @@ pub const SessionPreview = struct {
             .setRoot = setRootImpl,
             .update = updateImpl,
             .remove = removeImpl,
+            .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
             .evaluate = evaluateImpl,
@@ -225,14 +246,43 @@ pub const SessionPreview = struct {
         try self.session.markFileEdited(module_path);
     }
 
-    /// Forgets a document the editor closed. One that another document imports is read
-    /// from disk again, as it is now.
+    /// Forgets a document the editor closed, and its values. One that another document
+    /// imports is read from disk again, as it is now.
     pub fn remove(self: *SessionPreview, module_path: []const u8) !void {
         self.dropHover();
         if (self.hasFrameOf(module_path)) self.dropFrame();
+        if (self.params.fetchRemove(module_path)) |kv| {
+            self.allocator.free(kv.key);
+            var values = kv.value;
+            values.deinit(self.allocator);
+        }
         try self.session.removeModule(module_path);
         _ = self.documents.deleteFile(module_path);
         try self.session.loadImports();
+    }
+
+    /// The session runs with them when it next runs the document (useParamsOf); its hovers
+    /// read a run with them.
+    pub fn setParams(self: *SessionPreview, module_path: []const u8, values: *const ParamValues) !void {
+        var copy = try values.clone(self.allocator);
+        errdefer copy.deinit(self.allocator);
+        const gop = try owned_keys.getOrPutOwned(&self.params, self.allocator, module_path);
+        if (gop.found_existing) gop.value_ptr.deinit(self.allocator);
+        gop.value_ptr.* = copy;
+        if (self.hover) |hover| if (std.mem.eql(u8, hover.module_path, module_path)) self.dropHover();
+    }
+
+    fn paramsOf(self: *const SessionPreview, module_path: []const u8) *const ParamValues {
+        return self.params.getPtr(module_path) orelse &NO_PARAMS;
+    }
+
+    /// Gives the session the values of `module_path` when it ran with others: every module
+    /// then runs again (ScriptSession.setParams).
+    fn useParamsOf(self: *SessionPreview, module_path: []const u8) !void {
+        const wanted = self.paramsOf(module_path);
+        if (wanted.eql(self.session.params)) return;
+        var copy = try wanted.clone(self.allocator);
+        self.session.setParams(&copy);
     }
 
     pub fn fileChanged(self: *SessionPreview, path: []const u8) !bool {
@@ -284,6 +334,7 @@ pub const SessionPreview = struct {
     /// reads changed; or why it didn't run, when it or a module it imports doesn't parse or
     /// compile, or a module it imports fails.
     pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
+        self.useParamsOf(module_path) catch |err| return notEvaluated(module_path, err);
         // The frame is made by a run: the last run made none (no viewer was watching), or
         // was of another document
         if (want_frame and !self.hasFrameOf(module_path)) self.session.runAgain(module_path) catch |err| return notEvaluated(module_path, err);
@@ -401,7 +452,7 @@ pub const SessionPreview = struct {
         errdefer self.allocator.free(path);
         var doc = try api.Document.parse(self.allocator, source);
         errdefer doc.deinit();
-        const run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), &doc, module_path);
+        const run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), &doc, module_path, self.paramsOf(module_path));
         self.hover = .{ .module_path = path, .doc = doc, .run = run };
         return &self.hover.?;
     }
@@ -422,6 +473,9 @@ pub const SessionPreview = struct {
     }
     fn removeImpl(ptr: *anyopaque, module_path: []const u8) anyerror!void {
         return cast(ptr).remove(module_path);
+    }
+    fn setParamsImpl(ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void {
+        return cast(ptr).setParams(module_path, values);
     }
     fn fileChangedImpl(ptr: *anyopaque, path: []const u8) anyerror!bool {
         return cast(ptr).fileChanged(path);
@@ -460,9 +514,10 @@ pub const HoverRun = struct {
     program: chunk.Chunk,
 
     /// Runs `doc` (known in the project as `module_path`) on `sandbox`, which must not
-    /// write: the document is untrusted. Null when it doesn't compile: running an
-    /// incomplete chunk broke the VM's invariants, and its diagnostics say why.
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8) !?*HoverRun {
+    /// write: the document is untrusted, with `params` as the preview runs it. Null when it
+    /// doesn't compile: running an incomplete chunk broke the VM's invariants, and its
+    /// diagnostics say why.
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, params: *const ParamValues) !?*HoverRun {
         const self = try allocator.create(HoverRun);
         errdefer allocator.destroy(self);
         self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
@@ -475,6 +530,7 @@ pub const HoverRun = struct {
         // Hovers read the run the preview shows
         self.vm.previewing = true;
         try registry.registerStandardLibrary(&self.vm);
+        try api.injectParams(&self.vm, params);
 
         var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
         defer comp.deinit();

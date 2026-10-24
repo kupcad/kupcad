@@ -630,6 +630,61 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try worker.finish());
 }
 
+test "kupcad: lsp gives a document values with kupcad.setParams, and a new worker is given them" {
+    const builtin = @import("builtin");
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    var server: Conversation = undefined;
+    try server.start(sb.path, &.{"lsp"});
+    errdefer server.child.kill(testing.io);
+    var seen: std.ArrayList(u8) = .empty;
+    defer seen.deinit(testing.allocator);
+
+    var root_buf: [1024]u8 = undefined;
+    const root = try std.mem.print(&root_buf, "file://{s}", .{sb.path});
+    var msg_buf: [2048]u8 = undefined;
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"{s}\"}}}}", .{root}));
+    const capabilities = try server.answer(1, &seen);
+    defer testing.allocator.free(capabilities);
+    try testing.expect(std.mem.find(u8, capabilities, "\"executeCommandProvider\":{\"commands\":[\"kupcad.setParams\"]}") != null);
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+    const text = "a = cube(param(:w, default: 2))\\n";
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ root, text }));
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"workspace/executeCommand\",\"params\":{{\"command\":\"kupcad.setParams\",\"arguments\":[{{\"uri\":\"{s}/part.kup\",\"values\":{{\"w\":3}}}}]}}}}", .{root}));
+    const set = try server.answer(2, &seen);
+    defer testing.allocator.free(set);
+    try testing.expect(std.mem.find(u8, set, "\"error\"") == null);
+    const hover_fmt = "{{\"jsonrpc\":\"2.0\",\"id\":{d},\"method\":\"textDocument/hover\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\"}},\"position\":{{\"line\":0,\"character\":0}}}}}}";
+    try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 3, root }));
+    const first = try server.answer(3, &seen);
+    defer testing.allocator.free(first);
+    try testing.expect(std.mem.find(u8, first, "**Volume:** `27.00`") != null);
+
+    // The worker is the server's one child: kill it; the edit that finds it gone starts another
+    var pid_buf: [16]u8 = undefined;
+    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.mem.print(&pid_buf, "{d}", .{server.child.id.?}) } });
+    testing.allocator.free(pkill.stdout);
+    testing.allocator.free(pkill.stderr);
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"{s}\"}}]}}}}", .{ root, text }));
+    try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 4, root }));
+    const second = try server.answer(4, &seen);
+    defer testing.allocator.free(second);
+    try testing.expect(std.mem.find(u8, second, "**Volume:** `27.00`") != null);
+
+    // Arguments of another shape are refused
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"workspace/executeCommand\",\"params\":{\"command\":\"kupcad.setParams\",\"arguments\":[]}}");
+    const refused = try server.answer(5, &seen);
+    defer testing.allocator.free(refused);
+    try testing.expect(std.mem.find(u8, refused, "\"code\":-32602") != null);
+
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"shutdown\"}");
+    testing.allocator.free(try server.answer(6, &seen));
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
+}
+
 test "kupcad: lsp runs scripts in a worker, and a worker that dies is replaced" {
     const builtin = @import("builtin");
     if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;

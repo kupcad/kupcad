@@ -136,3 +136,37 @@ test "lsp worker: the paths of a files_read reply read back as they were sent" {
         for (files, read) |want, got| try testing.expectEqualStrings(want, got);
     }
 }
+
+test "lsp worker: serve gives a document its values, which its next frame runs with, and refuses ones that aren't" {
+    const warnings = @import("../test_support.zig").expectWarnings(); // the refusal is logged
+    defer warnings.restore();
+    const path = "part.kup";
+    var requests: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer requests.deinit();
+    try lsp_worker.writeFrame(&requests.writer, .update, &.{ &u32Bytes(path.len), path, "cube(param(:w, default: 2))\n" });
+    try lsp_worker.writeFrame(&requests.writer, .set_params, &.{ &u32Bytes(path.len), path, "{\"w\":3}" });
+    try lsp_worker.writeFrame(&requests.writer, .evaluate, &.{ &.{1}, path });
+    try lsp_worker.writeFrame(&requests.writer, .set_params, &.{ &u32Bytes(path.len), path, "[3]" });
+
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    var in: std.Io.Reader = .fixed(requests.written());
+    var replies: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer replies.deinit();
+    try lsp_worker.serve(testing.io, testing.allocator, &preview, &in, &replies.writer);
+
+    var out: std.Io.Reader = .fixed(replies.written());
+    for (0..2) |_| {
+        const done = try lsp_worker.readFrame(&out, testing.allocator);
+        defer testing.allocator.free(done.payload);
+        try testing.expectEqualSlices(u8, &.{0}, done.payload);
+    }
+    const evaluated = try lsp_worker.readFrame(&out, testing.allocator);
+    defer testing.allocator.free(evaluated.payload);
+    const frame = try preview_frame.split(evaluated.payload[1..]);
+    try testing.expect(std.mem.find(u8, frame.header, "\"values\":{\"w\":3}") != null);
+    const refused = try lsp_worker.readFrame(&out, testing.allocator);
+    defer testing.allocator.free(refused.payload);
+    try testing.expectEqualSlices(u8, &.{1}, refused.payload);
+}

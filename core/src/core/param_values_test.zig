@@ -103,3 +103,40 @@ test "ParamValues: written as JSON, they read back the same, in their order" {
     for (values.map.keys(), back.map.keys()) |a, b| try testing.expectEqualStrings(a, b);
     try testing.expectEqualStrings("PETG \"pro\"", back.map.get("material").?.text);
 }
+
+test "ParamValues: a copy is equal, and a value, a name or the order changed isn't" {
+    var values: ParamValues = .{};
+    defer values.deinit(testing.allocator);
+    try values.put(testing.allocator, "width", .{ .number = 12.5 });
+    try values.put(testing.allocator, "label", .{ .text = "A" });
+    var copy = try values.clone(testing.allocator);
+    defer copy.deinit(testing.allocator);
+    try testing.expect(copy.eql(values));
+    try testing.expect(values.map.get("label").?.text.ptr != copy.map.get("label").?.text.ptr);
+    try testing.expect(!values.eql(.{}));
+
+    try copy.put(testing.allocator, "label", .{ .text = "B" });
+    try testing.expect(!copy.eql(values));
+    try copy.put(testing.allocator, "label", .{ .boolean = true });
+    try testing.expect(!copy.eql(values));
+
+    var reordered: ParamValues = .{};
+    defer reordered.deinit(testing.allocator);
+    try reordered.put(testing.allocator, "label", .{ .text = "A" });
+    try reordered.put(testing.allocator, "width", .{ .number = 12.5 });
+    try testing.expect(!reordered.eql(values));
+}
+
+test "ParamValues: a parsed JSON object gives its values, and refuses one no parameter takes" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, "{\"width\": 40, \"label\": \"A\", \"holes\": [1]}", .{});
+    var values: ParamValues = .{};
+    defer values.deinit(testing.allocator);
+    var why: ?[]u8 = null;
+    defer if (why) |w| testing.allocator.free(w);
+    try testing.expectError(error.InvalidParams, values.putObject(testing.allocator, parsed.value.object, &why));
+    try testing.expectEqualStrings("parameter 'holes' is an array; a parameter takes a number, a string, true or false", why.?);
+    // Its strings are copies: the parse goes, the values stay
+    parsed.deinit();
+    try expectValue(.{ .text = "A" }, &values, "label");
+    try expectValue(.{ .number = 40 }, &values, "width");
+}

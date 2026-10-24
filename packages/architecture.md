@@ -247,7 +247,7 @@ Data flow:
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.
 * **Parameters** go the other way: the panel's values → bridge → extension host →
-  `kupcad/setParams` request to the language server, which re-runs the preview with them.
+  `kupcad.setParams` command (`workspace/executeCommand`) to the language server, which re-runs the preview with them.
   The schema, the values used and any refused one come in each preview frame's header, so the
   panel and the model are always of the same run.
 * **Findings and warnings** are LSP diagnostics in the Problems view, as now; the preview's
@@ -313,10 +313,10 @@ Before `@kupcad/protocol` is written, so its types mirror real output. Each is s
 
 | Need | Where | What |
 |---|---|---|
-| One preview payload | `cli/lsp_preview.zig`, `cli/viewport_ws.zig`, `wasm.zig` | A frame of a JSON header and a body, the same from the viewport socket and from a new `preview_wasm(source, params)` export. The header: `protocolVersion`, `kind` (`3d`, `2d`, `none`), the parts (name, copies, colour), the run's warnings with their lines (a mended mesh, a feature the engine lacks; logged today), the parameter schema and the values the run used, a rejected value as `{ name, message }`, timings. The body: GLB, or SVG for a Sketch or a Path (which get no preview today). |
-| One findings shape | `wasm.zig` | `check_code_wasm` emits `check --format json`'s finding (`line`, `column`, `endLine`, `endColumn`, `severity`, `rule`, `code`, `message`, `fix`) without `path`, keeping `offset` and `length` too (CodeMirror wants offsets, VS Code lines). |
-| Parameters from the editor | `cli/lsp.zig` | A `kupcad/setParams` request (the session's `setParams` exists) that re-runs the preview with the values; the new frame carries what came of them. |
-| Machine-readable version | `cli/main.zig`, `cli/lsp.zig` | `kupcad version --json` (`version`, `protocolVersion`, `platform`), and `protocolVersion` in `kupcad/viewportReady`. |
+| One preview payload (done) | `preview/`, `cli/lsp_preview.zig`, `wasm.zig` | A frame (`preview/frame.zig`): a u32 header length, a JSON header and a body, the same from the viewport socket and from `preview_wasm(source, params)`. The header: `protocolVersion`, `kind` (`3d`, `2d`, `none`), `parts` (`name`, `count`, `nodes`, `color`, `opacity`), `warnings` (`message`, `line`, `column`), `params` (`schema`, as `kupcad doc` gives it, and the `values` the run took), `error` (`message`, `line`, `column`, `param`: the parameter whose value was refused), `timing` (`runMs`, `renderMs`). The body: GLB, or SVG for Sketches and Paths. |
+| One findings shape (done) | `tools/lint/finding.zig`, `wasm.zig` | `check_code_wasm` emits `check --format json`'s finding (`line`, `column`, `endLine`, `endColumn`, `offset`, `length`, `severity`, `rule`, `code`, `message`, `fix`) without `path` (CodeMirror wants offsets, VS Code lines). |
+| Parameters from the editor (done) | `cli/lsp.zig` | A `kupcad.setParams` command (`workspace/executeCommand`: lsp_kit answers a custom request with null), `[{ uri, values }]`, that re-runs the preview with the values; the new frame carries what came of them. |
+| Machine-readable version (done) | `cli/version_cmd.zig`, `cli/lsp.zig` | `kupcad version --json` (`version`, `protocolVersion`, `os`, `arch`), and `protocolVersion` in `kupcad/viewportReady`. |
 | Warnings as diagnostics | `cli/lsp.zig` | The run's warnings published at the call's line, for the Problems view. After the above. |
 | Part → source | `exporters/3d/gltf.zig` | Each part node's `extras` carry the file and line of its `named`, for click-to-source. Later. |
 | Publish the wasm | `.github/workflows/release.yml` | A job that builds `kupcad.wasm`, runs `@kupcad/wasm`'s tests against it and publishes the package from the tag. |
@@ -336,7 +336,7 @@ the truth.
 2. **Viewer and panels:** `@kupcad/viewer` (GLB, modes, camera, section, picking; SVG once the core
    sends it), `@kupcad/ui`'s `ViewerPane` and `ParamsPanel`.
 3. **The extension:** the binary manager, the viewer panel on the new components, parameters and
-   presets, export and print, the core's `kupcad/preview` and `kupcad/setParams`. This is the
+   presets, export and print, the core's `kupcad/preview`. This is the
    first thing a user installs, so it comes before the web hosts.
 4. **The playground** and the docs site that embeds it.
 5. **The PWA, then the desktop app**, which reuse everything above.
