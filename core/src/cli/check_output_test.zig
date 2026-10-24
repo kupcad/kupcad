@@ -3,6 +3,7 @@ const testing = std.testing;
 const check_output = @import("check_output.zig");
 const api = @import("../api.zig");
 const suppressions = @import("../tools/lint/suppressions.zig");
+const lint_finding = @import("../tools/lint/finding.zig");
 
 test "SARIF: every result names a declared rule and every path is a URI" {
     // Code scanning rejected the file: raw paths with spaces, suppression results naming
@@ -39,4 +40,39 @@ test "SARIF: every result names a declared rule and every path is a URI" {
     }
     try testing.expectEqualStrings("unexpected-token", results[0].object.get("ruleId").?.string);
     try testing.expectEqualStrings("note", results[2].object.get("level").?.string);
+}
+
+test "JSON: each finding is its path, then the finding every host gets (tools/lint/finding.zig)" {
+    // `check --format json` and the browser's check_code_wasm write one shape: the CLI's
+    // with the file's path first, and nothing else between them differs
+    const source = "x = 1\ncube(-2)\n";
+    var collector = check_output.Collector.init(testing.allocator);
+    defer collector.deinit();
+    const diags = try api.checkCode(testing.allocator, testing.io, source, .{});
+    defer api.freeDiagnostics(testing.allocator, diags);
+    try collector.add("part.kup", source, diags);
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    try collector.writeJson(&out.writer, .{ .files = 1, .errors = 0, .warnings = diags.len, .infos = 0 });
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, out.written(), .{});
+    defer parsed.deinit();
+    const findings = parsed.value.object.get("findings").?.array.items;
+    try testing.expectEqual(diags.len, findings.len);
+
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const line_index = try api.LineIndex.init(arena.allocator(), source);
+    for (findings, diags) |cli, d| {
+        try testing.expectEqualStrings("part.kup", cli.object.get("path").?.string);
+        const alone = try std.json.Stringify.valueAlloc(arena.allocator(), try lint_finding.Finding.place(arena.allocator(), &line_index, d), .{});
+        const host = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), alone, .{});
+        // The CLI's keys are "path" and the host's, in the host's order
+        const keys = cli.object.keys();
+        try testing.expectEqualStrings("path", keys[0]);
+        try testing.expectEqual(host.object.count(), keys.len - 1);
+        for (keys[1..], host.object.keys()) |a, b| try testing.expectEqualStrings(b, a);
+        const cli_text = try std.json.Stringify.valueAlloc(arena.allocator(), cli.object.get("offset").?, .{});
+        const host_text = try std.json.Stringify.valueAlloc(arena.allocator(), host.object.get("offset").?, .{});
+        try testing.expectEqualStrings(host_text, cli_text);
+    }
 }

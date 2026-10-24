@@ -486,29 +486,44 @@ test "WASM Interop: a build imports the files put in the VFS, and not after clea
     try testing.expect(std.mem.find(u8, msg, "plate.kup") != null);
 }
 
-test "WASM Interop: check_code_wasm's JSON names each finding's place, severity, code and message" {
+test "WASM Interop: check_code_wasm's JSON is check --format json's finding, without its path" {
     const src = "x = 1\ncube(-2)";
     var len: usize = 0;
     const res = wasm.check_code_wasm(src.ptr, src.len, &len) orelse return error.CheckFailed;
     defer wasm.wasm_free(@constCast(res), len);
+    // Parsed strictly: a field missing or added fails
     const parsed = try std.json.parseFromSlice([]CheckFinding, testing.allocator, res[0..len], .{});
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 2), parsed.value.len);
-    for (parsed.value) |f| {
-        try testing.expect(f.line >= 1 and f.col >= 1); // one-based, as an editor shows them
-        try testing.expectEqualStrings(src[f.offset..][0..f.length], src[f.offset..][0..f.length]);
-        try testing.expect(std.mem.eql(u8, f.severity, "error") or std.mem.eql(u8, f.severity, "warning") or std.mem.eql(u8, f.severity, "info"));
-        try testing.expect(f.message.len > 0);
-    }
-    const negative = for (parsed.value) |f| {
-        if (f.line == 2) break f;
-    } else return error.MissingFinding;
-    try testing.expectEqual(@as(u32, 6), negative.col);
+    const unused = parsed.value[0];
+    try testing.expectEqual(@as(u32, 1), unused.line); // one-based, as an editor shows them
+    try testing.expectEqual(@as(u32, 1), unused.column);
+    try testing.expectEqualStrings("x", src[unused.offset..][0..unused.length]);
+    try testing.expectEqualStrings("unused-variable", unused.rule.?);
+    try testing.expectEqualStrings("_x", unused.fix.?.edits[0].text);
+    const negative = parsed.value[1];
+    try testing.expectEqual(@as(u32, 2), negative.line);
+    try testing.expectEqual(@as(u32, 6), negative.column);
+    try testing.expectEqual(@as(u32, 8), negative.endColumn);
     try testing.expectEqualStrings("-2", src[negative.offset..][0..negative.length]);
     try testing.expectEqualStrings("nonpositive-size", negative.code);
+    try testing.expectEqualStrings("warning", negative.severity);
 }
 
-const CheckFinding = struct { line: u32, col: u32, offset: u32, length: u32, severity: []const u8, code: []const u8, message: []const u8 };
+const CheckEdit = struct { line: u32, column: u32, endLine: u32, endColumn: u32, offset: u32, length: u32, text: []const u8 };
+const CheckFinding = struct {
+    line: u32,
+    column: u32,
+    endLine: u32,
+    endColumn: u32,
+    offset: u32,
+    length: u32,
+    severity: []const u8,
+    rule: ?[]const u8,
+    code: []const u8,
+    message: []const u8,
+    fix: ?struct { title: []const u8, safe: bool, edits: []const CheckEdit },
+};
 
 test "WASM Interop: check_code_wasm's JSON gives a syntax error its code, as a finding its rule" {
     const src = "cube(1";
@@ -520,6 +535,8 @@ test "WASM Interop: check_code_wasm's JSON gives a syntax error its code, as a f
     try testing.expectEqual(@as(usize, 1), parsed.value.len);
     try testing.expectEqualStrings("error", parsed.value[0].severity);
     try testing.expectEqualStrings("unexpected-token", parsed.value[0].code);
+    // A syntax error is no rule's
+    try testing.expectEqual(@as(?[]const u8, null), parsed.value[0].rule);
 }
 
 test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" {

@@ -696,7 +696,7 @@ A setting `.kupcad.json` doesn't have is an error that gives its line and column
 
 In the editor, each finding with a fix offers it as a quick fix (Ctrl+. / Cmd+.), the safe ones marked preferred, and every lint finding also offers "Disable <rule> for this line", which adds the `kupcad:disable-next-line` comment above it, indented like the line.
 
-For CI, `--max-warnings <n>` fails the run when there are more than `n` warnings (`0` fails on any), and `--format json` or `--format sarif` writes one document to stdout instead of the report: JSON lists each finding with its path, line, column, end, severity, rule (null for a syntax or compile error), code (the rule, or the error's code), message and fix; SARIF 2.1.0 is what code-scanning services read (GitHub shows the findings on a pull request with `github/codeql-action/upload-sarif`).
+For CI, `--max-warnings <n>` fails the run when there are more than `n` warnings (`0` fails on any), and `--format json` or `--format sarif` writes one document to stdout instead of the report: JSON lists each finding with its path, line, column, end (`endLine`, `endColumn`), byte `offset` and `length`, severity, rule (null for a syntax or compile error), code (the rule, or the error's code), message and fix (the same finding the browser's `check_code_wasm` gives, without the path); SARIF 2.1.0 is what code-scanning services read (GitHub shows the findings on a pull request with `github/codeql-action/upload-sarif`).
 
 A comment can hide findings where they are deliberate. It names the rules it hides, and may say why after ` -- `:
 

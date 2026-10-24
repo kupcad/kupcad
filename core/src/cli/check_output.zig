@@ -6,6 +6,7 @@ const api = @import("../api.zig");
 const RuleSet = @import("../tools/lint/linter.zig").RuleSet;
 const suppressions = @import("../tools/lint/suppressions.zig");
 const ErrorCode = @import("../core/errors.zig").Code;
+const lint_finding = @import("../tools/lint/finding.zig");
 
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI = "https://github.com/kupcad/kupcad";
@@ -17,32 +18,19 @@ pub const Format = enum {
     sarif,
 };
 
-/// A place in a file: 1-based line, and 1-based column in UTF-8 bytes (as `check` prints
-/// it) and in UTF-16 code units (SARIF's default).
-const Position = struct {
-    line: u32,
-    column: u32,
-    utf16_column: u32,
-
-    fn at(line_index: *const api.LineIndex, offset: u32) Position {
-        const pos = line_index.humanPosition(offset);
-        return .{ .line = pos.line, .column = pos.column, .utf16_column = line_index.getUtf16Column(offset) + 1 };
-    }
-};
-
-const Edit = struct { start: Position, end: Position, text: []const u8 };
-
+/// A finding in its file: the shape every host gets (tools/lint/finding.zig), with the
+/// file's path before it.
 const Finding = struct {
     path: []const u8,
-    start: Position,
-    end: Position,
-    severity: []const u8,
-    rule: ?[]const u8,
-    code: []const u8,
-    message: []const u8,
-    fix_title: ?[]const u8 = null,
-    fix_safe: bool = false,
-    fix_edits: []const Edit = &.{},
+    finding: lint_finding.Finding,
+
+    pub fn jsonStringify(self: Finding, jw: *std.json.Stringify) !void {
+        try jw.beginObject();
+        try jw.objectField("path");
+        try jw.write(self.path);
+        try self.finding.writeFields(jw);
+        try jw.endObject();
+    }
 };
 
 /// The findings of a run, kept until it ends and written as one document.
@@ -63,66 +51,18 @@ pub const Collector = struct {
         const a = self.arena.allocator();
         const line_index = try api.LineIndex.init(a, source);
         const kept_path = try a.dupe(u8, path);
-        for (diags) |d| {
-            var finding: Finding = .{
-                .path = kept_path,
-                .start = .at(&line_index, d.loc.offset),
-                .end = .at(&line_index, d.loc.offset + d.loc.length),
-                .severity = @tagName(d.severity),
-                .rule = d.ruleId(),
-                .code = d.code(),
-                .message = try a.dupe(u8, d.message),
-            };
-            if (d.fix) |fix| {
-                const edits = try a.alloc(Edit, fix.edits.len);
-                for (fix.edits, edits) |e, *out| out.* = .{
-                    .start = .at(&line_index, e.offset),
-                    .end = .at(&line_index, e.offset + e.length),
-                    .text = try a.dupe(u8, e.replacement),
-                };
-                finding.fix_title = try a.dupe(u8, fix.title);
-                finding.fix_safe = fix.safe;
-                finding.fix_edits = edits;
-            }
-            try self.findings.append(a, finding);
-        }
+        for (diags) |d| try self.findings.append(a, .{ .path = kept_path, .finding = try .place(a, &line_index, d) });
     }
 
     /// `{ "files", "errors", "warnings", "infos", "findings": [...] }`, each finding with
-    /// its `path`, `line`, `column`, `endLine`, `endColumn` (1-based, columns in UTF-8
-    /// bytes), `severity`, `rule` (null for a syntax or compile error), `message` and `fix`.
+    /// its `path` and then tools/lint/finding.zig's fields.
     pub fn writeJson(self: *const Collector, w: *std.Io.Writer, counts: Counts) !void {
-        const a = @constCast(&self.arena).allocator();
-        const JsonEdit = struct { line: u32, column: u32, endLine: u32, endColumn: u32, text: []const u8 };
-        const JsonFix = struct { title: []const u8, safe: bool, edits: []const JsonEdit };
-        const JsonFinding = struct {
-            path: []const u8,
-            line: u32,
-            column: u32,
-            endLine: u32,
-            endColumn: u32,
-            severity: []const u8,
-            rule: ?[]const u8,
-            code: []const u8,
-            message: []const u8,
-            fix: ?JsonFix,
-        };
-        const out = try a.alloc(JsonFinding, self.findings.items.len);
-        for (self.findings.items, out) |f, *j| {
-            var fix: ?JsonFix = null;
-            if (f.fix_title) |title| {
-                const edits = try a.alloc(JsonEdit, f.fix_edits.len);
-                for (f.fix_edits, edits) |e, *je| je.* = .{ .line = e.start.line, .column = e.start.column, .endLine = e.end.line, .endColumn = e.end.column, .text = e.text };
-                fix = .{ .title = title, .safe = f.fix_safe, .edits = edits };
-            }
-            j.* = .{ .path = f.path, .line = f.start.line, .column = f.start.column, .endLine = f.end.line, .endColumn = f.end.column, .severity = f.severity, .rule = f.rule, .code = f.code, .message = f.message, .fix = fix };
-        }
         try std.json.Stringify.value(.{
             .files = counts.files,
             .errors = counts.errors,
             .warnings = counts.warnings,
             .infos = counts.infos,
-            .findings = out,
+            .findings = self.findings.items,
         }, .{ .whitespace = .indent_2 }, w);
         try w.writeAll("\n");
     }
@@ -149,10 +89,11 @@ pub const Collector = struct {
         for (codes, rules[RuleSet.ids.len + 1 ..]) |code, *rule| rule.* = .{ .id = code.name(), .shortDescription = .{ .text = code.description() } };
 
         const results = try a.alloc(Result, self.findings.items.len);
-        for (self.findings.items, results) |f, *r| {
+        for (self.findings.items, results) |placed, *r| {
+            const f = placed.finding;
             const locations = try a.alloc(Location, 1);
             locations[0] = .{ .physicalLocation = .{
-                .artifactLocation = .{ .uri = try pathUri(a, f.path) },
+                .artifactLocation = .{ .uri = try pathUri(a, placed.path) },
                 .region = .{ .startLine = f.start.line, .startColumn = f.start.utf16_column, .endLine = f.end.line, .endColumn = f.end.utf16_column },
             } };
             const level = if (std.mem.eql(u8, f.severity, "info")) "note" else f.severity;

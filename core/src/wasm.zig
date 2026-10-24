@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const api = @import("api.zig");
+const lint_finding = @import("tools/lint/finding.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
 // Use the thread-safe C allocator provided by wasi-libc
@@ -101,33 +102,21 @@ fn inner_format(source: []const u8) ![]const u8 {
     return try api.formatCode(allocator, source, .{});
 }
 
+/// The findings of `source` as a JSON array, each in the shape `check --format json` gives
+/// it (tools/lint/finding.zig) without a path: syntax errors among them.
 fn inner_check(source: []const u8) ![]const u8 {
-    // Note: checkCode safely returns syntax errors as part of the diagnostics array.
     const diags = try api.checkCode(allocator, wasmIo(), source, .{});
     defer api.freeDiagnostics(allocator, diags);
 
-    var line_index = try api.LineIndex.init(allocator, source);
-    defer line_index.deinit(allocator);
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const line_index = try api.LineIndex.init(arena.allocator(), source);
+    const findings = try arena.allocator().alloc(lint_finding.Finding, diags.len);
+    for (diags, findings) |d, *f| f.* = try .place(arena.allocator(), &line_index, d);
+
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
-
-    try out.writer.writeAll("[");
-    for (diags, 0..) |d, i| {
-        if (i > 0) try out.writer.writeAll(",");
-        const at = line_index.humanPosition(d.loc.offset);
-        const flat_diag = .{
-            .line = at.line,
-            .col = at.column,
-            .offset = d.loc.offset,
-            .length = d.loc.length,
-            .severity = d.severity.toString(),
-            .code = d.code(),
-            .message = d.message,
-        };
-        try out.writer.print("{f}", .{std.json.fmt(flat_diag, .{})});
-    }
-    try out.writer.writeAll("]");
-
+    try std.json.Stringify.value(findings, .{}, &out.writer);
     return try out.toOwnedSlice();
 }
 
