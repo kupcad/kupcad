@@ -24,6 +24,11 @@ pub const MAX_DRACO_POSITION_BITS: u8 = 30;
 /// Material slot 0: parts without a `material(...)` (neutral grey, half rough).
 const DEFAULT_BASE_COLOR = [4]f64{ 0.8, 0.8, 0.8, 1.0 };
 const DEFAULT_ROUGHNESS = 0.5;
+/// The sRGB transfer function's constants (IEC 61966-2-1).
+const SRGB_LINEAR_KNEE = 0.04045;
+const SRGB_LINEAR_SLOPE = 12.92;
+const SRGB_OFFSET = 0.055;
+const SRGB_EXPONENT = 2.4;
 
 const DATA_URI_PREFIX = "data:application/octet-stream;base64,";
 
@@ -100,11 +105,17 @@ const BufferView = struct {
     target: ?u32 = null,
 };
 
-/// glTF's baseColorFactor is linear: decode the sRGB bytes (gamma 2.2).
+/// glTF's baseColorFactor is linear: the sRGB bytes decoded by the sRGB transfer function, as
+/// a viewer encodes them back. A gamma of 2.2 came near it, but `#cc3333` showed as `#cd3030`.
 fn linearColor(rgb: [3]u8, alpha: f64) [4]f64 {
     var color: [4]f64 = .{ 0, 0, 0, alpha };
-    for (color[0..3], rgb) |*c, byte| c.* = std.math.pow(f64, @as(f64, @floatFromInt(byte)) / 255.0, 2.2);
+    for (color[0..3], rgb) |*c, byte| c.* = srgbToLinear(@as(f64, @floatFromInt(byte)) / 255.0);
     return color;
+}
+
+/// IEC 61966-2-1's decoding of an sRGB component (0 to 1): linear near black, a 2.4 power above.
+fn srgbToLinear(c: f64) f64 {
+    return if (c <= SRGB_LINEAR_KNEE) c / SRGB_LINEAR_SLOPE else std.math.pow(f64, (c + SRGB_OFFSET) / (1 + SRGB_OFFSET), SRGB_EXPONENT);
 }
 
 /// How the glTF document is packaged. Both hold the same scene.
