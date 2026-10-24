@@ -12,7 +12,7 @@ await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a previe
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
 viewer.setCamera({ projection: 'orthographic', view: 'front' }); // frames the model from there
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
-viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click on a part
+viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click, or null
 viewer.select('bolt'); // tints every copy of the part
 viewer.bounds; // { min, max } in mm: what a section's offset ranges over
 const png = await viewer.screenshot();
@@ -30,18 +30,27 @@ const png = await viewer.screenshot();
 * **The model:** each copy of a part is a node of the GLB named as the frame's `parts[].nodes`
   say, so the viewer knows every mesh's part; ghosts are seen through and can't be picked. A
   drawing is seen from the top, orthographic, each filled shape named by its id. A model that
-  follows keeps the camera where it is; the first, or one of another kind, is framed.
+  follows keeps the camera where it is, a model of nothing between them too (one that failed);
+  the first, or one of another kind than the last shown, is framed. A model without the selected
+  part drops the selection, with a `select` event of null.
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
   solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone.
-* **A section** clips every material at its plane and caps the cut where it runs inside a
-  solid (three.js's stencil technique).
+* **A section** clips every material of a solid's model at its plane and caps the cut where it
+  runs inside a solid (three.js's stencil technique), but in a wireframe; a drawing isn't cut. A
+  part cut away isn't picked.
 * **Draco:** a model built with `--draco` needs `dracoDecoderPath`, where three.js's decoder files
   are; the decoder is loaded only when a model needs it.
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
   `--vscode-*` variables).
 
+The component's canvas is named for a screen reader by `label` ("The model" by default). Without
+`onerror`, a model it can't show is an unhandled rejection; an error of `onmodel`'s is never
+passed to `onerror`.
+
 A host's tests that mount the viewer under jsdom add `@kupcad/viewer/testing` to Vitest's
-`setupFiles`: what jsdom lacks of a browser and the viewer uses.
+`setupFiles`: what jsdom lacks of a browser and the viewer uses. Its `stubRenderer()` draws in
+place of WebGL (`options.renderer`) and keeps what it was asked: the frames, the last scene and
+camera, and whether it was disposed.
 
 Tests: the scene logic in Node (jsdom), with a stand-in for WebGL and models the real core makes
 through `@kupcad/wasm`; and a smoke test in headless Chromium (`pnpm test:browser`) that draws

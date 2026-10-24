@@ -2,7 +2,8 @@
 // (millimetres, Z up), for any host; Viewer.svelte wraps it for Svelte. Its state is properties
 // (render mode, camera, section, selection, environment) that the host's toolbar sets, and it
 // renders when one changes or the camera moves, not every frame. A click on a part selects it
-// and says so (a 'select' event, `detail.part` its name, or null).
+// and says so (a 'select' event, `detail.part` its name, or null), as does a model without the
+// selected part.
 
 import {
   AmbientLight,
@@ -22,11 +23,13 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { applyRenderMode, applySelection } from './appearance.js';
 import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
-import { disposeEnvironment, environmentOf } from './environment.js';
+import { disposeObject } from './dispose.js';
+import { environmentOf } from './environment.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { RENDER_ORDER, SectionView } from './section.js';
 import { LIGHT } from './theme.js';
 
+/** @import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js' */
 /** @import { Model } from '@kupcad/protocol/types' */
 /** @import { Bounds, Environment, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
 
@@ -90,6 +93,8 @@ export class Viewer extends EventTarget {
   #selectionEdges = new LineBasicMaterial();
   /** @type {SceneModel | null} */
   #model = null;
+  /** The kind of the last model shown, which a model of nothing (one that failed) leaves. @type {SceneModel['kind'] | null} */
+  #shownKind = null;
   /** @type {Theme} */
   #theme;
   /** @type {Environment} */
@@ -108,6 +113,8 @@ export class Viewer extends EventTarget {
   #selected = null;
   /** @type {Promise<GLTFLoader> | null} */
   #loader = null;
+  /** The GLB loader's Draco decoder, once made: it keeps its workers until disposed. @type {DRACOLoader | null} */
+  #draco = null;
   /** Counts the models asked for: one that loads after a later one is dropped. */
   #loads = 0;
   #frame = 0;
@@ -188,8 +195,9 @@ export class Viewer extends EventTarget {
 
   /**
    * Shows `model` in place of the last one (null, or a model of kind 'none', shows nothing).
-   * The camera stays where it is, unless the model is the first, or of another kind (a drawing
-   * is seen from the top, orthographic): then it frames it.
+   * The camera stays where it is, unless the model is the first, or of another kind than the
+   * last one shown (a drawing is seen from the top, orthographic): then it frames it. A
+   * selection whose part is gone is dropped, with a 'select' event.
    * @param {Model | null} model
    * @returns {Promise<void>}
    * @throws {ViewerError} for a Draco-compressed model without `dracoDecoderPath`
@@ -211,21 +219,23 @@ export class Viewer extends EventTarget {
       for (const shape of built.shapes) shape.mesh.renderOrder = RENDER_ORDER.model;
       this.#content.add(built.root);
     }
-    if (this.#selected !== null && !built?.shapes.some((shape) => shape.part === this.#selected)) {
-      this.#selected = null;
-    }
+    const dropped =
+      this.#selected !== null && !built?.shapes.some((shape) => shape.part === this.#selected);
+    if (dropped) this.#selected = null;
     this.#applyRenderMode();
     this.#applySelection();
     this.#rebuildEnvironment();
-    if (built && built.kind !== before?.kind) {
+    if (built && built.kind !== this.#shownKind) {
       if (built.kind === '2d') {
         this.#useProjection('orthographic');
         this.#view = 'top';
       }
       this.fit();
     }
+    if (built) this.#shownKind = built.kind;
     this.#applySection();
     this.#invalidate();
+    if (dropped) this.#said(null);
   }
 
   /** @param {RenderMode} mode */
@@ -353,7 +363,9 @@ export class Viewer extends EventTarget {
       if (shape.part !== null) pickable.set(shape.mesh, shape);
     }
     for (const hit of this.#raycaster.intersectObjects([...pickable.keys()], false)) {
-      if (this.#section && this.#sectionView.plane.distanceToPoint(hit.point) < 0) continue;
+      if (this.#sectionView.clipping && this.#sectionView.plane.distanceToPoint(hit.point) < 0) {
+        continue;
+      }
       return pickable.get(hit.object)?.part ?? null;
     }
     return null;
@@ -381,7 +393,8 @@ export class Viewer extends EventTarget {
     this.#listeners.abort();
     this.#controls.dispose();
     if (this.#model) disposeScene(this.#model);
-    disposeEnvironment(this.#environment);
+    disposeObject(this.#environment);
+    this.#draco?.dispose();
     this.#sectionView.dispose();
     this.#selectionEdges.dispose();
     this.#renderer.dispose();
@@ -411,7 +424,8 @@ export class Viewer extends EventTarget {
       const decoderPath = this.#options.dracoDecoderPath;
       if (decoderPath) {
         const { DRACOLoader } = await import('three/addons/loaders/DRACOLoader.js');
-        loader.setDRACOLoader(new DRACOLoader().setDecoderPath(decoderPath));
+        this.#draco = new DRACOLoader().setDecoderPath(decoderPath);
+        loader.setDRACOLoader(this.#draco);
       }
       return loader;
     })();
@@ -434,7 +448,7 @@ export class Viewer extends EventTarget {
   }
 
   #rebuildEnvironment() {
-    disposeEnvironment(this.#environment);
+    disposeObject(this.#environment);
     this.#environment.clear();
     this.#environment.add(
       environmentOf(this.#environmentKind, this.#modelBox(), this.#plate, this.#theme),
@@ -515,6 +529,14 @@ export class Viewer extends EventTarget {
     if (!down || Math.hypot(event.offsetX - down.x, event.offsetY - down.y) > CLICK_SLOP_PX) return;
     const part = this.partAt(event.offsetX, event.offsetY);
     this.select(part);
+    this.#said(part);
+  }
+
+  /**
+   * Says the selection is now `part`.
+   * @param {string | null} part
+   */
+  #said(part) {
     this.dispatchEvent(new CustomEvent('select', { detail: { part } }));
   }
 }

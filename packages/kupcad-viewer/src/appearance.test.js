@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { applyRenderMode, applySelection, SELECTION_TINT, XRAY_OPACITY } from './appearance.js';
 import { GHOST_OPACITY, sceneOf } from './model.js';
-import { modelOf, PARTS } from './models.test-helper.js';
+import { modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { LIGHT } from './theme.js';
 
 /** @import { MeshStandardMaterial } from 'three' */
@@ -11,7 +11,7 @@ import { LIGHT } from './theme.js';
 
 /** @returns {Promise<SceneModel>} */
 async function partsScene() {
-  const scene = await sceneOf(await modelOf(PARTS), new GLTFLoader(), LIGHT);
+  const scene = await sceneOf(await modelOf(PARTS_WITH_GHOST), new GLTFLoader(), LIGHT);
   if (!scene) throw new Error('no scene');
   return scene;
 }

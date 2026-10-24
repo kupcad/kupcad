@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { BACKGROUND_RGB } from './colors.js';
 
 /** @param {number[]} rgb @param {number} channel which of red, green, blue leads */
 const leads = (rgb, channel) => rgb.every((value, i) => i === channel || rgb[channel] > value + 60);
@@ -16,14 +17,14 @@ test('draws what the core made: its colour, the background, a section and its ca
 
   // The iso view's centre is where three edges meet: a face is beside it
   expect(leads(await page.evaluate(() => window.smoke.pixel(0.4, 0.6)), 0)).toBe(true);
-  expect(await page.evaluate(() => window.smoke.pixel(0.02, 0.02))).toEqual([255, 255, 255]);
+  expect(await page.evaluate(() => window.smoke.pixel(0.02, 0.02))).toEqual(BACKGROUND_RGB);
 
   // From the top, a section below the cube cuts all of it away
   await page.evaluate(() => {
     window.smoke.setCamera({ view: 'top' });
     window.smoke.setSection({ axis: 'z', offset: -15 });
   });
-  expect(await page.evaluate(() => window.smoke.pixel(0.5, 0.5))).toEqual([255, 255, 255]);
+  expect(await page.evaluate(() => window.smoke.pixel(0.5, 0.5))).toEqual(BACKGROUND_RGB);
 
   // Through its middle, the cut is capped in the cap's colour
   await page.evaluate(() => window.smoke.setSection({ axis: 'z', offset: 0 }));

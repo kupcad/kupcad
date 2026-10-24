@@ -224,7 +224,8 @@ await viewer.setModel(model);        // a Model: GLB parsed with GLTFLoader (+ D
 viewer.setRenderMode('solid' | 'xray' | 'wireframe');
 viewer.setCamera({ projection: 'perspective' | 'orthographic', view: 'iso' | 'top' | ... });
 viewer.setSection({ axis: 'z', offset, flip });   // a clipping plane, with the cut faces capped
-viewer.select(partName); viewer.addEventListener('select', ...)   // picking by raycast, tinting the part
+viewer.select(partName); viewer.addEventListener('select', ...)   // picking by raycast, tinting the part;
+                                                                  // a model without the part says null
 viewer.partAt(x, y); viewer.fit(); viewer.resize(); viewer.screenshot(); viewer.dispose();
 ```
 
@@ -250,7 +251,8 @@ Decisions in it:
   their tokens into; the VS Code webview maps `--vscode-*` variables.
 
 Tested two ways: the scene logic (what nodes a model becomes, picking, section plane, camera
-framing, render modes and selection) under Vitest with a stubbed renderer, on models the real
+framing, render modes and selection) under Vitest with a stubbed renderer
+(`@kupcad/viewer/testing`'s `stubRenderer`, which the hosts' tests use too), on models the real
 core makes through `@kupcad/wasm`; and a Playwright smoke test that draws what the core makes in
 the page with headless Chromium's WebGL and reads the pixels back (a part's colour, the
 background, a section, its cap), so a three.js upgrade that breaks rendering is caught. Reading

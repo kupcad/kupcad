@@ -22,9 +22,11 @@
    * @property {string | null} [selected] the part selected; bindable
    * @property {Viewer | null} [viewer] the Viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the Viewer is made with (its renderer, Draco's path)
+   * @property {string} [label] what the canvas is, for a screen reader
    * @property {(viewer: Viewer) => void} [onmodel] a model is shown: what follows it (its
    *   bounds) can be read
-   * @property {(error: unknown) => void} [onerror] a model it couldn't show
+   * @property {(error: unknown) => void} [onerror] a model it couldn't show; without it, the
+   *   error is thrown on, unhandled
    */
 
   /** @type {Props} */
@@ -38,6 +40,7 @@
     selected = $bindable(null),
     viewer = $bindable(null),
     options = {},
+    label = 'The model',
     onmodel,
     onerror,
   } = $props();
@@ -62,10 +65,13 @@
 
   $effect(() => {
     const shown = viewer;
-    shown
-      ?.setModel(model)
-      .then(() => onmodel?.(shown))
-      .catch((error) => onerror?.(error));
+    shown?.setModel(model).then(
+      () => onmodel?.(shown),
+      (error) => {
+        if (!onerror) throw error;
+        onerror(error);
+      },
+    );
   });
   $effect(() => {
     if (theme) viewer?.setTheme(theme);
@@ -87,7 +93,7 @@
   });
 </script>
 
-<canvas bind:this={canvas} class="kc-viewer"></canvas>
+<canvas bind:this={canvas} class="kc-viewer" aria-label={label}></canvas>
 
 <style>
   .kc-viewer {

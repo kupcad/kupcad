@@ -33,7 +33,7 @@ export async function dracoModelOf(source) {
 }
 
 /** A plate and two copies of a red bolt, beside a ghost. */
-export const PARTS = `bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
+export const PARTS_WITH_GHOST = `bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
 cube(10).translate(z: 1).ghost
 [cube([20, 10, 2]).named("plate"), bolt.translate(x: 3, y: 5, z: 2), bolt.translate(x: 15, y: 5, z: 2)]
 `;

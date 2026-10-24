@@ -89,16 +89,3 @@ function lines(width, depth, step, color) {
   );
   return new LineSegments(geometry, new LineBasicMaterial({ color }));
 }
-
-/**
- * Frees what an environment holds.
- * @param {Group} group
- */
-export function disposeEnvironment(group) {
-  group.traverse((object) => {
-    if (object instanceof Mesh || object instanceof LineSegments) {
-      object.geometry.dispose();
-      /** @type {import('three').Material} */ (object.material).dispose();
-    }
-  });
-}

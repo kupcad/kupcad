@@ -18,6 +18,7 @@ import {
   ShapeGeometry,
 } from 'three';
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
+import { disposeGeometries } from './dispose.js';
 
 /** @import { Material, Object3D } from 'three' */
 /** @import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js' */
@@ -212,14 +213,23 @@ function outlineOf(path, closed) {
 }
 
 /**
+ * The materials the model's scene owns: each shape's, and its edges'. A selected shape's edges
+ * are drawn with the viewer's material, which isn't the model's to free.
+ * @param {SceneModel} model
+ * @returns {Set<Material>}
+ */
+export function ownMaterials(model) {
+  return new Set([
+    model.edgeMaterial,
+    ...model.shapes.map((shape) => /** @type {Material} */ (shape.mesh.material)),
+  ]);
+}
+
+/**
  * Frees the GPU's copies of a scene's geometries and materials.
  * @param {SceneModel} model
  */
 export function disposeScene(model) {
-  model.root.traverse((object) => {
-    if (object instanceof Mesh || object instanceof LineSegments) {
-      object.geometry.dispose();
-      for (const material of [object.material].flat()) material.dispose();
-    }
-  });
+  disposeGeometries(model.root);
+  for (const material of ownMaterials(model)) material.dispose();
 }

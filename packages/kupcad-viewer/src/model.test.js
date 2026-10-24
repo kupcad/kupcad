@@ -2,7 +2,7 @@ import { Box3, Mesh } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { GHOST_OPACITY, isDracoCompressed, sceneOf } from './model.js';
-import { dracoModelOf, modelOf, PARTS } from './models.test-helper.js';
+import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { LIGHT } from './theme.js';
 
 /** @import { MeshStandardMaterial } from 'three' */
@@ -36,7 +36,7 @@ describe('sceneOf a GLB', () => {
   });
 
   it("knows each mesh's part, with its colour and edges, and sees a ghost through", async () => {
-    const scene = await sceneOfScript(PARTS);
+    const scene = await sceneOfScript(PARTS_WITH_GHOST);
     const parts = scene.shapes.map((shape) => shape.part);
     expect(parts.filter((part) => part === 'bolt')).toHaveLength(2);
     expect(parts.filter((part) => part === 'plate')).toHaveLength(1);

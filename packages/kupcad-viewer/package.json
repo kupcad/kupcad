@@ -5,7 +5,9 @@
   "description": "KupCAD's viewer: a three.js scene of a model the core made (GLB) or a drawing (SVG), with render modes, views, a section plane and part picking, and a Svelte component around it.",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "sideEffects": false,
+  "sideEffects": [
+    "./src/testing.js"
+  ],
   "exports": {
     ".": "./src/index.js",
     "./svelte": {

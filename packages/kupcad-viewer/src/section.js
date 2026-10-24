@@ -21,6 +21,7 @@ import {
   ReplaceStencilOp,
   Vector3,
 } from 'three';
+import { ownMaterials } from './model.js';
 
 /** @import { Material, Sphere } from 'three' */
 /** @import { Section, SceneModel, Theme } from './types.js' */
@@ -36,6 +37,8 @@ const PLANE_NORMAL = new Vector3(0, 0, 1);
 export class SectionView {
   /** The plane every material clips at, while a section is on. */
   plane = new Plane();
+  /** Whether the model is cut: a section is on, and the model is a solid's (a drawing isn't). */
+  clipping = false;
   /** The cap's plane, drawn where the stencil count isn't 0. */
   cap;
   /** The stencil counters added under each solid mesh: taken away with the section. */
@@ -72,7 +75,8 @@ export class SectionView {
    * @param {SceneModel | null} model
    * @param {Sphere} bounds the model's, which the cap must cover
    * @param {{ capped: boolean, also: Material[] }} options whether the cut is closed (not in a
-   *   wireframe), and materials outside the model that clip with it (the selection's edges)
+   *   wireframe), and materials outside the model that clip with it (the selected shapes'
+   *   edges)
    */
   apply(section, model, bounds, { capped, also }) {
     for (const counters of this.#counters) {
@@ -82,27 +86,30 @@ export class SectionView {
       }
     }
     this.#counters = [];
-    const clipping = section && model?.kind === '3d' ? [this.plane] : null;
-    this.cap.visible = clipping !== null && capped;
-    for (const material of [...(model ? materialsOf(model) : []), ...also]) {
-      material.clippingPlanes = clipping;
+    const cut = section && model?.kind === '3d' ? { section, model } : null;
+    this.clipping = cut !== null;
+    if (cut) {
+      // What lies past the offset, along the axis (against it when flipped), is cut away
+      this.plane.normal.copy(AXES[cut.section.axis]).multiplyScalar(cut.section.flip ? 1 : -1);
+      this.plane.constant = cut.section.flip ? -cut.section.offset : cut.section.offset;
+    }
+    this.cap.visible = cut !== null && capped;
+    for (const material of [...(model ? ownMaterials(model) : []), ...also]) {
+      material.clippingPlanes = cut ? [this.plane] : null;
       material.needsUpdate = true;
     }
-    if (!clipping || !section || !model || !capped) return;
+    if (!cut || !capped) return;
 
-    const along = AXES[section.axis];
-    // What lies past the offset, along the axis (against it when flipped), is cut away
-    this.plane.normal.copy(along).multiplyScalar(section.flip ? 1 : -1);
-    this.plane.constant = section.flip ? -section.offset : section.offset;
-    for (const shape of model.shapes) {
+    for (const shape of cut.model.shapes) {
       if (shape.ghost) continue;
       const counters = stencilCounters(shape.mesh, this.plane);
       shape.mesh.add(counters);
       this.#counters.push(counters);
     }
+    // Centred where the model's centre meets the plane, the cap covers the cut wherever it is
     const size = bounds.radius * CAP_REACH;
     this.cap.scale.set(size, size, 1);
-    this.plane.coplanarPoint(this.cap.position);
+    this.plane.projectPoint(bounds.center, this.cap.position);
     this.cap.quaternion.setFromUnitVectors(PLANE_NORMAL, this.plane.normal);
   }
 
@@ -110,21 +117,6 @@ export class SectionView {
     this.cap.geometry.dispose();
     /** @type {Material} */ (this.cap.material).dispose();
   }
-}
-
-/**
- * The materials a section clips: every shape's, and the edges'.
- * @param {SceneModel} model
- * @returns {Material[]}
- */
-function materialsOf(model) {
-  /** @type {Set<Material>} */
-  const materials = new Set([model.edgeMaterial]);
-  for (const shape of model.shapes) {
-    materials.add(/** @type {Material} */ (shape.mesh.material));
-    if (shape.edges) materials.add(/** @type {Material} */ (shape.edges.material));
-  }
-  return [...materials];
 }
 
 /**
