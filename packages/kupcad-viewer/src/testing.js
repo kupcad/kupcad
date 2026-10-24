@@ -28,9 +28,10 @@ HTMLCanvasElement.prototype.toBlob = function toBlob(callback, type = 'image/png
 
 /**
  * A stand-in for WebGL, for a Viewer's `options.renderer`: it draws nothing, and keeps what it
- * was asked: how many frames, the scene and the camera of the last, and whether it was disposed.
- * As a WebGLRenderer does, it brings the scene's and the camera's matrices up to date: the
- * camera's controls pan along them.
+ * was asked of the viewer's canvas (the first it is given; another, a view cube's, it draws on
+ * unrecorded): how many frames, the scene and the camera of the last, and whether it was
+ * disposed. As a WebGLRenderer does, it brings the scene's and the camera's matrices up to date:
+ * the camera's controls pan along them.
  */
 export function stubRenderer() {
   const drawn = {
@@ -41,21 +42,31 @@ export function stubRenderer() {
     camera: null,
     disposed: false,
   };
-  /** @returns {RendererLike} */
-  const renderer = () => ({
-    localClippingEnabled: false,
-    setPixelRatio() {},
-    setSize() {},
-    render(scene, camera) {
-      scene.updateMatrixWorld();
-      if (camera.parent === null) camera.updateMatrixWorld();
-      drawn.renders += 1;
-      drawn.scene = scene;
-      drawn.camera = camera;
-    },
-    dispose() {
-      drawn.disposed = true;
-    },
-  });
+  /** @type {HTMLCanvasElement | null} */
+  let viewers = null;
+  /**
+   * @param {HTMLCanvasElement} canvas
+   * @returns {RendererLike}
+   */
+  const renderer = (canvas) => {
+    viewers ??= canvas;
+    const recorded = canvas === viewers;
+    return {
+      localClippingEnabled: false,
+      setPixelRatio() {},
+      setSize() {},
+      render(scene, camera) {
+        scene.updateMatrixWorld();
+        if (camera.parent === null) camera.updateMatrixWorld();
+        if (!recorded) return;
+        drawn.renders += 1;
+        drawn.scene = scene;
+        drawn.camera = camera;
+      },
+      dispose() {
+        if (recorded) drawn.disposed = true;
+      },
+    };
+  };
   return { renderer, drawn };
 }

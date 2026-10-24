@@ -7,15 +7,23 @@
       body {
         margin: 0;
       }
-      canvas {
+      #viewer {
         display: block;
         width: 400px;
         height: 300px;
       }
+      #cube {
+        position: absolute;
+        top: 8px;
+        left: 420px;
+        width: 96px;
+        height: 96px;
+      }
     </style>
   </head>
   <body>
-    <canvas></canvas>
+    <canvas id="viewer"></canvas>
+    <canvas id="cube"></canvas>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

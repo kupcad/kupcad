@@ -16,6 +16,7 @@ import {
   MOUSE,
   OrthographicCamera,
   PerspectiveCamera,
+  Quaternion,
   Raycaster,
   Scene,
   Sphere,
@@ -132,6 +133,8 @@ export class Viewer extends EventTarget {
   #view = 'iso';
   /** The camera's move under way, if one. @type {CameraMove | null} */
   #move = null;
+  /** How the camera was turned when last drawn: a change is a 'camera' event. */
+  #orientation = new Quaternion();
   /** @type {Section | null} */
   #section = null;
   /** @type {string | null} */
@@ -208,6 +211,11 @@ export class Viewer extends EventTarget {
   /** The named view the camera looks from, or null when it was turned by hand. */
   get view() {
     return this.#view;
+  }
+
+  /** How the camera is turned (Z up): what a view cube follows, as 'camera' events say. */
+  get orientation() {
+    return this.#camera.quaternion.clone();
   }
   get section() {
     return this.#section;
@@ -726,6 +734,10 @@ export class Viewer extends EventTarget {
     this.#headlight.position.copy(this.#camera.position);
     this.#headlight.target.position.copy(this.#controls.target);
     this.#renderer.render(this.#scene, this.#camera);
+    if (!this.#orientation.equals(this.#camera.quaternion)) {
+      this.#orientation.copy(this.#camera.quaternion);
+      this.dispatchEvent(new CustomEvent('camera'));
+    }
   }
 
   /**

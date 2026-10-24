@@ -13,7 +13,8 @@ await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a previe
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
 viewer.setEdges(false); // the shapes' edges hidden (a wireframe's stay)
 viewer.setCamera({ projection: 'orthographic', view: 'front' }); // moves there, framing the model
-viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as a view cube's corner does
+viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as the view cube's corner does
+new ViewCube(cubeCanvas, viewer, { theme: DARK }); // the cube, on a canvas of its own
 viewer.fit(); viewer.zoom(1.25); // fits the model from where it looks; zooms in (out, below 1)
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
 viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click (the main
@@ -41,6 +42,10 @@ const png = await viewer.screenshot();
   the last solid was seen. The camera's depth takes in the model and what it stands on, however
   small the model and wherever the camera moves. A model without the selected part drops the
   selection, with a `select` event of null.
+* **The view cube** (`ViewCube`, which the Svelte component puts in its corner unless
+  `cube={false}`) is turned as the camera is; its faces (labelled TOP, FRONT, RIGHT, ..., each
+  upright from its view), edges and corners, 26 ways to look, take the camera there when
+  clicked, the one under the pointer lit in the selection's colour.
 * **The camera** moves to a view over a moment (`motionMs`, 250 by default; at once when the page
   asks for reduced motion), turning round the model. Turned by hand it is in no named view (`view`
   is null), which a `view` event says, as it says every change. Its controls are Orca Slicer's:

@@ -1,15 +1,22 @@
 // The smoke test's page: a viewer drawing with WebGL what the core, in this page, makes of a
-// script, and the hooks the test drives it by (window.smoke), once it is ready.
+// script, its view cube, and the hooks the test drives them by (window.smoke), once it is ready.
+// The camera moves at once, so what the test reads is where it went.
 
 import { createKupcad } from '@kupcad/wasm';
-import { LIGHT, Viewer } from '../src/index.js';
+import { LIGHT, ViewCube, Viewer } from '../src/index.js';
 import { BACKGROUND, CAP } from './colors.js';
 
-const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
-const viewer = new Viewer(canvas, {
-  theme: { ...LIGHT, background: BACKGROUND, cap: CAP },
-  environment: 'none',
-});
+const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('#viewer'));
+const theme = { ...LIGHT, background: BACKGROUND, cap: CAP };
+const viewer = new Viewer(canvas, { theme, environment: 'none', motionMs: 0 });
+const cube = new ViewCube(
+  /** @type {HTMLCanvasElement} */ (document.querySelector('#cube')),
+  viewer,
+  {
+    theme,
+  },
+);
+cube.resize();
 const core = await createKupcad({ log: () => {} });
 
 window.smoke = {
@@ -19,6 +26,7 @@ window.smoke = {
     await viewer.setModel(model);
   },
   setCamera: (camera) => viewer.setCamera(camera),
+  view: () => viewer.view,
   setSection: (section) => viewer.setSection(section),
   async pixel(x, y) {
     const bitmap = await createImageBitmap(await viewer.screenshot());

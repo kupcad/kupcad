@@ -1,11 +1,13 @@
 <!--
   @component
-  The viewer for Svelte: a canvas filling its box, showing `model` in the state its props give.
-  `selected` is bindable (a click on a part sets it), and so is `viewer`, the Viewer itself, for
-  what isn't state: framing a view (`setCamera({ view })`), `fit()`, `screenshot()`.
+  The viewer for Svelte: a canvas filling its box, showing `model` in the state its props give,
+  with a view cube in its corner (`cube`). `selected` is bindable (a click on a part sets it),
+  and so is `viewer`, the Viewer itself, for what isn't state: framing a view
+  (`setCamera({ view })`), `fit()`, `screenshot()`.
 -->
 <script>
   import { onMount } from 'svelte';
+  import { ViewCube } from './view-cube.js';
   import { Viewer } from './viewer.js';
 
   /** @import { Model } from '@kupcad/protocol/types' */
@@ -23,6 +25,7 @@
    * @property {Viewer | null} [viewer] the Viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the Viewer is made with (its renderer, Draco's path)
    * @property {string} [label] what the canvas is, for a screen reader
+   * @property {boolean} [cube] the view cube is shown in the corner (by default)
    * @property {(viewer: Viewer) => void} [onmodel] a model is shown: what follows it (its
    *   bounds) can be read. Not for one a later model replaced before it was shown
    * @property {(error: unknown) => void} [onerror] a model it couldn't show; without it, the
@@ -41,12 +44,17 @@
     viewer = $bindable(null),
     options = {},
     label = 'The model',
+    cube = true,
     onmodel,
     onerror,
   } = $props();
 
   /** @type {HTMLCanvasElement} */
   let canvas;
+  /** @type {HTMLCanvasElement | undefined} */
+  let cubeCanvas = $state();
+  /** @type {ViewCube | null} */
+  let viewCube = null;
 
   onMount(() => {
     const made = new Viewer(canvas, { ...options, theme: theme ?? options.theme, environment });
@@ -63,6 +71,24 @@
     };
   });
 
+  // The cube follows the viewer: made with it, on its own canvas
+  $effect(() => {
+    const shown = viewer;
+    if (!shown || !cubeCanvas) return;
+    const made = new ViewCube(cubeCanvas, shown, {
+      theme: theme ?? options.theme,
+      renderer: options.renderer,
+    });
+    const resized = new ResizeObserver(() => made.resize());
+    resized.observe(cubeCanvas);
+    viewCube = made;
+    return () => {
+      resized.disconnect();
+      made.dispose();
+      viewCube = null;
+    };
+  });
+
   $effect(() => {
     const shown = viewer;
     shown?.setModel(model).then(
@@ -76,7 +102,9 @@
     );
   });
   $effect(() => {
-    if (theme) viewer?.setTheme(theme);
+    if (!theme) return;
+    viewer?.setTheme(theme);
+    viewCube?.setTheme(theme);
   });
   $effect(() => {
     viewer?.setEnvironment(environment);
@@ -95,13 +123,34 @@
   });
 </script>
 
-<canvas bind:this={canvas} class="kc-viewer" aria-label={label}></canvas>
+<div class="kc-viewer">
+  <canvas bind:this={canvas} class="scene" aria-label={label}></canvas>
+  {#if cube}
+    <canvas
+      bind:this={cubeCanvas}
+      class="cube"
+      aria-label="View cube: a face, an edge or a corner clicked looks from there"
+    ></canvas>
+  {/if}
+</div>
 
 <style>
   .kc-viewer {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  .scene {
     display: block;
     width: 100%;
     height: 100%;
     touch-action: none;
+  }
+  .cube {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 96px;
+    height: 96px;
   }
 </style>

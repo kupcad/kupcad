@@ -31,3 +31,19 @@ test('draws what the core made: its colour, the background, a section and its ca
   expect(leads(await page.evaluate(() => window.smoke.pixel(0.5, 0.5)), 1)).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test('draws the view cube, which turns the camera to the part clicked', async ({ page }) => {
+  const errors = /** @type {string[]} */ ([]);
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await page.waitForFunction(() => window.ready);
+  await page.evaluate(() => window.smoke.show('cube(20, center: true)'));
+  const cube = page.locator('#cube');
+  await page.evaluate(() => window.smoke.setCamera({ view: 'top' }));
+  // From the top, the front edge is the cube's lower one
+  await cube.click({ position: { x: 48, y: 68 } });
+  expect(await page.evaluate(() => window.smoke.view())).toBeNull();
+  await cube.click({ position: { x: 48, y: 48 } });
+  expect(await page.evaluate(() => window.smoke.view())).toBeNull();
+  expect(errors).toEqual([]);
+});
