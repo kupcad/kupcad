@@ -1,8 +1,10 @@
 // A release of the core installed where the extension keeps its own: `<dir>/<version>/kupcad`.
 // The archive for this platform is downloaded, checked against the release's checksums.txt
-// before it is unpacked, and its binary written into a folder that takes the version's name only
-// once it is whole, so a download cut short never looks installed.
+// before it is unpacked, and its binary written into a folder of its own that takes the version's
+// name only once it is whole, so a download cut short never looks installed, and two installs of
+// one version (two windows) don't write into each other's.
 
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { errorText } from '../../errors.js';
@@ -13,6 +15,8 @@ import { assetFor, CHECKSUMS, checksumOf, sha256 } from './assets.js';
 
 /** Executable by everyone, written by its owner. */
 const EXECUTABLE = 0o755;
+/** What renaming a folder onto one that is there says: ENOTEMPTY, EEXIST, or EPERM on Windows. */
+const TAKEN = ['ENOTEMPTY', 'EEXIST', 'EPERM'];
 
 /** Why a release couldn't be installed, in words a person acts on. */
 export class InstallError extends Error {
@@ -63,14 +67,41 @@ export async function install(release, { get, dir, platform, arch, progress }) {
   if (!binary) throw new InstallError(`${asset.archive} has no ${asset.binary}`);
 
   const target = path.join(dir, release.version);
-  const partial = `${target}.partial`;
-  await fs.rm(partial, { recursive: true, force: true });
+  const installed = path.join(target, asset.binary);
+  const partial = `${target}.${randomUUID()}.partial`;
   await fs.mkdir(partial, { recursive: true });
-  await fs.writeFile(path.join(partial, asset.binary), binary, { mode: EXECUTABLE });
-  await fs.rm(target, { recursive: true, force: true });
-  await fs.rename(partial, target);
-  return path.join(target, asset.binary);
+  try {
+    await fs.writeFile(path.join(partial, asset.binary), binary, { mode: EXECUTABLE });
+    await settle(partial, target, installed);
+  } finally {
+    await fs.rm(partial, { recursive: true, force: true });
+  }
+  return installed;
 }
+
+/**
+ * Gives the whole install at `partial` the version's name, `target`. One there already (another
+ * window's install of the same release, maybe running) is kept; a folder of the version without
+ * its binary is no install, and is replaced.
+ * @param {string} partial
+ * @param {string} target
+ * @param {string} installed the binary's path once it has the name
+ */
+async function settle(partial, target, installed) {
+  if (await isFile(installed)) return;
+  try {
+    await fs.rename(partial, target);
+  } catch (error) {
+    // Another install took the name meanwhile
+    if (await isFile(installed)) return;
+    if (!TAKEN.includes(/** @type {{ code?: string }} */ (error).code ?? '')) throw error;
+    await fs.rm(target, { recursive: true, force: true });
+    await fs.rename(partial, target);
+  }
+}
+
+/** @param {string} file */
+const isFile = async (file) => (await fs.stat(file).catch(() => null))?.isFile() ?? false;
 
 /**
  * The bytes at `url`, read as they come.
@@ -120,8 +151,7 @@ export async function installedVersions(dir, binary) {
   const found = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.endsWith('.partial')) continue;
-    const stat = await fs.stat(path.join(dir, entry.name, binary)).catch(() => null);
-    if (stat?.isFile()) found.push(entry.name);
+    if (await isFile(path.join(dir, entry.name, binary))) found.push(entry.name);
   }
   return found;
 }

@@ -234,6 +234,17 @@ export const fake = {
   opens: true,
   /** The progress notifications running, to cancel. @type {EventEmitter[]} */
   cancellations: [],
+  settingsChanged: new EventEmitter(),
+
+  /**
+   * The user changed the settings named (their full names).
+   * @param {string[]} names
+   */
+  changeSettings(...names) {
+    this.settingsChanged.fire({
+      affectsConfiguration: (/** @type {string} */ name) => names.includes(name),
+    });
+  },
 
   /** The user cancels the progress notifications running. */
   cancelProgress() {
@@ -283,6 +294,7 @@ export function resetFake() {
   fake.picks = [];
   fake.opens = true;
   fake.cancellations = [];
+  fake.settingsChanged = new EventEmitter();
   fake.settings = {};
   fake.saveAnswer = undefined;
   fake.activeDocument = undefined;
@@ -355,6 +367,8 @@ export const window = {
 };
 
 export const workspace = {
+  /** @param {(event: { affectsConfiguration(name: string): boolean }) => void} listener */
+  onDidChangeConfiguration: (listener) => fake.settingsChanged.event(listener),
   /** @param {string} section */
   getConfiguration(section) {
     return {

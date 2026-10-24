@@ -75,7 +75,8 @@ export class ViewerPanel {
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor) this.show(editor.document);
       }),
-      options.server.onViewport(() => this.#serverStarted()),
+      // The server started (again): the page connects to its socket
+      options.server.onViewport(() => this.#render()),
       panel.onDidDispose(() => this.#disposed()),
     );
     // A presets file edited, made or removed outside the panel
@@ -296,17 +297,6 @@ export class ViewerPanel {
   #presetsFile(uri) {
     const script = vscode.Uri.parse(uri);
     return script.with({ path: presetsPathOf(script.path) });
-  }
-
-  /**
-   * The server started (again): the page connects to its socket, and the values given before
-   * are given again, a restarted server knowing none.
-   */
-  #serverStarted() {
-    this.#render();
-    for (const [uri, values] of this.#options.values.entries()) {
-      this.#ask(this.#options.server.setParams(uri, values), 'setParams');
-    }
   }
 
   /** @param {HostMessage} message */

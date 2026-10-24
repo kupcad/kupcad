@@ -25,21 +25,16 @@ const isExecutable = (p) => {
 };
 
 /**
- * Looks `name` up on PATH (adds PATHEXT suffixes on Windows).
- * @param {string} name
+ * The first executable named `file` in a folder of PATH. The name is the binary's own
+ * (`kupcad.exe` on Windows), not one PATHEXT completes: a `.cmd` shim can't be run without a
+ * shell, and was taken before the binary after it.
+ * @param {string} file
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string | undefined}
  */
-export const findOnPath = (name, env = process.env) => {
+export const findOnPath = (file, env = process.env) => {
   const dirs = (env.PATH || env.Path || '').split(path.delimiter).filter(Boolean);
-  const exts = process.platform === 'win32' ? (env.PATHEXT || '.EXE;.CMD').split(';') : [''];
-  for (const dir of dirs) {
-    for (const ext of exts) {
-      const candidate = path.join(dir, name + ext);
-      if (isExecutable(candidate)) return candidate;
-    }
-  }
-  return undefined;
+  return dirs.map((dir) => path.join(dir, file)).find(isExecutable);
 };
 
 /**
@@ -61,7 +56,8 @@ const expandHome = (configured, env) =>
  * @typedef {object} FindOptions
  * @property {string | undefined} configured the `kupcad.serverPath` setting
  * @property {string} managedDir where the extension's own installs are, a folder per version
- * @property {string} extensionPath
+ * @property {string | null} extensionPath the extension's folder when it runs from a source
+ *   checkout, where the monorepo's build is looked for; null for one installed
  * @property {string} range the core versions the extension runs with
  * @property {(path: string) => Promise<VersionInfo | null>} probe
  * @property {NodeJS.ProcessEnv} [env]
@@ -110,10 +106,12 @@ export async function findServer({
     );
   for (const { version } of managed)
     candidates.push({ path: path.join(managedDir, version, binary), source: 'managed' });
-  const onPath = findOnPath('kupcad', env);
+  const onPath = findOnPath(binary, env);
   if (onPath) candidates.push({ path: onPath, source: 'path' });
-  const development = path.resolve(extensionPath, '../../core/zig-out/bin', binary);
-  if (isExecutable(development)) candidates.push({ path: development, source: 'development' });
+  if (extensionPath) {
+    const development = path.resolve(extensionPath, '../../core/zig-out/bin', binary);
+    if (isExecutable(development)) candidates.push({ path: development, source: 'development' });
+  }
 
   for (const candidate of candidates) {
     const info = await probe(candidate.path);

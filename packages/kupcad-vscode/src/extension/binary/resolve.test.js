@@ -54,7 +54,6 @@ const options = (more = {}) => ({
 /** @param {...string} dirs */
 const pathEnv = (...dirs) => ({
   PATH: dirs.map((d) => path.join(dir, d)).join(path.delimiter),
-  PATHEXT: '.EXE',
 });
 
 beforeEach(() => {
@@ -111,6 +110,11 @@ describe('findServer', () => {
     expect(none.notes).toHaveLength(2);
   });
 
+  it('looks for no monorepo build when the extension is an installed one', async () => {
+    kupcadAt(`core/zig-out/bin/${BIN_NAME}`, '0.1.0');
+    expect(await findServer(options({ extensionPath: null }))).toEqual({ found: null, notes: [] });
+  });
+
   it('finds nothing where there is nothing', async () => {
     expect(await findServer(options())).toEqual({ found: null, notes: [] });
   });
@@ -125,5 +129,12 @@ describe('findOnPath', () => {
     const runnable = kupcadAt('bin/kupcad', '0.1.0');
     expect(findOnPath('kupcad', pathEnv('plain', 'bin'))).toBe(runnable);
     expect(findOnPath('kupcad', pathEnv('plain'))).toBeUndefined();
+  });
+
+  it('takes the binary by its own name, not a shim PATHEXT would complete it to', () => {
+    kupcadAt('shims/kupcad.cmd', '0.1.0');
+    const binary = kupcadAt('bin/kupcad.exe', '0.1.0');
+    const env = { ...pathEnv('shims', 'bin'), PATHEXT: '.CMD;.EXE' };
+    expect(findOnPath('kupcad.exe', env)).toBe(binary);
   });
 });

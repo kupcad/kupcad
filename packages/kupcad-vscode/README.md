@@ -37,20 +37,26 @@ The extension ships no binary: it runs the `kupcad` it finds, or installs one. I
 1. the `kupcad.serverPath` setting, whatever its version (a warning says when it is one the
    extension doesn't declare it runs with);
 2. its own install, in VS Code's storage for the extension: the newest one there;
-3. `kupcad` on `PATH`;
-4. the monorepo's build at `core/zig-out/bin/kupcad` (when the extension runs from a checkout).
+3. `kupcad` on `PATH` (`kupcad.exe` on Windows, by that name: a `.cmd` shim isn't run);
+4. the monorepo's build at `core/zig-out/bin/kupcad`, only when the extension runs in
+   development (F5 from a checkout).
 
 Each of the last three is asked its version (`kupcad version --json`) and run only when it is in
 the range the extension declares (`kupcad.core` in its package.json) and speaks its protocol, so
 an old `kupcad` on `PATH` never runs under a newer extension. When none fits, the newest release
 in range is downloaded from GitHub (a progress notification shows it), checked against the
 release's `checksums.txt` before it is unpacked, and installed; if that fails, the message says
-why and offers the releases page and the setting.
+why and offers the releases page and the setting, and `KupCAD: Check for Updates` tries again.
+Windows installing the same release at once each unpack it apart, and the first to finish
+installs it; an install already there is kept.
 
 Once a day (and on `KupCAD: Check for Updates`) the extension's own install looks for a newer
 release in range, and installs it and restarts the server with it, or asks first when
-`kupcad.binary.autoUpdate` is off. A newer release out of range says the extension needs
+`kupcad.binary.autoUpdate` is off; the installs it replaced are removed, but for the one before
+(another window may still run it). A newer release out of range says the extension needs
 updating first. A `kupcad` from the setting, `PATH` or a checkout is updated where it came from.
+
+Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again with it.
 
 ## Extension Settings
 
@@ -87,11 +93,12 @@ Two programs, built separately by Vite:
   `binary/` finds or installs the `kupcad` it runs (`BinaryManager`, over pure modules: the
   version range, the releases list with its ETag, the archive's name per platform, its checksum,
   unpacking a `.tar.gz` or `.zip` with Node's zlib, the resolution order),
-  `server.js` starts the language server (`LanguageServer`: the language client, the viewport's
-  port from `kupcad/viewportReady`, and the server's `kupcad.preview` and `kupcad.setParams`
-  commands), `viewer-panel.js` is the viewer's webview panel (`ViewerPanel`: it follows the
-  editor, tells the page the document it shows and asks the server for its frame, gives the
-  server the panel's values, again to a server that restarted, and saves a screenshot),
+  `server.js` starts the language server (`LanguageServer`: the language client, its starts,
+  restarts and stops one after another, the values every script was given sent again to a server
+  that (re)started, the viewport's port from `kupcad/viewportReady`, and the server's
+  `kupcad.preview` and `kupcad.setParams` commands), `viewer-panel.js` is the viewer's webview
+  panel (`ViewerPanel`: it follows the editor, tells the page the document it shows and asks the
+  server for its frame, gives the server the panel's values, and saves a screenshot),
   `presets.js` reads and writes a script's presets file (the panel lists, applies and saves
   them), `commands.js` exports and prints (over `export.js`: the formats, `kupcad build`'s
   arguments, why a build failed, opening a slicer), `values.js` keeps the values each script was

@@ -18,19 +18,25 @@ vi.mock('./server.js', () => ({
       this.serverPath = /** @type {{ serverPath: string }} */ (options).serverPath;
       this.started = false;
       this.stopped = false;
+      /** @type {object[]} what each restart changed */
+      this.restarts = [];
       this.viewport = new EventEmitter();
       this.onViewport = this.viewport.event;
       servers.push(this);
     }
     async start() {
+      if (binaries.failStart) throw new Error('spawn EACCES');
       this.started = true;
     }
     async stop() {
       this.stopped = true;
+      this.started = false;
     }
-    /** @param {string} next */
-    async restart(next) {
-      this.restartedOn = next;
+    /** @param {{ serverPath?: string }} change */
+    async restart(change) {
+      this.restarts.push(change);
+      if (change.serverPath) this.serverPath = change.serverPath;
+      this.started = true;
     }
     async preview() {}
     async setParams() {}
@@ -45,6 +51,10 @@ const binaries = vi.hoisted(() => ({
   updates: /** @type {(string | null)[]} */ ([]),
   /** @type {boolean[]} */
   asked: /** @type {boolean[]} */ ([]),
+  /** Whether the server fails to start, and the look for an update fails. */
+  failStart: false,
+  updateFails: false,
+  prunes: 0,
 }));
 vi.mock('./binary/manager.js', () => ({
   CHECK_FOR_UPDATES_COMMAND: 'kupcad.checkForUpdates',
@@ -59,7 +69,11 @@ vi.mock('./binary/manager.js', () => ({
     /** @param {{ asked: boolean }} how */
     async checkForUpdates({ asked }) {
       binaries.asked.push(asked);
+      if (binaries.updateFails) throw new Error('the archive is no zip');
       return binaries.updates.shift() ?? null;
+    }
+    async prune() {
+      binaries.prunes += 1;
     }
   },
 }));
@@ -88,6 +102,9 @@ beforeEach(() => {
   binaries.found = { path: '/usr/local/bin/kupcad', version: '0.1.0', source: 'path' };
   binaries.updates = [];
   binaries.asked = [];
+  binaries.failStart = false;
+  binaries.updateFails = false;
+  binaries.prunes = 0;
   context = extension();
 });
 afterEach(async () => {
@@ -130,12 +147,56 @@ describe('activate', () => {
     expect(fake.messages[0].text).toMatch(/language server isn't running/);
   });
 
-  it('runs the kupcad an update installed: the daily look, and one asked for', async () => {
+  it('runs the kupcad an update installed, the daily look and one asked for, and prunes the old', async () => {
     binaries.updates = ['/storage/bin/0.1.3/kupcad', '/storage/bin/0.1.4/kupcad'];
     await activate(/** @type {any} */ (context));
-    await vi.waitFor(() => expect(servers[0].restartedOn).toBe('/storage/bin/0.1.3/kupcad'));
+    await vi.waitFor(() =>
+      expect(servers[0].restarts).toEqual([{ serverPath: '/storage/bin/0.1.3/kupcad' }]),
+    );
     await commands.executeCommand('kupcad.checkForUpdates');
-    expect(servers[0].restartedOn).toBe('/storage/bin/0.1.4/kupcad');
+    expect(servers[0].restarts.at(-1)).toEqual({ serverPath: '/storage/bin/0.1.4/kupcad' });
     expect(binaries.asked).toEqual([false, true]);
+    expect(binaries.prunes).toBe(2);
+  });
+
+  it('logs an update that failed, and keeps the server running', async () => {
+    binaries.updateFails = true;
+    await activate(/** @type {any} */ (context));
+    await vi.waitFor(() =>
+      expect(fake.logs[0].lines).toContain(
+        'error: The update of kupcad failed: the archive is no zip',
+      ),
+    );
+    expect(servers[0].started).toBe(true);
+  });
+
+  it("says a server that didn't start isn't running, and starts it again on a check asked for", async () => {
+    binaries.failStart = true;
+    await activate(/** @type {any} */ (context));
+    expect(fake.messages[0].text).toMatch(/didn't start: spawn EACCES/);
+    await commands.executeCommand(OPEN_VIEWER_COMMAND);
+    expect(fake.panels).toHaveLength(0);
+    expect(fake.messages[1].text).toMatch(/isn't running/);
+
+    binaries.failStart = false;
+    await commands.executeCommand('kupcad.checkForUpdates');
+    expect(servers[0].restarts).toEqual([
+      { serverPath: '/usr/local/bin/kupcad', viewportPort: 9001 },
+    ]);
+    expect(binaries.asked).toEqual([]);
+    await commands.executeCommand(OPEN_VIEWER_COMMAND);
+    expect(fake.panels).toHaveLength(1);
+  });
+
+  it('starts the server again when its path or port is set, and not for another setting', async () => {
+    await activate(/** @type {any} */ (context));
+    fake.changeSettings('kupcad.print.slicer');
+    fake.settings['kupcad.viewport.port'] = 9200;
+    fake.changeSettings('kupcad.viewport.port');
+    await vi.waitFor(() =>
+      expect(servers[0].restarts).toEqual([
+        { serverPath: '/usr/local/bin/kupcad', viewportPort: 9200 },
+      ]),
+    );
   });
 });

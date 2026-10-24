@@ -367,7 +367,8 @@ Data flow:
   values are; `Save as preset…` writes the panel's values under the name the user gives.
 * **Parameters** go the other way: the panel's values → bridge → extension host →
   `kupcad.setParams` command (`workspace/executeCommand`) to the language server, which re-runs the preview with them.
-  The schema, the values used and any refused one come in each preview frame's header, so the
+  A server that starts (again, after an update, a setting changed or a crash) is given every
+  script's values when it is running (`LanguageServer`, on the client's `State.Running`). The schema, the values used and any refused one come in each preview frame's header, so the
   panel and the model are always of the same run.
 * **Findings and warnings** are LSP diagnostics in the Problems view, as now; the preview's
   warnings (a mended mesh, an engine without a feature) join them on the line of the call that
@@ -389,8 +390,9 @@ The extension ships no binary; it fetches a release of the core it runs with.
 1. **Resolve** (`resolve.js`), in order: the `kupcad.serverPath` setting, run whatever its
    version (a warning says when it is out of range: the user chose it; one that isn't kupcad is
    an error with the setting to open); the newest of the extension's own installs
-   (`<globalStorage>/bin/<version>/kupcad`); `kupcad` on `PATH`; the repo's
-   `core/zig-out/bin/kupcad` in development. Each of those three is asked `kupcad version --json`
+   (`<globalStorage>/bin/<version>/kupcad`); `kupcad` on `PATH` (by the binary's own name,
+   `kupcad.exe` on Windows: no PATHEXT shim); the repo's `core/zig-out/bin/kupcad`, only when
+   the extension runs in development (`ExtensionMode.Development`). Each of those three is asked `kupcad version --json`
    (`probe.js`) and run only when its version is in the range the extension declares
    (`"kupcad": { "core": ">=0.1.0 <0.2.0" }` in its `package.json`; a pre-release is in range when
    the release it leads to is, `versions.js`) and it speaks the extension's protocol; one that
@@ -401,15 +403,20 @@ The extension ships no binary; it fetches a release of the core it runs with.
    nothing, `releases.js`), the archive for this platform (`kupcad_<version>_<os>_<arch>.tar.gz`,
    `.zip` on Windows, `os` and `arch` from `process.platform`/`process.arch`, `assets.js`),
    verified against the release's `checksums.txt` (SHA-256) before it is unpacked, its binary taken
-   out with Node's zlib alone (`archive.js`: ustar, or a zip stored or deflated) into a folder that
-   takes the version's name only once it is whole. A progress notification shows the download; a
-   failure (offline, no archive for the platform, a checksum that doesn't match) says what went
-   wrong and offers the releases page and the setting.
+   out with Node's zlib alone (`archive.js`: ustar, or a zip stored or deflated) into a folder of
+   its own (`<version>.<uuid>.partial`) that takes the version's name only once it is whole. Two
+   windows installing at once each unpack apart: the first rename wins, an install already there
+   is kept, and a folder of the version without its binary is replaced. A progress notification
+   shows the download; a failure (offline, no archive for the platform, a checksum that doesn't
+   match) says what went wrong and offers the releases page and the setting, and
+   `KupCAD: Check for Updates` tries again.
 3. **Update** (`BinaryManager.checkForUpdates`): once a day on activation (and on the
    `KupCAD: Check for Updates` command) the releases list is read again; a newer version in range
    is installed and the server restarted on it (`LanguageServer.restart`), or offered first with
    `kupcad.binary.autoUpdate` off; a newer version out of range says the extension itself needs
-   updating. Prereleases are taken only with `kupcad.binary.channel: "prerelease"`. Only the
+   updating. Checks run one after another (the daily one and the command's never install
+   twice). Once the server runs the update, the installs older than it are removed
+   (`BinaryManager.prune`) but the newest of them, which another window may still run. Prereleases are taken only with `kupcad.binary.channel: "prerelease"`. Only the
    extension's own install is updated: one from the setting, `PATH` or a checkout is the user's.
 4. **Compatibility is checked twice**: by version range and protocol before the server starts,
    and by `PROTOCOL_VERSION` in `kupcad/viewportReady` once it has, for the webview's sake.

@@ -2,9 +2,11 @@
 // range installed in its storage (install.js), and that install kept up to date. This is what
 // the user sees of it: a download's progress, why one failed and what to do, an update to take.
 
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { errorText } from '../../errors.js';
-import { install as installRelease } from './install.js';
+import { install as installRelease, installedVersions } from './install.js';
 import { probe as probeVersion } from './probe.js';
 import { newestInRange, readReleases as readReleaseList, RELEASES_PAGE } from './releases.js';
 import { findServer } from './resolve.js';
@@ -31,6 +33,8 @@ const PERCENT = 100;
  * @property {string} range the core versions the extension runs with (`kupcad.core`)
  * @property {string} managedDir where its own installs go
  * @property {string} extensionPath
+ * @property {boolean} development whether the extension runs from a source checkout, where the
+ *   monorepo's build is looked for
  * @property {vscode.Memento} state what it keeps between sessions
  * @property {vscode.LogOutputChannel} log
  * @property {() => vscode.WorkspaceConfiguration} settings its settings (`kupcad.*`), as they are now
@@ -47,6 +51,8 @@ export class BinaryManager {
   #options;
   /** The kupcad running now, once one is. @type {Found | null} */
   #running = null;
+  /** The last look for an update asked: one waits for the one under way, so two never install at once. */
+  #checks = Promise.resolve(/** @type {string | null} */ (null));
 
   /** @param {ManagerOptions} options */
   constructor(options) {
@@ -67,12 +73,12 @@ export class BinaryManager {
    * @returns {Promise<Found | null>}
    */
   async server() {
-    const { range, managedDir, extensionPath, probe, log } = this.#options;
+    const { range, managedDir, extensionPath, development, probe, log } = this.#options;
     const configured = this.#options.settings().get('serverPath');
     const { found, notes } = await this.#options.find({
       configured,
       managedDir,
-      extensionPath,
+      extensionPath: development ? extensionPath : null,
       range,
       probe,
     });
@@ -88,8 +94,8 @@ export class BinaryManager {
     try {
       const release = newestInRange((await this.#releases()).releases, range, this.#channel());
       if (!release) throw new Error(`no release of kupcad is in ${range} yet`);
-      const path = await this.#install(release);
-      return (this.#running = { path, version: release.version, source: 'managed' });
+      const file = await this.#install(release);
+      return (this.#running = { path: file, version: release.version, source: 'managed' });
     } catch (error) {
       log.error(`kupcad couldn't be installed: ${errorText(error)}`);
       void this.#tellNotInstalled(errorText(error));
@@ -104,7 +110,37 @@ export class BinaryManager {
    * @param {{ asked: boolean }} how
    * @returns {Promise<string | null>} the new install's path, for the server to run, or null
    */
-  async checkForUpdates({ asked }) {
+  checkForUpdates(how) {
+    const check = this.#checks.then(() => this.#checkForUpdates(how));
+    this.#checks = check.catch(() => null);
+    return check;
+  }
+
+  /**
+   * Removes the extension's own installs but the one running and the newest one before it,
+   * which another window may still run until it updates too. One that can't be removed (a
+   * binary running on Windows) is left for the next time.
+   */
+  async prune() {
+    const running = this.#running;
+    const { managedDir, log } = this.#options;
+    if (running?.source !== 'managed') return;
+    const current = /** @type {Version} */ (parseVersion(running.version));
+    const older = (await installedVersions(managedDir, path.basename(running.path)))
+      .map((version) => ({ version, parsed: parseVersion(version) }))
+      .filter((v) => v.parsed !== null && compareVersions(v.parsed, current) < 0)
+      .toSorted((a, b) =>
+        compareVersions(/** @type {Version} */ (b.parsed), /** @type {Version} */ (a.parsed)),
+      );
+    for (const { version } of older.slice(1)) {
+      await fs
+        .rm(path.join(managedDir, version), { recursive: true, force: true })
+        .catch((error) => log.warn(`kupcad ${version} wasn't removed: ${errorText(error)}`));
+    }
+  }
+
+  /** @param {{ asked: boolean }} how */
+  async #checkForUpdates({ asked }) {
     const running = this.#running;
     const { state, now, log } = this.#options;
     if (!running) return null;
@@ -147,9 +183,9 @@ export class BinaryManager {
         )) === UPDATE;
       if (!take) return null;
       try {
-        const path = await this.#install(inRange);
-        this.#running = { path, version: inRange.version, source: 'managed' };
-        return path;
+        const file = await this.#install(inRange);
+        this.#running = { path: file, version: inRange.version, source: 'managed' };
+        return file;
       } catch (error) {
         log.error(`kupcad ${inRange.version} couldn't be installed: ${errorText(error)}`);
         void vscode.window.showErrorMessage(

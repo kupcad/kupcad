@@ -63,6 +63,16 @@ const release = {
   },
 };
 
+/** An install of the release, served whole, into the test's `bin` folder. */
+function servedRelease() {
+  const bytes = archive();
+  const get = serving({
+    'https://example.com/archive': bytes,
+    'https://example.com/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
+  });
+  return { get, dir: path.join(dir, 'bin'), platform: 'linux', arch: 'x64' };
+}
+
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kupcad-install-'));
 });
@@ -140,5 +150,48 @@ describe('probe', () => {
     expect(await probe(script('other', 'echo hello'))).toBeNull();
     expect(await probe(script('failing', 'exit 3'))).toBeNull();
     expect(await probe(path.join(dir, 'missing'))).toBeNull();
+  });
+});
+
+describe('installs together', () => {
+  it.runIf(POSIX)(
+    'installs one release three times at once (three windows): each ends with it',
+    async () => {
+      const at = servedRelease();
+      const all = await Promise.all([
+        install(release, at),
+        install(release, at),
+        install(release, at),
+      ]);
+      const installed = path.join(at.dir, VERSION, 'kupcad');
+      expect(all).toEqual([installed, installed, installed]);
+      expect(await probe(installed)).toEqual(SAYS);
+      // No partial folder is left
+      expect(fs.readdirSync(at.dir)).toEqual([VERSION]);
+    },
+  );
+
+  it.runIf(POSIX)(
+    'keeps an install of the version already there, and replaces a folder of it without its binary',
+    async () => {
+      const at = servedRelease();
+      const installed = path.join(at.dir, VERSION, 'kupcad');
+      fs.mkdirSync(path.dirname(installed), { recursive: true });
+      fs.writeFileSync(installed, 'the one running', { mode: 0o755 });
+      expect(await install(release, at)).toBe(installed);
+      expect(fs.readFileSync(installed, 'utf8')).toBe('the one running');
+
+      fs.rmSync(installed);
+      fs.writeFileSync(path.join(at.dir, VERSION, 'stray'), '');
+      expect(await install(release, at)).toBe(installed);
+      expect(await probe(installed)).toEqual(SAYS);
+    },
+  );
+
+  it('counts no partial folder as installed', async () => {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(path.join(bin, `${VERSION}.0e7c.partial`), { recursive: true });
+    fs.writeFileSync(path.join(bin, `${VERSION}.0e7c.partial`, 'kupcad'), '');
+    expect(await installedVersions(bin, 'kupcad')).toEqual([]);
   });
 });

@@ -68,16 +68,17 @@ function serverAt(port) {
 /** A panel over `server`, and what it drew and logged. */
 function open(server = serverAt(9001)) {
   const log = window.createOutputChannel();
+  const values = new ScriptValues();
   const panel = ViewerPanel.open({
     server,
-    values: new ScriptValues(),
+    values,
     // The stand-ins are what the panel uses of VS Code's types
     extensionUri: /** @type {any} */ (Uri.file('/ext')),
     page: () => PAGE,
     log: /** @type {any} */ (log),
   });
   const shown = /** @type {(typeof fake.panels)[number]} */ (fake.panels.at(-1));
-  return { panel, server, shown, webview: shown.webview, log };
+  return { panel, server, values, shown, webview: shown.webview, log };
 }
 
 beforeEach(() => resetFake());
@@ -130,15 +131,16 @@ describe('ViewerPanel', () => {
     ]);
   });
 
-  it("gives the server the panel's values, and a restarted server them again, the page its socket", () => {
+  it("gives the server the panel's values, keeps them for it, and follows a restarted server's socket", () => {
     fake.activeDocument = PART;
-    const { webview, server } = open();
+    const { webview, server, values } = open();
     webview.receive({ type: 'setParams', uri: PART_URI, values: { w: 3 } });
-    server.restart(9100);
     expect(server.asked.filter(([what]) => what === 'setParams')).toEqual([
       ['setParams', PART_URI, { w: 3 }],
-      ['setParams', PART_URI, { w: 3 }],
     ]);
+    // The server is given them again when it restarts (LanguageServer), from this store
+    expect(values.of(PART_URI)).toEqual({ w: 3 });
+    server.restart(9100);
     expect(webview.html).toContain('ws://127.0.0.1:9100');
     // Shown again, the page is told the values it gave
     fake.showEditor(documentAt('/work/lid.kup'));
