@@ -159,3 +159,45 @@ describe('App', () => {
     await vi.waitFor(() => expect(viewer.posted.at(-1)).toMatchObject({ type: 'screenshot' }));
   });
 });
+
+describe('App presets', () => {
+  it("lists the document's presets, applies the one chosen, and saves the panel's values as one", async () => {
+    const viewer = page();
+    await viewer.tell({ type: 'document', document: PART });
+    viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+    await viewer.tell({ type: 'presets', uri: LID.uri, names: ['Other'] });
+    await viewer.tell({ type: 'presets', uri: PART.uri, names: ['Small', 'Large'] });
+    const picker = /** @type {HTMLSelectElement} */ (
+      screen.getByRole('combobox', { name: 'Preset' })
+    );
+    expect([...picker.options].map((o) => o.textContent?.trim())).toEqual([
+      'Apply a preset…',
+      'Small',
+      'Large',
+    ]);
+
+    await fireEvent.change(picker, { target: { value: 'Large' } });
+    expect(viewer.posted.at(-1)).toEqual({ type: 'applyPreset', uri: PART.uri, name: 'Large' });
+    expect(picker.value).toBe('');
+
+    await fireEvent.change(screen.getByLabelText('width'), { target: { value: '40' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save as preset…' }));
+    expect(viewer.posted.at(-1)).toEqual({
+      type: 'savePreset',
+      uri: PART.uri,
+      values: { width: 40 },
+    });
+  });
+
+  it('offers no preset to apply for a document without any', async () => {
+    const viewer = page();
+    await viewer.tell({ type: 'document', document: PART });
+    viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+    await tick();
+    const picker = /** @type {HTMLSelectElement} */ (
+      screen.getByRole('combobox', { name: 'Preset' })
+    );
+    expect(picker.disabled).toBe(true);
+    expect(picker.options[0].textContent?.trim()).toBe('No presets');
+  });
+});

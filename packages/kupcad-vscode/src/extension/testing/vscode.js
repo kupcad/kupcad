@@ -201,8 +201,22 @@ export const fake = {
   opened: [],
   /** The progress notifications' titles, and what each reported. @type {{ title: string, reports: unknown[] }[]} */
   progress: [],
-  /** @type {Map<string, Uint8Array>} the files written, by path */
-  written: new Map(),
+  /** @type {Map<string, Uint8Array>} the file system: what was there, and what was written, by path */
+  files: new Map(),
+  /** What the input box answers: a text, or nothing (cancelled). @type {string | undefined} */
+  inputAnswer: undefined,
+  /** The input boxes shown, by their options. @type {object[]} */
+  inputs: [],
+  /** @type {{ changed: EventEmitter, created: EventEmitter, deleted: EventEmitter }[]} */
+  watchers: [],
+
+  /**
+   * A file changed on disk, as a watcher hears it.
+   * @param {string} file
+   */
+  fileChanged(file) {
+    for (const watcher of this.watchers) watcher.changed.fire(Uri.file(file));
+  },
   /** @type {Record<string, unknown>} the settings, by their full name */
   settings: {},
   /** What the save dialog answers: a file, or nothing (cancelled). @type {Uri | undefined} */
@@ -230,7 +244,10 @@ export function resetFake() {
   fake.answer = undefined;
   fake.opened = [];
   fake.progress = [];
-  fake.written = new Map();
+  fake.files = new Map();
+  fake.inputAnswer = undefined;
+  fake.inputs = [];
+  fake.watchers = [];
   fake.settings = {};
   fake.saveAnswer = undefined;
   fake.activeDocument = undefined;
@@ -238,10 +255,14 @@ export function resetFake() {
   fake.logs = [];
 }
 
-/** @param {string} level */
+/**
+ * A message of `level`: its text, then its options (`{ modal }`), if any, and its buttons.
+ * @param {string} level
+ */
 const say =
   (level) =>
-  async (/** @type {string} */ text, /** @type {string[]} */ ...buttons) => {
+  async (/** @type {string} */ text, /** @type {unknown[]} */ ...rest) => {
+    const buttons = /** @type {string[]} */ (rest.filter((item) => typeof item === 'string'));
     fake.messages.push({ level, text, buttons });
     return buttons.includes(/** @type {string} */ (fake.answer)) ? fake.answer : undefined;
   };
@@ -269,6 +290,11 @@ export const window = {
     return channel;
   },
   showSaveDialog: async () => fake.saveAnswer,
+  /** @param {object} options */
+  showInputBox: async (options) => {
+    fake.inputs.push(options);
+    return fake.inputAnswer;
+  },
   /**
    * @param {{ title: string }} options
    * @param {(progress: { report(value: unknown): void }) => Promise<unknown>} task
@@ -303,10 +329,29 @@ export const workspace = {
      * @param {Uint8Array} bytes
      */
     writeFile: async (uri, bytes) => {
-      fake.written.set(uri.path, bytes);
+      fake.files.set(uri.path, bytes);
+    },
+    /** @param {Uri} uri */
+    readFile: async (uri) => {
+      const bytes = fake.files.get(uri.path);
+      if (!bytes) throw Object.assign(new Error(`${uri.path} not found`), { code: 'FileNotFound' });
+      return bytes;
     },
   },
-  createFileSystemWatcher: () => ({ dispose() {} }),
+  createFileSystemWatcher() {
+    const watcher = {
+      changed: new EventEmitter(),
+      created: new EventEmitter(),
+      deleted: new EventEmitter(),
+    };
+    fake.watchers.push(watcher);
+    return {
+      onDidChange: watcher.changed.event,
+      onDidCreate: watcher.created.event,
+      onDidDelete: watcher.deleted.event,
+      dispose() {},
+    };
+  },
 };
 
 export const commands = {

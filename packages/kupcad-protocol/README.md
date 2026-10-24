@@ -41,8 +41,8 @@ client.sendRequest('workspace/executeCommand', {
 * `VIEWPORT_READY_NOTIFICATION`, `SET_PARAMS_COMMAND` and `PREVIEW_COMMAND`: the language
   server's names.
 * `HostMessage` and `ViewerMessage`: what a host (the VS Code extension, the desktop app) and its
-  viewer say to each other: the document shown and its panel's values one way, `ready`,
-  `setParams`, a screenshot and a problem the other. `isHostMessage` and `isViewerMessage` read
+  viewer say to each other: the document shown, its panel's values and its presets' names one
+  way; `ready`, `setParams`, a preset to apply or to save, a screenshot and a problem the other. `isHostMessage` and `isViewerMessage` read
   one as it arrives untyped (`postMessage`), and `isParamValues` the values in it.
 
 ## Kept in step with the core

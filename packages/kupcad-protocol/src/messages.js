@@ -30,6 +30,8 @@ const HOST_MESSAGES = {
     (isObject(m.document) && isString(m.document.uri) && isString(m.document.name)),
   /** @param {Record<string, unknown>} m */
   overrides: (m) => isString(m.uri) && isParamValues(m.values),
+  /** @param {Record<string, unknown>} m */
+  presets: (m) => isString(m.uri) && Array.isArray(m.names) && m.names.every(isString),
 };
 
 /** Each viewer message's fields, checked: by its type. */
@@ -37,6 +39,10 @@ const VIEWER_MESSAGES = {
   ready: () => true,
   /** @param {Record<string, unknown>} m */
   setParams: (m) => isString(m.uri) && isParamValues(m.values),
+  /** @param {Record<string, unknown>} m */
+  applyPreset: (m) => isString(m.uri) && isString(m.name),
+  /** @param {Record<string, unknown>} m */
+  savePreset: (m) => isString(m.uri) && isParamValues(m.values),
   /** @param {Record<string, unknown>} m */
   screenshot: (m) => isString(m.png),
   /** @param {Record<string, unknown>} m */

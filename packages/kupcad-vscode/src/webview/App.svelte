@@ -4,7 +4,8 @@
   server's socket sends it, with its parameters beside it. The panel's values go to the
   extension, which gives them to the server; the frame that comes back is of a run with them.
   What the run warned of without a line (the rest are in the Problems view), and why it failed,
-  are shown over the model.
+  are shown over the model. The document's presets are above its parameters: one applied, or the
+  panel's values saved as one.
 -->
 <script>
   import { onMount } from 'svelte';
@@ -31,8 +32,11 @@
   let preview = $state(/** @type {Preview | null} */ (null));
   let connected = $state(false);
   let overrides = $state(/** @type {ParamValues} */ ({}));
+  let presets = $state(/** @type {string[]} */ ([]));
   /** The panel's values of each document shown, by URI. */
   const valuesOf = new Map();
+  /** The presets' names of each document shown, by URI. */
+  const presetsOf = new Map();
 
   const header = $derived(preview?.header ?? null);
   const parameters = $derived(header?.params.schema.parameters ?? []);
@@ -54,9 +58,13 @@
         if (message.document?.uri !== shown?.uri) preview = null;
         shown = message.document;
         overrides = (shown && valuesOf.get(shown.uri)) ?? {};
-      } else {
+        presets = (shown && presetsOf.get(shown.uri)) ?? [];
+      } else if (message.type === 'overrides') {
         valuesOf.set(message.uri, message.values);
         if (message.uri === shown?.uri) overrides = message.values;
+      } else {
+        presetsOf.set(message.uri, message.names);
+        if (message.uri === shown?.uri) presets = message.names;
       }
     });
     const disconnect = viewportUrl
@@ -82,6 +90,18 @@
     if (!shown) return;
     valuesOf.set(shown.uri, values);
     host.post({ type: 'setParams', uri: shown.uri, values });
+  }
+
+  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
+  function applyPreset(event) {
+    const name = event.currentTarget.value;
+    event.currentTarget.value = '';
+    if (shown && name) host.post({ type: 'applyPreset', uri: shown.uri, name });
+  }
+
+  function savePreset() {
+    if (shown)
+      host.post({ type: 'savePreset', uri: shown.uri, values: $state.snapshot(overrides) });
   }
 
   /** @param {Blob} image */
@@ -122,6 +142,17 @@
   </section>
   {#if header && parameters.length > 0}
     <aside class="params" aria-label="Parameters">
+      <div class="presets">
+        <select aria-label="Preset" disabled={presets.length === 0} onchange={applyPreset}>
+          <option value="" selected disabled>
+            {presets.length > 0 ? 'Apply a preset…' : 'No presets'}
+          </option>
+          {#each presets as name (name)}
+            <option value={name}>{name}</option>
+          {/each}
+        </select>
+        <button type="button" onclick={savePreset}>Save as preset…</button>
+      </div>
       <ParamsPanel
         schema={header.params.schema}
         values={header.params.values}
@@ -159,6 +190,24 @@
     overflow: auto;
     padding: var(--kc-gap);
     border-left: 1px solid var(--kc-border);
+  }
+  .presets {
+    display: flex;
+    gap: 4px;
+    margin-bottom: var(--kc-gap);
+  }
+  .presets select {
+    flex: 1;
+    min-width: 0;
+  }
+  .presets select,
+  .presets button {
+    font: inherit;
+    color: var(--kc-fg);
+    background: var(--kc-input-bg);
+    border: 1px solid var(--kc-border);
+    border-radius: var(--kc-radius);
+    padding: 2px 6px;
   }
   .status {
     position: absolute;

@@ -7,6 +7,7 @@ describe('isHostMessage', () => {
       { type: 'document', document: { uri: 'file:///w/a.kup', name: 'a.kup' } },
       { type: 'document', document: null },
       { type: 'overrides', uri: 'file:///w/a.kup', values: { w: 3, label: 'A', hollow: true } },
+      { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 'Large'] },
     ]) {
       expect(isHostMessage(message)).toBe(true);
     }
@@ -22,6 +23,7 @@ describe('isHostMessage', () => {
       { type: 'document', document: { uri: 'file:///w/a.kup' } },
       { type: 'overrides', uri: 'file:///w/a.kup', values: { w: [3] } },
       { type: 'overrides', values: {} },
+      { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 2] },
       { type: 'ready' },
       { type: 'toString' },
     ]) {
@@ -36,6 +38,13 @@ describe('isViewerMessage', () => {
     expect(isViewerMessage({ type: 'setParams', uri: 'file:///w/a.kup', values: {} })).toBe(true);
     expect(isViewerMessage({ type: 'screenshot', png: 'iVBORw0KGgo=' })).toBe(true);
     expect(isViewerMessage({ type: 'problem', message: 'the socket closed' })).toBe(true);
+    expect(isViewerMessage({ type: 'applyPreset', uri: 'file:///w/a.kup', name: 'Small' })).toBe(
+      true,
+    );
+    expect(isViewerMessage({ type: 'savePreset', uri: 'file:///w/a.kup', values: { w: 3 } })).toBe(
+      true,
+    );
+    expect(isViewerMessage({ type: 'applyPreset', uri: 'file:///w/a.kup' })).toBe(false);
     expect(isViewerMessage({ type: 'setParams', uri: 'file:///w/a.kup', values: null })).toBe(
       false,
     );

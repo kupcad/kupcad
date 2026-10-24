@@ -166,8 +166,9 @@ added as optional (`document`) needs no new version.
 
 The messages between a host and a viewer (the extension's webview bridge) are the package's too
 (`messages.js`, `HostMessage` and `ViewerMessage`): the host tells the viewer the document it
-shows and the values its panel holds, and the viewer tells the host it is ready for a frame, the
-values its panel gives, a screenshot to save and a problem to log. They arrive untyped
+shows, the values its panel holds and the names of its presets, and the viewer tells the host it
+is ready for a frame, the values its panel gives, a preset to apply or to save, a screenshot to
+save and a problem to log. They arrive untyped
 (`postMessage`), so each side reads the other's with a guard (`isHostMessage`,
 `isViewerMessage`) and drops what isn't one.
 
@@ -359,6 +360,10 @@ Data flow:
   through the extension host: a model can be megabytes and the host has no reason to copy it. The
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.
+* **Presets** are named sets of a script's values in `<name>.presets.json` beside it
+  (`presets.js`, JSON a person edits and commits): the host reads them and tells the page their
+  names, again when the file changes on disk; a preset applied is given to the server as the panel's
+  values are; `Save as preset…` writes the panel's values under the name the user gives.
 * **Parameters** go the other way: the panel's values → bridge → extension host →
   `kupcad.setParams` command (`workspace/executeCommand`) to the language server, which re-runs the preview with them.
   The schema, the values used and any refused one come in each preview frame's header, so the

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The module Vitest gives the code as `vscode`
 import { documentAt, EventEmitter, fake, resetFake, Uri, window } from './testing/vscode.js';
+import { readPresets, writePresets } from './presets.js';
 import { ViewerPanel } from './viewer-panel.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
@@ -10,6 +11,19 @@ const PAGE =
   '<!doctype html><html><head></head><body><script type="module" src="./main.js"></script></body></html>';
 const PART = documentAt('/work/part.kup');
 const PART_URI = 'file:///work/part.kup';
+const PRESETS = '/work/part.presets.json';
+
+/**
+ * Puts presets in the presets file of part.kup.
+ * @param {import('./presets.js').Presets} presets
+ */
+const presetsOnDisk = (presets) =>
+  fake.files.set(PRESETS, new TextEncoder().encode(writePresets(presets)));
+/** The presets in part.kup's file. */
+const presetsOf = () => readPresets(new TextDecoder().decode(fake.files.get(PRESETS)));
+/** What the panel posted the page of the type given. @param {{ posted: unknown[] }} webview @param {string} type */
+const postedOf = (webview, type) =>
+  webview.posted.filter((m) => /** @type {{ type: string }} */ (m).type === type);
 
 /**
  * A stand-in for the language server: its socket's port, and what it was asked.
@@ -140,11 +154,11 @@ describe('ViewerPanel', () => {
     const { webview } = open();
     webview.receive({ type: 'screenshot', png: btoa('PNG') });
     await new Promise((resolve) => setTimeout(resolve));
-    expect(fake.written.size).toBe(0);
+    expect(fake.files.size).toBe(0);
     fake.saveAnswer = Uri.file('/work/part.png');
     webview.receive({ type: 'screenshot', png: btoa('PNG') });
-    await vi.waitFor(() => expect(fake.written.has('/work/part.png')).toBe(true));
-    expect(new TextDecoder().decode(fake.written.get('/work/part.png'))).toBe('PNG');
+    await vi.waitFor(() => expect(fake.files.has('/work/part.png')).toBe(true));
+    expect(new TextDecoder().decode(fake.files.get('/work/part.png'))).toBe('PNG');
   });
 
   it('stops following the editor once closed', () => {
@@ -156,5 +170,81 @@ describe('ViewerPanel', () => {
     server.restart(9100);
     expect(server.asked).toEqual([['preview', PART_URI]]);
     expect(webview.html).not.toContain('9100');
+  });
+});
+
+describe('ViewerPanel presets', () => {
+  it("tells the page the shown script's presets, again when their file changes", async () => {
+    presetsOnDisk({ Small: { w: 1 } });
+    fake.activeDocument = PART;
+    const { webview } = open();
+    await vi.waitFor(() =>
+      expect(postedOf(webview, 'presets')).toEqual([
+        { type: 'presets', uri: PART_URI, names: ['Small'] },
+      ]),
+    );
+    presetsOnDisk({ Small: { w: 1 }, Large: { w: 9 } });
+    fake.fileChanged(PRESETS);
+    fake.fileChanged('/work/lid.presets.json');
+    await vi.waitFor(() => expect(postedOf(webview, 'presets')).toHaveLength(2));
+    expect(postedOf(webview, 'presets')[1]).toEqual({
+      type: 'presets',
+      uri: PART_URI,
+      names: ['Small', 'Large'],
+    });
+  });
+
+  it("applies a preset: the server runs with its values, and the page's panel shows them", async () => {
+    presetsOnDisk({ Small: { w: 1, label: 'S' } });
+    fake.activeDocument = PART;
+    const { webview, server } = open();
+    webview.receive({ type: 'applyPreset', uri: PART_URI, name: 'Small' });
+    await vi.waitFor(() =>
+      expect(server.asked).toContainEqual(['setParams', PART_URI, { w: 1, label: 'S' }]),
+    );
+    expect(postedOf(webview, 'overrides')).toEqual([
+      { type: 'overrides', uri: PART_URI, values: { w: 1, label: 'S' } },
+    ]);
+  });
+
+  it("saves the panel's values as a preset under the name given, asking before replacing one", async () => {
+    presetsOnDisk({ Small: { w: 1 } });
+    fake.activeDocument = PART;
+    const { webview } = open();
+    fake.inputAnswer = ' Large ';
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 9 } });
+    await vi.waitFor(() => expect(presetsOf()).toEqual({ Small: { w: 1 }, Large: { w: 9 } }));
+
+    // A name taken: left as it was unless the user says replace
+    fake.inputAnswer = 'Small';
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 2 } });
+    await vi.waitFor(() => expect(fake.messages).toHaveLength(1));
+    expect(fake.messages[0]).toMatchObject({ level: 'warning', buttons: ['Replace'] });
+    expect(presetsOf().Small).toEqual({ w: 1 });
+    fake.answer = 'Replace';
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 2 } });
+    await vi.waitFor(() => expect(presetsOf().Small).toEqual({ w: 2 }));
+    expect(fake.inputs).toHaveLength(3);
+
+    // Cancelled, nothing is written
+    fake.inputAnswer = undefined;
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 3 } });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(presetsOf()).toEqual({ Small: { w: 2 }, Large: { w: 9 } });
+  });
+
+  it("lists none of a presets file it can't read, says why, and saves nothing over it", async () => {
+    fake.files.set(PRESETS, new TextEncoder().encode('{'));
+    fake.activeDocument = PART;
+    const { webview, log } = open();
+    await vi.waitFor(() =>
+      expect(postedOf(webview, 'presets')).toEqual([{ type: 'presets', uri: PART_URI, names: [] }]),
+    );
+    expect(log.lines[0]).toMatch(/part\.presets\.json can't be read: it is no JSON/);
+    fake.inputAnswer = 'Small';
+    webview.receive({ type: 'savePreset', uri: PART_URI, values: { w: 1 } });
+    await vi.waitFor(() => expect(fake.messages[0]?.text).toMatch(/so the preset wasn't saved/));
+    expect(new TextDecoder().decode(fake.files.get(PRESETS))).toBe('{');
+    expect(fake.inputs).toHaveLength(0);
   });
 });

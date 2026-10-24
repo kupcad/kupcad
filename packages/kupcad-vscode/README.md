@@ -17,6 +17,11 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
   The script's parameters are a panel beside it: a value set there runs the script again with it,
   checked against the parameter's range first; one the run refuses is marked. Why a run failed,
   and what it warned of with no line to show it on, are shown over the model.
+* **Presets:** named sets of a script's values, kept beside it in `<name>.presets.json`
+  (`bracket.kup`'s in `bracket.presets.json`, `{ "presets": { "Small": { "width": 20 } } }`, to
+  read, edit and commit with the script). The viewer lists them above the parameters: one chosen
+  runs the script with its values; `Save as preset…` keeps the values set in the panel under a
+  name (asking before replacing one). An edit of the file shows at once.
 
 ## The `kupcad` it runs
 
@@ -77,7 +82,9 @@ Two programs, built separately by Vite:
   port from `kupcad/viewportReady`, and the server's `kupcad.preview` and `kupcad.setParams`
   commands), `viewer-panel.js` is the viewer's webview panel (`ViewerPanel`: it follows the
   editor, tells the page the document it shows and asks the server for its frame, gives the
-  server the panel's values, again to a server that restarted, and saves a screenshot), and
+  server the panel's values, again to a server that restarted, and saves a screenshot),
+  `presets.js` reads and writes a script's presets file (the panel lists, applies and saves
+  them), and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.
 * **The page** (`src/webview/`, in the panel): `App.svelte` is `@kupcad/ui`'s viewer pane and

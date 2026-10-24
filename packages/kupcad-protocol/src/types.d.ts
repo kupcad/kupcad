@@ -172,7 +172,9 @@ export type HostMessage =
   /** The document the viewer shows from now on; null for none. */
   | { type: 'document'; document: ShownDocument | null }
   /** The values the host gives a document's parameters, its panel's: on showing it, and after a change of the host's. */
-  | { type: 'overrides'; uri: string; values: ParamValues };
+  | { type: 'overrides'; uri: string; values: ParamValues }
+  /** The names of a document's presets, in their order. */
+  | { type: 'presets'; uri: string; names: string[] };
 
 /** What a viewer asks of its host (`isViewerMessage`). */
 export type ViewerMessage =
@@ -180,6 +182,10 @@ export type ViewerMessage =
   | { type: 'ready' }
   /** The panel's values for a document changed: the host gives them to the language server, and keeps them. */
   | { type: 'setParams'; uri: string; values: ParamValues }
+  /** The document runs with its preset's values. */
+  | { type: 'applyPreset'; uri: string; name: string }
+  /** The panel's values are kept as one of the document's presets: the host asks its name. */
+  | { type: 'savePreset'; uri: string; values: ParamValues }
   /** A screenshot, a PNG's bytes in base64, for the host to save. */
   | { type: 'screenshot'; png: string }
   /** Something the viewer couldn't do, for the host's log. */
