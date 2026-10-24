@@ -29,7 +29,6 @@
     "@kupcad/wasm": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@testing-library/svelte": "catalog:",
-    "@testing-library/user-event": "^14.6.8",
     "@types/node": "catalog:",
     "jsdom": "catalog:",
     "svelte": "catalog:",
