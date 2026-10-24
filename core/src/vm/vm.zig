@@ -1422,6 +1422,28 @@ pub const VM = struct {
         self.globalsChanged();
     }
 
+    /// Forgets the main script's own top-level names (its variables, defs, classes and
+    /// exports), giving back the builtins it shadowed: the next script compiled on this VM
+    /// starts as one on a VM of its own does. The compiler reads a bare name the VM knows as
+    /// a variable, so a module's `def part` made another module's bare `part`, and its own
+    /// next run's, a read of the function instead of a call. A session forgets them before
+    /// each run; the REPL keeps them from one line to the next.
+    pub fn forgetScriptGlobals(self: *VM) void {
+        var names = self.script_defined_globals.keyIterator();
+        while (names.next()) |name| {
+            if (self.shadowed_builtins.get(name.*)) |original| {
+                self.globals.getPtr(name.*).?.* = original;
+            } else {
+                _ = self.globals.remove(name.*);
+            }
+        }
+        self.script_defined_globals.clearRetainingCapacity();
+        self.shadowed_builtins.clearRetainingCapacity();
+        for (self.owned_global_keys.items) |key| self.allocator.free(key);
+        self.owned_global_keys.clearRetainingCapacity();
+        self.globalsChanged();
+    }
+
     /// A new generation of the global tables' layout: every site looks its name up again.
     fn globalsChanged(self: *VM) void {
         self.global_generation = next_global_generation.fetchAdd(1, .monotonic);

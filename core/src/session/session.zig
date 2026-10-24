@@ -438,6 +438,9 @@ pub const ScriptSession = struct {
         self.vm.line_index = &doc.line_index;
         // The Document goes away with this call; the pointer used to outlive it.
         defer self.vm.line_index = null;
+        // The module runs as on a VM of its own: the names another module's run defined,
+        // or its own last run's, aren't its
+        self.vm.forgetScriptGlobals();
         try registry.registerStandardLibrary(&self.vm);
         try api.injectParams(&self.vm, &self.params);
 
@@ -522,8 +525,7 @@ pub const ScriptSession = struct {
         }
         if (unmeshed) hasher.update(mod.source);
         for (self.vm.materials.items) |mat| mat.hashInto(&hasher);
-        // An export not hashed by content changed: this evaluation is its revision. (The
-        // VM's globals outlive a run, so a module without exports would see another's.)
+        // An export not hashed by content changed: this evaluation is its revision
         if (mod.exports.count() > 0 and !exports_fingerprint.hashExports(&hasher, &self.vm)) {
             hasher.update(std.mem.asBytes(&self.global_revision));
         }

@@ -839,3 +839,18 @@ test "ScriptSession: a module's run's warnings are kept with it, until its next 
     try session.evaluateWorkspace();
     try testing.expectEqual(@as(usize, 0), node.warnings.items.len);
 }
+
+test "ScriptSession: a module calls a def by its bare name, its own or an import's, on every run" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    // lib.kup ran first, as a module of its own: its `def lib_part` was a variable to
+    // main.kup, whose bare `lib_part` read the function, and so was main.kup's own `part`
+    // in its next run
+    const main_source = "import { lib_part } from \"./lib.kup\"\ndef part\n  lib_part + cube(1)\nend\npart\n";
+    try runLibAndMain(&session, &files, "def lib_part\n  cube(2)\nend\nexport lib_part\n", main_source);
+    try testing.expectApproxEqAbs(@as(f64, 8), mainVolume(&session), 1e-9);
+    try editMain(&session, main_source ++ "\n");
+    try testing.expectApproxEqAbs(@as(f64, 8), mainVolume(&session), 1e-9);
+}

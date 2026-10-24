@@ -1273,6 +1273,22 @@ test "VM: a module still sees a builtin the main script shadowed" {
     try testing.expectEqual(@as(f64, 4205), r.asNumber());
 }
 
+test "VM: a script run after another, its names forgotten, starts as on a VM of its own" {
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    // A host's global, as the standard library's are
+    try vm.setGlobal("helper_val", value.Value.initNumber(42));
+    try testing.expectEqual(.ok, try support.runOn(&vm, "helper_val = 5\ndef part\n  7\nend\nsize = part\n"));
+    vm.forgetScriptGlobals();
+    try testing.expect(vm.globals.get("size") == null);
+    try testing.expect(vm.globals.get("part") == null);
+    try testing.expectEqual(@as(f64, 42), vm.globals.get("helper_val").?.asNumber());
+    // Its bare `part` is a call of its own def, as on a fresh VM
+    try testing.expectEqual(.ok, try support.runOn(&vm, "def part\n  cube(2)\nend\nr = part.volume + helper_val\n"));
+    try testing.expectEqual(@as(f64, 50), vm.globals.get("r").?.asNumber());
+}
+
 test "VM: module namespace values survive GC" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
