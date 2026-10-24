@@ -22,7 +22,7 @@ describe('webview CSP', () => {
       buildCsp({ cspSource: 'vscode-resource:', nonce: 'abc', viewportPort: 51234 }),
     );
     expect(d['default-src']).toEqual(["'none'"]);
-    expect(d['script-src']).toEqual(["'nonce-abc'"]);
+    expect(d['script-src']).toEqual(["'nonce-abc'", 'vscode-resource:']);
     expect(d['style-src']).toEqual(['vscode-resource:']);
     expect(d['connect-src']).toEqual(['ws://127.0.0.1:51234']);
     const all = Object.values(d).flat();

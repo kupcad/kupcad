@@ -1,7 +1,11 @@
+# What the packaged extension leaves out: it runs dist/extension.cjs (the language client bundled
+# in) and the page in dist-webview/, nothing else of this folder.
 .vscode/**
-.vscode-test/**
-test/**
 .gitignore
-**/jsconfig.json
+src/**
+*.config.js
+jsconfig.json
+node_modules/**
 **/*.map
-**/.vscode-test.*
+# three's Draco decoder, which the build copies in: the language server sends no Draco model
+dist-webview/assets/draco_*

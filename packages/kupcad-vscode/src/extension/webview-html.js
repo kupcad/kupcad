@@ -15,7 +15,9 @@ export const viewportUrl = (port) => `ws://${VIEWPORT_HOST}:${port}`;
 
 /**
  * Strict CSP: no inline script but the nonced ones, no eval, and the network only to the
- * viewport socket, once its port is known.
+ * viewport socket, once its port is known. The page's own modules (`cspSource`, which
+ * localResourceRoots holds to the built page) load too: a module a script imports isn't
+ * covered by the script's nonce.
  * @param {{ cspSource: string, nonce: string, viewportPort: number | undefined }} options
  * @returns {string}
  */
@@ -25,7 +27,7 @@ export const buildCsp = ({ cspSource, nonce, viewportPort }) =>
     `img-src ${cspSource} data: blob:`,
     `font-src ${cspSource}`,
     `style-src ${cspSource}`,
-    `script-src 'nonce-${nonce}'`,
+    `script-src 'nonce-${nonce}' ${cspSource}`,
     `connect-src ${viewportPort ? viewportUrl(viewportPort) : "'none'"}`,
   ].join('; ');
 
