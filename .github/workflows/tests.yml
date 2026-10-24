@@ -10,11 +10,12 @@ permissions:
   contents: read
 
 jobs:
-  # The front ends (packages/): oxlint, oxfmt and tsc over every package, then their tests.
+  # The front ends (packages/): oxlint, oxfmt and tsc over every package, then their tests,
+  # @kupcad/wasm's against the module built from this commit.
   packages:
     name: Packages
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     concurrency:
       group: packages-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
@@ -22,6 +23,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
+          submodules: true
           persist-credentials: false
 
       - name: Install pnpm
@@ -31,11 +33,21 @@ jobs:
           runtime: node@24
           cache: true
 
+      - name: Install Zig
+        uses: xyzzylabs/setup-zig@v1
+        with:
+          zig-version-file: .tool-versions
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Lint, format and type-check
         run: pnpm check
+
+      - name: Build kupcad.wasm and the packages
+        run: |
+          pnpm build:core:wasm
+          pnpm -r build
 
       - name: Run the packages' tests
         run: pnpm test:packages

@@ -55,6 +55,19 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(yaml@2.9.1))
 
+  packages/kupcad-wasm:
+    dependencies:
+      '@kupcad/protocol':
+        specifier: workspace:*
+        version: link:../kupcad-protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^24.19.1
+        version: 24.19.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@24.19.2)(vite@8.3.4(@types/node@24.19.2)(yaml@2.9.1))
+
 packages:
 
   '@changesets/apply-release-plan@8.1.1':

@@ -5,6 +5,10 @@
     "correctness": "error",
     "suspicious": "error"
   },
+  "rules": {
+    // Meant for window.postMessage: a Worker's and a MessagePort's take no target origin
+    "unicorn/require-post-message-target-origin": "off"
+  },
   "env": {
     "es2024": true
   },

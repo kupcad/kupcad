@@ -154,14 +154,14 @@ The core's exports are plain C-style functions over linear memory (`core/src/was
 `wasm_alloc`/`wasm_free`, `get_last_error`). This package is the typed face over them:
 
 ```js
-const kupcad = await createKupcad({ wasm: url | ArrayBuffer });   // instantiates once
-await kupcad.preview(source, { params })   // -> Preview (protocol's readFrame of preview_wasm)
-await kupcad.build(source, { params, format: 'glb', draco: false }) // -> Uint8Array
+const kupcad = await createKupcad({ wasm, log });  // instantiates once; createKupcadWorker() alike
+await kupcad.preview(source, { params, signal })   // -> Preview (protocol's readFrame of preview_wasm)
+await kupcad.build(source, { params, format: 'glb', draco: false, signal }) // -> Uint8Array
 await kupcad.check(source)   // -> Finding[]
 await kupcad.format(source)  // -> string
 await kupcad.params(source)  // -> UiSchema
-kupcad.version()             // -> VersionInfo (version_wasm), checked against PROTOCOL_VERSION
-kupcad.files.put('plate.dxf', bytes); kupcad.files.clear()          // the VFS imports read
+await kupcad.version()       // -> VersionInfo (version_wasm), checked against PROTOCOL_VERSION
+await kupcad.files.put('plate.dxf', bytes); await kupcad.files.clear()  // the VFS imports read
 ```
 
 * **Memory** is handled inside: strings and buffers are copied in with `wasm_alloc`, results
@@ -171,20 +171,31 @@ kupcad.files.put('plate.dxf', bytes); kupcad.files.clear()          // the VFS i
   core refuses, is a frame whose `error` says why, as from the language server.
 * **A worker wrapper**, `createKupcadWorker()`, gives the same API but runs the module in a Web
   Worker, passing buffers as transferables, with one call in flight and the next queued (a build
-  can take seconds; the page must not freeze). A build can be cancelled by terminating and
-  recreating the worker, which is what the core's instruction cap can't do from outside.
+  can take seconds; the page must not freeze). A call's `AbortSignal` drops it while it waits and
+  stops the worker while it runs, which is what the core's instruction cap can't do from
+  outside; the next call starts a worker given the files put so far, as after a crash. The
+  worker's side (`serve`) and the client's are tested over a `MessageChannel` with the real
+  module, the worker itself being a stand-in in Node.
+* **WASI** is the package's own (`src/wasi.js`): the module imports it, a browser has none, and
+  Node's would give it a file system. It answers the calls the module makes (clocks, randomness,
+  the log, which goes to `log` a line at a time) and every other one ENOSYS, from the module's own
+  list of imports. `Kupcad.fromExports(exports)` takes a module a host instantiated itself.
+* **A trap** (or an exit) leaves the instance unusable: it is a `KupcadCrashError` for that call
+  and each after; a worker's is replaced on the next call.
 * **Two builds** of the module come from core: `kupcad.wasm` and the threaded one
   (`-Dwasm_threads`, which needs `SharedArrayBuffer` and so cross-origin isolation). The package
-  ships the plain one by default and the threaded one as a second entry a host opts into when its
-  headers allow.
+  ships the plain one; the threaded one, a second entry a host opts into when its headers allow,
+  comes with the first host that can serve it (it also needs its threads run in workers).
 * **Versioning:** the package version is the core's (`build.zig.zon`), and the release workflow
   publishes it from the same tag that builds the binaries, with npm provenance. `kupcad.version()`
   returns the module's own (`version_wasm`), so a playground loading the module from a URL can
   show which core it runs, and refuses a module whose `protocolVersion` it doesn't know.
 
-Tests drive the real module (Vitest in Node instantiates wasm): a build gives a GLB, an error
-gives its message, the VFS round trips, and memory doesn't grow over repeated builds (the core's
-own wasm test checks the same from the inside).
+Tests drive the real module (Vitest in Node instantiates wasm): every format builds, an error
+gives its message, the VFS round trips, the package's version is the core's, and memory doesn't
+grow over repeated calls (the core's own wasm test checks the same from the inside). CI builds
+the module from the same commit before the packages' tests (`pnpm build:core:wasm`, then
+`pnpm -r build`, which copies it into the package).
 
 ## 4. `@kupcad/viewer`
 

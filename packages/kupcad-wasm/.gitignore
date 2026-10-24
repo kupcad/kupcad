@@ -1,0 +1,2 @@
+# The module copied from core/zig-out by `pnpm build`
+dist/
