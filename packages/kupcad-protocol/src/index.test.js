@@ -6,6 +6,7 @@ import {
   ProtocolError,
   readFrame,
   SET_PARAMS_COMMAND,
+  PREVIEW_COMMAND,
   VIEWPORT_READY_NOTIFICATION,
 } from './index.js';
 // Headers the core's preview worker sent (their timings made fixed)
@@ -118,5 +119,6 @@ describe('the protocol', () => {
       `pub const VIEWPORT_READY_NOTIFICATION = "${VIEWPORT_READY_NOTIFICATION}";`,
     );
     expect(lsp).toContain(`pub const SET_PARAMS_COMMAND = "${SET_PARAMS_COMMAND}";`);
+    expect(lsp).toContain(`pub const PREVIEW_COMMAND = "${PREVIEW_COMMAND}";`);
   });
 });

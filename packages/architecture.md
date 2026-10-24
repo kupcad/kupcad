@@ -138,6 +138,10 @@ export interface VersionInfo { version: string; protocolVersion: number; os: str
 export interface ViewportReady { port: number; protocolVersion: number }
 /** The one argument of the `kupcad.setParams` command (`workspace/executeCommand`). */
 export interface SetParamsArgument { uri: string; values: ParamValues }
+/** The one argument of the `kupcad.preview` command: the document the viewport shows. */
+export interface PreviewArgument { uri: string }
+/** A host and its viewer: the document shown and its values; ready, setParams, a screenshot, a problem. */
+export type HostMessage = ...; export type ViewerMessage = ...;
 ```
 
 ```js
@@ -145,6 +149,8 @@ export interface SetParamsArgument { uri: string; values: ParamValues }
 export const PROTOCOL_VERSION = 1;
 export const VIEWPORT_READY_NOTIFICATION = 'kupcad/viewportReady';
 export const SET_PARAMS_COMMAND = 'kupcad.setParams';
+export const PREVIEW_COMMAND = 'kupcad.preview';
+export function isHostMessage(value) { ... }            // and isViewerMessage, isParamValues
 export function isCompatible(protocolVersion) { ... }   // this package reads that version
 export function readFrame(bytes) { ... }                // ArrayBuffer | Uint8Array -> Preview
 export class ProtocolError extends Error { ... }        // a frame this package can't read
@@ -158,9 +164,12 @@ don't agree say so instead of showing nothing (the extension's webview and the l
 compare theirs through `kupcad/viewportReady`, a playground through `version_wasm`). A field
 added as optional (`document`) needs no new version.
 
-The messages between a host and a viewer (the extension's webview bridge) join the package with
-the first host that sends them (section 9, step 3); until then nothing would check them against a
-real sender.
+The messages between a host and a viewer (the extension's webview bridge) are the package's too
+(`messages.js`, `HostMessage` and `ViewerMessage`): the host tells the viewer the document it
+shows and the values its panel holds, and the viewer tells the host it is ready for a frame, the
+values its panel gives, a screenshot to save and a problem to log. They arrive untyped
+(`postMessage`), so each side reads the other's with a guard (`isHostMessage`,
+`isViewerMessage`) and drops what isn't one.
 
 ## 3. `@kupcad/wasm`
 

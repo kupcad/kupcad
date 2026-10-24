@@ -155,3 +155,32 @@ export interface SetParamsArgument {
   uri: string;
   values: ParamValues;
 }
+
+/** The one argument of the language server's `kupcad.preview` command. */
+export interface PreviewArgument {
+  uri: string;
+}
+
+/** The document a viewer shows: its URI, and the name to title it by. */
+export interface ShownDocument {
+  uri: string;
+  name: string;
+}
+
+/** What a host tells its viewer (`isHostMessage`). */
+export type HostMessage =
+  /** The document the viewer shows from now on; null for none. */
+  | { type: 'document'; document: ShownDocument | null }
+  /** The values the host gives a document's parameters, its panel's: on showing it, and after a change of the host's. */
+  | { type: 'overrides'; uri: string; values: ParamValues };
+
+/** What a viewer asks of its host (`isViewerMessage`). */
+export type ViewerMessage =
+  /** Its connection to the language server's socket is open: the host asks for the shown document's frame. */
+  | { type: 'ready' }
+  /** The panel's values for a document changed: the host gives them to the language server, and keeps them. */
+  | { type: 'setParams'; uri: string; values: ParamValues }
+  /** A screenshot, a PNG's bytes in base64, for the host to save. */
+  | { type: 'screenshot'; png: string }
+  /** Something the viewer couldn't do, for the host's log. */
+  | { type: 'problem'; message: string };

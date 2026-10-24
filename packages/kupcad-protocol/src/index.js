@@ -1,11 +1,12 @@
 // What a front end needs to read what the core sends it: the protocol's version and names, and
-// the reader of a preview frame. The shapes are in types.d.ts (`@kupcad/protocol/types`).
+// the reader of a preview frame; and the messages between a host and its viewer
+// (messages.js). The shapes are in types.d.ts (`@kupcad/protocol/types`).
 
 /** @import { FrameHeader, Kind, Model, Preview } from './types.js' */
 
 /**
  * The version of the protocol this package reads (core/src/preview/frame.zig's): the preview
- * frame, `kupcad/viewportReady` and `kupcad.setParams`. It goes up when one of them changes
+ * frame, `kupcad/viewportReady`, `kupcad.setParams` and `kupcad.preview`. It goes up when one of them changes
  * shape; a field added as optional leaves it.
  */
 export const PROTOCOL_VERSION = 1;
@@ -18,6 +19,14 @@ export const VIEWPORT_READY_NOTIFICATION = 'kupcad/viewportReady';
  * values: its one argument is a `SetParamsArgument`.
  */
 export const SET_PARAMS_COMMAND = 'kupcad.setParams';
+
+/**
+ * The language server's command that chooses the document its viewport shows, and asks for its
+ * frame: its one argument is a `PreviewArgument`.
+ */
+export const PREVIEW_COMMAND = 'kupcad.preview';
+
+export { isHostMessage, isParamValues, isViewerMessage } from './messages.js';
 
 /** The bytes before a frame's header: its length, u32 little-endian. */
 const LENGTH_BYTES = 4;
