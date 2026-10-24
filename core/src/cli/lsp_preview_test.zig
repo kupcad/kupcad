@@ -241,3 +241,49 @@ test "LSP preview: each run's warnings are its own, the same on every run" {
         try testing.expectEqual(@as(?u32, 3), warnings[0].line);
     }
 }
+
+/// The paths of the modules `warnings` are of, sorted.
+fn pathsOf(arena: std.mem.Allocator, warnings: []const lsp_preview.ModuleWarnings) ![]const []const u8 {
+    const paths = try arena.alloc([]const u8, warnings.len);
+    for (paths, warnings) |*path, module| path.* = module.module_path;
+    std.mem.sortUnstable([]const u8, paths, {}, struct {
+        fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.order(u8, a, b) == .lt;
+        }
+    }.lessThan);
+    return paths;
+}
+
+test "LSP preview: the warnings taken are those of the modules that ran since, a stopped evaluation's runs too" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    try preview.update("lib.kup", "CAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n");
+    try preview.update("main.kup", "import { shade } from \"./lib.kup\"\nshade\n");
+    try preview.update("other.kup", "cube(1)\n");
+    _ = try frameOf(a, &preview, "main.kup");
+    const first = try preview.takeRunWarnings(a);
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "lib.kup", "main.kup" }), try pathsOf(a, first));
+    try testing.expectEqual(@as(?u32, 2), for (first) |module| {
+        if (std.mem.eql(u8, module.module_path, "lib.kup")) break module.warnings[0].line;
+    } else null);
+    // Taken: none ran since
+    try testing.expectEqual(@as(usize, 0), (try preview.takeRunWarnings(a)).len);
+
+    // lib.kup edited, another document evaluated: lib.kup didn't run, and its last run's
+    // warning (on a line that moved) isn't given again
+    try preview.update("lib.kup", "\nCAD.config(engine: :brep)\nshade = cube(1).material(color: \"#cc3333\")\nexport shade\n");
+    _ = try frameOf(a, &preview, "other.kup");
+    try testing.expectEqualDeep(@as([]const []const u8, &.{"other.kup"}), try pathsOf(a, try preview.takeRunWarnings(a)));
+
+    // Two evaluations before the warnings are taken (the first stopped by a message, whose
+    // runs the server doesn't ask about): the runs of both are given
+    try preview.update("other.kup", "cube(2)\n");
+    _ = try frameOf(a, &preview, "main.kup");
+    _ = try frameOf(a, &preview, "other.kup");
+    try testing.expectEqualDeep(@as([]const []const u8, &.{ "lib.kup", "main.kup", "other.kup" }), try pathsOf(a, try preview.takeRunWarnings(a)));
+}

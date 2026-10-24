@@ -718,6 +718,27 @@ const Viewers = struct {
 const LIB_URI = "file:///work/lib.kup";
 const MAIN_URI = "file:///work/main.kup";
 
+test "LSP: an edited document that didn't run has its last run's warnings put back nowhere" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    server.preview.session.vm.mute_errors = true; // the engine's warning would print to the test log
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    const arena = server.arena.allocator();
+    const warns = "CAD.config(engine: :brep)\npart = cube(1)\npart.material(color: \"#cc3333\")\nnil\n";
+    try server.open(LIB_URI, warns);
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), (try diagnosticsOf(&server, arena, LIB_URI)).len);
+
+    // Another document shown: an edit of this one runs that one, not this
+    try server.open(MAIN_URI, "cube(2)\n");
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try server.change(LIB_URI, "\n" ++ warns);
+    server.settle();
+    try testing.expectEqual(@as(usize, 0), (try diagnosticsOf(&server, arena, LIB_URI)).len);
+}
+
 test "LSP: kupcad.preview shows the document chosen, again when a module it imports is edited" {
     var server: Server = undefined;
     try server.init();

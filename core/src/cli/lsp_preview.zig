@@ -53,8 +53,8 @@ pub const Target = struct {
     uri: []const u8,
 };
 
-/// What a module's last run warned of: its path in the project, and each warning, placed as
-/// a frame places them (the module's own lines). JSON as the worker sends it.
+/// What a module's run warned of: its path in the project, and each warning, placed as a
+/// frame places them (the module's own lines). JSON as the worker sends it.
 pub const ModuleWarnings = struct {
     module_path: []const u8,
     warnings: []const FrameWarning,
@@ -77,7 +77,7 @@ pub const Preview = struct {
         setParams: *const fn (ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void,
         fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
-        runWarnings: *const fn (ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings,
+        takeRunWarnings: *const fn (ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings,
         evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
         cancelToken: *const fn (ptr: *anyopaque) *std.atomic.Value(bool),
@@ -121,10 +121,13 @@ pub const Preview = struct {
         return self.vtable.filesRead(self.ptr, allocator);
     }
 
-    /// What each module that ran warned of in its last run (none, for one that warned of
-    /// nothing), owned by `arena`: the editor shows an open document's as diagnostics.
-    pub fn runWarnings(self: Preview, arena: std.mem.Allocator) ![]const ModuleWarnings {
-        return self.vtable.runWarnings(self.ptr, arena);
+    /// What each module that ran since the last call warned of (none, for one that warned of
+    /// nothing), owned by `arena`: the editor shows an open document's as diagnostics. A
+    /// module that didn't run is left out (an edit dropped its warnings, its lines having
+    /// moved, and its last run's would be put back where they were); the runs of an
+    /// evaluation a message stopped are in the next call's.
+    pub fn takeRunWarnings(self: Preview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+        return self.vtable.takeRunWarnings(self.ptr, arena);
     }
 
     /// Runs `target` and the modules it imports, as far as they changed, and gives its frame
@@ -176,6 +179,8 @@ pub const SessionPreview = struct {
     params: std.StringHashMapUnmanaged(ParamValues) = .empty,
     /// What the evaluation running now is for, and what the session's observer saw of it.
     round: ?Round = null,
+    /// The modules that ran since their warnings were last taken (takeRunWarnings), keys owned.
+    ran_since_taken: std.StringHashMapUnmanaged(void) = .empty,
 
     const Hover = struct {
         module_path: []u8,
@@ -226,6 +231,7 @@ pub const SessionPreview = struct {
         self.dropHover();
         self.dropFrame();
         owned_keys.deinit(&self.params, self.allocator, .owned);
+        owned_keys.deinit(&self.ran_since_taken, self.allocator, .borrowed);
         self.session.deinit();
         self.documents.deinit();
         if (self.workspace_dir) |d| d.close(self.io);
@@ -239,7 +245,7 @@ pub const SessionPreview = struct {
             .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
-            .runWarnings = runWarningsImpl,
+            .takeRunWarnings = takeRunWarningsImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -324,19 +330,23 @@ pub const SessionPreview = struct {
         try self.session.markFileEdited(path);
     }
 
-    pub fn runWarnings(self: *SessionPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
-        const ws = &self.session.workspace;
-        const modules = try arena.alloc(ModuleWarnings, self.session.nodes.items.len);
-        for (modules, ws.modules.items[0..modules.len], self.session.nodes.items) |*out, module, node| {
+    pub fn takeRunWarnings(self: *SessionPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+        var modules = try std.ArrayList(ModuleWarnings).initCapacity(arena, self.ran_since_taken.count());
+        var since = self.ran_since_taken.keyIterator();
+        while (since.next()) |key| {
+            const path = key.*;
+            // Removed since it ran
+            const id = self.session.workspace.path_to_id.get(path) orelse continue;
+            const node = &self.session.nodes.items[@backingInt(id)];
             const warnings = try arena.alloc(FrameWarning, node.warnings.items.len);
-            for (warnings, node.warnings.items) |*placed, w| placed.* = .{
-                .message = try arena.dupe(u8, w.message),
-                .line = if (w.position) |p| p.line else null,
-                .column = if (w.position) |p| p.column else null,
-            };
-            out.* = .{ .module_path = try arena.dupe(u8, module.path), .warnings = warnings };
+            for (warnings, node.warnings.items) |*placed, w| placed.* = preview_build.warningOf(try arena.dupe(u8, w.message), w.position);
+            modules.appendAssumeCapacity(.{ .module_path = try arena.dupe(u8, path), .warnings = warnings });
         }
-        return modules;
+        // Taken once they are all copied: a copy that failed leaves them for the next call
+        var taken = self.ran_since_taken.keyIterator();
+        while (taken.next()) |path| self.allocator.free(path.*);
+        self.ran_since_taken.clearRetainingCapacity();
+        return modules.items;
     }
 
     pub fn filesRead(self: *SessionPreview, allocator: std.mem.Allocator) ![][]u8 {
@@ -400,6 +410,8 @@ pub const SessionPreview = struct {
     /// that failed is why it didn't run. Any run of a module makes the frame kept of it out
     /// of date.
     fn ran(self: *SessionPreview, run: ModuleRun) void {
+        _ = owned_keys.getOrPutOwned(&self.ran_since_taken, self.allocator, run.path) catch |err|
+            logger.warn("{s}'s warnings won't be shown: {}", .{ run.path, err });
         const round = &(self.round orelse return);
         const is_target = std.mem.eql(u8, run.path, round.target.module_path);
         if (is_target or self.keepsFrameOf(run.path)) self.dropFrame();
@@ -534,8 +546,8 @@ pub const SessionPreview = struct {
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
     }
-    fn runWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
-        return cast(ptr).runWarnings(arena);
+    fn takeRunWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
+        return cast(ptr).takeRunWarnings(arena);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
         return cast(ptr).evaluate(allocator, target, want_frame);

@@ -74,34 +74,27 @@ pub const DocumentBuffer = struct {
     module_path: []const u8,
     source: []const u8,
     doc: ?api.Document = null,
-    /// What its last run warned of (Preview.runWarnings), each message owned, shown beside
-    /// its lint findings until an edit moves the lines they are on.
-    run_warnings: []FrameWarning = &.{},
+    /// What its last run warned of (Preview.takeRunWarnings), in `run_warnings_memory`, shown
+    /// beside its lint findings until an edit moves the lines they are on.
+    run_warnings: []const FrameWarning = &.{},
+    run_warnings_memory: std.heap.ArenaAllocator,
 
-    /// Takes a copy of `warnings` as its run's, in place of the last.
-    fn setRunWarnings(self: *DocumentBuffer, allocator: std.mem.Allocator, warnings: []const FrameWarning) !void {
-        const copy = try allocator.alloc(FrameWarning, warnings.len);
-        var copied: usize = 0;
-        errdefer {
-            for (copy[0..copied]) |w| allocator.free(w.message);
-            allocator.free(copy);
-        }
-        for (copy, warnings) |*to, from| {
-            to.* = .{ .message = try allocator.dupe(u8, from.message), .line = from.line, .column = from.column };
-            copied += 1;
-        }
-        self.forgetRunWarnings(allocator);
+    /// Takes a copy of `warnings` as its run's, in place of the last (none, when the copy fails).
+    fn setRunWarnings(self: *DocumentBuffer, warnings: []const FrameWarning) !void {
+        self.forgetRunWarnings();
+        const memory = self.run_warnings_memory.allocator();
+        const copy = try memory.alloc(FrameWarning, warnings.len);
+        for (copy, warnings) |*to, from| to.* = .{ .message = try memory.dupe(u8, from.message), .line = from.line, .column = from.column };
         self.run_warnings = copy;
     }
 
-    fn forgetRunWarnings(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
-        for (self.run_warnings) |w| allocator.free(w.message);
-        allocator.free(self.run_warnings);
+    fn forgetRunWarnings(self: *DocumentBuffer) void {
         self.run_warnings = &.{};
+        _ = self.run_warnings_memory.reset(.retain_capacity);
     }
 
     pub fn deinit(self: *DocumentBuffer, allocator: std.mem.Allocator) void {
-        self.forgetRunWarnings(allocator);
+        self.run_warnings_memory.deinit();
         allocator.free(self.uri);
         allocator.free(self.module_path);
         allocator.free(self.source);
@@ -384,14 +377,14 @@ pub const Handler = struct {
         var arena_state = std.heap.ArenaAllocator.init(self.allocator);
         defer arena_state.deinit();
         const arena = arena_state.allocator();
-        const modules = self.preview.runWarnings(arena) catch |err| {
+        const modules = self.preview.takeRunWarnings(arena) catch |err| {
             logger.warn("Could not read what the runs warned of: {}", .{err});
             return;
         };
         for (modules) |module| {
             const buf = self.bufferOf(module.module_path) orelse continue;
             if (sameWarnings(buf.run_warnings, module.warnings)) continue;
-            buf.setRunWarnings(self.allocator, module.warnings) catch |err| {
+            buf.setRunWarnings(module.warnings) catch |err| {
                 logger.warn("Could not keep what {s} warned of: {}", .{ module.module_path, err });
                 continue;
             };
@@ -628,6 +621,7 @@ pub const Handler = struct {
             .module_path = module_path,
             .source = source_dup,
             .doc = parsed_doc,
+            .run_warnings_memory = .init(self.allocator),
         });
 
         try self.syncSession(uri_dup, module_path, source_dup);
@@ -648,7 +642,7 @@ pub const Handler = struct {
                         self.allocator.free(buf.source);
                         if (buf.doc) |*d| d.deinit();
                         // Its lines moved: its next run says what it warns of now
-                        buf.forgetRunWarnings(self.allocator);
+                        buf.forgetRunWarnings();
 
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;

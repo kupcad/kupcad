@@ -51,7 +51,8 @@ pub const Kind = enum(u8) {
     /// u8 the outcome's tag, then the preview frame's bytes for a frame. To hover: u8 0
     /// (doesn't compile) or 1, then the facts. To file_changed: u8 1 when a module read the
     /// file, else 0 (failed too). To files_read: the paths, PATH_SEPARATOR between them. To
-    /// run_warnings: the modules' warnings as JSON (`[]ModuleWarnings`).
+    /// run_warnings: the warnings of the modules that ran since the last run_warnings, as JSON
+    /// (`[]ModuleWarnings`).
     reply,
     // Added after the first kinds, whose values stay as they were.
     /// path: a file changed on disk.
@@ -60,7 +61,7 @@ pub const Kind = enum(u8) {
     files_read,
     /// u32 path length, path, the values as a JSON object (ParamValues.jsonStringify).
     set_params,
-    /// (empty) What each module's last run warned of.
+    /// (empty) What each module that ran since the last such request warned of.
     run_warnings,
     _,
 };
@@ -191,7 +192,7 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
         .run_warnings => {
             var arena = std.heap.ArenaAllocator.init(allocator);
             defer arena.deinit();
-            const json = try std.json.Stringify.valueAlloc(arena.allocator(), try preview.runWarnings(arena.allocator()), .{});
+            const json = try std.json.Stringify.valueAlloc(arena.allocator(), try preview.takeRunWarnings(arena.allocator()), .{});
             try writeFrame(output, .reply, &.{json});
         },
         .evaluate => {
@@ -359,7 +360,7 @@ pub const WorkerPreview = struct {
             .setParams = setParamsImpl,
             .fileChanged = fileChangedImpl,
             .filesRead = filesReadImpl,
-            .runWarnings = runWarningsImpl,
+            .takeRunWarnings = takeRunWarningsImpl,
             .evaluate = evaluateImpl,
             .hoverFacts = hoverFactsImpl,
             .cancelToken = cancelTokenImpl,
@@ -441,7 +442,7 @@ pub const WorkerPreview = struct {
     }
 
     /// None while no worker runs: a new one has run nothing yet.
-    pub fn runWarnings(self: *WorkerPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
+    pub fn takeRunWarnings(self: *WorkerPreview, arena: std.mem.Allocator) ![]const ModuleWarnings {
         const w = self.worker orelse return &.{};
         const reply = self.request(w, .run_warnings, &.{}) catch |err| {
             _ = self.ended(w, err, "what the runs warned of");
@@ -585,8 +586,8 @@ pub const WorkerPreview = struct {
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
     }
-    fn runWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
-        return cast(ptr).runWarnings(arena);
+    fn takeRunWarningsImpl(ptr: *anyopaque, arena: std.mem.Allocator) anyerror![]const ModuleWarnings {
+        return cast(ptr).takeRunWarnings(arena);
     }
     fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
         return cast(ptr).evaluate(allocator, target, want_frame);

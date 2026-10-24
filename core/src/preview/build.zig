@@ -218,7 +218,8 @@ fn paramValue(v: value.Value) ?param_values.ParamValue {
     return null;
 }
 
-fn warningOf(message: []const u8, position: ?LinePosition) frame.Warning {
+/// A warning of the run as a frame places it, at its line and column (null for none).
+pub fn warningOf(message: []const u8, position: ?LinePosition) frame.Warning {
     return .{ .message = message, .line = lineOf(position), .column = columnOf(position) };
 }
 
