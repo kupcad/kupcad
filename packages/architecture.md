@@ -8,28 +8,44 @@ one ends, at the core's two faces: the `kupcad` binary (CLI and language server)
 
 ## 1. The shape
 
+```mermaid
+flowchart BT
+    protocol["@kupcad/protocol<br/>frame header · Model · UiSchema · Finding · versions"]
+
+    subgraph components ["Components"]
+        wasm["@kupcad/wasm<br/>the core in the browser"]
+        viewer["@kupcad/viewer<br/>three.js scene"]
+        ui["@kupcad/ui<br/>panes, panels"]
+        editor["@kupcad/editor<br/>CodeMirror 6"]
+    end
+
+    subgraph hosts ["Hosts"]
+        playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
+        vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: ui + viewer"]
+        app["kupcad-app (Tauri)<br/>native binary + LSP"]
+        docs["docs site"]
+        pwa["kupcad-pwa"]
+    end
+
+    wasm --> protocol
+    viewer --> protocol
+    ui --> protocol
+    ui --> viewer
+    editor --> protocol
+    playground --> wasm
+    playground --> editor
+    playground --> ui
+    vscode --> protocol
+    vscode --> viewer
+    vscode --> ui
+    app --> editor
+    app --> viewer
+    app --> ui
+    docs --> playground
+    pwa --> playground
 ```
-                    ┌──────────────────────────────────────────────────────┐
-                    │                    @kupcad/protocol                   │
-                    │   Model · UiSchema · Finding · host↔viewer messages   │
-                    └──────────────────────────────────────────────────────┘
-                          ▲              ▲               ▲             ▲
-            ┌─────────────┘              │               │             └────────────┐
-   ┌────────┴────────┐          ┌────────┴───────┐   ┌───┴──────────┐      ┌────────┴────────┐
-   │  @kupcad/wasm   │          │ @kupcad/viewer │   │  @kupcad/ui  │      │ @kupcad/editor  │
-   │ core in browser │          │ three.js scene │◄──│ panes, panels│      │  CodeMirror 6   │
-   └────────┬────────┘          └────────┬───────┘   └───┬──────────┘      └────────┬────────┘
-            │                            │               │                          │
-            │        ┌───────────────────┼───────────────┼──────────────────────────┤
-            ▼        ▼                   ▼               ▼                          ▼
-   ┌─────────────────────┐    ┌─────────────────────────────────┐    ┌──────────────────────────┐
-   │ @kupcad/playground  │    │       @kupcad/vscode             │    │   kupcad-app (Tauri)      │
-   │ editor+viewer+params│    │ host: LSP client, binary manager │    │ native binary + LSP       │
-   │ on wasm, in a worker│    │ webview: ui + viewer             │    │ @kupcad/editor + LSP     │
-   └──────────┬──────────┘    └─────────────────────────────────┘    └──────────────────────────┘
-              │
-      docs site · kupcad-pwa
-```
+
+An arrow points at what a package builds on.
 
 Three rules keep it this shape:
 
