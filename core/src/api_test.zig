@@ -270,6 +270,15 @@ test "API: a STEP build refuses a part that isn't exact geometry, instead of dro
     }
 }
 
+test "API: a STEP build builds the modules the script imports on the B-Rep engine too" {
+    var files = @import("vfs/memory.zig").MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    try files.vfs().writeFile("lib.kup", "part = cube(2)\nexport part\n");
+    const step = try api.buildModel(testing.allocator, testing.io, "import { part } from \"./lib.kup\"\npart\n", .{ .format = .step, .vfs = files.vfs() });
+    defer testing.allocator.free(step);
+    try testing.expect(std.mem.startsWith(u8, step, "ISO-10303-21;"));
+}
+
 test "API: an STL of several parts is their union; glTF keeps them apart" {
     const source = "[cube(10), cube(10).translate(5, 0, 0)]";
     const stl = try api.buildModel(testing.allocator, testing.io, source, .{ .format = .stl });

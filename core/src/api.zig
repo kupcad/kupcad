@@ -407,11 +407,7 @@ fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: 
     vm.vfs = setup.vfs;
     vm.line_index = &doc.line_index;
     try registry.registerStandardLibrary(&vm);
-    if (setup.engine) |engine| {
-        var settings = vm.config();
-        settings.engine = engine;
-        try vm.setConfig(settings);
-    }
+    if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);
     return vm;
 }

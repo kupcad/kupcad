@@ -46,8 +46,10 @@ pub const ClosedPath = struct {
 /// The size of the tables below which the graph is never compacted (DAGBuilder.compact).
 const MIN_COMPACTION_BYTES: usize = 1 << 20;
 
-/// Index of a node's settings in DAGBuilder.settings_table; 0 is the default settings.
+/// Index of a node's settings in DAGBuilder.settings_table, past DEFAULT_SETTINGS.
 pub const SettingsId = u16;
+/// The settings of a script that set none (EngineConfig's defaults), in no table entry.
+pub const DEFAULT_SETTINGS: SettingsId = 0;
 
 /// Legacy marker for an ObjGeometry that has no DAG node (raw concrete handle).
 /// Never a valid node index: appendNodeWithRollback refuses to grow that far.
@@ -208,7 +210,7 @@ pub const DAGNode = struct {
     tag: DAGTag,
     flags: u8 = 0, // e.g., bit 0 = center boolean
     /// The settings (CAD.config) the node was created under, which it is built with.
-    settings: SettingsId = 0,
+    settings: SettingsId = DEFAULT_SETTINGS,
     data: u32 = 0, // Payload index into extra_data or numbers
 };
 
@@ -326,7 +328,7 @@ pub const DAGBuilder = struct {
     /// carry its settings: it used to be built with whatever was active when evaluated.
     settings_table: std.ArrayList(EngineConfig) = .empty,
     /// The settings new nodes get; the VM sets it whenever its config changes.
-    current_settings: SettingsId = 0,
+    current_settings: SettingsId = DEFAULT_SETTINGS,
 
     /// The names `named` gives parts, each once: a set_name node holds its index. Owned,
     /// and kept through compactions, as the settings are.
@@ -371,7 +373,7 @@ pub const DAGBuilder = struct {
 
     /// The id of `config`, added to the table if it is new.
     pub fn internSettings(self: *DAGBuilder, config: EngineConfig) !SettingsId {
-        if (std.meta.eql(config, EngineConfig{})) return 0;
+        if (std.meta.eql(config, EngineConfig{})) return DEFAULT_SETTINGS;
         for (self.settings_table.items, 1..) |known, id| {
             if (std.meta.eql(known, config)) return @intCast(id);
         }
@@ -381,7 +383,7 @@ pub const DAGBuilder = struct {
     }
 
     pub fn settings(self: *const DAGBuilder, id: SettingsId) EngineConfig {
-        return if (id == 0) .{} else self.settings_table.items[id - 1];
+        return if (id == DEFAULT_SETTINGS) .{} else self.settings_table.items[id - 1];
     }
 
     // --- Allocation & Rollback Infrastructure ---

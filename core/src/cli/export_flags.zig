@@ -192,10 +192,7 @@ pub const ExportFlags = struct {
 
     /// Sets `vm` to build on the engine the outputs need, if they need one.
     pub fn prepare(self: *const ExportFlags, vm: *VM) !void {
-        const engine = self.requiredEngine() orelse return;
-        var settings = vm.config();
-        settings.engine = engine;
-        try vm.setConfig(settings);
+        try vm.setRunEngine(self.requiredEngine() orelse return);
     }
 
     /// Writes what was asked for, the model of `vm` (run from `input_path`) or a file per

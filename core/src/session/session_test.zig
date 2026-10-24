@@ -787,3 +787,38 @@ test "ScriptSession: a parameter an import declares again takes the import's dec
     try editMain(&session, "param(:t, default: 1)\nimport { side } from \"./lib.kup\"\ncube(param(:t) + 1)\n");
     try testing.expectApproxEqAbs(@as(f64, 64), mainVolume(&session), 1e-9);
 }
+
+test "ScriptSession: the settings a module's run puts in force (CAD.config) are its run's alone" {
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    const a_id = try session.workspace.addModule("a.kup", "CAD.config(engine: :brep)\nside = 1\n");
+    const b_id = try session.workspace.addModule("b.kup", "cube(2)\n");
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateModule(a_id);
+    try session.evaluateModule(b_id);
+    try testing.expectEqual(.manifold, session.nodes.items[@backingInt(b_id)].cached_handle.?.engine);
+}
+
+test "ScriptSession: the settings an import puts in force (CAD.config) end with it, whether it runs or comes from the VM's cache" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    // The cube was B-Rep when lib.kup ran, and Manifold when it came from the cache
+    const main_source = "import { part } from \"./lib.kup\"\npart + cube(1)\n";
+    try runLibAndMain(&session, &files, "part = cube(2)\nCAD.config(engine: :brep)\nexport part\n", main_source);
+    try testing.expectApproxEqAbs(@as(f64, 8), mainVolume(&session), 1e-9);
+    try editMain(&session, main_source ++ "\n");
+    try testing.expectApproxEqAbs(@as(f64, 8), mainVolume(&session), 1e-9);
+}
+
+test "ScriptSession: an import runs with the default settings, not its importer's" {
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());
+    defer session.deinit();
+    try runLibAndMain(&session, &files, "part = cube(2)\nexport part\n", "CAD.config(engine: :brep)\nimport { part } from \"./lib.kup\"\npart\n");
+    const main_id = session.workspace.path_to_id.get("main.kup").?;
+    try testing.expectEqual(.manifold, session.nodes.items[@backingInt(main_id)].cached_handle.?.engine);
+}

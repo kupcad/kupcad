@@ -266,6 +266,9 @@ pub const VM = struct {
     /// pushes, CAD.config changes the top; never empty. Read with `config`, change only with
     /// setConfig / pushConfig / popConfig, which keep the DAG builder's settings in step.
     config_stack: std.ArrayList(dag.SettingsId) = .empty,
+    /// The settings each run, and each module it imports, starts with: the defaults, or
+    /// those a host gives (`setRunEngine`).
+    run_settings: dag.SettingsId = dag.DEFAULT_SETTINGS,
 
     // safety for infinite loops
     instruction_count: usize,
@@ -302,7 +305,7 @@ pub const VM = struct {
         var vm = vm: {
             var config_stack = std.ArrayList(dag.SettingsId).empty;
             errdefer config_stack.deinit(allocator);
-            try config_stack.append(allocator, 0); // the default settings
+            try config_stack.append(allocator, dag.DEFAULT_SETTINGS);
 
             // Pre-allocate a massive 64K stack (512KB of contiguous memory)
             const initial_stack = try allocator.alloc(value.Value, 65536);
@@ -1585,9 +1588,9 @@ pub const VM = struct {
 
     /// Forgets what a run left: the ghosts it put on display (display_list owns its
     /// handles, clones taken by ghost(), see materials.zig), its materials, the files it
-    /// read, its report and the parameters it declared. A session running a script again
-    /// and again kept them all, so every viewport export carried every material ever made
-    /// and every ghost ever shown.
+    /// read, its report, the parameters it declared and the settings it put in force. A
+    /// session running a script again and again kept them all, so every viewport export
+    /// carried every material ever made and every ghost ever shown.
     pub fn resetRunOutput(self: *VM) void {
         for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.clearRetainingCapacity();
@@ -1600,6 +1603,8 @@ pub const VM = struct {
         self.param_registry.clearRetainingCapacity();
         self.param_lookup.clearRetainingCapacity();
         self.param_declarations.clearRetainingCapacity();
+        // CAD.config(engine: :brep) in one module was the engine of every module run after it
+        self.restoreConfig(1, self.run_settings);
     }
 
     fn forgetFilesRead(self: *VM) void {
@@ -1702,6 +1707,22 @@ pub const VM = struct {
         std.debug.assert(self.config_stack.items.len > 1); // the base settings stay
         _ = self.config_stack.pop();
         self.dag_builder.current_settings = self.config_stack.items[self.config_stack.items.len - 1];
+    }
+
+    /// Every run, and every module it imports, builds on `engine`, the other settings the
+    /// defaults until the script changes them: a host's whose format needs that engine
+    /// (STEP, the B-Rep one). Before the run.
+    pub fn setRunEngine(self: *VM, engine: geom.EngineType) !void {
+        self.run_settings = try self.dag_builder.internSettings(.{ .engine = engine });
+        self.restoreConfig(1, self.run_settings);
+    }
+
+    /// Puts the settings back as they were with `depth` entries on the stack, `in_force` the
+    /// top one: before a module ran (executeImport), or before any run (resetRunOutput).
+    fn restoreConfig(self: *VM, depth: usize, in_force: dag.SettingsId) void {
+        self.config_stack.shrinkRetainingCapacity(depth);
+        self.config_stack.items[depth - 1] = in_force;
+        self.dag_builder.current_settings = in_force;
     }
 
     // --- JIT Materialization ---
@@ -2335,6 +2356,15 @@ pub const VM = struct {
         // a puts, was "circular" the second time it was imported.)
         self.loading_modules.put(self.allocator, path_str, {}) catch |err| return self.allocationFailed(err);
         defer _ = self.loading_modules.remove(path_str);
+
+        // A script of its own: it starts with a run's settings, and those it puts in force
+        // (CAD.config) end with it. The importer's reached it, and its own the importer,
+        // when it ran, and not when it came from the cache.
+        const settings_depth = self.config_stack.items.len;
+        const settings_in_force = self.config_stack.items[settings_depth - 1];
+        self.config_stack.append(self.allocator, self.run_settings) catch |err| return self.allocationFailed(err);
+        self.dag_builder.current_settings = self.run_settings;
+        defer self.restoreConfig(settings_depth, settings_in_force);
 
         // 6. Execute synchronously, noting where the parameters it declares begin
         const import_depth = self.frames.items.len;
