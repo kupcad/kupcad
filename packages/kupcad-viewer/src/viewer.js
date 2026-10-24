@@ -186,6 +186,11 @@ export class Viewer extends EventTarget {
     return this.#environmentKind;
   }
 
+  /** The kind of the model shown: '3d' (its solids), '2d' (a drawing), or null for none. */
+  get kind() {
+    return this.#model?.kind ?? null;
+  }
+
   /**
    * The model's bounds, in the script's coordinates (mm), or null with no model shown: what a
    * section's offset ranges over.

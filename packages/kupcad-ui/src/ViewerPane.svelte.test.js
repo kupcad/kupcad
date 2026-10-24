@@ -125,6 +125,16 @@ describe('ViewerPane', () => {
     ).toBe('top');
   });
 
+  it('offers no section through a drawing, which the viewer cuts not', async () => {
+    const { show } = await pane();
+    const sectioned = /** @type {HTMLInputElement} */ (
+      screen.getByRole('checkbox', { name: 'Section' })
+    );
+    expect(sectioned.disabled).toBe(false);
+    await show('square(10)');
+    expect(sectioned.disabled).toBe(true);
+  });
+
   it('keeps a section where it was through an edit, and puts it across a model it misses', async () => {
     const { viewer, show } = await pane();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Section' }));

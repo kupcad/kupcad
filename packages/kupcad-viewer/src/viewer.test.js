@@ -197,7 +197,9 @@ describe('Viewer', () => {
 
   it('shows a drawing from the top, orthographic', async () => {
     const { viewer } = viewerOn();
+    expect(viewer.kind).toBeNull();
     await viewer.setModel(await modelOf('square(10, center: true).named("plate")'));
+    expect(viewer.kind).toBe('2d');
     expect(viewer.projection).toBe('orthographic');
     expect(viewer.view).toBe('top');
     expect(viewer.partAt(WIDTH / 2, HEIGHT / 2)).toBe('plate');

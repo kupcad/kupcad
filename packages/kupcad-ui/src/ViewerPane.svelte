@@ -59,10 +59,14 @@
   let axis = $state(/** @type {Axis} */ ('z'));
   let offset = $state(0);
   let bounds = $state(/** @type {Bounds | null} */ (null));
+  /** The model shown is a solid's: a drawing isn't cut, and offered no section. */
+  let solid = $state(false);
 
   const parts = $derived(/** @type {Part[]} */ (model?.kind === '3d' ? model.parts : []));
   const along = $derived(AXES.indexOf(axis));
-  const span = $derived(bounds ? { min: bounds.min[along], max: bounds.max[along] } : null);
+  const span = $derived(
+    solid && bounds ? { min: bounds.min[along], max: bounds.max[along] } : null,
+  );
   const section = $derived(sectioned && span ? { axis, offset } : null);
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
@@ -77,6 +81,7 @@
     orthographic = shown.projection === 'orthographic';
     view = shown.view;
     bounds = shown.bounds;
+    solid = shown.kind === '3d';
     const kept = sectioned && span && offset >= span.min && offset <= span.max;
     if (!kept) centreSection();
   }
