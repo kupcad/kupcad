@@ -2,14 +2,14 @@
 // `kupcad build` with the values its parameters have in the viewer, and the file written where the
 // user says, or opened in a slicer.
 
-import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
   buildArguments,
   FORMATS,
-  printFile,
+  makePrintFile,
+  PRINT_FORMAT,
   runBuild,
   slicerCommand,
   startApart,
@@ -17,6 +17,7 @@ import {
 import { errorText } from '../errors.js';
 import { fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
+/** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { ScriptValues } from './values.js' */
 
 export const EXPORT_COMMAND = 'kupcad.export';
@@ -66,13 +67,13 @@ async function exportScript(options, given) {
     saveLabel: 'Export',
   });
   if (!target) return;
-  const built = await build(
-    options,
+  const built = await build(options, {
     kupcad,
     document,
-    target.fsPath,
-    `Exporting ${name} as ${choice.label}`,
-  );
+    output: target.fsPath,
+    format: choice.format,
+    title: `Exporting ${name} as ${choice.label}`,
+  });
   if (!built) return;
   const chosen = await vscode.window.showInformationMessage(
     `Exported ${fileName(target)}.`,
@@ -91,15 +92,14 @@ async function printScript(options, given) {
   const ready = await scriptToBuild(options, given);
   if (!ready) return;
   const { document, kupcad } = ready;
-  const output = printFile(os.tmpdir(), document.uri.fsPath);
-  await fs.mkdir(path.dirname(output), { recursive: true });
-  const built = await build(
-    options,
+  const output = await makePrintFile(os.tmpdir(), scriptName(document.uri));
+  const built = await build(options, {
     kupcad,
     document,
     output,
-    `Preparing ${scriptName(document.uri)} for printing`,
-  );
+    format: PRINT_FORMAT,
+    title: `Preparing ${scriptName(document.uri)} for printing`,
+  });
   if (!built) return;
   const slicer = vscode.workspace.getConfiguration('kupcad').get('print.slicer');
   if (typeof slicer === 'string' && slicer) {
@@ -174,17 +174,23 @@ async function scriptOf(options, given) {
 }
 
 /**
+ * @typedef {object} BuildRequest
+ * @property {string} kupcad
+ * @property {vscode.TextDocument} document
+ * @property {string} output
+ * @property {ExportFormat} format
+ * @property {string} title the notification's
+ */
+
+/**
  * Builds the script to `output` with its values, a notification showing it (its cancel stops the
  * build): false when it failed (the user told why) or was stopped.
  * @param {CommandOptions} options
- * @param {string} kupcad
- * @param {vscode.TextDocument} document
- * @param {string} output
- * @param {string} title
+ * @param {BuildRequest} request
  */
-function build(options, kupcad, document, output, title) {
+function build(options, { kupcad, document, output, format, title }) {
   const script = document.uri.fsPath;
-  const args = buildArguments(script, output, options.values.of(document.uri.toString()));
+  const args = buildArguments(script, output, format, options.values.of(document.uri.toString()));
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title, cancellable: true },
     async (_progress, token) => {

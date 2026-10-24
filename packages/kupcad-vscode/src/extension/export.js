@@ -2,6 +2,7 @@
 // viewer, so what is written is what the CLI builds. Free of the `vscode` import.
 
 import { execFile, spawn } from 'node:child_process';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
@@ -28,15 +29,23 @@ export const FORMATS = [
   { format: 'svg', label: 'SVG', detail: 'A drawing on XY, for a laser cutter' },
   { format: 'dxf', label: 'DXF', detail: 'The drawing as DXF, for CAD and CNC' },
 ];
-/** Where prints are built, under the system's temporary folder. */
-export const PRINT_DIR = 'kupcad-print';
-const PRINT_FORMAT = '3mf';
+/** A print's folder, a new one under the system's temporary folder each time. */
+export const PRINT_DIR_PREFIX = 'kupcad-print-';
+/** What a print is built as: a slicer's format. */
+export const PRINT_FORMAT = '3mf';
 /** What a build may say, at most: its log and why it failed. */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/** The log lines of a build, which aren't why it failed. */
-const LOG_LINE = /^(info|debug)\(/;
-/** What an error's line starts with in the log: its level and scope. */
-const LOG_PREFIX = /^(error|warning)\([^)]*\):\s*/;
+/**
+ * The lines of a failed build that say why, best first, each giving its words: an error the run
+ * raised (its log line), a syntax or compile error at its place, the CLI's refusal, its summary.
+ * The script's own output (`puts`, a warning) is none of them.
+ */
+const WHY = [
+  /^error\([^)]*\):\s*(.+)$/,
+  /^(.+:\d+:\d+: E: .+)$/,
+  /^Error: (.+)$/,
+  /^(\w+ failed: .+)$/,
+];
 
 /** Why `kupcad build` failed: what it said. */
 export class BuildError extends Error {
@@ -48,15 +57,17 @@ export class BuildError extends Error {
 }
 
 /**
- * `kupcad build`'s arguments: the script, the output, and a `-p name=value` for each value.
+ * `kupcad build`'s arguments: the script, the output in `format` (whatever its name's extension),
+ * and a `-p name=value` for each value.
  * @param {string} script
- * @param {string} output its extension says the format
+ * @param {string} output
+ * @param {ExportFormat} format
  * @param {ParamValues} values
  * @returns {string[]}
  */
-export function buildArguments(script, output, values) {
+export function buildArguments(script, output, format, values) {
   const params = Object.entries(values).flatMap(([name, value]) => ['-p', `${name}=${value}`]);
-  return ['build', script, '-o', output, ...params];
+  return ['build', script, '-o', output, '-f', format, ...params];
 }
 
 /**
@@ -83,28 +94,32 @@ export function runBuild(kupcad, args, { cwd, signal }) {
 }
 
 /**
- * What a failed build said of why: its first line that isn't the log's (an error's level taken
- * off), not its backtrace nor the summary after it.
+ * What a failed build said of why (`WHY`'s first line found), or null when it said nothing that
+ * does.
  * @param {string} stderr
  * @returns {string | null}
  */
 export function whyItFailed(stderr) {
-  for (const raw of stderr.split('\n')) {
-    const line = raw.trim();
-    if (!line || LOG_LINE.test(line)) continue;
-    return line.replace(LOG_PREFIX, '');
+  const lines = stderr.split('\n').map((line) => line.trim());
+  for (const pattern of WHY) {
+    for (const line of lines) {
+      const said = pattern.exec(line);
+      if (said) return said[1];
+    }
   }
   return null;
 }
 
 /**
- * Where a print of `script` is built: a 3MF of its name in `tmp`'s print folder.
+ * Where a print named `name` is built: a 3MF in a folder of its own under `tmp`, made now, so no
+ * other print (nor anyone else on the machine) writes there.
  * @param {string} tmp the system's temporary folder
- * @param {string} script
+ * @param {string} name
+ * @returns {Promise<string>}
  */
-export function printFile(tmp, script) {
-  const name = path.basename(script).replace(/\.kup$/, '');
-  return path.join(tmp, PRINT_DIR, `${name}.${PRINT_FORMAT}`);
+export async function makePrintFile(tmp, name) {
+  const dir = await fs.mkdtemp(path.join(tmp, PRINT_DIR_PREFIX));
+  return path.join(dir, `${name}.${PRINT_FORMAT}`);
 }
 
 /**

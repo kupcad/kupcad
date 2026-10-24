@@ -6,7 +6,7 @@ import {
   BuildError,
   buildArguments,
   FORMATS,
-  printFile,
+  makePrintFile,
   runBuild,
   slicerCommand,
   startApart,
@@ -46,14 +46,20 @@ describe('export', () => {
     ]);
   });
 
-  it("builds the script to the output, a -p for each of the viewer's values", () => {
+  it("builds the script to the output in the format picked, a -p for each of the viewer's values", () => {
     expect(
-      buildArguments('/w/part.kup', '/w/part.stl', { width: 40, hollow: true, label: 'A b=c' }),
+      buildArguments('/w/part.kup', '/w/part.stl', 'stl', {
+        width: 40,
+        hollow: true,
+        label: 'A b=c',
+      }),
     ).toEqual([
       'build',
       '/w/part.kup',
       '-o',
       '/w/part.stl',
+      '-f',
+      'stl',
       '-p',
       'width=40',
       '-p',
@@ -61,11 +67,14 @@ describe('export', () => {
       '-p',
       'label=A b=c',
     ]);
-    expect(buildArguments('/w/part.kup', '/w/part.stl', {})).toEqual([
+    // A name without the format's extension is still written in it
+    expect(buildArguments('/w/part.kup', '/w/part', '3mf', {})).toEqual([
       'build',
       '/w/part.kup',
       '-o',
-      '/w/part.stl',
+      '/w/part',
+      '-f',
+      '3mf',
     ]);
   });
 
@@ -111,13 +120,29 @@ describe('whyItFailed', () => {
     );
     expect(whyItFailed('info(x): only the log\n')).toBeNull();
   });
+
+  it("isn't taken in by the script's own output, before the error", () => {
+    const noisy =
+      "info(session_manager): Initialized\nhello\n[Warning] careful\nerror(vm): RuntimeError: boom\nerror(vm):     from script:3:8:in 'script'\nBuild failed: error.RuntimeError\n";
+    expect(whyItFailed(noisy)).toBe('RuntimeError: boom');
+    expect(whyItFailed("hello\nError: Unknown option '--bogus'\n\nUsage: kupcad build\n")).toBe(
+      "Unknown option '--bogus'",
+    );
+    expect(whyItFailed('hello\nBuild failed: error.OutOfMemory\n')).toBe(
+      'Build failed: error.OutOfMemory',
+    );
+    expect(whyItFailed('hello\n')).toBeNull();
+  });
 });
 
 describe('print', () => {
-  it("builds a 3MF of the script's name in the temporary folder's print folder", () => {
-    expect(printFile('/tmp', '/w/parts/bracket.kup')).toBe(
-      path.join('/tmp', 'kupcad-print', 'bracket.3mf'),
-    );
+  it("builds a 3MF of the script's name in a folder of its own, a new one each time", async () => {
+    const first = await makePrintFile(dir, 'bracket');
+    const second = await makePrintFile(dir, 'bracket');
+    expect(path.basename(first)).toBe('bracket.3mf');
+    expect(path.basename(path.dirname(first))).toMatch(/^kupcad-print-/);
+    expect(path.dirname(first)).not.toBe(path.dirname(second));
+    expect(fs.statSync(path.dirname(first)).isDirectory()).toBe(true);
   });
 
   it('opens it with the slicer the settings name: a macOS app by open -a, anything else run with it', () => {

@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXPORT_COMMAND, PRINT_COMMAND, registerExportCommands } from './commands.js';
-import { BuildError, PRINT_DIR } from './export.js';
+import { BuildError, PRINT_DIR_PREFIX } from './export.js';
 // The module Vitest gives the code as `vscode`
 import { commands, documentAt, fake, resetFake, Uri, window } from './testing/vscode.js';
 import { ScriptValues } from './values.js';
@@ -59,7 +59,7 @@ describe('export', () => {
     expect(builds).toEqual([
       {
         kupcad: '/usr/local/bin/kupcad',
-        args: ['build', '/work/part.kup', '-o', '/out/part.3mf', '-p', 'width=40'],
+        args: ['build', '/work/part.kup', '-o', '/out/part.3mf', '-f', '3mf', '-p', 'width=40'],
         cwd: '/work',
       },
     ]);
@@ -88,6 +88,15 @@ describe('export', () => {
     fake.saveAnswer = undefined;
     await commands.executeCommand(EXPORT_COMMAND, PART_URI);
     expect(builds).toHaveLength(2);
+  });
+
+  it("builds the script the editor's title bar gives, as a Uri", async () => {
+    documentAt('/work/lid.kup');
+    const { builds } = registered();
+    fake.pick = 'STEP';
+    fake.saveAnswer = Uri.file('/out/lid');
+    await commands.executeCommand(EXPORT_COMMAND, Uri.file('/work/lid.kup'));
+    expect(builds[0].args.slice(1, 6)).toEqual(['/work/lid.kup', '-o', '/out/lid', '-f', 'step']);
   });
 
   it('saves a script with changes first, when the user says so, and builds nothing left unsaved', async () => {
@@ -148,8 +157,11 @@ describe('print', () => {
     fake.activeDocument = documentAt('/work/part.kup');
     const { builds } = registered();
     await commands.executeCommand(PRINT_COMMAND);
-    const printed = path.join(os.tmpdir(), PRINT_DIR, 'part.3mf');
-    expect(builds[0].args.slice(0, 4)).toEqual(['build', '/work/part.kup', '-o', printed]);
+    const printed = builds[0].args[3];
+    expect(path.dirname(path.dirname(printed))).toBe(os.tmpdir());
+    expect(path.basename(path.dirname(printed))).toMatch(new RegExp(`^${PRINT_DIR_PREFIX}`));
+    expect(path.basename(printed)).toBe('part.3mf');
+    expect(builds[0].args.slice(4, 6)).toEqual(['-f', '3mf']);
     expect(fake.opened).toEqual([Uri.file(printed).toString()]);
 
     // Nothing opened it: the setting to set
@@ -161,11 +173,9 @@ describe('print', () => {
   it('opens it in the slicer the settings name, saying when it is none', async () => {
     fake.activeDocument = documentAt('/work/part.kup');
     fake.settings['kupcad.print.slicer'] = '/usr/bin/prusa-slicer';
-    const { started } = registered();
+    const { started, builds } = registered();
     await commands.executeCommand(PRINT_COMMAND);
-    expect(started).toEqual([
-      { command: '/usr/bin/prusa-slicer', args: [path.join(os.tmpdir(), PRINT_DIR, 'part.3mf')] },
-    ]);
+    expect(started).toEqual([{ command: '/usr/bin/prusa-slicer', args: [builds[0].args[3]] }]);
     expect(fake.opened).toEqual([]);
 
     resetFake();

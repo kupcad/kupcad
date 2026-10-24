@@ -372,12 +372,13 @@ Data flow:
 * **Findings and warnings** are LSP diagnostics in the Problems view, as now; the preview's
   warnings (a mended mesh, an engine without a feature) join them on the line of the call that
   caused them (core work, section 8).
-* **Export and print** run the binary, not the server: `kupcad build <file> -o <path> -p ...`
+* **Export and print** run the binary, not the server: `kupcad build <file> -o <path> -f <format> -p ...`
   with the panel's current values (`ScriptValues`, which the viewer and the commands share), so
   what is exported is what the CLI would build; a script with unsaved changes is saved first, on
   the user's word. Print writes a 3MF to a temp file and opens it with the configured slicer
-  (`kupcad.print.slicer`) or the OS's handler. A failed build says the first line of why
-  (`whyItFailed`: not the log, the backtrace or the summary).
+  (`kupcad.print.slicer`) or the OS's handler, from a folder of its own under the system's
+  temporary one. A failed build says why (`whyItFailed`: the error the run raised, a syntax error,
+  the CLI's refusal, the summary, in that order; never the script's own output).
 * **Click a part** in the viewer and the editor jumps to where it was named (needs source
   locations in the GLB's part metadata: core work).
 
