@@ -1,0 +1,32 @@
+/*
+  The --kc-* tokens the panels are styled by, light and dark as the page's colour scheme is. A
+  host sets its own on top (vscode.css maps VS Code's). --kc-viewer-* (background, grid, plate,
+  edges, selection, cap, ghost) theme the viewer; left unset, it uses its own colours.
+*/
+:root {
+  --kc-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --kc-font-size: 13px;
+  --kc-bg: #ffffff;
+  --kc-fg: #1f2328;
+  --kc-muted: #656d76;
+  --kc-border: #d0d7de;
+  --kc-input-bg: #ffffff;
+  --kc-accent: #2f80ed;
+  --kc-accent-fg: #ffffff;
+  --kc-error: #cf222e;
+  --kc-radius: 4px;
+  --kc-gap: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --kc-bg: #1e2024;
+    --kc-fg: #e6e7e9;
+    --kc-muted: #9aa0a8;
+    --kc-border: #3a3e45;
+    --kc-input-bg: #26292e;
+    --kc-accent: #5aa0ff;
+    --kc-accent-fg: #0d0e10;
+    --kc-error: #ff7b72;
+  }
+}

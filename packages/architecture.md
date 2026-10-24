@@ -260,21 +260,27 @@ pixels, rather than comparing a screenshot, holds on any machine's GPU.
 
 The panels a host places around an editor, as Svelte 5 components:
 
-* `ViewerPane`: the viewer with its toolbar (environment, render mode, camera views, section
-  plane, fit, screenshot) and the part list.
-* `ParamsPanel`: controls generated from a `UiSchema`, grouped by `group:`, a slider or a
-  number field with `step:` and `unit:`, a select for `in:` choices, a toggle for a boolean;
-  values validated against `min`/`max` before they leave the panel; an overridden value marked
-  with a revert, as the reference extension does.
-* `PresetsBar`: named sets of parameter values, saved and loaded through the host (the host owns
-  where: a JSON file beside the script in VS Code, local storage in the playground).
-* `LogPanel`: the run's output and warnings, errors linked to their line (the host navigates).
-* `StatusBar`: building / done in n ms / failed, the engine and core version.
+* `ViewerPane`: the viewer with its toolbar (render mode, view, projection, floor, a section
+  plane along an axis over the model's bounds, fit, screenshot) and the part list, each part with
+  its colour and copies, a click selecting its copies as a click in the viewer does.
+* `ParamsPanel`: controls generated from a `UiSchema`, grouped by `group:`, a slider with a number
+  between `min` and `max`, a number field with `step:` and `unit:`, a select for `in:` choices, a
+  toggle for a boolean; values validated against the schema before they leave the panel (its
+  logic is plain functions, `params.js`); a value the run refused (the frame's `error.param`)
+  shown on its control; an overridden value marked with a revert, as the reference extension
+  does.
+* Later, with the hosts that need them: `PresetsBar` (named sets of parameter values, saved and
+  loaded through the host: a JSON file beside the script in VS Code, local storage in the
+  playground), `LogPanel` (the run's warnings and errors linked to their line) and `StatusBar`
+  (building, done in n ms, failed; the core's version).
 
-They talk only in protocol types and Svelte events (`onchange={(values) => ...}`), hold no engine
-and fetch nothing. A host wires them: the playground to its worker, the extension's webview to
-its message bridge. Tokens (`--kc-*` CSS variables) give them one look; a `vscode.css` maps
-VS Code's variables onto them so the webview follows the editor's theme.
+They talk only in protocol types and Svelte props and callbacks (`onchange={(values) => ...}`),
+hold no engine and fetch nothing. A host wires them: the playground to its worker, the extension's
+webview to its message bridge. Tokens (`--kc-*` CSS variables, `tokens.css`) give them one look;
+a `vscode.css` maps VS Code's variables onto them so the webview follows the editor's theme, and
+`--kc-viewer-*` theme the viewer. They are tested mounted under jsdom with the viewer's `testing`
+setup and the real core's schemas and models; the binding a host makes (`bind:selected`) is
+tested through reactive state, as a parent's `$state` is.
 
 ## 6. `@kupcad/editor` and the editor question
 

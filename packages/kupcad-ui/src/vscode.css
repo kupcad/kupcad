@@ -1,0 +1,24 @@
+/*
+  The --kc-* tokens as VS Code's theme sets its own, for the extension's webview: the panels and
+  the viewer follow the editor's theme.
+*/
+:root {
+  --kc-font: var(--vscode-font-family);
+  --kc-font-size: var(--vscode-font-size);
+  --kc-bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --kc-fg: var(--vscode-foreground);
+  --kc-muted: var(--vscode-descriptionForeground);
+  --kc-border: var(--vscode-panel-border, var(--vscode-widget-border));
+  --kc-input-bg: var(--vscode-input-background);
+  --kc-accent: var(--vscode-focusBorder);
+  --kc-accent-fg: var(--vscode-button-foreground);
+  --kc-error: var(--vscode-errorForeground);
+
+  --kc-viewer-background: var(--vscode-editor-background);
+  --kc-viewer-grid: var(--vscode-editorIndentGuide-background1, var(--vscode-panel-border));
+  --kc-viewer-plate: var(--vscode-editorWidget-background);
+  --kc-viewer-edges: var(--vscode-editorLineNumber-foreground);
+  --kc-viewer-selection: var(--vscode-focusBorder);
+  --kc-viewer-cap: var(--vscode-editorError-foreground);
+  --kc-viewer-ghost: var(--vscode-editorInfo-foreground);
+}

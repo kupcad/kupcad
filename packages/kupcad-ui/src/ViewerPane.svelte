@@ -1,0 +1,271 @@
+<!--
+  @component
+  The viewer with its toolbar (render mode, view, projection, floor, a section through the
+  model, fit, screenshot) and the model's parts, a click on one selecting its copies as a click
+  in the viewer does. Themed by the --kc-viewer-* tokens unless given a `theme`.
+-->
+<script>
+  import { onMount } from 'svelte';
+  import { RENDER_MODES, VIEW_NAMES } from '@kupcad/viewer';
+  import { Viewer } from '@kupcad/viewer/svelte';
+  import { themeFromTokens } from './theme.js';
+
+  /** @import { Model, Part } from '@kupcad/protocol/types' */
+  /** @import { Axis, Bounds, Environment, RenderMode, Theme, ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
+
+  /**
+   * @typedef {object} Props
+   * @property {Model | null} [model]
+   * @property {Theme} [theme] by default the --kc-viewer-* tokens'
+   * @property {string | null} [selected] the part selected; bindable
+   * @property {ViewerClass | null} [viewer] the viewer, once mounted; bindable
+   * @property {ViewerOptions} [options] what the viewer is made with
+   * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
+   * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
+   */
+
+  /** @type {Props} */
+  let {
+    model = null,
+    theme,
+    selected = $bindable(null),
+    viewer = $bindable(null),
+    options = {},
+    onscreenshot,
+    onerror,
+  } = $props();
+
+  /** @type {Record<RenderMode, string>} */
+  const MODE_LABELS = { solid: 'Solid', xray: 'X-ray', wireframe: 'Wireframe' };
+  /** @type {Record<Environment, string>} */
+  const FLOOR_LABELS = { grid: 'Grid', plate: 'Plate', none: 'None' };
+  /** @type {Axis[]} */
+  const AXES = ['x', 'y', 'z'];
+  /** A section's slider takes this many steps across the model. */
+  const SECTION_STEPS = 200;
+
+  /** @type {HTMLDivElement} */
+  let root;
+  let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
+  let renderMode = $state(/** @type {RenderMode} */ ('solid'));
+  let orthographic = $state(false);
+  let environment = $state(/** @type {Environment} */ ('grid'));
+  let sectioned = $state(false);
+  let axis = $state(/** @type {Axis} */ ('z'));
+  let offset = $state(0);
+  let bounds = $state(/** @type {Bounds | null} */ (null));
+
+  const parts = $derived(/** @type {Part[]} */ (model?.kind === '3d' ? model.parts : []));
+  const along = $derived(AXES.indexOf(axis));
+  const span = $derived(bounds ? { min: bounds.min[along], max: bounds.max[along] } : null);
+  const section = $derived(sectioned && span ? { axis, offset } : null);
+
+  onMount(() => {
+    tokenTheme = themeFromTokens(root);
+  });
+
+  /** @param {ViewerClass} shown */
+  function modelShown(shown) {
+    bounds = shown.bounds;
+    centreSection();
+  }
+
+  /** Puts the section across the middle of the model, along its axis. */
+  function centreSection() {
+    if (span) offset = (span.min + span.max) / 2;
+  }
+
+  async function screenshot() {
+    const image = await viewer?.screenshot();
+    if (image) onscreenshot?.(image);
+  }
+</script>
+
+<div class="kc-viewer-pane" bind:this={root}>
+  <div class="toolbar" role="toolbar" aria-label="Viewer">
+    <div class="segments" role="group" aria-label="Render mode">
+      {#each RENDER_MODES as mode (mode)}
+        <button
+          type="button"
+          aria-pressed={renderMode === mode}
+          onclick={() => (renderMode = mode)}
+        >
+          {MODE_LABELS[mode]}
+        </button>
+      {/each}
+    </div>
+    <label>
+      View
+      <select
+        onchange={(event) =>
+          viewer?.setCamera({ view: /** @type {any} */ (event.currentTarget.value) })}
+      >
+        {#each VIEW_NAMES as view (view)}
+          <option value={view}>{view}</option>
+        {/each}
+      </select>
+    </label>
+    <label><input type="checkbox" bind:checked={orthographic} /> Orthographic</label>
+    <label>
+      Floor
+      <select bind:value={environment}>
+        {#each Object.entries(FLOOR_LABELS) as [value, label] (value)}
+          <option {value}>{label}</option>
+        {/each}
+      </select>
+    </label>
+    <label><input type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label>
+    {#if sectioned && span}
+      <select aria-label="Section axis" bind:value={axis} onchange={centreSection}>
+        {#each AXES as name (name)}
+          <option value={name}>{name.toUpperCase()}</option>
+        {/each}
+      </select>
+      <input
+        type="range"
+        aria-label="Section offset"
+        min={span.min}
+        max={span.max}
+        step={(span.max - span.min) / SECTION_STEPS || 'any'}
+        bind:value={offset}
+      />
+    {/if}
+    <button type="button" onclick={() => viewer?.fit()}>Fit</button>
+    {#if onscreenshot}
+      <button type="button" onclick={screenshot}>Screenshot</button>
+    {/if}
+  </div>
+  <div class="body">
+    <div class="canvas">
+      <Viewer
+        {model}
+        theme={theme ?? tokenTheme}
+        {environment}
+        {renderMode}
+        projection={orthographic ? 'orthographic' : 'perspective'}
+        {section}
+        bind:selected
+        bind:viewer
+        {options}
+        onmodel={modelShown}
+        {onerror}
+      />
+    </div>
+    {#if parts.length > 0}
+      <ul class="parts" aria-label="Parts">
+        {#each parts as part (part.name)}
+          <li>
+            <button
+              type="button"
+              aria-pressed={selected === part.name}
+              onclick={() => (selected = selected === part.name ? null : part.name)}
+            >
+              <span class="swatch" style:background={part.color ?? 'var(--kc-muted)'}></span>
+              <span class="name">{part.name}</span>
+              {#if part.count > 1}<span class="count">×{part.count}</span>{/if}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .kc-viewer-pane {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    font-family: var(--kc-font);
+    font-size: var(--kc-font-size);
+    color: var(--kc-fg);
+    background: var(--kc-bg);
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--kc-gap);
+    padding: 4px var(--kc-gap);
+    border-bottom: 1px solid var(--kc-border);
+  }
+  .segments {
+    display: flex;
+  }
+  button,
+  select {
+    font: inherit;
+    color: var(--kc-fg);
+    background: var(--kc-input-bg);
+    border: 1px solid var(--kc-border);
+    border-radius: var(--kc-radius);
+    padding: 2px 8px;
+    cursor: pointer;
+  }
+  .segments button {
+    border-radius: 0;
+  }
+  .segments button:first-child {
+    border-radius: var(--kc-radius) 0 0 var(--kc-radius);
+  }
+  .segments button:last-child {
+    border-radius: 0 var(--kc-radius) var(--kc-radius) 0;
+  }
+  button[aria-pressed='true'] {
+    color: var(--kc-accent-fg);
+    background: var(--kc-accent);
+    border-color: var(--kc-accent);
+  }
+  label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .canvas {
+    flex: 1;
+    min-width: 0;
+  }
+  .parts {
+    list-style: none;
+    margin: 0;
+    padding: var(--kc-gap);
+    min-width: 10em;
+    overflow: auto;
+    border-left: 1px solid var(--kc-border);
+  }
+  .parts button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    border-color: transparent;
+    background: none;
+    text-align: left;
+  }
+  .parts button[aria-pressed='true'] {
+    color: var(--kc-accent-fg);
+    background: var(--kc-accent);
+  }
+  .swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .name {
+    flex: 1;
+  }
+  .count {
+    color: var(--kc-muted);
+  }
+  [aria-pressed='true'] .count {
+    color: inherit;
+  }
+</style>
