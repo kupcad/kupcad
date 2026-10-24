@@ -90,6 +90,15 @@ describe('Viewer', () => {
     expect(viewer.section).toBeNull();
   });
 
+  it("gives the model's bounds in the script's coordinates, none without a model", async () => {
+    const { viewer } = viewerOn();
+    expect(viewer.bounds).toBeNull();
+    await viewer.setModel(await modelOf('cube([20, 10, 2]).translate(z: 5)'));
+    const bounds = viewer.bounds;
+    expect(bounds?.min.map((v) => Math.round(v * 1000) / 1000 + 0)).toEqual([0, 0, 5]);
+    expect(bounds?.max.map((v) => Math.round(v * 1000) / 1000 + 0)).toEqual([20, 10, 7]);
+  });
+
   it('shows a drawing from the top, orthographic', async () => {
     const { viewer } = viewerOn();
     await viewer.setModel(await modelOf('square(10, center: true).named("plate")'));

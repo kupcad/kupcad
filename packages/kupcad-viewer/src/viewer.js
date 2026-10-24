@@ -28,7 +28,7 @@ import { RENDER_ORDER, SectionView } from './section.js';
 import { LIGHT } from './theme.js';
 
 /** @import { Model } from '@kupcad/protocol/types' */
-/** @import { Environment, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
+/** @import { Bounds, Environment, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
 
 /** The perspective camera's vertical field of view, in degrees. */
 const FOV_DEG = 35;
@@ -170,6 +170,20 @@ export class Viewer extends EventTarget {
   }
   get environment() {
     return this.#environmentKind;
+  }
+
+  /**
+   * The model's bounds, in the script's coordinates (mm), or null with no model shown: what a
+   * section's offset ranges over.
+   * @returns {Bounds | null}
+   */
+  get bounds() {
+    const box = this.#modelBox();
+    if (box.isEmpty()) return null;
+    return {
+      min: /** @type {Bounds['min']} */ (box.min.toArray()),
+      max: /** @type {Bounds['max']} */ (box.max.toArray()),
+    };
   }
 
   /**

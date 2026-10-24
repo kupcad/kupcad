@@ -32,6 +32,12 @@ export interface Section {
   flip?: boolean;
 }
 
+/** A box in the script's coordinates, in mm. */
+export interface Bounds {
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
 /** A build plate's size, in mm. */
 export interface Plate {
   width: number;

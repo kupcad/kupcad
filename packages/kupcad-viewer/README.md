@@ -14,6 +14,7 @@ viewer.setCamera({ projection: 'orthographic', view: 'front' }); // frames the m
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
 viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click on a part
 viewer.select('bolt'); // tints every copy of the part
+viewer.bounds; // { min, max } in mm: what a section's offset ranges over
 const png = await viewer.screenshot();
 ```
 
