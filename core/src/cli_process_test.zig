@@ -124,6 +124,7 @@ test "kupcad: help, version and unknown commands" {
         .{ .args = &.{ "pkg", "--help" }, .code = 0, .contains = "add <alias>=<url>" },
         .{ .args = &.{ "pkg", "add", "--help" }, .code = 0, .contains = "Usage: kupcad pkg" },
         .{ .args = &.{ "lsp", "--help" }, .code = 0, .contains = "Usage: kupcad lsp" },
+        .{ .args = &.{ "lsp", "--tcp" }, .code = 1, .contains = "Unknown option '--tcp'" },
         .{ .args = &.{ "dev", "-h" }, .code = 0, .contains = "Usage: kupcad dev" },
         .{ .args = &.{"--help"}, .code = 0, .contains = "Run 'kupcad <command> --help'" },
     });
@@ -646,7 +647,8 @@ test "kupcad: lsp gives a document values with kupcad.setParams, a new worker is
     var sb = try Sandbox.init();
     defer sb.deinit();
     var server: Conversation = undefined;
-    try server.start(sb.path, &.{"lsp"});
+    // As VS Code's language client starts it: it ended at once, refusing --stdio
+    try server.start(sb.path, &.{ "lsp", "--stdio" });
     errdefer server.child.kill(testing.io);
     var seen: std.ArrayList(u8) = .empty;
     defer seen.deinit(testing.allocator);

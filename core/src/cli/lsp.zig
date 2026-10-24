@@ -26,6 +26,7 @@ const SessionPreview = lsp_preview.SessionPreview;
 const freeFiles = lsp_preview.freeFiles;
 const lsp_worker = @import("lsp_worker.zig");
 const Args = @import("args.zig").Args;
+const Reporter = @import("reporter.zig").Reporter;
 const viewport_ws = @import("viewport_ws.zig");
 const ViewportWsServer = viewport_ws.ViewportWsServer;
 const project_config = @import("config.zig");
@@ -54,11 +55,16 @@ pub const SET_PARAMS_COMMAND = "kupcad.setParams";
 pub const PREVIEW_COMMAND = "kupcad.preview";
 /// The commands the server runs, as `initialize` declares them.
 const COMMANDS = [_][]const u8{ SET_PARAMS_COMMAND, PREVIEW_COMMAND };
+/// The flag a language client gives a server it talks to on stdin and stdout (VS Code's adds
+/// it for that transport): the server's only one, so it changes nothing. Refused, the server
+/// ended before it started, and the extension's never ran.
+pub const STDIO_FLAG = "--stdio";
 
 pub const USAGE =
-    \\Usage: kupcad lsp
+    \\Usage: kupcad lsp [--stdio]
     \\
-    \\Starts the language server on stdin and stdout. Editors start it themselves;
+    \\Starts the language server on stdin and stdout (--stdio, which language clients
+    \\give, says so; it is the only transport). Editors start it themselves;
     \\the VS Code extension runs it for .kup files. It runs scripts in a worker
     \\process of its own (kupcad lsp --preview-worker), which it restarts if it crashes.
     \\
@@ -1236,10 +1242,14 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
-    if (args.next()) |arg| {
-        if (!std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) return error.UnknownArgument;
-        try lsp_worker.runWorker(init.io, allocator);
-        return .success;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) {
+            try lsp_worker.runWorker(init.io, allocator);
+            return .success;
+        }
+        if (std.mem.eql(u8, arg, STDIO_FLAG)) continue;
+        Reporter.forProcess(init).err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
+        return .failure;
     }
 
     // 1. Where scripts run: in a worker process (this executable, lsp_worker.zig), so one
