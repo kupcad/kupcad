@@ -30,8 +30,7 @@ pub const USAGE =
     \\  -o, --output <file>       Output path; its extension picks the format
     \\                            (
 ++ Format.EXTENSIONS ++ "); repeatable, the one run written to each\n" ++
-    \\  -f, --format <name>
-++ Format.NAMES ++ " (glb when there is no -o)\n" ++
+    "  -f, --format <name>       " ++ Format.NAMES ++ " (glb when there is no -o)\n" ++
     \\  -d, --draco               Compress glb and gltf meshes with Draco
     \\      --draco-bits <n>      Quantize Draco's positions to n bits, 1 to 30 (14: an
     \\                            error of a part's size / 16384); finer files are larger

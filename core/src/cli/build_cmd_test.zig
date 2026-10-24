@@ -641,3 +641,16 @@ test "build_cmd: the project's vm_memory_limit caps the script's heap" {
     try testing.expectEqual(.failure, result.outcome);
     try testing.expect(std.mem.find(u8, result.text(), "Build failed") != null); // the VM reports the OutOfMemoryError itself
 }
+
+test "build_cmd: every option's description starts in the same column of the help" {
+    // The format's line ran its option and its description together: "<name>stl, glb"
+    const description_column = "  -o, --output <file>       ".len;
+    var lines = std.mem.splitScalar(u8, build_cmd.USAGE, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, std.mem.trimStart(u8, line, " "), "-")) continue;
+        errdefer std.debug.print("line: {s}\n", .{line});
+        try testing.expect(line.len > description_column);
+        try testing.expectEqual(' ', line[description_column - 1]);
+        try testing.expect(line[description_column] != ' ');
+    }
+}
