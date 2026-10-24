@@ -87,6 +87,22 @@ test "LSP preview: no frame while no viewer watches, and the next one wanted run
     try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), .any)));
 }
 
+test "LSP preview: a closed document isn't evaluated, and its values (none now) change nothing" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    try preview.update("part.kup", "w = param(:w, default: 1)\ncube(w)\n");
+    try setParams(&preview, "part.kup", "{\"w\": 3}");
+    _ = try frameOf(arena.allocator(), &preview, "part.kup");
+    try preview.remove("part.kup");
+    const revision = preview.session.global_revision;
+    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), .any)));
+    // Its values given to the session first made every module run again
+    try testing.expectEqual(revision, preview.session.global_revision);
+}
+
 test "LSP preview: a document that doesn't parse, compile or run says why, and where, in its frame" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

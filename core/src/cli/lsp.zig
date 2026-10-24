@@ -673,6 +673,12 @@ pub const Handler = struct {
         var closed = (self.files.fetchRemove(uri) orelse return).value;
         defer closed.deinit(self.allocator);
         defer self.tellOfCrash();
+        // Shown no more: the next document edited is, until a front end chooses one. Chosen,
+        // it stayed shown, and no edit of another showed that one
+        if (self.previewed) |shown| if (std.mem.eql(u8, shown.uri, uri)) {
+            self.dropPreviewed();
+            self.preview_chosen = false;
+        };
         try self.preview.remove(closed.module_path);
         // A document another one imports is read from disk now, which may differ from the
         // text the editor had

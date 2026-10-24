@@ -818,6 +818,24 @@ test "LSP: viewers that connect after none was watching are sent the frame, thou
     try testing.expectEqualSlices(u8, viewers.frames.items[0], viewers.frames.items[1]);
 }
 
+test "LSP: the document chosen, closed, is shown no more: the next edited is" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.open(MAIN_URI, "cube(2)\n");
+    try server.open(LIB_URI, "square(1)\n");
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try server.close(MAIN_URI);
+    try server.change(LIB_URI, "square(2)\n");
+    server.settle();
+    try testing.expectEqualStrings(LIB_URI, (try viewers.last(server.arena.allocator())).document.?);
+}
+
 test "LSP: without kupcad.preview, the document last edited is shown" {
     var server: Server = undefined;
     try server.init();

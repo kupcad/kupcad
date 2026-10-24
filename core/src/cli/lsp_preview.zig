@@ -393,6 +393,9 @@ pub const SessionPreview = struct {
     pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, want: Want) Outcome {
         const module_path = target.module_path;
         const want_frame = want != .none;
+        // Closed, and nothing open imports it. Its values (none now) given to the session
+        // first made every module run again
+        if (!self.session.workspace.path_to_id.contains(module_path)) return .nothing;
         self.useParamsOf(module_path) catch |err| return notEvaluated(module_path, err);
         // The frame is made by a run: the last run made none (no viewer was watching), or
         // was of another document
@@ -421,8 +424,7 @@ pub const SessionPreview = struct {
     }
 
     fn notEvaluated(module_path: []const u8, err: anyerror) Outcome {
-        // The document was closed, and nothing open imports it
-        if (err != error.UnknownModule) logger.warn("Could not evaluate {s}: {}", .{ module_path, err });
+        logger.warn("Could not evaluate {s}: {}", .{ module_path, err });
         return .nothing;
     }
 
