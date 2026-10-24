@@ -17,6 +17,7 @@ viewer.addEventListener('select', (event) => console.log(event.detail.part)); //
 // button; the others pan and zoom), or null
 viewer.select('bolt'); // tints every copy of the part
 viewer.bounds; // { min, max } in mm: what a section's offset ranges over
+viewer.kind; // '3d' or '2d', the model shown's (a drawing isn't cut), or null for none
 const png = await viewer.screenshot();
 ```
 

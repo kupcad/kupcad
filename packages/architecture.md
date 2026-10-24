@@ -232,13 +232,15 @@ can own it:
 
 ```js
 const viewer = new Viewer(canvas, { theme, environment: 'grid' | 'plate' | 'none', plate, dracoDecoderPath });
-await viewer.setModel(model);        // a Model: GLB parsed with GLTFLoader (+ DRACOLoader lazily), or SVG drawn on XY
+await viewer.setModel(model);        // a Model: GLB parsed with GLTFLoader (+ DRACOLoader lazily), or SVG drawn on XY;
+                                     // false when a later one replaced it before it was shown
 viewer.setRenderMode('solid' | 'xray' | 'wireframe');
 viewer.setCamera({ projection: 'perspective' | 'orthographic', view: 'iso' | 'top' | ... });
 viewer.setSection({ axis: 'z', offset, flip });   // a clipping plane, with the cut faces capped
 viewer.select(partName); viewer.addEventListener('select', ...)   // picking by raycast, tinting the part;
                                                                   // a model without the part says null
 viewer.partAt(x, y); viewer.fit(); viewer.resize(); viewer.screenshot(); viewer.dispose();
+viewer.bounds; viewer.kind;          // the model shown's: what a section ranges over, and whether it is cut
 ```
 
 Decisions in it:
