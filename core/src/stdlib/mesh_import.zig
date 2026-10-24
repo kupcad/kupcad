@@ -18,8 +18,6 @@ const mesh_repair = @import("../core/mesh_repair.zig");
 const Diagnostic = @import("../exporters/diagnostic.zig").Diagnostic;
 const file_import = @import("file_import.zig");
 
-const log = std.log.scoped(.vm);
-
 /// A file's points are welded within this many of the float's steps at their size, at
 /// least: what a file written from floats can't tell apart (STL holds f32).
 const FLOAT_STEPS = 8;
@@ -103,7 +101,7 @@ fn solidOf(vm: *VM, meshes: []const imported_mesh.Mesh, request: Request, compti
     }
     if (mended.changed()) {
         var buffer: [256]u8 = undefined;
-        log.warn(method ++ ": mended the mesh of '{s}' to close it: {s}", .{ request.path, changesOf(&buffer, mended) });
+        vm.warn(method ++ ": mended the mesh of '{s}' to close it: {s}", .{ request.path, changesOf(&buffer, mended) });
     }
     return vm.allocateGeometry(.{ .symbolic = try vm.dag_builder.addBalancedChain(.union_op, nodes) });
 }

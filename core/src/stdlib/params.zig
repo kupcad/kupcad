@@ -1,11 +1,13 @@
 //! The `param` built-in (`nativeParam`): `param(:name)` reads a parameter, and with
 //! `default:` and `validate:` declares it, taking the host's injected value over the default,
 //! reading it as its default's type (`readNumber`, `readBoolean`), checking its range and
-//! choices, and recording it in the VM's parameter registry.
+//! choices, and recording it in the VM's parameter registry. A value it refuses names its
+//! parameter in the run's report (`refuse`), for a host's control to mark.
 
 const std = @import("std");
 const value = @import("../core/value.zig");
-const VM = @import("../vm/vm.zig").VM;
+const vm_mod = @import("../vm/vm.zig");
+const VM = vm_mod.VM;
 const parameters = @import("../core/parameters.zig");
 const arguments = @import("arguments.zig");
 
@@ -88,8 +90,8 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
             const num = readNumber(injected_val) orelse return typeMismatch(vm, sym_chars, "a number", injected_val);
             injected_val = value.Value.initNumber(num);
             // An unset bound is NaN, which no comparison passes
-            if (num < min_val) return vm.fail(.ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) });
-            if (num > max_val) return vm.fail(.ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) });
+            if (num < min_val) return refuse(vm, sym_chars, .ValueError, "parameter :{s} value {f} is below its minimum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(min_val) });
+            if (num > max_val) return refuse(vm, sym_chars, .ValueError, "parameter :{s} value {f} is above its maximum {f}", .{ sym_chars, value.fmtNumber(num), value.fmtNumber(max_val) });
         },
         .boolean => {
             const b = readBoolean(injected_val) orelse return typeMismatch(vm, sym_chars, "true or false", injected_val);
@@ -111,7 +113,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     if (choices_array) |arr| {
         for (arr.items.items) |choice| {
             if (vm.valuesEqual(injected_val, choice)) break;
-        } else return vm.fail(.ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
+        } else return refuse(vm, sym_chars, .ValueError, "parameter :{s} value is not one of its allowed choices", .{sym_chars});
     }
 
     // --- DOD REGISTRY UPSERT ---
@@ -164,7 +166,14 @@ fn readBoolean(val: value.Value) ?bool {
 
 /// The TypeError for a value parameter `name` can't take: "parameter :w expects a number,
 /// got "abc"", the text quoted as `-p` gave it.
-fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{RuntimeError} {
-    if (got.isString()) return vm.fail(.TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
-    return vm.fail(.TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, arguments.typeName(vm, got) });
+fn typeMismatch(vm: *VM, name: []const u8, expected: []const u8, got: value.Value) error{ RuntimeError, OutOfMemory } {
+    if (got.isString()) return refuse(vm, name, .TypeError, "parameter :{s} expects {s}, got \"{s}\"", .{ name, expected, got.asString().chars });
+    return refuse(vm, name, .TypeError, "parameter :{s} expects {s}, got {s}", .{ name, expected, arguments.typeName(vm, got) });
+}
+
+/// The error of the value parameter `name` refused, `kind` saying `fmt`, with the
+/// parameter noted in the run's report as the one that stopped it.
+fn refuse(vm: *VM, name: []const u8, comptime kind: vm_mod.ErrorKind, comptime fmt: []const u8, args: anytype) error{ RuntimeError, OutOfMemory } {
+    try vm.report.refuse(vm.allocator, name);
+    return vm.fail(kind, fmt, args);
 }

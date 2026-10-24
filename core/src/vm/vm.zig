@@ -28,6 +28,8 @@ const LineIndex = @import("../core/line_index.zig").LineIndex;
 const EngineConfig = @import("../core/engine_config.zig").EngineConfig;
 const sequence = @import("sequence.zig");
 const owned_keys = @import("../core/owned_keys.zig");
+const run_report = @import("run_report.zig");
+const RunReport = run_report.RunReport;
 
 const log = std.log.scoped(.vm);
 
@@ -195,6 +197,8 @@ pub const VM = struct {
     /// as printed to stderr (e.g. "ValueError: ..."): what failed the run. Kept even with
     /// `mute_errors`, so embedders (api, wasm) can show it. Owned by `allocator`.
     last_error: ?[]u8 = null,
+    /// Where the script was when `last_error` was reported; null where it wasn't running.
+    last_error_position: ?LinePosition = null,
 
     // std classes
     string_class: ?*value.ObjClass = null,
@@ -253,6 +257,8 @@ pub const VM = struct {
 
     /// Features already warned about (warnUnsupported), so each is reported once per run.
     warned_features: std.EnumSet(kernel.Feature) = .empty,
+    /// What the run warned of, and the parameter whose value stopped it (vm/run_report.zig).
+    report: RunReport = .{},
     /// The settings in force, as ids into dag_builder's settings table: CAD.with_config
     /// pushes, CAD.config changes the top; never empty. Read with `config`, change only with
     /// setConfig / pushConfig / popConfig, which keep the DAG builder's settings in step.
@@ -364,6 +370,8 @@ pub const VM = struct {
     pub fn deinit(self: *VM) void {
         self.resetStack();
         self.clearLastError();
+        // Before what it clears is torn down (the parameters' list among it)
+        self.resetRunOutput();
 
         self.gc.collectGarbage(self, true);
         // --- GC Teardown Memory Assert ---
@@ -400,7 +408,7 @@ pub const VM = struct {
         self.param_lookup.deinit(self.allocator);
         self.config_stack.deinit(self.allocator);
         self.unwind_stack.deinit(self.allocator);
-        self.resetRunOutput();
+        self.report.deinit(self.allocator);
         self.materials.deinit(self.allocator);
         self.display_list.deinit(self.allocator);
         self.files_read.deinit(self.allocator);
@@ -1539,15 +1547,22 @@ pub const VM = struct {
         self.clearUnwindState();
     }
 
-    /// Forgets what a run put on display: the ghosts (display_list owns its handles,
-    /// clones taken by ghost(), see materials.zig) and the materials. A session running
-    /// a script again and again kept them all, so every viewport export carried every
-    /// material ever made and every ghost ever shown.
+    /// Forgets what a run left: the ghosts it put on display (display_list owns its
+    /// handles, clones taken by ghost(), see materials.zig), its materials, the files it
+    /// read, its report and the parameters it declared. A session running a script again
+    /// and again kept them all, so every viewport export carried every material ever made
+    /// and every ghost ever shown.
     pub fn resetRunOutput(self: *VM) void {
         for (self.display_list.items) |h| kernel.destruct(h);
         self.display_list.clearRetainingCapacity();
         self.materials.clearRetainingCapacity();
         self.forgetFilesRead();
+        self.report.clear(self.allocator);
+        self.warned_features = .empty;
+        // A run's parameters are its own: another module's, run before in the same VM,
+        // were read by `param(:name)` and listed as this run's
+        self.param_registry.clearRetainingCapacity();
+        self.param_lookup.clearRetainingCapacity();
     }
 
     fn forgetFilesRead(self: *VM) void {
@@ -1592,7 +1607,18 @@ pub const VM = struct {
     pub fn warnUnsupported(self: *VM, engine: geom.EngineType, feature: kernel.Feature) void {
         if (kernel.supports(engine, feature) or self.warned_features.contains(feature)) return;
         self.warned_features.insert(feature);
-        log.warn("the {s} engine can't {s} yet, so this model is built without them; use engine: :manifold to keep them", .{ engine.scriptName(), feature.describe() });
+        self.warn("the {s} engine can't {s} yet, so this model is built without them; use engine: :manifold to keep them", .{ engine.scriptName(), feature.describe() });
+    }
+
+    /// Warns of something the run did that its author should know (a mesh mended, a feature
+    /// the engine lacks): logged, unless errors are muted, and kept in `report` where the
+    /// script is now, for a host to show beside the source. A warning there is no room to
+    /// keep is only logged.
+    pub fn warn(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        comptime checkMessageLayout(fmt);
+        if (!self.mute_errors) log.warn(fmt, args);
+        const message = std.fmt.allocPrint(self.allocator, fmt, args) catch return;
+        self.report.addWarning(self.allocator, message, self.currentPosition()) catch {};
     }
 
     /// The settings in force (CAD.config / CAD.with_config).
@@ -1619,7 +1645,7 @@ pub const VM = struct {
         return .{ .line = at.line, .column = at.column };
     }
 
-    pub const LinePosition = struct { line: u32, column: u32 };
+    pub const LinePosition = run_report.LinePosition;
 
     /// Replaces the settings in force (CAD.config): geometry made from now on uses them.
     pub fn setConfig(self: *VM, settings: EngineConfig) !void {
@@ -3919,11 +3945,13 @@ pub const VM = struct {
         // Formats and messages carry newlines that only lay out stderr. A failed copy just
         // loses the message.
         self.last_error = self.allocator.dupe(u8, std.mem.trim(u8, full, &std.ascii.whitespace)) catch null;
+        self.last_error_position = self.currentPosition();
     }
 
     pub fn clearLastError(self: *VM) void {
         if (self.last_error) |msg| self.allocator.free(msg);
         self.last_error = null;
+        self.last_error_position = null;
     }
 
     /// The backtrace lines of the current frames, innermost first, formatted into a reused
