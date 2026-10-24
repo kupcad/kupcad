@@ -607,7 +607,7 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     const updated = try worker.receiveFrame();
     defer testing.allocator.free(updated);
     try testing.expectEqualSlices(u8, &.{0}, updated);
-    try worker.sendFrame(EVALUATE, &.{ &.{1}, path });
+    try worker.sendFrame(EVALUATE, &.{ &.{1}, &u32Le(path.len), path, "file:///work/" ++ path });
     const evaluated = try worker.receiveFrame();
     defer testing.allocator.free(evaluated);
     // The preview frame: its header's length, the header, the model as GLB
@@ -619,7 +619,7 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     // A run that never ends stops when the server says so, not at the instruction limit.
     try worker.sendFrame(UPDATE, &.{ &u32Le(path.len), path, "while true\nend\n" });
     testing.allocator.free(try worker.receiveFrame());
-    try worker.sendFrame(EVALUATE, &.{ &.{1}, path });
+    try worker.sendFrame(EVALUATE, &.{ &.{1}, &u32Le(path.len), path, "file:///work/" ++ path });
     // Read in order, so it stops this run whenever it lands, even before the run starts.
     try testing.io.sleep(.fromMilliseconds(10), .awake);
     try worker.sendFrame(CANCEL, &.{});

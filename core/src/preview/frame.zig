@@ -29,6 +29,10 @@ pub const Kind = enum {
 /// The JSON header. Its field names are the protocol's.
 pub const Header = struct {
     protocolVersion: u32 = PROTOCOL_VERSION,
+    /// The document the frame is of, as its host names it (the language server: the URI the
+    /// editor opened it by, which `kupcad.setParams` takes); null where the host has no name
+    /// for it (`preview_wasm`). Added in protocol version 1, optional: no version bump.
+    document: ?[]const u8 = null,
     kind: Kind,
     /// A `3d` frame's parts, as the parts list groups its Solids.
     parts: []const Part = &.{},

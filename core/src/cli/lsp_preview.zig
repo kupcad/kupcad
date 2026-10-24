@@ -20,7 +20,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const session_mod = @import("../session/session.zig");
 const ScriptSession = session_mod.ScriptSession;
 const ModuleRun = session_mod.ModuleRun;
-const Module = @import("../frontend/workspace.zig").Module;
+const ModuleId = @import("../frontend/workspace.zig").ModuleId;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
@@ -45,6 +45,13 @@ pub const Outcome = union(enum) {
     crashed,
 };
 
+/// The document a preview is of: its path in the project, which the session knows it by, and
+/// its URI, which its frame names it by (the header's `document`).
+pub const Target = struct {
+    module_path: []const u8,
+    uri: []const u8,
+};
+
 /// Frees what Preview.filesRead gave.
 pub fn freeFiles(allocator: std.mem.Allocator, files: []const []u8) void {
     for (files) |path| allocator.free(path);
@@ -62,7 +69,7 @@ pub const Preview = struct {
         setParams: *const fn (ptr: *anyopaque, module_path: []const u8, values: *const ParamValues) anyerror!void,
         fileChanged: *const fn (ptr: *anyopaque, path: []const u8) anyerror!bool,
         filesRead: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8,
-        evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome,
+        evaluate: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome,
         hoverFacts: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8,
         cancelToken: *const fn (ptr: *anyopaque) *std.atomic.Value(bool),
         takeCrash: *const fn (ptr: *anyopaque) ?[]const u8,
@@ -104,11 +111,11 @@ pub const Preview = struct {
         return self.vtable.filesRead(self.ptr, allocator);
     }
 
-    /// Runs `module_path` and the modules it imports, as far as they changed, and gives its
-    /// frame (`nothing` in its place unless `want_frame`: no viewer is watching);
-    /// `cancelToken` stops it.
-    pub fn evaluate(self: Preview, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
-        return self.vtable.evaluate(self.ptr, allocator, module_path, want_frame);
+    /// Runs `target` and the modules it imports, as far as they changed, and gives its frame
+    /// (`nothing` in its place unless `want_frame`: no viewer is watching); `cancelToken`
+    /// stops it.
+    pub fn evaluate(self: Preview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+        return self.vtable.evaluate(self.ptr, allocator, target, want_frame);
     }
 
     /// What a run of `module_path` knows about the value at `node` of its syntax tree, as
@@ -163,12 +170,14 @@ pub const SessionPreview = struct {
 
     const Frame = struct {
         module_path: []u8,
+        /// The name the frame gives its document.
+        uri: []u8,
         bytes: []u8,
     };
 
     const Round = struct {
-        /// The module whose frame is wanted, which runs last.
-        target: []const u8,
+        /// The document whose frame is wanted, whose module runs last.
+        target: Target,
         wants_frame: bool,
         /// The target ran: `frame` is of this run, unless none was wanted or it couldn't be made.
         target_ran: bool = false,
@@ -250,7 +259,7 @@ pub const SessionPreview = struct {
     /// imports is read from disk again, as it is now.
     pub fn remove(self: *SessionPreview, module_path: []const u8) !void {
         self.dropHover();
-        if (self.hasFrameOf(module_path)) self.dropFrame();
+        if (self.keepsFrameOf(module_path)) self.dropFrame();
         if (self.params.fetchRemove(module_path)) |kv| {
             self.allocator.free(kv.key);
             var values = kv.value;
@@ -328,17 +337,18 @@ pub const SessionPreview = struct {
         return std.mem.order(u8, a, b) == .lt;
     }
 
-    /// Runs `module_path` and the modules it imports, as far as they changed (the modules it
+    /// Runs `target` and the modules it imports, as far as they changed (the modules it
     /// finished stay evaluated, even when a message stops it), and gives its frame: of its
     /// run, made while the VM held what the run left (`ran`); the last one, when nothing it
     /// reads changed; or why it didn't run, when it or a module it imports doesn't parse or
     /// compile, or a module it imports fails.
-    pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
+    pub fn evaluate(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+        const module_path = target.module_path;
         self.useParamsOf(module_path) catch |err| return notEvaluated(module_path, err);
         // The frame is made by a run: the last run made none (no viewer was watching), or
         // was of another document
-        if (want_frame and !self.hasFrameOf(module_path)) self.session.runAgain(module_path) catch |err| return notEvaluated(module_path, err);
-        self.round = .{ .target = module_path, .wants_frame = want_frame };
+        if (want_frame and !self.hasFrameFor(target)) self.session.runAgain(module_path) catch |err| return notEvaluated(module_path, err);
+        self.round = .{ .target = target, .wants_frame = want_frame };
         defer self.round = null;
         const evaluated = self.session.evaluateWithImports(module_path);
         if (self.cancelled()) return .cancelled;
@@ -351,7 +361,7 @@ pub const SessionPreview = struct {
         };
         if (!want_frame) return .nothing;
         const round = self.round.?;
-        if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, module_path, err, round.failed_import);
+        if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, target, err, round.failed_import);
         // Of this run, or of the last when nothing it reads changed
         const frame = self.frame orelse return .nothing;
         return .{ .frame = allocator.dupe(u8, frame.bytes) catch return .nothing };
@@ -368,8 +378,8 @@ pub const SessionPreview = struct {
     /// of date.
     fn ran(self: *SessionPreview, run: ModuleRun) void {
         const round = &(self.round orelse return);
-        const is_target = std.mem.eql(u8, run.path, round.target);
-        if (is_target or self.hasFrameOf(run.path)) self.dropFrame();
+        const is_target = std.mem.eql(u8, run.path, round.target.module_path);
+        if (is_target or self.keepsFrameOf(run.path)) self.dropFrame();
         if (!is_target) {
             if (!run.ok) round.failed_import = run.path;
             return;
@@ -377,51 +387,64 @@ pub const SessionPreview = struct {
         round.target_ran = true;
         // A run a message stopped is shown by the next one
         if (!round.wants_frame or self.cancelled()) return;
-        self.keepFrame(run) catch |err| logger.warn("Could not make the preview of {s}: {}", .{ run.path, err });
+        self.keepFrame(round.target.uri, run) catch |err| logger.warn("Could not make the preview of {s}: {}", .{ run.path, err });
     }
 
-    fn keepFrame(self: *SessionPreview, run: ModuleRun) !void {
-        const bytes = try preview_build.ofRun(self.allocator, .{ .vm = run.vm, .doc = run.doc, .source = run.source, .ok = run.ok, .run_ns = run.run_ns });
+    fn keepFrame(self: *SessionPreview, uri: []const u8, run: ModuleRun) !void {
+        const script: preview_build.Script = .{ .doc = run.doc, .source = run.source, .name = uri };
+        const bytes = try preview_build.ofRun(self.allocator, script, .{ .vm = run.vm, .ok = run.ok, .run_ns = run.run_ns });
         errdefer self.allocator.free(bytes);
-        self.frame = .{ .module_path = try self.allocator.dupe(u8, run.path), .bytes = bytes };
+        const module_path = try self.allocator.dupe(u8, run.path);
+        errdefer self.allocator.free(module_path);
+        self.frame = .{ .module_path = module_path, .uri = try self.allocator.dupe(u8, uri), .bytes = bytes };
     }
 
-    fn hasFrameOf(self: *const SessionPreview, module_path: []const u8) bool {
+    /// Whether the frame kept is of the module at `module_path`, by whatever name.
+    fn keepsFrameOf(self: *const SessionPreview, module_path: []const u8) bool {
         const frame = self.frame orelse return false;
         return std.mem.eql(u8, frame.module_path, module_path);
+    }
+
+    /// Whether the frame kept is `target`'s: of its module, under its name.
+    fn hasFrameFor(self: *const SessionPreview, target: Target) bool {
+        const frame = self.frame orelse return false;
+        return std.mem.eql(u8, frame.module_path, target.module_path) and std.mem.eql(u8, frame.uri, target.uri);
     }
 
     fn dropFrame(self: *SessionPreview) void {
         const frame = self.frame orelse return;
         self.allocator.free(frame.module_path);
+        self.allocator.free(frame.uri);
         self.allocator.free(frame.bytes);
         self.frame = null;
     }
 
-    /// The frame of `module_path`, which didn't run because the evaluation stopped with `err`.
-    fn stopped(self: *SessionPreview, allocator: std.mem.Allocator, module_path: []const u8, err: anyerror, failed_import: ?[]const u8) Outcome {
+    /// The frame of `target`, which didn't run because the evaluation stopped with `err`.
+    fn stopped(self: *SessionPreview, allocator: std.mem.Allocator, target: Target, err: anyerror, failed_import: ?[]const u8) Outcome {
         const ws = &self.session.workspace;
-        const target = &ws.modules.items[@backingInt(ws.path_to_id.get(module_path) orelse return .nothing)];
-        const made = self.stoppedFrame(allocator, target, err, failed_import) catch |e| {
-            logger.warn("Could not make the preview of {s}: {}", .{ module_path, e });
+        const id = ws.path_to_id.get(target.module_path) orelse return .nothing;
+        const module = &ws.modules.items[@backingInt(id)];
+        const script: preview_build.Script = .{ .doc = &module.doc, .source = module.source, .name = target.uri };
+        const made = self.stoppedFrame(allocator, script, id, err, failed_import) catch |e| {
+            logger.warn("Could not make the preview of {s}: {}", .{ target.module_path, e });
             return .nothing;
         };
         return if (made) |bytes| .{ .frame = bytes } else .nothing;
     }
 
-    /// Why `target` didn't run: it doesn't parse or compile, or a module it imports doesn't
-    /// (the session's failure), or failed to run (`failed_import`, the VM's last error).
-    /// Null when nothing says why.
-    fn stoppedFrame(self: *SessionPreview, allocator: std.mem.Allocator, target: *const Module, err: anyerror, failed_import: ?[]const u8) !?[]u8 {
+    /// Why `script`, the module `id`, didn't run: it doesn't parse or compile, or a module it
+    /// imports doesn't (the session's failure), or failed to run (`failed_import`, the VM's
+    /// last error). Null when nothing says why.
+    fn stoppedFrame(self: *SessionPreview, allocator: std.mem.Allocator, script: preview_build.Script, id: ModuleId, err: anyerror, failed_import: ?[]const u8) !?[]u8 {
         if (err == error.RuntimeError) {
             const path = failed_import orelse return null;
-            return try preview_build.ofImportFailure(allocator, &target.doc, target.source, path, preview_build.failureOf(&self.session.vm));
+            return try preview_build.ofImportFailure(allocator, script, path, preview_build.failureOf(&self.session.vm));
         }
         const failure = self.session.failure orelse return null;
         const failed = &self.session.workspace.modules.items[@backingInt(failure.module)];
         const why = preview_build.failureOfDiagnostic(&failed.doc, failure.diagnostics[0]);
-        if (failed == target) return try preview_build.ofFailure(allocator, &target.doc, target.source, why);
-        return try preview_build.ofImportFailure(allocator, &target.doc, target.source, failed.path, why);
+        if (failure.module == id) return try preview_build.ofFailure(allocator, script, why);
+        return try preview_build.ofImportFailure(allocator, script, failed.path, why);
     }
 
     fn cancelled(self: *SessionPreview) bool {
@@ -483,8 +506,8 @@ pub const SessionPreview = struct {
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
     }
-    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
-        return cast(ptr).evaluate(allocator, module_path, want_frame);
+    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+        return cast(ptr).evaluate(allocator, target, want_frame);
     }
     fn hoverFactsImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8 {
         return cast(ptr).hoverFacts(allocator, module_path, node);

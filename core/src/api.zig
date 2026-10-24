@@ -431,7 +431,7 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
     if (doc.diagnostics.len > 0) {
-        return preview_build.ofFailure(allocator, &doc, source, preview_build.failureOfDiagnostic(&doc, doc.diagnostics[0]));
+        return preview_build.ofFailure(allocator, .{ .doc = &doc, .source = source }, preview_build.failureOfDiagnostic(&doc, doc.diagnostics[0]));
     }
     var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params });
     defer vm.deinit();
@@ -446,11 +446,11 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
     defer comp.deinit();
     comp.compile(doc.tree.root) catch |err| {
         const found = comp.errorDiagnostic() orelse return err;
-        return preview_build.ofFailure(allocator, &doc, source, preview_build.failureOfDiagnostic(&doc, found));
+        return preview_build.ofFailure(allocator, .{ .doc = &doc, .source = source }, preview_build.failureOfDiagnostic(&doc, found));
     };
     var clock = Stopwatch.start(io);
     const ok = vm.interpret(&program) == .ok;
-    return preview_build.ofRun(allocator, .{ .vm = &vm, .doc = &doc, .source = source, .ok = ok, .run_ns = clock.lap() });
+    return preview_build.ofRun(allocator, .{ .doc = &doc, .source = source }, .{ .vm = &vm, .ok = ok, .run_ns = clock.lap() });
 }
 
 /// The preview frame of `source` refused before it ran, for `message` (a host's parameter
@@ -458,7 +458,7 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
 pub fn previewFailure(allocator: std.mem.Allocator, source: []const u8, message: []const u8) ![]u8 {
     var doc = try Document.parse(allocator, source);
     defer doc.deinit();
-    return preview_build.ofFailure(allocator, &doc, source, .{ .message = message });
+    return preview_build.ofFailure(allocator, .{ .doc = &doc, .source = source }, .{ .message = message });
 }
 
 /// Copies the VM's record of the error that failed it; null if there is none or on OOM,

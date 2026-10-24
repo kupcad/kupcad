@@ -9,6 +9,7 @@ test "frame: a header and a body come apart as they went in, the header's fields
     try values.put(testing.allocator, "width", .{ .number = 20 });
     try values.put(testing.allocator, "material", .{ .text = "PLA" });
     const header: frame.Header = .{
+        .document = "file:///work/box.kup",
         .kind = .@"3d",
         .parts = &.{.{ .name = "lid", .count = 2, .nodes = &.{ "lid", "lid_2" }, .color = "#cc3333", .opacity = 1 }},
         .warnings = &.{.{ .message = "mended", .line = 3, .column = 5 }},
@@ -24,6 +25,7 @@ test "frame: a header and a body come apart as they went in, the header's fields
     // Read back strictly, as a front end's types would: a field renamed or added fails
     const Json = struct {
         protocolVersion: u32,
+        document: ?[]const u8,
         kind: []const u8,
         parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64 },
         warnings: []const struct { message: []const u8, line: ?u32, column: ?u32 },
@@ -35,6 +37,7 @@ test "frame: a header and a body come apart as they went in, the header's fields
     defer parsed.deinit();
     const h = parsed.value;
     try testing.expectEqual(frame.PROTOCOL_VERSION, h.protocolVersion);
+    try testing.expectEqualStrings("file:///work/box.kup", h.document.?);
     try testing.expectEqualStrings("3d", h.kind);
     try testing.expectEqualStrings("lid_2", h.parts[0].nodes[1]);
     try testing.expectEqual(@as(?u32, 3), h.warnings[0].line);

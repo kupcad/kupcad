@@ -26,12 +26,18 @@ const FAILED_WITHOUT_MESSAGE = "the script failed";
 /// The warning of a model whose Solids hold no triangle.
 const EMPTY_MODEL = "the model's Solids are empty: there is nothing to show";
 
-/// A run the VM has just finished.
-pub const Run = struct {
-    vm: *VM,
-    /// The script the VM ran, for its parameter schema.
+/// The script a frame is of.
+pub const Script = struct {
+    /// Its parse and its text, for its parameter schema.
     doc: *const Document,
     source: []const u8,
+    /// What its host calls it, the header's `document`; null for none.
+    name: ?[]const u8 = null,
+};
+
+/// A run of the script the VM has just finished.
+pub const Run = struct {
+    vm: *VM,
     /// It ended without an error; else the VM's last error says why.
     ok: bool,
     /// How long it ran, in nanoseconds.
@@ -41,16 +47,13 @@ pub const Run = struct {
 /// The frame of `run`, owned by `allocator`. Showing the model can fail in the VM as an
 /// export does (an engine that can't mesh, a last value that is no model): the frame then
 /// says why, as for a failed run.
-pub fn ofRun(allocator: std.mem.Allocator, run: Run) ![]u8 {
+pub fn ofRun(allocator: std.mem.Allocator, script: Script, run: Run) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     const vm = run.vm;
-    var header: frame.Header = .{
-        .kind = .none,
-        .params = .{ .schema = try extractor.extractSchema(arena, run.doc, run.source), .values = try valuesOf(arena, vm) },
-        .timing = .{ .runMs = stopwatch.milliseconds(run.run_ns), .renderMs = 0 },
-    };
+    var header = try headerOf(arena, script, try valuesOf(arena, vm));
+    header.timing.runMs = stopwatch.milliseconds(run.run_ns);
     var warnings: std.ArrayList(frame.Warning) = .empty;
     for (vm.report.warnings.items) |w| try warnings.append(arena, warningOf(w.message, w.position));
 
@@ -74,28 +77,34 @@ pub fn ofRun(allocator: std.mem.Allocator, run: Run) ![]u8 {
 }
 
 /// The frame of a script that didn't get to run: its schema, as far as it parses, and why.
-pub fn ofFailure(allocator: std.mem.Allocator, doc: *const Document, source: []const u8, failure: frame.Failure) ![]u8 {
+pub fn ofFailure(allocator: std.mem.Allocator, script: Script, failure: frame.Failure) ![]u8 {
     var arena_state = std.heap.ArenaAllocator.init(allocator);
     defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    return frame.encode(allocator, .{
+    var header = try headerOf(arena_state.allocator(), script, .{});
+    header.@"error" = failure;
+    return frame.encode(allocator, header, "");
+}
+
+/// The header of `script`'s frame with the parameter values a run took, showing nothing yet.
+fn headerOf(arena: std.mem.Allocator, script: Script, values: param_values.ParamValues) !frame.Header {
+    return .{
+        .document = script.name,
         .kind = .none,
-        .params = .{ .schema = try extractor.extractSchema(arena, doc, source), .values = .{} },
-        .@"error" = failure,
+        .params = .{ .schema = try extractor.extractSchema(arena, script.doc, script.source), .values = values },
         .timing = .{ .runMs = 0, .renderMs = 0 },
-    }, "");
+    };
 }
 
 /// The frame of a script that didn't run because the module it imports at `module_path`
 /// failed, as `failure` says in that module's lines: the message names the module and the
 /// place, and the line and column, which would be the script's, are left out.
-pub fn ofImportFailure(allocator: std.mem.Allocator, doc: *const Document, source: []const u8, module_path: []const u8, failure: frame.Failure) ![]u8 {
+pub fn ofImportFailure(allocator: std.mem.Allocator, script: Script, module_path: []const u8, failure: frame.Failure) ![]u8 {
     const message = if (failure.line) |line|
         try std.fmt.allocPrint(allocator, "{s}:{d}:{d}: {s}", .{ module_path, line, failure.column orelse 1, failure.message })
     else
         try std.fmt.allocPrint(allocator, "{s}: {s}", .{ module_path, failure.message });
     defer allocator.free(message);
-    return ofFailure(allocator, doc, source, .{ .message = message });
+    return ofFailure(allocator, script, .{ .message = message });
 }
 
 /// Why a script doesn't parse or compile: `diagnostic`, placed in `doc`.

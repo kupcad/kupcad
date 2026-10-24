@@ -10,6 +10,7 @@ const ParamValues = @import("../core/param_values.zig").ParamValues;
 /// The header as a front end's types read it: a field renamed or added fails.
 const Header = struct {
     protocolVersion: u32,
+    document: ?[]const u8,
     kind: []const u8,
     parts: []const struct { name: []const u8, count: u32, nodes: []const []const u8, color: ?[]const u8, opacity: f64 },
     warnings: []const struct { message: []const u8, line: ?u32, column: ?u32 },
@@ -60,6 +61,8 @@ test "preview: a model's Solids as GLB, its parts named as the GLB's nodes, with
     const read = try preview(arena.allocator(), source, "{\"width\": 25}");
     const h = read.header;
     try testing.expectEqual(frame.PROTOCOL_VERSION, h.protocolVersion);
+    // previewScript's host gives the script no name
+    try testing.expect(h.document == null);
     try testing.expectEqualStrings("3d", h.kind);
     try testing.expect(h.@"error" == null);
     try testing.expectEqual(@as(usize, 0), h.warnings.len);

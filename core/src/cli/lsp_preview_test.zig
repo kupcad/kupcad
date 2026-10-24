@@ -3,12 +3,15 @@
 
 const std = @import("std");
 const testing = std.testing;
-const SessionPreview = @import("lsp_preview.zig").SessionPreview;
+const lsp_preview = @import("lsp_preview.zig");
+const SessionPreview = lsp_preview.SessionPreview;
+const Target = lsp_preview.Target;
 const preview_frame = @import("../preview/frame.zig");
 const ParamValues = @import("../core/param_values.zig").ParamValues;
 
 /// What these tests read of a frame's header.
 const Header = struct {
+    document: ?[]const u8,
     kind: []const u8,
     @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
     params: struct { values: std.json.Value },
@@ -16,9 +19,18 @@ const Header = struct {
 
 const Read = struct { header: Header, bytes: []const u8, body: []const u8 };
 
-/// The frame `preview` gives of `module_path`, owned and read by `arena`.
-fn frameOf(arena: std.mem.Allocator, preview: *SessionPreview, module_path: []const u8) !Read {
-    const bytes = switch (preview.evaluate(arena, module_path, true)) {
+/// The document at `module_path`, as an editor opens it from the folder /work.
+fn target(comptime module_path: []const u8) Target {
+    return .{ .module_path = module_path, .uri = "file:///work/" ++ module_path };
+}
+
+/// The frame `preview` gives of the document at `module_path`, owned and read by `arena`.
+fn frameOf(arena: std.mem.Allocator, preview: *SessionPreview, comptime module_path: []const u8) !Read {
+    return frameFor(arena, preview, target(module_path));
+}
+
+fn frameFor(arena: std.mem.Allocator, preview: *SessionPreview, of: Target) !Read {
+    const bytes = switch (preview.evaluate(arena, of, true)) {
         .frame => |b| b,
         else => return error.TestExpectedFrame,
     };
@@ -36,12 +48,16 @@ test "LSP preview: a document's frame, made by its run and kept while nothing it
     try preview.update("part.kup", "w = param(:width, default: 2)\ncube(w)\n");
 
     const first = try frameOf(arena.allocator(), &preview, "part.kup");
+    try testing.expectEqualStrings("file:///work/part.kup", first.header.document.?);
     try testing.expectEqualStrings("3d", first.header.kind);
     try testing.expectEqualStrings("glTF", first.body[0..4]);
     try testing.expectEqual(@as(i64, 2), first.header.params.values.object.get("width").?.integer);
     // Not run again: the same frame, its timings and all
     const again = try frameOf(arena.allocator(), &preview, "part.kup");
     try testing.expectEqualSlices(u8, first.bytes, again.bytes);
+    // Under another name, the frame is that name's
+    const renamed = try frameFor(arena.allocator(), &preview, .{ .module_path = "part.kup", .uri = "untitled:Untitled-1" });
+    try testing.expectEqualStrings("untitled:Untitled-1", renamed.header.document.?);
 
     // A Sketch is shown as SVG
     try preview.update("part.kup", "square(4)\n");
@@ -57,11 +73,11 @@ test "LSP preview: no frame while no viewer watches, and the next one wanted run
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
     try preview.update("part.kup", "cube(2)\n");
-    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), "part.kup", false)));
+    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), false)));
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "part.kup")).header.kind);
     // A document closed, that nothing imports, has none
     try preview.remove("part.kup");
-    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), "part.kup", true)));
+    try testing.expectEqual(.nothing, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), true)));
 }
 
 test "LSP preview: a document that doesn't parse, compile or run says why, and where, in its frame" {
@@ -107,6 +123,7 @@ test "LSP preview: a module the document imports that fails is named in its fram
     try preview.update("lib.kup", "x = 1\nside = (\n");
     try preview.update("main.kup", "import { side } from \"./lib.kup\"\ncube(side)\n");
     const syntax = (try frameOf(arena.allocator(), &preview, "main.kup")).header;
+    try testing.expectEqualStrings("file:///work/main.kup", syntax.document.?);
     try testing.expectEqualStrings("none", syntax.kind);
     try testing.expect(std.mem.startsWith(u8, syntax.@"error".?.message, "lib.kup:"));
     // Its line would be the document's: the message says where in the import
@@ -133,7 +150,7 @@ test "LSP preview: a run a message stopped leaves no frame, and the next run mak
 
     // As the inbox does when a message arrives during the run
     preview.session.vm.cancel_token.store(true, .release);
-    try testing.expectEqual(.cancelled, std.meta.activeTag(preview.evaluate(arena.allocator(), "part.kup", true)));
+    try testing.expectEqual(.cancelled, std.meta.activeTag(preview.evaluate(arena.allocator(), target("part.kup"), true)));
     try testing.expect(preview.frame == null);
     preview.session.vm.cancel_token.store(false, .release);
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "part.kup")).header.kind);

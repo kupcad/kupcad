@@ -16,6 +16,7 @@ const Preview = lsp_preview.Preview;
 const freeFiles = lsp_preview.freeFiles;
 const SessionPreview = lsp_preview.SessionPreview;
 const Outcome = lsp_preview.Outcome;
+const Target = lsp_preview.Target;
 const OutcomeTag = std.meta.Tag(Outcome);
 
 const logger = std.log.scoped(.lsp);
@@ -39,7 +40,7 @@ pub const Kind = enum(u8) {
     update,
     /// path.
     remove,
-    /// u8 want_frame, path.
+    /// u8 want_frame, u32 path length, path, the document's URI.
     evaluate,
     /// u32 node index, path.
     hover,
@@ -185,7 +186,8 @@ fn answer(allocator: std.mem.Allocator, preview: *SessionPreview, frame: Frame, 
         },
         .evaluate => {
             if (frame.payload.len < 1) return error.BadFrame;
-            const outcome = preview.evaluate(allocator, frame.payload[1..], frame.payload[0] != 0);
+            const parts = try splitPrefixed(frame.payload[1..]);
+            const outcome = preview.evaluate(allocator, .{ .module_path = parts[0], .uri = parts[1] }, frame.payload[0] != 0);
             switch (outcome) {
                 .frame => |bytes| {
                     defer allocator.free(bytes);
@@ -443,9 +445,10 @@ pub const WorkerPreview = struct {
         return splitPaths(allocator, reply.payload);
     }
 
-    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
+    pub fn evaluate(self: *WorkerPreview, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+        const module_path = target.module_path;
         const w = self.running() catch return .crashed;
-        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@intFromBool(want_frame)}, module_path }) catch |err| return self.ended(w, err, module_path);
+        writeFrame(&w.writer.interface, .evaluate, &.{ &.{@intFromBool(want_frame)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }) catch |err| return self.ended(w, err, module_path);
         // The inbox sets `cancel` while this waits; it is passed on as it is set.
         var forwarder = self.io.concurrent(forwardCancel, .{ self, w }) catch null;
         const reply = readFrame(&w.reader.interface, self.allocator);
@@ -576,8 +579,8 @@ pub const WorkerPreview = struct {
     fn filesReadImpl(ptr: *anyopaque, allocator: std.mem.Allocator) anyerror![][]u8 {
         return cast(ptr).filesRead(allocator);
     }
-    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, want_frame: bool) Outcome {
-        return cast(ptr).evaluate(allocator, module_path, want_frame);
+    fn evaluateImpl(ptr: *anyopaque, allocator: std.mem.Allocator, target: Target, want_frame: bool) Outcome {
+        return cast(ptr).evaluate(allocator, target, want_frame);
     }
     fn hoverFactsImpl(ptr: *anyopaque, allocator: std.mem.Allocator, module_path: []const u8, node: ast.NodeIndex) anyerror!?[]u8 {
         return cast(ptr).hoverFacts(allocator, module_path, node);

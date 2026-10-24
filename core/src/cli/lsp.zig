@@ -189,8 +189,9 @@ pub const Handler = struct {
     watched_files: [][]u8 = &.{},
     /// The number of the last request the server sent the editor.
     last_request: u32 = 0,
-    /// The module path of the document last edited, whose mesh the viewport shows (owned).
-    preview_module: ?[]u8 = null,
+    /// The document last edited, whose frame the viewport shows (its module path and URI
+    /// owned).
+    previewed: ?lsp_preview.Target = null,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
 
@@ -212,17 +213,27 @@ pub const Handler = struct {
         };
     }
 
-    /// Gives the preview the module's source; it is evaluated once the editor goes quiet
+    /// Gives the preview the document's source; it is evaluated once the editor goes quiet
     /// (`evaluatePreview`, run by the inbox), not on every keystroke. The module is named
     /// by its path in the project (modulePath), and its unsaved text is what imports of it
-    /// read; the modules importing it are evaluated again with it.
-    fn syncSession(self: *Handler, module_path: []const u8, source: []const u8) !void {
+    /// read; the modules importing it are evaluated again with it. Its frame names it by
+    /// `uri`.
+    fn syncSession(self: *Handler, uri: []const u8, module_path: []const u8, source: []const u8) !void {
         defer self.tellOfCrash();
         try self.preview.update(module_path, source);
-        const previewed = try self.allocator.dupe(u8, module_path);
-        if (self.preview_module) |old| self.allocator.free(old);
-        self.preview_module = previewed;
+        const uri_copy = try self.allocator.dupe(u8, uri);
+        errdefer self.allocator.free(uri_copy);
+        const path_copy = try self.allocator.dupe(u8, module_path);
+        self.dropPreviewed();
+        self.previewed = .{ .module_path = path_copy, .uri = uri_copy };
         self.preview_pending = true;
+    }
+
+    fn dropPreviewed(self: *Handler) void {
+        const shown = self.previewed orelse return;
+        self.allocator.free(shown.module_path);
+        self.allocator.free(shown.uri);
+        self.previewed = null;
     }
 
     /// What the session and imports call the document at `uri`: its path relative to the
@@ -260,9 +271,9 @@ pub const Handler = struct {
     pub fn evaluatePreview(self: *Handler) void {
         defer self.tellOfCrash();
         self.preview_pending = false;
-        const module_path = self.preview_module orelse return;
+        const target = self.previewed orelse return;
         const viewer = if (self.ws_server) |ws| (if (ws.clientCount() > 0) ws else null) else null;
-        switch (self.preview.evaluate(self.allocator, module_path, viewer != null)) {
+        switch (self.preview.evaluate(self.allocator, target, viewer != null)) {
             .frame => |bytes| {
                 defer self.allocator.free(bytes);
                 viewer.?.broadcastBinary(bytes) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
@@ -361,7 +372,7 @@ pub const Handler = struct {
     }
 
     pub fn deinit(self: *Handler) void {
-        if (self.preview_module) |m| self.allocator.free(m);
+        self.dropPreviewed();
         if (self.root) |r| self.allocator.free(r);
         if (self.root_uri) |r| self.allocator.free(r);
         freeFiles(self.allocator, self.watched_files);
@@ -490,7 +501,7 @@ pub const Handler = struct {
             .doc = parsed_doc,
         });
 
-        try self.syncSession(module_path, source_dup);
+        try self.syncSession(uri_dup, module_path, source_dup);
 
         try self.runDiagnostics(arena, self.files.getPtr(uri_dup).?);
     }
@@ -511,7 +522,7 @@ pub const Handler = struct {
                         buf.source = try self.allocator.dupe(u8, doc_change.text);
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
-                        try self.syncSession(buf.module_path, buf.source);
+                        try self.syncSession(buf.uri, buf.module_path, buf.source);
                         try self.runDiagnostics(arena, buf);
                     }
                 },
@@ -535,7 +546,7 @@ pub const Handler = struct {
         try self.preview.remove(closed.module_path);
         // A document another one imports is read from disk now, which may differ from the
         // text the editor had
-        if (self.preview_module != null) self.preview_pending = true;
+        if (self.previewed != null) self.preview_pending = true;
     }
 
     /// `kupcad.setParams` (SET_PARAMS_COMMAND): the document at `uri` runs with `values`, a
@@ -556,8 +567,8 @@ pub const Handler = struct {
         const module_path = try self.modulePath(arena, set.uri);
         defer self.tellOfCrash();
         try self.preview.setParams(module_path, &set.values);
-        if (self.preview_module) |shown| {
-            if (std.mem.eql(u8, shown, module_path)) self.preview_pending = true;
+        if (self.previewed) |shown| {
+            if (std.mem.eql(u8, shown.module_path, module_path)) self.preview_pending = true;
         }
         return null;
     }
@@ -580,7 +591,7 @@ pub const Handler = struct {
             logger.debug("{s} changed on disk", .{path});
             changed = true;
         }
-        if (changed and self.preview_module != null) self.preview_pending = true;
+        if (changed and self.previewed != null) self.preview_pending = true;
     }
 
     pub fn @"textDocument/formatting"(
