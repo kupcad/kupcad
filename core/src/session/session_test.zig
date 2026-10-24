@@ -707,7 +707,7 @@ test "ScriptSession: an observer is told of each run, with what the run left, fa
     try testing.expect(!seen.runs.items[1].ok);
 }
 
-test "ScriptSession: runAgain runs a module whose inputs are the same, and its importers if its output changed" {
+test "ScriptSession: runAgain runs a module whose inputs are the same, and not its importers when its output is the same too" {
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
     var session = try ScriptSession.init(testing.allocator, testing.io, files.vfs());

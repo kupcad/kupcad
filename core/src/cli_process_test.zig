@@ -548,6 +548,16 @@ const Conversation = struct {
         return body;
     }
 
+    /// Kills the processes it started (the language server's preview worker), as a crash
+    /// would end them.
+    fn killChildren(self: *Conversation) !void {
+        var pid_buf: [16]u8 = undefined;
+        const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.mem.print(&pid_buf, "{d}", .{self.child.id.?}) } });
+        testing.allocator.free(pkill.stdout);
+        testing.allocator.free(pkill.stderr);
+        try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
+    }
+
     /// The server's answer to request `id`; the notifications before it go to `seen`.
     fn answer(self: *Conversation, id: u32, seen: *std.ArrayList(u8)) ![]u8 {
         var needle_buf: [32]u8 = undefined;
@@ -630,7 +640,7 @@ test "kupcad: lsp --preview-worker evaluates, answers hovers, stops on a cancel 
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try worker.finish());
 }
 
-test "kupcad: lsp gives a document values with kupcad.setParams, and a new worker is given them" {
+test "kupcad: lsp gives a document values with kupcad.setParams, a new worker is given them, and a closed document forgets them" {
     const builtin = @import("builtin");
     if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
     var sb = try Sandbox.init();
@@ -662,11 +672,7 @@ test "kupcad: lsp gives a document values with kupcad.setParams, and a new worke
     try testing.expect(std.mem.find(u8, first, "**Volume:** `27.00`") != null);
 
     // The worker is the server's one child: kill it; the edit that finds it gone starts another
-    var pid_buf: [16]u8 = undefined;
-    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.mem.print(&pid_buf, "{d}", .{server.child.id.?}) } });
-    testing.allocator.free(pkill.stdout);
-    testing.allocator.free(pkill.stderr);
-    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
+    try server.killChildren();
     try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"{s}\"}}]}}}}", .{ root, text }));
     try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 4, root }));
     const second = try server.answer(4, &seen);
@@ -679,8 +685,18 @@ test "kupcad: lsp gives a document values with kupcad.setParams, and a new worke
     defer testing.allocator.free(refused);
     try testing.expect(std.mem.find(u8, refused, "\"code\":-32602") != null);
 
-    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"shutdown\"}");
-    testing.allocator.free(try server.answer(6, &seen));
+    // Closed and opened again, it runs with its defaults, in this worker and the next
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\"}}}}}}", .{root}));
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":3,\"text\":\"{s}\"}}}}}}", .{ root, text }));
+    try server.killChildren();
+    try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":4}},\"contentChanges\":[{{\"text\":\"{s}\"}}]}}}}", .{ root, text }));
+    try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 6, root }));
+    const reopened = try server.answer(6, &seen);
+    defer testing.allocator.free(reopened);
+    try testing.expect(std.mem.find(u8, reopened, "**Volume:** `8.00`") != null);
+
+    try server.sendJson("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"shutdown\"}");
+    testing.allocator.free(try server.answer(7, &seen));
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
     try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, try server.finish());
 }
@@ -710,11 +726,7 @@ test "kupcad: lsp runs scripts in a worker, and a worker that dies is replaced" 
     try testing.expect(std.mem.find(u8, first, "**Volume:** `8.00`") != null);
 
     // The worker is the server's one child: kill it, as a crash would end it.
-    var pid_buf: [16]u8 = undefined;
-    const pkill = try std.process.run(testing.allocator, testing.io, .{ .argv = &.{ "pkill", "-KILL", "-P", try std.mem.print(&pid_buf, "{d}", .{server.child.id.?}) } });
-    testing.allocator.free(pkill.stdout);
-    testing.allocator.free(pkill.stderr);
-    try testing.expectEqual(std.process.Child.Term{ .exited = 0 }, pkill.term);
+    try server.killChildren();
 
     try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"version\":2}},\"contentChanges\":[{{\"text\":\"a = cube(3)\\n\"}}]}}}}", .{root}));
     try server.sendJson(try std.mem.print(&msg_buf, hover_fmt, .{ 3, root }));

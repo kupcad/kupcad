@@ -62,17 +62,12 @@ test "JSON: each finding is its path, then the finding every host gets (tools/li
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const line_index = try api.LineIndex.init(arena.allocator(), source);
-    for (findings, diags) |cli, d| {
+    for (findings, diags) |*cli, d| {
+        try testing.expectEqualStrings("path", cli.object.keys()[0]);
         try testing.expectEqualStrings("part.kup", cli.object.get("path").?.string);
-        const alone = try std.json.Stringify.valueAlloc(arena.allocator(), try lint_finding.Finding.place(arena.allocator(), &line_index, d), .{});
-        const host = try std.json.parseFromSliceLeaky(std.json.Value, arena.allocator(), alone, .{});
-        // The CLI's keys are "path" and the host's, in the host's order
-        const keys = cli.object.keys();
-        try testing.expectEqualStrings("path", keys[0]);
-        try testing.expectEqual(host.object.count(), keys.len - 1);
-        for (keys[1..], host.object.keys()) |a, b| try testing.expectEqualStrings(b, a);
-        const cli_text = try std.json.Stringify.valueAlloc(arena.allocator(), cli.object.get("offset").?, .{});
-        const host_text = try std.json.Stringify.valueAlloc(arena.allocator(), host.object.get("offset").?, .{});
-        try testing.expectEqualStrings(host_text, cli_text);
+        // The rest is the host's finding, written the same, key for key and in its order
+        _ = cli.object.orderedRemove("path");
+        const host = try std.json.Stringify.valueAlloc(arena.allocator(), try lint_finding.Finding.place(arena.allocator(), &line_index, d), .{});
+        try testing.expectEqualStrings(host, try std.json.Stringify.valueAlloc(arena.allocator(), cli.*, .{}));
     }
 }
