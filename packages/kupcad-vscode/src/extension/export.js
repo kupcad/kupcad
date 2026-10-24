@@ -1,9 +1,7 @@
-// Export and print: the script built by `kupcad build` with the values its parameters have in the
-// viewer, so what is written is what the CLI builds. Free of the `vscode` import.
+// Export: the script built by `kupcad build` with the values its parameters have in the viewer,
+// so what is written is what the CLI builds. Free of the `vscode` import.
 
-import { execFile, spawn } from 'node:child_process';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { execFile } from 'node:child_process';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
 
@@ -29,10 +27,6 @@ export const FORMATS = [
   { format: 'svg', label: 'SVG', detail: 'A drawing on XY, for a laser cutter' },
   { format: 'dxf', label: 'DXF', detail: 'The drawing as DXF, for CAD and CNC' },
 ];
-/** A print's folder, a new one under the system's temporary folder each time. */
-export const PRINT_DIR_PREFIX = 'kupcad-print-';
-/** What a print is built as: a slicer's format. */
-export const PRINT_FORMAT = '3mf';
 /** What a build may say, at most: its log and why it failed. */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**
@@ -108,46 +102,4 @@ export function whyItFailed(stderr) {
     }
   }
   return null;
-}
-
-/**
- * Where a print named `name` is built: a 3MF in a folder of its own under `tmp`, made now, so no
- * other print (nor anyone else on the machine) writes there.
- * @param {string} tmp the system's temporary folder
- * @param {string} name
- * @returns {Promise<string>}
- */
-export async function makePrintFile(tmp, name) {
-  const dir = await fs.mkdtemp(path.join(tmp, PRINT_DIR_PREFIX));
-  return path.join(dir, `${name}.${PRINT_FORMAT}`);
-}
-
-/**
- * How the slicer the settings name opens `file`: a macOS app by `open -a`, anything else run
- * with the file.
- * @param {string} slicer
- * @param {string} file
- * @param {string} platform Node's `process.platform`
- * @returns {{ command: string, args: string[] }}
- */
-export function slicerCommand(slicer, file, platform) {
-  if (platform === 'darwin' && /\.app\/?$/.test(slicer))
-    return { command: 'open', args: ['-a', slicer, file] };
-  return { command: slicer, args: [file] };
-}
-
-/**
- * Starts `command`, left to run on its own (a slicer outlives the extension's call).
- * @param {{ command: string, args: string[] }} run
- * @returns {Promise<void>} once it started; rejected when it couldn't
- */
-export function startApart({ command, args }) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('spawn', () => {
-      child.unref();
-      resolve();
-    });
-  });
 }

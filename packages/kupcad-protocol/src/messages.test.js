@@ -46,8 +46,6 @@ describe('isViewerMessage', () => {
     );
     expect(isViewerMessage({ type: 'applyPreset', uri: 'file:///w/a.kup' })).toBe(false);
     expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup' })).toBe(true);
-    expect(isViewerMessage({ type: 'print', uri: 'file:///w/a.kup' })).toBe(true);
-    expect(isViewerMessage({ type: 'print' })).toBe(false);
     expect(isViewerMessage({ type: 'setParams', uri: 'file:///w/a.kup', values: null })).toBe(
       false,
     );

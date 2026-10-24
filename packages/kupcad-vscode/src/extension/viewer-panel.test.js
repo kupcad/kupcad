@@ -349,25 +349,14 @@ describe('ViewerPanel presets', () => {
   });
 });
 
-describe('ViewerPanel export and print', () => {
-  it('runs the export and print commands on the script the page asks for', async () => {
-    /** @type {unknown[][]} */
-    const ran = [];
-    commands.registerCommand('kupcad.export', (/** @type {unknown} */ uri) =>
-      ran.push(['export', uri]),
-    );
-    commands.registerCommand('kupcad.print', (/** @type {unknown} */ uri) =>
-      ran.push(['print', uri]),
-    );
+describe('ViewerPanel export', () => {
+  it('runs the export command on the script the page asks for', async () => {
+    /** @type {unknown[]} */
+    const exported = [];
+    commands.registerCommand('kupcad.export', (/** @type {unknown} */ uri) => exported.push(uri));
     fake.activeDocument = PART;
     const { webview } = open();
     webview.receive({ type: 'export', uri: PART_URI });
-    webview.receive({ type: 'print', uri: PART_URI });
-    await vi.waitFor(() =>
-      expect(ran).toEqual([
-        ['export', PART_URI],
-        ['print', PART_URI],
-      ]),
-    );
+    await vi.waitFor(() => expect(exported).toEqual([PART_URI]));
   });
 });

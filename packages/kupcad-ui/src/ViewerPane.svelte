@@ -23,7 +23,7 @@
    * @property {ViewerClass | null} [viewer] the viewer, once mounted; bindable
    * @property {ViewerOptions} [options] what the viewer is made with
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
-   * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export, print)
+   * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export)
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
    */
 

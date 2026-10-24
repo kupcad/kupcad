@@ -219,18 +219,13 @@ describe('App presets', () => {
   });
 });
 
-it('asks the host to export or print the document shown', async () => {
+it('asks the host to export the document shown', async () => {
   const viewer = page();
   expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();
   await viewer.tell({ type: 'document', document: PART });
-  // In the viewer's toolbar, they look as its own controls do
-  for (const name of ['Export…', 'Print']) {
-    expect(screen.getByRole('button', { name }).classList.contains('kc-control')).toBe(true);
-  }
-  await fireEvent.click(screen.getByRole('button', { name: 'Export…' }));
-  await fireEvent.click(screen.getByRole('button', { name: 'Print' }));
-  expect(viewer.posted.slice(-2)).toEqual([
-    { type: 'export', uri: PART.uri },
-    { type: 'print', uri: PART.uri },
-  ]);
+  const exportButton = screen.getByRole('button', { name: 'Export…' });
+  // In the viewer's toolbar, it looks as its own controls do
+  expect(exportButton.classList.contains('kc-control')).toBe(true);
+  await fireEvent.click(exportButton);
+  expect(viewer.posted.at(-1)).toEqual({ type: 'export', uri: PART.uri });
 });

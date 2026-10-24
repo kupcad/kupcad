@@ -2,16 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  BuildError,
-  buildArguments,
-  FORMATS,
-  makePrintFile,
-  runBuild,
-  slicerCommand,
-  startApart,
-  whyItFailed,
-} from './export.js';
+import { BuildError, buildArguments, FORMATS, runBuild, whyItFailed } from './export.js';
 
 const POSIX = process.platform !== 'win32';
 
@@ -132,40 +123,5 @@ describe('whyItFailed', () => {
       'Build failed: error.OutOfMemory',
     );
     expect(whyItFailed('hello\n')).toBeNull();
-  });
-});
-
-describe('print', () => {
-  it("builds a 3MF of the script's name in a folder of its own, a new one each time", async () => {
-    const first = await makePrintFile(dir, 'bracket');
-    const second = await makePrintFile(dir, 'bracket');
-    expect(path.basename(first)).toBe('bracket.3mf');
-    expect(path.basename(path.dirname(first))).toMatch(/^kupcad-print-/);
-    expect(path.dirname(first)).not.toBe(path.dirname(second));
-    expect(fs.statSync(path.dirname(first)).isDirectory()).toBe(true);
-  });
-
-  it('opens it with the slicer the settings name: a macOS app by open -a, anything else run with it', () => {
-    expect(slicerCommand('/Applications/PrusaSlicer.app', '/tmp/a.3mf', 'darwin')).toEqual({
-      command: 'open',
-      args: ['-a', '/Applications/PrusaSlicer.app', '/tmp/a.3mf'],
-    });
-    expect(slicerCommand('/usr/bin/prusa-slicer', '/tmp/a.3mf', 'linux')).toEqual({
-      command: '/usr/bin/prusa-slicer',
-      args: ['/tmp/a.3mf'],
-    });
-    expect(slicerCommand('C:\\Slicer\\slicer.exe', 'a.3mf', 'win32')).toEqual({
-      command: 'C:\\Slicer\\slicer.exe',
-      args: ['a.3mf'],
-    });
-  });
-
-  it.runIf(POSIX)('starts a slicer apart, and says when it is none', async () => {
-    const marker = path.join(dir, 'started');
-    await startApart({ command: kupcad(`touch "${marker}"`), args: [] });
-    await expect.poll(() => fs.existsSync(marker)).toBe(true);
-    await expect(
-      startApart({ command: path.join(dir, 'missing'), args: [] }),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

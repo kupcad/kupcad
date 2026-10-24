@@ -50,11 +50,6 @@
         "category": "KupCAD"
       },
       {
-        "command": "kupcad.print",
-        "title": "Print…",
-        "category": "KupCAD"
-      },
-      {
         "command": "kupcad.checkForUpdates",
         "title": "Check for Updates",
         "category": "KupCAD"
@@ -71,11 +66,6 @@
           "command": "kupcad.export",
           "when": "resourceLangId == kupcad",
           "group": "kupcad@1"
-        },
-        {
-          "command": "kupcad.print",
-          "when": "resourceLangId == kupcad",
-          "group": "kupcad@2"
         }
       ]
     },
@@ -87,12 +77,6 @@
           "default": "",
           "scope": "machine",
           "description": "Absolute path to the `kupcad` executable, run whatever its version. When empty, the extension runs its own install (downloading the newest release it runs with), else `kupcad` on PATH, else the monorepo's build, each only when its version is one the extension runs with."
-        },
-        "kupcad.print.slicer": {
-          "type": "string",
-          "default": "",
-          "scope": "machine",
-          "description": "The slicer `KupCAD: Print…` opens the model's 3MF with: a program's path (a macOS app's too, `/Applications/PrusaSlicer.app`). When empty, the program the system opens a 3MF with."
         },
         "kupcad.binary.autoUpdate": {
           "type": "boolean",

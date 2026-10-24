@@ -22,13 +22,12 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
   read, edit and commit with the script). The viewer lists them above the parameters: one chosen
   runs the script with its values; `Save as preset…` keeps the values set in the panel under a
   name (asking before replacing one). An edit of the file shows at once, wherever the script is.
-* **Export and print** (`KupCAD: Export…`, `KupCAD: Print…`, a `.kup` editor's title bar, or the
-  viewer's toolbar): the script is built by `kupcad build` with the values its parameters have in
-  the viewer, so what is written is what the CLI builds. Export asks the format (STL, 3MF, STEP,
-  GLB, glTF, OBJ, SVG, DXF) and where; print builds a 3MF in the temporary folder and opens it in
-  the slicer `kupcad.print.slicer` names, else in the program the system opens a 3MF with. A
-  script with changes not saved is saved first, when you say so; the notification's cancel stops
-  the build, and a build that fails says why.
+* **Export** (`KupCAD: Export…`, a `.kup` editor's title bar, or the viewer's toolbar): the
+  script is built by `kupcad build` with the values its parameters have in the viewer, so what is
+  written is what the CLI builds, in the format you pick (STL, 3MF, STEP, GLB, glTF, OBJ, SVG,
+  DXF) and where you say: a 3MF, its parts and colours with it, is what a slicer opens. A script
+  with changes not saved is saved first, when you say so; the notification's cancel stops the
+  build, and a build that fails says why.
 
 ## The `kupcad` it runs
 
@@ -69,8 +68,6 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
 * `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
   instead of asking.
 * `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.
-* `kupcad.print.slicer` (machine scope): the slicer a print opens in: a program's path, a macOS
-  app's too (`/Applications/PrusaSlicer.app`). Empty: the system's program for a 3MF.
 
 ## Security notes
 
@@ -102,8 +99,8 @@ Two programs, built separately by Vite:
   panel (`ViewerPanel`: it follows the editor to a script in a file, tells the page the document
   it shows and asks the server for its frame, gives the server the panel's values, and saves a
   screenshot), `presets.js` says what a script's presets file holds and `presets-file.js` reads,
-  writes and watches it (the panel lists, applies and saves them), `commands.js` exports and prints (over `export.js`: the formats, `kupcad build`'s
-  arguments, why a build failed, opening a slicer), `values.js` keeps the values each script was
+  writes and watches it (the panel lists, applies and saves them), `commands.js` exports (over
+  `export.js`: the formats, `kupcad build`'s arguments, why a build failed), `values.js` keeps the values each script was
   given, which the server runs it with and an export builds it with, and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.

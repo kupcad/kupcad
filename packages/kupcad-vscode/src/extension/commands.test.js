@@ -1,8 +1,6 @@
-import * as os from 'node:os';
-import * as path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { EXPORT_COMMAND, PRINT_COMMAND, registerExportCommands } from './commands.js';
-import { BuildError, PRINT_DIR_PREFIX } from './export.js';
+import { EXPORT_COMMAND, registerExportCommands } from './commands.js';
+import { BuildError } from './export.js';
 // The module Vitest gives the code as `vscode`
 import { commands, documentAt, fake, resetFake, Uri, window } from './testing/vscode.js';
 import { ScriptValues } from './values.js';
@@ -11,13 +9,11 @@ const PART_URI = 'file:///work/part.kup';
 
 /**
  * The commands registered, with the kupcad given running, and the builds they ran.
- * @param {{ kupcad?: string | null, shown?: string | null, fails?: string, slicerFails?: boolean }} [world]
+ * @param {{ kupcad?: string | null, shown?: string | null, fails?: string }} [world]
  */
 function registered(world = {}) {
   /** @type {{ kupcad: string, args: string[], cwd: string }[]} */
   const builds = [];
-  /** @type {{ command: string, args: string[] }[]} */
-  const started = [];
   const values = new ScriptValues();
   registerExportCommands({
     kupcad: () => (world.kupcad === undefined ? '/usr/local/bin/kupcad' : world.kupcad),
@@ -33,12 +29,8 @@ function registered(world = {}) {
       }
       if (world.fails) throw new BuildError(world.fails);
     },
-    start: async (run) => {
-      if (world.slicerFails) throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' });
-      started.push(run);
-    },
   });
-  return { builds, started, values };
+  return { builds, values };
 }
 
 beforeEach(() => resetFake());
@@ -154,42 +146,5 @@ describe('export', () => {
     await commands.executeCommand(EXPORT_COMMAND);
     expect(fake.messages[0].text).toMatch(/isn't running/);
     expect(fake.picks).toEqual([]);
-  });
-});
-
-describe('print', () => {
-  it("builds a 3MF in the temporary folder, opened by the system's program for it", async () => {
-    fake.activeDocument = documentAt('/work/part.kup');
-    const { builds } = registered();
-    await commands.executeCommand(PRINT_COMMAND);
-    const printed = builds[0].args[3];
-    expect(path.dirname(path.dirname(printed))).toBe(os.tmpdir());
-    expect(path.basename(path.dirname(printed))).toMatch(new RegExp(`^${PRINT_DIR_PREFIX}`));
-    expect(path.basename(printed)).toBe('part.3mf');
-    expect(builds[0].args.slice(4, 6)).toEqual(['-f', '3mf']);
-    expect(fake.opened).toEqual([Uri.file(printed).toString()]);
-
-    // Nothing opened it: the setting to set
-    fake.opens = false;
-    await commands.executeCommand(PRINT_COMMAND);
-    expect(fake.messages.at(-1)?.text).toMatch(/set "kupcad\.print\.slicer"/);
-  });
-
-  it('opens it in the slicer the settings name, saying when it is none', async () => {
-    fake.activeDocument = documentAt('/work/part.kup');
-    fake.settings['kupcad.print.slicer'] = '/usr/bin/prusa-slicer';
-    const { started, builds } = registered();
-    await commands.executeCommand(PRINT_COMMAND);
-    expect(started).toEqual([{ command: '/usr/bin/prusa-slicer', args: [builds[0].args[3]] }]);
-    expect(fake.opened).toEqual([]);
-
-    resetFake();
-    fake.activeDocument = documentAt('/work/part.kup');
-    fake.settings['kupcad.print.slicer'] = '/nowhere/slicer';
-    registered({ slicerFails: true });
-    await commands.executeCommand(PRINT_COMMAND);
-    expect(fake.messages[0].text).toMatch(
-      /The slicer \(\/nowhere\/slicer\) couldn't be started: spawn ENOENT/,
-    );
   });
 });

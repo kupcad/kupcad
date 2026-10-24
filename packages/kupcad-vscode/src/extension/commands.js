@@ -1,19 +1,10 @@
-// Export and print: the script (the one given, the editor's, else the viewer's) saved, built by
-// `kupcad build` with the values its parameters have in the viewer, and the file written where the
-// user says, or opened in a slicer.
+// Export: the script (the one given, the editor's, else the viewer's) saved, built by
+// `kupcad build` with the values its parameters have in the viewer, in the format the user picks
+// and where the user says.
 
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import {
-  buildArguments,
-  FORMATS,
-  makePrintFile,
-  PRINT_FORMAT,
-  runBuild,
-  slicerCommand,
-  startApart,
-} from './export.js';
+import { buildArguments, FORMATS, runBuild } from './export.js';
 import { errorText } from '../errors.js';
 import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
@@ -21,7 +12,6 @@ import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './s
 /** @import { ScriptValues } from './values.js' */
 
 export const EXPORT_COMMAND = 'kupcad.export';
-export const PRINT_COMMAND = 'kupcad.print';
 const SAVE = 'Save';
 const REVEAL = 'Reveal';
 
@@ -32,7 +22,6 @@ const REVEAL = 'Reveal';
  * @property {() => string | null} shown the URI of the script the viewer shows, if one
  * @property {vscode.LogOutputChannel} log
  * @property {typeof runBuild} [build]
- * @property {typeof startApart} [start]
  */
 
 /**
@@ -40,10 +29,7 @@ const REVEAL = 'Reveal';
  * @returns {vscode.Disposable[]}
  */
 export function registerExportCommands(options) {
-  return [
-    vscode.commands.registerCommand(EXPORT_COMMAND, (given) => exportScript(options, given)),
-    vscode.commands.registerCommand(PRINT_COMMAND, (given) => printScript(options, given)),
-  ];
+  return [vscode.commands.registerCommand(EXPORT_COMMAND, (given) => exportScript(options, given))];
 }
 
 /**
@@ -80,44 +66,6 @@ async function exportScript(options, given) {
     REVEAL,
   );
   if (chosen === REVEAL) await vscode.commands.executeCommand('revealFileInOS', target);
-}
-
-/**
- * Prints the script: a 3MF built in the temporary folder, opened in the slicer the settings name,
- * else in the program the system opens a 3MF with.
- * @param {CommandOptions} options
- * @param {vscode.Uri | string | undefined} given
- */
-async function printScript(options, given) {
-  const ready = await scriptToBuild(options, given);
-  if (!ready) return;
-  const { document, kupcad } = ready;
-  const output = await makePrintFile(os.tmpdir(), scriptName(document.uri));
-  const built = await build(options, {
-    kupcad,
-    document,
-    output,
-    format: PRINT_FORMAT,
-    title: `Preparing ${scriptName(document.uri)} for printing`,
-  });
-  if (!built) return;
-  const slicer = vscode.workspace.getConfiguration('kupcad').get('print.slicer');
-  if (typeof slicer === 'string' && slicer) {
-    try {
-      await (options.start ?? startApart)(slicerCommand(slicer, output, process.platform));
-    } catch (error) {
-      void vscode.window.showErrorMessage(
-        `The slicer (${slicer}) couldn't be started: ${errorText(error)}`,
-      );
-    }
-    return;
-  }
-  const opened = await vscode.env.openExternal(vscode.Uri.file(output));
-  if (!opened) {
-    void vscode.window.showErrorMessage(
-      `${output} was built, and nothing opened it: set "kupcad.print.slicer" to your slicer.`,
-    );
-  }
 }
 
 /**

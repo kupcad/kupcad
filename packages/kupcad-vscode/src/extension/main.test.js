@@ -190,7 +190,7 @@ describe('activate', () => {
 
   it('starts the server again when its path or port is set, and not for another setting', async () => {
     await activate(/** @type {any} */ (context));
-    fake.changeSettings('kupcad.print.slicer');
+    fake.changeSettings('kupcad.binary.autoUpdate');
     fake.settings['kupcad.viewport.port'] = 9200;
     fake.changeSettings('kupcad.viewport.port');
     await vi.waitFor(() =>

@@ -46,8 +46,6 @@ const VIEWER_MESSAGES = {
   /** @param {Record<string, unknown>} m */
   export: (m) => isString(m.uri),
   /** @param {Record<string, unknown>} m */
-  print: (m) => isString(m.uri),
-  /** @param {Record<string, unknown>} m */
   screenshot: (m) => isString(m.png),
   /** @param {Record<string, unknown>} m */
   problem: (m) => isString(m.message),

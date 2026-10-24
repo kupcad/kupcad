@@ -348,7 +348,7 @@ src/
     server.js             the LanguageClient, kupcad/viewportReady, kupcad.preview and setParams
     viewer-panel.js       the webview panel: it follows the editor, bridges the page's messages
     webview-html.js       the page's HTML and its CSP
-    commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf) and print, over export.js
+    commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf), over export.js
     scripts.js            a script: its language, a file's (no untitled one), its names
     values.js             the values each script was given: the server runs it, an export builds it, with them
     presets.js            parameter presets as <script>.presets.json beside the file
@@ -380,12 +380,12 @@ Data flow:
 * **Findings and warnings** are LSP diagnostics in the Problems view, as now; the preview's
   warnings (a mended mesh, an engine without a feature) join them on the line of the call that
   caused them (core work, section 8).
-* **Export and print** run the binary, not the server: `kupcad build <file> -o <path> -f <format> -p ...`
+* **Export** runs the binary, not the server: `kupcad build <file> -o <path> -f <format> -p ...`
   with the panel's current values (`ScriptValues`, which the viewer and the commands share), so
   what is exported is what the CLI would build; a script with unsaved changes is saved first, on
-  the user's word. Print writes a 3MF to a temp file and opens it with the configured slicer
-  (`kupcad.print.slicer`) or the OS's handler, from a folder of its own under the system's
-  temporary one. A failed build says why (`whyItFailed`: the error the run raised, a syntax error,
+  the user's word. There is no print: a 3MF exported is what a slicer opens, and a command that
+  handed one to the system's program for it found none on a Mac without a slicer registered (the
+  system said so, in a dialog the extension never heard of). A failed build says why (`whyItFailed`: the error the run raised, a syntax error,
   the CLI's refusal, the summary, in that order; never the script's own output).
 * **Click a part** in the viewer and the editor jumps to where it was named (needs source
   locations in the GLB's part metadata: core work).
@@ -481,7 +481,7 @@ the truth.
 2. **Viewer and panels:** `@kupcad/viewer` (GLB, modes, camera, section, picking; SVG once the core
    sends it), `@kupcad/ui`'s `ViewerPane` and `ParamsPanel`.
 3. **The extension** (done): the binary manager, the viewer panel on the new components,
-   parameters and presets, export and print, the core's `kupcad.preview` and the run's warnings
+   parameters and presets, export, the core's `kupcad.preview` and the run's warnings
    as diagnostics. This is the first thing a user installs, so it comes before the web hosts.
    Left for later: a part clicked in the viewer taking the editor to where it was named (the
    GLB's part extras, section 8).

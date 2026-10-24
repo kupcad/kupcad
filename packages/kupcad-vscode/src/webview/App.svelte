@@ -106,12 +106,9 @@
       host.post({ type: 'savePreset', uri: shown.uri, values: $state.snapshot(overrides) });
   }
 
-  /**
-   * Asks the host to export the shown document, or to print it, with its values.
-   * @param {'export' | 'print'} command
-   */
-  function run(command) {
-    if (shown) host.post({ type: command, uri: shown.uri });
+  /** Asks the host to export the shown document, with its values. */
+  function exportShown() {
+    if (shown) host.post({ type: 'export', uri: shown.uri });
   }
 
   /** @param {Blob} image */
@@ -135,8 +132,7 @@
     >
       {#snippet actions()}
         {#if shown}
-          <button type="button" class="kc-control" onclick={() => run('export')}>Export…</button>
-          <button type="button" class="kc-control" onclick={() => run('print')}>Print</button>
+          <button type="button" class="kc-control" onclick={exportShown}>Export…</button>
         {/if}
       {/snippet}
     </ViewerPane>

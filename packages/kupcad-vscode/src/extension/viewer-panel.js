@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import { isViewerMessage } from '@kupcad/protocol';
 import { errorText } from '../errors.js';
-import { EXPORT_COMMAND, PRINT_COMMAND } from './commands.js';
+import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
@@ -167,9 +167,6 @@ export class ViewerPanel {
         return;
       case 'export':
         void vscode.commands.executeCommand(EXPORT_COMMAND, message.uri);
-        return;
-      case 'print':
-        void vscode.commands.executeCommand(PRINT_COMMAND, message.uri);
         return;
       case 'screenshot':
         void this.#saveScreenshot(message.png);
