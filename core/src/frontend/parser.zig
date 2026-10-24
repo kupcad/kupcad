@@ -688,8 +688,12 @@ pub const Parser = struct {
                 const mc = self.b.tree.methodCall(left_node);
                 // An attribute is a name on a receiver, without parentheses: `part.size = 2`.
                 // A call (`f() = 1`, `part.size() += 1`) was taken for one too, and `f()`, with
-                // no receiver, reached the compiler as an attribute of nothing (the fuzzer).
-                if (mc.receiver != .none and mc.args.start == mc.args.end and mc.block == .none and self.tokens.tags[mc.name_token + 1] != .l_paren) {
+                // no receiver, reached the compiler as an attribute of nothing (the fuzzer). A
+                // value's call (`(f)()`) has no name, and its name token is the value's own,
+                // so the parenthesis after it wasn't seen: it was an attribute of no name,
+                // which the formatter wrote as the call it is (the fuzzer again)
+                const named = self.b.tree.getString(mc.method_name).len > 0;
+                if (mc.receiver != .none and named and mc.args.start == mc.args.end and mc.block == .none and self.tokens.tags[mc.name_token + 1] != .l_paren) {
                     return self.b.propertyAssignment(mc.receiver, mc.method_name, tagToAssignmentOp(op_tag), value, left_node.main_token) catch ParseError.OutOfMemory;
                 }
                 self.reportError(self.getLoc(op_tok), .@"invalid-assignment", "A call gives a value but holds none: assign to a variable, an attribute (`part.size = 2`) or an element (`list[0] = 2`)", .{});
