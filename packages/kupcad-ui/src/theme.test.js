@@ -1,4 +1,4 @@
-import { LIGHT } from '@kupcad/viewer';
+import { DARK, LIGHT } from '@kupcad/viewer';
 import { expect, it, vi } from 'vitest';
 import { themeFromTokens, watchTokens } from './theme.js';
 
@@ -36,10 +36,23 @@ it("gives the tokens' theme as the page's root changes them, once for each chang
   await vi.waitFor(() => expect(backgrounds).toEqual([LIGHT.background, '#102030']));
   // A change of something else gives nothing
   root.style.setProperty('--other', '1');
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(backgrounds).toEqual([LIGHT.background, '#102030']);
   stop();
   root.style.setProperty('--kc-viewer-background', '#405060');
   await new Promise((resolve) => setTimeout(resolve));
   expect(backgrounds).toEqual([LIGHT.background, '#102030']);
   root.removeAttribute('style');
   element.remove();
+});
+
+it("takes the viewer's dark colours for the tokens unset, in a dark colour scheme", () => {
+  vi.stubGlobal('matchMedia', (/** @type {string} */ query) => ({
+    matches: query === '(prefers-color-scheme: dark)',
+  }));
+  try {
+    expect(themeFromTokens(document.body)).toEqual(DARK);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

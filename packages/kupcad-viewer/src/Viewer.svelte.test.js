@@ -44,6 +44,10 @@ it('makes a Viewer on its canvas, in the state its props give, binds the part cl
   await rerender({ renderMode: 'wireframe', section: { axis: 'z', offset: 0 } });
   expect(shown.renderMode).toBe('wireframe');
   expect(shown.section).toEqual({ axis: 'z', offset: 0 });
+  // A selection the host makes reaches the viewer
+  await rerender({ selected: 'block' });
+  expect(shown.selected).toBe('block');
+  await rerender({ selected: null });
 
   const canvas = /** @type {HTMLCanvasElement} */ (container.querySelector('canvas'));
   expect(canvas.getAttribute('aria-label')).toBe('The model');

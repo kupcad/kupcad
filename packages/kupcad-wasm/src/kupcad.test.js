@@ -205,6 +205,21 @@ describe('a module that stops', () => {
   });
 });
 
+it('says so when the module has no room for what a call gives it', async () => {
+  let allocations = 0;
+  const full = /** @type {KupcadExports} */ (
+    /** @type {unknown} */ ({
+      memory: new WebAssembly.Memory({ initial: 1 }),
+      // The first is where results' lengths go; then there is none
+      wasm_alloc: () => (allocations++ === 0 ? 8 : 0),
+      wasm_free: () => {},
+    })
+  );
+  await expect(new Kupcad(full).check('cube(1)')).rejects.toThrow(
+    new KupcadError('kupcad.wasm has no room for 7 bytes'),
+  );
+});
+
 it('a module of another protocol version is refused', async () => {
   const memory = new WebAssembly.Memory({ initial: 1 });
   // Its version_wasm says it speaks the next version

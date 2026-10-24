@@ -1,5 +1,6 @@
-import { Color, PlaneGeometry } from 'three';
+import { Color, MeshStandardMaterial, PlaneGeometry } from 'three';
 import { describe, expect, it, vi } from 'vitest';
+import { GHOST_OPACITY } from './model.js';
 import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { stubRenderer } from './testing.js';
 import { DARK, LIGHT } from './theme.js';
@@ -49,6 +50,23 @@ async function sceneDrawn(drawn) {
 }
 
 const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+
+/**
+ * The colours of the ghosts in `scene`, as hex: the meshes seen through at a ghost's opacity.
+ * @param {Scene} scene
+ * @returns {string[]}
+ */
+function ghostColorsOf(scene) {
+  /** @type {string[]} */
+  const colors = [];
+  scene.traverse((object) => {
+    const material = /** @type {Partial<Mesh>} */ (object).material;
+    if (material instanceof MeshStandardMaterial && material.opacity === GHOST_OPACITY) {
+      colors.push(material.color.getHexString());
+    }
+  });
+  return colors;
+}
 
 /**
  * The planes `width` wide in `scene`: a build plate's surface.
@@ -192,6 +210,15 @@ describe('Viewer', () => {
     expect(camera.position.toArray()).toEqual(framed.toArray());
   });
 
+  it('picks the part behind a ghost, which is seen through', async () => {
+    const { viewer } = viewerOn();
+    await viewer.setModel(
+      await modelOf(`cube(30, center: true).translate(x: 20, y: -20, z: 20).ghost\n${BLOCK}`),
+    );
+    // From the iso view, the ghost stands between the camera and the block's centre
+    expect(viewer.partAt(WIDTH / 2, HEIGHT / 2)).toBe('block');
+  });
+
   it('looks through either camera at the same model', async () => {
     const { viewer } = viewerOn();
     await viewer.setModel(await modelOf(BLOCK));
@@ -236,13 +263,11 @@ describe('Viewer', () => {
   });
 
   it("draws in its theme's colours, and stands the model on the environment asked for", async () => {
-    const { viewer, drawn } = viewerOn({
-      theme: LIGHT,
-      environment: 'plate',
-      plate: { width: 200, depth: 100 },
-    });
-    await viewer.setModel(await modelOf('cube(2)'));
+    const { viewer, drawn } = viewerOn({ theme: LIGHT, environment: 'none' });
+    await viewer.setModel(await modelOf(PARTS_WITH_GHOST));
+    viewer.setEnvironment('plate', { width: 200, depth: 100 });
     const scene = await sceneDrawn(drawn);
+    expect(ghostColorsOf(scene)).toEqual([new Color(LIGHT.ghost).getHexString()]);
     expect(/** @type {Color} */ (scene.background).getHexString()).toBe(
       new Color(LIGHT.background).getHexString(),
     );
@@ -253,6 +278,7 @@ describe('Viewer', () => {
     expect(/** @type {Color} */ (redrawn.background).getHexString()).toBe(
       new Color(DARK.background).getHexString(),
     );
+    expect(ghostColorsOf(redrawn)).toEqual([new Color(DARK.ghost).getHexString()]);
     expect(planesOf(redrawn, 200)).toEqual([]);
   });
 

@@ -102,6 +102,14 @@ describe('ParamsPanel', () => {
     expect(within(field).getByRole('alert').textContent).toBe('ValueError: too wide');
   });
 
+  it("doesn't submit its form: Enter in a field leaves the page where it is", async () => {
+    await panel();
+    const form = /** @type {HTMLFormElement} */ (numberField('width').form);
+    const submit = new Event('submit', { cancelable: true });
+    form.dispatchEvent(submit);
+    expect(submit.defaultPrevented).toBe(true);
+  });
+
   it('says so of a script without parameters', async () => {
     render(ParamsPanel, { props: { schema: await schemaOf('cube(1)') } });
     expect(screen.getByText('This script has no parameters.')).toBeTruthy();

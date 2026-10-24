@@ -148,6 +148,13 @@ describe('ViewerPane', () => {
     await vi.waitFor(async () => expect(await backgroundDrawn(drawn)).toBe('#405060'));
   });
 
+  it('frames the model again on Fit, from the view it looks from', async () => {
+    const { viewer } = await pane();
+    const fit = vi.spyOn(viewer, 'fit');
+    await fireEvent.click(screen.getByRole('button', { name: 'Fit' }));
+    expect(fit).toHaveBeenCalledOnce();
+  });
+
   it('gives a screenshot to its host', async () => {
     const { images } = await pane();
     await fireEvent.click(screen.getByRole('button', { name: 'Screenshot' }));

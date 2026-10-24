@@ -142,6 +142,44 @@ describe('createKupcadWorker', () => {
     kupcad.terminate();
   });
 
+  it('clears the files put, and gives a new worker none of them', async () => {
+    const { spawn, started } = inProcess(createKupcad);
+    const kupcad = createKupcadWorker({ worker: spawn, log: silent });
+    const reads = 'cube(import_json("size.json")[:side])';
+    await kupcad.files.put('size.json', '{"side": 3}');
+    await kupcad.files.clear();
+    await expect(kupcad.build(reads)).rejects.toBeInstanceOf(KupcadError);
+    const controller = new AbortController();
+    const running = kupcad.check('x = 1', { signal: controller.signal });
+    controller.abort();
+    await expect(running).rejects.toThrow(/abort/i);
+    await expect(kupcad.build(reads)).rejects.toBeInstanceOf(KupcadError);
+    expect(started).toHaveLength(2);
+    kupcad.terminate();
+  });
+
+  it("gives an error of the worker's that isn't the core's as the Error it was, by name", async () => {
+    /** A core whose calls fail as no core would: a TypeError, and a thrown string. */
+    const odd = /** @type {KupcadApi} */ (
+      /** @type {unknown} */ ({
+        check: async () => {
+          throw new TypeError('not a function');
+        },
+        format: async () => {
+          throw 'a string';
+        },
+      })
+    );
+    const { spawn } = inProcess(async () => odd);
+    const kupcad = createKupcadWorker({ worker: spawn, log: silent });
+    await expect(kupcad.check('x')).rejects.toMatchObject({
+      name: 'TypeError',
+      message: 'not a function',
+    });
+    await expect(kupcad.format('x')).rejects.toThrow('a string');
+    kupcad.terminate();
+  });
+
   it('replaces a worker whose core stopped, and one whose core could not start', async () => {
     /** A core whose builds trap: the only call made of it. */
     const stopped = /** @type {KupcadApi} */ (
