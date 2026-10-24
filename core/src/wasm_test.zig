@@ -4,6 +4,7 @@ const testing = std.testing;
 // Access all submodules via the kupcad module
 const kupcad = @import("kupcad");
 const wasm = kupcad.wasm;
+const preview_frame = kupcad.api.preview_frame;
 const VM = kupcad.vm.VM;
 const chunk = kupcad.chunk;
 const value = kupcad.value;
@@ -411,7 +412,7 @@ test "WASM Interop: a build the instruction cap stops leaves the next one workin
     try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength("cube(2)"));
 }
 
-test "WASM Interop: repeated builds, checks and formats don't grow the module's memory" {
+test "WASM Interop: repeated builds, previews, checks and formats don't grow the module's memory" {
     // Whatever one call leaves allocated (in the VFS, the error buffer, a cache) adds up
     // over an editing session in the browser, which never restarts the module.
     const src = "w = param(:w, default: 4)\nx = [cube(w).material(color: \"#FF0000\"), sphere(2).translate(x: 6)]\nx";
@@ -425,6 +426,8 @@ test "WASM Interop: repeated builds, checks and formats don't grow the module's 
             wasm.wasm_free(@constCast(checked), len);
             const formatted = wasm.format_code_wasm(source.ptr, source.len, &len) orelse return error.FormatFailed;
             wasm.wasm_free(@constCast(formatted), len);
+            const previewed = wasm.preview_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, &len) orelse return error.PreviewFailed;
+            wasm.wasm_free(@constCast(previewed), len);
             _ = try expectBuildFailure("raise \"x\"");
         }
     };
@@ -600,4 +603,41 @@ test "WASM Interop: build_model_wasm writes 3MF, a zip of the model's parts" {
     };
     defer wasm.wasm_free(@constCast(res), out_len);
     try testing.expectEqualSlices(u8, "PK\x03\x04", res[0..4]);
+}
+
+/// The preview frame preview_wasm gives for `src` with `params`: its header's kind and its
+/// error's message, and whether its body is a GLB.
+fn previewOf(src: []const u8, params: []const u8) !struct { kind: []const u8, message: ?[]const u8, glb: bool, arena: std.heap.ArenaAllocator } {
+    var len: usize = 0;
+    const res = wasm.preview_wasm(src.ptr, src.len, params.ptr, params.len, &len) orelse return error.PreviewFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    const parts = try preview_frame.split(res[0..len]);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    errdefer arena.deinit();
+    const Header = struct { kind: []const u8, @"error": ?struct { message: []const u8 } };
+    const header = try std.json.parseFromSliceLeaky(Header, arena.allocator(), parts.header, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+    return .{
+        .kind = header.kind,
+        .message = if (header.@"error") |e| e.message else null,
+        .glb = parts.body.len >= 4 and std.mem.eql(u8, parts.body[0..4], "glTF"),
+        .arena = arena,
+    };
+}
+
+test "WASM Interop: preview_wasm gives a frame: the model as GLB, or why it failed" {
+    var cube = try previewOf("w = param(:w, default: 2)\ncube(w)", "{\"w\": 3}");
+    defer cube.arena.deinit();
+    try testing.expectEqualStrings("3d", cube.kind);
+    try testing.expect(cube.glb);
+    try testing.expect(cube.message == null);
+
+    var refused = try previewOf("cube(2)", "{\"w\": [1]}");
+    defer refused.arena.deinit();
+    try testing.expectEqualStrings("none", refused.kind);
+    try testing.expect(std.mem.startsWith(u8, refused.message.?, "parameters: parameter 'w' is an array"));
+
+    var failed = try previewOf("cube(1)\nraise \"boom\"", "");
+    defer failed.arena.deinit();
+    try testing.expectEqualStrings("none", failed.kind);
+    try testing.expectEqualStrings("RuntimeError: boom", failed.message.?);
 }

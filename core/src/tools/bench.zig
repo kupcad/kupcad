@@ -10,6 +10,7 @@ const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
 const registry = @import("../stdlib/registry.zig");
 const profiler_mod = @import("../vm/profiler.zig");
+const Stopwatch = @import("../core/stopwatch.zig").Stopwatch;
 
 pub const Options = struct {
     /// Runs to time; the report gives each phase's median.
@@ -142,22 +143,6 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     }
     return .{ .ns = ns, .evaluated = evaluated };
 }
-
-const Stopwatch = struct {
-    io: std.Io,
-    last: std.Io.Timestamp,
-
-    fn start(io: std.Io) Stopwatch {
-        return .{ .io = io, .last = std.Io.Clock.now(.awake, io) };
-    }
-
-    /// Nanoseconds since the start or the previous lap.
-    fn lap(self: *Stopwatch) u64 {
-        const now = std.Io.Clock.now(.awake, self.io);
-        defer self.last = now;
-        return @intCast(@max(self.last.durationTo(now).toNanoseconds(), 0));
-    }
-};
 
 fn median(values: []u64) u64 {
     std.mem.sort(u64, values, {}, std.sort.asc(u64));

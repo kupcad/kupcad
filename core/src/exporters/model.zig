@@ -58,14 +58,24 @@ pub const Model = struct {
     }
 };
 
+/// The value the script left last, nil when it left none.
+pub fn finalValue(vm: *const VM) value.Value {
+    return if (vm.stack_top > 0) vm.stack[0] else value.Value.initNil();
+}
+
+/// Whether `val` is what a script ends with to leave a model (collectModel may still refuse
+/// an item of an Array): a Solid, a Sketch, a Path, an Assembly, an Array, or nil for none.
+pub fn isModel(val: value.Value) bool {
+    return val.isNil() or val.isGeometry() or val.isCrossSection() or val.isPath() or val.isAssembly() or val.isArray();
+}
+
 /// The model the script left, from its final value. A value that is no model raises in
 /// the VM (a TypeError saying what it is) and fails with error.RuntimeError: an item that
 /// isn't a shape, such as a Number, was silently left out, and nested Arrays with it.
 pub fn collectModel(allocator: std.mem.Allocator, vm: *VM) !Model {
     var model: Model = .{ .ghosts = vm.display_list.items };
     errdefer model.deinit(allocator);
-    if (vm.stack_top == 0) return model;
-    const final_val = vm.stack[0];
+    const final_val = finalValue(vm);
     if (final_val.isNil()) return model;
     if (final_val.isAssembly()) model.title = final_val.asAssembly().name.chars;
     var path = ItemPath{};

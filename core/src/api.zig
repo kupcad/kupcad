@@ -1,6 +1,7 @@
 //! The library's entry points for the CLI, the LSP and the WASM build: format, lint and fix
 //! source (`formatDocument`, `checkDocument`, `fixCode`), extract the parameter schema
-//! (`extractSchema`), and run a script and export its model (`buildModel`, `exportModelFromVm`).
+//! (`extractSchema`), run a script and export its model (`buildModel`, `exportModelFromVm`),
+//! and run it as an editor's preview, for its frame (`previewScript`, `previewFailure`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -21,6 +22,10 @@ const Linter = @import("tools/lint/linter.zig").Linter;
 const format_mod = @import("exporters/format.zig");
 const model_mod = @import("exporters/model.zig");
 const export_mod = @import("exporters/export.zig");
+const geom = @import("core/geometry_handle.zig");
+const preview_build = @import("preview/build.zig");
+const Stopwatch = @import("core/stopwatch.zig").Stopwatch;
+const LinePosition = @import("vm/run_report.zig").LinePosition;
 
 pub const UiSchema = extractor.UiSchema;
 pub const FormatterConfig = @import("tools/fmt/config.zig").Config;
@@ -48,6 +53,9 @@ pub const exportPartsFromVm = export_mod.exportPartsFromVm;
 pub const freePartFiles = export_mod.freePartFiles;
 pub const exportMaterialLibrary = export_mod.exportMaterialLibrary;
 pub const materialLibraryPath = export_mod.materialLibraryPath;
+
+/// The preview frame previewScript gives: its format and the protocol version.
+pub const preview_frame = @import("preview/frame.zig");
 
 /// How many times fixCode re-checks and applies before it stops (as ESLint does): fixes
 /// that keep making room for each other must still end.
@@ -351,20 +359,8 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         return error.SyntaxError;
     }
 
-    var vm = try VM.init(allocator, io);
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .engine = format.requiredEngine() });
     defer vm.deinit();
-
-    vm.vfs = options.vfs;
-    vm.line_index = &doc.line_index;
-    try registry.registerStandardLibrary(&vm);
-
-    if (format.requiredEngine()) |engine| {
-        var settings = vm.config();
-        settings.engine = engine;
-        try vm.setConfig(settings);
-    }
-
-    if (options.params) |params| try injectParams(&vm, params);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
@@ -392,6 +388,84 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         if (diagnostic) |d| d.message = dupeVmError(allocator, &vm);
         return err;
     };
+}
+
+/// What a script run in a VM of its own is given (buildModel's, previewScript's): the file
+/// system its imports and exports go through, its parameters' values, and the engine a
+/// format needs, when it needs one.
+const RunSetup = struct {
+    vfs: Vfs = .none,
+    params: ?*const ParamValues = null,
+    engine: ?geom.EngineType = null,
+};
+
+/// A VM for one run of `doc` as `setup` says: its errors placed by the document's lines (so
+/// `doc` outlives it), the standard library registered, the parameters given. The caller
+/// deinits it.
+fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: RunSetup) !VM {
+    var vm = try VM.init(allocator, io);
+    errdefer vm.deinit();
+    vm.vfs = setup.vfs;
+    vm.line_index = &doc.line_index;
+    try registry.registerStandardLibrary(&vm);
+    if (setup.engine) |engine| {
+        var settings = vm.config();
+        settings.engine = engine;
+        try vm.setConfig(settings);
+    }
+    if (setup.params) |params| try injectParams(&vm, params);
+    return vm;
+}
+
+/// How previewScript runs a script: with these parameter values, its imports read through
+/// `vfs` (none by default, as for buildModel).
+pub const PreviewOptions = struct {
+    params: ?*const ParamValues = null,
+    vfs: Vfs = .none,
+};
+
+/// The preview frame (preview/frame.zig) of `source`, run as an editor's preview runs it:
+/// under the interactive limits, `CAD.preview?` true, its errors kept out of the log (the
+/// frame says them). A script that doesn't parse or compile, or fails, gives a frame saying
+/// why; only the host's own failures (out of memory) are errors. Caller owns it.
+pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u8, options: PreviewOptions) ![]u8 {
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+    if (doc.diagnostics.len > 0) {
+        const found = doc.diagnostics[0];
+        return preview_build.ofFailure(allocator, &doc, source, found.message, positionOf(&doc, found.loc.offset));
+    }
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params });
+    defer vm.deinit();
+    vm.mute_errors = true;
+    vm.previewing = true;
+    vm.hooks.setLimit(limits.INTERACTIVE_INSTRUCTION_LIMIT);
+    vm.setMemoryLimit(limits.INTERACTIVE_MEMORY_LIMIT);
+
+    var program = chunk.Chunk.init();
+    defer program.free(allocator);
+    var comp = Compiler.forDocument(allocator, &doc, &program, &vm);
+    defer comp.deinit();
+    comp.compile(doc.tree.root) catch |err| {
+        const found = comp.errorDiagnostic() orelse return err;
+        return preview_build.ofFailure(allocator, &doc, source, found.message, positionOf(&doc, found.loc.offset));
+    };
+    var clock = Stopwatch.start(io);
+    const ok = vm.interpret(&program) == .ok;
+    return preview_build.ofRun(allocator, .{ .vm = &vm, .doc = &doc, .source = source, .ok = ok, .run_ns = clock.lap() });
+}
+
+/// The preview frame of `source` refused before it ran, for `message` (a host's parameter
+/// values that aren't JSON, say): its parameter schema and why. Caller owns it.
+pub fn previewFailure(allocator: std.mem.Allocator, source: []const u8, message: []const u8) ![]u8 {
+    var doc = try Document.parse(allocator, source);
+    defer doc.deinit();
+    return preview_build.ofFailure(allocator, &doc, source, message, null);
+}
+
+fn positionOf(doc: *const Document, offset: u32) LinePosition {
+    const at = doc.line_index.humanPosition(offset);
+    return .{ .line = at.line, .column = at.column };
 }
 
 /// Copies the VM's record of the error that failed it; null if there is none or on OOM,

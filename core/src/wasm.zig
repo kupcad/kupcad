@@ -1,6 +1,7 @@
 //! The exports of the WebAssembly build, over `api.zig`: `format_code_wasm`, `check_code_wasm`,
-//! `extract_params_wasm` and `build_model_wasm`, a build reading files from an in-memory VFS
-//! filled with `put_file_wasm`, plus `wasm_alloc`/`wasm_free` and `get_last_error`.
+//! `extract_params_wasm`, `build_model_wasm` and `preview_wasm`, a build reading files from an
+//! in-memory VFS filled with `put_file_wasm`, plus `wasm_alloc`/`wasm_free` and
+//! `get_last_error`.
 
 const std = @import("std");
 const api = @import("api.zig");
@@ -142,15 +143,35 @@ fn inner_build_model(source: []const u8, params_json: []const u8, format: []cons
     const export_format = api.ExportFormat.parse(format) orelse return error.UnsupportedFormat;
     var params: api.ParamValues = .{};
     defer params.deinit(allocator);
-    if (params_json.len > 0) params.putJson(allocator, params_json, &diagnostic.message) catch |err| {
-        // Told apart from the script's own errors: "parameters: line 1, column 3: invalid JSON"
-        if (diagnostic.message) |why| {
-            defer allocator.free(why);
-            diagnostic.message = allocator.print("parameters: {s}", .{why}) catch null;
-        }
-        return err;
-    };
+    if (try putParams(&params, params_json)) |refusal| {
+        diagnostic.message = refusal;
+        return error.InvalidParams;
+    }
     return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = getMemVfs().vfs(), .diagnostic = diagnostic });
+}
+
+fn inner_preview(source: []const u8, params_json: []const u8) ![]const u8 {
+    var params: api.ParamValues = .{};
+    defer params.deinit(allocator);
+    if (try putParams(&params, params_json)) |refusal| {
+        defer allocator.free(refusal);
+        return api.previewFailure(allocator, source, refusal);
+    }
+    return api.previewScript(allocator, wasmIo(), source, .{ .params = &params, .vfs = getMemVfs().vfs() });
+}
+
+/// Sets `params` from `json`, a JSON object of names and values (empty for none). Null when
+/// it took them; else why it refused them, owned, told apart from a script's own errors:
+/// "parameters: line 1, column 3: invalid JSON".
+fn putParams(params: *api.ParamValues, json: []const u8) !?[]u8 {
+    if (json.len == 0) return null;
+    var why: ?[]u8 = null;
+    params.putJson(allocator, json, &why) catch |err| {
+        defer if (why) |w| allocator.free(w);
+        if (err != error.InvalidParams) return err;
+        return try allocator.print("parameters: {s}", .{why orelse "they aren't one JSON object of names and values"});
+    };
+    return null;
 }
 
 // --- WASM Export Boundaries ---
@@ -188,6 +209,29 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize, out_le
         return res.ptr;
     } else |_| {
         setLastError("Internal Linter Error");
+        out_len.* = 0;
+        return null;
+    }
+}
+
+/// The preview frame (preview/frame.zig) of `source` with the parameter values in `params`
+/// (a JSON object, as build_model_wasm takes; empty for none): its model as GLB or SVG, with
+/// its parts, warnings, parameters and, when it failed, why. A script that doesn't run, and
+/// values that aren't JSON, give a frame saying so; null (and get_last_error) only when the
+/// module itself fails.
+pub export fn preview_wasm(
+    source_ptr: [*]const u8,
+    source_len: usize,
+    params_ptr: [*]const u8,
+    params_len: usize,
+    out_len: *usize,
+) ?[*]const u8 {
+    if (inner_preview(source_ptr[0..source_len], params_ptr[0..params_len])) |res| {
+        out_len.* = res.len;
+        return res.ptr;
+    } else |err| {
+        var buf: [MAX_ERROR_MSG_LEN]u8 = undefined;
+        setLastError(std.mem.print(&buf, "Preview Error: {s}", .{@errorName(err)}) catch "Preview Error");
         out_len.* = 0;
         return null;
     }

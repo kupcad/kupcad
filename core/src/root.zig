@@ -45,6 +45,7 @@ test {
     _ = @import("core/bspline_test.zig");
     _ = @import("tools/lint/finding_test.zig");
     _ = @import("preview/frame_test.zig");
+    _ = @import("preview/build_test.zig");
     _ = @import("vm/run_report_test.zig");
     _ = @import("core/mesh_repair_test.zig");
     _ = @import("core/affine2_test.zig");
