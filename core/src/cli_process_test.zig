@@ -657,7 +657,7 @@ test "kupcad: lsp gives a document values with kupcad.setParams, a new worker is
     try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"capabilities\":{{}},\"rootUri\":\"{s}\"}}}}", .{root}));
     const capabilities = try server.answer(1, &seen);
     defer testing.allocator.free(capabilities);
-    try testing.expect(std.mem.find(u8, capabilities, "\"executeCommandProvider\":{\"commands\":[\"kupcad.setParams\"]}") != null);
+    try testing.expect(std.mem.find(u8, capabilities, "\"executeCommandProvider\":{\"commands\":[\"kupcad.setParams\",\"kupcad.preview\"]}") != null);
     try server.sendJson("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
     const text = "a = cube(param(:w, default: 2))\\n";
     try server.sendJson(try std.mem.print(&msg_buf, "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":\"{s}/part.kup\",\"languageId\":\"kupcad\",\"version\":1,\"text\":\"{s}\"}}}}}}", .{ root, text }));

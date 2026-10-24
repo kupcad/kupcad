@@ -7,10 +7,13 @@ const lsp = @import("lsp");
 const Handler = @import("lsp.zig").Handler;
 const documentPath = @import("lsp.zig").documentPath;
 const SET_PARAMS_COMMAND = @import("lsp.zig").SET_PARAMS_COMMAND;
+const PREVIEW_COMMAND = @import("lsp.zig").PREVIEW_COMMAND;
+const Viewport = @import("lsp.zig").Viewport;
 const FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const kernel = @import("../kernel/kernel.zig");
 const SessionPreview = @import("lsp_preview.zig").SessionPreview;
+const test_support = @import("../test_support.zig");
 
 const URI = "file:///work/part.kup";
 
@@ -121,9 +124,14 @@ const Server = struct {
 
     /// The editor runs `kupcad.setParams` with `arguments` (JSON text of the arguments' array).
     fn setParams(self: *Server, arguments: []const u8) !void {
+        return self.command(SET_PARAMS_COMMAND, arguments);
+    }
+
+    /// The editor runs the server's `name` with `arguments` (JSON text of the arguments' array).
+    fn command(self: *Server, name: []const u8, arguments: []const u8) !void {
         const arena = self.arena.allocator();
         const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, arguments, .{});
-        _ = try self.handler.@"workspace/executeCommand"(arena, .{ .command = SET_PARAMS_COMMAND, .arguments = parsed.array.items });
+        _ = try self.handler.@"workspace/executeCommand"(arena, .{ .command = name, .arguments = parsed.array.items });
     }
 
     fn volumeOf(self: *Server, module_path: []const u8) !f64 {
@@ -622,7 +630,7 @@ test "LSP: viewportReady gives the socket's port and the protocol version of its
     var server: Server = undefined;
     try server.init();
     defer server.deinit();
-    server.handler.ws_server = &ws;
+    server.handler.viewport = Viewport.ofSocket(&ws);
     server.handler.initialized(server.arena.allocator(), .{});
     const Notification = struct { method: []const u8, params: @import("lsp.zig").ViewportReady };
     const parsed = try std.json.parseFromSlice(Notification, testing.allocator, server.outbox.last(), .{ .ignore_unknown_fields = true });
@@ -655,7 +663,7 @@ test "LSP: kupcad.setParams gives a document values, and the preview of it runs 
     try testing.expect(!server.handler.preview_pending);
 }
 
-test "LSP: kupcad.setParams refuses arguments of another shape, and an unknown command is refused" {
+test "LSP: kupcad.setParams and kupcad.preview refuse arguments of another shape, and an unknown command is refused" {
     const warnings = @import("../test_support.zig").expectWarnings(); // each refusal is logged with why
     defer warnings.restore();
     var server: Server = undefined;
@@ -670,6 +678,106 @@ test "LSP: kupcad.setParams refuses arguments of another shape, and an unknown c
         "[{\"uri\": \"" ++ URI ++ "\", \"values\": {\"w\": [3]}}]",
     };
     for (refused) |arguments| try testing.expectError(error.InvalidParams, server.setParams(arguments));
+    for ([_][]const u8{ "[]", "[{\"url\": \"" ++ URI ++ "\"}]", "[\"" ++ URI ++ "\"]" }) |arguments| {
+        try testing.expectError(error.InvalidParams, server.command(PREVIEW_COMMAND, arguments));
+    }
     try testing.expect(!server.handler.preview_pending);
     try testing.expectError(error.InvalidParams, server.handler.@"workspace/executeCommand"(server.arena.allocator(), .{ .command = "kupcad.unknown" }));
+}
+
+/// A viewport whose one viewer is the test: the frames sent, kept.
+const Viewers = struct {
+    frames: std.ArrayList([]u8) = .empty,
+
+    const VTABLE: Viewport.VTable = .{ .viewers = viewers, .send = send };
+
+    fn viewport(self: *Viewers) Viewport {
+        return .{ .ptr = self, .vtable = &VTABLE, .port = 9001 };
+    }
+
+    fn viewers(_: *anyopaque) usize {
+        return 1;
+    }
+
+    fn send(ptr: *anyopaque, frame: []const u8) anyerror!void {
+        const self: *Viewers = @ptrCast(@alignCast(ptr));
+        try self.frames.append(testing.allocator, try testing.allocator.dupe(u8, frame));
+    }
+
+    fn deinit(self: *Viewers) void {
+        for (self.frames.items) |frame| testing.allocator.free(frame);
+        self.frames.deinit(testing.allocator);
+    }
+
+    /// The header of the last frame sent, read into `arena`.
+    fn last(self: *const Viewers, arena: std.mem.Allocator) !test_support.FrameHeader {
+        return (try test_support.readFrame(arena, self.frames.items[self.frames.items.len - 1])).header;
+    }
+};
+
+const LIB_URI = "file:///work/lib.kup";
+const MAIN_URI = "file:///work/main.kup";
+
+test "LSP: kupcad.preview shows the document chosen, again when a module it imports is edited" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try testing.expectEqualStrings(PREVIEW_COMMAND, Handler.serverCapabilities(.@"utf-16").executeCommandProvider.?.commands[1]);
+
+    try server.open(LIB_URI, "side = param(:side, default: 2)\nexport side\n");
+    try server.open(MAIN_URI, "import { side } from \"./lib.kup\"\ncube(param(:w, default: side))\n");
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    const arena = server.arena.allocator();
+    try testing.expectEqualStrings(MAIN_URI, (try viewers.last(arena)).document.?);
+
+    // Editing the module it imports shows it again, not the module: it ran with the edit
+    try server.change(LIB_URI, "side = param(:side, default: 3)\nexport side\n");
+    server.settle();
+    const shown = try viewers.last(arena);
+    try testing.expectEqualStrings(MAIN_URI, shown.document.?);
+    try testing.expectEqual(@as(i64, 3), shown.params.values.object.get("w").?.integer);
+}
+
+test "LSP: a frame the viewers have isn't sent again, unless one asks for it" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.open(MAIN_URI, "cube(2)\n");
+    try server.open(LIB_URI, "x = 1\n");
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), viewers.frames.items.len);
+
+    // An edit of a document it doesn't read runs nothing it shows
+    try server.change(LIB_URI, "x = 2\n");
+    server.settle();
+    try testing.expectEqual(@as(usize, 1), viewers.frames.items.len);
+    // A viewer just opened asks, and is sent it
+    try server.command(PREVIEW_COMMAND, "[{\"uri\": \"" ++ MAIN_URI ++ "\"}]");
+    server.settle();
+    try testing.expectEqual(@as(usize, 2), viewers.frames.items.len);
+    try testing.expectEqualSlices(u8, viewers.frames.items[0], viewers.frames.items[1]);
+}
+
+test "LSP: without kupcad.preview, the document last edited is shown" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    var viewers: Viewers = .{};
+    defer viewers.deinit();
+    server.handler.viewport = viewers.viewport();
+    _ = server.handler.initialize(server.arena.allocator(), .{ .capabilities = .{}, .rootUri = "file:///work" });
+    try server.open(MAIN_URI, "cube(2)\n");
+    try server.open(LIB_URI, "square(1)\n");
+    server.settle();
+    try testing.expectEqualStrings(LIB_URI, (try viewers.last(server.arena.allocator())).document.?);
 }

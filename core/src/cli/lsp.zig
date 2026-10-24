@@ -46,6 +46,11 @@ const WATCHED_FILES_METHOD = "workspace/didChangeWatchedFiles";
 /// The command (`workspace/executeCommand`) a front end gives a document's parameters values
 /// with: `[{"uri": "file:///...", "values": {"width": 40}}]`.
 pub const SET_PARAMS_COMMAND = "kupcad.setParams";
+/// The command a front end chooses the document the viewport shows with, and asks for its
+/// frame: `[{"uri": "file:///..."}]`.
+pub const PREVIEW_COMMAND = "kupcad.preview";
+/// The commands the server runs, as `initialize` declares them.
+const COMMANDS = [_][]const u8{ SET_PARAMS_COMMAND, PREVIEW_COMMAND };
 
 pub const USAGE =
     \\Usage: kupcad lsp
@@ -145,6 +150,46 @@ pub fn globEscaped(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return out.toOwnedSlice(allocator);
 }
 
+/// Where the preview's frames go: the viewers connected to the viewport socket
+/// (viewport_ws.zig, `ofSocket`), or a test's.
+pub const Viewport = struct {
+    ptr: *anyopaque,
+    vtable: *const VTable,
+    /// Where viewers connect, which `kupcad/viewportReady` announces.
+    port: u16,
+
+    pub const VTable = struct {
+        viewers: *const fn (ptr: *anyopaque) usize,
+        send: *const fn (ptr: *anyopaque, frame: []const u8) anyerror!void,
+    };
+
+    /// How many viewers are connected: with none, no frame is made.
+    pub fn viewers(self: Viewport) usize {
+        return self.vtable.viewers(self.ptr);
+    }
+
+    /// Gives `frame` to every viewer connected.
+    pub fn send(self: Viewport, frame: []const u8) !void {
+        return self.vtable.send(self.ptr, frame);
+    }
+
+    pub fn ofSocket(socket: *ViewportWsServer) Viewport {
+        return .{ .ptr = socket, .vtable = &SOCKET, .port = socket.port };
+    }
+
+    const SOCKET: VTable = .{ .viewers = socketViewers, .send = socketSend };
+
+    fn socketViewers(ptr: *anyopaque) usize {
+        const socket: *ViewportWsServer = @ptrCast(@alignCast(ptr));
+        return socket.clientCount();
+    }
+
+    fn socketSend(ptr: *anyopaque, frame: []const u8) anyerror!void {
+        const socket: *ViewportWsServer = @ptrCast(@alignCast(ptr));
+        return socket.broadcastBinary(frame);
+    }
+};
+
 /// `kupcad/viewportReady`'s params: the port the viewport socket bound, and the protocol
 /// version of what it sends.
 pub const ViewportReady = struct {
@@ -175,7 +220,7 @@ pub const Handler = struct {
     /// process when the server runs (lsp_worker.zig), in this one in tests.
     preview: Preview,
     /// Null when the viewport server failed to start; language features keep working.
-    ws_server: ?*ViewportWsServer,
+    viewport: ?Viewport,
     /// The workspace folder the editor opened (absolute, owned): documents are known by
     /// their path relative to it, so their relative imports find each other.
     root: ?[]u8 = null,
@@ -189,18 +234,25 @@ pub const Handler = struct {
     watched_files: [][]u8 = &.{},
     /// The number of the last request the server sent the editor.
     last_request: u32 = 0,
-    /// The document last edited, whose frame the viewport shows (its module path and URI
-    /// owned).
+    /// The document whose frame the viewport shows (its module path and URI owned): the one
+    /// last edited, until a front end chooses one (`kupcad.preview`).
     previewed: ?lsp_preview.Target = null,
+    /// A front end chose the document shown: an edit of another no longer shows that one.
+    preview_chosen: bool = false,
     /// An edit hasn't been evaluated yet.
     preview_pending: bool = false,
+    /// The hash of the last frame the viewers were sent: the same frame (nothing the document
+    /// reads changed) isn't sent again.
+    sent_frame: ?u64 = null,
+    /// A viewer asked for the frame (`kupcad.preview`): the next is sent, the same or not.
+    frame_asked: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
         transport: *lsp.Transport,
         preview: Preview,
-        ws_server: ?*ViewportWsServer,
+        viewport: ?Viewport,
     ) Handler {
         return .{
             .allocator = allocator,
@@ -209,7 +261,7 @@ pub const Handler = struct {
             .offset_encoding = .@"utf-16",
             .files = .empty,
             .preview = preview,
-            .ws_server = ws_server,
+            .viewport = viewport,
         };
     }
 
@@ -221,12 +273,18 @@ pub const Handler = struct {
     fn syncSession(self: *Handler, uri: []const u8, module_path: []const u8, source: []const u8) !void {
         defer self.tellOfCrash();
         try self.preview.update(module_path, source);
+        // The document chosen may import this one: it runs again with it
+        if (!self.preview_chosen) try self.showDocument(uri, module_path);
+        if (self.previewed != null) self.preview_pending = true;
+    }
+
+    /// The viewport shows the document at `uri` (`module_path`) from now on.
+    fn showDocument(self: *Handler, uri: []const u8, module_path: []const u8) !void {
         const uri_copy = try self.allocator.dupe(u8, uri);
         errdefer self.allocator.free(uri_copy);
         const path_copy = try self.allocator.dupe(u8, module_path);
         self.dropPreviewed();
         self.previewed = .{ .module_path = path_copy, .uri = uri_copy };
-        self.preview_pending = true;
     }
 
     fn dropPreviewed(self: *Handler) void {
@@ -265,18 +323,18 @@ pub const Handler = struct {
         try self.preview.setRoot(trimmed);
     }
 
-    /// Evaluates the preview and sends the edited document's frame (preview/frame.zig) to the
-    /// viewport. An edit that arrives meanwhile cancels it (the inbox sets the preview's
-    /// cancel token).
+    /// Evaluates the preview and sends the shown document's frame (preview/frame.zig) to the
+    /// viewport, unless the viewers have it already and none asked for it. An edit that
+    /// arrives meanwhile cancels it (the inbox sets the preview's cancel token).
     pub fn evaluatePreview(self: *Handler) void {
         defer self.tellOfCrash();
         self.preview_pending = false;
         const target = self.previewed orelse return;
-        const viewer = if (self.ws_server) |ws| (if (ws.clientCount() > 0) ws else null) else null;
-        switch (self.preview.evaluate(self.allocator, target, viewer != null)) {
+        const viewport = if (self.viewport) |v| (if (v.viewers() > 0) v else null) else null;
+        switch (self.preview.evaluate(self.allocator, target, viewport != null)) {
             .frame => |bytes| {
                 defer self.allocator.free(bytes);
-                viewer.?.broadcastBinary(bytes) catch |err| logger.warn("Viewport broadcast failed: {}", .{err});
+                self.sendFrame(viewport.?, bytes);
             },
             .nothing => {},
             // Stopped by a message: run again once the editor is quiet. The modules it
@@ -290,6 +348,19 @@ pub const Handler = struct {
             .crashed => return,
         }
         self.watchFilesRead();
+    }
+
+    /// Gives the viewers `frame`, unless it is the one they were last sent (the document's
+    /// run was kept: nothing it reads changed) and none asked for it.
+    fn sendFrame(self: *Handler, viewport: Viewport, frame: []const u8) void {
+        const hash = std.hash.Wyhash.hash(0, frame);
+        if (!self.frame_asked and self.sent_frame == hash) return;
+        viewport.send(frame) catch |err| {
+            logger.warn("Viewport broadcast failed: {}", .{err});
+            return;
+        };
+        self.sent_frame = hash;
+        self.frame_asked = false;
     }
 
     /// Asks the editor to watch the files the preview's runs read as data (`import_json`,
@@ -449,15 +520,15 @@ pub const Handler = struct {
             },
             .documentSymbolProvider = .{ .bool = true },
             .codeActionProvider = .{ .bool = true },
-            .executeCommandProvider = .{ .commands = &.{SET_PARAMS_COMMAND} },
+            .executeCommandProvider = .{ .commands = &COMMANDS },
         };
     }
 
     pub fn initialized(self: *Handler, arena: std.mem.Allocator, _: lsp.types.InitializedParams) void {
         // Tell the editor which port the viewport actually bound (it may be ephemeral), so the
         // extension never has to hard-code it. Sent after `initialized` per LSP lifecycle rules.
-        const ws = self.ws_server orelse return;
-        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, ViewportReady, .{ .port = ws.port }, .{}) catch |err| {
+        const viewport = self.viewport orelse return;
+        self.transport.writeNotification(self.io, arena, VIEWPORT_READY_NOTIFICATION, ViewportReady, .{ .port = viewport.port }, .{}) catch |err| {
             logger.warn("Failed to announce viewport port: {}", .{err});
         };
     }
@@ -549,28 +620,46 @@ pub const Handler = struct {
         if (self.previewed != null) self.preview_pending = true;
     }
 
-    /// `kupcad.setParams` (SET_PARAMS_COMMAND): the document at `uri` runs with `values`, a
-    /// JSON object of names and values as `kupcad build -P` reads, from now on (its preview
-    /// and its hovers; another call replaces them). A document the preview shows runs again,
-    /// and its frame says what came of them. An unknown command, or arguments of another
-    /// shape, is error.InvalidParams, the reason logged.
+    /// The server's commands (COMMANDS). An unknown one, or arguments of another shape, is
+    /// error.InvalidParams, the reason logged.
     pub fn @"workspace/executeCommand"(
         self: *Handler,
         arena: std.mem.Allocator,
         params: lsp.types.workspace.execute_command.Params,
     ) !?lsp.types.LSPAny {
-        if (!std.mem.eql(u8, params.command, SET_PARAMS_COMMAND)) {
+        const arguments = params.arguments orelse &.{};
+        if (std.mem.eql(u8, params.command, SET_PARAMS_COMMAND)) {
+            try self.setParams(arena, try setParamsArgument(arena, arguments));
+        } else if (std.mem.eql(u8, params.command, PREVIEW_COMMAND)) {
+            try self.choosePreview(arena, (try oneArgument(struct { uri: []const u8 }, arena, PREVIEW_COMMAND, "{\"uri\": ...}", arguments)).uri);
+        } else {
             logger.warn("Unknown command: {s}", .{params.command});
             return error.InvalidParams;
         }
-        const set = try setParamsArgument(arena, params.arguments orelse &.{});
+        return null;
+    }
+
+    /// `kupcad.setParams` (SET_PARAMS_COMMAND): the document at `uri` runs with `values`, a
+    /// JSON object of names and values as `kupcad build -P` reads, from now on (its preview
+    /// and its hovers; another call replaces them). A document the preview shows runs again,
+    /// and its frame says what came of them.
+    fn setParams(self: *Handler, arena: std.mem.Allocator, set: SetParams) !void {
         const module_path = try self.modulePath(arena, set.uri);
         defer self.tellOfCrash();
         try self.preview.setParams(module_path, &set.values);
         if (self.previewed) |shown| {
             if (std.mem.eql(u8, shown.module_path, module_path)) self.preview_pending = true;
         }
-        return null;
+    }
+
+    /// `kupcad.preview` (PREVIEW_COMMAND): the viewport shows the document at `uri`, whatever
+    /// is edited, and its frame is sent once the editor is quiet, though the viewers had it:
+    /// a viewer just opened asks for it so.
+    fn choosePreview(self: *Handler, arena: std.mem.Allocator, uri: []const u8) !void {
+        try self.showDocument(uri, try self.modulePath(arena, uri));
+        self.preview_chosen = true;
+        self.frame_asked = true;
+        self.preview_pending = true;
     }
 
     /// A file was saved, created or deleted on disk: one the editor watches for the preview
@@ -1025,15 +1114,20 @@ pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
 /// What a `kupcad.setParams` is given: the document's URI, and its values.
 const SetParams = struct { uri: []const u8, values: api.ParamValues };
 
+/// A command's one argument, an object read as `T` (`shape` says it in the log), owned by
+/// `arena`; error.InvalidParams, the reason logged, for arguments of another shape.
+fn oneArgument(comptime T: type, arena: std.mem.Allocator, comptime command: []const u8, comptime shape: []const u8, arguments: []const std.json.Value) !T {
+    const parsed: ?T = if (arguments.len == 1) std.json.parseFromValueLeaky(T, arena, arguments[0], .{ .ignore_unknown_fields = true }) catch null else null;
+    return parsed orelse {
+        logger.warn("{s} takes one argument, {s}", .{ command, shape });
+        return error.InvalidParams;
+    };
+}
+
 /// The one argument of a `kupcad.setParams`, owned by `arena`; error.InvalidParams, the reason
 /// logged, for arguments of another shape or a value no parameter takes.
 fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value) !SetParams {
-    const Argument = struct { uri: []const u8, values: std.json.Value };
-    const parsed: ?Argument = if (arguments.len == 1) std.json.parseFromValueLeaky(Argument, arena, arguments[0], .{ .ignore_unknown_fields = true }) catch null else null;
-    const argument = parsed orelse {
-        logger.warn("{s} takes one argument, {{\"uri\": ..., \"values\": {{...}}}}", .{SET_PARAMS_COMMAND});
-        return error.InvalidParams;
-    };
+    const argument = try oneArgument(struct { uri: []const u8, values: std.json.Value }, arena, SET_PARAMS_COMMAND, "{\"uri\": ..., \"values\": {...}}", arguments);
     const object = switch (argument.values) {
         .object => |o| o,
         else => {
@@ -1094,7 +1188,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
     var stdio_transport: lsp.Transport.Stdio = .init(&read_buffer, .stdin(), .stdout());
     const transport: *lsp.Transport = &stdio_transport.transport;
 
-    var handler = Handler.init(allocator, init.io, transport, preview, ws_server);
+    var handler = Handler.init(allocator, init.io, transport, preview, if (ws_server) |ws| Viewport.ofSocket(ws) else null);
     defer handler.deinit();
 
     // Messages come through the inbox, which evaluates the preview when the editor goes
