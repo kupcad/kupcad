@@ -3,6 +3,7 @@
 
 pub const api = @import("api.zig");
 pub const wasm = @import("wasm.zig");
+pub const version = @import("version.zig");
 pub const vm = @import("vm/vm.zig");
 pub const chunk = @import("vm/chunk.zig");
 pub const value = @import("core/value.zig");

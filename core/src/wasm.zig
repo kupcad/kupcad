@@ -1,10 +1,11 @@
 //! The exports of the WebAssembly build, over `api.zig`: `format_code_wasm`, `check_code_wasm`,
 //! `extract_params_wasm`, `build_model_wasm` and `preview_wasm`, a build reading files from an
-//! in-memory VFS filled with `put_file_wasm`, plus `wasm_alloc`/`wasm_free` and
-//! `get_last_error`.
+//! in-memory VFS filled with `put_file_wasm`, plus `version_wasm`, `wasm_alloc`/`wasm_free`
+//! and `get_last_error`.
 
 const std = @import("std");
 const api = @import("api.zig");
+const version = @import("version.zig");
 const lint_finding = @import("tools/lint/finding.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 
@@ -175,6 +176,20 @@ fn putParams(params: *api.ParamValues, json: []const u8) !?[]u8 {
 }
 
 // --- WASM Export Boundaries ---
+
+/// What the module says of itself (version.zig), as `kupcad version --json` prints it:
+/// `{"version": "0.1.0", "protocolVersion": 1, "os": "wasi", "arch": "wasm32"}`, for a page
+/// that loads the module from a URL to show, and to check the protocol version of. Freed with
+/// wasm_free, as every result is.
+pub export fn version_wasm(out_len: *usize) ?[*]const u8 {
+    const json = std.json.Stringify.valueAlloc(allocator, version.Info{}, .{}) catch {
+        setLastError("Out of memory");
+        out_len.* = 0;
+        return null;
+    };
+    out_len.* = json.len;
+    return json.ptr;
+}
 
 pub export fn format_code_wasm(source_ptr: [*]const u8, source_len: usize, out_len: *usize) ?[*]const u8 {
     std.debug.assert(@intFromPtr(source_ptr) != 0);

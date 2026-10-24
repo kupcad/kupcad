@@ -641,3 +641,18 @@ test "WASM Interop: preview_wasm gives a frame: the model as GLB, or why it fail
     try testing.expectEqualStrings("none", failed.kind);
     try testing.expectEqualStrings("RuntimeError: boom", failed.message.?);
 }
+
+test "WASM Interop: version_wasm says what kupcad version --json says, of this module" {
+    var len: usize = 0;
+    const res = wasm.version_wasm(&len) orelse return error.VersionFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    // Parsed strictly: what a page reads, field for field
+    const Info = struct { version: []const u8, protocolVersion: u32, os: []const u8, arch: []const u8 };
+    const parsed = try std.json.parseFromSlice(Info, testing.allocator, res[0..len], .{});
+    defer parsed.deinit();
+    const built: kupcad.version.Info = .{};
+    try testing.expectEqualStrings(built.version, parsed.value.version);
+    try testing.expectEqual(preview_frame.PROTOCOL_VERSION, parsed.value.protocolVersion);
+    try testing.expectEqualStrings("wasi", parsed.value.os);
+    try testing.expectEqualStrings("wasm32", parsed.value.arch);
+}

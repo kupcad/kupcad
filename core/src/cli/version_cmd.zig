@@ -1,11 +1,10 @@
 //! `kupcad version`: the version of kupcad, as `--version` prints it, or with `--json` what a
-//! front end checks before it runs this binary: the version, the protocol version
-//! (preview/frame.zig) and the platform it was built for.
+//! front end checks before it runs this binary (version.zig): the version, the protocol
+//! version and the platform it was built for.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const build_info = @import("build_info");
-const frame = @import("../preview/frame.zig");
+const Info = @import("../version.zig").Info;
 const log_helpers = @import("../log.zig");
 pub const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
@@ -21,14 +20,6 @@ pub const USAGE =
 ;
 
 pub const TEXT = "kupcad " ++ build_info.version ++ "\n";
-
-/// What `--json` prints.
-pub const Info = struct {
-    version: []const u8 = build_info.version,
-    protocolVersion: u32 = frame.PROTOCOL_VERSION,
-    os: []const u8 = @tagName(builtin.os.tag),
-    arch: []const u8 = @tagName(builtin.cpu.arch),
-};
 
 pub fn execute(init: std.process.Init, _: std.mem.Allocator, args: *Args) !Outcome {
     return run(args, .forProcess(init));
