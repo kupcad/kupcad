@@ -69,7 +69,9 @@ export function gridSide(box) {
 }
 
 /**
- * Lines every `step` across a `width` × `depth` rectangle centred on the origin.
+ * Lines every `step` from the origin across a `width` × `depth` rectangle centred on it, and
+ * along its edges. They ran from one edge, so a plate whose side isn't a whole number of steps
+ * had none through the origin and one past its far edge.
  * @param {number} width
  * @param {number} depth
  * @param {number} step
@@ -81,11 +83,30 @@ function lines(width, depth, step, color) {
   const positions = [];
   const halfW = width / 2;
   const halfD = depth / 2;
-  for (let x = -halfW; x <= halfW + step / 2; x += step) positions.push(x, -halfD, 0, x, halfD, 0);
-  for (let y = -halfD; y <= halfD + step / 2; y += step) positions.push(-halfW, y, 0, halfW, y, 0);
+  for (const x of stops(halfW, step)) positions.push(x, -halfD, 0, x, halfD, 0);
+  for (const y of stops(halfD, step)) positions.push(-halfW, y, 0, halfW, y, 0);
   const geometry = new BufferGeometry().setAttribute(
     'position',
     new Float32BufferAttribute(positions, 3),
   );
   return new LineSegments(geometry, new LineBasicMaterial({ color }));
+}
+
+/**
+ * Where lines across ±`half` go: every whole `step` from 0 inside it (each a multiple, not a
+ * sum, so they don't drift), and ±`half`.
+ * @param {number} half
+ * @param {number} step
+ * @returns {number[]}
+ */
+export function stops(half, step) {
+  // A multiple this near an edge is the edge
+  const near = step * 1e-6;
+  /** @type {number[]} */
+  const inside = [];
+  for (let i = Math.ceil(-half / step); i * step <= half; i++) {
+    const at = i * step;
+    if (Math.abs(Math.abs(at) - half) > near) inside.push(at);
+  }
+  return [-half, ...inside, half];
 }
