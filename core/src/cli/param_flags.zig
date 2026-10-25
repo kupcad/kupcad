@@ -9,11 +9,12 @@ const Reporter = @import("reporter.zig").Reporter;
 
 /// The options' lines of a command's USAGE.
 pub const USAGE =
-    \\  -p, --param <name=value>  Value for param(:name), read as the type its default
-    \\                            has; repeatable
+    \\  -p, --param <name=value>  Value for param(:name), read as the parameter's type
+    \\                            (an Array's as JSON: size=[10,20]); repeatable
     \\  -P, --params <file.json>  Values for parameters, a JSON object of names and
-    \\                            numbers, strings or booleans; repeatable. Of two
-    \\                            values for one parameter the later (-p or -P) wins
+    \\                            numbers, strings, booleans or arrays of them (null
+    \\                            for none); repeatable. Of two values for one
+    \\                            parameter the later (-p or -P) wins
     \\
 ;
 

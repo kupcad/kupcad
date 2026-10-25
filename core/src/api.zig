@@ -11,6 +11,7 @@ const value_hash = @import("vm/value_hash.zig");
 const value = @import("core/value.zig");
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
+const params_mod = @import("stdlib/params.zig");
 const kernel = @import("kernel/kernel.zig");
 const extractor = @import("tools/doc/extractor.zig");
 const Vfs = @import("vfs/vfs.zig").Vfs;
@@ -259,7 +260,7 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
 /// Puts `values` in the VM's `params` Map (which registering the standard library makes),
 /// keyed by symbol, where `param(:name)` finds and reads them by its declared type: a text
-/// value goes in as a String.
+/// value goes in as a String, an array as an Array.
 pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
     if (values.map.count() == 0) return;
     const params_map = (vm.globals.get("params") orelse return).asMap();
@@ -268,11 +269,7 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
         const key = try vm.allocateSymbol(name);
         vm.push(key);
         defer _ = vm.pop();
-        const val: value.Value = switch (v) {
-            .number => |n| value.Value.initNumber(n),
-            .boolean => |b| value.Value.initBool(b),
-            .text => |t| try vm.allocateString(t),
-        };
+        const val = try params_mod.scriptValueOf(vm, v);
         vm.push(val);
         defer _ = vm.pop();
         try params_map.table.put(vm.gc.trackingAllocator(), key, val);

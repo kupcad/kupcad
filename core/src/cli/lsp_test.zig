@@ -707,7 +707,7 @@ test "LSP: kupcad.setParams and kupcad.preview refuse arguments of another shape
         "[]",
         "[{\"uri\": \"" ++ URI ++ "\"}]",
         "[{\"uri\": \"" ++ URI ++ "\", \"values\": [3]}]",
-        "[{\"uri\": \"" ++ URI ++ "\", \"values\": {\"w\": [3]}}]",
+        "[{\"uri\": \"" ++ URI ++ "\", \"values\": {\"w\": {\"a\": 3}}}]",
     };
     for (refused) |arguments| try testing.expectError(error.InvalidParams, server.setParams(arguments));
     for ([_][]const u8{ "[]", "[{\"url\": \"" ++ URI ++ "\"}]", "[\"" ++ URI ++ "\"]" }) |arguments| {

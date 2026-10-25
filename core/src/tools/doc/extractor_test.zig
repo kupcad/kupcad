@@ -124,3 +124,45 @@ test "Extractor: step, unit, group, title and description, for a host's controls
     try testing.expect(schema.parameters[2].unit == null);
     try testing.expect(schema.parameters[2].title == null);
 }
+
+test "Extractor: a parameter's type is type:'s, else its default's, else its choices', else a String's" {
+    // One without a literal default was a number, whatever the run would make it
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\key = param(:key, title: "Key")
+        \\none = param(:none, default: nil)
+        \\count = param(:count, type: :number)
+        \\size = param(:size, type: :symbol, validate: { in: [:m3, :m4] })
+        \\pick = param(:pick, validate: { in: [:m3, :m4] })
+        \\vec = param(:vec, default: [10, -20, 30], unit: "mm")
+        \\pts = param(:pts, default: [[0, 0], [10, 0]])
+        \\list = param(:list, type: :array)
+        \\made = param(:made, default: [1, made_up])
+        \\computed = param(:computed, default: 2 * 3)
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+
+    var out: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer out.deinit();
+    for (schema.parameters) |spec| {
+        try out.writer.print("{s} {s} {f}\n", .{ spec.name, spec.type, std.json.fmt(spec.default_value, .{}) });
+    }
+    // An Array with something computed in it, as any default the run computes, is taken
+    // for a number's
+    try testing.expectEqualStrings(
+        \\key string null
+        \\none string null
+        \\count number null
+        \\size string null
+        \\pick string null
+        \\vec array [10,-20,30]
+        \\pts array [[0,0],[10,0]]
+        \\list array null
+        \\made number null
+        \\computed number null
+        \\
+    , out.written());
+}

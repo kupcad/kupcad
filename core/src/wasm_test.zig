@@ -402,7 +402,9 @@ test "WASM Interop: build_model_wasm takes parameter values as a JSON object" {
     try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength(src));
     try testing.expectEqual(@as(usize, 84 + 3 * 12 * 50), try expectBuildLengthWith(src, "{\"n\": 3, \"label\": \"ok\"}"));
     // A refusal says it is about the parameters, not the script.
-    try testing.expectEqualStrings("parameters: parameter 'n' is an array; a parameter takes a number, a string, true or false", try expectBuildFailureWith(src, "{\"n\": [1, 2]}"));
+    try testing.expectEqualStrings("parameters: parameter 'n' is an object; a parameter takes a number, a string, true or false, or an array of them", try expectBuildFailureWith(src, "{\"n\": {\"a\": 1}}"));
+    // An Array parameter takes an array
+    try testing.expectEqual(@as(usize, 84 + 2 * 12 * 50), try expectBuildLengthWith("xs = param(:xs, default: [0])\nunion(xs.map { |x| cube(1).translate(x: x) })", "{\"xs\": [0, 3]}"));
     try testing.expectEqualStrings("parameters: line 1, column 2: invalid JSON", try expectBuildFailureWith(src, "{n: 3}"));
 }
 
@@ -672,10 +674,10 @@ test "WASM Interop: preview_wasm gives a frame: the model as GLB, or why it fail
     try testing.expect(cube.glb);
     try testing.expect(cube.message == null);
 
-    var refused = try previewOf("cube(2)", "{\"w\": [1]}");
+    var refused = try previewOf("cube(2)", "{\"w\": {\"a\": 1}}");
     defer refused.arena.deinit();
     try testing.expectEqualStrings("none", refused.kind);
-    try testing.expect(std.mem.startsWith(u8, refused.message.?, "parameters: parameter 'w' is an array"));
+    try testing.expect(std.mem.startsWith(u8, refused.message.?, "parameters: parameter 'w' is an object"));
 
     var failed = try previewOf("cube(1)\nraise \"boom\"", "");
     defer failed.arena.deinit();

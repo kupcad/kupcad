@@ -9,6 +9,8 @@ pub const ParamType = enum {
     string,
     boolean,
     symbol,
+    /// Of numbers, Strings, booleans, Symbols and Arrays of them.
+    array,
 };
 
 pub const ParamRegistry = struct {

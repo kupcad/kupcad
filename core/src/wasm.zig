@@ -236,7 +236,7 @@ pub export fn preview_wasm(
 }
 
 /// Builds `source` with the parameter values in `params` (a JSON object of names and
-/// numbers, strings or booleans, as `kupcad build -P` reads; empty for none) and the files it
+/// numbers, strings, booleans or arrays of them, as `kupcad build -P` reads; empty for none) and the files it
 /// imports in `files` (packed as vfs/packed.zig has them; empty for none), and exports it as
 /// `format`.
 pub export fn build_model_wasm(

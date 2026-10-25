@@ -24,7 +24,11 @@ pub const ParamValidate = struct {
 
 pub const ParamMetadata = struct {
     name: []const u8,
+    /// "number", "string" (a Symbol parameter's too), "boolean" or "array": `type:`'s, else
+    /// its literal default's, else its choices', else "string" (one with no default is text
+    /// until a host gives it some). A default only the run computes is taken for a number.
     type: []const u8,
+    /// Null when there is none (or nil), or the run computes it.
     default_value: ?std.json.Value,
     validate: ParamValidate,
     /// A number control's increment, `step:`, when written as a literal.
@@ -108,7 +112,8 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
     const p_name = extractString(tree, args[0].value) orelse "unknown";
 
     var def_val: ?std.json.Value = null;
-    var p_type: []const u8 = "number";
+    var computed_default = false;
+    var named_type: ?[]const u8 = null;
     var val = ParamValidate{};
     var step: ?f64 = null;
     var unit: ?[]const u8 = null;
@@ -121,15 +126,10 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
         const kw_name = tree.getString(arg.name);
 
         if (std.mem.eql(u8, kw_name, "default")) {
-            def_val = extractJsonValue(tree, arg.value);
-            if (def_val) |dv| {
-                switch (dv) {
-                    .float, .integer => p_type = "number",
-                    .string => p_type = "string",
-                    .bool => p_type = "boolean",
-                    else => {},
-                }
-            }
+            def_val = try extractJsonValue(allocator, tree, arg.value);
+            computed_default = def_val == null;
+        } else if (std.mem.eql(u8, kw_name, "type")) {
+            named_type = schemaType(extractText(tree, arg.value) orelse "");
         } else if (std.mem.eql(u8, kw_name, "validate")) {
             val = try extractValidate(allocator, tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "step")) {
@@ -145,6 +145,12 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
         }
     }
 
+    const computed: ?[]const u8 = if (computed_default) "number" else null;
+    const p_type = named_type orelse
+        (if (def_val) |dv| jsonType(dv) else null) orelse
+        computed orelse
+        sharedJsonType(val.in orelse &.{}) orelse
+        "string";
     return ParamMetadata{
         .name = p_name,
         .type = p_type,
@@ -184,7 +190,7 @@ fn extractChoices(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx:
     if (node.tag != .array_literal) return null;
     const elements = tree.getNodes(tree.arrayLiteral(node).span);
     const choices = try allocator.alloc(std.json.Value, elements.len);
-    for (elements, choices) |e, *c| c.* = extractJsonValue(tree, e) orelse return null;
+    for (elements, choices) |e, *c| c.* = try extractJsonValue(allocator, tree, e) orelse return null;
     return choices;
 }
 
@@ -219,12 +225,21 @@ fn extractNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?f64 {
     return null;
 }
 
-fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Value {
+/// A literal's value as JSON: a number, a String's or a Symbol's text, true or false, nil, or
+/// an Array of them; null for what only the run can compute.
+fn extractJsonValue(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !?std.json.Value {
     const node = tree.getNode(node_idx) orelse return null;
     switch (node.tag) {
         .number => return .{ .float = tree.number(node) },
         .boolean => return .{ .bool = tree.boolean(node) },
         .string, .symbol => return .{ .string = tree.nodeString(node) },
+        .nil => return .null,
+        .array_literal => {
+            const elements = tree.getNodes(tree.arrayLiteral(node).span);
+            var items: std.json.Array = try .initCapacity(allocator, elements.len);
+            for (elements) |e| items.appendAssumeCapacity(try extractJsonValue(allocator, tree, e) orelse return null);
+            return .{ .array = items };
+        },
         .unary_op => {
             const un = tree.unaryExpr(node);
             if (un.op == .negate) {
@@ -235,4 +250,35 @@ fn extractJsonValue(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?std.json.Va
         },
         else => return null,
     }
+}
+
+/// The schema's type of a `type:` (`:symbol` is a "string" with choices); null for a name no
+/// parameter type has, which the run refuses.
+fn schemaType(name: []const u8) ?[]const u8 {
+    for ([_][]const u8{ "number", "string", "boolean", "array" }) |known| {
+        if (std.mem.eql(u8, name, known)) return known;
+    }
+    return if (std.mem.eql(u8, name, "symbol")) "string" else null;
+}
+
+/// The schema's type of a literal default; null for nil, which gives none.
+fn jsonType(v: std.json.Value) ?[]const u8 {
+    return switch (v) {
+        .float, .integer => "number",
+        .string => "string",
+        .bool => "boolean",
+        .array => "array",
+        else => null,
+    };
+}
+
+/// The type all of `values` share; null when there are none, or they differ.
+fn sharedJsonType(values: []const std.json.Value) ?[]const u8 {
+    if (values.len == 0) return null;
+    const first = jsonType(values[0]) orelse return null;
+    for (values[1..]) |v| {
+        const other = jsonType(v) orelse return null;
+        if (!std.mem.eql(u8, other, first)) return null;
+    }
+    return first;
 }

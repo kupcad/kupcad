@@ -211,8 +211,8 @@ fn hexColor(arena: std.mem.Allocator, material: MaterialDef) ![]const u8 {
 }
 
 /// The value each of the script's own parameters (its schema's, in its order) took in the
-/// run: the panel's, not one its imports declared. A number no JSON can hold (an infinite
-/// default) is left out, and so is a parameter the run didn't reach.
+/// run: the panel's, not one its imports declared. A parameter left nil, one holding a
+/// number no JSON can hold (an infinite default), and one the run didn't reach are left out.
 fn valuesOf(arena: std.mem.Allocator, vm: *const VM, schema: extractor.UiSchema) !param_values.ParamValues {
     var declared: std.StringHashMapUnmanaged(value.Value) = .empty;
     for (vm.param_registry.items(.name), vm.param_registry.items(.current_value)) |name, v| {
@@ -220,17 +220,24 @@ fn valuesOf(arena: std.mem.Allocator, vm: *const VM, schema: extractor.UiSchema)
     }
     var values: param_values.ParamValues = .{};
     for (schema.parameters) |spec| {
-        const taken = paramValue(declared.get(spec.name) orelse continue) orelse continue;
+        const taken = try paramValue(arena, declared.get(spec.name) orelse continue) orelse continue;
         try values.put(arena, spec.name, taken);
     }
     return values;
 }
 
-fn paramValue(v: value.Value) ?param_values.ParamValue {
+/// `v` as JSON gives a parameter's value (its text borrowed, its arrays in `arena`); null for
+/// nil and for what JSON can't hold.
+fn paramValue(arena: std.mem.Allocator, v: value.Value) !?param_values.ParamValue {
     if (v.isNumber()) return if (std.math.isFinite(v.asNumber())) .{ .number = v.asNumber() } else null;
     if (v.isBool()) return .{ .boolean = v.asBool() };
     if (v.nameChars()) |text| return .{ .text = text };
-    return null;
+    if (!v.isArray()) return null;
+    // param() read it, so it nests no deeper than a parameter's may
+    const items = v.asArray().items.items;
+    const elements = try arena.alloc(param_values.ParamValue, items.len);
+    for (items, elements) |item, *element| element.* = try paramValue(arena, item) orelse return null;
+    return .{ .array = elements };
 }
 
 /// A warning of the run as a frame places it, at its line and column (null for none).

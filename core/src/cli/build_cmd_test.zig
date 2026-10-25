@@ -355,16 +355,16 @@ test "build_cmd: -P reads a JSON object of values, and of two for one parameter 
 test "build_cmd: -P refuses a file it can't read, and one that isn't parameter values" {
     var fx = try Fixture.init("cube(1)\n");
     defer fx.deinit();
-    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "list.json", .data = "{\"gears\": [20, 30]}" });
-    const list = try fx.path("list.json");
-    defer testing.allocator.free(list);
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "object.json", .data = "{\"gears\": {\"teeth\": 20}}" });
+    const object = try fx.path("object.json");
+    defer testing.allocator.free(object);
     const missing = try fx.path("missing.json");
     defer testing.allocator.free(missing);
     try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "number.json", .data = "5" });
     const number = try fx.path("number.json");
     defer testing.allocator.free(number);
     const cases = [_]struct { file: []const u8, message: []const u8 }{
-        .{ .file = list, .message = ": parameter 'gears' is an array; a parameter takes a number, a string, true or false\n" },
+        .{ .file = object, .message = ": parameter 'gears' is an object; a parameter takes a number, a string, true or false, or an array of them\n" },
         .{ .file = missing, .message = "': FileNotFound\n" },
         .{ .file = number, .message = ": a parameter file holds one JSON object of names and values, as {\"width\": 40}\n" },
     };
