@@ -1,5 +1,5 @@
-//! `MemoryVfs`: a `Vfs` held in memory (files, directories, symlinks and hard links), for
-//! the LSP's open documents, the WASM build and tests.
+//! `MemoryVfs`: a `Vfs` held in memory (files, directories and symlinks), for the LSP's
+//! open documents, the WASM build and tests.
 
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
@@ -7,10 +7,10 @@ const owned_keys = @import("../core/owned_keys.zig");
 
 pub const NodeKind = enum { file, directory, symlink };
 
+/// A path's node: its content (a file's bytes, a symlink's target) its own.
 pub const MemoryNode = struct {
     kind: NodeKind,
     content: ?[]const u8 = null,
-    nlink: u32 = 1,
 };
 
 pub const MemoryVfs = struct {
@@ -27,44 +27,28 @@ pub const MemoryVfs = struct {
     pub fn deinit(self: *MemoryVfs) void {
         var it = self.nodes.iterator();
         while (it.next()) |entry| {
-            if (entry.value_ptr.content) |c| {
-                // Content hard links share is freed by the last node holding it; nothing
-                // here allocates (a tracking map used to, and panicked when it couldn't).
-                entry.value_ptr.content = null;
-                self.releaseContent(c);
-            }
+            if (entry.value_ptr.content) |c| self.allocator.free(c);
             self.allocator.free(entry.key_ptr.*);
         }
         self.nodes.deinit();
     }
 
     /// Removes the file at `path` (the LSP drops a document the editor closed); false if
-    /// there is none. Content a hard link still shares is kept for it.
+    /// there is none.
     pub fn deleteFile(self: *MemoryVfs, path: []const u8) bool {
         const entry = self.nodes.fetchRemove(path) orelse return false;
-        if (entry.value.content) |c| self.releaseContent(c);
+        if (entry.value.content) |c| self.allocator.free(c);
         self.allocator.free(entry.key);
         return true;
     }
 
-    /// Frees `content` unless a node still shares it (a hard link).
-    fn releaseContent(self: *MemoryVfs, content: []const u8) void {
-        var it = self.nodes.valueIterator();
-        while (it.next()) |node| {
-            if (node.content) |other| if (other.ptr == content.ptr) return;
-        }
-        self.allocator.free(content);
-    }
-
-    /// Puts `node` at `path`, which gets its own copy of the path when new. What was
-    /// there is released first, unless a hard link still shares its content: a write
-    /// over a linked path freed the content under the other link, and a link onto an
-    /// existing path leaked both the old node's content and the new path copy.
+    /// Puts `node` at `path`, which gets its own copy of the path when new; what was there
+    /// is freed (a link onto an existing path leaked its content and the new path copy).
     fn replaceNode(self: *MemoryVfs, path: []const u8, node: MemoryNode) !void {
         const gop = try owned_keys.getOrPutOwned(&self.nodes, self.allocator, path);
         const old: ?MemoryNode = if (gop.found_existing) gop.value_ptr.* else null;
         gop.value_ptr.* = node;
-        if (old) |o| if (o.content) |c| self.releaseContent(c);
+        if (old) |o| if (o.content) |c| self.allocator.free(c);
     }
 
     pub fn vfs(self: *MemoryVfs) Vfs {
@@ -74,7 +58,6 @@ pub const MemoryVfs = struct {
                 .makePath = makePath,
                 .readFile = readFile,
                 .writeFile = writeFile,
-                .hardLink = hardLink,
                 .symLink = symLink,
             },
         };
@@ -104,13 +87,6 @@ pub const MemoryVfs = struct {
         const data_dup = try self.allocator.dupe(u8, data);
         errdefer self.allocator.free(data_dup);
         try self.replaceNode(path, .{ .kind = .file, .content = data_dup });
-    }
-
-    fn hardLink(ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void {
-        const self: *MemoryVfs = @ptrCast(@alignCast(ptr));
-        const source_node = self.nodes.getPtr(old_path) orelse return error.FileNotFound;
-        source_node.nlink += 1;
-        try self.replaceNode(new_path, source_node.*);
     }
 
     fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {

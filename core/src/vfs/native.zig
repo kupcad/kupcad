@@ -27,7 +27,6 @@ pub const NativeVfs = struct {
                 .makePath = makePath,
                 .readFile = readFile,
                 .writeFile = writeFile,
-                .hardLink = hardLink,
                 .symLink = symLink,
                 .hardLinkTrusted = hardLinkTrusted,
             },
@@ -121,13 +120,6 @@ pub const NativeVfs = struct {
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
         try self.confine(path);
         try self.root_dir.writeFile(self.io, .{ .sub_path = path, .data = data });
-    }
-
-    fn hardLink(ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void {
-        const self: *NativeVfs = @ptrCast(@alignCast(ptr));
-        try self.confine(old_path);
-        try self.confine(new_path);
-        try self.root_dir.hardLink(old_path, self.root_dir, new_path, self.io, .{});
     }
 
     /// Links a trusted absolute source (the CAFS store, outside the sandbox root)

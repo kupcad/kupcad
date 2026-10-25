@@ -22,7 +22,6 @@ test "Vfs: none has no files and refuses every write" {
     try testing.expectError(error.FileNotFound, fs.readFile(testing.allocator, "build.zig"));
     try testing.expectError(error.AccessDenied, fs.writeFile("out.stl", "solid"));
     try testing.expectError(error.AccessDenied, fs.makePath("out"));
-    try testing.expectError(error.AccessDenied, fs.hardLink("a", "b"));
     try testing.expectError(error.AccessDenied, fs.symLink("a", "b"));
     try testing.expectError(error.OperationUnsupported, fs.hardLinkTrusted("/abs/source", "dest"));
 }

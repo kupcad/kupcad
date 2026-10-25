@@ -67,29 +67,6 @@ test "MemoryVfs: directory creation and duplicate call safety" {
     try testing.expectEqual(.directory, node.kind);
 }
 
-test "MemoryVfs: hardLink increments reference count and shares content" {
-    var mem = MemoryVfs.init(testing.allocator);
-    defer mem.deinit();
-
-    const fs = mem.vfs();
-    const orig_path = "source.kup";
-    const link_path = "link.kup";
-    const content = "export val = 42;";
-
-    try fs.writeFile(orig_path, content);
-    try fs.hardLink(orig_path, link_path);
-
-    const orig_node = mem.nodes.get(orig_path).?;
-    const link_node = mem.nodes.get(link_path).?;
-
-    try testing.expectEqual(@as(u32, 2), orig_node.nlink);
-    try testing.expectEqual(@as(u32, 2), link_node.nlink);
-
-    const read_link = try fs.readFile(testing.allocator, link_path);
-    defer testing.allocator.free(read_link);
-    try testing.expectEqualStrings(content, read_link);
-}
-
 test "MemoryVfs: symLink stores target path in content" {
     var mem = MemoryVfs.init(testing.allocator);
     defer mem.deinit();
@@ -105,39 +82,15 @@ test "MemoryVfs: symLink stores target path in content" {
     try testing.expectEqualStrings(target, node.content.?);
 }
 
-test "MemoryVfs: deleteFile removes the file, and keeps content a hard link shares" {
+test "MemoryVfs: deleteFile removes the file" {
     var mem = MemoryVfs.init(testing.allocator);
     defer mem.deinit();
     const fs = mem.vfs();
 
     try fs.writeFile("a.kup", "cube(1)");
-    try fs.hardLink("a.kup", "b.kup");
     try testing.expect(mem.deleteFile("a.kup"));
     try testing.expect(!mem.deleteFile("a.kup"));
     try testing.expectError(error.FileNotFound, fs.readFile(testing.allocator, "a.kup"));
-
-    const kept = try fs.readFile(testing.allocator, "b.kup");
-    defer testing.allocator.free(kept);
-    try testing.expectEqualStrings("cube(1)", kept);
-    try testing.expect(mem.deleteFile("b.kup"));
-}
-
-test "MemoryVfs: writing over a hard-linked path leaves the other link its content" {
-    // The write freed the shared content under the other link.
-    var mem = MemoryVfs.init(testing.allocator);
-    defer mem.deinit();
-    const fs = mem.vfs();
-
-    try fs.writeFile("a.kup", "shared");
-    try fs.hardLink("a.kup", "b.kup");
-    try fs.writeFile("a.kup", "own");
-
-    const a = try fs.readFile(testing.allocator, "a.kup");
-    defer testing.allocator.free(a);
-    const b = try fs.readFile(testing.allocator, "b.kup");
-    defer testing.allocator.free(b);
-    try testing.expectEqualStrings("own", a);
-    try testing.expectEqualStrings("shared", b);
 }
 
 test "MemoryVfs: a link onto an existing path replaces it without leaking" {
@@ -147,17 +100,11 @@ test "MemoryVfs: a link onto an existing path replaces it without leaking" {
     const fs = mem.vfs();
 
     try fs.writeFile("src.kup", "source");
-    try fs.writeFile("taken.kup", "old");
-    try fs.hardLink("src.kup", "taken.kup");
-    const linked = try fs.readFile(testing.allocator, "taken.kup");
-    defer testing.allocator.free(linked);
-    try testing.expectEqualStrings("source", linked);
-
     try fs.writeFile("other.kup", "old");
     try fs.symLink("src.kup", "other.kup");
     try testing.expectEqual(.symlink, mem.nodes.get("other.kup").?.kind);
     try testing.expectEqualStrings("src.kup", mem.nodes.get("other.kup").?.content.?);
-    try testing.expectEqual(@as(u32, 3), mem.nodes.count());
+    try testing.expectEqual(@as(u32, 2), mem.nodes.count());
 }
 
 test "MemoryVfs: node replacement survives allocation failure" {
@@ -167,7 +114,6 @@ test "MemoryVfs: node replacement survives allocation failure" {
             defer mem.deinit();
             const fs = mem.vfs();
             try fs.writeFile("a.kup", "one");
-            try fs.hardLink("a.kup", "b.kup");
             try fs.writeFile("a.kup", "two");
             try fs.symLink("a.kup", "b.kup");
         }

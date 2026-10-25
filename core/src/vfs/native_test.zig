@@ -131,7 +131,6 @@ test "NativeVfs: a symlink inside the root that leads out of it is followed nowh
     try testing.expectError(error.AccessDenied, fs.readFile(testing.allocator, "out/secret.txt"));
     try testing.expectError(error.AccessDenied, fs.writeFile("out/new.txt", "x"));
     try testing.expectError(error.AccessDenied, fs.makePath("out/sub/dir"));
-    try testing.expectError(error.AccessDenied, fs.hardLink("real/own.txt", "out/own.txt"));
     try testing.expectError(error.AccessDenied, fs.symLink("real", "out/link"));
     try testing.expectError(error.AccessDenied, fs.readFile(testing.allocator, "out"));
     try testing.expect(tmp.dir.statFile(testing.io, "outside/new.txt", .{}) == error.FileNotFound);

@@ -18,7 +18,6 @@ pub const Vfs = struct {
         makePath: *const fn (ptr: *anyopaque, path: []const u8) anyerror!void,
         readFile: *const fn (ptr: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8,
         writeFile: *const fn (ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void,
-        hardLink: *const fn (ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void,
         symLink: *const fn (ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void,
         /// Hard links from a *trusted* absolute source (e.g. the global CAFS store,
         /// which lives outside the sandbox root) to a sandboxed destination.
@@ -36,10 +35,6 @@ pub const Vfs = struct {
 
     pub inline fn writeFile(self: Vfs, path: []const u8, data: []const u8) !void {
         return self.vtable.writeFile(self.ptr, path, data);
-    }
-
-    pub inline fn hardLink(self: Vfs, old_path: []const u8, new_path: []const u8) !void {
-        return self.vtable.hardLink(self.ptr, old_path, new_path);
     }
 
     /// Never pass a path derived from untrusted input as `trusted_abs_source`;
@@ -62,7 +57,6 @@ const None = struct {
         .makePath = makePath,
         .readFile = readFile,
         .writeFile = writeFile,
-        .hardLink = link,
         .symLink = link,
     };
 

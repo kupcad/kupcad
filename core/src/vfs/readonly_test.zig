@@ -30,10 +30,9 @@ test "ReadOnlyVfs: prefers open buffers and discards every mutating call" {
 
     try v.makePath("made/dir");
     try v.writeFile("written.txt", "x");
-    try v.hardLink("lib.kup", "hard.kup");
     try v.symLink("lib.kup", "sym.kup");
     try testing.expectError(error.OperationUnsupported, v.hardLinkTrusted("/etc/hosts", "trusted.kup"));
-    try testing.expectEqual(@as(usize, 4), sandbox.discarded_writes);
+    try testing.expectEqual(@as(usize, 3), sandbox.discarded_writes);
 
     var it = tmp.dir.iterate();
     var entries: usize = 0;

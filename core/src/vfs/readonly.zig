@@ -26,7 +26,6 @@ pub const ReadOnlyVfs = struct {
                 .makePath = makePath,
                 .readFile = readFile,
                 .writeFile = writeFile,
-                .hardLink = hardLink,
                 .symLink = symLink,
             },
         };
@@ -58,11 +57,6 @@ pub const ReadOnlyVfs = struct {
     fn writeFile(ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void {
         _ = data;
         discard(ptr, path);
-    }
-
-    fn hardLink(ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void {
-        _ = old_path;
-        discard(ptr, new_path);
     }
 
     fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
