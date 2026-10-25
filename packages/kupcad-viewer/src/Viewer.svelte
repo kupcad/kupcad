@@ -6,7 +6,7 @@
   (`setCamera({ view })`), `fit()`, `screenshot()`.
 -->
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { ViewCube } from './view-cube.js';
   import { Viewer } from './viewer.js';
 
@@ -59,42 +59,47 @@
   let cubeCanvas = $state();
   /** @type {ViewCube | null} */
   let viewCube = null;
+  /** The Viewer made, which the effects follow: `viewer` is the host's to bind, and may be set. */
+  let made = $state(/** @type {Viewer | null} */ (null));
 
   onMount(() => {
-    const made = new Viewer(canvas, { ...options, theme: theme ?? options.theme, environment });
-    const resized = new ResizeObserver(() => made.resize());
+    const shown = new Viewer(canvas, { ...options, theme: theme ?? options.theme, environment });
+    const resized = new ResizeObserver(() => shown.resize());
     resized.observe(canvas);
-    made.addEventListener('select', (event) => {
+    shown.addEventListener('select', (event) => {
       selected = /** @type {CustomEvent<{ part: string | null }>} */ (event).detail.part;
     });
-    viewer = made;
+    made = shown;
+    viewer = shown;
     return () => {
       resized.disconnect();
-      made.dispose();
+      shown.dispose();
+      made = null;
       viewer = null;
     };
   });
 
-  // The cube follows the viewer: made with it, on its own canvas
+  // The cube follows the viewer: made with it, on its own canvas, in the theme then (another
+  // theme is drawn in by the effect below, not by a cube made again)
   $effect(() => {
-    const shown = viewer;
-    if (!shown || !cubeCanvas) return;
-    const made = new ViewCube(cubeCanvas, shown, {
-      theme: theme ?? options.theme,
-      renderer: options.renderer,
-    });
-    const resized = new ResizeObserver(() => made.resize());
-    resized.observe(cubeCanvas);
-    viewCube = made;
+    const shown = made;
+    const on = cubeCanvas;
+    if (!shown || !on) return;
+    const shownCube = untrack(
+      () => new ViewCube(on, shown, { theme: theme ?? options.theme, renderer: options.renderer }),
+    );
+    const resized = new ResizeObserver(() => shownCube.resize());
+    resized.observe(on);
+    viewCube = shownCube;
     return () => {
       resized.disconnect();
-      made.dispose();
+      shownCube.dispose();
       viewCube = null;
     };
   });
 
   $effect(() => {
-    const shown = viewer;
+    const shown = made;
     shown?.setModel(model).then(
       (isShown) => {
         if (isShown) onmodel?.(shown);
@@ -107,29 +112,29 @@
   });
   $effect(() => {
     if (!theme) return;
-    viewer?.setTheme(theme);
+    made?.setTheme(theme);
     viewCube?.setTheme(theme);
   });
   $effect(() => {
-    viewer?.setEnvironment(environment);
+    made?.setEnvironment(environment);
   });
   $effect(() => {
-    viewer?.setRenderMode(renderMode);
+    made?.setRenderMode(renderMode);
   });
   $effect(() => {
-    viewer?.setEdges(edges);
+    made?.setEdges(edges);
   });
   $effect(() => {
-    viewer?.setAxes(axes);
+    made?.setAxes(axes);
   });
   $effect(() => {
-    viewer?.setCamera({ projection });
+    made?.setCamera({ projection });
   });
   $effect(() => {
-    viewer?.setSection(section);
+    made?.setSection(section);
   });
   $effect(() => {
-    if (viewer && viewer.selected !== selected) viewer.select(selected);
+    if (made && made.selected !== selected) made.select(selected);
   });
 </script>
 

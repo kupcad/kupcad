@@ -30,8 +30,9 @@ HTMLCanvasElement.prototype.toBlob = function toBlob(callback, type = 'image/png
  * A stand-in for WebGL, for a Viewer's `options.renderer`: it draws nothing, and keeps what it
  * was asked of the viewer's canvas (the first it is given; another, a view cube's, it draws on
  * unrecorded): how many frames, the scene and the camera of the last, and whether it was
- * disposed. As a WebGLRenderer does, it brings the scene's and the camera's matrices up to date:
- * the camera's controls pan along them.
+ * disposed; and of every canvas, how many renderers were made and how many let their context
+ * go. As a WebGLRenderer does, it brings the scene's and the camera's matrices up to date: the
+ * camera's controls pan along them.
  */
 export function stubRenderer() {
   const drawn = {
@@ -41,6 +42,8 @@ export function stubRenderer() {
     /** @type {Camera | null} */
     camera: null,
     disposed: false,
+    made: 0,
+    released: 0,
   };
   /** @type {HTMLCanvasElement | null} */
   let viewers = null;
@@ -51,6 +54,7 @@ export function stubRenderer() {
   const renderer = (canvas) => {
     viewers ??= canvas;
     const recorded = canvas === viewers;
+    drawn.made += 1;
     return {
       localClippingEnabled: false,
       setPixelRatio() {},
@@ -65,6 +69,9 @@ export function stubRenderer() {
       },
       dispose() {
         if (recorded) drawn.disposed = true;
+      },
+      forceContextLoss() {
+        drawn.released += 1;
       },
     };
   };

@@ -92,7 +92,9 @@ is never passed to `onerror`.
 A host's tests that mount the viewer under jsdom add `@kupcad/viewer/testing` to Vitest's
 `setupFiles`: what jsdom lacks of a browser and the viewer uses. Its `stubRenderer()` draws in
 place of WebGL (`options.renderer`) and keeps what it was asked: the frames, the last scene and
-camera, and whether it was disposed.
+camera, whether it was disposed, and how many renderers were made and let their WebGL context go
+(a viewer and its cube let theirs go when disposed, not when the page collects them: a page has
+few).
 
 Tests: the scene logic in Node (jsdom), with a stand-in for WebGL and models the real core makes
 through `@kupcad/wasm`; and a smoke test in headless Chromium (`pnpm test:browser`) that draws

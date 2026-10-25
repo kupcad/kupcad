@@ -540,6 +540,8 @@ export class Viewer extends EventTarget {
     this.#sectionView.dispose();
     this.#selectionEdges.dispose();
     this.#renderer.dispose();
+    // Its WebGL context let go now: a page has few, and gets one back only when it is collected
+    this.#renderer.forceContextLoss();
   }
 
   /**

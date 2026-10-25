@@ -55,6 +55,8 @@ export interface RendererLike {
   setSize(width: number, height: number, updateStyle?: boolean): void;
   render(scene: Object3D, camera: Camera): void;
   dispose(): void;
+  /** Lets the canvas's WebGL context go at once. */
+  forceContextLoss(): void;
 }
 
 export interface ViewerOptions {

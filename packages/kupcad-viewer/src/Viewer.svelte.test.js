@@ -2,6 +2,7 @@ import { render } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { dracoModelOf, modelOf } from './models.test-helper.js';
 import { stubRenderer } from './testing.js';
+import { DARK, LIGHT } from './theme.js';
 import ViewerComponent from './Viewer.svelte';
 import { ViewerError } from './viewer.js';
 
@@ -58,8 +59,16 @@ it('makes a Viewer on its canvas, in the state its props give, binds the part cl
   }
   expect(selected).toBe('block');
 
+  // Another theme is drawn in, by the viewer and its cube as they are
+  expect(drawn.made).toBe(2);
+  await rerender({ theme: DARK });
+  await rerender({ theme: LIGHT });
+  expect(drawn.made).toBe(2);
+
   unmount();
   expect(drawn.disposed).toBe(true);
+  // Their WebGL contexts let go at once, not when the page collects them: it has few
+  expect(drawn.released).toBe(2);
   expect(viewer).toBeNull();
 });
 

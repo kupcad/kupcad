@@ -149,6 +149,8 @@ export class ViewCube {
     this.#removeLabels();
     disposeObject(this.#cube);
     this.#renderer.dispose();
+    // Its WebGL context let go now, as the viewer's is
+    this.#renderer.forceContextLoss();
   }
 
   /** Makes the 26 parts, the outline and the labels. */
