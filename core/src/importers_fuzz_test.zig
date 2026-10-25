@@ -1,9 +1,9 @@
-//! Fuzzing what KupCAD reads but didn't write: an STL, OBJ, 3MF or font file a script imports, a package
+//! Fuzzing what KupCAD reads but didn't write: an STL, OBJ, 3MF, DXF, SVG or font file a script imports, a package
 //! archive and a provider's API response from the network, a WebSocket handshake from a
 //! viewport client, and a cloned project's kupcad.lock, kupcad.json and .kupcad.json with
 //! their version constraints. Each parser must take any bytes without crashing or leaking,
 //! and keep what it promises of what it accepts: an STL mesh's faces point at its vertices
-//! and every vertex is finite (mended too, core/mesh_repair.zig), a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
+//! and every vertex is finite (mended too, core/mesh_repair.zig), a drawing's outlines and open paths are finite, a font's text outlines are finite, an archive's paths stay inside the package, a commit id is a
 //! hex digest. A plain test run replays the seeds; `zig build fuzz -Dfuzz-target=importers
 //! --fuzz=<runs>` searches from them.
 
@@ -14,6 +14,9 @@ const stl = @import("exporters/3d/stl.zig");
 const mesh_repair = @import("core/mesh_repair.zig");
 const obj_read = @import("exporters/3d/obj_read.zig");
 const threemf_read = @import("exporters/3d/threemf_read.zig");
+const dxf_read = @import("exporters/2d/dxf_read.zig");
+const svg_read = @import("exporters/2d/svg_read.zig");
+const path_mod = @import("core/path.zig");
 const zip = @import("exporters/zip.zig");
 const cafs_mod = @import("pkg/cafs.zig");
 const Lockfile = @import("pkg/lockfile.zig").Lockfile;
@@ -34,6 +37,11 @@ const Buffer = [MAX_INPUT_BYTES]u8;
 
 /// What an extracted fuzz archive may hold: small, so a run stays fast and its blobs few.
 const FUZZ_EXTRACT_LIMITS: cafs_mod.ExtractLimits = .{ .max_total_bytes = 256 * 1024, .max_file_count = 32 };
+
+/// What a fuzzed drawing's blocks and clones may place, and read again: small, so a run
+/// stays fast (the readers' own caps are what the limits test meets).
+const FUZZ_DRAWING_POINTS = 10_000;
+const FUZZ_DRAWING_BYTES = 256 * 1024;
 
 /// Characters a font is asked for besides printable ASCII, which it draws: each cmap format a
 /// font may map them with is read.
@@ -166,6 +174,65 @@ fn checkFont(data: []const u8) !void {
     for (polygons.contours.items) |contour| for (contour.items) |point| for (point) |coordinate| {
         try testing.expect(std.math.isFinite(coordinate));
     };
+}
+
+// --- DXF and SVG ---
+
+test "fuzz: a DXF drawing a script imports" {
+    // Each entity that draws, a block placed in an array, and numbers far out of range
+    const entities = "0\nLINE\n8\ncut\n10\n0\n20\n0\n11\n20\n21\n0\n0\nARC\n10\n20\n20\n5\n40\n5\n50\n270\n51\n90\n" ++
+        "0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n10\n10\n20\n0\n42\n1\n10\n10\n20\n10\n0\nCIRCLE\n10\n30\n20\n5\n40\n2\n" ++
+        "0\nSPLINE\n71\n3\n10\n0\n20\n0\n10\n1\n20\n1\n10\n2\n20\n0\n10\n3\n20\n1\n40\n0\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n40\n1\n" ++
+        "0\nELLIPSE\n10\n0\n20\n0\n11\n2\n21\n0\n40\n0.5\n0\nPOLYLINE\n70\n1\n0\nVERTEX\n10\n0\n20\n0\n0\nVERTEX\n10\n1\n20\n0\n0\nVERTEX\n10\n0\n20\n1\n0\nSEQEND\n";
+    const drawing = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nbolt\n10\n0\n20\n0\n0\nCIRCLE\n8\n0\n10\n0\n20\n0\n40\n1\n0\nENDBLK\n0\nENDSEC\n" ++
+        "0\nSECTION\n2\nENTITIES\n" ++ entities ++ "0\nINSERT\n2\nbolt\n10\n4\n20\n0\n41\n2\n50\n30\n70\n3\n71\n2\n44\n10\n45\n10\n0\nENDSEC\n0\nEOF\n";
+    const far = "0\nSECTION\n2\nENTITIES\n0\nARC\n10\n0\n20\n0\n40\n1e300\n50\n1e300\n51\n-1e300\n0\nLWPOLYLINE\n70\n1e30\n10\n1e300\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    try fuzzParser(checkDxf, &.{ drawing, far });
+}
+
+fn checkDxf(data: []const u8) !void {
+    var diag: dxf_read.Diagnostic = .{};
+    var drawing = dxf_read.read(testing.allocator, data, .{ .tolerance = 1e-3, .keep_open = true, .max_points = FUZZ_DRAWING_POINTS }, &diag) catch return;
+    defer drawing.deinit();
+    try expectFinite(drawing.outlines);
+    try expectFinite(drawing.open_paths);
+}
+
+test "fuzz: an SVG drawing a script imports" {
+    // Each shape, a path of every command, a style sheet, and uses of a group and a symbol
+    const svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100mm\" height=\"50mm\" viewBox=\"0 0 200 100\"><defs><style>.c{fill:none}</style>" ++
+        "<g id=\"g\"><rect x=\"1\" y=\"1\" width=\"5\" height=\"5\" rx=\"1\"/><circle cx=\"10\" cy=\"10\" r=\"3\"/></g>" ++
+        "<symbol id=\"s\" viewBox=\"0 0 10 10\"><ellipse cx=\"5\" cy=\"5\" rx=\"4\" ry=\"2\"/></symbol></defs>" ++
+        "<path d=\"M0 0L10 0H20V10C25 15 30 15 35 10S45 5 50 10Q55 15 60 10T70 10A5 5 0 0 1 80 10Z\" transform=\"rotate(30) scale(2 1)\"/>" ++
+        "<polygon points=\"0,50 10,60 0,70\"/><polyline class=\"c\" points=\"20,50 30,60\"/><line x1=\"0\" y1=\"90\" x2=\"10\" y2=\"95\"/>" ++
+        "<use href=\"#g\" x=\"100\"/><use href=\"#s\" x=\"150\" width=\"20\" height=\"20\"/></svg>";
+    const deep = "<svg width=\"1mm\" viewBox=\"0 0 1 1\"><g id=\"a\"><use href=\"#b\"/></g><g id=\"b\"><use href=\"#a\"/></g></svg>";
+    try fuzzParser(checkSvg, &.{ svg, deep });
+}
+
+fn checkSvg(data: []const u8) !void {
+    var diag: svg_read.Diagnostic = .{};
+    var drawing = svg_read.read(testing.allocator, data, .{ .tolerance = 1e-3, .max_cloned = FUZZ_DRAWING_POINTS, .max_reread = FUZZ_DRAWING_BYTES }, &diag) catch return;
+    defer drawing.deinit();
+    try expectFinite(drawing.outlines);
+    try expectFinite(drawing.open_paths);
+}
+
+/// The kernel takes a drawing's runs as they are: each point of them is finite.
+fn expectFinite(runs: []const path_mod.Run) !void {
+    for (runs) |run| {
+        for (run.start) |c| try testing.expect(std.math.isFinite(c));
+        for (run.segments) |segment| {
+            for (segment.to) |c| try testing.expect(std.math.isFinite(c));
+            if (segment.arc) |arc| {
+                for (arc.center) |c| try testing.expect(std.math.isFinite(c));
+                try testing.expect(std.math.isFinite(arc.radius));
+            }
+            if (segment.cubic) |cubic| for ([_][2]f64{ cubic.c1, cubic.c2 }) |p| for (p) |c| {
+                try testing.expect(std.math.isFinite(c));
+            };
+        }
+    }
 }
 
 // --- Package archives ---

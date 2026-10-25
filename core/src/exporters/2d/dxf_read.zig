@@ -70,6 +70,8 @@ pub const Options = struct {
     layers: ?[]const []const u8 = null,
     /// Whether pieces that join into no outline are open paths, not an error.
     keep_open: bool = false,
+    /// How many points blocks may place: nested, they multiply.
+    max_points: usize = limits.MAX_DRAWING_POINTS,
 };
 
 /// The outlines read, the open paths (kept, Options.keep_open) and every layer that holds
@@ -274,7 +276,7 @@ const Reader = struct {
     /// within a block within a block can place more than a drawing holds.
     fn drawModel(self: *Reader) Error!void {
         const count = try self.pointsOf(self.model.items, 0);
-        if (count > limits.MAX_DRAWING_POINTS) return self.diag.fail("its blocks would place {d} points; a script reads at most {d}", .{ count, limits.MAX_DRAWING_POINTS });
+        if (count > self.options.max_points) return self.diag.fail("its blocks would place {d} points; a script reads at most {d}", .{ count, self.options.max_points });
         try self.draw(self.model.items);
     }
 
