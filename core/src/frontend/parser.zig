@@ -86,6 +86,10 @@ pub const Parser = struct {
     /// Ruby's condition parsing): `for x in xs do` used to read as calling `xs` with a
     /// block, which swallowed the loop's body. Brackets inside the header clear it again.
     in_loop_header: bool = false,
+    /// Set while parsing a paren-less call's arguments, where `rescue` is no operator: as in
+    /// Ruby, `r.push x rescue y` rescues the whole statement. It read as r.push(x rescue y).
+    /// Brackets inside the arguments clear it again.
+    in_command_args: bool = false,
     /// Set while parsing one item of a comma-separated list (an argument, an array element,
     /// a map value), where an assignment takes one value: `f(b = 5, 6)` passes two
     /// arguments, as in Ruby. It made `b` the array [5, 6]. A statement clears it again.
@@ -334,11 +338,24 @@ pub const Parser = struct {
         return self.tag(0) == .l_brace or (self.tag(0) == .keyword_do and !self.in_loop_header);
     }
 
-    /// Lets `do` open blocks again inside brackets in a loop header, such as
-    /// `for x in (xs.map do |v| v end)`. Pair with `defer self.in_loop_header = outer`.
-    fn allowDoBlocks(self: *Parser) bool {
-        defer self.in_loop_header = false;
-        return self.in_loop_header;
+    /// The flags a bracket ends, as they were outside it.
+    const Outer = struct { loop_header: bool, command_args: bool };
+
+    /// Clears the flags that hold until a bracket opens, within `( )`, `[ ]`, `{ }`, a
+    /// lambda or a block: `do` opens blocks again in a loop header (`for x in (xs.map do |v|
+    /// v end)`), and `rescue` is the modifier again in a call's arguments. Pair with
+    /// `defer self.leaveBrackets(outer)`.
+    fn enterBrackets(self: *Parser) Outer {
+        defer {
+            self.in_loop_header = false;
+            self.in_command_args = false;
+        }
+        return .{ .loop_header = self.in_loop_header, .command_args = self.in_command_args };
+    }
+
+    fn leaveBrackets(self: *Parser, outer: Outer) void {
+        self.in_loop_header = outer.loop_header;
+        self.in_command_args = outer.command_args;
     }
 
     /// The expression of a `for` or `while` header, which ends at the line break or `;`.
@@ -666,8 +683,8 @@ pub const Parser = struct {
     }
 
     fn parseLambda(self: *Parser) ParseError!ast.NodeIndex {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         const start_tok = try self.expect(.minus_greater);
         const scope = self.enterScope();
         defer self.leaveScope(scope);
@@ -767,8 +784,8 @@ pub const Parser = struct {
     }
 
     fn parseBlockClosure(self: *Parser) ParseError!ast.NodeIndex {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         const is_brace = (self.tag(0) == .l_brace);
         const start_tok = if (is_brace) try self.expect(.l_brace) else try self.expect(.keyword_do);
         const params_start = self.scratch_nodes.items.len;
@@ -1484,8 +1501,8 @@ pub const Parser = struct {
     }
 
     fn parseParenArgs(self: *Parser) ParseError!ast.Span {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         if (self.tag(0) == .l_paren) {
             self.advance();
             const s_len = self.scratch_named_args.items.len;
@@ -1959,6 +1976,9 @@ pub const Parser = struct {
     fn parseCommandArgsAndBlock(self: *Parser) ParseError!struct { args: ast.Span, block: ?ast.NodeIndex } {
         const s_len = self.scratch_named_args.items.len;
         defer self.scratch_named_args.shrinkRetainingCapacity(s_len);
+        const outer_args = self.in_command_args;
+        self.in_command_args = true;
+        defer self.in_command_args = outer_args;
         while (self.tag(0) != .newline and self.tag(0) != .semicolon and self.tag(0) != .eof and self.tag(0) != .keyword_do and self.tag(0) != .l_brace and self.tag(0) != .r_paren and self.tag(0) != .r_bracket and self.tag(0) != .r_brace and self.tag(0) != .keyword_if and self.tag(0) != .keyword_unless and self.tag(0) != .keyword_while and self.tag(0) != .keyword_until) {
             try self.scratch_named_args.append(self.allocator, try self.parseNamedArg());
             if (self.tag(0) == .comma) {
@@ -1975,8 +1995,8 @@ pub const Parser = struct {
     }
 
     fn parseGroupedExpression(self: *Parser) ParseError!ast.NodeIndex {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         const start_tok = try self.expect(.l_paren);
         self.skipIgnored(); // Allow newlines immediately after '('
 
@@ -2047,8 +2067,8 @@ pub const Parser = struct {
     }
 
     fn parseArrayLiteral(self: *Parser) ParseError!ast.NodeIndex {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         const start_tok = try self.expect(.l_bracket);
         const s_len = self.scratch_nodes.items.len;
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
@@ -2060,8 +2080,8 @@ pub const Parser = struct {
     }
 
     fn parseHashLiteral(self: *Parser) ParseError!ast.NodeIndex {
-        const outer = self.allowDoBlocks();
-        defer self.in_loop_header = outer;
+        const outer = self.enterBrackets();
+        defer self.leaveBrackets(outer);
         const start_tok = try self.expect(.l_brace);
         const s_len = self.scratch_hash_entries.items.len;
         defer self.scratch_hash_entries.shrinkRetainingCapacity(s_len);
@@ -2139,6 +2159,7 @@ pub const Parser = struct {
 
     fn getInfixPrecedence(self: *const Parser, t: Tag) Precedence {
         if (self.in_block_params and t == .pipe) return .none;
+        if (self.in_command_args and t == .keyword_rescue) return .none;
         if (tagToBinaryOp(t)) |op| return binaryPrecedence(op);
 
         return switch (t) {

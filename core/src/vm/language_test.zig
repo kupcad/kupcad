@@ -439,6 +439,18 @@ test "Language: inspect shows an instance by its inspect, inherited too, or else
     }
 }
 
+test "Language: a rescue modifier covers its whole statement, a call's arguments and all" {
+    // `r.push raise("boom") rescue r.push(:rescued)` read as r.push(raise("boom") rescue
+    // r.push(:rescued)): r pushed twice, the rescue's value pushed too
+    try expectScripts(&.{
+        .{ .src = "r = []\nr.push raise(\"boom\") rescue r.push(:rescued)\nr = r.length", .expected = .{ .num = 1 } },
+        .{ .src = "def f(x)\n  raise \"boom\"\nend\nr = f 1 rescue 7", .expected = .{ .num = 7 } },
+        // Within brackets, it is the bracketed expression's again
+        .{ .src = "r = []\nr.push (raise(\"boom\") rescue 3)\nr = r", .expected = .{ .nums = &.{3} } },
+        .{ .src = "r = [1, (raise(\"x\") rescue 2)]", .expected = .{ .nums = &.{ 1, 2 } } },
+    });
+}
+
 test "Language: a class, rescue, range or module used wrongly says how" {
     try expectScripts(&.{
         .{ .src = rescued("class A\nend\nA.new(1)"), .expected = .{ .str = "ArgumentError: Expected 0 args for default constructor." } },
