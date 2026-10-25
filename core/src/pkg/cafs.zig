@@ -337,6 +337,25 @@ pub const Cafs = struct {
         if (!std.mem.eql(u8, &hex, hash_hex)) return error.BlobCorrupted;
     }
 
+    /// Whether the blob named `hash_hex` holds what its name says (a file changed in the
+    /// store, or cut short, doesn't).
+    pub fn isIntact(self: *Cafs, hash_hex: []const u8) !bool {
+        const path = try self.blobPath(hash_hex);
+        defer self.allocator.free(path);
+        self.verifyBlob(path, hash_hex) catch |err| switch (err) {
+            error.BlobCorrupted => return false,
+            else => return err,
+        };
+        return true;
+    }
+
+    /// Whether `name` is a blob's: a SHA-256 in lower-case hex.
+    pub fn isBlobName(name: []const u8) bool {
+        if (name.len != 2 * Sha256.digest_length) return false;
+        for (name) |c| if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
+        return true;
+    }
+
     /// Reads a CAFS blob (trusted, absolute path) with an explicit size cap.
     pub fn readBlob(self: *Cafs, allocator: std.mem.Allocator, hash_hex: []const u8, max_bytes: usize) ![]u8 {
         const path = try self.blobPath(hash_hex);

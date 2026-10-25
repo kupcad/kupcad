@@ -1,6 +1,7 @@
 //! `kupcad pkg doctor`: `Doctor.run` checks the package database's SQLite integrity, evicts
-//! index entries whose blob file is gone from the content-addressed store, and re-registers
-//! blob files the index doesn't list, printing each step.
+//! index entries whose blob file is gone from the content-addressed store or doesn't hold
+//! what its name says (removing it), and re-registers blob files the index doesn't list
+//! that do, printing each step.
 
 const std = @import("std");
 const Cafs = @import("cafs.zig").Cafs;
@@ -51,7 +52,7 @@ pub const Doctor = struct {
     }
 
     fn healMissingBlobs(self: *Doctor) !void {
-        self.printer.print("[2/3] Scanning for missing physical files... ", .{});
+        self.printer.print("[2/3] Scanning for missing or corrupt physical files... ", .{});
 
         // Listed first, as evicting while stepping a SELECT over the same table is unsafe.
         const hashes = try self.store.blobHashes(self.allocator);
@@ -68,14 +69,19 @@ pub const Doctor = struct {
                 f.close(self.io);
                 break :blk true;
             } else |_| false;
-            if (file_exists) continue;
+            // There, it must hold what its name says: a changed one would be linked into
+            // every project installing it (linkBlob refuses it, too late to repair then)
+            if (file_exists) {
+                if (try self.cafs.isIntact(hash)) continue;
+                cwd.deleteFile(self.io, final_path) catch |err| log.warn("Could not remove the corrupt blob {s}: {}", .{ hash, err });
+            }
             // Evict blob + dependent packages so they get re-downloaded next install
             try self.store.evictBlob(hash);
             missing_count += 1;
         }
 
         if (missing_count > 0) {
-            log.warn("Evicted {d} missing blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
+            log.warn("Evicted {d} missing or corrupt blobs from index. Run 'kupcad pkg install' to repair.\n", .{missing_count});
         } else {
             self.printer.print("OK\n", .{});
         }
@@ -96,15 +102,19 @@ pub const Doctor = struct {
         const now = clock.nowSeconds(self.io);
 
         while (try it.next(self.io)) |entry| {
-            if (entry.kind != .file) continue;
+            // A blob's name is its SHA-256: any other file (a .DS_Store) is none of the store's
+            if (entry.kind != .file or !Cafs.isBlobName(entry.name)) continue;
 
             // File names are bound as parameters: they are not trusted SQL.
-            if (!try self.store.hasBlob(entry.name)) {
-                // File exists physically but not in DB. Re-register it.
-                const stat = try dir.statFile(self.io, entry.name, .{});
-                try self.store.indexBlob(entry.name, @intCast(stat.size), now);
-                orphan_count += 1;
+            if (try self.store.hasBlob(entry.name)) continue;
+            // File exists physically but not in DB. Re-register it, if it is what its name says
+            if (!try self.cafs.isIntact(entry.name)) {
+                dir.deleteFile(self.io, entry.name) catch |err| log.warn("Could not remove the corrupt blob {s}: {}", .{ entry.name, err });
+                continue;
             }
+            const stat = try dir.statFile(self.io, entry.name, .{});
+            try self.store.indexBlob(entry.name, @intCast(stat.size), now);
+            orphan_count += 1;
         }
 
         if (orphan_count > 0) {
