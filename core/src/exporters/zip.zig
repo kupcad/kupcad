@@ -24,6 +24,10 @@ const CENTRAL_HEADER_LEN = 46;
 const LOCAL_HEADER_LEN = 30;
 /// The longest comment an end record carries, which it is searched for back past.
 const MAX_COMMENT_LEN = 0xFFFF;
+/// The most bytes deflate unpacks one byte to (a 258-byte match in under 2 bits), and a
+/// block's worth of slack: an entry claiming more than that of its packed bytes is corrupt.
+const MAX_DEFLATE_RATIO = 1032;
+const DEFLATE_SLACK = 1024;
 /// MS-DOS date 1980-01-01 (time 00:00), the earliest a zip records.
 const DOS_DATE: u16 = (0 << 9) | (1 << 5) | 1;
 const DOS_TIME: u16 = 0;
@@ -186,6 +190,8 @@ pub const Archive = struct {
         const start = at + LOCAL_HEADER_LEN + std.mem.readInt(u16, self.data[at + 26 ..][0..2], .little) + std.mem.readInt(u16, self.data[at + 28 ..][0..2], .little);
         if (@as(u64, start) + entry.compressed > self.data.len) return error.Corrupt;
         const packed_data = self.data[start..][0..entry.compressed];
+        // Before its size is allocated: a few bytes claiming 512 MiB asked for it all
+        if (entry.method == DEFLATED and entry.size > @as(u64, entry.compressed) * MAX_DEFLATE_RATIO + DEFLATE_SLACK) return error.Corrupt;
         const out = try allocator.alloc(u8, entry.size);
         errdefer allocator.free(out);
         if (entry.method == STORED) {

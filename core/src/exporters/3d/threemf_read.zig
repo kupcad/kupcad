@@ -155,6 +155,9 @@ const Package = struct {
     diag: *Diagnostic,
     /// The model parts read, by path
     parts: std.StringHashMapUnmanaged(*Part) = .empty,
+    /// What the parts read unpacked to, together: they all stay while the package is read,
+    /// so many of them, each under the limit, were as much as memory held
+    unpacked: usize = 0,
 
     /// Where the 3D model is: the relationship to it the package's relationships give, or
     /// the default.
@@ -184,7 +187,9 @@ const Package = struct {
     }
 
     fn unpack(self: *Package, entry: zip.Archive.Entry, name: []const u8) Error![]const u8 {
-        return self.archive.read(self.arena, entry, limits.MAX_PACKAGE_PART_BYTES) catch |err| archiveError(err, name, self.diag);
+        const text = self.archive.read(self.arena, entry, limits.MAX_PACKAGE_PART_BYTES - self.unpacked) catch |err| return archiveError(err, name, self.diag);
+        self.unpacked += text.len;
+        return text;
     }
 
     /// The objects and the build of the model part `p`, from its XML `text`.

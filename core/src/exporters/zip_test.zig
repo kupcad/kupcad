@@ -148,6 +148,18 @@ test "zip: a deflated file is inflated, and a file the reader can't take says wh
     try testing.expectError(error.NotAnArchive, zip.Archive.open(testing.allocator, "solid part\nendsolid part\n"));
 }
 
+test "zip: an entry claiming more than its packed bytes could unpack to is refused before it is allocated" {
+    // 14 deflated bytes claiming 100 MiB: deflate makes at most 1032 bytes of one. The size
+    // was allocated first, so a tiny archive asked for up to the reader's limit
+    const deflated = [_]u8{ 0xf3, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0xe1, 0x02, 0x00 };
+    const archive = try oneFile("big.model", 8, 0, &deflated, 100 * 1024 * 1024, 0);
+    defer testing.allocator.free(archive);
+    const read = try zip.Archive.open(testing.allocator, archive);
+    defer read.deinit(testing.allocator);
+    var no_memory = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    try testing.expectError(error.Corrupt, read.read(no_memory.allocator(), read.entries[0], 512 * 1024 * 1024));
+}
+
 test "zip: an entry whose offset or size runs past the archive is refused, however the sums would wrap" {
     const crc = std.hash.Crc32.hash("Hello world\n");
     const archive = try oneFile("hello.txt", 0, 0, "Hello world\n", 12, crc);

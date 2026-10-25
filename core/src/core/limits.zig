@@ -83,8 +83,9 @@ pub const MAX_DRAWING_PIECES: usize = 1_000_000;
 // INSERTs place it: nested, they multiply. More than a drawing of MAX_DRAWING_BYTES gives
 // itself (a point takes 10 bytes at least), so only blocks multiplying past that are refused.
 pub const MAX_DRAWING_POINTS: usize = 8_000_000;
-// Largest file of a 3MF package `import_3mf` unpacks: a zip's file says what it unpacks
-// to, so a small archive could ask for more than memory holds.
+// Most a 3MF package's files unpack to, together, as `import_3mf` reads them: a zip's file
+// says what it unpacks to, so a small archive could ask for more than memory holds (one that
+// claims more than deflate makes of its packed bytes is corrupt, before it is allocated).
 pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 // Most triangles a 3MF's build places: components within components multiply, so a small
 // file could ask for more than memory holds; and most vertices, as many as the triangles
