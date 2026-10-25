@@ -82,6 +82,26 @@ export interface Shape {
   opacity: number;
 }
 
+/**
+ * A face of a solid, as its feature edges bound it: flat or curved, its area (mm²), and a flat
+ * one's way (a unit vector) and the axis it faces along, if one ('+Z (top)').
+ */
+export interface Face {
+  flat: boolean;
+  area: number;
+  normal: [number, number, number] | null;
+  facing: string | null;
+}
+
+/** What is under a point of the viewer: the part (null for a nameless one) and, on a solid, the face. */
+export interface Hover {
+  part: string | null;
+  face: Face | null;
+}
+
+/** A 'hover' event's detail: what the pointer is over, and where (CSS pixels); null for nothing. */
+export type HoverDetail = (Hover & { x: number; y: number }) | null;
+
 /** A model made into a scene, in the script's coordinates. */
 export interface SceneModel {
   kind: '3d' | '2d';

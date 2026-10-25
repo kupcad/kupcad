@@ -4,7 +4,8 @@
 // renders when one changes or the camera moves, not every frame. A click on a part selects it
 // and says so (a 'select' event, `detail.part` its name, or null), as does a model without the
 // selected part. The camera moves to a view over a moment (motion.js); turned by hand, it is in
-// no named view, which a 'view' event says. Its keys are Orca Slicer's.
+// no named view, which a 'view' event says. Its keys are Orca Slicer's. What is under the pointer
+// (the part, the face: faces.js) a 'hover' event says, a frame at most.
 
 import {
   AmbientLight,
@@ -29,6 +30,7 @@ import { applyRenderMode, applySelection } from './appearance.js';
 import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
 import { disposeObject } from './dispose.js';
 import { environmentOf } from './environment.js';
+import { faceAt } from './faces.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
 import { RENDER_ORDER, SectionView } from './section.js';
@@ -37,8 +39,9 @@ import { LIGHT } from './theme.js';
 /** @import { Vector3 } from 'three' */
 /** @import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js' */
 /** @import { Pose } from './motion.js' */
+
 /** @import { Model } from '@kupcad/protocol/types' */
-/** @import { Bounds, Environment, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
+/** @import { Bounds, Environment, Hover, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
 
 /** The perspective camera's vertical field of view, in degrees. */
 const FOV_DEG = 35;
@@ -150,6 +153,11 @@ export class Viewer extends EventTarget {
   #height = 1;
   /** Where the pointer went down, to tell a click from a drag. @type {{ x: number, y: number } | null} */
   #down = null;
+  /** Where the pointer is, to say what is under it on the next frame. @type {{ x: number, y: number } | null} */
+  #pointer = null;
+  #hoverFrame = 0;
+  /** Something under the pointer was said: leaving it is said too. */
+  #hovering = false;
   #disposed = false;
   /** @type {AbortController} */
   #listeners = new AbortController();
@@ -192,6 +200,8 @@ export class Viewer extends EventTarget {
     canvas.addEventListener('pointerdown', (event) => this.#pointerDown(event), { signal });
     canvas.addEventListener('pointerup', (event) => this.#pointerUp(event), { signal });
     canvas.addEventListener('keydown', (event) => this.#keyDown(event), { signal });
+    canvas.addEventListener('pointermove', (event) => this.#pointerMove(event), { signal });
+    canvas.addEventListener('pointerleave', () => this.#pointerMove(null), { signal });
     // Its keys work once it has the focus, which a click gives it
     if (canvas.tabIndex < 0) canvas.tabIndex = 0;
     this.setTheme(this.#theme);
@@ -440,23 +450,25 @@ export class Viewer extends EventTarget {
    * @returns {string | null}
    */
   partAt(x, y) {
-    if (!this.#model) return null;
-    this.#scene.updateMatrixWorld();
-    this.#camera.updateMatrixWorld();
-    const pointer = new Vector2((x / this.#width) * 2 - 1, 1 - (y / this.#height) * 2);
-    this.#raycaster.setFromCamera(pointer, this.#camera);
-    /** @type {Map<import('three').Object3D, Shape>} */
-    const pickable = new Map();
-    for (const shape of this.#model.shapes) {
-      if (shape.part !== null) pickable.set(shape.mesh, shape);
-    }
-    for (const hit of this.#raycaster.intersectObjects([...pickable.keys()], false)) {
-      if (this.#sectionView.clipping && this.#sectionView.plane.distanceToPoint(hit.point) < 0) {
-        continue;
-      }
-      return pickable.get(hit.object)?.part ?? null;
-    }
-    return null;
+    return this.#hitAt(x, y)?.shape.part ?? null;
+  }
+
+  /**
+   * What is under a point of the canvas (CSS pixels from its top left): the part (null for a
+   * nameless one) and, on a solid, the face; null over nothing, a ghost, or what a section cut
+   * away.
+   * @param {number} x
+   * @param {number} y
+   * @returns {Hover | null}
+   */
+  hoverAt(x, y) {
+    const hit = this.#hitAt(x, y);
+    if (!hit) return null;
+    const face =
+      this.#model?.kind === '3d' && hit.triangle !== null
+        ? faceAt(/** @type {import('three').Mesh} */ (hit.shape.mesh), hit.triangle)
+        : null;
+    return { part: hit.shape.part, face };
   }
 
   /**
@@ -479,6 +491,7 @@ export class Viewer extends EventTarget {
     if (this.#disposed) return;
     this.#disposed = true;
     if (this.#frame) cancelAnimationFrame(this.#frame);
+    if (this.#hoverFrame) cancelAnimationFrame(this.#hoverFrame);
     this.#listeners.abort();
     this.#controls.dispose();
     if (this.#model) disposeScene(this.#model);
@@ -747,6 +760,58 @@ export class Viewer extends EventTarget {
   #pointerDown(event) {
     this.#down =
       event.isPrimary && event.button === 0 ? { x: event.offsetX, y: event.offsetY } : null;
+  }
+
+  /**
+   * The first shape the ray through a point of the canvas meets, and the triangle it meets:
+   * not a ghost (seen through), nor where a section cut it away.
+   * @param {number} x
+   * @param {number} y
+   * @returns {{ shape: Shape, triangle: number | null } | null}
+   */
+  #hitAt(x, y) {
+    if (!this.#model) return null;
+    this.#scene.updateMatrixWorld();
+    this.#camera.updateMatrixWorld();
+    const pointer = new Vector2((x / this.#width) * 2 - 1, 1 - (y / this.#height) * 2);
+    this.#raycaster.setFromCamera(pointer, this.#camera);
+    /** @type {Map<import('three').Object3D, Shape>} */
+    const solid = new Map();
+    for (const shape of this.#model.shapes) {
+      if (!shape.ghost) solid.set(shape.mesh, shape);
+    }
+    for (const hit of this.#raycaster.intersectObjects([...solid.keys()], false)) {
+      if (this.#sectionView.clipping && this.#sectionView.plane.distanceToPoint(hit.point) < 0) {
+        continue;
+      }
+      const shape = /** @type {Shape} */ (solid.get(hit.object));
+      return { shape, triangle: hit.faceIndex ?? null };
+    }
+    return null;
+  }
+
+  /**
+   * The pointer moved over the canvas (or left it: null): what is under it is said on the next
+   * frame, once however often it moved, and nothing while a button drags the camera.
+   * @param {PointerEvent | null} event
+   */
+  #pointerMove(event) {
+    this.#pointer = event && event.buttons === 0 ? { x: event.offsetX, y: event.offsetY } : null;
+    if (this.#hoverFrame || this.#disposed) return;
+    this.#hoverFrame = requestAnimationFrame(() => {
+      this.#hoverFrame = 0;
+      this.#sayHover();
+    });
+  }
+
+  /** Says what is under the pointer ('hover', its detail `hoverAt`'s with where), or nothing. */
+  #sayHover() {
+    const at = this.#pointer;
+    const under = at ? this.hoverAt(at.x, at.y) : null;
+    if (!under && !this.#hovering) return;
+    this.#hovering = under !== null;
+    const detail = under && at ? { ...under, x: at.x, y: at.y } : null;
+    this.dispatchEvent(new CustomEvent('hover', { detail }));
   }
 
   /**

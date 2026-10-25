@@ -400,6 +400,65 @@ describe('Viewer', () => {
     expect(camera.position.clone().sub(before).dot(turned)).toBeCloseTo(0, 6);
   });
 
+  it('says what is under a point: the part, and the face, flat or curved, its area and way', async () => {
+    const { viewer } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    viewer.setCamera({ view: 'top' });
+    const top = viewer.hoverAt(WIDTH / 2, HEIGHT / 2);
+    expect(top?.part).toBe('block');
+    expect(top?.face).toMatchObject({ flat: true, facing: '+Z (top)' });
+    expect(top?.face?.area).toBeCloseTo(400, 6);
+    // A rod's side from the front, its facets meeting at 7.5°: one curved face, as the edges
+    // bound it (a coarser one's facets, past the edges' 20°, are faces of their own)
+    await viewer.setModel(
+      await modelOf('cylinder(r: 5, h: 10, center: true, segments: 48).named("rod")'),
+    );
+    viewer.setCamera({ view: 'front' });
+    const rod = viewer.hoverAt(WIDTH / 2, HEIGHT / 2);
+    expect(rod?.part).toBe('rod');
+    expect(rod?.face?.flat).toBe(false);
+    expect(rod?.face?.facing).toBeNull();
+    const side = 2 * Math.PI * 5 * 10;
+    expect(rod?.face?.area).toBeGreaterThan(0.85 * side);
+    expect(rod?.face?.area).toBeLessThan(side);
+    expect(viewer.hoverAt(2, 2)).toBeNull();
+  });
+
+  it('says what the pointer is over as it moves, a frame at most, and nothing while it drags', async () => {
+    const { viewer, canvas } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    /** @type {({ part: string | null } | null)[]} */
+    const said = [];
+    viewer.addEventListener('hover', (event) => {
+      said.push(/** @type {CustomEvent<{ part: string | null } | null>} */ (event).detail);
+    });
+    /** @param {string} type @param {number} x @param {number} [buttons] */
+    const pointer = (type, x, buttons = 0) => {
+      canvas.dispatchEvent(
+        Object.assign(new Event(type), { offsetX: x, offsetY: HEIGHT / 2, buttons }),
+      );
+    };
+    pointer('pointermove', WIDTH / 2 - 2);
+    pointer('pointermove', WIDTH / 2);
+    await nextFrame();
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatchObject({ part: 'block', x: WIDTH / 2, y: HEIGHT / 2 });
+    // Dragging the camera, nothing is under it
+    pointer('pointermove', WIDTH / 2, 1);
+    await nextFrame();
+    expect(said.at(-1)).toBeNull();
+    pointer('pointermove', WIDTH / 2);
+    await nextFrame();
+    canvas.dispatchEvent(new Event('pointerleave'));
+    await nextFrame();
+    expect(said.at(-1)).toBeNull();
+    // Off the model, once said, nothing more
+    const count = said.length;
+    pointer('pointermove', 2);
+    await nextFrame();
+    expect(said).toHaveLength(count);
+  });
+
   it('picks the part behind a ghost, which is seen through', async () => {
     const { viewer } = viewerOn();
     await viewer.setModel(

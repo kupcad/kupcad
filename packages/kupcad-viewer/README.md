@@ -21,6 +21,8 @@ viewer.addEventListener('select', (event) => console.log(event.detail.part)); //
 // button; the others pan and zoom), or null
 viewer.select('bolt'); // tints every copy of the part
 viewer.bounds; // { min, max } in mm: what a section's offset ranges over
+viewer.hoverAt(x, y); // { part, face: { flat, area, normal, facing } }: what is under a point
+viewer.addEventListener('hover', (event) => event.detail); // the same, with x and y, as the pointer moves
 viewer.kind; // '3d' or '2d', the model shown's (a drawing isn't cut), or null for none
 const png = await viewer.screenshot();
 ```
@@ -42,6 +44,11 @@ const png = await viewer.screenshot();
   the last solid was seen. The camera's depth takes in the model and what it stands on, however
   small the model and wherever the camera moves. A model without the selected part drops the
   selection, with a `select` event of null.
+* **Under the pointer** the viewer says, a frame at most (a `hover` event, null over nothing and
+  while a button drags the camera), the part and, on a solid, the face: what its feature edges
+  bound (`faces.js`: triangles joined where they meet at less than the edges' 20°), flat when it
+  faces one way (its area in mm², its way, and `+Z (top)` when along an axis) or curved (its
+  area). A ghost, seen through, is under nothing, and neither is what a section cut away.
 * **The view cube** (`ViewCube`, which the Svelte component puts in its corner unless
   `cube={false}`) is turned as the camera is; its faces (labelled TOP, FRONT, RIGHT, ..., each
   upright from its view), edges and corners, 26 ways to look, take the camera there when

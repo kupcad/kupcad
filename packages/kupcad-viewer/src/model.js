@@ -26,7 +26,7 @@ import { disposeGeometries } from './dispose.js';
 /** @import { SceneModel, Shape, Theme } from './types.js' */
 
 /** Where a solid's faces meet at more than this many degrees, an edge is drawn: its features. */
-const EDGE_ANGLE_DEG = 20;
+export const EDGE_ANGLE_DEG = 20;
 /** A ghost is seen through. */
 export const GHOST_OPACITY = 0.2;
 /**
