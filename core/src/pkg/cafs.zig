@@ -89,16 +89,15 @@ pub const Cafs = struct {
     pub fn init(allocator: std.mem.Allocator, io: std.Io, global_dir_path: []const u8, fs: Vfs) !Cafs {
         const cwd = std.Io.Dir.cwd();
 
-        // Use native I/O for the global CAFS directories
-        cwd.createDirPath(io, global_dir_path) catch |err| std.log.warn("Failed to create CAFS dir: {}", .{err});
-
+        // Use native I/O for the global CAFS directories: one that can't be made fails here,
+        // not later as a database that won't open
         const files_path = try allocator.print("{s}/files", .{global_dir_path});
         defer allocator.free(files_path);
-        cwd.createDirPath(io, files_path) catch |err| std.log.warn("Failed to create CAFS files dir: {}", .{err});
+        try cwd.createDirPath(io, files_path);
 
         const tmp_path = try allocator.print("{s}/tmp", .{global_dir_path});
         defer allocator.free(tmp_path);
-        cwd.createDirPath(io, tmp_path) catch |err| std.log.warn("Failed to create CAFS tmp dir: {}", .{err});
+        try cwd.createDirPath(io, tmp_path);
 
         return .{
             .allocator = allocator,

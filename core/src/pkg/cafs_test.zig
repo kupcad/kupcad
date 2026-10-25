@@ -86,6 +86,20 @@ test "Cafs: init creates the blob directory under the global dir" {
     dir.close(testing.io);
 }
 
+test "Cafs: init fails where the store's folders can't be made, instead of later" {
+    // It warned and went on: the store's database then failed to open, as SqliteOpenFailed
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "file", .data = "" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    const under_a_file = try std.fs.path.join(testing.allocator, &.{ root, "file", "store" });
+    defer testing.allocator.free(under_a_file);
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    try testing.expectError(error.NotDir, Cafs.init(testing.allocator, testing.io, under_a_file, mem_vfs.vfs()));
+}
+
 test "Cafs: blobPath generates correct absolute paths" {
     var fx: Fixture = undefined;
     try fx.init();

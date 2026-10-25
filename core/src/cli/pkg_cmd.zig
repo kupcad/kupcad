@@ -147,7 +147,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     };
     defer allocator.free(global_dir);
 
-    var cafs = try Cafs.init(allocator, init.io, global_dir, fs);
+    var cafs = Cafs.init(allocator, init.io, global_dir, fs) catch |err| {
+        if (err == error.OutOfMemory) return err;
+        log_helpers.printStderr(init.io, "Error: the package store at '{s}' can't be made: {s}\n", .{ global_dir, @errorName(err) });
+        return .failure;
+    };
     defer cafs.deinit();
 
     const db_path = try allocator.print("{s}/index.db", .{global_dir});
@@ -195,6 +199,9 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
 
         if (dependency.package.constraint != null) {
             log_helpers.printStdout(init.io, "Added {s} at the highest tag matching {s}. Running concurrent install...\n", .{ dependency.alias, dependency.package.ref });
+        } else if (dependency.package.ref.len == 0) {
+            // A local archive (file:) has no reference: it is where it came from
+            log_helpers.printStdout(init.io, "Added {s} from {s}. Running concurrent install...\n", .{ dependency.alias, dependency.url });
         } else {
             log_helpers.printStdout(init.io, "Added {s} at reference '{s}'. Running concurrent install...\n", .{ dependency.alias, dependency.package.ref });
         }

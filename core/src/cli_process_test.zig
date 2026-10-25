@@ -355,6 +355,10 @@ test "kupcad: pkg add of a local package records it, and keeps what else kupcad.
     defer added.deinit();
     errdefer std.debug.print("{s}\n", .{added.stderr});
     try testing.expectEqual(@as(u8, 0), added.code);
+    // Where it came from: it said "at reference ''"
+    const said = try std.fmt.allocPrint(testing.allocator, "Added screws from {s}.", .{spec});
+    defer testing.allocator.free(said);
+    try testing.expect(std.mem.find(u8, added.stdout, said) != null);
     // It used to write back the name, the version and the dependencies alone
     const saved = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(saved);
