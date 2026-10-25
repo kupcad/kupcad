@@ -335,6 +335,7 @@ test "API: buildModel reads and writes no files unless the caller gives it a fil
     const cases = [_]struct { source: []const u8, message: []const u8 }{
         .{ .source = "import_stl(\"build.zig\")", .message = "ImportError: could not read STL file 'build.zig': FileNotFound" },
         .{ .source = "import_json(\"build.zig.zon\")", .message = "ImportError: could not read JSON file 'build.zig.zon': FileNotFound" },
+        .{ .source = "import { x } from \"./build.kup\"", .message = "ImportError: could not read module 'build.kup': FileNotFound" },
         .{ .source = "cube(1).export_stl(\"api_no_files.stl\")", .message = "RuntimeError: export_stl: could not write 'api_no_files.stl': AccessDenied" },
     };
     for (cases) |case| {

@@ -1310,10 +1310,12 @@ test "VM: module namespace values survive GC" {
     try expectGlobalString(&vm, "r", "string!");
 }
 
-test "VM: importing a module that fails to compile names where and why" {
+/// The message of the ImportError a script gets importing `bad.kup`, of `source`; the caller
+/// frees it.
+fn importErrorOf(source: []const u8) ![]u8 {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
-    try mem_vfs.vfs().writeFile("bad.kup", "x = 1\ncube = 5\nexport x");
+    try mem_vfs.vfs().writeFile("bad.kup", source);
 
     var vm = try VM.init(testing.allocator, testing.io);
 
@@ -1322,7 +1324,6 @@ test "VM: importing a module that fails to compile names where and why" {
     vm.vfs = mem_vfs.vfs();
     vm.mute_errors = true;
     try registry.registerStandardLibrary(&vm);
-
     const main_source =
         \\r = begin
         \\  import { x } from "./bad.kup"
@@ -1339,10 +1340,22 @@ test "VM: importing a module that fails to compile names where and why" {
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     try testing.expectEqual(.ok, vm.interpret(&out_chunk));
-
-    // It used to say only "Compilation failed for './bad.kup'".
     const r = vm.globals.get("r") orelse return error.MissingResult;
-    try testing.expectEqualStrings("could not compile 'bad.kup': 2:1: 'cube' is a built-in and can't be assigned [builtin-redefined]", r.asString().chars);
+    return testing.allocator.dupe(u8, r.asString().chars);
+}
+
+test "VM: importing a module that fails to compile names where and why" {
+    // It used to say only "Compilation failed for './bad.kup'".
+    const message = try importErrorOf("x = 1\ncube = 5\nexport x");
+    defer testing.allocator.free(message);
+    try testing.expectEqualStrings("could not compile 'bad.kup': 2:1: 'cube' is a built-in and can't be assigned [builtin-redefined]", message);
+}
+
+test "VM: importing a module that doesn't parse names where and why, and how many more" {
+    // It used to say only "Syntax errors in 'bad.kup'"
+    const message = try importErrorOf("x = 1\ndef\nexport x\ny = (\n");
+    defer testing.allocator.free(message);
+    try testing.expectEqualStrings("could not parse 'bad.kup': 2:4: The statement ends too soon: something should follow 'def' [unexpected-token] (and 1 more)", message);
 }
 
 test "VM: a relative import is read next to the file that imports it" {

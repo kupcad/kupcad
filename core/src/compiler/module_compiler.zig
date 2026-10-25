@@ -14,7 +14,13 @@ const Compiler = @import("compiler.zig").Compiler;
 pub fn compileModule(vm: *VM, path: []const u8, source: []const u8, namespace: *value.Namespace) anyerror!*chunk.Chunk {
     var doc = Document.parse(vm.allocator, source) catch return vm.fail(.ImportError, "Parse error in '{s}'", .{path});
     defer doc.deinit();
-    if (doc.diagnostics.len > 0) return vm.fail(.ImportError, "Syntax errors in '{s}'", .{path});
+    if (doc.diagnostics.len > 0) {
+        // Where the first is and what it says, as a compile error is told
+        const first = try doc.diagnostics[0].formatLine(vm.allocator, &doc.line_index);
+        defer vm.allocator.free(first);
+        if (doc.diagnostics.len == 1) return vm.fail(.ImportError, "could not parse '{s}': {s}", .{ path, first });
+        return vm.fail(.ImportError, "could not parse '{s}': {s} (and {d} more)", .{ path, first, doc.diagnostics.len - 1 });
+    }
 
     const module_chunk = try vm.allocator.create(chunk.Chunk);
     module_chunk.* = chunk.Chunk.init();

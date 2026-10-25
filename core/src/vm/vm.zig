@@ -2372,8 +2372,8 @@ pub const VM = struct {
         }
 
         // 2. Fetch from VFS
-        const source = self.vfs.readFile(self.allocator, path_str) catch {
-            if (self.raiseError(.ImportError, "Could not read module '{s}'", .{path_str}) != .ok) return .runtime_error;
+        const source = self.vfs.readFile(self.allocator, path_str) catch |err| {
+            if (self.raiseError(.ImportError, "could not read module '{s}': {s}", .{ path_str, @errorName(err) }) != .ok) return .runtime_error;
             return null;
         };
         defer self.allocator.free(source);
