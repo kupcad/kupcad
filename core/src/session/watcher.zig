@@ -39,6 +39,8 @@ pub const Listener = struct {
 pub const Watcher = struct {
     session: *ScriptSession,
     io: std.Io,
+    /// The folder the session's file system is rooted at, which its module paths are from
+    root: std.Io.Dir,
     listener: Listener,
     /// The mtime last seen for each watched file, keyed by the workspace's path slices.
     mtimes: std.StringHashMapUnmanaged(i128) = .empty,
@@ -48,8 +50,8 @@ pub const Watcher = struct {
     data_mtimes: std.StringHashMapUnmanaged(i128) = .empty,
     is_one_shot: bool = false,
 
-    pub fn init(session: *ScriptSession, io: std.Io, listener: Listener) !Watcher {
-        var self: Watcher = .{ .session = session, .io = io, .listener = listener };
+    pub fn init(session: *ScriptSession, io: std.Io, root: std.Io.Dir, listener: Listener) !Watcher {
+        var self: Watcher = .{ .session = session, .io = io, .root = root, .listener = listener };
         errdefer self.deinit();
         try self.rememberMtimes();
         return self;
@@ -141,7 +143,7 @@ pub const Watcher = struct {
     /// and its importers stale.
     fn reload(self: *Watcher, path: []const u8) !void {
         const allocator = self.session.allocator;
-        const source = try std.Io.Dir.cwd().readFileAlloc(self.io, path, allocator, .limited(MAX_WATCHED_FILE_SIZE));
+        const source = try self.root.readFileAlloc(self.io, path, allocator, .limited(MAX_WATCHED_FILE_SIZE));
         defer allocator.free(source);
         _ = try self.session.workspace.upsertModule(path, source);
         try self.session.loadImports();
@@ -158,7 +160,7 @@ pub const Watcher = struct {
     }
 
     fn mtimeOf(self: *const Watcher, path: []const u8) ?i128 {
-        const stat = std.Io.Dir.cwd().statFile(self.io, path, .{}) catch return null;
+        const stat = self.root.statFile(self.io, path, .{}) catch return null;
         return stat.mtime.nanoseconds;
     }
 };

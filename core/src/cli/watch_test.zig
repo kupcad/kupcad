@@ -5,6 +5,7 @@
 const std = @import("std");
 const testing = std.testing;
 const watch = @import("watch.zig");
+const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const Args = @import("args.zig").Args;
 
 /// The options `args` give, or null; `output` receives what was reported.
@@ -68,7 +69,9 @@ test "kupcad watch: each watcher event is reported as build reports it" {
 
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root_path = "model.kup", .reporter = .{ .io = testing.io, .capture = &output.writer } };
+    var root = try ScriptRoot.of(testing.io, testing.allocator, "model.kup");
+    defer root.deinit(testing.io, testing.allocator);
+    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root = &root, .reporter = .{ .io = testing.io, .capture = &output.writer } };
     const listener = printer.listener();
     const cases = [_]struct { event: @import("../session/watcher.zig").Event, says: []const u8 }{
         .{ .event = .{ .changed = "lib.kup" }, .says = "Changed: lib.kup\n" },
@@ -121,7 +124,9 @@ test "kupcad watch: with export options, each build that succeeds writes them; w
 
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     defer output.deinit();
-    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root_path = "model.kup", .reporter = .{ .io = testing.io, .capture = &output.writer }, .exports = &options.exports };
+    var root = try ScriptRoot.of(testing.io, testing.allocator, "model.kup");
+    defer root.deinit(testing.io, testing.allocator);
+    var printer = watch.EventPrinter{ .allocator = testing.allocator, .session = &session, .root = &root, .reporter = .{ .io = testing.io, .capture = &output.writer }, .exports = &options.exports };
     const listener = printer.listener();
     listener.onEvent(listener.ptr, .built);
     try testing.expect(std.mem.startsWith(u8, output.written(), "Built model.kup\nSuccessfully built "));

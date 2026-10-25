@@ -18,6 +18,7 @@ const debugger = @import("debugger.zig");
 const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const ScriptRoot = @import("script_root.zig").ScriptRoot;
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -35,12 +36,14 @@ pub const USAGE =
 
 /// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
 /// and a caret), then a one-line summary.
-pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, reporter: Reporter) !void {
+pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, root: *const ScriptRoot, reporter: Reporter) !void {
     const mod = &session.workspace.modules.items[@backingInt(failure.module)];
+    const name = try root.shown(allocator, mod.path);
+    defer allocator.free(name);
     var rendered: std.Io.Writer.Allocating = .init(allocator);
     defer rendered.deinit();
-    const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, mod.path, mod.source, failure.diagnostics, reporter.err_style);
-    reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", mod.path });
+    const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, name, mod.source, failure.diagnostics, reporter.err_style);
+    reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", name });
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
@@ -66,11 +69,14 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var options = try parseOptions(allocator, args_iter, reporter) orelse return .failure;
     defer options.deinit(allocator);
 
-    // A one-shot command: one session is all it needs, reading and writing the disk
-    var disk = NativeVfs.init(reporter.io, std.Io.Dir.cwd());
+    // A one-shot command: one session is all it needs, reading and writing the disk from
+    // where the script's imports are
+    var root = try ScriptRoot.open(reporter.io, allocator, options.input_path, reporter) orelse return .failure;
+    defer root.deinit(reporter.io, allocator);
+    var disk = NativeVfs.init(reporter.io, root.dir);
     var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
     defer manager.deinit();
-    const session = try runScript(allocator, &manager, options.input_path, &options.params, &options.exports, reporter) orelse return .failure;
+    const session = try runScript(allocator, &manager, &root, &options.params, &options.exports, reporter) orelse return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }
 
@@ -114,13 +120,20 @@ fn refuse(allocator: std.mem.Allocator, options: *Options) ?Options {
     return null;
 }
 
-/// Runs the script at `input_path` in a session of `manager`, set up as the command and
-/// the project ask: `params` (which the session takes), the terminal debugger, the
+/// Runs the script `root` names (its file system `manager`'s) in a session of `manager`, set
+/// up as the command and the project ask: `params` (which the session takes), the terminal debugger, the
 /// project's memory limit (`vm_memory_limit` in .kupcad.json) and the engine `exports`
 /// need (STEP's exact B-Rep). The session, its model built; null, the failure reported,
 /// when it can't be set up or the script doesn't parse, compile or run.
-pub fn runScript(allocator: std.mem.Allocator, manager: *SessionManager, input_path: []const u8, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !?*ScriptSession {
+pub fn runScript(allocator: std.mem.Allocator, manager: *SessionManager, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !?*ScriptSession {
     const io = reporter.io;
+    const input_path = root.input;
+    // Read first: a file that isn't there is named so, before a session is made for it
+    const source = fs.readFile(io, allocator, input_path) catch |err| {
+        reporter.err("Error: Could not read '{s}': {s}\n", .{ input_path, @errorName(err) });
+        return null;
+    };
+    defer allocator.free(source);
     const session = manager.getOrInitializeSession(input_path) catch |err| {
         reporter.err("Failed to initialize session: {}\n", .{err});
         return null;
@@ -134,20 +147,18 @@ pub fn runScript(allocator: std.mem.Allocator, manager: *SessionManager, input_p
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
     if (exports) |e| try e.prepare(&session.vm);
-    return if (try evaluate(allocator, session, input_path, reporter)) session else null;
+    return if (try evaluate(allocator, session, root, source, reporter)) session else null;
 }
 
-/// Runs the script at `input_path` and the modules it imports, dependencies first; false,
-/// the errors reported, when one doesn't parse, compile or run.
-fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, input_path: []const u8, reporter: Reporter) !bool {
-    const source = try fs.readFile(reporter.io, allocator, input_path);
-    defer allocator.free(source);
-    _ = try session.workspace.addModule(input_path, source);
+/// Runs the script `root` names, of `source`, and the modules it imports, dependencies
+/// first; false, the errors reported, when one doesn't parse, compile or run.
+fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, source: []const u8, reporter: Reporter) !bool {
+    _ = try session.workspace.addModule(root.path, source);
     try session.workspace.linkDependencies();
     try session.buildReverseGraph();
     session.evaluateWorkspace() catch |err| {
         if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
-            try reportErrors(allocator, session, failure, reporter);
+            try reportErrors(allocator, session, failure, root, reporter);
             return false;
         };
         reporter.err("Build failed: {}\n", .{err});

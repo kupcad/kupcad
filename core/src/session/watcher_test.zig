@@ -104,7 +104,7 @@ test "Daemon Watcher: re-reads and re-evaluates the file after a modification" {
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(watcher.evaluate());
 
@@ -131,7 +131,7 @@ test "Daemon Watcher: an edit to an imported module rebuilds the script" {
 
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     errdefer {
         std.debug.print("events: {any}\n", .{recorder.events.items});
@@ -155,7 +155,7 @@ test "Daemon Watcher: a module deleted is told once, and rebuilt from when it is
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(watcher.evaluate());
 
@@ -183,7 +183,7 @@ test "Daemon Watcher: an edit to a module reached through a re-export rebuilds t
 
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(watcher.evaluate());
     try testing.expectApproxEqAbs(@as(f64, 1000), fx.rootVolume(root), 1e-6);
@@ -203,7 +203,7 @@ test "Daemon Watcher: a build that fails is reported, and watching goes on" {
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
 
     try testing.expect(!watcher.evaluate());
@@ -224,7 +224,7 @@ test "Daemon Watcher: an edit to a JSON file the script reads rebuilds it" {
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(watcher.evaluate());
     try testing.expectApproxEqAbs(@as(f64, 1000), fx.rootVolume(root), 1e-6);
@@ -245,7 +245,7 @@ test "Daemon Watcher: a JSON file missing at the first build is watched, so crea
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(!watcher.evaluate());
 
@@ -264,7 +264,7 @@ test "Daemon Watcher: a file restored to an older version counts as a change" {
     defer testing.allocator.free(root);
     var recorder = Recorder{ .session = &fx.session };
     defer recorder.deinit();
-    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    var watcher = try Watcher.init(&fx.session, testing.io, std.Io.Dir.cwd(), recorder.listener());
     defer watcher.deinit();
     try testing.expect(watcher.evaluate());
 

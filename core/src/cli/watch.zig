@@ -19,6 +19,7 @@ const Args = @import("args.zig").Args;
 const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
+const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
 
@@ -101,8 +102,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer options.deinit(allocator);
     const file_path = options.file_path;
 
-    // Spin up the cache controller; the script reads and writes the disk
-    var disk = NativeVfs.init(init.io, std.Io.Dir.cwd());
+    // Spin up the cache controller; the script reads and writes the disk from where its
+    // imports are
+    var root = try ScriptRoot.open(init.io, allocator, file_path, reporter) orelse return .failure;
+    defer root.deinit(init.io, allocator);
+    var disk = NativeVfs.init(init.io, root.dir);
     var manager = SessionManager.init(allocator, init.io, 1, disk.vfs());
     defer manager.deinit();
 
@@ -128,11 +132,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     };
     defer allocator.free(source);
 
-    _ = try session.workspace.addModule(file_path, source);
+    _ = try session.workspace.addModule(root.path, source);
     try session.loadImports();
 
-    var printer = EventPrinter{ .allocator = allocator, .session = session, .root_path = file_path, .reporter = reporter, .exports = if (options.writes) &options.exports else null };
-    var watcher = try Watcher.init(session, init.io, printer.listener());
+    var printer = EventPrinter{ .allocator = allocator, .session = session, .root = &root, .reporter = reporter, .exports = if (options.writes) &options.exports else null };
+    var watcher = try Watcher.init(session, init.io, root.dir, printer.listener());
     defer watcher.deinit();
 
     // The first build is reported like any other, and a failed one is watched for a fix
@@ -148,7 +152,8 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 pub const EventPrinter = struct {
     allocator: std.mem.Allocator,
     session: *ScriptSession,
-    root_path: []const u8,
+    /// Where the script runs, and how it was named
+    root: *const ScriptRoot,
     reporter: Reporter,
     /// What a build that succeeds writes, if anything.
     exports: ?*const ExportFlags = null,
@@ -162,14 +167,14 @@ pub const EventPrinter = struct {
         switch (event) {
             .changed => |path| self.reporter.err("Changed: {s}\n", .{path}),
             .built => {
-                self.reporter.err("Built {s}\n", .{self.root_path});
+                self.reporter.err("Built {s}\n", .{self.root.input});
                 // A file that can't be written is reported, and the next build tries again
-                if (self.exports) |exports| _ = exports.write(self.allocator, &self.session.vm, self.root_path, self.reporter) catch |err| {
+                if (self.exports) |exports| _ = exports.write(self.allocator, &self.session.vm, self.root.input, self.reporter) catch |err| {
                     self.reporter.err("Could not write the model: {s}\n", .{@errorName(err)});
                 };
             },
-            .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.reporter) catch |err| {
-                self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root_path, @errorName(err) });
+            .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.root, self.reporter) catch |err| {
+                self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root.input, @errorName(err) });
             },
             .run_failed => |err| self.reporter.err("Build failed: {s}\n", .{@errorName(err)}),
             .reload_failed => |r| self.reporter.err("Could not reload '{s}': {s}\n", .{ r.path, @errorName(r.err) }),

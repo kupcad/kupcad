@@ -299,6 +299,41 @@ test "kupcad: run in a subfolder of the project keeps the memory limit of its .k
     try testing.expect(std.mem.find(u8, run.stdout, "200000") == null);
 }
 
+test "kupcad: a script imports its neighbours however it is named, from wherever kupcad runs" {
+    // Rooted at the current directory, a script named by its absolute path or from a folder
+    // beside it imported nothing (the file system refused the path)
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "proj/parts");
+    try sb.tmp.dir.createDirPath(testing.io, "other");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{ \"name\": \"p\", \"version\": \"1.0.0\" }" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/lib.kup", .data = "side = 3\nexport side\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/parts/main.kup", .data = "import { side } from \"../lib.kup\"\nputs side * 2\ncube(side)\n" });
+    const main_abs = try std.fs.path.join(testing.allocator, &.{ sb.path, "proj", "parts", "main.kup" });
+    defer testing.allocator.free(main_abs);
+    const proj = try std.fs.path.join(testing.allocator, &.{ sb.path, "proj" });
+    defer testing.allocator.free(proj);
+    const other = try std.fs.path.join(testing.allocator, &.{ sb.path, "other" });
+    defer testing.allocator.free(other);
+
+    const cases = [_]struct { cwd: []const u8, script: []const u8 }{
+        .{ .cwd = proj, .script = main_abs },
+        .{ .cwd = proj, .script = "parts/main.kup" },
+        // Outside the current directory: its project's folder, where kupcad.json is
+        .{ .cwd = other, .script = "../proj/parts/main.kup" },
+        .{ .cwd = other, .script = main_abs },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("in {s}: kupcad run {s}\n", .{ case.cwd, case.script });
+        const run = try kupcad(case.cwd, &.{ "run", case.script });
+        defer run.deinit();
+        errdefer std.debug.print("{s}\n", .{run.stderr});
+        try testing.expectEqual(@as(u8, 0), run.code);
+        // What it prints (on stderr, as `run` prints)
+        try testing.expect(std.mem.endsWith(u8, run.stderr, "\n6\n"));
+    }
+}
+
 test "kupcad: pkg add of a local package records it, and keeps what else kupcad.json says" {
     var sb = try Sandbox.init();
     defer sb.deinit();

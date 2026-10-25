@@ -109,7 +109,8 @@ test "build_cmd: nonexistent input file fails" {
     var res = try runBuild(&.{"/nonexistent/kupcad/build_cmd_test/model.kup"});
     defer res.deinit();
     try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
-    try testing.expect(std.mem.startsWith(u8, res.text(), "Failed to initialize session: "));
+    // Named, with why: it said only "Failed to initialize session: error.FileNotFound"
+    try testing.expectEqualStrings("Error: Could not read '/nonexistent/kupcad/build_cmd_test/model.kup': FileNotFound\n", res.text());
 }
 
 test "build_cmd: script failures and empty exports return failure without writing output" {
