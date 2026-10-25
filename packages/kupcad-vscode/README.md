@@ -78,11 +78,16 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
 
 * The language server evaluates documents on a read-only virtual filesystem: a `.kup` file cannot
   write to disk (`export_*`) just by being opened.
-* A downloaded `kupcad` is checked against its release's `checksums.txt`: that catches a download
-  broken on the way, not a release replaced on GitHub (both files come from it). Its files are
-  taken from the repository's release downloads alone, and a download whose redirects end
-  anywhere but GitHub and its storage (`objects.githubusercontent.com`,
-  `release-assets.githubusercontent.com`) is refused.
+* A downloaded `kupcad` is checked against its release's `checksums.txt`, which catches a download
+  broken on the way, and against its attestation, which catches a release replaced: GitHub keeps,
+  by the archive's SHA-256, a SLSA provenance the release workflow signed with Sigstore
+  (`actions/attest-build-provenance`), and the archive installs only when that is signed by
+  `.github/workflows/release.yml` at the release's tag, through GitHub Actions, checked against
+  Sigstore's trusted root (fetched by TUF from `tuf-repo-cdn.sigstore.dev`, kept in the
+  extension's storage), as `gh attestation verify` checks it. Its files are taken from the
+  repository's release downloads alone, and a download whose redirects end anywhere but GitHub
+  and its storage (`objects.githubusercontent.com`, `release-assets.githubusercontent.com`) is
+  refused.
 * The viewport socket only listens on `127.0.0.1` and only accepts connections whose `Origin` is a
   VS Code webview. The viewer's page runs under a strict Content Security Policy: no script but
   its own (nonced), no inline style, and no network but that socket.

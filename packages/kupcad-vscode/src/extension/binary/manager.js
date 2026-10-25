@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import { errorText } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { sigstoreCheck, verifyAttested } from './attestation.js';
 import { install as installRelease, installedVersions } from './install.js';
 import { probe as probeVersion } from './probe.js';
 import { newestInRange, readReleases as readReleaseList, RELEASES_PAGE } from './releases.js';
@@ -29,6 +30,18 @@ const UPDATE = 'Update';
 const PERCENT = 100;
 
 /**
+ * That a download is the release's own: attested by its release workflow, checked by Sigstore
+ * against a trusted root TUF keeps in `cachePath`.
+ * @param {typeof fetch} get
+ * @param {string} cachePath
+ */
+function attestedBy(get, cachePath) {
+  const check = sigstoreCheck({ cachePath });
+  return (/** @type {string} */ digest, /** @type {string} */ version) =>
+    verifyAttested(digest, version, { get, check });
+}
+
+/**
  * @typedef {object} ManagerOptions
  * @property {string} range the core versions the extension runs with (`kupcad.core`)
  * @property {string} managedDir where its own installs go
@@ -42,6 +55,8 @@ const PERCENT = 100;
  * @property {(path: string) => Promise<VersionInfo | null>} [probe]
  * @property {typeof findServer} [find]
  * @property {typeof installRelease} [install]
+ * @property {(digest: string, version: string) => Promise<void>} [attest] that a download is
+ *   the release's own (verifyAttested; Sigstore's trusted root kept beside the installs)
  * @property {typeof readReleaseList} [readReleases]
  * @property {() => number} [now]
  */
@@ -63,6 +78,10 @@ export class BinaryManager {
       install: installRelease,
       readReleases: readReleaseList,
       now: Date.now,
+      attest: attestedBy(
+        options.get ?? globalThis.fetch,
+        path.join(path.dirname(options.managedDir), 'sigstore'),
+      ),
       ...options,
     };
   }
@@ -228,6 +247,7 @@ export class BinaryManager {
         let shown = 0;
         return this.#options.install(release, {
           get,
+          attest: this.#options.attest,
           dir: managedDir,
           platform: process.platform,
           arch: process.arch,

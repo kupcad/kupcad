@@ -60,6 +60,9 @@ const redirectedTo = (get, to) => async (url) => {
   return response;
 };
 
+/** An attestation that holds, of whatever was downloaded. */
+const attested = async () => {};
+
 /** A network that is down. */
 const offline = async () => {
   throw new TypeError('fetch failed');
@@ -82,7 +85,7 @@ function servedRelease() {
     'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive': bytes,
     'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
   });
-  return { get, dir: path.join(dir, 'bin'), platform: 'linux', arch: 'x64' };
+  return { get, attest: attested, dir: path.join(dir, 'bin'), platform: 'linux', arch: 'x64' };
 }
 
 beforeEach(() => {
@@ -104,6 +107,7 @@ describe('install', () => {
       const bin = path.join(dir, 'bin');
       const installed = await install(release, {
         get,
+        attest: attested,
         dir: bin,
         platform: 'linux',
         arch: 'x64',
@@ -143,18 +147,40 @@ describe('install', () => {
     });
     const bin = path.join(dir, 'bin');
     await expect(
-      install(release, { get, dir: bin, platform: 'linux', arch: 'x64' }),
+      install(release, { get, attest: attested, dir: bin, platform: 'linux', arch: 'x64' }),
     ).rejects.toThrow(
       new InstallError(`${ARCHIVE} doesn't match its checksum: it was changed, or cut short`),
     );
     expect(await installedVersions(bin, 'kupcad')).toEqual([]);
   });
 
+  it.runIf(POSIX)(
+    "refuses an archive its release workflow didn't attest, and installs nothing",
+    async () => {
+      const served = servedRelease();
+      /** @type {[string, string][]} */
+      const asked = [];
+      const forged = async (/** @type {string} */ digest, /** @type {string} */ version) => {
+        asked.push([digest, version]);
+        throw new Error("it has no attestation: kupcad's release workflow didn't build it");
+      };
+      await expect(install(release, { ...served, attest: forged })).rejects.toThrow(
+        new InstallError(
+          `${ARCHIVE} isn't kupcad's own release: it has no attestation: kupcad's release workflow didn't build it`,
+        ),
+      );
+      // Asked of the archive the checksums name, for the release's version
+      expect(asked[0][1]).toBe(VERSION);
+      expect(asked[0][0]).toMatch(/^[0-9a-f]{64}$/);
+      expect(await installedVersions(served.dir, 'kupcad')).toEqual([]);
+    },
+  );
+
   it('says what is missing: a build for the platform, the archive, its checksum, the server', async () => {
     const get = serving({
       'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': 'nothing',
     });
-    const at = { get, dir, platform: 'linux', arch: 'x64' };
+    const at = { get, attest: attested, dir, platform: 'linux', arch: 'x64' };
     await expect(install(release, { ...at, platform: 'aix' })).rejects.toThrow(
       "kupcad isn't built for aix on x64",
     );

@@ -1,6 +1,7 @@
 // A release of the core installed where the extension keeps its own: `<dir>/<version>/kupcad`.
-// The archive for this platform is downloaded, checked against the release's checksums.txt
-// before it is unpacked, and its binary written into a folder of its own that takes the version's
+// The archive for this platform is downloaded, checked against the release's checksums.txt and
+// its attestation (that the release workflow built it from the tag) before it is unpacked, and
+// its binary written into a folder of its own that takes the version's
 // name only once it is whole, so a download cut short never looks installed, and two installs of
 // one version (two windows) don't write into each other's.
 
@@ -39,6 +40,8 @@ export class InstallError extends Error {
 /**
  * @typedef {object} InstallOptions
  * @property {typeof fetch} get
+ * @property {(digest: string, version: string) => Promise<void>} attest that an archive of
+ *   SHA-256 `digest` (hex) is the release's own; throws why not
  * @property {string} dir where installs go, a folder each
  * @property {string} platform Node's `process.platform`
  * @property {string} arch Node's `process.arch`
@@ -52,7 +55,7 @@ export class InstallError extends Error {
  * @returns {Promise<string>} the binary's path
  * @throws {InstallError}
  */
-export async function install(release, { get, dir, platform, arch, progress }) {
+export async function install(release, { get, attest, dir, platform, arch, progress }) {
   const asset = assetFor(release.version, platform, arch);
   if (!asset) throw new InstallError(`kupcad isn't built for ${platform} on ${arch}`);
   const archiveUrl = release.assets[asset.archive];
@@ -71,6 +74,11 @@ export async function install(release, { get, dir, platform, arch, progress }) {
     throw new InstallError(
       `${asset.archive} doesn't match its checksum: it was changed, or cut short`,
     );
+  }
+  try {
+    await attest(expected, release.version);
+  } catch (error) {
+    throw new InstallError(`${asset.archive} isn't kupcad's own release: ${errorText(error)}`);
   }
   const binary = extractFile(archive, asset.format, asset.binary);
   if (!binary) throw new InstallError(`${asset.archive} has no ${asset.binary}`);
