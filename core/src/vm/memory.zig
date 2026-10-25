@@ -499,10 +499,11 @@ pub const GC = struct {
         return ptr;
     }
 
-    pub fn allocateAssembly(self: *GC, vm: *VM, name: *value.ObjString, parts: *value.ObjArray) !*value.ObjAssembly {
+    pub fn allocateAssembly(self: *GC, vm: *VM, name: *value.ObjString, parts: *value.ObjArray, size: value.AssemblySize) !*value.ObjAssembly {
         const ptr = try self.allocateObject(vm, value.ObjAssembly, &self.assemblies, .assembly);
         ptr.name = name;
         ptr.parts = parts;
+        ptr.size = size;
         return ptr;
     }
 

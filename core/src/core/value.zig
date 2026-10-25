@@ -417,7 +417,12 @@ pub const ObjAssembly = struct {
     obj: Obj,
     name: *ObjString,
     parts: *ObjArray,
+    /// How deep it nests (itself 1), and how many Solids it places, an assembly in it
+    /// counted each time it is placed: measured once, when it is made, from its parts'.
+    size: AssemblySize,
 };
+
+pub const AssemblySize = struct { depth: u16, solids: u64 };
 
 /// A font file a script imported (`import label from "./Inter.ttf"`, class Font), for
 /// `text(font:)`: its bytes as read, owned and counted against the VM's memory, which a

@@ -52,6 +52,7 @@ const CASES = .{
     .MAX_PLACED_TRIANGLES = placedTriangles,
     .MAX_PLACED_VERTICES = placedVertices,
     .MAX_PLACED_MESHES = placedMeshes,
+    .MAX_ASSEMBLY_SOLIDS = assemblySolids,
     .MAX_MESH_BYTES = meshBytes,
     .MAX_READ_BYTES = readBytes,
     .MAX_FILES_READ = filesRead,
@@ -286,6 +287,14 @@ fn placedMeshes() !void {
     defer testing.allocator.free(package);
     const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} meshes; a script reads at most that", .{limits.MAX_PLACED_MESHES});
     try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
+}
+
+fn assemblySolids() !void {
+    // An assembly of a cube, and one of two of that, seventeen deep: 131 072 cubes, refused
+    // as it is made (walking them took minutes, and memory no limit counted)
+    const src = "a = assemble(name: \"p\", parts: [cube(1)])\n17.times { a = assemble(name: \"n\", parts: [a, a]) }";
+    const expected = std.fmt.comptimePrint("ValueError: assemble: its parts place 131072 Solids (an assembly among them counts each time it is placed); a script places at most {d}", .{limits.MAX_ASSEMBLY_SOLIDS});
+    try support.expectScripts(&.{.{ .src = support.rescued(src), .expected = .{ .str = expected } }});
 }
 
 fn meshBytes() !void {

@@ -95,6 +95,10 @@ pub const MAX_PLACED_VERTICES: usize = 3 * MAX_PLACED_TRIANGLES;
 // the rest, so a small file placing a small object millions of times would ask for more than
 // memory holds, though its triangles stay under their cap.
 pub const MAX_PLACED_MESHES: usize = 100_000;
+// Most Solids an assembly places, an assembly in it counted each time it is placed: one
+// placed twice in each of 25 levels places 2^25, which an export, a BOM or a translate
+// walks one by one; as many as a 3MF's build may place.
+pub const MAX_ASSEMBLY_SOLIDS: usize = MAX_PLACED_MESHES;
 // Largest mesh file `import_stl`, `import_obj` and `import_3mf` read: five million
 // triangles as binary STL (50 bytes each), which the kernel takes minutes over already.
 pub const MAX_MESH_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
