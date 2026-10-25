@@ -1136,11 +1136,11 @@ pub const VM = struct {
         // As for a native: a raised error may be rescued, unwinding past this frame.
         const caller_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
-        const more = self.pushForElement(self.getLocal(frame, slot), @intFromFloat(taken)) catch |err| {
+        const next = self.pushForElement(frame, slot, @intFromFloat(taken)) catch |err| {
             return self.alreadyThrown(throw_seq, caller_depth) orelse self.nativeFailed("for", err);
         };
-        if (more) {
-            self.setLocal(frame, slot + 1, value.Value.initNumber(taken + 1));
+        if (next) |got| {
+            self.setLocal(frame, slot + 1, value.Value.initNumber(@floatFromInt(got)));
         } else {
             frame.ip += exit_offset;
         }
@@ -2906,38 +2906,53 @@ pub const VM = struct {
         return .ok;
     }
 
-    /// Pushes the element of a `for` loop's `iterable` after the `taken` ones and returns
-    /// true, or returns false when there are no more. A Range yields the values Range#each
-    /// does and a Map or a JsonObject its [key, value] pairs; an Array is read live, so it may grow while
-    /// the loop runs.
-    fn pushForElement(self: *VM, iterable: value.Value, taken: u64) error{ RuntimeError, OutOfMemory }!bool {
+    /// Pushes the next element of the `for` loop whose state is in the frame's locals from
+    /// `slot` (the iterable, how far it has got: `taken`, and a Map's keys) and returns how
+    /// far it has got then, or null when there are no more. A Range yields the values
+    /// Range#each does and a Map or a JsonObject its [key, value] pairs; an Array is read
+    /// live, so it may grow while the loop runs.
+    fn pushForElement(self: *VM, frame: *CallFrame, slot: usize, taken: u64) error{ RuntimeError, OutOfMemory }!?u64 {
+        const iterable = self.getLocal(frame, slot);
         if (iterable.isArray()) {
             const items = iterable.asArray().items.items;
-            if (taken >= items.len) return false;
+            if (taken >= items.len) return null;
             self.push(items[@intCast(taken)]);
-            return true;
+            return taken + 1;
         }
         if (iterable.isRange()) {
             const r = iterable.asRange();
             const span: sequence.Span = .{ .start = r.start, .end = r.end, .step = r.step, .is_exclusive = r.is_exclusive };
-            if (taken >= try sequence.iterationCount(self, span, "for")) return false;
+            if (taken >= try sequence.iterationCount(self, span, "for")) return null;
             self.push(value.Value.initNumber(span.at(taken)));
-            return true;
+            return taken + 1;
         }
-        if (iterable.isMap()) return self.pushForEntry(&iterable.asMap().map, taken);
-        if (iterable.isJsonObject()) return self.pushForEntry(&iterable.asJsonObject().map, taken);
+        if (iterable.isMap()) return self.pushForEntry(frame, slot, &iterable.asMap().map, taken);
+        if (iterable.isJsonObject()) return self.pushForEntry(frame, slot, &iterable.asJsonObject().map, taken);
         return self.fail(.TypeError, "for expects an Array, a Range, a Map or a JsonObject, got {s}", .{self.typeName(iterable)});
     }
 
-    /// pushForElement for a Map's (or a JsonObject's) entries: its [key, value] pair.
-    fn pushForEntry(self: *VM, map: *const value.ValueMap, taken: u64) error{OutOfMemory}!bool {
-        if (taken >= map.count()) return false;
-        const pair = try self.gc.allocateArray(self);
-        // Rooted before the items are added: appending may run a collection.
-        self.push(value.Value.initObj(&pair.obj));
-        const i: usize = @intCast(taken);
-        try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ map.keys()[i], map.values()[i] });
-        return true;
+    /// pushForElement for a Map's (or a JsonObject's) entries, as a block's walk of it gives
+    /// them (classes/map.zig's Walk): the [key, value] pair of the next of the keys there
+    /// when the loop began (kept in its third local) that is still there, with its value now.
+    /// One deleted before its turn is passed over (walked by position, deleting the entry
+    /// given skipped the next), and one added isn't given. `taken`: the keys passed.
+    fn pushForEntry(self: *VM, frame: *CallFrame, slot: usize, map: *const value.ValueMap, taken: u64) error{OutOfMemory}!?u64 {
+        if (self.getLocal(frame, slot + 2).isNil()) {
+            const keys = try self.gc.allocateArrayOf(self, map.keys());
+            self.setLocal(frame, slot + 2, value.Value.initObj(&keys.obj));
+        }
+        const keys = self.getLocal(frame, slot + 2).asArray().items.items;
+        var at: usize = @intCast(taken);
+        while (at < keys.len) : (at += 1) {
+            // The key is rooted by the keys kept, the value by the Map
+            const held = map.get(keys[at]) orelse continue;
+            const pair = try self.gc.allocateArray(self);
+            // Rooted before the items are added: appending may run a collection.
+            self.push(value.Value.initObj(&pair.obj));
+            try pair.items.appendSlice(self.gc.trackingAllocator(), &.{ keys[at], held });
+            return at + 1;
+        }
+        return null;
     }
 
     /// target[index], with both on the stack: an element of an Array or a character of a

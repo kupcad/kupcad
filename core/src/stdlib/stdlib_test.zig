@@ -932,6 +932,10 @@ test "Stdlib: for walks an Array, a Range or a Map, as Ruby's does" {
         .{ .src = "r = []\nfor i in (3..1).step(-1)\n  r.push(i)\nend", .expected = .{ .nums = &.{ 3, 2, 1 } } },
         // A Map yields [key, value] pairs; several variables spread each element.
         .{ .src = "r = []\nfor k, v in { a: 1, b: 2 }\n  r.push(\"#{k.to_s}#{v}\")\nend\nr = r.join(\",\")", .expected = .{ .str = "a1,b2" } },
+        // As a block's walk of it: the keys there when the loop began, a deleted one passed
+        // over (deleting the one given skipped the next), an added one not given
+        .{ .src = "h = { 1 => :a, 2 => :b, 3 => :c, 4 => :d }\nr = []\nfor k, v in h\n  r.push(k)\n  h.delete(k)\n  h[k + 10] = v\nend", .expected = .{ .nums = &.{ 1, 2, 3, 4 } }, .gc_stress = true },
+        .{ .src = "h = { 1 => 10, 2 => 20, 3 => 30 }\nr = []\nfor k, v in h\n  h.delete(3)\n  h[2] = 99\n  r.push(v)\nend", .expected = .{ .nums = &.{ 10, 99 } } },
         .{ .src = "r = 0\nfor x, y in [[1, 2], [3, 4]]\n  r += x * y\nend", .expected = .{ .num = 14 } },
         .{ .src = "r = []\nfor head, *tail in [[1, 2, 3]]\n  r = tail\nend", .expected = .{ .nums = &.{ 2, 3 } } },
         // One variable takes the element whole.

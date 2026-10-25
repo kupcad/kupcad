@@ -2101,8 +2101,8 @@ pub const Compiler = struct {
         self.current_stack_depth = expected_entry_depth + 1;
     }
 
-    /// `for targets in iterable ... end`. The iterable and the count of elements taken live
-    /// in two hidden locals (see op_for_next), so around `break` and `next` the stack is as
+    /// `for targets in iterable ... end`. The iterable, how far the loop has got and a Map's
+    /// keys live in three hidden locals (see op_for_next), so around `break` and `next` the stack is as
     /// in a while loop, and `return` leaves the method as from any loop. Like Ruby's, the
     /// loop's value is the iterable, or what `break` passes.
     fn compileForStmt(self: *Compiler, node: *const ast.Node, expected_entry_depth: usize) CompileError!void {
@@ -2110,12 +2110,16 @@ pub const Compiler = struct {
         const targets = self.tree.getLhsExprs(fs.targets);
         try self.declareTargets(targets);
 
-        const state = try self.hiddenLocalSlots(2);
+        const state = try self.hiddenLocalSlots(3);
         try self.compileNode(fs.iterable);
         try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, state);
         try self.emitOp(.op_pop);
         try self.emitConstant(value.Value.initNumber(0));
         try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, state + 1);
+        try self.emitOp(.op_pop);
+        // A Map's keys, taken at its first step
+        try self.emitOp(.op_nil);
+        try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, state + 2);
         try self.emitOp(.op_pop);
 
         const loop_start = self.current_chunk.code.items.len;
