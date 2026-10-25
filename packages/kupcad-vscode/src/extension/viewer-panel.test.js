@@ -10,7 +10,7 @@ import {
   window,
   workspace,
 } from './testing/vscode.js';
-import { readPresets, writePresets } from './presets.js';
+import { readPresets, writePresets } from '@kupcad/protocol';
 import { ScriptValues } from './values.js';
 import { ViewerPanel } from './viewer-panel.js';
 
@@ -25,7 +25,7 @@ const PRESETS = '/work/part.presets.json';
 
 /**
  * Puts presets in the presets file of part.kup.
- * @param {import('./presets.js').Presets} presets
+ * @param {import('@kupcad/protocol/types').Presets} presets
  */
 const presetsOnDisk = (presets) =>
   fake.files.set(PRESETS, new TextEncoder().encode(writePresets(presets)));

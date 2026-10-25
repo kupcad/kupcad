@@ -104,17 +104,16 @@ Two programs, built separately by Vite:
   panel (`ViewerPanel`: it follows the editor to a script in a file, tells the page the document
   it shows and asks the server for its frame, gives the server the panel's values, saves a
   screenshot, and shows the script at a place a run named, its column of UTF-8 bytes counted
-  as VS Code counts: `@kupcad/protocol`'s `characterAt`), `presets.js` says what a script's presets file holds and `presets-file.js` reads,
+  as VS Code counts: `@kupcad/protocol`'s `characterAt`), `presets-file.js` reads (the file's format is `@kupcad/protocol`'s),
   writes and watches it (the panel lists, applies and saves them), `commands.js` exports (over
   `export.js`: `kupcad build`'s arguments, why a build failed; the formats are
   `@kupcad/protocol`'s `EXPORT_FORMATS`), `values.js` keeps the values each script was
   given, which the server runs it with and an export builds it with, and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.
-* **The page** (`src/webview/`, in the panel): `App.svelte` is `@kupcad/ui`'s viewer pane and
-  parameter panel; `socket.js` reads the server's frames (`@kupcad/protocol`'s `readFrame`),
-  opening the socket again when it closes; `bridge.js` talks to the host. Built into
-  `dist-webview/`.
+* **The page** (`src/webview/`, in the panel): `@kupcad/ui`'s `PreviewPanel`, which reads the
+  server's frames from its socket itself, themed by VS Code's colours (`vscode.css`);
+  `bridge.js` is its host, over the webview's messages. Built into `dist-webview/`.
 
 The model never passes through the host: a frame can be megabytes, and the page reads it from
 the socket itself. The host and the page say the rest to each other in `@kupcad/protocol`'s

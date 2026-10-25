@@ -1,6 +1,6 @@
 import { PROTOCOL_VERSION } from '@kupcad/protocol';
 import { expect, it } from 'vitest';
-import { connectViewport, RETRY_MS } from './socket.js';
+import { connectViewport, RETRY_MS } from './viewport-socket.js';
 
 /** The sockets opened, each an event target the test drives as the server would. */
 function sockets() {

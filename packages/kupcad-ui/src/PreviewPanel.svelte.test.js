@@ -3,10 +3,10 @@ import { testCore } from '@kupcad/wasm/testing';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
-import App from './App.svelte';
+import PreviewPanel from './PreviewPanel.svelte';
 
 /** @import { HostMessage, Preview } from '@kupcad/protocol/types' */
-/** @import { ViewportEvents } from './socket.js' */
+/** @import { ViewportEvents } from './viewport-socket.js' */
 
 const PART = { uri: 'file:///work/part.kup', name: 'part.kup' };
 const LID = { uri: 'file:///work/lid.kup', name: 'lid.kup' };
@@ -45,7 +45,7 @@ function page({ viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001
       opened.closed = true;
     };
   };
-  const { unmount } = render(App, {
+  const { unmount } = render(PreviewPanel, {
     props: {
       host,
       viewportUrl,

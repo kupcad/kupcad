@@ -3,12 +3,12 @@
 // extension wrote in the page.
 
 import '@kupcad/ui/vscode.css';
+import { PreviewPanel } from '@kupcad/ui';
 import { mount } from 'svelte';
-import App from './App.svelte';
 import { connectHost } from './bridge.js';
 
 const viewport = document.querySelector('meta[name="kupcad-viewport"]');
-mount(App, {
+mount(PreviewPanel, {
   target: /** @type {HTMLElement} */ (document.getElementById('app')),
   props: {
     host: connectHost(acquireVsCodeApi()),

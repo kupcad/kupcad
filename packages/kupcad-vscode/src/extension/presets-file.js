@@ -2,11 +2,11 @@
 // a preset put in it, and watched, wherever the script is (in the workspace or not).
 
 import * as vscode from 'vscode';
-import { presetsPathOf, readPresets, writePresets } from './presets.js';
+import { presetsPathOf, readPresets, writePresets } from '@kupcad/protocol';
 import { fileName } from './scripts.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
-/** @import { Presets } from './presets.js' */
+/** @import { Presets } from '@kupcad/protocol/types' */
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();

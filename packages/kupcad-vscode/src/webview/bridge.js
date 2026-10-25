@@ -4,21 +4,14 @@
 
 import { isHostMessage } from '@kupcad/protocol';
 
-/** @import { HostMessage, ViewerMessage } from '@kupcad/protocol/types' */
+/** @import { ViewerHost } from '@kupcad/protocol/types' */
 /** @import { WebviewApi } from '../types.js' */
-
-/**
- * @typedef {object} Host
- * @property {(message: ViewerMessage) => void} post
- * @property {(listener: (message: HostMessage) => void) => () => void} listen calls `listener`
- *   with each message; the function it gives stops it
- */
 
 /**
  * The extension, as the page talks to it.
  * @param {WebviewApi} api `acquireVsCodeApi()`'s
  * @param {Window} [window]
- * @returns {Host}
+ * @returns {ViewerHost}
  */
 export function connectHost(api, window = globalThis.window) {
   return {

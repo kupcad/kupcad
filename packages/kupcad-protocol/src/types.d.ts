@@ -177,6 +177,16 @@ export interface ShownDocument {
   name: string;
 }
 
+/** A document's presets: its parameters' values, by the preset's name, in the file's order. */
+export type Presets = Record<string, ParamValues>;
+
+/** A viewer's host, as the viewer talks to it: a VS Code extension, the desktop app. */
+export interface ViewerHost {
+  post(message: ViewerMessage): void;
+  /** Calls `listener` with each message the host sends; the function it gives stops it. */
+  listen(listener: (message: HostMessage) => void): () => void;
+}
+
 /** What a host tells its viewer (`isHostMessage`). */
 export type HostMessage =
   /** The document the viewer shows from now on; null for none. */

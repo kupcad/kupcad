@@ -1,11 +1,15 @@
-// @kupcad/ui: the panels a KupCAD host shows beside its editor. Styled by the --kc-* tokens of
+// @kupcad/ui: the panels a KupCAD host shows beside its editor, and a language server's preview
+// (PreviewPanel, over its viewport socket, connectViewport). Styled by the --kc-* tokens of
 // `@kupcad/ui/tokens.css` (or `@kupcad/ui/vscode.css` in VS Code's webview), which a page loads.
 
 export { default as ParamsPanel } from './ParamsPanel.svelte';
+export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
 export { controlOf, groupsOf, isOverridden, shownValue, validate } from './params.js';
 export { describeRun, problemsOf, runStatusOf } from './run-status.js';
 export { themeFromTokens, watchTokens } from './theme.js';
+export { connectViewport } from './viewport-socket.js';
 
 /** @typedef {import('./run-status.js').Problem} Problem */
 /** @typedef {import('./run-status.js').RunStatus} RunStatus */
+/** @typedef {import('./viewport-socket.js').ViewportEvents} ViewportEvents */

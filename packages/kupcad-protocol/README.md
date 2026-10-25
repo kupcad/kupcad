@@ -44,7 +44,13 @@ client.sendRequest('workspace/executeCommand', {
   viewer say to each other: the document shown, its panel's values and its presets' names one
   way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
   in the script to reveal (`reveal`: a warning's line and column) the other. `isHostMessage` and `isViewerMessage` read
-  one as it arrives untyped (`postMessage`), and `isParamValues` the values in it.
+  one as it arrives untyped (`postMessage`), and `isParamValues` the values in it. A
+  `ViewerHost` is the host as its viewer talks to it (`post`, `listen`).
+* Presets (`Presets`): a script's named sets of values, kept beside it as JSON a person edits
+  (`bracket.kup`'s in `bracket.presets.json`, `{ "presets": { "Small": { "width": 20 } } }`).
+  `presetsPathOf(scriptPath)`, `readPresets(text)` (a `PresetsError` saying why a file isn't
+  one) and `writePresets(presets)`; each host reads and writes the file with its own file
+  system.
 * `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
   `build`), each with its name and what it is for, in the order a host offers them.
 * `errorText(error)`: what an error says, for a person: an Error's message, anything else

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { PresetsFile } from './presets-file.js';
-import { PresetsError, writePresets } from './presets.js';
+import { PresetsError, writePresets } from '@kupcad/protocol';
 // The module Vitest gives the code as `vscode`
 import { fake, resetFake, Uri } from './testing/vscode.js';
 

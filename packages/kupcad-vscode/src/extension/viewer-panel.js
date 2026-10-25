@@ -12,9 +12,8 @@ import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
-/** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
+/** @import { HostMessage, ParamValues, Presets, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
-/** @import { Presets } from './presets.js' */
 /** @import { ScriptValues } from './values.js' */
 
 const VIEW_TYPE = 'kupcad.viewer';

@@ -390,13 +390,13 @@ src/
     commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf), over export.js
     scripts.js            a script: its language, a file's (no untitled one), its names
     values.js             the values each script was given: the server runs it, an export builds it, with them
-    presets.js            parameter presets as <script>.presets.json beside the file
-    presets-file.js       that file read, a preset put in it, and watched (a RelativePattern)
+    presets-file.js       <script>.presets.json beside the file (@kupcad/protocol's format), read,
+                          a preset put in it, and watched (a RelativePattern)
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
   webview/                runs in the panel (browser)
-    App.svelte            ViewerPane + ParamsPanel from @kupcad/ui, the run's problems
-    bridge.js             postMessage in and out, as the protocol's HostMessage and ViewerMessage
-    socket.js             the viewport WebSocket: preview frames from the language server
+    main.js               @kupcad/ui's PreviewPanel (the viewport socket, ViewerPane, ParamsPanel,
+                          problems, presets), themed by vscode.css
+    bridge.js             its ViewerHost: postMessage in and out, as HostMessage and ViewerMessage
 ```
 
 Data flow:
@@ -407,7 +407,7 @@ Data flow:
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.
 * **Presets** are named sets of a script's values in `<name>.presets.json` beside it
-  (`presets.js`, JSON a person edits and commits): the host reads them (`PresetsFile`) and tells
+  (`@kupcad/protocol`'s `presets.js`, JSON a person edits and commits): the host reads them (`PresetsFile`) and tells
   the page their names, again when the shown script's file changes on disk (watched by its folder,
   so a script outside the workspace has its own); a preset applied is given to the server as the panel's
   values are; `Save as preset…` writes the panel's values under the name the user gives.

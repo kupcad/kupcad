@@ -1,27 +1,28 @@
 <!--
   @component
-  The viewer's page: the model of the document the extension says it shows, as the language
-  server's socket sends it, with its parameters beside it. The panel's values go to the
-  extension, which gives them to the server; the frame that comes back is of a run with them.
-  Why the run failed and what it warned of are listed under the model: one with a line, clicked,
-  is shown in the script's editor. The document's presets are above its parameters: one applied,
-  or the panel's values saved as one.
+  A language server's preview: the model of the document the host says it shows, as the
+  server's viewport socket sends it, with its parameters beside it. The panel's values go to the
+  host (a ViewerHost: the VS Code extension, the desktop app), which gives them to the server;
+  the frame that comes back is of a run with them. Why the run failed and what it warned of are
+  listed under the model: one with a line, clicked, is shown in the script's editor. The
+  document's presets are above its parameters: one applied, or the panel's values saved as one.
 -->
 <script>
   import { onMount } from 'svelte';
   import { errorText } from '@kupcad/protocol';
-  import { ParamsPanel, problemsOf, runStatusOf, ViewerPane } from '@kupcad/ui';
+  import ParamsPanel from './ParamsPanel.svelte';
+  import ViewerPane from './ViewerPane.svelte';
   import { toBase64 } from './base64.js';
-  import { connectViewport } from './socket.js';
+  import { problemsOf, runStatusOf } from './run-status.js';
+  import { connectViewport } from './viewport-socket.js';
 
-  /** @import { ParamValues, Preview, ShownDocument } from '@kupcad/protocol/types' */
-  /** @import { Problem } from '@kupcad/ui' */
+  /** @import { ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
-  /** @import { Host } from './bridge.js' */
+  /** @import { Problem } from './run-status.js' */
 
   /**
    * @typedef {object} Props
-   * @property {Host} host
+   * @property {ViewerHost} host
    * @property {string | null} viewportUrl the language server's socket, once it is up
    * @property {typeof connectViewport} [connect]
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
@@ -134,7 +135,7 @@
   }
 </script>
 
-<main class="kc-app">
+<div class="kc-preview">
   <section class="view">
     <ViewerPane
       model={preview?.model ?? null}
@@ -182,20 +183,13 @@
       />
     </aside>
   {/if}
-</main>
+</div>
 
 <style>
-  :global(html),
-  :global(body),
-  :global(#app) {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    background: var(--kc-bg);
-  }
-  .kc-app {
+  .kc-preview {
     display: flex;
     height: 100%;
+    background: var(--kc-bg);
     font-family: var(--kc-font);
     font-size: var(--kc-font-size);
     color: var(--kc-fg);

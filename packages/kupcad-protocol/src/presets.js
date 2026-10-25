@@ -1,12 +1,12 @@
 // A document's presets: named sets of its parameters' values, kept beside it as JSON a person can
 // read and edit: `bracket.kup`'s in `bracket.presets.json`,
-// `{ "presets": { "Small": { "width": 20 } } }`. Free of the `vscode` import.
+// `{ "presets": { "Small": { "width": 20 } } }`. The file's format alone: a host reads and
+// writes it with its own file system.
 
-import { errorText, isParamValues } from '@kupcad/protocol';
+import { errorText } from './error-text.js';
+import { isParamValues } from './messages.js';
 
-/** @import { ParamValues } from '@kupcad/protocol/types' */
-
-/** @typedef {Record<string, ParamValues>} Presets a document's, by name, in the file's order */
+/** @import { Presets } from './types.js' */
 
 const INDENT = 2;
 
