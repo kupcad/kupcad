@@ -627,31 +627,37 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidOpenParams,
     ) !void {
         logger.debug("Opened {s}", .{params.textDocument.uri});
-        if (self.files.fetchRemove(params.textDocument.uri)) |kv| {
+        const buf = try self.hold(params.textDocument.uri, params.textDocument.text);
+        try self.syncSession(buf.uri, buf.module_path, buf.source);
+        try self.runDiagnostics(arena, self.files.getPtr(params.textDocument.uri).?);
+    }
+
+    /// Holds the document at `uri` with `text`, in place of one held there before. Held, it
+    /// is the files' to free: what fails after (its diagnostics not sent) leaves it there.
+    fn hold(self: *Handler, uri: []const u8, text: []const u8) !*const DocumentBuffer {
+        if (self.files.fetchRemove(uri)) |kv| {
             var old_doc = kv.value;
             old_doc.deinit(self.allocator);
         }
 
-        const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        const uri_dup = try self.allocator.dupe(u8, uri);
         errdefer self.allocator.free(uri_dup);
-        const module_path = try self.modulePath(self.allocator, params.textDocument.uri);
+        const module_path = try self.modulePath(self.allocator, uri);
         errdefer self.allocator.free(module_path);
-        const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
+        const source_dup = try self.allocator.dupe(u8, text);
         errdefer self.allocator.free(source_dup);
 
         var parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
         errdefer if (parsed_doc) |*d| d.deinit();
-        try self.files.put(self.allocator, uri_dup, .{
+        const entry = try self.files.getOrPut(self.allocator, uri_dup);
+        entry.value_ptr.* = .{
             .uri = uri_dup,
             .module_path = module_path,
             .source = source_dup,
             .doc = parsed_doc,
             .run_warnings_memory = .init(self.allocator),
-        });
-
-        try self.syncSession(uri_dup, module_path, source_dup);
-
-        try self.runDiagnostics(arena, self.files.getPtr(uri_dup).?);
+        };
+        return entry.value_ptr;
     }
 
     pub fn @"textDocument/didChange"(

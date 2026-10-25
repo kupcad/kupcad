@@ -27,6 +27,8 @@ const READS_SIZE = "import size from \"./size.json\"\ncube(size[:side])\n";
 const Outbox = struct {
     transport: lsp.Transport = .{ .vtable = &.{ .readJsonMessage = read, .writeJsonMessage = write } },
     messages: std.ArrayList([]u8) = .empty,
+    /// Whether the editor has gone: a write fails as one to a closed pipe does.
+    broken: bool = false,
 
     fn read(_: *lsp.Transport, _: std.Io, _: std.mem.Allocator) lsp.Transport.ReadError![]u8 {
         return error.EndOfStream;
@@ -34,6 +36,7 @@ const Outbox = struct {
 
     fn write(transport: *lsp.Transport, _: std.Io, json: []const u8) lsp.Transport.WriteError!void {
         const self: *Outbox = @alignCast(@fieldParentPtr("transport", transport));
+        if (self.broken) return error.BrokenPipe;
         const copy = testing.allocator.dupe(u8, json) catch @panic("OOM");
         self.messages.append(testing.allocator, copy) catch @panic("OOM");
     }
@@ -187,6 +190,17 @@ test "LSP: closing a document clears its diagnostics and forgets its module" {
     // Opening it again starts over.
     try server.open(URI, "cube(1)\n");
     try testing.expectEqual(@as(usize, 1), server.preview.session.workspace.modules.items.len);
+}
+
+test "LSP: a document opened as the editor goes is held once, and freed once" {
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+
+    server.outbox.broken = true;
+    // Its diagnostics can't be sent: the document is still held, and the server's end frees it
+    try testing.expectError(error.BrokenPipe, server.open(URI, "cube(1)\n"));
+    try testing.expect(server.handler.files.contains(URI));
 }
 
 test "LSP: documentPath reads file URIs and nothing else" {
