@@ -24,13 +24,17 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 />
 ```
 
-* **`ViewerPane`**: @kupcad/viewer with a toolbar (render mode, view, orthographic, floor, a
-  section through the model along an axis, fit, screenshot) and the model's parts, each with its
-  colour and copies; a click on one selects its copies, as a click in the viewer does
-  (`bind:selected`). `bind:viewer` gives the viewer itself, and an `actions` snippet a host's
-  own buttons at the toolbar's end (the VS Code extension's Export). The toolbar shows how the viewer
-  looks (a drawing switches it to the top view, orthographic), and a section stays where it was
-  put through an edit of the script, while the model still reaches it.
+* **`ViewerPane`**: @kupcad/viewer with its view cube in the corner and a column of controls
+  over it under the cube (Fit; Solid, Wire, X-ray; Edges, Grid, Plate, Persp toggles; the Iso,
+  Top, Front and Right views, the one looked from pressed, a turn by hand pressing none), a bar
+  above (a section through the model along an axis, screenshot, and an `actions` snippet: a
+  host's own buttons, the VS Code extension's Export), the model's parts beside it, each with its
+  colour and copies (a click on one selects its copies, as a click in the viewer does:
+  `bind:selected`), and a status line below from `status` (`runStatusOf(header)` makes it of a
+  frame's header: Running…, then Ready or Failed, with the run's time and its warnings).
+  `bind:viewer` gives the viewer itself. The controls show how the viewer looks (a drawing
+  switches it to the top view, orthographic), and a section stays where it was put through an
+  edit of the script, while the model still reaches it.
 * **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
   toggle, a text field; `step:` and `unit:` as given. Each shows the value set in the panel, else

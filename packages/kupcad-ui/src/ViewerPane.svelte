@@ -1,19 +1,24 @@
 <!--
   @component
-  The viewer with its toolbar (render mode, view, projection, floor, a section through the
-  model, fit, screenshot, and a host's own actions, which take the toolbar's look by .kc-control) and the model's parts, a click on one selecting its copies as a click
-  in the viewer does. Themed by the --kc-viewer-* tokens unless given a `theme`.
+  The viewer, its view cube in a corner and the view's controls in a column over it (fit, the
+  render mode, edges, the floor, perspective, the views), a section through the model, a
+  screenshot and a host's own actions (which take the controls' look by .kc-control) in a bar
+  above, the model's parts beside it (a click on one selecting its copies as a click in the
+  viewer does), and how its run went below. Themed by the --kc-viewer-* tokens unless given a
+  `theme`.
 -->
 <script>
   import { onMount } from 'svelte';
-  import { RENDER_MODES, VIEW_NAMES } from '@kupcad/viewer';
+  import { RENDER_MODES } from '@kupcad/viewer';
   import { Viewer } from '@kupcad/viewer/svelte';
+  import { describeRun } from './run-status.js';
   import { watchTokens } from './theme.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
   /** @import { Axis, Bounds, Environment, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
   /** @import { Snippet } from 'svelte' */
+  /** @import { RunStatus } from './run-status.js' */
 
   /**
    * @typedef {object} Props
@@ -24,6 +29,7 @@
    * @property {ViewerOptions} [options] what the viewer is made with
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
    * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export)
+   * @property {RunStatus | null} [status] how the run shown went, or none to say
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
    */
 
@@ -36,13 +42,29 @@
     options = {},
     onscreenshot,
     actions,
+    status = null,
     onerror,
   } = $props();
 
-  /** @type {Record<RenderMode, string>} */
-  const MODE_LABELS = { solid: 'Solid', xray: 'X-ray', wireframe: 'Wireframe' };
-  /** @type {Record<Environment, string>} */
-  const FLOOR_LABELS = { grid: 'Grid', plate: 'Plate', none: 'None' };
+  /**
+   * Each render mode's button: its text, and its name when the text is short of it.
+   * @type {Record<RenderMode, { text: string, name: string }>}
+   */
+  const MODES = {
+    solid: { text: 'Solid', name: 'Solid' },
+    xray: { text: 'X-ray', name: 'X-ray' },
+    wireframe: { text: 'Wire', name: 'Wireframe' },
+  };
+  /**
+   * The views with a button: the cube, and the keys, give the rest.
+   * @type {{ view: View, text: string }[]}
+   */
+  const VIEW_BUTTONS = [
+    { view: 'iso', text: 'Iso' },
+    { view: 'top', text: 'Top' },
+    { view: 'front', text: 'Front' },
+    { view: 'right', text: 'Right' },
+  ];
   /** @type {Axis[]} */
   const AXES = ['x', 'y', 'z'];
   /** A section's slider takes this many steps across the model. */
@@ -52,6 +74,7 @@
   let root;
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
   let renderMode = $state(/** @type {RenderMode} */ ('solid'));
+  let edges = $state(true);
   let orthographic = $state(false);
   /** The named view the viewer looks from: none once it was turned by hand. */
   let view = $state(/** @type {View | null} */ ('iso'));
@@ -69,6 +92,7 @@
     solid && bounds ? { min: bounds.min[along], max: bounds.max[along] } : null,
   );
   const section = $derived(sectioned && span ? { axis, offset } : null);
+  const statusText = $derived(status ? describeRun(status) : '');
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
 
@@ -109,45 +133,18 @@
     const image = await viewer?.screenshot();
     if (image) onscreenshot?.(image);
   }
+
+  /**
+   * The floor `floor` is, or none when it is already: its button toggles it.
+   * @param {Environment} floor
+   */
+  function toggleFloor(floor) {
+    environment = environment === floor ? 'none' : floor;
+  }
 </script>
 
 <div class="kc-viewer-pane" bind:this={root}>
   <div class="toolbar">
-    <div class="segments" role="group" aria-label="Render mode">
-      {#each RENDER_MODES as mode (mode)}
-        <button
-          type="button"
-          class="kc-control"
-          aria-pressed={renderMode === mode}
-          onclick={() => (renderMode = mode)}
-        >
-          {MODE_LABELS[mode]}
-        </button>
-      {/each}
-    </div>
-    <label>
-      View
-      <select
-        class="kc-control"
-        bind:value={view}
-        onchange={() => {
-          if (view) viewer?.setCamera({ view });
-        }}
-      >
-        {#each VIEW_NAMES as view (view)}
-          <option value={view}>{view}</option>
-        {/each}
-      </select>
-    </label>
-    <label><input type="checkbox" bind:checked={orthographic} /> Orthographic</label>
-    <label>
-      Floor
-      <select class="kc-control" bind:value={environment}>
-        {#each Object.entries(FLOOR_LABELS) as [value, label] (value)}
-          <option {value}>{label}</option>
-        {/each}
-      </select>
-    </label>
     <label><input type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label>
     {#if sectioned && span}
       <select
@@ -169,7 +166,7 @@
         bind:value={offset}
       />
     {/if}
-    <button type="button" class="kc-control" onclick={() => viewer?.fit()}>Fit</button>
+    <span class="spacer"></span>
     {#if onscreenshot}
       <button type="button" class="kc-control" onclick={screenshot}>Screenshot</button>
     {/if}
@@ -182,6 +179,7 @@
         theme={theme ?? tokenTheme}
         {environment}
         {renderMode}
+        {edges}
         projection={orthographic ? 'orthographic' : 'perspective'}
         {section}
         bind:selected
@@ -190,6 +188,69 @@
         onmodel={modelShown}
         {onerror}
       />
+      <div class="controls" role="toolbar" aria-label="View" aria-orientation="vertical">
+        <button type="button" class="kc-control" onclick={() => viewer?.fit()}>Fit</button>
+        <div class="group" role="group" aria-label="Render mode">
+          {#each RENDER_MODES as mode (mode)}
+            <button
+              type="button"
+              class="kc-control"
+              aria-label={MODES[mode].name}
+              aria-pressed={renderMode === mode}
+              onclick={() => (renderMode = mode)}
+            >
+              {MODES[mode].text}
+            </button>
+          {/each}
+        </div>
+        <div class="group">
+          <button
+            type="button"
+            class="kc-control"
+            aria-pressed={edges}
+            onclick={() => (edges = !edges)}
+          >
+            Edges
+          </button>
+          <button
+            type="button"
+            class="kc-control"
+            aria-pressed={environment === 'grid'}
+            onclick={() => toggleFloor('grid')}
+          >
+            Grid
+          </button>
+          <button
+            type="button"
+            class="kc-control"
+            aria-pressed={environment === 'plate'}
+            onclick={() => toggleFloor('plate')}
+          >
+            Plate
+          </button>
+          <button
+            type="button"
+            class="kc-control"
+            aria-label="Perspective"
+            aria-pressed={!orthographic}
+            onclick={() => (orthographic = !orthographic)}
+          >
+            Persp
+          </button>
+        </div>
+        <div class="group" role="group" aria-label="Views">
+          {#each VIEW_BUTTONS as button (button.view)}
+            <button
+              type="button"
+              class="kc-control"
+              aria-pressed={view === button.view}
+              onclick={() => viewer?.setCamera({ view: button.view })}
+            >
+              {button.text}
+            </button>
+          {/each}
+        </div>
+      </div>
     </div>
     {#if parts.length > 0}
       <ul class="parts" aria-label="Parts">
@@ -209,6 +270,12 @@
       </ul>
     {/if}
   </div>
+  {#if status}
+    <div class="status" role="status">
+      <span class="dot {status.state}"></span>
+      {statusText}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -230,17 +297,8 @@
     padding: 4px var(--kc-gap);
     border-bottom: 1px solid var(--kc-border);
   }
-  .segments {
-    display: flex;
-  }
-  .segments button {
-    border-radius: 0;
-  }
-  .segments button:first-child {
-    border-radius: var(--kc-radius) 0 0 var(--kc-radius);
-  }
-  .segments button:last-child {
-    border-radius: 0 var(--kc-radius) var(--kc-radius) 0;
+  .spacer {
+    flex: 1;
   }
   label {
     display: flex;
@@ -253,8 +311,49 @@
     min-height: 0;
   }
   .canvas {
+    position: relative;
     flex: 1;
     min-width: 0;
+  }
+  /* Under the view cube (8px from the top, 96px high) */
+  .controls {
+    position: absolute;
+    top: 112px;
+    right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 64px;
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .controls button {
+    width: 100%;
+    padding: 2px 4px;
+    font-size: 0.92em;
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px var(--kc-gap);
+    border-top: 1px solid var(--kc-border);
+    color: var(--kc-muted);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--kc-muted);
+  }
+  .dot.ready {
+    background: var(--kc-accent);
+  }
+  .dot.failed {
+    background: var(--kc-error);
   }
   .parts {
     list-style: none;

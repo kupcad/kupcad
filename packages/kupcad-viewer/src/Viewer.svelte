@@ -19,6 +19,7 @@
    * @property {Theme} [theme]
    * @property {Environment} [environment]
    * @property {RenderMode} [renderMode]
+   * @property {boolean} [edges] the shapes' edges are drawn (by default; a wireframe's always are)
    * @property {Projection} [projection]
    * @property {Section | null} [section]
    * @property {string | null} [selected] the part selected; bindable
@@ -38,6 +39,7 @@
     theme,
     environment = 'grid',
     renderMode = 'solid',
+    edges = true,
     projection = 'perspective',
     section = null,
     selected = $bindable(null),
@@ -111,6 +113,9 @@
   });
   $effect(() => {
     viewer?.setRenderMode(renderMode);
+  });
+  $effect(() => {
+    viewer?.setEdges(edges);
   });
   $effect(() => {
     viewer?.setCamera({ projection });

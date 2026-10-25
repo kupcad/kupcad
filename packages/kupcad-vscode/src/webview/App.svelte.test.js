@@ -68,7 +68,7 @@ function page({ viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001
 }
 
 /** The status line's text, if one shows. */
-const status = () => document.querySelector('.status')?.textContent ?? null;
+const status = () => document.querySelector('.notice')?.textContent ?? null;
 
 describe('App', () => {
   it('says what it waits for: the server, its socket, a script, its model', async () => {
@@ -105,9 +105,12 @@ describe('App', () => {
     viewer.socket.on.frame(await previewOf('cube(1)', LID.uri));
     await tick();
     expect(status()).toBe('Running part.kup…');
+    // The pane's status line: running until its frame came
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Running…');
     viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
     await tick();
     expect(status()).toBeNull();
+    expect(screen.getByRole('status').textContent?.trim()).toMatch(/^Ready · \d+ ms$/);
     expect(screen.getByLabelText('Parameters')).toBeTruthy();
     expect(/** @type {HTMLInputElement} */ (screen.getByLabelText('width')).value).toBe('20');
   });

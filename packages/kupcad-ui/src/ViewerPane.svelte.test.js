@@ -61,6 +61,12 @@ async function backgroundDrawn(drawn) {
   return `#${scene.background.getHexString()}`;
 }
 
+/**
+ * Whether the button named `name` is pressed, as its aria-pressed says.
+ * @param {string} name
+ */
+const pressed = (name) => screen.getByRole('button', { name }).getAttribute('aria-pressed');
+
 afterEach(() => document.documentElement.removeAttribute('style'));
 
 describe('ViewerPane', () => {
@@ -77,33 +83,49 @@ describe('ViewerPane', () => {
     expect(viewer.selected).toBeNull();
   });
 
-  it("sets the viewer's render mode, projection, floor and view from its toolbar", async () => {
+  it("sets the viewer's render mode, edges, floor, perspective and view from the controls over it", async () => {
     const { viewer } = await pane();
-    // Drawn as .kc-control, the look a host's own actions in it take
-    for (const control of [
-      screen.getByRole('button', { name: 'Fit' }),
-      screen.getByRole('combobox', { name: 'View' }),
-    ]) {
-      expect(control.classList.contains('kc-control')).toBe(true);
-    }
+    expect(screen.getByRole('toolbar', { name: 'View' })).toBeTruthy();
+    // Drawn as .kc-control, the look a host's own actions take
+    expect(screen.getByRole('button', { name: 'Fit' }).classList.contains('kc-control')).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
     expect(viewer.renderMode).toBe('xray');
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Orthographic' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Wireframe' }));
+    expect(viewer.renderMode).toBe('wireframe');
+    expect([pressed('Wireframe'), pressed('X-ray')]).toEqual(['true', 'false']);
+    await fireEvent.click(screen.getByRole('button', { name: 'Edges' }));
+    expect(viewer.edges).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'Perspective' }));
     expect(viewer.projection).toBe('orthographic');
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Floor' }), {
-      target: { value: 'plate' },
-    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Plate' }));
     expect(viewer.environment).toBe('plate');
-    await fireEvent.change(screen.getByRole('combobox', { name: 'View' }), {
-      target: { value: 'front' },
-    });
+    // Pressed again, there is no floor
+    await fireEvent.click(screen.getByRole('button', { name: 'Plate' }));
+    expect(viewer.environment).toBe('none');
+    await fireEvent.click(screen.getByRole('button', { name: 'Front' }));
     expect(viewer.view).toBe('front');
-    // A key the viewer takes (Orca Slicer's Ctrl+1, the top) shows in the toolbar
+    expect(pressed('Front')).toBe('true');
+    // A key the viewer takes (Orca Slicer's Ctrl+1, the top) shows in the controls
     const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
     await fireEvent.keyDown(canvas, { key: '1', ctrlKey: true });
-    expect(
-      /** @type {HTMLSelectElement} */ (screen.getByRole('combobox', { name: 'View' })).value,
-    ).toBe('top');
+    expect([pressed('Top'), pressed('Front')]).toEqual(['true', 'false']);
+  });
+
+  it('says how the run went: its state, its time and its warnings', async () => {
+    const { rerender } = render(ViewerPane, {
+      props: {
+        model: await modelOf(PARTS),
+        options: { renderer: stubRenderer().renderer },
+        status: { state: 'running' },
+      },
+    });
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Running…');
+    await rerender({ status: { state: 'ready', runMs: 183.6, warnings: 2 } });
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Ready · 184 ms · 2 warnings');
+    await rerender({ status: { state: 'failed', runMs: 12, warnings: 1 } });
+    expect(screen.getByRole('status').textContent?.trim()).toBe('Failed · 12 ms · 1 warning');
+    await rerender({ status: null });
+    expect(screen.queryByRole('status')).toBeNull();
   });
 
   it('cuts a section across the middle of the model, along the axis chosen', async () => {
@@ -129,13 +151,7 @@ describe('ViewerPane', () => {
   it('says how the viewer looks at a drawing: from the top, orthographic', async () => {
     const { viewer } = await pane('square(10)');
     expect(viewer.projection).toBe('orthographic');
-    expect(
-      /** @type {HTMLInputElement} */ (screen.getByRole('checkbox', { name: 'Orthographic' }))
-        .checked,
-    ).toBe(true);
-    expect(
-      /** @type {HTMLSelectElement} */ (screen.getByRole('combobox', { name: 'View' })).value,
-    ).toBe('top');
+    expect([pressed('Perspective'), pressed('Top')]).toEqual(['false', 'true']);
   });
 
   it('offers no section through a drawing, which the viewer cuts not', async () => {

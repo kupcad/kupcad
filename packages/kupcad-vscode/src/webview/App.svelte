@@ -9,7 +9,7 @@
 -->
 <script>
   import { onMount } from 'svelte';
-  import { ParamsPanel, ViewerPane } from '@kupcad/ui';
+  import { ParamsPanel, runStatusOf, ViewerPane } from '@kupcad/ui';
   import { errorText } from '../errors.js';
   import { toBase64 } from './base64.js';
   import { connectViewport } from './socket.js';
@@ -40,6 +40,8 @@
   const presetsOf = new Map();
 
   const header = $derived(preview?.header ?? null);
+  /** How the shown document's run went, for the pane's status line. */
+  const run = $derived(shown ? runStatusOf(header) : null);
   const parameters = $derived(header?.params.schema.parameters ?? []);
   /** The warnings with no line: those with one are diagnostics, in the Problems view. */
   const unplaced = $derived(header?.warnings.filter((w) => w.line === null) ?? []);
@@ -127,6 +129,7 @@
     <ViewerPane
       model={preview?.model ?? null}
       options={viewerOptions}
+      status={run}
       onscreenshot={screenshot}
       onerror={failed}
     >
@@ -137,7 +140,7 @@
       {/snippet}
     </ViewerPane>
     {#if status}
-      <p class="status">{status}</p>
+      <p class="notice">{status}</p>
     {/if}
     {#if header?.error || unplaced.length > 0}
       <div class="problems" role="alert">
@@ -218,7 +221,7 @@
     flex: 1;
     min-width: 0;
   }
-  .status {
+  .notice {
     position: absolute;
     inset: 50% 0 auto;
     margin: 0;
