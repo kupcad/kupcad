@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const threemf_read = @import("threemf_read.zig");
 const zip = @import("../zip.zig");
+const support = @import("../../test_support.zig");
 
 /// A tetrahedron's mesh of corners (0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1), its faces out.
 const TETRA = "<mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/><vertex x=\"0\" y=\"0\" z=\"1\"/></vertices>" ++
@@ -71,6 +72,23 @@ test "3MF read: components nest, their transforms compose, and a mirror turns th
         try testing.expectEqual(@as(f64, 5), mesh.points[0][2]);
     }
     try testing.expectEqual(@as(f64, -2), m.meshes[0].points[1][0]);
+}
+
+test "3MF read: components that place nothing aren't walked, however many and deep" {
+    // An object of nothing, and four layers of 300 components each of the layer below: 300^4
+    // ways down to nothing, beside the tetrahedron
+    const layer = struct {
+        fn of(comptime id: []const u8, comptime below: []const u8) []const u8 {
+            return "<object id=\"" ++ id ++ "\"><components>" ++ support.repeat("<component objectid=\"" ++ below ++ "\"/>", 300) ++ "</components></object>";
+        }
+    };
+    const resources = comptime "<object id=\"1\">" ++ TETRA ++ "</object><object id=\"10\"><components></components></object>" ++
+        layer.of("11", "10") ++ layer.of("12", "11") ++ layer.of("13", "12") ++ layer.of("14", "13");
+    var package: []u8 = undefined;
+    var m = try read(&.{.{ .name = "3D/3dmodel.model", .data = model("millimeter", resources, "<item objectid=\"1\"/><item objectid=\"14\"/>") }}, &package);
+    defer testing.allocator.free(package);
+    defer m.deinit();
+    try testing.expectEqual(@as(usize, 1), m.meshes.len);
 }
 
 test "3MF read: the model the relationships name, and an object in another part of the package" {

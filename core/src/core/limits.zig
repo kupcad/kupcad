@@ -91,6 +91,10 @@ pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 // could name (an object placed is welded afresh each time, vertex by vertex).
 pub const MAX_PLACED_TRIANGLES: usize = 20_000_000;
 pub const MAX_PLACED_VERTICES: usize = 3 * MAX_PLACED_TRIANGLES;
+// Most meshes a 3MF's build places: each is welded on its own and made a solid, unioned with
+// the rest, so a small file placing a small object millions of times would ask for more than
+// memory holds, though its triangles stay under their cap.
+pub const MAX_PLACED_MESHES: usize = 100_000;
 // Largest mesh file `import_stl`, `import_obj` and `import_3mf` read: five million
 // triangles as binary STL (50 bytes each), which the kernel takes minutes over already.
 pub const MAX_MESH_BYTES: usize = 256 * 1024 * 1024; // 256 MiB

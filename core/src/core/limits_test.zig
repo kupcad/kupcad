@@ -51,6 +51,7 @@ const CASES = .{
     .MAX_PACKAGE_PART_BYTES = packagePartBytes,
     .MAX_PLACED_TRIANGLES = placedTriangles,
     .MAX_PLACED_VERTICES = placedVertices,
+    .MAX_PLACED_MESHES = placedMeshes,
     .MAX_MESH_BYTES = meshBytes,
     .MAX_READ_BYTES = readBytes,
     .MAX_FILES_READ = filesRead,
@@ -226,16 +227,17 @@ fn packagePartBytes() !void {
 }
 
 fn placedTriangles() !void {
-    // A triangle, an object of 5000 of it, and 5000 of that: 25 million, counted before
-    // any is placed
+    // A mesh of a thousand triangles, an object of 5000 of it, and 5 of that: 25 million in
+    // 25 000 meshes, counted before any is placed
     var model: std.Io.Writer.Allocating = .init(testing.allocator);
     defer model.deinit();
     const w = &model.writer;
-    try w.writeAll("<model><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/></vertices>" ++
-        "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/></triangles></mesh></object>");
-    for ([_]u8{ 2, 3 }) |id| {
+    try w.writeAll("<model><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/></vertices><triangles>");
+    for (0..1000) |_| try w.writeAll("<triangle v1=\"0\" v2=\"1\" v3=\"2\"/>");
+    try w.writeAll("</triangles></mesh></object>");
+    for ([_]u8{ 2, 3 }, [_]usize{ 5000, 5 }) |id, count| {
         try w.print("<object id=\"{d}\"><components>", .{id});
-        for (0..5000) |_| try w.print("<component objectid=\"{d}\"/>", .{id - 1});
+        for (0..count) |_| try w.print("<component objectid=\"{d}\"/>", .{id - 1});
         try w.writeAll("</components></object>");
     }
     try w.writeAll("</resources><build><item objectid=\"3\"/></build></model>");
@@ -263,6 +265,26 @@ fn placedVertices() !void {
     const package = try zip.write(testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = model.written() }});
     defer testing.allocator.free(package);
     const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} vertices; a script reads at most that", .{limits.MAX_PLACED_VERTICES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
+}
+
+fn placedMeshes() !void {
+    // A tetrahedron, an object of 16 of it, and 16 of that, five deep: a million meshes of
+    // four million triangles, under their cap
+    var model: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer model.deinit();
+    const w = &model.writer;
+    try w.writeAll("<model><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/><vertex x=\"0\" y=\"0\" z=\"1\"/></vertices>");
+    try w.writeAll("<triangles><triangle v1=\"0\" v2=\"2\" v3=\"1\"/><triangle v1=\"0\" v2=\"1\" v3=\"3\"/><triangle v1=\"0\" v2=\"3\" v3=\"2\"/><triangle v1=\"1\" v2=\"2\" v3=\"3\"/></triangles></mesh></object>");
+    for ([_]u8{ 2, 3, 4, 5, 6 }) |id| {
+        try w.print("<object id=\"{d}\"><components>", .{id});
+        for (0..16) |_| try w.print("<component objectid=\"{d}\"/>", .{id - 1});
+        try w.writeAll("</components></object>");
+    }
+    try w.writeAll("</resources><build><item objectid=\"6\"/></build></model>");
+    const package = try zip.write(testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = model.written() }});
+    defer testing.allocator.free(package);
+    const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} meshes; a script reads at most that", .{limits.MAX_PLACED_MESHES});
     try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
 }
 

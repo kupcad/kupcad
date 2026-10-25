@@ -59,6 +59,7 @@ pub fn read(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnostic) E
     var placed: Placed = .{};
     for (root.items) |item| {
         placed = placed.plus(try package.countOf(try package.objectOf(root, item), 0));
+        if (placed.meshes > limits.MAX_PLACED_MESHES) return diag.fail("its build would place more than {d} meshes; a script reads at most that", .{limits.MAX_PLACED_MESHES});
         if (placed.triangles > limits.MAX_PLACED_TRIANGLES) return diag.fail("its build would place more than {d} triangles; a script reads at most that", .{limits.MAX_PLACED_TRIANGLES});
         if (placed.vertices > limits.MAX_PLACED_VERTICES) return diag.fail("its build would place more than {d} vertices; a script reads at most that", .{limits.MAX_PLACED_VERTICES});
     }
@@ -123,15 +124,17 @@ const Object = struct {
     placed: ?Placed = null,
 };
 
-/// What a build places: the triangles, and the vertices (each placement welds an object's
-/// afresh, so a vertex is placed as many times as its object is).
+/// What a build places: the meshes, their triangles, and their vertices (each placement
+/// welds an object's afresh, so a vertex is placed as many times as its object is).
 const Placed = struct {
+    meshes: u64 = 0,
     triangles: u64 = 0,
     vertices: u64 = 0,
 
     /// This and `other`, each sum held just past its limit: past it is past it.
     fn plus(self: Placed, other: Placed) Placed {
         return .{
+            .meshes = @min(self.meshes + other.meshes, limits.MAX_PLACED_MESHES + 1),
             .triangles = @min(self.triangles + other.triangles, limits.MAX_PLACED_TRIANGLES + 1),
             .vertices = @min(self.vertices + other.vertices, limits.MAX_PLACED_VERTICES + 1),
         };
@@ -244,7 +247,7 @@ const Package = struct {
     fn countOf(self: *Package, object: *Object, depth: usize) Error!Placed {
         if (object.placed) |known| return known;
         if (depth > MAX_COMPONENT_NESTING) return self.diag.fail("{s}: its objects hold objects more than {d} deep (does one hold itself?)", .{ object.part.path, MAX_COMPONENT_NESTING });
-        var count: Placed = if (object.read) .{ .triangles = object.triangles.items.len, .vertices = object.vertices.items.len } else .{};
+        var count: Placed = if (object.read and object.triangles.items.len > 0) .{ .meshes = 1, .triangles = object.triangles.items.len, .vertices = object.vertices.items.len } else .{};
         for (object.components.items) |component| {
             count = count.plus(try self.countOf(try self.objectOf(object.part, component), depth + 1));
         }
@@ -269,7 +272,11 @@ const Package = struct {
             try meshes.append(self.arena, try mesh.finish(self.arena));
         }
         for (object.components.items) |component| {
-            try self.place(meshes, try self.objectOf(object.part, component), component.transform.then(transform));
+            const placed = try self.objectOf(object.part, component);
+            // One that places nothing (countOf has counted them all) isn't walked: empty objects'
+            // components, layer upon layer, are ways down to nothing as many as they multiply to
+            if (placed.placed.?.triangles == 0) continue;
+            try self.place(meshes, placed, component.transform.then(transform));
         }
     }
 
