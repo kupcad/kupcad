@@ -476,6 +476,33 @@ test "GC: an allocation the memory limit refuses raises an error the script can 
     try support.expectValue(.{ .str = try std.mem.print(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}) }, vm.globals.get("r").?);
 }
 
+test "GC: the geometry graph a run grows counts against the memory limit, the run before's not" {
+    // Its tables weren't counted: a loop of transforms grew them without bound while the
+    // heap held a Solid or two
+    const support = @import("../test_support.zig");
+    var vm = try support.initVm();
+    defer vm.deinit();
+    const limit = vm.gc.bytes_allocated + 1024 * 1024;
+    vm.setMemoryLimit(limit);
+    const grows =
+        \\r = begin
+        \\  s = cube(1)
+        \\  100000.times { |i| s = s.translate(1, 0, 0) }
+        \\  "no limit"
+        \\rescue OutOfMemoryError => e
+        \\  e.message
+        \\end
+    ;
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, grows));
+    var buf: [96]u8 = undefined;
+    // And the method it was in (translate)
+    try std.testing.expectStringStartsWith(vm.globals.get("r").?.asString().chars, try std.mem.print(&buf, "the script exceeded its memory limit of {d} bytes", .{limit}));
+    try std.testing.expect(vm.dag_builder.tableBytes() > 512 * 1024);
+    // The next run starts from the graph as it is: what it grows is its own
+    try std.testing.expectEqual(.ok, try support.runOn(&vm, "r = cube(2).translate(1, 0, 0).volume"));
+    try support.expectValue(.{ .num = 8 }, vm.globals.get("r").?);
+}
+
 test "GC: a rescued allocation failure goes on in the handler, not out of the run" {
     // An instruction whose own allocation failed (spreading an array here) returned the
     // rescue's result from the run itself: a rescued OutOfMemoryError ended the script as if

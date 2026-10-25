@@ -19,8 +19,8 @@ pub const MAX_AST_DEPTH: usize = 1500;
 /// the editor's language server, which answers nothing else while a script runs. A script
 /// that loops forever stops with an error there instead of hanging them.
 pub const INTERACTIVE_INSTRUCTION_LIMIT: usize = 100_000_000;
-/// Most script heap (strings, arrays, maps, instances: what the GC tracks, not the kernel's
-/// meshes) one run may hold where a server runs scripts for others (the language server,
+/// Most script heap (strings, arrays, maps, instances: what the GC tracks, and the geometry
+/// graph's tables the run grows; not the kernel's meshes) one run may hold where a server runs scripts for others (the language server,
 /// `kupcad watch`): a loop that fills an array forever stops with an error instead of
 /// taking the machine down. A project sets its own with `vm_memory_limit` in .kupcad.json.
 pub const INTERACTIVE_MEMORY_LIMIT: usize = 1024 * 1024 * 1024;

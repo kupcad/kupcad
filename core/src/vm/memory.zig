@@ -71,6 +71,10 @@ pub const GC = struct {
 
     // Hard Sandbox Memory Limit
     max_memory_limit: ?usize,
+    /// The geometry graph's table bytes when the last script's run ended (VM.interpret): what
+    /// a script grows of them counts against the limit (graphBytes), what an earlier one
+    /// left in a long-lived VM (until a compaction) is that one's.
+    graph_baseline: usize = 0,
     /// An OutOfMemoryError is being raised: it may use OUT_OF_MEMORY_RESERVE past the limit.
     raising_out_of_memory: bool = false,
 
@@ -240,11 +244,20 @@ pub const GC = struct {
         self.next_gc_threshold = self.bytes_allocated * HEAP_GROW_FACTOR;
     }
 
-    /// The most the heap may hold now: the memory limit, and the reserve on top while an
-    /// OutOfMemoryError is raised; null without a limit.
+    /// The most the heap may hold now: the memory limit (and the reserve on top while an
+    /// OutOfMemoryError is raised), less the geometry graph's tables this run has grown,
+    /// which count against it too though no collection frees them; null without a limit.
     fn memoryCap(self: *const GC) ?usize {
         const limit = self.max_memory_limit orelse return null;
-        return if (self.raising_out_of_memory) limit +| OUT_OF_MEMORY_RESERVE else limit;
+        const cap = if (self.raising_out_of_memory) limit +| OUT_OF_MEMORY_RESERVE else limit;
+        return cap -| self.graphBytes();
+    }
+
+    /// The geometry graph's table bytes the current script has grown. A GC lives in its VM,
+    /// whose graph builder holds them.
+    fn graphBytes(self: *const GC) usize {
+        const vm: *const VM = @alignCast(@fieldParentPtr("gc", self));
+        return vm.dag_builder.tableBytes() -| self.graph_baseline;
     }
 
     /// The heap size past which the next allocation collects first: the growth threshold, or

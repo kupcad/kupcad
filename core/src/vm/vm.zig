@@ -517,6 +517,9 @@ pub const VM = struct {
         func.chunk = null;
         self.clearUnwindState();
         self.tidyGeometryGraph();
+        // What the next script grows of the geometry graph counts against its memory limit,
+        // what this one left (until a compaction) doesn't
+        self.gc.graph_baseline = self.dag_builder.tableBytes();
         return res;
     }
 
