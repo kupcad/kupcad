@@ -12,11 +12,16 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
 * **The viewer** (`KupCAD: Open Viewer`, or the button in a `.kup` editor's title bar): the model
   of the script the editor shows, beside it, following the editor from script to script. It
   comes straight from the language server's local socket, a new one each time the script, or a
-  module it imports, changes. Solid, x-ray and wireframe, the standard views, a section through
-  the model, the parts with their colours and copies (a click selects a part), and a screenshot.
-  The script's parameters are a panel beside it: a value set there runs the script again with it,
-  checked against the parameter's range first; one the run refuses is marked. Why a run failed,
-  and what it warned of with no line to show it on, are shown over the model.
+  module it imports, changes. Its controls are Orca Slicer's: the left button turns, the middle
+  and right ones pan, the wheel zooms (with Shift it pans, with Option it moves the section, with
+  Cmd it turns the view), and the keys `0`–`6`, `F`, `I` and `O`. Solid, x-ray and wireframe,
+  edges, the axes through the origin, a grid or the build plate, the standard views and a view
+  cube, a section through the model, and the parts with their colours and copies (a click
+  selects a part) in a panel beside it, which the Panel button hides; a screenshot. The script's
+  parameters are a panel beside it: a value set there runs the script again with it, checked
+  against the parameter's range first; one the run refuses is marked. Under the model, how the
+  run went, why it failed and what it warned of: one with a line, clicked, is shown in the
+  script's editor.
 * **Presets:** named sets of a script's values, kept beside it in `<name>.presets.json`
   (`bracket.kup`'s in `bracket.presets.json`, `{ "presets": { "Small": { "width": 20 } } }`, to
   read, edit and commit with the script). The viewer lists them above the parameters: one chosen

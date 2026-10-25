@@ -6,3 +6,6 @@ export { default as ViewerPane } from './ViewerPane.svelte';
 export { controlOf, groupsOf, isOverridden, shownValue, validate } from './params.js';
 export { describeRun, problemsOf, runStatusOf } from './run-status.js';
 export { themeFromTokens, watchTokens } from './theme.js';
+
+/** @typedef {import('./run-status.js').Problem} Problem */
+/** @typedef {import('./run-status.js').RunStatus} RunStatus */

@@ -359,7 +359,7 @@ src/
     viewer-panel.js       the webview panel: it follows the editor, bridges the page's messages
     webview-html.js       the page's HTML and its CSP
     commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf), over export.js
-    scripts.js            a script: its language, a file's (no untitled one), its names
+    scripts.js            a script: its language, a file's (no untitled one), its names, a place in it as VS Code counts
     values.js             the values each script was given: the server runs it, an export builds it, with them
     presets.js            parameter presets as <script>.presets.json beside the file
     presets-file.js       that file read, a preset put in it, and watched (a RelativePattern)

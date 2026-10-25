@@ -67,6 +67,9 @@ function page({ viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001
   };
 }
 
+/** The list of the run's problems under the model. */
+const problems = () => screen.getByRole('list', { name: 'Problems' });
+
 /** The status line's text, if one shows. */
 const status = () => document.querySelector('.notice')?.textContent ?? null;
 
@@ -153,21 +156,25 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Revert width' })).toBeTruthy();
   });
 
-  it('shows why the run failed, and what it warned of without a line', async () => {
+  it('lists why the run failed, and what it warned of; one with a line, clicked, is revealed', async () => {
     const viewer = page();
     await viewer.tell({ type: 'document', document: PART });
     const failed = await previewOf('x = 1\nraise "too thin"\n', PART.uri);
     viewer.socket.on.frame(failed);
     await tick();
-    expect(screen.getByRole('alert').textContent).toMatch(/too thin.*\(line 2\)/);
+    expect(problems().textContent).toMatch(/Error\s+RuntimeError: too thin\s+line 2/);
+    await fireEvent.click(/** @type {HTMLElement} */ (problems().querySelector('button')));
+    expect(viewer.posted.at(-1)).toEqual({ type: 'reveal', uri: PART.uri, line: 2, column: 1 });
 
+    // A warning while the model was meshed has no line: nothing to reveal
     const empty = await previewOf(
       'cube(1) - cube(2, center: true).translate(x: 0.5, y: 0.5, z: 0.5)',
       PART.uri,
     );
     viewer.socket.on.frame(empty);
     await tick();
-    expect(screen.getByRole('alert').textContent).toMatch(/empty/);
+    expect(problems().textContent).toMatch(/Warning\s+.*empty/);
+    expect(problems().querySelector('button')).toBeNull();
   });
 
   it('gives the host a screenshot as base64', async () => {

@@ -3,18 +3,19 @@
   The viewer's page: the model of the document the extension says it shows, as the language
   server's socket sends it, with its parameters beside it. The panel's values go to the
   extension, which gives them to the server; the frame that comes back is of a run with them.
-  What the run warned of without a line (the rest are in the Problems view), and why it failed,
-  are shown over the model. The document's presets are above its parameters: one applied, or the
-  panel's values saved as one.
+  Why the run failed and what it warned of are listed under the model: one with a line, clicked,
+  is shown in the script's editor. The document's presets are above its parameters: one applied,
+  or the panel's values saved as one.
 -->
 <script>
   import { onMount } from 'svelte';
-  import { ParamsPanel, runStatusOf, ViewerPane } from '@kupcad/ui';
+  import { ParamsPanel, problemsOf, runStatusOf, ViewerPane } from '@kupcad/ui';
   import { errorText } from '../errors.js';
   import { toBase64 } from './base64.js';
   import { connectViewport } from './socket.js';
 
   /** @import { ParamValues, Preview, ShownDocument } from '@kupcad/protocol/types' */
+  /** @import { Problem } from '@kupcad/ui' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Host } from './bridge.js' */
 
@@ -42,9 +43,8 @@
   const header = $derived(preview?.header ?? null);
   /** How the shown document's run went, for the pane's status line. */
   const run = $derived(shown ? runStatusOf(header) : null);
+  const problems = $derived(problemsOf(header));
   const parameters = $derived(header?.params.schema.parameters ?? []);
-  /** The warnings with no line: those with one are diagnostics, in the Problems view. */
-  const unplaced = $derived(header?.warnings.filter((w) => w.line === null) ?? []);
   const status = $derived(statusOf());
 
   function statusOf() {
@@ -113,6 +113,15 @@
     if (shown) host.post({ type: 'export', uri: shown.uri });
   }
 
+  /**
+   * Asks the host to show the script where `problem` was, in its editor.
+   * @param {Problem} problem
+   */
+  function revealProblem(problem) {
+    if (!shown || problem.line === null) return;
+    host.post({ type: 'reveal', uri: shown.uri, line: problem.line, column: problem.column ?? 1 });
+  }
+
   /** @param {Blob} image */
   async function screenshot(image) {
     host.post({ type: 'screenshot', png: toBase64(new Uint8Array(await image.arrayBuffer())) });
@@ -130,6 +139,8 @@
       model={preview?.model ?? null}
       options={viewerOptions}
       status={run}
+      {problems}
+      onproblem={revealProblem}
       onscreenshot={screenshot}
       onerror={failed}
     >
@@ -141,19 +152,6 @@
     </ViewerPane>
     {#if status}
       <p class="notice">{status}</p>
-    {/if}
-    {#if header?.error || unplaced.length > 0}
-      <div class="problems" role="alert">
-        {#if header?.error}
-          <p class="error">
-            {header.error.message}{#if header.error.line !== null}
-              (line {header.error.line}){/if}
-          </p>
-        {/if}
-        {#each unplaced as warning, index (index)}
-          <p class="warning">{warning.message}</p>
-        {/each}
-      </div>
     {/if}
   </section>
   {#if header && parameters.length > 0}
@@ -228,24 +226,5 @@
     text-align: center;
     color: var(--kc-muted);
     pointer-events: none;
-  }
-  .problems {
-    position: absolute;
-    left: var(--kc-gap);
-    right: var(--kc-gap);
-    bottom: var(--kc-gap);
-    padding: 4px var(--kc-gap);
-    border: 1px solid var(--kc-border);
-    border-radius: var(--kc-radius);
-    background: var(--kc-bg);
-  }
-  .problems p {
-    margin: 2px 0;
-  }
-  .error {
-    color: var(--kc-error);
-  }
-  .warning {
-    color: var(--kc-muted);
   }
 </style>
