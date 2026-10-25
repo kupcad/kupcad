@@ -15,6 +15,8 @@ export interface Theme {
   /** Where a section cuts a solid. */
   cap: string;
   ghost: string;
+  /** A solid the script highlights (`.highlight`): seen through whatever hides it too. */
+  highlight: string;
 }
 
 export type View = 'iso' | 'top' | 'bottom' | 'front' | 'back' | 'right' | 'left';
@@ -77,6 +79,11 @@ export interface Shape {
   /** The part it is a copy of (a drawing's shape: its name); null for a ghost or a nameless one. */
   part: string | null;
   ghost: boolean;
+  /**
+   * A highlighted solid's copy, drawn see-through where something hides the solid; null for
+   * any other shape.
+   */
+  seenThrough: Mesh | null;
   /** Its own colour and opacity, which the render mode and the selection change from. */
   color: Color;
   opacity: number;

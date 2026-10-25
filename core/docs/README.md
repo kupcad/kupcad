@@ -487,7 +487,7 @@ KupCAD also provides non-destructive inline modifiers to alter visibility in the
 ```ruby
 # Debugging Modifiers pushed to the VM display list
 env = cube(100).ghost           # Shows a semi-transparent copy; env is the cube itself
-bolt = cylinder(r: 3).highlight # Forces high-contrast visibility
+bolt = cylinder(r: 3).highlight # Shown in the viewer's highlight colour, seen through what hides it
 
 # Material metadata assigned to the geometry handle (propagates to GLB exports);
 # density (g/cm³) is for the parts list's mass, and shows nowhere

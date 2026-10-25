@@ -28,7 +28,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { applyRenderMode, applySelection } from './appearance.js';
+import { applyRenderMode, applySelection, applyTheme } from './appearance.js';
 import {
   boundsOf,
   orbited,
@@ -439,12 +439,7 @@ export class Viewer extends EventTarget {
     this.#scene.background = new Color(theme.background);
     this.#selectionEdges.color.set(theme.selection);
     this.#sectionView.setCapColor(theme.cap);
-    if (this.#model) {
-      this.#model.edgeMaterial.color.set(theme.edges);
-      for (const shape of this.#model.shapes) {
-        if (shape.ghost) shape.color.set(theme.ghost);
-      }
-    }
+    applyTheme(this.#model, theme);
     this.#applySelection();
     this.#rebuildEnvironment();
     this.#invalidate();

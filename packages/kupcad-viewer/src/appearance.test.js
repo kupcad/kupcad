@@ -1,19 +1,35 @@
 import { Color, LineBasicMaterial } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
-import { applyRenderMode, applySelection, SELECTION_TINT, XRAY_OPACITY } from './appearance.js';
+import {
+  applyRenderMode,
+  applySelection,
+  applyTheme,
+  SELECTION_TINT,
+  XRAY_OPACITY,
+} from './appearance.js';
 import { GHOST_OPACITY, sceneOf } from './model.js';
-import { modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
-import { LIGHT } from './theme.js';
+import { HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
+import { DARK, LIGHT } from './theme.js';
 
-/** @import { MeshStandardMaterial } from 'three' */
+/** @import { MeshBasicMaterial, MeshStandardMaterial } from 'three' */
 /** @import { SceneModel, Shape } from './types.js' */
 
 /** @returns {Promise<SceneModel>} */
-async function partsScene() {
-  const scene = await sceneOf(await modelOf(PARTS_WITH_GHOST), new GLTFLoader(), LIGHT);
+async function partsScene(source = PARTS_WITH_GHOST) {
+  const scene = await sceneOf(await modelOf(source), new GLTFLoader(), LIGHT);
   if (!scene) throw new Error('no scene');
   return scene;
+}
+
+/**
+ * The highlighted pin's shape of `scene`.
+ * @param {SceneModel} scene
+ */
+function pinOf(scene) {
+  const pin = scene.shapes.find((shape) => shape.part === 'pin');
+  if (!pin?.seenThrough) throw new Error('no highlighted pin');
+  return { pin, copy: pin.seenThrough };
 }
 
 /** @param {Shape} shape */
@@ -43,6 +59,16 @@ describe('applyRenderMode', () => {
     });
     // A ghost keeps its own look
     expect(materialOf(ghost)).toMatchObject({ visible: true, opacity: GHOST_OPACITY });
+  });
+
+  it('sees a highlight through what hides it only as solids are: x-ray sees all through', async () => {
+    const scene = await partsScene(HIGHLIGHTED_PIN);
+    const { copy } = pinOf(scene);
+    const seen = /** @type {const} */ (['solid', 'xray', 'wireframe']).map((mode) => {
+      applyRenderMode(scene, mode, true);
+      return copy.visible;
+    });
+    expect(seen).toEqual([true, false, false]);
   });
 
   it("draws the edges or not, as asked, but always a wireframe's, which is nothing else", async () => {
@@ -78,5 +104,25 @@ describe('applySelection', () => {
     applySelection(scene, null, '#2f80ed', selectionEdges);
     expect(materialOf(bolts[0]).color.equals(bolts[0].color)).toBe(true);
     expect(bolts[0].edges?.material).toBe(scene.edgeMaterial);
+  });
+});
+
+describe('applyTheme', () => {
+  it("gives the edges, a ghost and a highlight the theme's colours, which the selection tints", async () => {
+    const ghostly = await partsScene();
+    applyTheme(ghostly, DARK);
+    expect(ghostly.edgeMaterial.color.getHexString()).toBe(DARK.edges.slice(1));
+    const ghost = ghostly.shapes.find((shape) => shape.ghost);
+    expect(ghost?.color.getHexString()).toBe(DARK.ghost.slice(1));
+
+    const scene = await partsScene(HIGHLIGHTED_PIN);
+    const { pin, copy } = pinOf(scene);
+    applyTheme(scene, DARK);
+    expect(pin.color.getHexString()).toBe(DARK.highlight.slice(1));
+    expect(/** @type {MeshBasicMaterial} */ (copy.material).color.getHexString()).toBe(
+      DARK.highlight.slice(1),
+    );
+    applySelection(scene, null, DARK.selection, new LineBasicMaterial());
+    expect(materialOf(pin).color.getHexString()).toBe(DARK.highlight.slice(1));
   });
 });

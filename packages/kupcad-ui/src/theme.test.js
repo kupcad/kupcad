@@ -6,11 +6,13 @@ it("takes the viewer's colours from the --kc-viewer-* tokens, its own where one 
   const element = document.createElement('div');
   element.style.setProperty('--kc-viewer-background', '#101010');
   element.style.setProperty('--kc-viewer-selection', ' rgb(1, 2, 3) ');
+  element.style.setProperty('--kc-viewer-highlight', '#c050a0');
   document.body.append(element);
   expect(themeFromTokens(element)).toEqual({
     ...LIGHT,
     background: '#101010',
     selection: 'rgb(1, 2, 3)',
+    highlight: '#c050a0',
   });
   element.remove();
 });

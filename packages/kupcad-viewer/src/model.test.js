@@ -1,8 +1,14 @@
-import { Box3, Mesh } from 'three';
+import { Box3, GreaterDepth, Mesh } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it, vi } from 'vitest';
-import { GHOST_OPACITY, isDracoCompressed, sceneOf } from './model.js';
-import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
+import {
+  GHOST_OPACITY,
+  isDracoCompressed,
+  ownMaterials,
+  sceneOf,
+  SEEN_THROUGH_OPACITY,
+} from './model.js';
+import { dracoModelOf, HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { LIGHT } from './theme.js';
 
 /** @import { MeshBasicMaterial, MeshStandardMaterial } from 'three' */
@@ -57,6 +63,28 @@ describe('sceneOf a GLB', () => {
     expect(material.transparent).toBe(true);
     expect(material.opacity).toBe(GHOST_OPACITY);
     expect(ghost?.edges).toBeNull();
+  });
+
+  it("draws a highlighted solid in the highlight's colour, and a copy seen through what hides it", async () => {
+    const scene = await sceneOfScript(HIGHLIGHTED_PIN);
+    const pin = scene.shapes.find((shape) => shape.part === 'pin');
+    const box = scene.shapes.find((shape) => shape.part === 'box');
+    if (!pin || !box) throw new Error('no pin or box');
+    // A part as any other, with its edges, in the highlight's colour
+    expect(pin.color.getHexString()).toBe(LIGHT.highlight.slice(1));
+    expect(pin.edges).not.toBeNull();
+    const copy = pin.seenThrough;
+    expect(copy?.parent).toBe(pin.mesh);
+    expect(copy?.geometry).toBe(pin.mesh.geometry);
+    // Drawn only where something nearer was drawn: behind it
+    expect(/** @type {MeshBasicMaterial} */ (copy?.material)).toMatchObject({
+      transparent: true,
+      opacity: SEEN_THROUGH_OPACITY,
+      depthFunc: GreaterDepth,
+      depthWrite: false,
+    });
+    expect(ownMaterials(scene).has(/** @type {MeshBasicMaterial} */ (copy?.material))).toBe(true);
+    expect(box.seenThrough).toBeNull();
   });
 
   it("knows a part whose name the loader changes, by its GLB node's", async () => {

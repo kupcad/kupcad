@@ -25,4 +25,6 @@
   --kc-viewer-selection: var(--vscode-focusBorder);
   --kc-viewer-cap: var(--vscode-editorError-foreground);
   --kc-viewer-ghost: var(--vscode-editorInfo-foreground);
+  /* A colour of its own, as no other token's: a chart's, which every theme sets */
+  --kc-viewer-highlight: var(--vscode-charts-purple);
 }

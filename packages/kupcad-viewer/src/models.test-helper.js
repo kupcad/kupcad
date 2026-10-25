@@ -16,6 +16,10 @@ export async function dracoModelOf(source) {
   return { kind: '3d', glb, parts: [] };
 }
 
+/** A box, and a pin inside it the script highlights. */
+export const HIGHLIGHTED_PIN = `[cube(10).named("box"), cube(2).translate(x: 4, y: 4, z: 4).named("pin").highlight]
+`;
+
 /** A plate and two copies of a red bolt, beside a ghost. */
 export const PARTS_WITH_GHOST = `bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
 cube(10).translate(z: 1).ghost

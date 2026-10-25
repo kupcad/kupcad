@@ -40,6 +40,9 @@ const png = await viewer.screenshot();
 
 * **The model:** each copy of a part is a node of the GLB named as the frame's `parts[].nodes`
   say, so the viewer knows every mesh's part; ghosts are seen through and can't be picked. A
+  solid the script highlights (`.highlight`, which the core tags in the GLB) is drawn in the
+  theme's `highlight` colour and seen through whatever hides it (a see-through copy drawn only
+  behind what is in front), in solid mode; it is a part as any other. A
   drawing is seen from the top, orthographic, each filled shape named by its id. A model that
   follows keeps the camera where it is, a model of nothing between them too (one that failed);
   the first, or one of another kind than the last shown, is framed, a solid after a drawing as

@@ -66,7 +66,17 @@ it("moves the plane alone over the same model: its counters stay, and its materi
   const model = /** @type {SceneModel} */ ({
     kind: '3d',
     root: new Group().add(mesh),
-    shapes: [{ mesh, edges: null, part: 'box', ghost: false, color: new Color(), opacity: 1 }],
+    shapes: [
+      {
+        mesh,
+        edges: null,
+        part: 'box',
+        ghost: false,
+        seenThrough: null,
+        color: new Color(),
+        opacity: 1,
+      },
+    ],
     edgeMaterial: new LineBasicMaterial(),
   });
   const bounds = new Sphere(new Vector3(), 10);

@@ -1,7 +1,15 @@
-import { Color, LineBasicMaterial, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
+import {
+  Color,
+  GreaterDepth,
+  LineBasicMaterial,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  PlaneGeometry,
+  Vector3,
+} from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GHOST_OPACITY } from './model.js';
-import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
+import { dracoModelOf, HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { stubRenderer } from './testing.js';
 import { DARK, LIGHT } from './theme.js';
 import { Viewer, ViewerError } from './viewer.js';
@@ -207,6 +215,24 @@ describe('Viewer', () => {
       await modelOf('square(10, center: true).translate(x: -20).named("plate")'),
     );
     expect(viewer.partAt(WIDTH / 2, HEIGHT / 2)).toBe('plate');
+  });
+
+  it("cuts a highlight's copy, seen through what hides it, at the section too", async () => {
+    const { viewer, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(HIGHLIGHTED_PIN));
+    viewer.setSection({ axis: 'z', offset: 5 });
+    /** @type {MeshBasicMaterial[]} */
+    const copies = [];
+    (await sceneDrawn(drawn)).traverse((object) => {
+      const { material } = /** @type {Partial<Mesh>} */ (object);
+      if (material instanceof MeshBasicMaterial && material.depthFunc === GreaterDepth) {
+        copies.push(material);
+      }
+    });
+    expect(copies).toHaveLength(1);
+    expect(copies[0].clippingPlanes).toHaveLength(1);
+    viewer.setSection(null);
+    expect(copies[0].clippingPlanes).toBeNull();
   });
 
   it('cuts at a section, and picks nothing cut away', async () => {

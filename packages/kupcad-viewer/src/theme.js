@@ -12,6 +12,7 @@ export const LIGHT = {
   selection: '#2f80ed',
   cap: '#e0605a',
   ghost: '#6f8fb8',
+  highlight: '#d6409f',
 };
 
 /** @type {Theme} */
@@ -23,4 +24,5 @@ export const DARK = {
   selection: '#5aa0ff',
   cap: '#e0605a',
   ghost: '#7f9fcc',
+  highlight: '#f06cb8',
 };

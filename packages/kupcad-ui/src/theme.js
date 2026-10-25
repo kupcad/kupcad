@@ -16,6 +16,7 @@ const TOKENS = /** @type {const} */ ({
   selection: '--kc-viewer-selection',
   cap: '--kc-viewer-cap',
   ghost: '--kc-viewer-ghost',
+  highlight: '--kc-viewer-highlight',
 });
 /** A hex colour with an alpha (#rgba, #rrggbbaa), which three.js can't read: its colour first. */
 const HEX_WITH_ALPHA = /^(#[\da-f]{3})[\da-f]$|^(#[\da-f]{6})[\da-f]{2}$/i;

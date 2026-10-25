@@ -1,14 +1,16 @@
 // A model the core made (@kupcad/protocol's Model) as a scene. A GLB's Solids are put back in
 // the script's coordinates: the core writes them in metres and Y up under one root node, whose
 // transform this undoes, so the scene is in millimetres and Z up. Each mesh is known by the part
-// its node is a copy of (the frame's `parts[].nodes`), and gets its feature edges. A drawing's
-// SVG becomes its filled shapes and outlines on the XY plane.
+// its node is a copy of (the frame's `parts[].nodes`), and gets its feature edges; a ghost is seen
+// through, and a highlighted solid drawn in the highlight's colour, seen through what hides it
+// too. A drawing's SVG becomes its filled shapes and outlines on the XY plane.
 
 import {
   DoubleSide,
   EdgesGeometry,
   Float32BufferAttribute,
   BufferGeometry,
+  GreaterDepth,
   Group,
   LineBasicMaterial,
   LineSegments,
@@ -29,6 +31,8 @@ import { disposeGeometries } from './dispose.js';
 export const EDGE_ANGLE_DEG = 20;
 /** A ghost is seen through. */
 export const GHOST_OPACITY = 0.2;
+/** How much of a highlighted solid shows where something hides it. */
+export const SEEN_THROUGH_OPACITY = 0.4;
 /**
  * A shape's faces are drawn this far behind its edges (in depth, as a factor of their slope
  * and in its smallest steps), so the edges, at the same depth, aren't lost in the faces.
@@ -106,7 +110,8 @@ async function solids(glb, parts, loader, theme) {
 
 /**
  * A solid's mesh as a shape: its own material (so tinting one part tints no other), its part,
- * and its edges; a ghost seen through, in the theme's colour.
+ * and its edges; a ghost seen through, in the theme's colour; a highlighted one (the core tags
+ * its material) in the highlight's, seen through what hides it.
  * @param {Mesh} mesh
  * @param {Map<string, string>} partOf
  * @param {(object: Object3D) => string | undefined} nodeName
@@ -119,7 +124,8 @@ function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
     /** @type {Material} */ (mesh.material).clone()
   );
   mesh.material = material;
-  const ghost = material.userData.kupcad_role === 'ghost';
+  const role = material.userData.kupcad_role;
+  const ghost = role === 'ghost';
   if (ghost) {
     material.color.set(theme.ghost);
     material.transparent = true;
@@ -130,10 +136,13 @@ function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
       edges: null,
       part: null,
       ghost,
+      seenThrough: null,
       color: material.color.clone(),
       opacity: GHOST_OPACITY,
     };
   }
+  const highlighted = role === 'highlight';
+  if (highlighted) material.color.set(theme.highlight);
   Object.assign(material, FACES_BEHIND_EDGES);
   const edges = new LineSegments(new EdgesGeometry(mesh.geometry, EDGE_ANGLE_DEG), edgeMaterial);
   mesh.add(edges);
@@ -142,9 +151,33 @@ function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
     edges,
     part: partAbove(mesh, partOf, nodeName),
     ghost,
+    seenThrough: highlighted ? seenThroughOf(mesh, theme.highlight) : null,
     color: material.color.clone(),
     opacity: material.opacity,
   };
+}
+
+/**
+ * A copy of a highlighted solid's mesh, under it, drawn where something hides the solid (its
+ * depth behind what is drawn there; never over the solid's own faces, which lie behind it by
+ * their offset), see-through in `color`: the highlight seen through whatever is in front.
+ * @param {Mesh} mesh
+ * @param {string} color
+ * @returns {Mesh}
+ */
+function seenThroughOf(mesh, color) {
+  const copy = new Mesh(
+    mesh.geometry,
+    new MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: SEEN_THROUGH_OPACITY,
+      depthFunc: GreaterDepth,
+      depthWrite: false,
+    }),
+  );
+  mesh.add(copy);
+  return copy;
 }
 
 /**
@@ -203,6 +236,7 @@ function drawing(svg, theme) {
       edges,
       part: id || null,
       ghost: false,
+      seenThrough: null,
       color: material.color.clone(),
       opacity,
     });
@@ -232,15 +266,19 @@ function outlineOf(path, closed) {
 }
 
 /**
- * The materials the model's scene owns: each shape's, and its edges'. A selected shape's edges
- * are drawn with the viewer's material, which isn't the model's to free.
+ * The materials the model's scene owns: each shape's, a highlight's copy's, and its edges'. A
+ * selected shape's edges are drawn with the viewer's material, which isn't the model's to free.
  * @param {SceneModel} model
  * @returns {Set<Material>}
  */
 export function ownMaterials(model) {
   return new Set([
     model.edgeMaterial,
-    ...model.shapes.map((shape) => /** @type {Material} */ (shape.mesh.material)),
+    ...model.shapes.flatMap((shape) =>
+      [shape.mesh, shape.seenThrough].flatMap((mesh) =>
+        mesh ? [/** @type {Material} */ (mesh.material)] : [],
+      ),
+    ),
   ]);
 }
 
