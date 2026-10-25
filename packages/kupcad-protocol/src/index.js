@@ -1,8 +1,8 @@
 // What a front end needs to read what the core sends it: the protocol's version and names, the
 // reader of a preview frame, where a place it names is in a string (places.js), the formats it
 // writes (formats.js), what an error says (error-text.js) and why a build failed
-// (build-output.js); the messages between a host and its viewer (messages.js); and a document's
-// presets file (presets.js). The shapes are in types.d.ts (`@kupcad/protocol/types`).
+// (build-output.js); the messages between a host and its viewer (messages.js), and what every
+// host does alike (host.js); and a document's presets file (presets.js). The shapes are in types.d.ts (`@kupcad/protocol/types`).
 
 /** @import { FrameHeader, Kind, Model, Preview } from './types.js' */
 
@@ -34,6 +34,7 @@ export { errorText } from './error-text.js';
 export { whyBuildFailed } from './build-output.js';
 export { EXPORT_FORMATS } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
+export { anotherDocument, ScriptValues, VIEWPORT_HOST, viewportUrl } from './host.js';
 
 /** The bytes before a frame's header: its length, u32 little-endian. */
 const LENGTH_BYTES = 4;

@@ -9,7 +9,7 @@ import { buildArguments, runBuild } from './export.js';
 import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
-/** @import { ScriptValues } from './values.js' */
+/** @import { ScriptValues } from '@kupcad/protocol' */
 
 export const EXPORT_COMMAND = 'kupcad.export';
 const SAVE = 'Save';

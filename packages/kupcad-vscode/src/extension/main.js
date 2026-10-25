@@ -3,14 +3,13 @@
 // an update or a setting changed, and opens the viewer, a webview the server sends its models to.
 
 import * as fs from 'node:fs';
-import { errorText } from '@kupcad/protocol';
+import { errorText, ScriptValues } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, CHECK_FOR_UPDATES_COMMAND } from './binary/manager.js';
 import { registerExportCommands } from './commands.js';
 import { LanguageServer } from './server.js';
 import { NOT_RUNNING } from './scripts.js';
-import { ScriptValues } from './values.js';
 import { PAGE_DIR, ViewerPanel } from './viewer-panel.js';
 
 export const OPEN_VIEWER_COMMAND = 'kupcad.openViewer';

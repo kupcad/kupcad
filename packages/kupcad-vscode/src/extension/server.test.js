@@ -7,7 +7,7 @@ import {
 import { LanguageServer } from './server.js';
 // The module Vitest gives the code as `vscode`
 import { EventEmitter, fake, resetFake, window } from './testing/vscode.js';
-import { ScriptValues } from './values.js';
+import { ScriptValues } from '@kupcad/protocol';
 
 /** The language clients made, as the stand-in below plays them. */
 const clients = vi.hoisted(() => /** @type {any[]} */ ([]));

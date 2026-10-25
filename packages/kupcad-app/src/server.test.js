@@ -58,6 +58,16 @@ describe('the language server', () => {
     ]);
   });
 
+  it('shows no viewport at what is no port, and says why', async () => {
+    // It took whatever came: ws://127.0.0.1:undefined
+    const { server, events } = serverOn(fakeServer({ port: /** @type {any} */ ('9001') }));
+    await server.start();
+    await vi.waitFor(() => expect(events.viewport).toHaveBeenCalledWith(null));
+    expect(events.log).toHaveBeenCalledWith(
+      "kupcad named no port for its viewport (9001): the model can't be shown",
+    );
+  });
+
   it('shows no viewport of a server that speaks another protocol, and says why', async () => {
     const { server, events } = serverOn(fakeServer({ protocolVersion: PROTOCOL_VERSION + 1 }));
     await server.start();

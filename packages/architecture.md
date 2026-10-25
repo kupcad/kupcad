@@ -389,7 +389,6 @@ src/
     webview-html.js       the page's HTML and its CSP
     commands.js           export (stl, 3mf, step, glb, gltf, obj, svg, dxf), over export.js
     scripts.js            a script: its language, a file's (no untitled one), its names
-    values.js             the values each script was given: the server runs it, an export builds it, with them
     presets-file.js       <script>.presets.json beside the file (@kupcad/protocol's format), read,
                           a preset put in it, and watched (a RelativePattern)
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
@@ -424,7 +423,7 @@ Data flow:
   warnings (a mended mesh, an engine without a feature) join them on the line of the call that
   caused them (core work, section 8).
 * **Export** runs the binary, not the server: `kupcad build <file> -o <path> -f <format> -p ...`
-  with the panel's current values (`ScriptValues`, which the viewer and the commands share), so
+  with the panel's current values (`@kupcad/protocol`'s `ScriptValues`, which the viewer and the commands share), so
   what is exported is what the CLI would build; a script with unsaved changes is saved first, on
   the user's word. There is no print: a 3MF exported is what a slicer opens, and a command that
   handed one to the system's program for it found none on a Mac without a slicer registered (the

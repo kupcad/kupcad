@@ -6,7 +6,7 @@
 // for the page, again when their file changes, one applied, the panel's values saved as one.
 
 import * as vscode from 'vscode';
-import { characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
+import { anotherDocument, characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptName } from './scripts.js';
@@ -14,7 +14,7 @@ import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, Presets, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
-/** @import { ScriptValues } from './values.js' */
+/** @import { ScriptValues } from '@kupcad/protocol' */
 
 const VIEW_TYPE = 'kupcad.viewer';
 const TITLE = 'KupCAD Viewer';
@@ -149,8 +149,9 @@ export class ViewerPanel {
   #handle(message) {
     // The page acts on the document the panel shows, and on no other: a page naming another
     // would have the host write beside it, build it or open it
-    if ('uri' in message && message.uri !== this.#shown?.uri) {
-      this.#options.log.warn(`The viewer named ${message.uri}, which it isn't shown: refused`);
+    const another = anotherDocument(message, this.#shown);
+    if (another !== null) {
+      this.#options.log.warn(`The viewer named ${another}, which it isn't shown: refused`);
       return;
     }
     switch (message.type) {

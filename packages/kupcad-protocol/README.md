@@ -55,6 +55,11 @@ client.sendRequest('workspace/executeCommand', {
   system.
 * `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
   `build`), each with its name and what it is for, in the order a host offers them.
+* What every host of the viewer does alike (`host.js`): `ScriptValues`, the values each
+  script's parameters were given (what the server runs it with, what an export builds it
+  with); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
+  names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
+  message names when it isn't the one shown, which a host refuses.
 * `whyBuildFailed(stderr)`: what a failed `kupcad build` said of why (the run's error, a syntax
   error at its place, the CLI's refusal, its summary; not its log nor the script's own output),
   for a host that runs it to tell the person; null when it said nothing that does.

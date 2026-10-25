@@ -11,6 +11,7 @@ import {
   PROTOCOL_VERSION,
   SET_PARAMS_COMMAND,
   VIEWPORT_READY_NOTIFICATION,
+  viewportUrl,
 } from '@kupcad/protocol';
 import { Channel, invoke } from '@tauri-apps/api/core';
 
@@ -206,6 +207,12 @@ export class LanguageServer {
 
   /** @param {ViewportReady} ready */
   #viewportReady({ port, protocolVersion }) {
+    const url = viewportUrl(port);
+    if (!url) {
+      this.#on.log(`kupcad named no port for its viewport (${port}): the model can't be shown`);
+      this.#on.viewport(null);
+      return;
+    }
     if (!isCompatible(protocolVersion)) {
       this.#on.log(
         `kupcad speaks protocol ${protocolVersion}, and this app reads ${PROTOCOL_VERSION}: the model can't be shown`,
@@ -213,7 +220,7 @@ export class LanguageServer {
       this.#on.viewport(null);
       return;
     }
-    this.#on.viewport(`ws://127.0.0.1:${port}`);
+    this.#on.viewport(url);
   }
 
   /**

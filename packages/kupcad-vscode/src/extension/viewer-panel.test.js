@@ -11,7 +11,7 @@ import {
   workspace,
 } from './testing/vscode.js';
 import { readPresets, writePresets } from '@kupcad/protocol';
-import { ScriptValues } from './values.js';
+import { ScriptValues } from '@kupcad/protocol';
 import { ViewerPanel } from './viewer-panel.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */

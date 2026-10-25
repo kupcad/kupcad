@@ -3,7 +3,7 @@
 // viewport shows, and the values a document's parameters take.
 
 import * as vscode from 'vscode';
-import { errorText } from '@kupcad/protocol';
+import { errorText, viewportUrl } from '@kupcad/protocol';
 import { LanguageClient, State, TransportKind } from 'vscode-languageclient/node';
 import {
   isCompatible,
@@ -16,7 +16,7 @@ import { FILE_SCHEME, LANGUAGE_ID } from './scripts.js';
 
 /** @import { ParamValues, ViewportReady } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
-/** @import { ScriptValues } from './values.js' */
+/** @import { ScriptValues } from '@kupcad/protocol' */
 
 /** The port the server's viewport socket tries first, which it reads from its environment. */
 const VIEWPORT_PORT_ENV = 'KUPCAD_VIEWPORT_PORT';
@@ -198,7 +198,7 @@ export class LanguageServer {
    * @param {ViewportReady} ready
    */
   #viewportReady({ port, protocolVersion }) {
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) return;
+    if (viewportUrl(port) === null) return;
     if (!isCompatible(protocolVersion)) {
       void vscode.window.showErrorMessage(
         `The kupcad language server speaks protocol version ${protocolVersion}, and this extension version ${PROTOCOL_VERSION}: the viewer can't show its models. Update the one that is older.`,

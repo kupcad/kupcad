@@ -3,7 +3,7 @@ import { EXPORT_COMMAND, registerExportCommands } from './commands.js';
 import { BuildError } from './export.js';
 // The module Vitest gives the code as `vscode`
 import { commands, documentAt, fake, resetFake, Uri, window, workspace } from './testing/vscode.js';
-import { ScriptValues } from './values.js';
+import { ScriptValues } from '@kupcad/protocol';
 
 const PART_URI = 'file:///work/part.kup';
 

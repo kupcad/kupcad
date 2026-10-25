@@ -3,15 +3,11 @@
 // URL in a meta tag. Free of the `vscode` import, so it is tested without VS Code.
 
 import * as crypto from 'node:crypto';
+import { viewportUrl } from '@kupcad/protocol';
 
-/** Where the language server's viewport socket listens. */
-const VIEWPORT_HOST = '127.0.0.1';
 const NONCE_BYTES = 16;
 
 export const createNonce = () => crypto.randomBytes(NONCE_BYTES).toString('base64');
-
-/** The socket the viewer connects to, at `port`. @param {number} port */
-export const viewportUrl = (port) => `ws://${VIEWPORT_HOST}:${port}`;
 
 /**
  * Strict CSP: no inline script but the nonced ones, no eval, and the network only to the
@@ -28,7 +24,7 @@ export const buildCsp = ({ cspSource, nonce, viewportPort }) =>
     `font-src ${cspSource}`,
     `style-src ${cspSource}`,
     `script-src 'nonce-${nonce}' ${cspSource}`,
-    `connect-src ${viewportPort ? viewportUrl(viewportPort) : "'none'"}`,
+    `connect-src ${viewportUrl(viewportPort) ?? "'none'"}`,
   ].join('; ');
 
 /** @param {unknown} s */
@@ -55,7 +51,7 @@ export const prepareWebviewHtml = (html, { csp, nonce, viewportPort, toWebviewUr
 
   const meta =
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(csp)}">` +
-    `<meta name="kupcad-viewport" content="${escapeAttr(viewportPort ? viewportUrl(viewportPort) : '')}">`;
+    `<meta name="kupcad-viewport" content="${escapeAttr(viewportUrl(viewportPort) ?? '')}">`;
   if (/<head[^>]*>/i.test(out)) return out.replace(/<head[^>]*>/i, (m) => `${m}${meta}`);
   return `<!DOCTYPE html><html><head>${meta}</head><body>${out}</body></html>`;
 };

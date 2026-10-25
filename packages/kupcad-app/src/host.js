@@ -3,7 +3,13 @@
 // export, and the panel is told the script shown, the values its parameters were given, and the
 // server's log, for its console.
 
-import { EXPORT_FORMATS, errorText, whyBuildFailed } from '@kupcad/protocol';
+import {
+  anotherDocument,
+  EXPORT_FORMATS,
+  errorText,
+  ScriptValues,
+  whyBuildFailed,
+} from '@kupcad/protocol';
 
 /** @import { ExportFormat, HostMessage, ParamValues, ViewerHost, ViewerMessage } from '@kupcad/protocol/types' */
 
@@ -41,8 +47,8 @@ const EXTENSIONS = new Map(
 export function createHost(services) {
   /** @type {Set<(message: HostMessage) => void>} */
   const listeners = new Set();
-  /** The values each script's parameters were given, by its URI, kept while the app runs. */
-  const values = new Map();
+  /** The values each script's parameters were given, kept while the app runs. */
+  const values = new ScriptValues();
   /** @type {ShownScript | null} */
   let shown = null;
 
@@ -52,7 +58,7 @@ export function createHost(services) {
   };
   const tellDocument = () => {
     tell({ type: 'document', document: shown && { uri: shown.uri, name: shown.name } });
-    if (shown) tell({ type: 'overrides', uri: shown.uri, values: values.get(shown.uri) ?? {} });
+    if (shown) tell({ type: 'overrides', uri: shown.uri, values: values.of(shown.uri) });
   };
   /**
    * @param {Promise<unknown>} asked
@@ -81,7 +87,7 @@ export function createHost(services) {
       );
       return;
     }
-    const params = Object.entries(values.get(script.uri) ?? {}).map(
+    const params = Object.entries(values.of(script.uri)).map(
       ([name, value]) => /** @type {[string, string]} */ ([name, String(value)]),
     );
     try {
@@ -110,8 +116,9 @@ export function createHost(services) {
   /** @param {ViewerMessage} message */
   function handle(message) {
     // The panel acts on the script shown and on no other
-    if ('uri' in message && message.uri !== shown?.uri) {
-      services.log(`The preview named ${message.uri}, which it isn't shown: refused`);
+    const another = anotherDocument(message, shown);
+    if (another !== null) {
+      services.log(`The preview named ${another}, which it isn't shown: refused`);
       return;
     }
     switch (message.type) {
