@@ -95,6 +95,27 @@ describe('the language server', () => {
     expect(waits).toEqual([RESTART_MS.first, RESTART_MS.first * 2]);
   });
 
+  it('tries again, later each time, when the server it starts again fails to start', async () => {
+    const fake = fakeServer();
+    const spawn = fake.spawn;
+    let refused = 0;
+    fake.spawn = (origin, on) =>
+      refused-- > 0 ? Promise.reject(new Error('no sidecar')) : spawn(origin, on);
+    const { server, events, timers, waits } = serverOn(fake);
+    await server.start();
+    refused = 2;
+    fake.processes[0].on.exit(1);
+    timers[0]();
+    await vi.waitFor(() => expect(timers).toHaveLength(2));
+    expect(events.log).toHaveBeenCalledWith("kupcad lsp didn't start: Error: no sidecar");
+    timers[1]();
+    await vi.waitFor(() => expect(timers).toHaveLength(3));
+    timers[2]();
+    await vi.waitFor(() => expect(events.state).toHaveBeenLastCalledWith(true));
+    expect(fake.processes).toHaveLength(2);
+    expect(waits).toEqual([RESTART_MS.first, RESTART_MS.first * 2, RESTART_MS.first * 4]);
+  });
+
   it('stops for good: the process killed, and not started again when it ends', async () => {
     const { server, fake, timers } = serverOn();
     await server.start();

@@ -229,8 +229,18 @@ export class LanguageServer {
     this.#on.state(false);
     if (this.#stopped) return;
     this.#on.log(`kupcad lsp ended (code ${code}); starting it again`);
+    this.#startLater();
+  }
+
+  /** Starts the server again after the wait, which doubles each time, and again if it fails. */
+  #startLater() {
     this.#restart = this.#later(() => {
-      this.start().catch((error) => this.#on.log(`kupcad lsp didn't start: ${error}`));
+      this.#restart = undefined;
+      this.start().catch((error) => {
+        this.#on.log(`kupcad lsp didn't start: ${error}`);
+        // One that ended before it was up is started again by #ended; one never started isn't
+        if (!this.#stopped && this.#restart === undefined) this.#startLater();
+      });
     }, this.#wait);
     this.#wait = Math.min(this.#wait * 2, RESTART_MS.most);
   }
