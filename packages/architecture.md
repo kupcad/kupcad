@@ -23,7 +23,7 @@ flowchart BT
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
         vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: ui + viewer"]
         app["kupcad-app (Tauri)<br/>native binary + LSP"]
-        docs["@kupcad/site<br/>Astro: the playground,<br/>the docs later"]
+        docs["the site (own repository)<br/>Astro: the playground,<br/>the docs later"]
         pwa["kupcad-pwa"]
     end
 
@@ -365,17 +365,15 @@ its `ParamsPanel`, and the run's error and warnings marked in the editor too (no
 `check` found errors: a script that doesn't parse fails for that). A problem clicked takes the
 editor to its line. Exports (`build` in a format of `EXPORT_FORMATS`, with the panel's values)
 and the screenshot download as files named after `name`. It keeps nothing of the host's: the
-site embeds it in a page with a script of the page's own, the PWA will wrap it with files and
-projects.
+site (an Astro site in a repository of its own) embeds it in a page with a script of the page's
+own, the PWA will wrap it with files and projects.
 
-### The site (`@kupcad/site`)
-
-Astro, its interactive parts Svelte islands: `/playground` is the playground on an example
-(`client:only`: the core is WebAssembly in a worker, the viewer WebGL), the docs pages come
-later. The worker is bundled as an ES module (`vite.worker.format`), the core's module and
-three.js's decoders as assets. Its smoke test builds the site and drives the page in headless
-Chromium: the example runs to Ready in the real worker, its parts and parameters show, `param` is
-highlighted, and a script that raises says so.
+Its page (`dev/`) is the playground on an example, as a site embeds it: `pnpm dev` serves it as it
+changes (`pnpm dev:playground` at the root builds the core first). The smoke test builds the page
+(the worker bundled as an ES module, `worker.format`, the core's module and three.js's decoders
+as assets, as a site's build does) and drives it in headless Chromium: the example runs to Ready
+in the real worker, its parts and parameters show, `param` is highlighted, and a script that
+raises says so.
 
 ### The VS Code extension (`@kupcad/vscode`)
 
@@ -526,6 +524,6 @@ the truth.
    as diagnostics. This is the first thing a user installs, so it comes before the web hosts.
    Left for later: a part clicked in the viewer taking the editor to where it was named (the
    GLB's part extras, section 8).
-4. **The playground** (done: `@kupcad/editor`, `@kupcad/playground`, and `@kupcad/site` with its
-   `/playground` page), then the docs pages of the site.
+4. **The playground** (done: `@kupcad/editor`, `@kupcad/playground` and its page), then the
+   site, in a repository of its own: the playground's page and the docs.
 5. **The PWA, then the desktop app**, which reuse everything above.

@@ -47,11 +47,11 @@ To try the front ends from a checkout:
 
 ```sh
 pnpm dev:vscode       # kupcad and the VS Code extension built, a VS Code window with it on examples/
-pnpm dev:playground   # the core built to WebAssembly, the playground at http://127.0.0.1:4321/playground
+pnpm dev:playground   # the core built to WebAssembly, the playground at http://127.0.0.1:4321/
 ```
 
 The [extension's README](packages/kupcad-vscode/README.md#development) and the
-[site's](packages/kupcad-site/README.md) say more; [packages/](packages/README.md) has the rest.
+[playground's](packages/kupcad-playground/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
 
 ## Usage
 

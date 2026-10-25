@@ -1,6 +1,5 @@
-# Astro's build and the types it writes
+# The page as built (the smoke test's)
 dist/
-.astro/
 # Playwright's output
 test-results/
 playwright-report/

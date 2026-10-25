@@ -32,8 +32,36 @@ the PWA) embeds; it keeps nothing of the page's.
   panel's values) and saves a screenshot, as downloads named after `name`; a build that fails
   says why. The parameters (`ParamsPanel`) are beside it.
 
-Tests: the runner's timing against a stand-in for the core, the marks, the downloads, and the
-component on the real core (`@kupcad/wasm`'s `testCore`) under jsdom: the model shown, the
-findings and the run's error marked, a problem clicked revealing its line, an edit and a value
-running again, an export downloaded and one refused. In a browser, with the real worker:
-`@kupcad/site`'s smoke test.
+## Running it
+
+From the repository's root:
+
+```sh
+pnpm install
+pnpm dev:playground
+```
+
+It builds the core to WebAssembly (`pnpm build:core:wasm`), copies the module into
+`@kupcad/wasm`, and serves the playground's page (`dev/`: the component on
+`examples/standoff.kup`, the whole window, light or dark as the system is) at
+<http://127.0.0.1:4321/>, a change to it or to a package it uses shown as you save it. A change to
+the core needs `pnpm dev:playground` again (or the two build steps, then a reload).
+
+In this package:
+
+```sh
+pnpm dev            # the page, served as you change it
+pnpm check          # svelte-check: the component's, the page's and the tests' types
+pnpm test           # Vitest under jsdom
+pnpm test:browser   # the smoke test: the page built, in headless Chromium
+```
+
+## Tests
+
+The runner's timing against a stand-in for the core, the marks, the downloads, and the component
+on the real core (`@kupcad/wasm`'s `testCore`) under jsdom: the model shown, the findings and the
+run's error marked, a problem clicked revealing its line, an edit and a value running again, an
+export downloaded and one refused. In a browser, with the real worker, the smoke test
+(`smoke/playground.spec.js`): the page built (`vite build`, the worker an ES module as a site's
+build makes it) and served, the example run to Ready, its parts and parameters shown, `param`
+highlighted as a function, and a script that raises saying so.

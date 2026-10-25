@@ -5,5 +5,5 @@
     "maxNodeModuleJsDepth": 0,
     "resolveJsonModule": true
   },
-  "include": ["src", "*.config.js"]
+  "include": ["src", "dev", "smoke", "*.config.js"]
 }

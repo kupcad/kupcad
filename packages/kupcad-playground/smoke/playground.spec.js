@@ -7,7 +7,7 @@ test('runs the example in the browser: its model, its parts and parameters; an e
   test.setTimeout(120_000);
   const errors = /** @type {string[]} */ ([]);
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/playground');
+  await page.goto('/');
   // The core's worker loaded its module and ran the script
   await expect(page.getByRole('status')).toHaveText(/Ready · \d+ ms/, { timeout: 60_000 });
   await expect(page.getByRole('list', { name: 'Parts' })).toBeVisible();
