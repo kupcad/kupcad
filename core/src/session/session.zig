@@ -46,9 +46,10 @@ pub const SessionNode = struct {
     /// shows them beside its lint findings.
     warnings: std.ArrayList(RunWarning) = .empty,
     /// It runs again though its source is the same: a file it read changed
-    /// (ScriptSession.markDataFileEdited), or its host wants what a run leaves
-    /// (ScriptSession.runAgain). Cleared once it ran without an error, so a failed run runs
-    /// again next time and isn't taken for its last output.
+    /// (ScriptSession.markDataFileEdited), its host wants what a run leaves
+    /// (ScriptSession.runAgain), or its last run failed. Set as a run starts and cleared once
+    /// it ran without an error, so a failed run runs again next time and isn't taken for its
+    /// last output: not even when its source is back to the one that made that output.
     must_run: bool = false,
 
     pub fn deinit(self: *SessionNode, allocator: std.mem.Allocator) void {
@@ -421,6 +422,10 @@ pub const ScriptSession = struct {
             return;
         }
         // --------------------------------------------
+
+        // Until it runs without an error: whatever stops it (a parse, a compile, the run, its
+        // output) leaves it to run next time, its source the same as its last output's or not
+        node.must_run = true;
 
         var doc = api.Document.parse(self.allocator, mod.source) catch |err| {
             log.err("Parse failed for module '{s}': {}", .{ mod.path, err });

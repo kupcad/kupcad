@@ -413,7 +413,12 @@ pub const SessionPreview = struct {
         };
         if (!want_frame) return .nothing;
         const round = self.round.?;
-        if (!round.target_ran) if (evaluated) |_| {} else |err| return self.stopped(allocator, target, err, round.last_import);
+        if (!round.target_ran) if (evaluated) |_| {} else |err| {
+            // The viewers are told why it didn't run: the frame kept is no longer the one they
+            // have, and once nothing stops it (the import put back) it is theirs to be given again
+            if (self.frame) |*kept| kept.given = false;
+            return self.stopped(allocator, target, err, round.last_import);
+        };
         // Of this run, or of the last when nothing it reads changed: not copied again for
         // viewers that have it
         const frame = if (self.frame) |*kept| kept else return .nothing;

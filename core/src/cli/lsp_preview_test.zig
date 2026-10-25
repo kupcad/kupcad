@@ -169,6 +169,43 @@ test "LSP preview: a module the document imports that fails is named in its fram
     try testing.expectEqualStrings("3d", (try frameOf(arena.allocator(), &preview, "main.kup")).header.kind);
 }
 
+test "LSP preview: a document broken, then put back as it was, is given its frame again" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the runs' errors would print to the test log
+
+    // The viewers have each frame given: put back, the document's isn't the frame they have
+    const good = "cube(2)\n";
+    try preview.update("part.kup", good);
+    _ = preview.evaluate(a, target("part.kup"), .new).frame;
+    for ([_][]const u8{ "cube(\n", "cube(2).ds\n" }) |broken| {
+        try preview.update("part.kup", broken);
+        const failed = try test_support.readFrame(a, preview.evaluate(a, target("part.kup"), .new).frame);
+        try testing.expectEqualStrings("none", failed.header.kind);
+        try preview.update("part.kup", good);
+        const fixed = try test_support.readFrame(a, preview.evaluate(a, target("part.kup"), .new).frame);
+        try testing.expectEqualStrings("3d", fixed.header.kind);
+    }
+
+    // So with a module it imports: the document doesn't run again, its output the same
+    const lib = "side = 2\nexport side\n";
+    try preview.update("lib.kup", lib);
+    try preview.update("main.kup", "import { side } from \"./lib.kup\"\ncube(side)\n");
+    _ = preview.evaluate(a, target("main.kup"), .new).frame;
+    for ([_][]const u8{ "side = (\n", "raise \"no side\"\n" }) |broken| {
+        try preview.update("lib.kup", broken);
+        const failed = try test_support.readFrame(a, preview.evaluate(a, target("main.kup"), .new).frame);
+        try testing.expectEqualStrings("none", failed.header.kind);
+        try preview.update("lib.kup", lib);
+        const fixed = try test_support.readFrame(a, preview.evaluate(a, target("main.kup"), .new).frame);
+        try testing.expectEqualStrings("3d", fixed.header.kind);
+    }
+}
+
 test "LSP preview: a run a message stopped leaves no frame, and the next run makes it" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

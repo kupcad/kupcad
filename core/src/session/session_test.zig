@@ -706,6 +706,41 @@ test "ScriptSession: an observer is told of each run, with what the run left, fa
     try testing.expect(!seen.runs.items[1].ok);
 }
 
+test "ScriptSession: a module that failed runs again once its source is back to the one it last ran without an error" {
+    var session = try ScriptSession.init(testing.allocator, testing.io, .none);
+    defer session.deinit();
+    session.vm.mute_errors = true; // the failed runs' errors would print to the test log
+    var seen: Seen = .{};
+    defer seen.runs.deinit(testing.allocator);
+    session.observer = seen.observer();
+
+    const good = "x = 2\nx * 3\n";
+    const id = try session.workspace.addModule("a.kup", good);
+    try session.workspace.linkDependencies();
+    try session.buildReverseGraph();
+    try session.evaluateWorkspace();
+
+    // Its source broken, then put back: the source was its last good run's, so it was taken
+    // for up to date, and the failure for what it last did (an editor's preview kept it)
+    const Broken = struct { source: []const u8, err: anyerror };
+    for ([_]Broken{
+        .{ .source = "x = (\n", .err = error.ParseError },
+        .{ .source = "cube = 5\n", .err = error.CompileError },
+        .{ .source = "raise \"boom\"\n", .err = error.RuntimeError },
+    }) |broken| {
+        try session.workspace.updateModuleSource(id, broken.source);
+        try session.markFileEdited("a.kup");
+        try testing.expectError(broken.err, session.evaluateWorkspace());
+        try session.workspace.updateModuleSource(id, good);
+        try session.markFileEdited("a.kup");
+        const runs = seen.runs.items.len;
+        try session.evaluateWorkspace();
+        try testing.expectEqual(runs + 1, seen.runs.items.len);
+        try testing.expect(seen.runs.items[runs].ok);
+        try testing.expectEqual(@as(?f64, 6), seen.runs.items[runs].last);
+    }
+}
+
 test "ScriptSession: runAgain runs a module whose inputs are the same, and not its importers when its output is the same too" {
     var files = MemoryVfs.init(testing.allocator);
     defer files.deinit();
