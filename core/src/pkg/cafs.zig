@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const limits = @import("limits.zig");
 const string_map = @import("string_map.zig");
+const owned_keys = @import("../core/owned_keys.zig");
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
 const log = std.log.scoped(.pkg);
@@ -152,7 +153,10 @@ pub const Cafs = struct {
     ///   through a planted link to a location outside the package;
     /// - entry paths are sanitized (no absolute paths, `..`, `\\`, `:` or NUL);
     /// - total decompressed bytes and file count are capped (gzip / tar bombs);
-    /// - a `wrapped` archive's top folder is stripped, and must be the same for every file.
+    /// - a `wrapped` archive's top folder is stripped, and must be the same for every file;
+    /// - two names that are one file on a case-insensitive disk are refused
+    ///   (DuplicateArchiveEntry), and so is a file where another's folder is
+    ///   (ArchivePathConflict): linking either into a project failed half-way, or kept one.
     pub fn extractTarball(
         self: *Cafs,
         reader: *std.Io.Reader,
@@ -178,6 +182,11 @@ pub const Cafs = struct {
         var archive: Archive = .{ .files = .init(self.allocator), .root = &.{} };
         errdefer archive.deinit(self.allocator);
         const file_map = &archive.files;
+
+        // The files' paths, and their folders', in ASCII lower case: what a case-insensitive
+        // disk takes for one name
+        var taken: Taken = .{ .allocator = self.allocator };
+        defer taken.deinit();
 
         var total_bytes: u64 = 0;
         while (true) {
@@ -208,6 +217,7 @@ pub const Cafs = struct {
 
             // Duplicate entries would silently replace content after the fact.
             if (file_map.contains(rel_path)) return error.DuplicateArchiveEntry;
+            try taken.claim(rel_path);
 
             const hash_hex = self.saveExact(it.reader, entry.size) catch |err| {
                 if (limited.remaining == .nothing) return error.ArchiveTooLarge;
@@ -224,6 +234,37 @@ pub const Cafs = struct {
 
         return archive;
     }
+
+    /// The names an archive's files take on disk, folded to ASCII lower case: each file's, and
+    /// each folder a file is in.
+    const Taken = struct {
+        allocator: std.mem.Allocator,
+        files: std.StringHashMapUnmanaged(void) = .empty,
+        folders: std.StringHashMapUnmanaged(void) = .empty,
+
+        fn deinit(self: *Taken) void {
+            owned_keys.deinit(&self.files, self.allocator, .borrowed);
+            owned_keys.deinit(&self.folders, self.allocator, .borrowed);
+        }
+
+        /// Takes `path` for a file: refused when one folded the same is, or when it is a
+        /// folder of one, or one of its folders is one.
+        fn claim(self: *Taken, path: []const u8) !void {
+            const folded = try std.ascii.allocLowerString(self.allocator, path);
+            defer self.allocator.free(folded);
+            if (self.files.contains(folded)) return error.DuplicateArchiveEntry;
+            if (self.folders.contains(folded)) return error.ArchivePathConflict;
+            var at: usize = 0;
+            while (std.mem.findScalarPos(u8, folded, at, '/')) |slash| : (at = slash + 1) {
+                if (self.files.contains(folded[0..slash])) return error.ArchivePathConflict;
+            }
+            at = 0;
+            while (std.mem.findScalarPos(u8, folded, at, '/')) |slash| : (at = slash + 1) {
+                _ = try owned_keys.getOrPutOwned(&self.folders, self.allocator, folded[0..slash]);
+            }
+            _ = try owned_keys.getOrPutOwned(&self.files, self.allocator, folded);
+        }
+    };
 
     /// Streams exactly `size` bytes into a temporary file, hashes it, applies 0444, and atomically commits it to CAFS
     fn saveExact(self: *Cafs, reader: *std.Io.Reader, size: u64) ![]const u8 {

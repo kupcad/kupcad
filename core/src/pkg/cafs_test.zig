@@ -178,6 +178,21 @@ test "Cafs: extractTarball rejects escaping and duplicate entries" {
         .{ .name = "a.kup", .data = "1" },
         .{ .name = "./a.kup", .data = "2" },
     });
+    // Two names one file on a case-insensitive disk (macOS, Windows): the second link
+    // replaced the first, though the integrity hash covers both
+    try fx.expectExtractError(error.DuplicateArchiveEntry, &.{
+        .{ .name = "lib/A.kup", .data = "1" },
+        .{ .name = "LIB/a.kup", .data = "2" },
+    });
+    // A file where another's folder is, either way round: linking failed half-way (NotDir)
+    try fx.expectExtractError(error.ArchivePathConflict, &.{
+        .{ .name = "a", .data = "1" },
+        .{ .name = "a/b.kup", .data = "2" },
+    });
+    try fx.expectExtractError(error.ArchivePathConflict, &.{
+        .{ .name = "A/b/c.kup", .data = "1" },
+        .{ .name = "a/B", .data = "2" },
+    });
 }
 
 // Decompression bombs used to be extracted without bound.
