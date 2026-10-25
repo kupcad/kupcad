@@ -3,13 +3,14 @@
   The app's window: the folder opened, its files beside the script open in the editor, and the
   script's preview, its parameters with it. The editor and the preview run on the bundled
   kupcad's language server, started for the folder. A script is saved with ⌘S (Ctrl+S); the
-  window asks before it closes on unsaved changes.
+  window asks before it closes on unsaved changes. The bars between the panes resize them, the
+  sizes kept in the app's settings (`settings`).
 -->
 <script>
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText } from '@kupcad/protocol';
-  import { PreviewPanel } from '@kupcad/ui';
-  import { onMount, tick } from 'svelte';
+  import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/ui';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import FileTree from './FileTree.svelte';
   import { fileUri } from './folder.js';
@@ -17,6 +18,7 @@
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
   /** @import { Entry } from './folder.js' */
+  /** @import { Settings } from '@kupcad/ui' */
   /** @import { Platform } from './platform.js' */
 
   /**
@@ -24,10 +26,16 @@
    * @property {Platform} platform what the window does its work with
    * @property {import('@kupcad/viewer/types').ViewerOptions} [viewerOptions] what the
    *   preview's viewer is made with
+   * @property {Settings} [settings] where the panes' sizes are kept (the app's settings file)
    */
 
   /** @type {Props} */
-  let { platform, viewerOptions = {} } = $props();
+  let { platform, viewerOptions = {}, settings = memorySettings() } = $props();
+
+  /** The settings' keys: the folder's tree's width and the editor's. */
+  const KEYS = { files: 'app.files', editor: 'app.editor' };
+  let filesWidth = $state(untrack(() => sizeSetting(settings, KEYS.files, 224)));
+  let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 520)));
 
   /** The folder open, by its path. */
   let folder = $state(/** @type {string | null} */ (null));
@@ -191,10 +199,17 @@
       </span>
     </header>
     <div class="body">
-      <nav class="files" aria-label="Files">
+      <nav class="files" aria-label="Files" style:width="{filesWidth}px">
         <FileTree {entries} selected={open?.path ?? null} {unsaved} onopen={openScript} />
       </nav>
-      <section class="code" aria-label="Script">
+      <Splitter
+        bind:size={filesWidth}
+        min={140}
+        max={480}
+        label="Resize the files"
+        onchange={(size) => settings.set(KEYS.files, size)}
+      />
+      <section class="code" aria-label="Script" style:width="{editorWidth}px">
         {#if open && server}
           {#key open.path}
             <Editor
@@ -209,9 +224,21 @@
           <p class="empty">Open a script from the folder.</p>
         {/if}
       </section>
+      <Splitter
+        bind:size={editorWidth}
+        min={280}
+        label="Resize the script"
+        onchange={(size) => settings.set(KEYS.editor, size)}
+      />
       <section class="preview" aria-label="Preview">
         {#key viewportUrl}
-          <PreviewPanel host={preview.host} {viewportUrl} {viewerOptions} presets={false} />
+          <PreviewPanel
+            host={preview.host}
+            {viewportUrl}
+            {viewerOptions}
+            {settings}
+            presets={false}
+          />
         {/key}
       </section>
     </div>
@@ -258,19 +285,20 @@
     min-height: 0;
   }
   .files {
-    width: 14em;
+    flex: none;
     overflow: auto;
     border-right: 1px solid var(--kc-border);
   }
   .code {
     position: relative;
-    flex: 2 1 0;
+    flex: none;
     min-width: 0;
     border-right: 1px solid var(--kc-border);
   }
+  /* What the others leave, however wide they are made: the window's least width keeps some */
   .preview {
-    flex: 3 1 0;
-    min-width: 0;
+    flex: 1;
+    min-width: 320px;
   }
   .empty {
     margin: var(--kc-gap);

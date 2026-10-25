@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { describe, expect, it, vi } from 'vitest';
 import PreviewPanel from './PreviewPanel.svelte';
+import { memorySettings } from './settings.js';
 
 /** @import { HostMessage, Preview } from '@kupcad/protocol/types' */
 /** @import { ViewportEvents } from './viewport-socket.js' */
@@ -27,6 +28,7 @@ async function previewOf(source, uri) {
 function page({
   viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001'),
   presets = true,
+  settings = memorySettings(),
 } = {}) {
   /** @type {unknown[]} */
   const posted = [];
@@ -55,6 +57,7 @@ function page({
       connect,
       viewerOptions: { renderer: stubRenderer().renderer },
       presets,
+      settings,
     },
   });
   return {
@@ -310,6 +313,32 @@ describe('PreviewPanel console', () => {
       'false',
     );
   });
+});
+
+it("lays its panes out as the host's settings keep them, and keeps what the person changes", async () => {
+  const settings = memorySettings({ 'preview.params': 320, 'preview.console': 200 });
+  const viewer = page({ settings });
+  await viewer.tell({ type: 'document', document: PART });
+  viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+  await tick();
+  const params = /** @type {HTMLElement} */ (
+    screen.getByRole('complementary', { name: 'Parameters' })
+  );
+  expect(params.style.width).toBe('320px');
+  expect(screen.getByRole('log').style.height).toBe('200px');
+  await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize the parameters' }), {
+    key: 'ArrowLeft',
+  });
+  // The bar is before the column: toward its start widens it
+  expect(settings.get('preview.params')).toBe(336);
+  await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize the console' }), {
+    key: 'ArrowDown',
+  });
+  expect(settings.get('preview.console')).toBe(184);
+  // Folded, it stays so, and has no bar to resize it
+  await fireEvent.click(screen.getByRole('button', { name: 'Console' }));
+  expect(settings.get('preview.consoleOpen')).toBe(false);
+  expect(screen.queryByRole('separator', { name: 'Resize the console' })).toBeNull();
 });
 
 it('asks the host to export the document shown', async () => {

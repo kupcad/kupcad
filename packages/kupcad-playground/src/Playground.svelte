@@ -5,8 +5,10 @@
   `check` finds and where the run failed or warned (marks.js); the viewer pane says how the run
   went and lists its problems, one clicked taking the editor there. A model is exported in any
   format the core writes, and the viewer's screenshot saved, as downloads. The console under the
-  model keeps each run (what it printed, its warnings and its error) and the core's log. It
-  keeps nothing of the page's: the page gives the script it starts with (`source`).
+  model keeps each run (what it printed, its warnings and its error) and the core's log. The
+  bars between the panes resize them, the sizes kept in `settings` (the page's localStorage by
+  default). It keeps nothing else of the page's: the page gives the script it starts with
+  (`source`).
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -17,9 +19,12 @@
     ConsolePanel,
     linesOfLog,
     linesOfRun,
+    localSettings,
     ParamsPanel,
     problemsOf,
     runStatusOf,
+    sizeSetting,
+    Splitter,
     ViewerPane,
   } from '@kupcad/ui';
   import { createKupcadWorker } from '@kupcad/wasm';
@@ -29,7 +34,7 @@
 
   /** @import { Editor as EditorClass } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-  /** @import { ConsoleLine, Problem } from '@kupcad/ui' */
+  /** @import { ConsoleLine, Problem, Settings } from '@kupcad/ui' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { KupcadApi, WorkerWasmSource } from '@kupcad/wasm/types' */
 
@@ -42,10 +47,35 @@
    * @property {WorkerWasmSource} [wasm] that worker's module, when not the one the wasm package
    *   ships
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
+   * @property {Settings} [settings] where the panes' sizes are kept; by default the page's
+   *   localStorage
    */
 
   /** @type {Props} */
-  let { source = '', name = 'model', kupcad, wasm, viewerOptions = {} } = $props();
+  let {
+    source = '',
+    name = 'model',
+    kupcad,
+    wasm,
+    viewerOptions = {},
+    settings = localSettings(),
+  } = $props();
+
+  /** The settings' keys: the editor's and the parameters' widths, the console's height and state. */
+  const KEYS = {
+    editor: 'playground.editor',
+    params: 'playground.params',
+    console: 'playground.console',
+    open: 'playground.consoleOpen',
+  };
+  /** The least the model is given, however wide the editor is made. */
+  const MIN_VIEW = 320;
+  let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 460)));
+  let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
+  let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
+  let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
+  /** The playground's width, once laid out. */
+  let width = $state(0);
 
   /** The script as the editor has it: the user's, from the one the page gave at first. */
   let value = $state(untrack(() => source));
@@ -133,11 +163,23 @@
   }
 </script>
 
-<div class="kc-playground">
+<div
+  class="kc-playground"
+  bind:clientWidth={width}
+  style:--editor-width="{editorWidth}px"
+  style:--params-width="{paramsWidth}px"
+>
   <section class="code" aria-label="Script">
     <Editor bind:value bind:editor findings={marks} label={name} onchange={edited} />
     {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
   </section>
+  <Splitter
+    bind:size={editorWidth}
+    min={240}
+    max={width > 0 ? width - paramsWidth - MIN_VIEW : undefined}
+    label="Resize the script"
+    onchange={(size) => settings.set(KEYS.editor, size)}
+  />
   <section class="view" aria-label="Model">
     <div class="model">
       <ViewerPane
@@ -158,9 +200,33 @@
         {/snippet}
       </ViewerPane>
     </div>
-    <ConsolePanel lines={consoleLines} onreveal={reveal} onclear={() => (consoleLines = [])} />
+    {#if consoleOpen}
+      <Splitter
+        between="rows"
+        pane="after"
+        bind:size={consoleHeight}
+        min={48}
+        label="Resize the console"
+        onchange={(size) => settings.set(KEYS.console, size)}
+      />
+    {/if}
+    <ConsolePanel
+      lines={consoleLines}
+      height={consoleHeight}
+      bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, (consoleOpen = open))}
+      onreveal={reveal}
+      onclear={() => (consoleLines = [])}
+    />
   </section>
   {#if header && parameters.length > 0}
+    <Splitter
+      pane="after"
+      bind:size={paramsWidth}
+      min={200}
+      max={640}
+      label="Resize the parameters"
+      onchange={(size) => settings.set(KEYS.params, size)}
+    />
     <aside class="params" aria-label="Parameters">
       <ParamsPanel
         schema={header.params.schema}
@@ -185,14 +251,15 @@
   }
   .code {
     position: relative;
-    flex: 2 1 0;
+    flex: none;
+    width: var(--editor-width);
     min-width: 0;
     border-right: 1px solid var(--kc-border);
   }
   .view {
     display: flex;
     flex-direction: column;
-    flex: 3 1 0;
+    flex: 1;
     min-width: 0;
   }
   .model {
@@ -201,7 +268,8 @@
     min-height: 0;
   }
   .params {
-    width: 18em;
+    flex: none;
+    width: var(--params-width);
     overflow: auto;
     padding: var(--kc-gap);
     border-left: 1px solid var(--kc-border);
@@ -223,8 +291,13 @@
     .kc-playground {
       flex-direction: column;
     }
+    /* Stacked, each the page's width: the columns' bars have nothing to resize */
+    .kc-playground > :global(.kc-splitter.columns) {
+      display: none;
+    }
     .code {
       flex-basis: 40%;
+      width: auto;
       border-right: none;
       border-bottom: 1px solid var(--kc-border);
     }

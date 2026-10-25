@@ -74,6 +74,14 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   run of the document shown, a frame sent again once, and the lines the host's `log` messages
   give. A host that keeps no presets passes
   `presets={false}`, and none are offered.
+* **Layout** (`Splitter`, `settings.js`): the bar between two panes that resizes one of them,
+  dragged or with the keys (the arrows, Shift for longer steps, Home and End), double-clicked
+  back, a separator a screen reader knows (`role="separator"`, its value its size); it takes no
+  room, the panes keep their borders. The sizes are kept in a host's `Settings` (`get`, `set`):
+  `localSettings`, the page's localStorage as one JSON object, kept in memory where the page may
+  not store; `memorySettings`, the page's life alone; `sizeSetting` reads a kept size or the
+  pane's own. `PreviewPanel` keeps its parameters' width and its console's height and state
+  (`preview.*`) in the `settings` it is given.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.
   `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads each as the page draws it,

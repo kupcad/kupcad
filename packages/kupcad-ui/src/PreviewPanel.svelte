@@ -7,14 +7,17 @@
   listed under the model: one with a line, clicked, is shown in the script's editor. The
   document's presets are above its parameters: one applied, or the panel's values saved as one.
   The console under the model keeps each run (what it printed, its warnings and its error) and
-  the host's log, as OpenSCAD's does.
+  the host's log, as OpenSCAD's does. The parameters' column and the console are resized by the
+  bars beside them, their sizes (and the console folded or not) kept in the host's `settings`.
 -->
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { errorText } from '@kupcad/protocol';
   import ConsolePanel from './ConsolePanel.svelte';
   import { appendLines, linesOfLog, linesOfRun } from './console.js';
   import ParamsPanel from './ParamsPanel.svelte';
+  import { memorySettings, sizeSetting } from './settings.js';
+  import Splitter from './Splitter.svelte';
   import ViewerPane from './ViewerPane.svelte';
   import { toBase64 } from './base64.js';
   import { problemsOf, runStatusOf } from './run-status.js';
@@ -24,6 +27,7 @@
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
+  /** @import { Settings } from './settings.js' */
 
   /**
    * @typedef {object} Props
@@ -33,6 +37,7 @@
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
    * @property {boolean} [presets] whether the host keeps presets, which the panel then offers
    * @property {boolean} [console] whether the console shows under the model
+   * @property {Settings} [settings] where the panes' sizes are kept; by default the page's memory
    */
 
   /** @type {Props} */
@@ -43,7 +48,18 @@
     viewerOptions = {},
     presets: offersPresets = true,
     console: showsConsole = true,
+    settings = memorySettings(),
   } = $props();
+
+  /** The settings' keys: the parameters' width, the console's height, whether it is open. */
+  const KEYS = {
+    params: 'preview.params',
+    console: 'preview.console',
+    open: 'preview.consoleOpen',
+  };
+  let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
+  let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
+  let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
 
   let shown = $state(/** @type {ShownDocument | null} */ (null));
   let preview = $state(/** @type {Preview | null} */ (null));
@@ -191,15 +207,35 @@
       {/if}
     </div>
     {#if showsConsole}
+      {#if consoleOpen}
+        <Splitter
+          between="rows"
+          pane="after"
+          bind:size={consoleHeight}
+          min={48}
+          label="Resize the console"
+          onchange={(size) => settings.set(KEYS.console, size)}
+        />
+      {/if}
       <ConsolePanel
         lines={consoleLines}
+        height={consoleHeight}
+        bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, (consoleOpen = open))}
         onreveal={revealLine}
         onclear={() => (consoleLines = [])}
       />
     {/if}
   </section>
   {#if header && parameters.length > 0}
-    <aside class="params" aria-label="Parameters">
+    <Splitter
+      pane="after"
+      bind:size={paramsWidth}
+      min={200}
+      max={640}
+      label="Resize the parameters"
+      onchange={(size) => settings.set(KEYS.params, size)}
+    />
+    <aside class="params" aria-label="Parameters" style:width="{paramsWidth}px">
       {#if offersPresets}
         <div class="presets">
           <select
@@ -250,7 +286,7 @@
     min-height: 0;
   }
   .params {
-    width: 18em;
+    flex: none;
     overflow: auto;
     padding: var(--kc-gap);
     border-left: 1px solid var(--kc-border);

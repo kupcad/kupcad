@@ -1,5 +1,6 @@
 //! The desktop app's native side: the bundled kupcad's language server, which it runs for the
-//! page (server.rs); the plugins the page uses (dialogs, the files of the folder the user opens);
+//! page (server.rs); the plugins the page uses (dialogs, the files of the folder the user opens,
+//! its settings file);
 //! `launch_folder`, the folder named on the command line; and `export_model`, which builds a
 //! script with the bundled kupcad (`kupcad build`). The page runs the binary through these
 //! alone, its arguments checked here, and reads and writes only what the user chose.
@@ -110,6 +111,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(server::Server::default())
         .invoke_handler(tauri::generate_handler![
             export_model,

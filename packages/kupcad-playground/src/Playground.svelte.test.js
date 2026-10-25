@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { stubRenderer } from '@kupcad/viewer/testing';
 import { testCore } from '@kupcad/wasm/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { memorySettings } from '@kupcad/ui';
 import Playground from './Playground.svelte';
 
 /** How long a run may take here: the pause after an edit, then the real core's. */
@@ -14,8 +15,9 @@ afterEach(() => vi.restoreAllMocks());
 /**
  * The playground on `source`, run by the real core in this thread, and its editor's view.
  * @param {string} source
+ * @param {import('@kupcad/ui').Settings} [settings] where its panes' sizes are kept
  */
-async function playground(source) {
+async function playground(source, settings = memorySettings()) {
   const kupcad = await testCore();
   render(Playground, {
     props: {
@@ -23,6 +25,7 @@ async function playground(source) {
       kupcad,
       name: 'bracket',
       viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 },
+      settings,
     },
   });
   const view = /** @type {EditorView} */ (
@@ -91,6 +94,17 @@ describe('Playground', () => {
     ]);
     await fireEvent.click(screen.getByRole('button', { name: /Error: RuntimeError: boom/ }));
     expect(view.state.selection.main.head).toBe(view.state.doc.line(3).from);
+  });
+
+  it('lays its panes out as its settings keep them, and keeps what the person changes', async () => {
+    const settings = memorySettings({ 'playground.editor': 500 });
+    await playground('cube(10)\n', settings);
+    const script = /** @type {HTMLElement} */ (document.querySelector('.kc-playground'));
+    expect(script.style.getPropertyValue('--editor-width')).toBe('500px');
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize the script' }), {
+      key: 'ArrowRight',
+    });
+    expect(settings.get('playground.editor')).toBe(516);
   });
 
   it('runs the script again once an edit stays a moment', async () => {

@@ -3,6 +3,7 @@ import { stubRenderer } from '@kupcad/viewer/testing';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { memorySettings } from '@kupcad/ui';
 import App from './App.svelte';
 import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';
@@ -26,7 +27,10 @@ afterEach(() => {
 });
 
 /** The window on stand-ins for Tauri's services, with the server and the files they kept. */
-function windowOn({ launched = /** @type {string | null} */ (null) } = {}) {
+function windowOn({
+  launched = /** @type {string | null} */ (null),
+  settings = memorySettings(),
+} = {}) {
   const fake = fakeServer({ port: null });
   /** @type {(() => Promise<boolean>) | null} */
   let canClose = null;
@@ -49,9 +53,14 @@ function windowOn({ launched = /** @type {string | null} */ (null) } = {}) {
       canClose = ask;
       return () => {};
     },
+    settings: async () => settings,
   };
   const { unmount } = render(App, {
-    props: { platform, viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 } },
+    props: {
+      platform,
+      settings,
+      viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 },
+    },
   });
   opened.push(unmount);
   return {
@@ -145,6 +154,21 @@ describe('the window', () => {
     const view = await editorView();
     expect(window.platform.pickFolder).not.toHaveBeenCalled();
     expect(view.state.doc.toString()).toBe('cube(2)\n');
+  });
+
+  it('lays its panes out as the settings keep them, and keeps what the person changes', async () => {
+    const settings = memorySettings({ 'app.files': 260, 'app.editor': 600 });
+    windowOn({ settings });
+    await openFolder();
+    const files = screen.getByRole('navigation', { name: 'Files' });
+    expect(files.style.width).toBe('260px');
+    expect(screen.getByRole('region', { name: 'Script' }).style.width).toBe('600px');
+    await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize the files' }), {
+      key: 'ArrowRight',
+    });
+    expect(settings.get('app.files')).toBe(276);
+    // The preview's panes are kept in the same settings
+    expect(screen.getByRole('separator', { name: 'Resize the console' })).toBeTruthy();
   });
 
   it('asks before it closes on unsaved changes, and not without', async () => {

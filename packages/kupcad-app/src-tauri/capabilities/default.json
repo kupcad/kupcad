@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: closing itself once its unsaved changes are settled, dialogs, and the files of what the user chose in them. The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
+  "description": "The main window: closing itself once its unsaved changes are settled, dialogs, the files of what the user chose in them, and the app's settings file. The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,6 +12,7 @@
     "fs:allow-read-dir",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
-    "fs:allow-write-file"
+    "fs:allow-write-file",
+    "store:default"
   ]
 }

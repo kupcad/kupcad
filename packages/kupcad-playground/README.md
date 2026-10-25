@@ -31,6 +31,9 @@ the PWA) embeds; it keeps nothing of the page's.
   the model in any format the core writes (`@kupcad/protocol`'s `EXPORT_FORMATS`, built with the
   panel's values) and saves a screenshot, as downloads named after `name`; a build that fails
   says why. The parameters (`ParamsPanel`) are beside it.
+* **The layout**: the bars between the script, the model, the parameters and the console
+  resize them (`@kupcad/ui`'s `Splitter`), the sizes kept in `settings`, by default the page's
+  localStorage (`localSettings`, the `playground.*` keys); a narrow page stacks the panes.
 * **The console** (`@kupcad/ui`'s `ConsolePanel`, under the model): each run, what it printed
   (`puts`, `print`, `inspect`), its warnings and its error, a line naming a place taking the
   editor there, and the core's log (the worker module's stdout and stderr).
