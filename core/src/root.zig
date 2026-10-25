@@ -14,7 +14,6 @@ pub const test_support = @import("test_support.zig");
 /// How a host packs the files it gives a wasm build (the wasm tests pack them so).
 pub const vfs_packed = @import("vfs/packed.zig");
 pub const std_options = @import("log.zig").std_options;
-pub const SessionManager = @import("session/session_manager.zig").SessionManager;
 
 pub const formatCode = api.formatCode;
 pub const checkCode = api.checkCode;
@@ -94,7 +93,6 @@ test {
     _ = @import("core/import_path_test.zig");
 
     // Daemon
-    _ = @import("session/session_manager_test.zig");
     _ = @import("session/session_test.zig");
     _ = @import("session/watcher_test.zig");
     _ = @import("cli/viewport_ws_test.zig");

@@ -41,7 +41,7 @@ Each directory of `src/` is a layer, and imports only the layers below it. `src/
 | `pkg/` | The package manager. | `core/`, `vfs/`, `log.zig` |
 | `tools/` | What reads source without running it (the formatter, the linter, the doc extractor, the dev dumps), and the benchmark. | `core/`, `frontend/`, `kernel/`, `stdlib/`, `vm/`, `compiler/` |
 | `preview/` | The preview frame a front end shows: its format and `PROTOCOL_VERSION` (`frame.zig`), and its making from a run (`build.zig`). | `core/`, `frontend/`, `vm/`, `kernel/`, `exporters/`, `tools/doc/` |
-| `session/` | Incremental evaluation (`ScriptSession`, `SessionManager`), the watcher and the exports fingerprint. | `core/`, `frontend/`, `compiler/`, `vm/`, `kernel/`, `stdlib/`, `vfs/`, `api.zig` |
+| `session/` | Incremental evaluation (`ScriptSession`), the watcher and the exports fingerprint. | `core/`, `frontend/`, `compiler/`, `vm/`, `kernel/`, `stdlib/`, `vfs/`, `api.zig` |
 | `cli/` | The `kupcad` commands, the language server with its viewport's WebSocket server, and the terminal debugger. | anything |
 | `api.zig`, `wasm.zig`, `main.zig` | The embedding API, the browser's exports, the executable. | anything |
 | `locus/` | The B-Rep kernel, a library of its own. | — |

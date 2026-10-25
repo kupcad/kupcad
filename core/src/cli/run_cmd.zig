@@ -7,7 +7,7 @@
 const std = @import("std");
 const build_cmd = @import("build_cmd.zig");
 const param_flags = @import("param_flags.zig");
-const SessionManager = @import("../session/session_manager.zig").SessionManager;
+const ScriptSession = @import("../session/session.zig").ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const ScriptOptions = @import("script_options.zig").ScriptOptions;
@@ -41,8 +41,7 @@ pub fn run(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !Out
     var root = try ScriptRoot.open(reporter.io, allocator, input_path, reporter) orelse return .failure;
     defer root.deinit(reporter.io, allocator);
     var disk = NativeVfs.init(reporter.io, root.dir);
-    var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
-    defer manager.deinit();
-    _ = try build_cmd.runScript(allocator, &manager, &root, &options.params, null, reporter) orelse return .failure;
-    return .success;
+    var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
+    defer session.deinit();
+    return if (try build_cmd.runScript(allocator, &session, &root, &options.params, null, reporter)) .success else .failure;
 }

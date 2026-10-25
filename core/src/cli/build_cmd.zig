@@ -9,7 +9,6 @@ const fs = @import("fs.zig");
 const param_flags = @import("param_flags.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
-const SessionManager = @import("../session/session_manager.zig").SessionManager;
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const diagnostic_report = @import("diagnostic_report.zig");
@@ -57,45 +56,40 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var options = try ScriptOptions.parse(allocator, args_iter, reporter, .always, USAGE) orelse return .failure;
     defer options.deinit(allocator);
 
-    // A one-shot command: one session is all it needs, reading and writing the disk from
-    // where the script's imports are
+    // The script reads and writes the disk from where its imports are
     var root = try ScriptRoot.open(reporter.io, allocator, options.input_path, reporter) orelse return .failure;
     defer root.deinit(reporter.io, allocator);
     var disk = NativeVfs.init(reporter.io, root.dir);
-    var manager = SessionManager.init(allocator, reporter.io, 1, disk.vfs());
-    defer manager.deinit();
-    const session = try runScript(allocator, &manager, &root, &options.params, &options.exports, reporter) orelse return .failure;
+    var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
+    defer session.deinit();
+    if (!try runScript(allocator, &session, &root, &options.params, &options.exports, reporter)) return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }
 
-/// Runs the script `root` names (its file system `manager`'s) in a session of `manager`, set
-/// up as the command and the project ask: `params` (which the session takes), the terminal debugger, the
-/// project's memory limit (`vm_memory_limit` in .kupcad.json) and the engine `exports`
-/// need (STEP's exact B-Rep). The session, its model built; null, the failure reported,
-/// when it can't be set up or the script doesn't parse, compile or run.
-pub fn runScript(allocator: std.mem.Allocator, manager: *SessionManager, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !?*ScriptSession {
+/// Runs the script `root` names in `session` (reading `root`'s folder), set up as the command
+/// and the project ask: `params` (which the session takes), the terminal debugger, the
+/// project's memory limit (`vm_memory_limit` in .kupcad.json) and the engine `exports` need
+/// (STEP's exact B-Rep). Whether its model was built; false, the failure reported, when it
+/// can't be set up or the script doesn't parse, compile or run.
+pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !bool {
     const io = reporter.io;
     const input_path = root.input;
     // Read first: a file that isn't there is named so, before a session is made for it
     const source = fs.readFile(io, allocator, input_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ input_path, @errorName(err) });
-        return null;
+        return false;
     };
     defer allocator.free(source);
-    const session = manager.getOrInitializeSession(input_path) catch |err| {
-        reporter.err("Failed to initialize session: {}\n", .{err});
-        return null;
-    };
     session.setParams(params);
     session.vm.debugger_handler = debugger.terminalDebugger(io);
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(io, allocator, input_path, &where) catch |err| {
         reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, input_path, where.line, where.column, ProjectConfig.describeError(err) });
-        return null;
+        return false;
     };
     session.vm.setMemoryLimit(config.vm_memory_limit);
     if (exports) |e| try e.prepare(&session.vm);
-    return if (try evaluate(allocator, session, root, source, reporter)) session else null;
+    return evaluate(allocator, session, root, source, reporter);
 }
 
 /// Runs the script `root` names, of `source`, and the modules it imports, dependencies

@@ -329,8 +329,8 @@ test "kupcad: a script imports its neighbours however it is named, from wherever
         defer run.deinit();
         errdefer std.debug.print("{s}\n", .{run.stderr});
         try testing.expectEqual(@as(u8, 0), run.code);
-        // What it prints (on stderr, as `run` prints)
-        try testing.expect(std.mem.endsWith(u8, run.stderr, "\n6\n"));
+        // What it prints (on stderr, as `run` prints), and nothing else
+        try testing.expectEqualStrings("6\n", run.stderr);
     }
 }
 

@@ -1,5 +1,4 @@
-//! `kupcad watch`: builds a script, then rebuilds it through a pinned `ScriptSession`
-//! whenever the `Watcher` sees it or a module it imports change; given export options
+//! `kupcad watch`: builds a script, then rebuilds it through its `ScriptSession` whenever the `Watcher` sees it or a module it imports change; given export options
 //! (export_flags.zig, as `kupcad build` takes them), each build that succeeds writes them.
 
 const std = @import("std");
@@ -12,7 +11,6 @@ const fs = @import("fs.zig");
 const ProjectConfig = @import("config.zig").ProjectConfig;
 const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
-const SessionManager = @import("../session/session_manager.zig").SessionManager;
 const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
@@ -43,18 +41,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     defer options.deinit(allocator);
     const file_path = options.input_path;
 
-    // Spin up the cache controller; the script reads and writes the disk from where its
-    // imports are
+    // The script reads and writes the disk from where its imports are
     var root = try ScriptRoot.open(init.io, allocator, file_path, reporter) orelse return .failure;
     defer root.deinit(init.io, allocator);
     var disk = NativeVfs.init(init.io, root.dir);
-    var manager = SessionManager.init(allocator, init.io, 1, disk.vfs());
-    defer manager.deinit();
-
-    // Pin the session: the watcher holds this pointer for the life of the process.
-    const lease = try manager.acquireSession(file_path);
-    defer manager.release(lease);
-    const session = lease.session;
+    var script_session = try ScriptSession.init(allocator, init.io, disk.vfs());
+    defer script_session.deinit();
+    // The watcher holds it for the life of the process
+    const session = &script_session;
     session.setParams(&options.params);
     session.vm.debugger_handler = debugger.terminalDebugger(init.io);
     // A long-lived session caps the script heap: the project's `vm_memory_limit`, else the
