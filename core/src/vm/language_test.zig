@@ -17,8 +17,9 @@ test "Language: iterators follow the receiver as the block grows it" {
         .{ .src = "a = [1]\nseen = []\na.each { |x| a.push(x + 1) if x < 5; seen.push(x) }\nr = seen", .expected = .{ .nums = &.{ 1, 2, 3, 4, 5 } } },
         .{ .src = "a = [1, 2, 3]\nr = a.reduce(0) { |acc, x| 100.times { a.push(100) } if x == 1; acc + x }", .expected = .{ .num = 6 + 100 * 100 } },
         .{ .src = "a = [1, 2, 3, 4]\nr = a.filter { |x| 100.times { a.push(6) } if x == 1; x.even? }.slice(0, 3)", .expected = .{ .nums = &.{ 2, 4, 6 } } },
-        .{ .src = "m = { a: 1 }\nr = []\nm.each { |k, v| 40.times { |i| m[\"k#{i}\"] = i } if k == :a; r.push(v) }\nr = r.slice(0, 3)", .expected = .{ .nums = &.{ 1, 0, 1 } } },
-        .{ .src = "m = { a: 1, b: 2 }\nr = m.map { |k, v| 40.times { |i| m[\"k#{i}\"] = i } if k == :a; v }.slice(0, 3)", .expected = .{ .nums = &.{ 1, 2, 0 } } },
+        // A Map's give the entries there when they began (Ruby refuses a key added then)
+        .{ .src = "m = { a: 1 }\nr = []\nm.each { |k, v| 40.times { |i| m[\"k#{i}\"] = i } if k == :a; r.push(v) }\nr = r.push(m.length)", .expected = .{ .nums = &.{ 1, 41 } } },
+        .{ .src = "m = { a: 1, b: 2 }\nr = m.map { |k, v| 40.times { |i| m[\"k#{i}\"] = i } if k == :a; v }", .expected = .{ .nums = &.{ 1, 2 } } },
     });
 }
 

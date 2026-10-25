@@ -89,6 +89,19 @@ test "Map: a key is found by what it holds, an Array's, a Map's or a Range's, as
     });
 }
 
+test "Map: a block that deletes entries is given the others, each once" {
+    // Deleting the entry given moved the next into its place, which the walk then passed
+    const m = "h = { 1 => :a, 2 => :b, 3 => :c, 4 => :d }\n";
+    try expectScripts(&.{
+        .{ .src = m ++ "seen = []\nh.each { |k, v| seen.push(k)\nh.delete(k) }\nr = seen", .expected = .{ .nums = &.{ 1, 2, 3, 4 } } },
+        .{ .src = m ++ "r = h.map { |k, v| h.delete(k + 1)\nk }", .expected = .{ .nums = &.{ 1, 3 } } },
+        .{ .src = m ++ "r = h.filter { |k, v| h.delete(k)\ntrue }.keys", .expected = .{ .nums = &.{ 1, 2, 3, 4 } }, .gc_stress = true },
+        .{ .src = m ++ "r = h.transform_values { |v| h.delete(h.keys[0])\nv }.length", .expected = .{ .num = 4 } },
+        // One it adds isn't given: a block adding entries walked on until memory ran out
+        .{ .src = m ++ "n = 0\nh.each { |k, v| n += 1\nh[k + 10] = v }\nr = [n, h.length]", .expected = .{ .nums = &.{ 4, 8 } } },
+    });
+}
+
 test "Map: size, fetch and dig read entries, nested ones included" {
     const m = "m = { a: 1, b: [10, { c: \"deep\" }], \"s\" => 2 }\n";
     try expectScripts(&.{

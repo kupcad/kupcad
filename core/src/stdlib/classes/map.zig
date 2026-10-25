@@ -34,9 +34,8 @@ pub fn mapKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     return value.Value.initBool(map.map.contains(key));
 }
 
-/// Map#delete(key)
 /// Map#delete(key) -> the removed value, nil when absent. The other entries keep their
-/// order (a swap-remove moved the last entry into the hole).
+/// order: those after it move up one (a swap-remove moved the last entry into the hole).
 pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     _ = vm;
     if (map.map.fetchOrderedRemove(key)) |kv| {
@@ -45,15 +44,43 @@ pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     return value.Value.initNil();
 }
 
-// The iterators index the map afresh on every step and stop at its current count: a
-// block that inserts into the map it iterates moves its entries, and the key and value
-// slices taken once read freed memory.
+/// The entries a block is given, one at a time, by the iterators: the keys there when the
+/// walk began (a copy, rooted in the caller's scope), each with its value when its turn
+/// comes. One the block deletes before its turn isn't given, and one it adds isn't either:
+/// walked by position, deleting the entry given moved the next into its place, which the
+/// walk then passed, and a block adding entries walked on until memory ran out.
+const Walk = struct {
+    map: *value.ObjMap,
+    keys: *value.ObjArray,
+    at: usize = 0,
+
+    fn init(vm: *VM, scope: HandleScope, map: *value.ObjMap) !Walk {
+        const keys = try scope.array();
+        try keys.items.appendSlice(vm.gc.trackingAllocator(), map.map.keys());
+        return .{ .map = map, .keys = keys };
+    }
+
+    fn next(self: *Walk) ?struct { value.Value, value.Value } {
+        while (self.at < self.keys.items.items.len) {
+            const key = self.keys.items.items[self.at];
+            self.at += 1;
+            if (self.map.map.get(key)) |val| return .{ key, val };
+        }
+        return null;
+    }
+};
 
 /// Map#each { |k, v| ... }
 pub fn mapEach(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure) !value.Value {
-    var i: usize = 0;
-    while (i < map.map.count()) : (i += 1) {
-        switch (try callBlock(vm, closure, &.{ map.map.keys()[i], map.map.values()[i] })) {
+    var scope = HandleScope.init(vm);
+    defer scope.deinit();
+    var walk = try Walk.init(vm, scope, map);
+    while (walk.next()) |entry| {
+        var held = HandleScope.init(vm);
+        defer held.deinit();
+        // Rooted: the block may delete the entry
+        vm.push(entry[1]);
+        switch (try callBlock(vm, closure, &.{ entry[0], entry[1] })) {
             .broke => |v| return v,
             .value => {},
         }
@@ -104,9 +131,12 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
     try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
     const closure = block_opt.?;
 
-    var i: usize = 0;
-    while (i < map.map.count()) : (i += 1) {
-        const mapped_val = switch (try callBlock(vm, closure, &.{ map.map.keys()[i], map.map.values()[i] })) {
+    var walk = try Walk.init(vm, scope, map);
+    while (walk.next()) |entry| {
+        var held = HandleScope.init(vm);
+        defer held.deinit();
+        vm.push(entry[1]);
+        const mapped_val = switch (try callBlock(vm, closure, &.{ entry[0], entry[1] })) {
             .broke => |v| return v,
             .value => |v| v,
         };
@@ -264,14 +294,12 @@ fn keepEntries(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure, truthy: 
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     const kept = try scope.map();
-    var i: usize = 0;
-    while (i < map.map.count()) : (i += 1) {
-        const key = map.map.keys()[i];
-        const val = map.map.values()[i];
+    var walk = try Walk.init(vm, scope, map);
+    while (walk.next()) |entry| {
+        const key, const val = entry;
         // Rooted: the block may delete the entry
         var held = HandleScope.init(vm);
         defer held.deinit();
-        vm.push(key);
         vm.push(val);
         const res = switch (try callBlock(vm, closure, &.{ key, val })) {
             .broke => |v| return v,
@@ -288,13 +316,13 @@ pub fn mapTransformValues(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosur
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     const out = try scope.map();
-    var i: usize = 0;
-    while (i < map.map.count()) : (i += 1) {
-        const key = map.map.keys()[i];
+    var walk = try Walk.init(vm, scope, map);
+    while (walk.next()) |entry| {
+        const key, const val = entry;
         var held = HandleScope.init(vm);
         defer held.deinit();
-        vm.push(key);
-        const result = switch (try callBlock(vm, closure, &.{map.map.values()[i]})) {
+        vm.push(val);
+        const result = switch (try callBlock(vm, closure, &.{val})) {
             .broke => |v| return v,
             .value => |v| v,
         };
