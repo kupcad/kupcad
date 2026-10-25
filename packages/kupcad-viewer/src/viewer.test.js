@@ -7,7 +7,7 @@ import { DARK, LIGHT } from './theme.js';
 import { Viewer, ViewerError } from './viewer.js';
 
 /** @import { Camera, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, Scene } from 'three' */
-/** @import { View, ViewerOptions } from './types.js' */
+/** @import { Section, View, ViewerOptions } from './types.js' */
 
 const WIDTH = 800;
 const HEIGHT = 600;
@@ -122,6 +122,17 @@ function xAxes(scene) {
     }
   });
   return found;
+}
+
+/**
+ * Turns the wheel over `canvas`: whether the page was kept from scrolling.
+ * @param {HTMLCanvasElement} canvas
+ * @param {WheelEventInit} init
+ */
+function wheelOn(canvas, init) {
+  const event = new WheelEvent('wheel', { cancelable: true, ...init });
+  canvas.dispatchEvent(event);
+  return event.defaultPrevented;
 }
 
 const BLOCK = 'cube(20, center: true).named("block")';
@@ -413,6 +424,103 @@ describe('Viewer', () => {
     drag(1, 80);
     expect(camera.position.distanceTo(before)).toBeGreaterThan(0.1);
     expect(camera.position.clone().sub(before).dot(turned)).toBeCloseTo(0, 6);
+  });
+
+  it('zooms with the wheel, the controls none, while a button turns the view too', async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    const framed = camera.position.length();
+    expect(wheelOn(canvas, { deltaY: -100 })).toBe(true);
+    // Its zoom alone: the controls, which zoom with the wheel too, heard none of it
+    expect(camera.position.length()).toBeCloseTo(framed * 0.95, 6);
+    // While the left button turns the view, and the right one pans; not with the middle one
+    // held, which is the wheel pressed
+    for (const [button, buttons] of [
+      [0, 1],
+      [2, 2],
+    ]) {
+      const at = { pointerId: 1, pointerType: 'mouse', button, clientX: 100, clientY: 100 };
+      canvas.dispatchEvent(Object.assign(new Event('pointerdown'), at));
+      const before = camera.position.length();
+      wheelOn(canvas, { deltaY: 100, buttons });
+      expect(camera.position.length()).toBeCloseTo(before / 0.95, 6);
+      document.dispatchEvent(Object.assign(new Event('pointerup'), at));
+    }
+    const before = camera.position.length();
+    expect(wheelOn(canvas, { deltaY: 100, buttons: 4 })).toBe(true);
+    expect(camera.position.length()).toBe(before);
+    // A pinch is the wheel with Ctrl, which zooms ten times as fast
+    wheelOn(canvas, { deltaY: -10, ctrlKey: true });
+    expect(camera.position.length()).toBeCloseTo(before * 0.95, 6);
+  });
+
+  it('pans with Shift and the wheel: the model moves as a page would scroll, in either camera', async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    for (const projection of /** @type {const} */ (['perspective', 'orthographic'])) {
+      viewer.setCamera({ projection, view: 'iso' });
+      await nextFrame();
+      const camera = /** @type {Camera} */ (drawn.camera);
+      wheelOn(canvas, { deltaX: 100, deltaY: -50, shiftKey: true });
+      // The block's centre, the origin, was the canvas's: it went left and down
+      camera.updateMatrixWorld();
+      const seen = new Vector3().project(camera);
+      expect((seen.x + 1) * (WIDTH / 2)).toBeCloseTo(WIDTH / 2 - 100, 3);
+      expect((1 - seen.y) * (HEIGHT / 2)).toBeCloseTo(HEIGHT / 2 + 50, 3);
+      expect(viewer.view).toBe('iso');
+    }
+  });
+
+  it('turns the view with Cmd and the wheel, as a drag the other way would', async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    // jsdom lays nothing out: the controls turn by the canvas's height
+    Object.defineProperty(canvas, 'clientHeight', { value: HEIGHT });
+    /** @type {(View | null)[]} */
+    const views = [];
+    viewer.addEventListener('view', (event) => {
+      views.push(/** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view);
+    });
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    wheelOn(canvas, { deltaX: 80, deltaY: 40, metaKey: true });
+    const turned = camera.position.clone();
+    expect(views).toEqual([null]);
+    viewer.lookFrom([1, -1, 1]);
+    const at = { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 300, clientY: 300 };
+    canvas.dispatchEvent(Object.assign(new Event('pointerdown'), at));
+    const to = { ...at, clientX: 300 - 80, clientY: 300 - 40 };
+    document.dispatchEvent(Object.assign(new Event('pointermove'), to));
+    document.dispatchEvent(Object.assign(new Event('pointerup'), to));
+    expect(camera.position.distanceTo(turned)).toBeCloseTo(0, 6);
+  });
+
+  it('moves the section with Option and the wheel, from the top when none is on, and says so', async () => {
+    const { viewer, canvas } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    /** @type {(Section | null)[]} */
+    const said = [];
+    viewer.addEventListener('section', (event) => {
+      said.push(/** @type {CustomEvent<{ section: Section }>} */ (event).detail.section);
+    });
+    // The block is 20 mm high: 200 of the 2000 pixels across it are 2 mm down from its top
+    wheelOn(canvas, { deltaY: 200, altKey: true });
+    expect(viewer.section?.axis).toBe('z');
+    expect(viewer.section?.offset).toBeCloseTo(8, 4);
+    expect(said).toEqual([viewer.section]);
+    // Along the section's axis, flipped as it is, and no further than the model
+    viewer.setSection({ axis: 'x', offset: 0, flip: true });
+    wheelOn(canvas, { deltaY: -100_000, altKey: true });
+    expect(viewer.section).toEqual({ axis: 'x', offset: viewer.bounds?.max[0], flip: true });
+    expect(said).toHaveLength(2);
+    // A drawing isn't cut
+    await viewer.setModel(await modelOf('square(10)'));
+    viewer.setSection(null);
+    wheelOn(canvas, { deltaY: 200, altKey: true });
+    expect(viewer.section).toBeNull();
+    expect(said).toHaveLength(2);
   });
 
   it('says what is under a point: the part, and the face, flat or curved, its area and way', async () => {

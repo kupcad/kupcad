@@ -1,6 +1,6 @@
 import { Box3, PerspectiveCamera, Sphere, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
-import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
+import { boundsOf, orbited, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
 import { gridSide } from './environment.js';
 
 /**
@@ -16,11 +16,39 @@ const screenUp = (direction) => {
   return new Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
 };
 
+/**
+ * A vector's numbers, to a thousandth.
+ * @param {Vector3} v
+ */
+const rounded = (v) => v.toArray().map((n) => Math.round(n * 1000) / 1000 + 0);
+
 describe('the views', () => {
   it('each look from a unit direction; top shows +Y up the screen, front +Z', () => {
     for (const direction of Object.values(VIEWS)) expect(direction.length()).toBeCloseTo(1, 12);
     expect(screenUp(VIEWS.top).y).toBeGreaterThan(0.99);
     expect(screenUp(VIEWS.front).z).toBeGreaterThan(0.99);
+  });
+});
+
+describe('a turn about the model', () => {
+  it('goes round the Z axis, anticlockwise from the top, as high as it was and as far', () => {
+    const front = new Vector3(0, -10, 0);
+    expect(rounded(orbited(front, Math.PI / 2, 0))).toEqual([10, 0, 0]);
+    const iso = new Vector3(1, -1, 1).multiplyScalar(5);
+    const turned = orbited(iso, 1, 0);
+    expect(turned.z).toBeCloseTo(iso.z, 9);
+    expect(turned.length()).toBeCloseTo(iso.length(), 9);
+  });
+
+  it('tilts toward the top, and stops short of looking straight down or up', () => {
+    const front = new Vector3(0, -10, 0);
+    expect(rounded(orbited(front, 0, Math.PI / 4))).toEqual([0, -7.071, 7.071]);
+    const over = orbited(front, 0, Math.PI);
+    expect(over.z).toBeLessThan(10);
+    expect(over.z).toBeGreaterThan(9.99);
+    // Still on the front's side, its way about Z kept
+    expect(over.y).toBeLessThan(0);
+    expect(orbited(front, 0, -Math.PI).z).toBeGreaterThan(-10);
   });
 });
 

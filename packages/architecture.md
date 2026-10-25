@@ -236,7 +236,8 @@ await viewer.setModel(model);        // a Model: GLB parsed with GLTFLoader (+ D
                                      // false when a later one replaced it before it was shown
 viewer.setRenderMode('solid' | 'xray' | 'wireframe');
 viewer.setCamera({ projection: 'perspective' | 'orthographic', view: 'iso' | 'top' | ... });
-viewer.setSection({ axis: 'z', offset, flip });   // a clipping plane, with the cut faces capped
+viewer.setSection({ axis: 'z', offset, flip });   // a clipping plane, with the cut faces capped;
+                                                  // a 'section' event when the wheel moved it
 viewer.select(partName); viewer.addEventListener('select', ...)   // picking by raycast, tinting the part;
                                                                   // a model without the part says null
 viewer.partAt(x, y); viewer.fit(); viewer.resize(); viewer.screenshot(); viewer.dispose();
@@ -263,6 +264,12 @@ Decisions in it:
   axis, the grid and a drawing mean what they mean in the script.
 * **Themes** are a small object (background, grid, default material, selection) that hosts map
   their tokens into; the VS Code webview maps `--vscode-*` variables.
+* **The controls are Orca Slicer's**, as a slicer's users expect: its buttons and keys, and its
+  wheel with Shift (pan) and Option (the section). The viewer takes the wheel from three.js's
+  OrbitControls, which zoom with it only alone and not while a button drags; its listener comes
+  first on the canvas and stops the event there. Cmd and the wheel turn the view, so a trackpad
+  does all three moves with two fingers. Ctrl is left to a pinch, which browsers send as the
+  wheel with Ctrl: another meaning for it would break pinching, or guess which one it was.
 
 Tested two ways: the scene logic (what nodes a model becomes, picking, section plane, camera
 framing, render modes and selection) under Vitest with a stubbed renderer

@@ -4,8 +4,9 @@
 // renders when one changes or the camera moves, not every frame. A click on a part selects it
 // and says so (a 'select' event, `detail.part` its name, or null), as does a model without the
 // selected part. The camera moves to a view over a moment (motion.js); turned by hand, it is in
-// no named view, which a 'view' event says. Its keys are Orca Slicer's. What is under the pointer
-// (the part, the face: faces.js) a 'hover' event says, a frame at most.
+// no named view, which a 'view' event says. Its keys and its wheel (wheel.js) are Orca Slicer's;
+// the section the wheel moves, a 'section' event says. What is under the pointer (the part, the
+// face: faces.js) a 'hover' event says, a frame at most.
 
 import {
   AmbientLight,
@@ -22,12 +23,20 @@ import {
   Scene,
   Sphere,
   Vector2,
+  Vector3,
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { applyRenderMode, applySelection } from './appearance.js';
-import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
+import {
+  boundsOf,
+  orbited,
+  orthographicHalfHeight,
+  perspectiveDistance,
+  VIEWS,
+  ZOOM_STEP,
+} from './camera.js';
 import { disposeObject } from './dispose.js';
 import { axesOf, environmentOf } from './environment.js';
 import { faceAt } from './faces.js';
@@ -35,8 +44,8 @@ import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
 import { RENDER_ORDER, SectionView } from './section.js';
 import { LIGHT } from './theme.js';
+import { wheelGesture } from './wheel.js';
 
-/** @import { Vector3 } from 'three' */
 /** @import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js' */
 /** @import { Pose } from './motion.js' */
 
@@ -65,8 +74,8 @@ const VIEW_KEYS = /** @type {Record<string, View>} */ ({
   5: 'left',
   6: 'right',
 });
-/** What `I` zooms in by, and `O` out. */
-const ZOOM_STEP = 1.25;
+/** Scrolling this many CSS pixels with Option moves the section across the whole model. */
+const SECTION_SWEEP_PX = 2000;
 
 /** The render modes and views a toolbar offers, in order. */
 export const RENDER_MODES = /** @type {const} */ (['solid', 'xray', 'wireframe']);
@@ -179,6 +188,9 @@ export class Viewer extends EventTarget {
     this.#renderer.localClippingEnabled = true;
     this.#renderer.setPixelRatio(globalThis.devicePixelRatio ?? 1);
     for (const camera of [this.#perspective, this.#orthographic]) camera.up.set(0, 0, 1);
+    const { signal } = this.#listeners;
+    // Before the controls' own, which it keeps the wheel from
+    canvas.addEventListener('wheel', (event) => this.#wheel(event), { signal, passive: false });
     this.#controls = new OrbitControls(this.#camera, canvas);
     // Orca Slicer's: the middle button pans, as the right one does
     this.#controls.mouseButtons.MIDDLE = MOUSE.PAN;
@@ -198,7 +210,6 @@ export class Viewer extends EventTarget {
       this.#headlight,
       this.#headlight.target,
     );
-    const { signal } = this.#listeners;
     canvas.addEventListener('pointerdown', (event) => this.#pointerDown(event), { signal });
     canvas.addEventListener('pointerup', (event) => this.#pointerUp(event), { signal });
     canvas.addEventListener('keydown', (event) => this.#keyDown(event), { signal });
@@ -846,6 +857,76 @@ export class Viewer extends EventTarget {
     else if (key === 'o') this.zoom(1 / ZOOM_STEP);
     else return;
     event.preventDefault();
+  }
+
+  /**
+   * A turn of the wheel does what wheel.js says, the controls never: they would zoom only with
+   * the wheel alone, and not while a button drags.
+   * @param {WheelEvent} event
+   */
+  #wheel(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const gesture = wheelGesture(event, this.#height);
+    if (!gesture) return;
+    if (gesture.kind === 'zoom') this.zoom(gesture.factor);
+    else if (gesture.kind === 'pan') this.#pan(gesture.x, gesture.y);
+    else if (gesture.kind === 'orbit') this.#orbit(gesture.x, gesture.y);
+    else this.#moveSection(gesture.y);
+  }
+
+  /**
+   * Moves the camera across, as far as the model then moves the other way on the canvas, `x`
+   * and `y` CSS pixels (where the camera looks): as a page's content scrolls.
+   * @param {number} x
+   * @param {number} y
+   */
+  #pan(x, y) {
+    this.#settleMove();
+    const target = this.#controls.target;
+    const seen =
+      this.#camera === this.#orthographic
+        ? (2 * this.#halfHeight) / this.#orthographic.zoom
+        : 2 * this.#camera.position.distanceTo(target) * Math.tan(((FOV_DEG / 2) * Math.PI) / 180);
+    const perPx = seen / this.#height;
+    const move = new Vector3(x * perPx, -y * perPx, 0).applyQuaternion(this.#camera.quaternion);
+    this.#camera.position.add(move);
+    target.add(move);
+    this.#controls.update();
+  }
+
+  /**
+   * Turns the camera about what it looks at as a drag of the left button by `-x` and `-y` CSS
+   * pixels does (the canvas's height of them, a whole turn): the model turns the way a page's
+   * content scrolls.
+   * @param {number} x
+   * @param {number} y
+   */
+  #orbit(x, y) {
+    this.#settleMove();
+    const target = this.#controls.target;
+    const turn = (2 * Math.PI) / this.#height;
+    const offset = orbited(this.#camera.position.clone().sub(target), x * turn, -y * turn);
+    this.#camera.position.copy(target).add(offset);
+    this.#controls.update();
+  }
+
+  /**
+   * Moves a solid's section down `y` CSS pixels' worth (up, below 0), within the model: a model
+   * without one is cut across Z from its top, as Orca's section view is. A 'section' event says
+   * where it is now.
+   * @param {number} y
+   */
+  #moveSection(y) {
+    if (this.#model?.kind !== '3d') return;
+    const box = this.#modelBox();
+    const section = this.#section ?? { axis: 'z', offset: box.max.z };
+    const min = box.min[section.axis];
+    const max = box.max[section.axis];
+    const moved = section.offset - (y / SECTION_SWEEP_PX) * (max - min);
+    const next = { ...section, offset: Math.min(max, Math.max(min, moved)) };
+    this.setSection(next);
+    this.dispatchEvent(new CustomEvent('section', { detail: { section: next } }));
   }
 
   /** @param {PointerEvent} event */

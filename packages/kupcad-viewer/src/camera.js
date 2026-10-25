@@ -11,6 +11,11 @@ import { Sphere, Vector3 } from 'three';
  * meaning on the screen, so the view leans this much toward -Y and the screen's up is +Y.
  */
 const STRAIGHT_LEAN = 1e-4;
+/** A turn stops this short of looking straight down or up (radians): there, Z up means nothing. */
+const POLE_MARGIN = 1e-3;
+
+/** What one step zooms in by (`I`, and the most one turn of the wheel does), and out (`O`). */
+export const ZOOM_STEP = 1.25;
 
 /**
  * From the model's centre toward the camera, for each view (unit length).
@@ -64,4 +69,25 @@ export function perspectiveDistance(sphere, fovDeg, aspect, margin = 1.15) {
 export function orthographicHalfHeight(sphere, aspect, margin = 1.15) {
   const radius = sphere.radius * margin;
   return aspect >= 1 ? radius : radius / aspect;
+}
+
+/**
+ * Where a camera standing `offset` from what it looks at stands once turned `across` radians
+ * about the Z axis (anticlockwise, seen from the top) and `up` radians toward the top: as far
+ * off, short of looking straight down or up.
+ * @param {Vector3} offset
+ * @param {number} across
+ * @param {number} up
+ * @returns {Vector3}
+ */
+export function orbited(offset, across, up) {
+  const radius = offset.length();
+  const fromTop = Math.acos(Math.min(1, Math.max(-1, offset.z / radius)));
+  const tilted = Math.min(Math.PI - POLE_MARGIN, Math.max(POLE_MARGIN, fromTop - up));
+  const around = Math.atan2(offset.y, offset.x) + across;
+  return new Vector3(
+    Math.sin(tilted) * Math.cos(around),
+    Math.sin(tilted) * Math.sin(around),
+    Math.cos(tilted),
+  ).multiplyScalar(radius);
 }

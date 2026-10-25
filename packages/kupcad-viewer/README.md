@@ -18,6 +18,7 @@ viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as the view cube's cor
 new ViewCube(cubeCanvas, viewer, { theme: DARK }); // the cube, on a canvas of its own
 viewer.fit(); viewer.zoom(1.25); // fits the model from where it looks; zooms in (out, below 1)
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
+viewer.addEventListener('section', (event) => event.detail.section); // the wheel with Option moved it
 viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click (the main
 // button; the others pan and zoom), or null
 viewer.select('bolt'); // tints every copy of the part
@@ -57,9 +58,16 @@ const png = await viewer.screenshot();
 * **The camera** moves to a view over a moment (`motionMs`, 250 by default; at once when the page
   asks for reduced motion), turning round the model. Turned by hand it is in no named view (`view`
   is null), which a `view` event says, as it says every change. Its controls are Orca Slicer's:
-  the left button turns, the middle and right ones pan, the wheel zooms; once it has the focus (a
-  click gives it), `0`–`6` (alone, or with Ctrl or Cmd) look from the iso, top, bottom, front,
-  back, left and right, `F` fits, `I` and `O` zoom in and out.
+  the left button turns, the middle and right ones pan; once it has the focus (a click gives it),
+  `0`–`6` (alone, or with Ctrl or Cmd) look from the iso, top, bottom, front, back, left and
+  right, `F` fits, `I` and `O` zoom in and out.
+* **The wheel** (or two fingers on a trackpad: `wheel.js`) zooms, as a pinch does, and while
+  the left or right button drags too, though not with the middle one held (the wheel, pressed,
+  turns a little). With Shift it pans, the model moving as a page's content scrolls (Orca's
+  Shift with two fingers on a Mac); with Option (Alt) it moves the section along its axis, a
+  solid without one cut across Z from its top (Orca's Alt), which a `section` event says; with
+  Cmd it turns the view, as a drag does. Ctrl is a pinch's: a browser sends one as the wheel
+  with Ctrl, so Ctrl and the wheel zoom too.
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
   solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it
