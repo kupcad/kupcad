@@ -203,6 +203,24 @@ test "LSP: a document opened as the editor goes is held once, and freed once" {
     try testing.expect(server.handler.files.contains(URI));
 }
 
+test "LSP: of a change's several texts the last is the document's" {
+    // The first was taken: an editor that sends two whole texts in one change left the
+    // server with the older
+    var server: Server = undefined;
+    try server.init();
+    defer server.deinit();
+    try server.open(URI, "cube(1)\n");
+    const changes = [_]lsp.types.TextDocument.ContentChangeEvent{
+        .{ .text_document_content_change_whole_document = .{ .text = "cube(2)\n" } },
+        .{ .text_document_content_change_whole_document = .{ .text = "cube(3)\n" } },
+    };
+    try server.handler.@"textDocument/didChange"(server.arena.allocator(), .{
+        .textDocument = .{ .uri = URI, .version = 2 },
+        .contentChanges = &changes,
+    });
+    try testing.expectEqualStrings("cube(3)\n", server.handler.files.get(URI).?.source);
+}
+
 test "LSP: documentPath reads file URIs and nothing else" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

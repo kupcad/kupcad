@@ -666,8 +666,9 @@ pub const Handler = struct {
         params: lsp.types.TextDocument.DidChangeParams,
     ) !void {
         logger.debug("Changed {s}", .{params.textDocument.uri});
+        // The server syncs whole texts: of several, the last is the document's
         if (params.contentChanges.len > 0) {
-            switch (params.contentChanges[0]) {
+            switch (params.contentChanges[params.contentChanges.len - 1]) {
                 .text_document_content_change_whole_document => |doc_change| {
                     if (self.files.getPtr(params.textDocument.uri)) |buf| {
                         // Copied before the old source goes: a copy that fails leaves the
