@@ -76,6 +76,19 @@ test "Array: flat_map, sort_by, min_by, max_by and group_by call the block once 
     });
 }
 
+test "Map: a key is found by what it holds, an Array's, a Map's or a Range's, as == compares" {
+    // An Array key was found only by being the same Array: group_by gave a group per item
+    try expectScripts(&.{
+        .{ .src = "r = [1, 2, 3, 4].group_by { |x| [x % 2] }.inspect", .expected = .{ .str = "{[1] => [1, 3], [0] => [2, 4]}" }, .gc_stress = true },
+        .{ .src = "h = {}\nh[[1, [2]]] = 1\nh[[1, [2]]] = 2\nr = [h.length, h[[1, [2]]]]", .expected = .{ .nums = &.{ 1, 2 } } },
+        .{ .src = "r = { { a: 1, b: 2 } => 7 }[{ b: 2, a: 1 }]", .expected = .{ .num = 7 } },
+        .{ .src = "r = { (1..3) => 8 }[1..3]", .expected = .{ .num = 8 } },
+        .{ .src = "r = { [1] => 9 }.key?([1.0])", .expected = .{ .boolean = true } },
+        // uniq finds its equals by hashing them too: once per item, not against each kept
+        .{ .src = "r = (1..20000).map { |i| [i % 100, i % 7] }.uniq.length", .expected = .{ .num = 700 } },
+    });
+}
+
 test "Map: size, fetch and dig read entries, nested ones included" {
     const m = "m = { a: 1, b: [10, { c: \"deep\" }], \"s\" => 2 }\n";
     try expectScripts(&.{

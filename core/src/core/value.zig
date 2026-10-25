@@ -19,6 +19,9 @@ const MAX_PLAIN_MAGNITUDE = 1e16;
 
 /// Containers nested deeper than this print as `[...]`; see Printing.
 const MAX_STRINGIFY_DEPTH = 256;
+/// Two structures nesting (or holding themselves) deeper than this aren't equal (`==`, a
+/// Map's keys).
+pub const MAX_EQUALITY_DEPTH: usize = 64;
 
 // --- NaN Tagging Constants ---
 const QNAN: u64 = 0x7FFC000000000000;
@@ -94,31 +97,97 @@ pub const ObjArray = struct {
     items: std.ArrayList(Value),
 };
 
-/// Defines the Hashing and Equality rules for O(1) Map lookups
+/// How a Map finds its keys: as `==` compares them. An Array, a Map, a JsonObject or a Range
+/// (comparesByContent) is hashed and compared by what it holds, so `[1, 2]` finds the entry
+/// another `[1, 2]` made, and changing a key held changes where it is found; any other value
+/// by its bits (a String is interned: its bits are its text).
 pub const ValueContext = struct {
     pub fn hash(self: ValueContext, key: Value) u32 {
         _ = self;
-        var x = key.val;
-
-        // SplitMix64 / MurmurHash3 avalanche step.
-        // These "magic numbers" are statistically chosen large odd constants.
-        // Multiplying by them forces a high degree of bit diffusion (the avalanche effect),
-        // ensuring tightly clustered keys (like 1.0, 2.0, 3.0) produce wildly different hashes.
-        x ^= x >> 30;
-        x *%= 0xbf58476d1ce4e5b9;
-        x ^= x >> 27;
-        x *%= 0x94d049bb133111eb;
-        x ^= x >> 31;
-
-        return @truncate(x);
+        return @truncate(contentHash(key, MAX_EQUALITY_DEPTH));
     }
 
     pub fn eql(self: ValueContext, a: Value, b: Value, b_index: usize) bool {
         _ = self;
         _ = b_index;
-        return a.isEqual(b);
+        return contentEqual(a, b, MAX_EQUALITY_DEPTH);
     }
 };
+
+/// Whether `==` compares `v` by content (an Array, a Map, a JsonObject, a Range); any other
+/// value equals only itself.
+pub fn comparesByContent(v: Value) bool {
+    return v.isArray() or v.isMap() or v.isJsonObject() or v.isRange();
+}
+
+/// Whether `a` and `b` are equal as `==` has it: the same value, or containers holding equal
+/// values, `depth` deep at most.
+pub fn contentEqual(a: Value, b: Value, depth: usize) bool {
+    if (a.isEqual(b)) return true;
+    if (!a.isObject() or !b.isObject()) return false;
+    if (depth == 0) return false;
+    if (a.isArray() and b.isArray()) {
+        const xs = a.asArray().items.items;
+        const ys = b.asArray().items.items;
+        if (xs.len != ys.len) return false;
+        for (xs, ys) |x, y| {
+            if (!contentEqual(x, y, depth - 1)) return false;
+        }
+        return true;
+    }
+    if (a.isMap() and b.isMap()) return entriesEqual(&a.asMap().map, &b.asMap().map, depth);
+    if (a.isJsonObject() and b.isJsonObject()) return entriesEqual(&a.asJsonObject().map, &b.asJsonObject().map, depth);
+    if (a.isRange() and b.isRange()) {
+        const x = a.asRange();
+        const y = b.asRange();
+        return x.start == y.start and x.end == y.end and x.step == y.step and x.is_exclusive == y.is_exclusive;
+    }
+    return false;
+}
+
+/// Whether two Maps (or two JsonObjects) hold the same keys with equal values.
+fn entriesEqual(xm: *const ValueMap, ym: *const ValueMap, depth: usize) bool {
+    if (xm.count() != ym.count()) return false;
+    for (xm.keys(), xm.values()) |key, x| {
+        const y = ym.get(key) orelse return false;
+        if (!contentEqual(x, y, depth - 1)) return false;
+    }
+    return true;
+}
+
+/// A hash of `v` that values `contentEqual` takes for equal share: a container's of what
+/// it holds (a Map's entries in any order, as it compares them), any other value's of its
+/// bits. Past `depth` it is one constant, which equality still tells apart.
+fn contentHash(v: Value, depth: usize) u64 {
+    if (!comparesByContent(v)) return mixed(v.val);
+    if (depth == 0) return 0;
+    if (v.isArray()) {
+        var h = mixed(v.asArray().items.items.len);
+        for (v.asArray().items.items) |item| h = mixed(h ^ contentHash(item, depth - 1));
+        return h;
+    }
+    if (v.isRange()) {
+        const r = v.asRange();
+        return mixed(@as(u64, @bitCast(r.start)) ^ mixed(@as(u64, @bitCast(r.end)) ^ mixed(@as(u64, @bitCast(r.step)) +% @intFromBool(r.is_exclusive))));
+    }
+    const map = if (v.isMap()) &v.asMap().map else &v.asJsonObject().map;
+    // A sum of the entries' hashes, which their order doesn't change
+    var h = mixed(map.count());
+    for (map.keys(), map.values()) |key, item| h +%= mixed(contentHash(key, depth - 1) ^ (contentHash(item, depth - 1) *% 31));
+    return h;
+}
+
+/// `x`'s bits spread over the hash (SplitMix64's finalizer): keys close together, 1.0, 2.0
+/// and 3.0, hash far apart.
+fn mixed(bits: u64) u64 {
+    var x = bits;
+    x ^= x >> 30;
+    x *%= 0xbf58476d1ce4e5b9;
+    x ^= x >> 27;
+    x *%= 0x94d049bb133111eb;
+    x ^= x >> 31;
+    return x;
+}
 
 /// Values by Value, in insertion order: a Map's entries, a JsonObject's.
 pub const ValueMap = std.array_hash_map.Custom(Value, Value, ValueContext, false);

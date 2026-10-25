@@ -483,16 +483,15 @@ pub fn arrayZip(vm: *VM, arr: *value.ObjArray, others: []const value.Value) !val
 }
 
 /// Array#uniq / uniq { |x| key }: the items without the ones equal (`==`) to an earlier
-/// one, or whose block result is; in their order. A value compared by its bits is found
-/// by hashing, an Array, Map or Range among the earlier ones of those kinds.
+/// one, or whose block result is; in their order. Each is found among the earlier ones by
+/// hashing it, as a Map finds its keys (value.ValueContext).
 pub fn arrayUniq(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
     const kept = try scope.array();
-    // The keys of the kept items, rooted (a block's results): `seen` holds the ones
-    // compared by their bits, which a collection mustn't free while it is read
-    const bit_keys = try scope.array();
-    const content_keys = try scope.array();
+    // The keys of the kept items, rooted (a block's results): `seen` holds them, which a
+    // collection mustn't free while it is read
+    const keys = try scope.array();
     var seen: std.ArrayHashMapUnmanaged(value.Value, void, value.ValueContext, false) = .empty;
     defer seen.deinit(vm.allocator);
     var i: usize = 0;
@@ -505,18 +504,10 @@ pub fn arrayUniq(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
         var held = HandleScope.init(vm);
         defer held.deinit();
         vm.push(key);
-        if (VM.comparesByContent(key)) {
-            for (content_keys.items.items) |earlier| {
-                if (vm.valuesEqual(earlier, key)) break;
-            } else {
-                try content_keys.items.append(vm.gc.trackingAllocator(), key);
-                try kept.items.append(vm.gc.trackingAllocator(), item);
-            }
-        } else if (!seen.contains(key)) {
-            try bit_keys.items.append(vm.gc.trackingAllocator(), key);
-            try seen.put(vm.allocator, key, {});
-            try kept.items.append(vm.gc.trackingAllocator(), item);
-        }
+        if (seen.contains(key)) continue;
+        try keys.items.append(vm.gc.trackingAllocator(), key);
+        try seen.put(vm.allocator, key, {});
+        try kept.items.append(vm.gc.trackingAllocator(), item);
     }
     return value.Value.initObj(&kept.obj);
 }
