@@ -59,10 +59,11 @@ Windows warn before they open one; signing needs the certificates as the reposit
   `kupcad lsp --stdio --viewport-origin <the page's origin>` for the page and holds it, at most
   one: a page that loads again replaces the one it left, and the app stops it when it exits. Its
   stdio comes to the page over a Tauri channel and is framed for the editor's client
-  (`@kupcad/editor`'s `streamTransport`); a server that ends is started again, a little later
-  each time, the editors' scripts opened on it again. Its viewport socket admits the page by its
-  origin, `tauri://localhost` (`http://tauri.localhost` on Windows, Vite's under `tauri dev`),
-  and no other page.
+  (`@kupcad/editor`'s `streamTransport`); a server that ends, or doesn't start again, is started
+  again a little later each time, the editors' scripts opened on it again. Its viewport socket
+  admits the page by its origin, `tauri://localhost` (`http://tauri.localhost` on Windows), and
+  no other page; Vite's (under `tauri dev`) in a debug build alone, as a released app would
+  admit any other project's dev server on that port.
 * **The preview's host** (`src/host.js`): what the panel asks, done in the page. The panel's
   values go to the server (`kupcad.setParams`) and are kept for the script; an export asks where
   to save (the format is the file's extension) and runs `kupcad build` with them; a screenshot
@@ -88,7 +89,8 @@ connect to the app's IPC and the server's viewport socket on 127.0.0.1 alone.
 The folder's tree and its files' URIs, the preview's host (what the panel is told, an export
 with its values and its formats, a screenshot, a refused message), the language server's
 lifecycle on a stand-in server (its handshake through the framing, the viewport's URL, the
-commands, restarts, a server that ends before it is up), and the window on stand-ins (a folder
+commands, restarts, a server that ends before it is up or doesn't start again), and the window on stand-ins (a folder
 opened, a script opened, an edit saved with ⌘S, the question on closing). `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
-model from the viewport socket. The Rust side tests its commands' arguments.
+model from the viewport socket. The Rust side tests its commands' arguments, and that a release build doesn't admit Vite's
+origin.

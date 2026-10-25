@@ -13,13 +13,11 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
 use crate::SIDECAR;
 
-/// The page's origins: its own in a build (macOS and Linux; Windows), and Vite's under
-/// `tauri dev` (tauri.conf.json's devUrl).
-const PAGE_ORIGINS: [&str; 3] = [
-    "tauri://localhost",
-    "http://tauri.localhost",
-    "http://127.0.0.1:1420",
-];
+/// The page's origins in a build: macOS and Linux's, Windows'.
+const PAGE_ORIGINS: [&str; 2] = ["tauri://localhost", "http://tauri.localhost"];
+/// Vite's, where the page is under `tauri dev` (tauri.conf.json's devUrl): a debug build's
+/// alone, as a released app's socket would admit any other project's dev server on that port.
+const DEV_ORIGIN: &str = "http://127.0.0.1:1420";
 
 /// The server running, if one is.
 #[derive(Default)]
@@ -57,7 +55,8 @@ pub enum ServerEvent {
 /// `kupcad lsp`'s arguments for the page at `origin`, or why there are none: an origin that
 /// isn't the page's.
 fn server_args(origin: &str) -> Result<[&str; 4], String> {
-    if !PAGE_ORIGINS.contains(&origin) {
+    let dev = cfg!(debug_assertions) && origin == DEV_ORIGIN;
+    if !(PAGE_ORIGINS.contains(&origin) || dev) {
         return Err(format!("{origin} is no origin of the app's page"));
     }
     Ok(["lsp", "--stdio", "--viewport-origin", origin])
@@ -122,15 +121,11 @@ pub fn stop_server(server: State<'_, Server>) {
 
 #[cfg(test)]
 mod tests {
-    use super::server_args;
+    use super::{DEV_ORIGIN, server_args};
 
     #[test]
     fn the_server_admits_the_pages_own_origin_and_no_other() {
-        for origin in [
-            "tauri://localhost",
-            "http://tauri.localhost",
-            "http://127.0.0.1:1420",
-        ] {
+        for origin in ["tauri://localhost", "http://tauri.localhost"] {
             assert_eq!(
                 server_args(origin).unwrap(),
                 ["lsp", "--stdio", "--viewport-origin", origin]
@@ -139,5 +134,10 @@ mod tests {
         for origin in ["null", "http://localhost:1420", "https://evil.example", ""] {
             assert!(server_args(origin).is_err(), "{origin}");
         }
+    }
+
+    #[test]
+    fn vites_origin_is_a_debug_builds_alone() {
+        assert_eq!(server_args(DEV_ORIGIN).is_ok(), cfg!(debug_assertions));
     }
 }
