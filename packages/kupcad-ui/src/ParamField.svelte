@@ -6,7 +6,7 @@
   frame's error naming it).
 -->
 <script>
-  import { controlOf, validate } from './params.js';
+  import { controlOf, stepOf, validate } from './params.js';
 
   /** @import { ParamSpec } from '@kupcad/protocol/types' */
   /** @import { Value } from './params.js' */
@@ -75,7 +75,7 @@
     type="number"
     min={spec.validate.min}
     max={spec.validate.max}
-    step={spec.step ?? 'any'}
+    step={stepOf(spec)}
     value={value ?? ''}
     onchange={fromInput}
     {...described}
@@ -99,7 +99,7 @@
         type="range"
         min={spec.validate.min}
         max={spec.validate.max}
-        step={spec.step ?? 'any'}
+        step={stepOf(spec)}
         value={value ?? ''}
         aria-label="{label} slider"
         onchange={fromInput}

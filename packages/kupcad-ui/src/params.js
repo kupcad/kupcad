@@ -25,6 +25,22 @@ export function controlOf(spec) {
 }
 
 /**
+ * A number control's increment: the script's `step:`, else 1 for one between a `min` and a
+ * `max` (a slider moved by a hand lands on whole numbers, not on 27.41112), or, for a range
+ * narrower than 1, which a step of 1 couldn't move in, the power of ten that gives it at least
+ * ten positions; any value for a number with no range.
+ * @param {ParamSpec} spec
+ * @returns {number | 'any'}
+ */
+export function stepOf(spec) {
+  if (spec.step !== null) return spec.step;
+  const { min, max } = spec.validate;
+  if (min === null || max === null || !(max > min)) return 'any';
+  const range = max - min;
+  return range >= 1 ? 1 : 10 ** (Math.floor(Math.log10(range)) - 1);
+}
+
+/**
  * The parameters by their `group:`, the groups in the order the script first names them: those
  * without one first, under no heading.
  * @param {ParamSpec[]} parameters

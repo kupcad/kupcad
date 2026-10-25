@@ -5,6 +5,7 @@ import {
   groupsOf,
   isOverridden,
   shownValue,
+  stepOf,
   validate,
   withOverride,
   withoutOverride,
@@ -33,6 +34,19 @@ describe('the controls', () => {
       label: 'text',
       size: 'select',
     });
+  });
+
+  it('step by 1 between a min and a max, unless the script says, or the range is narrower', async () => {
+    const { parameters } =
+      await schemaOf(`a = param(:a, default: 20, validate: { min: 10, max: 100 })
+b = param(:b, default: 2, validate: { min: 0, max: 5 }, step: 0.25)
+c = param(:c, default: 0.2, validate: { min: 0.1, max: 0.5 })
+d = param(:d, default: 0.002, validate: { min: 0, max: 0.05 })
+e = param(:e, default: 3)
+cube(a + b + c + d + e)
+`);
+    // A slider of 0.1 to 0.5 by 1 couldn't move: it gets ten positions at least
+    expect(parameters.map(stepOf)).toEqual([1, 0.25, 0.01, 0.001, 'any']);
   });
 
   it('group as the script names the groups, those without one first', async () => {

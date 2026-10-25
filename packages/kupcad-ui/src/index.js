@@ -5,7 +5,7 @@
 export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
-export { controlOf, groupsOf, isOverridden, shownValue, validate } from './params.js';
+export { controlOf, groupsOf, isOverridden, shownValue, stepOf, validate } from './params.js';
 export { describeRun, problemsOf, runStatusOf } from './run-status.js';
 export { themeFromTokens, watchTokens } from './theme.js';
 export { connectViewport } from './viewport-socket.js';

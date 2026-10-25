@@ -43,7 +43,9 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   model still reaches it.
 * **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
-  toggle, a text field; `step:` and `unit:` as given. Each parameter is rows of its own, a line
+  toggle, a text field; `step:` and `unit:` as given. A slider without a `step:` moves by 1
+  (`stepOf`), and one over a range narrower than 1 by the power of ten that gives it ten
+  positions at least; a value typed in its field is taken whatever its step. Each parameter is rows of its own, a line
   between one and the next: its `title:` (its name where it has none, and as the title's tooltip),
   its `description:` (the control's description for a screen reader too), then its control the
   panel's whole width. Each shows the value set in the panel, else
