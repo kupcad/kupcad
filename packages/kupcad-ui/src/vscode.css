@@ -17,6 +17,11 @@
   --kc-accent-fg: var(--vscode-button-foreground);
   --kc-error: var(--vscode-errorForeground);
   --kc-warning: var(--vscode-editorWarning-foreground);
+  --kc-section-bg: var(
+    --vscode-sideBarSectionHeader-background,
+    var(--vscode-editorWidget-background)
+  );
+  --kc-section-fg: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-foreground));
 
   --kc-viewer-background: var(--vscode-editor-background);
   --kc-viewer-grid: var(--vscode-editorIndentGuide-background1, var(--vscode-panel-border));

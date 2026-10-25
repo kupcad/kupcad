@@ -35,20 +35,28 @@
 <form class="kc-params" onsubmit={(event) => event.preventDefault()}>
   {#if schema.meta.title}<h2>{schema.meta.title}</h2>{/if}
   {#if schema.meta.description}<p class="description">{schema.meta.description}</p>{/if}
+  {#snippet fields(/** @type {import('@kupcad/protocol/types').ParamSpec[]} */ parameters)}
+    {#each parameters as spec (spec.name)}
+      <ParamField
+        {spec}
+        value={shownValue(spec, overrides, values)}
+        overridden={isOverridden(overrides, spec.name)}
+        refused={error?.param === spec.name ? error.message : null}
+        onset={(value) => change(withOverride(overrides, spec.name, value))}
+        onrevert={() => change(withoutOverride(overrides, spec.name))}
+      />
+    {/each}
+  {/snippet}
   {#each groups as { group, parameters } (group)}
-    <fieldset>
-      {#if group}<legend>{group}</legend>{/if}
-      {#each parameters as spec (spec.name)}
-        <ParamField
-          {spec}
-          value={shownValue(spec, overrides, values)}
-          overridden={isOverridden(overrides, spec.name)}
-          refused={error?.param === spec.name ? error.message : null}
-          onset={(value) => change(withOverride(overrides, spec.name, value))}
-          onrevert={() => change(withoutOverride(overrides, spec.name))}
-        />
-      {/each}
-    </fieldset>
+    {#if group}
+      <!-- A group under its title, folded away with it -->
+      <details class="group" open>
+        <summary>{group}</summary>
+        <div class="fields" role="group" aria-label={group}>{@render fields(parameters)}</div>
+      </details>
+    {:else}
+      <div class="fields">{@render fields(parameters)}</div>
+    {/if}
   {:else}
     <p class="empty">This script has no parameters.</p>
   {/each}
@@ -73,19 +81,43 @@
     margin: 0;
     color: var(--kc-muted);
   }
-  /* Its parameters, a line between each (ParamField) */
-  fieldset {
+  /* Parameters, a line between each (ParamField) */
+  .fields {
     display: flex;
     flex-direction: column;
-    /* As wide as the panel, not as its widest control (a fieldset's own minimum) */
-    min-inline-size: 0;
-    margin: 0;
+    min-width: 0;
     padding: 0 var(--kc-gap);
+  }
+  /* A group stands apart from its controls: a section with a header of its own */
+  .group {
     border: 1px solid var(--kc-border);
     border-radius: var(--kc-radius);
+    overflow: hidden;
   }
-  legend {
-    padding: 0 4px;
-    color: var(--kc-muted);
+  summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px var(--kc-gap);
+    font-size: 0.85em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--kc-section-fg);
+    background: var(--kc-section-bg);
+    cursor: pointer;
+    list-style: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::before {
+    content: '▾';
+  }
+  .group:not([open]) summary::before {
+    content: '▸';
+  }
+  .group[open] summary {
+    border-bottom: 1px solid var(--kc-border);
   }
 </style>

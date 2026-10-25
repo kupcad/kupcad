@@ -41,7 +41,9 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   switches it to the top view, orthographic; a turn of the wheel with Option moves the section,
   and its slider), and a section stays where it was put through an edit of the script, while the
   model still reaches it.
-* **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a
+* **`ParamsPanel`**: a control per parameter of the schema, each `group:` a section under its
+  title that folds away (a header bar of its own, `--kc-section-bg` and `--kc-section-fg`, VS
+  Code's side bar section headers in its webview), the parameters of no group first: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
   toggle, a text field; `step:` and `unit:` as given. A slider without a `step:` moves by 1
   (`stepOf`), and one over a range narrower than 1 by the power of ten that gives it ten

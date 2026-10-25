@@ -31,8 +31,17 @@ describe('ParamsPanel', () => {
     await panel();
     expect(screen.getByRole('heading', { name: 'Bracket' })).toBeTruthy();
     expect(screen.getByText('A plate with holes')).toBeTruthy();
-    const legends = [...document.querySelectorAll('legend')].map((legend) => legend.textContent);
-    expect(legends).toEqual(['Size', 'Holes']);
+    // Each group a section under its title, foldable, its controls named by it
+    const titles = [...document.querySelectorAll('details > summary')].map((t) => t.textContent);
+    expect(titles).toEqual(['Size', 'Holes']);
+    expect(
+      within(screen.getByRole('group', { name: 'Size' })).getByLabelText('width'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByRole('group', { name: 'Holes' })).getByLabelText('size'),
+    ).toBeTruthy();
+    // The parameters of no group come first, under none
+    expect(screen.queryByRole('group', { name: 'hollow' })).toBeNull();
     expect(numberField('width').value).toBe('25');
     expect(screen.getByRole('slider', { name: 'width slider' })).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: 'hollow' })).toBeTruthy();

@@ -18,6 +18,9 @@
   --kc-accent-fg: #ffffff;
   --kc-error: #cf222e;
   --kc-warning: #9a6700;
+  /* A section's header: a group of parameters' */
+  --kc-section-bg: #eef1f4;
+  --kc-section-fg: #1f2328;
   --kc-radius: 4px;
   --kc-gap: 8px;
 }
@@ -33,5 +36,7 @@
     --kc-accent-fg: #0d0e10;
     --kc-error: #ff7b72;
     --kc-warning: #d29922;
+    --kc-section-bg: #2a2d33;
+    --kc-section-fg: #e6e7e9;
   }
 }
