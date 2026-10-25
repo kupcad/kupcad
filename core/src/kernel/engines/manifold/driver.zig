@@ -194,8 +194,10 @@ fn crossSectionContoursImpl(handle: geom.CrossSectionHandle, allocator: std.mem.
     var total: usize = 0;
     for (0..count) |ci| total += contours.len(ci);
     const points = allocator.alloc([2]f64, total) catch return null;
-    errdefer allocator.free(points);
-    const starts = allocator.alloc(u32, count + 1) catch return null;
+    const starts = allocator.alloc(u32, count + 1) catch {
+        allocator.free(points);
+        return null;
+    };
     var at: usize = 0;
     for (0..count) |ci| {
         starts[ci] = @intCast(at);

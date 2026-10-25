@@ -330,13 +330,14 @@ pub const ScriptSession = struct {
         self.vm.forgetModule(path);
 
         const index = @backingInt(id);
+        // The workspace first: a removal that fails there leaves the nodes matching it
+        _ = try self.workspace.removeModule(path);
         var node = self.nodes.orderedRemove(index);
         node.deinit(self.allocator);
         if (self.failure) |*failure| {
             const failed = @backingInt(failure.module);
             if (failed == index) self.clearFailure() else if (failed > index) failure.module = @fromBackingInt(failed - 1);
         }
-        _ = try self.workspace.removeModule(path);
         try self.buildReverseGraph();
     }
 

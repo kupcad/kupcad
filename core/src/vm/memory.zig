@@ -20,6 +20,10 @@ const build_info = @import("build_info");
 /// raising an error". Only the raise gets it: the heap never passes the limit by more.
 pub const OUT_OF_MEMORY_RESERVE: usize = 64 * 1024;
 
+/// What tells one native from another: its function and its name (a static string, as
+/// allocateNative requires, so the same name is the same pointer).
+const NativeKey = struct { function: usize, name: usize, name_len: usize };
+
 pub const GC = struct {
     allocator: std.mem.Allocator,
 
@@ -33,6 +37,9 @@ pub const GC = struct {
     /// phase passes over them (they reference no other object). One allocation each, and
     /// its free at teardown, made a VM cost about 850 allocations before it ran anything.
     builtins: std.heap.ArenaAllocator,
+    /// The natives made, by function and name: a library registered again on the same VM (a
+    /// session's every run) gets the natives it made the first time, not more in the arena.
+    natives: std.AutoHashMapUnmanaged(NativeKey, *value.ObjNative) = .empty,
 
     // --- Segregated Object Tracking Arrays (Data-Oriented Design) ---
     strings: std.ArrayList(*value.ObjString) = .empty,
@@ -117,6 +124,7 @@ pub const GC = struct {
         self.workplanes.deinit(self.allocator);
         self.fonts.deinit(self.allocator);
         self.randoms.deinit(self.allocator);
+        self.natives.deinit(self.allocator);
         self.builtins.deinit();
     }
 
@@ -212,7 +220,7 @@ pub const GC = struct {
                 self.ranges.items.len +
                 self.bboxes.items.len + self.geometries.items.len + self.cross_sections.items.len +
                 self.assemblies.items.len + self.workplanes.items.len + self.fonts.items.len +
-                self.randoms.items.len;
+                self.randoms.items.len + self.paths.items.len;
 
             self.gray_stack.ensureTotalCapacity(self.allocator, worst_case_size) catch {
                 vm.reportError("Fatal: Out of memory during garbage collection. Aborting script execution.", .{});
@@ -360,10 +368,16 @@ pub const GC = struct {
         return ptr;
     }
 
-    /// A native, alive as long as the VM (see `builtins`); `name` must live as long.
+    /// A native, alive as long as the VM (see `builtins`); `name` must live as long. The same
+    /// function under the same name (the standard library registered again) is the same native.
     pub fn allocateNative(self: *GC, name: []const u8, function: value.NativeFn) !*value.ObjNative {
+        const key: NativeKey = .{ .function = @intFromPtr(function), .name = @intFromPtr(name.ptr), .name_len = name.len };
+        const gop = try self.natives.getOrPut(self.allocator, key);
+        if (gop.found_existing) return gop.value_ptr.*;
+        errdefer _ = self.natives.remove(key);
         const ptr = try self.builtins.allocator().create(value.ObjNative);
         ptr.* = .{ .obj = .{ .obj_type = .native, .is_marked = true }, .function = function, .name = name };
+        gop.value_ptr.* = ptr;
         return ptr;
     }
 

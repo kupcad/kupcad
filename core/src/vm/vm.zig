@@ -488,6 +488,13 @@ pub const VM = struct {
         self.instruction_count = 0; // Reset gas on fresh run
         self.clearUnwindState();
         self.clearLastError();
+        // A run stopped on its way (cancelled, out of instructions) left what it was in:
+        // the handlers it was under, which point into its chunk and would catch this run's
+        // errors; the upvalues still open on its stack, which close over what they hold;
+        // a break on its way
+        if (self.open_upvalues != null) self.closeUpvalues(&self.stack[0]);
+        self.rescue_frames.clearRetainingCapacity();
+        self.pending_break = null;
         self.frames.clearRetainingCapacity();
         // Start small (64 initial frames) and let it grow dynamically
         self.frames.ensureTotalCapacity(self.allocator, 64) catch |err| return self.allocationFailed(err);
@@ -648,6 +655,8 @@ pub const VM = struct {
             if (self.hooks.active) {
                 @branchHint(.unlikely); // off unless a host, a test or the debugger turns a hook on
                 if (self.beforeInstruction(frame, exec_chunk, &previous_line)) |stop| return stop;
+                // The debugger may have run an expression, and the frames grown under `frame`
+                frame = &self.frames.items[self.frames.items.len - 1];
             }
 
             // Prevent runaway instruction pointer
@@ -2051,10 +2060,15 @@ pub const VM = struct {
 
         const target_depth = self.frames.items.len;
         const throw_seq = self.throw_seq;
-        const positional = if (has_kwargs) args[0 .. args.len - 1] else args;
+        const given = if (has_kwargs) args[0 .. args.len - 1] else args;
         const kwargs: ?value.Value = if (has_kwargs) args[args.len - 1] else null;
         const expected_args = closure.function.arity;
 
+        // `args` may lie in the stack, which growing it moves: its values are taken first
+        std.debug.assert(given.len <= limits.MAX_ARGS);
+        var positional_buf: [limits.MAX_ARGS]value.Value = undefined;
+        const positional = positional_buf[0..given.len];
+        @memcpy(positional, given);
         // Ensure stack capacity for closure, args, padded nils, the keyword Map and the implicit null block
         const total_pushes = 1 + @max(positional.len, expected_args) + 2;
         try self.ensureStackCapacity(self.stack_top + total_pushes);

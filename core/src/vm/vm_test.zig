@@ -13,6 +13,7 @@ const Document = @import("../frontend/document.zig").Document;
 const Profiler = @import("profiler.zig").Profiler;
 const VM = @import("vm.zig").VM;
 const helpers = @import("vm_test_helpers.zig");
+const test_support = @import("../test_support.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
 const compileAndRun = helpers.compileAndRun;
 const expectGlobalString = helpers.expectGlobalString;
@@ -644,4 +645,60 @@ test "VM: a top-level variable's cached slot follows its assignments and the tab
         .{ .src = "i = 0\nwhile i < 10\n  i += 1\nend\nr = i", .expected = .{ .num = 10 } },
         .{ .src = "total = 0\ni = 0\nwhile i < 10\n  total = total + i\n  if i == 3\n    g0 = 1\n    g1 = 1\n    g2 = 1\n    g3 = 1\n    g4 = 1\n    g5 = 1\n    g6 = 1\n    g7 = 1\n    g8 = 1\n    g9 = 1\n    g10 = 1\n    g11 = 1\n    g12 = 1\n    g13 = 1\n    g14 = 1\n    g15 = 1\n    g16 = 1\n    g17 = 1\n    g18 = 1\n    g19 = 1\n    g20 = 1\n    g21 = 1\n    g22 = 1\n    g23 = 1\n    g24 = 1\n    g25 = 1\n    g26 = 1\n    g27 = 1\n    g28 = 1\n    g29 = 1\n    g30 = 1\n    g31 = 1\n    g32 = 1\n    g33 = 1\n    g34 = 1\n    g35 = 1\n    g36 = 1\n    g37 = 1\n    g38 = 1\n    g39 = 1\n    g40 = 1\n    g41 = 1\n    g42 = 1\n    g43 = 1\n    g44 = 1\n    g45 = 1\n    g46 = 1\n    g47 = 1\n    g48 = 1\n    g49 = 1\n    g50 = 1\n    g51 = 1\n    g52 = 1\n    g53 = 1\n    g54 = 1\n    g55 = 1\n    g56 = 1\n    g57 = 1\n    g58 = 1\n    g59 = 1\n    g60 = 1\n    g61 = 1\n    g62 = 1\n    g63 = 1\n  end\n  i += 1\nend\nr = total + g63", .expected = .{ .num = 46 } },
     });
+}
+
+test "VM: a run stopped inside a rescue leaves none of its handlers to the next run" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    // Out of instructions inside `begin`: the handler it registered stayed, pointing into
+    // this chunk, and the next run's error jumped there
+    vm.hooks.setLimit(2000);
+    try testing.expectEqual(.execution_limit_exceeded, try test_support.runOn(&vm, "begin\n  while true\n  end\nrescue => e\n  e\nend"));
+    vm.hooks.setLimit(0);
+    try testing.expectEqual(.runtime_error, try test_support.runOn(&vm, "raise \"boom\""));
+    try testing.expect(std.mem.find(u8, vm.last_error.?, "boom") != null);
+}
+
+test "GC: a collection with many Paths alive has room for each on its gray stack" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    try testing.expectEqual(.ok, try test_support.runOn(&vm, "paths = (1..20000).map { |i| line([0, 0], [i, 1]) }"));
+    try testing.expect(vm.gc.paths.items.len >= 20000);
+    // Every path is marked from the global: a stack sized without the paths overflowed
+    vm.gc.collectGarbage(&vm, false);
+    try testing.expect(vm.gc.paths.items.len >= 20000);
+}
+
+test "GC: the standard library registered again on a VM makes no new natives" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    const natives = vm.gc.natives.count();
+    const arena = vm.gc.builtins.queryCapacity();
+    // As a session registers it before each run
+    try registry.registerStandardLibrary(&vm);
+    try testing.expectEqual(natives, vm.gc.natives.count());
+    try testing.expectEqual(arena, vm.gc.builtins.queryCapacity());
+}
+
+test "VM: a chunk owns its locals' names, which outlive the document they were read from" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    // runOn parses the script into a document of its own, gone when it returns; the names
+    // pointed into it, and the debugger read them from the chunk
+    try testing.expectEqual(.ok, try test_support.runOn(&vm, "def add(first, second)\n  first + second\nend\nadd(1, 2)"));
+    var first = false;
+    var second = false;
+    for (vm.gc.functions.items) |function| {
+        const function_chunk: *chunk.Chunk = @ptrCast(@alignCast(function.chunk orelse continue));
+        for (function_chunk.local_names.items) |name| {
+            if (std.mem.eql(u8, name, "first")) first = true;
+            if (std.mem.eql(u8, name, "second")) second = true;
+        }
+    }
+    try testing.expect(first and second);
 }

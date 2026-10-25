@@ -101,13 +101,19 @@ pub fn addLocal(self: *Compiler, name_id: ast.StringId, slot: u16) CompileError!
     if (slot > self.max_local_slot) self.max_local_slot = slot;
 
     // --- DEBUGGER METADATA: Track local names ---
+    // The chunk owns its copy of each name: the document's text goes before an imported
+    // module's chunk does, and the debugger reads the names from the chunk
     const name_str = if (name_id != .none) self.tree.getString(name_id) else "<anonymous>";
-
+    const names = &self.current_chunk.local_names;
     // Pad the array dynamically since block parameters can be registered out-of-order
-    while (self.current_chunk.local_names.items.len <= slot) {
-        try self.current_chunk.local_names.append(self.allocator, "<anonymous>");
+    while (names.items.len <= slot) {
+        const padding = try self.allocator.dupe(u8, "<anonymous>");
+        errdefer self.allocator.free(padding);
+        try names.append(self.allocator, padding);
     }
-    self.current_chunk.local_names.items[slot] = name_str;
+    const owned = try self.allocator.dupe(u8, name_str);
+    self.allocator.free(names.items[slot]);
+    names.items[slot] = owned;
 }
 
 pub fn resolveLocal(self: *Compiler, name_id: ast.StringId) ?u16 {

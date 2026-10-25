@@ -625,10 +625,14 @@ pub const Handler = struct {
         }
 
         const uri_dup = try self.allocator.dupe(u8, params.textDocument.uri);
+        errdefer self.allocator.free(uri_dup);
         const module_path = try self.modulePath(self.allocator, params.textDocument.uri);
+        errdefer self.allocator.free(module_path);
         const source_dup = try self.allocator.dupe(u8, params.textDocument.text);
+        errdefer self.allocator.free(source_dup);
 
-        const parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
+        var parsed_doc = api.Document.parse(self.allocator, source_dup) catch null;
+        errdefer if (parsed_doc) |*d| d.deinit();
         try self.files.put(self.allocator, uri_dup, .{
             .uri = uri_dup,
             .module_path = module_path,
@@ -652,12 +656,15 @@ pub const Handler = struct {
             switch (params.contentChanges[0]) {
                 .text_document_content_change_whole_document => |doc_change| {
                     if (self.files.getPtr(params.textDocument.uri)) |buf| {
+                        // Copied before the old source goes: a copy that fails leaves the
+                        // buffer whole, not with a source freed twice
+                        const source = try self.allocator.dupe(u8, doc_change.text);
                         self.allocator.free(buf.source);
                         if (buf.doc) |*d| d.deinit();
                         // Its lines moved: its next run says what it warns of now
                         buf.forgetRunWarnings();
 
-                        buf.source = try self.allocator.dupe(u8, doc_change.text);
+                        buf.source = source;
                         buf.doc = api.Document.parse(self.allocator, buf.source) catch null;
 
                         try self.syncSession(buf.uri, buf.module_path, buf.source);

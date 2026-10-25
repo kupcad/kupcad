@@ -444,6 +444,7 @@ pub const Chunk = struct {
         self.global_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
+        for (self.local_names.items) |name| allocator.free(name);
         self.local_names.deinit(allocator);
         self.* = init();
     }

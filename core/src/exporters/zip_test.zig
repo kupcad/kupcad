@@ -147,3 +147,19 @@ test "zip: a deflated file is inflated, and a file the reader can't take says wh
     }
     try testing.expectError(error.NotAnArchive, zip.Archive.open(testing.allocator, "solid part\nendsolid part\n"));
 }
+
+test "zip: an entry whose offset or size runs past the archive is refused, however the sums would wrap" {
+    const crc = std.hash.Crc32.hash("Hello world\n");
+    const archive = try oneFile("hello.txt", 0, 0, "Hello world\n", 12, crc);
+    defer testing.allocator.free(archive);
+    const read = try zip.Archive.open(testing.allocator, archive);
+    defer read.deinit(testing.allocator);
+    // An offset at the top of u32: with a 30-byte header, past a wasm32 usize
+    var far = read.entries[0];
+    far.offset = std.math.maxInt(u32) - 10;
+    try testing.expectError(error.Corrupt, read.read(testing.allocator, far, 1 << 16));
+    // Compressed bytes that would run past the end from a sound offset
+    var long = read.entries[0];
+    long.compressed = std.math.maxInt(u32);
+    try testing.expectError(error.Corrupt, read.read(testing.allocator, long, 1 << 16));
+}

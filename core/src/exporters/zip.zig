@@ -179,10 +179,12 @@ pub const Archive = struct {
         if (entry.flags & ENCRYPTED != 0) return error.Unsupported;
         if (entry.method != STORED and entry.method != DEFLATED) return error.Unsupported;
         if (entry.size > max_bytes) return error.TooLarge;
+        // Summed as u64: the archive's u32 offsets would wrap a wasm32 usize past the guards
+        if (@as(u64, entry.offset) + LOCAL_HEADER_LEN > self.data.len) return error.Corrupt;
         const at: usize = entry.offset;
-        if (at + LOCAL_HEADER_LEN > self.data.len or std.mem.readInt(u32, self.data[at..][0..4], .little) != LOCAL_HEADER_SIG) return error.Corrupt;
+        if (std.mem.readInt(u32, self.data[at..][0..4], .little) != LOCAL_HEADER_SIG) return error.Corrupt;
         const start = at + LOCAL_HEADER_LEN + std.mem.readInt(u16, self.data[at + 26 ..][0..2], .little) + std.mem.readInt(u16, self.data[at + 28 ..][0..2], .little);
-        if (start + entry.compressed > self.data.len) return error.Corrupt;
+        if (@as(u64, start) + entry.compressed > self.data.len) return error.Corrupt;
         const packed_data = self.data[start..][0..entry.compressed];
         const out = try allocator.alloc(u8, entry.size);
         errdefer allocator.free(out);
