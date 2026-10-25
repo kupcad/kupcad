@@ -237,24 +237,46 @@ pub fn arrayContains(vm: *VM, arr: *value.ObjArray, target: value.Value) !value.
     return value.Value.initBool(false);
 }
 
-/// Array#flatten
-pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray) !value.Value {
+/// Array#flatten / flatten(depth): the items, each Array among them replaced by its items,
+/// as deep as they nest (as Ruby's), or `depth` levels deep. Walked with a stack of its own,
+/// as Arrays may nest deeper than the native stack goes; one that holds itself is refused,
+/// as it would flatten forever.
+pub fn arrayFlatten(vm: *VM, arr: *value.ObjArray, depth: ?f64) !value.Value {
+    const levels: usize = if (depth) |d| blk: {
+        if (!(d >= 0) or d != @floor(d)) return vm.fail(.ArgumentError, "flatten takes how many levels to take out, a whole number from 0, got {f}", .{value.fmtNumber(d)});
+        break :blk std.math.lossyCast(usize, d);
+    } else std.math.maxInt(usize);
+
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-
-    const new_arr = try scope.array();
-
-    for (arr.items.items) |item| {
-        if (item.isArray()) {
-            const inner_arr = item.asArray();
-            for (inner_arr.items.items) |inner_item| {
-                try new_arr.items.append(vm.gc.trackingAllocator(), inner_item);
-            }
-        } else {
-            try new_arr.items.append(vm.gc.trackingAllocator(), item);
+    const flat = try scope.array();
+    // The Arrays being taken apart, outermost first, and where each is
+    const Open = struct { arr: *value.ObjArray, at: usize };
+    var stack: std.ArrayList(Open) = .empty;
+    defer stack.deinit(vm.allocator);
+    var open: std.AutoHashMapUnmanaged(*value.ObjArray, void) = .empty;
+    defer open.deinit(vm.allocator);
+    try stack.append(vm.allocator, .{ .arr = arr, .at = 0 });
+    try open.put(vm.allocator, arr, {});
+    while (stack.items.len > 0) {
+        const top = &stack.items[stack.items.len - 1];
+        if (top.at == top.arr.items.items.len) {
+            _ = open.remove(top.arr);
+            _ = stack.pop();
+            continue;
         }
+        const item = top.arr.items.items[top.at];
+        top.at += 1;
+        if (!item.isArray() or stack.items.len > levels) {
+            try flat.items.append(vm.gc.trackingAllocator(), item);
+            continue;
+        }
+        const inner = item.asArray();
+        if (open.contains(inner)) return vm.fail(.ArgumentError, "flatten: the Array holds itself, so it would flatten forever", .{});
+        try open.put(vm.allocator, inner, {});
+        try stack.append(vm.allocator, .{ .arr = inner, .at = 0 });
     }
-    return value.Value.initObj(&new_arr.obj);
+    return value.Value.initObj(&flat.obj);
 }
 
 /// Array#max

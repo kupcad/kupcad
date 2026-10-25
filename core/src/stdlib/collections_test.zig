@@ -53,6 +53,19 @@ test "Array: any?, all?, none?, find, include? and count ask about the items" {
     });
 }
 
+test "Array: flatten takes out every level, or as many as it is given" {
+    // It took out one level alone: [1, 2, [3, [4]]]
+    try expectScripts(&.{
+        .{ .src = "r = [1, [2, [3, [4]]], []].flatten", .expected = .{ .nums = &.{ 1, 2, 3, 4 } }, .gc_stress = true },
+        .{ .src = "r = [1, [2, [3, [4]]]].flatten(1).inspect", .expected = .{ .str = "[1, 2, [3, [4]]]" } },
+        .{ .src = "r = [1, [2]].flatten(0).inspect", .expected = .{ .str = "[1, [2]]" } },
+        // Nested deeper than the native stack would take, walked without it
+        .{ .src = "a = [1]\n100000.times { a = [a] }\nr = a.flatten", .expected = .{ .nums = &.{1} } },
+        .{ .src = comptime rescued("a = [1]\na.push([a])\na.flatten"), .expected = .{ .str = "ArgumentError: flatten: the Array holds itself, so it would flatten forever" } },
+        .{ .src = comptime rescued("[[1]].flatten(-1)"), .expected = .{ .str = "ArgumentError: flatten takes how many levels to take out, a whole number from 0, got -1" } },
+    });
+}
+
 test "Array: flat_map, sort_by, min_by, max_by and group_by call the block once per item" {
     try expectScripts(&.{
         .{ .src = "r = [1, 2].flat_map { |x| [x, x * 10] }", .expected = .{ .nums = &.{ 1, 10, 2, 20 } }, .gc_stress = true },
