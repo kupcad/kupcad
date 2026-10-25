@@ -1,6 +1,7 @@
-// What a front end needs to read what the core sends it: the protocol's version and names, and
-// the reader of a preview frame; and the messages between a host and its viewer
-// (messages.js). The shapes are in types.d.ts (`@kupcad/protocol/types`).
+// What a front end needs to read what the core sends it: the protocol's version and names, the
+// reader of a preview frame, and where a place it names is in a string (places.js); and the
+// messages between a host and its viewer (messages.js). The shapes are in types.d.ts
+// (`@kupcad/protocol/types`).
 
 /** @import { FrameHeader, Kind, Model, Preview } from './types.js' */
 
@@ -27,6 +28,7 @@ export const SET_PARAMS_COMMAND = 'kupcad.setParams';
 export const PREVIEW_COMMAND = 'kupcad.preview';
 
 export { isHostMessage, isParamValues, isViewerMessage } from './messages.js';
+export { characterAt } from './places.js';
 
 /** The bytes before a frame's header: its length, u32 little-endian. */
 const LENGTH_BYTES = 4;

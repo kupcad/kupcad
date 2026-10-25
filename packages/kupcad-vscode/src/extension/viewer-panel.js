@@ -6,11 +6,11 @@
 // for the page, again when their file changes, one applied, the panel's values saved as one.
 
 import * as vscode from 'vscode';
-import { isViewerMessage } from '@kupcad/protocol';
+import { characterAt, isViewerMessage } from '@kupcad/protocol';
 import { errorText } from '../errors.js';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
-import { characterAt, fileName, isScriptFile, scriptName } from './scripts.js';
+import { fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */

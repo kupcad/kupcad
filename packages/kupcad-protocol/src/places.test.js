@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { characterAt } from './scripts.js';
+import { characterAt } from './places.js';
 
 describe('characterAt', () => {
   it('counts a column of UTF-8 bytes from 1 as UTF-16 code units from 0', () => {
