@@ -75,7 +75,7 @@
     const started = platform.server(fileUri(picked), {
       viewport: (url) => (viewportUrl = url),
       state: (up) => (running = up),
-      log: (text) => console.debug(text),
+      log: (text) => preview.log(text),
     });
     server = started;
     try {

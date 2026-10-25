@@ -14,6 +14,13 @@ export interface FrameHeader {
   /** A 3D model's parts; empty otherwise. */
   parts: Part[];
   warnings: Warning[];
+  /**
+   * What the run printed (`puts`, `print`, `inspect`), as it printed it, for a console; absent
+   * from a core before it.
+   */
+  output?: string;
+  /** The run printed more than a run keeps (64 KiB): `output` is the start of it. */
+  outputCut?: boolean;
   params: { schema: UiSchema; values: ParamValues };
   /** Why the run failed (`kind` is then 'none'), or null. */
   error: Failure | null;
@@ -194,7 +201,9 @@ export type HostMessage =
   /** The values the host gives a document's parameters, its panel's: on showing it, and after a change of the host's. */
   | { type: 'overrides'; uri: string; values: ParamValues }
   /** The names of a document's presets, in their order. */
-  | { type: 'presets'; uri: string; names: string[] };
+  | { type: 'presets'; uri: string; names: string[] }
+  /** A line of the host's own log (the language server's), for the viewer's console. */
+  | { type: 'log'; text: string };
 
 /** What a viewer asks of its host (`isViewerMessage`). */
 export type ViewerMessage =

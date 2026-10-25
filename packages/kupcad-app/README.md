@@ -62,8 +62,9 @@ Windows warn before they open one; signing needs the certificates as the reposit
 * **The preview's host** (`src/host.js`): what the panel asks, done in the page. The panel's
   values go to the server (`kupcad.setParams`) and are kept for the script; an export asks where
   to save (the format is the file's extension) and runs `kupcad build` with them; a screenshot
-  is saved where the person says; a problem's place is shown in the editor. Presets aren't
-  offered yet.
+  is saved where the person says; a problem's place is shown in the editor. The server's log
+  goes to the panel's console, under the model, with each run (what it printed, its warnings
+  and its error). Presets aren't offered yet.
 * **The native side** (`src-tauri/src/lib.rs`): the plugins (dialogs, the file system) and the
   app's commands: `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder
   named on the command line, put in the file system's scope as a picked one is) and

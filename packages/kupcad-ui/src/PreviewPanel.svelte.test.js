@@ -272,6 +272,46 @@ describe('PreviewPanel presets', () => {
   });
 });
 
+/** The console's lines, as they read. */
+const consoleLines = () =>
+  [...screen.getByRole('log').querySelectorAll('li')].map((li) => li.textContent?.trim());
+
+describe('PreviewPanel console', () => {
+  it("keeps each run of the document shown once, and the host's log, as they come", async () => {
+    const viewer = page();
+    await viewer.tell({ type: 'document', document: PART });
+    const frame = await previewOf(`puts "hello"\n${SCRIPT}`, PART.uri);
+    viewer.socket.on.frame(frame);
+    await tick();
+    // Sent again (a viewer that connects is sent the frame it missed): the same run
+    viewer.socket.on.frame(frame);
+    await viewer.tell({ type: 'log', text: 'info(session_manager): Initialized\n' });
+    const lines = consoleLines();
+    expect(lines[0]).toMatch(/^part\.kup: Ready · \d+ ms$/);
+    expect(lines.slice(1)).toEqual(['hello', 'info(session_manager): Initialized']);
+    // Another document's frame isn't this console's
+    viewer.socket.on.frame(await previewOf('puts "other"\ncube(1)\n', LID.uri));
+    await tick();
+    expect(consoleLines()).toHaveLength(3);
+  });
+
+  it('shows the script where a line names, and is cleared and folded away', async () => {
+    const viewer = page();
+    await viewer.tell({ type: 'document', document: PART });
+    viewer.socket.on.frame(await previewOf('cube(1)\nraise "boom"\n', PART.uri));
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: /Error: RuntimeError: boom/ }));
+    expect(viewer.posted.at(-1)).toEqual({ type: 'reveal', uri: PART.uri, line: 2, column: 1 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(consoleLines()).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Console' }));
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Console' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+  });
+});
+
 it('asks the host to export the document shown', async () => {
   const viewer = page();
   expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();

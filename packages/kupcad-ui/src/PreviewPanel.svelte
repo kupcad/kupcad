@@ -6,10 +6,14 @@
   the frame that comes back is of a run with them. Why the run failed and what it warned of are
   listed under the model: one with a line, clicked, is shown in the script's editor. The
   document's presets are above its parameters: one applied, or the panel's values saved as one.
+  The console under the model keeps each run (what it printed, its warnings and its error) and
+  the host's log, as OpenSCAD's does.
 -->
 <script>
   import { onMount } from 'svelte';
   import { errorText } from '@kupcad/protocol';
+  import ConsolePanel from './ConsolePanel.svelte';
+  import { appendLines, linesOfLog, linesOfRun } from './console.js';
   import ParamsPanel from './ParamsPanel.svelte';
   import ViewerPane from './ViewerPane.svelte';
   import { toBase64 } from './base64.js';
@@ -18,6 +22,7 @@
 
   /** @import { ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
 
   /**
@@ -27,6 +32,7 @@
    * @property {typeof connectViewport} [connect]
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
    * @property {boolean} [presets] whether the host keeps presets, which the panel then offers
+   * @property {boolean} [console] whether the console shows under the model
    */
 
   /** @type {Props} */
@@ -36,6 +42,7 @@
     connect = connectViewport,
     viewerOptions = {},
     presets: offersPresets = true,
+    console: showsConsole = true,
   } = $props();
 
   let shown = $state(/** @type {ShownDocument | null} */ (null));
@@ -45,6 +52,9 @@
   let presets = $state(/** @type {string[]} */ ([]));
   /** Why the viewer can't show the frame's model, until the next frame. */
   let unshown = $state('');
+  let consoleLines = $state(/** @type {ConsoleLine[]} */ ([]));
+  /** The header of the run the console has last: a frame sent again is the same run. */
+  let lastRun = '';
 
   const header = $derived(preview?.header ?? null);
   /** How the shown document's run went, for the pane's status line. */
@@ -66,7 +76,9 @@
     const stopListening = host.listen((message) => {
       // The host holds the values and presets of every document: it says the shown one's
       // with each document, and again when they change
-      if (message.type === 'document') {
+      if (message.type === 'log') {
+        consoleLines = appendLines(consoleLines, linesOfLog(message.text));
+      } else if (message.type === 'document') {
         if (message.document?.uri !== shown?.uri) preview = null;
         shown = message.document;
         overrides = {};
@@ -86,9 +98,14 @@
           frame: (next) => {
             // The socket sends every viewer the frame of the document the server shows: one of
             // another (late, or with none shown here) isn't this page's
-            if (next.header.document !== shown?.uri) return;
+            if (!shown || next.header.document !== shown.uri) return;
             preview = next;
             unshown = '';
+            const thisRun = JSON.stringify(next.header);
+            if (thisRun !== lastRun) {
+              lastRun = thisRun;
+              consoleLines = appendLines(consoleLines, linesOfRun(next.header, shown.name));
+            }
           },
           problem: (message) => host.post({ type: 'problem', message }),
         })
@@ -130,6 +147,15 @@
     host.post({ type: 'reveal', uri: shown.uri, line: problem.line, column: problem.column ?? 1 });
   }
 
+  /**
+   * Shows the script where a console line names, in its editor.
+   * @param {ConsoleLine} line
+   */
+  function revealLine(line) {
+    if (!shown || line.line === null) return;
+    host.post({ type: 'reveal', uri: shown.uri, line: line.line, column: line.column ?? 1 });
+  }
+
   /** @param {Blob} image */
   async function screenshot(image) {
     host.post({ type: 'screenshot', png: toBase64(new Uint8Array(await image.arrayBuffer())) });
@@ -144,23 +170,32 @@
 
 <div class="kc-preview">
   <section class="view">
-    <ViewerPane
-      model={preview?.model ?? null}
-      options={viewerOptions}
-      status={run}
-      {problems}
-      onproblem={revealProblem}
-      onscreenshot={screenshot}
-      onerror={failed}
-    >
-      {#snippet actions()}
-        {#if shown}
-          <button type="button" class="kc-control" onclick={exportShown}>Export…</button>
-        {/if}
-      {/snippet}
-    </ViewerPane>
-    {#if status}
-      <p class="notice">{status}</p>
+    <div class="model">
+      <ViewerPane
+        model={preview?.model ?? null}
+        options={viewerOptions}
+        status={run}
+        {problems}
+        onproblem={revealProblem}
+        onscreenshot={screenshot}
+        onerror={failed}
+      >
+        {#snippet actions()}
+          {#if shown}
+            <button type="button" class="kc-control" onclick={exportShown}>Export…</button>
+          {/if}
+        {/snippet}
+      </ViewerPane>
+      {#if status}
+        <p class="notice">{status}</p>
+      {/if}
+    </div>
+    {#if showsConsole}
+      <ConsolePanel
+        lines={consoleLines}
+        onreveal={revealLine}
+        onclear={() => (consoleLines = [])}
+      />
     {/if}
   </section>
   {#if header && parameters.length > 0}
@@ -204,9 +239,15 @@
     color: var(--kc-fg);
   }
   .view {
-    position: relative;
+    display: flex;
+    flex-direction: column;
     flex: 1;
     min-width: 0;
+  }
+  .model {
+    position: relative;
+    flex: 1;
+    min-height: 0;
   }
   .params {
     width: 18em;

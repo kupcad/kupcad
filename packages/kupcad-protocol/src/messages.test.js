@@ -8,6 +8,7 @@ describe('isHostMessage', () => {
       { type: 'document', document: null },
       { type: 'overrides', uri: 'file:///w/a.kup', values: { w: 3, label: 'A', hollow: true } },
       { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 'Large'] },
+      { type: 'log', text: 'info(session_manager): Initialized' },
     ]) {
       expect(isHostMessage(message)).toBe(true);
     }
@@ -24,6 +25,7 @@ describe('isHostMessage', () => {
       { type: 'overrides', uri: 'file:///w/a.kup', values: { w: [3] } },
       { type: 'overrides', values: {} },
       { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 2] },
+      { type: 'log', text: 3 },
       { type: 'ready' },
       { type: 'toString' },
     ]) {

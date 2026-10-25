@@ -4,6 +4,8 @@
   "kind": "none",
   "parts": [],
   "warnings": [],
+  "output": "",
+  "outputCut": false,
   "params": {
     "schema": {
       "meta": {

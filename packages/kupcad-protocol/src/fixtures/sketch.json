@@ -4,6 +4,8 @@
   "kind": "2d",
   "parts": [],
   "warnings": [],
+  "output": "",
+  "outputCut": false,
   "params": {
     "schema": {
       "meta": {

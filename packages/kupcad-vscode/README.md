@@ -112,7 +112,8 @@ Two programs, built separately by Vite:
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.
 * **The page** (`src/webview/`, in the panel): `@kupcad/ui`'s `PreviewPanel`, which reads the
-  server's frames from its socket itself, themed by VS Code's colours (`vscode.css`);
+  server's frames from its socket itself (each run in its console too: what the script printed,
+  its warnings and its error), themed by VS Code's colours (`vscode.css`);
   `bridge.js` is its host, over the webview's messages. Built into `dist-webview/`.
 
 The model never passes through the host: a frame can be megabytes, and the page reads it from

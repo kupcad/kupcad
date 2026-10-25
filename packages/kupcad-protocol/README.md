@@ -31,7 +31,9 @@ client.sendRequest('workspace/executeCommand', {
 * `src/types.d.ts` (`@kupcad/protocol/types`): `FrameHeader`, `Part`, `Warning`, `Failure`,
   `Model`, `Preview`, `UiSchema`, `ParamSpec`, `ParamValues`, `ExportFormat`, `Finding`, `CheckFinding`,
   `VersionInfo`, `ViewportReady`, `SetParamsArgument`, `PreviewArgument`. Field for field what
-  the core writes; a field it may leave out is `null`, never missing.
+  the core writes; a field it may leave out is `null`, never missing, but for the ones a frame
+  of an older core lacks, which are optional (a frame's `output`, what the run printed, and
+  `outputCut`).
 * `readFrame(bytes)`: a frame (`ArrayBuffer` or `Uint8Array`) as a `Preview`, its GLB a view on
   the bytes, not a copy. A frame cut short, a header that isn't a JSON object, or a frame of a
   protocol version or kind this package doesn't know throws a `ProtocolError`.
@@ -41,8 +43,8 @@ client.sendRequest('workspace/executeCommand', {
 * `VIEWPORT_READY_NOTIFICATION`, `SET_PARAMS_COMMAND` and `PREVIEW_COMMAND`: the language
   server's names.
 * `HostMessage` and `ViewerMessage`: what a host (the VS Code extension, the desktop app) and its
-  viewer say to each other: the document shown, its panel's values and its presets' names one
-  way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
+  viewer say to each other: the document shown, its panel's values, its presets' names and the
+  host's log (`log`, for the viewer's console) one way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
   in the script to reveal (`reveal`: a warning's line and column) the other. `isHostMessage` and `isViewerMessage` read
   one as it arrives untyped (`postMessage`), and `isParamValues` the values in it. A
   `ViewerHost` is the host as its viewer talks to it (`post`, `listen`).

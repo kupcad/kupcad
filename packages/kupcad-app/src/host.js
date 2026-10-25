@@ -1,6 +1,7 @@
 // The preview's host, in the page itself (@kupcad/ui's PreviewPanel talks to it as a ViewerHost):
 // what the panel asks is done with the language server, the dialogs and the native side's
-// export, and the panel is told the script shown and the values its parameters were given.
+// export, and the panel is told the script shown, the values its parameters were given, and the
+// server's log, for its console.
 
 import { EXPORT_FORMATS, errorText, whyBuildFailed } from '@kupcad/protocol';
 
@@ -161,6 +162,13 @@ export function createHost(services) {
       shown = script;
       tellDocument();
       if (shown) report(services.server.preview(shown.uri), 'Showing the script');
+    },
+    /**
+     * Gives the panel's console `text`, lines of the server's log.
+     * @param {string} text
+     */
+    log(text) {
+      tell({ type: 'log', text });
     },
   };
 }

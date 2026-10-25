@@ -406,6 +406,10 @@ Data flow:
   through the extension host: a model can be megabytes and the host has no reason to copy it. The
   server's port arrives in `kupcad/viewportReady`, and the webview is re-rendered with a CSP that
   allows that port, as the current skeleton does.
+* **What a run printed** comes with its model, in the frame (`output`, as a preview's run keeps
+  it, not the worker's stderr), and the panel's console shows it with the run's warnings and
+  error; a host's own log reaches the console as `log` messages (the desktop app sends its
+  server's).
 * **Presets** are named sets of a script's values in `<name>.presets.json` beside it
   (`@kupcad/protocol`'s `presets.js`, JSON a person edits and commits): the host reads them (`PresetsFile`) and tells
   the page their names, again when the shown script's file changes on disk (watched by its folder,

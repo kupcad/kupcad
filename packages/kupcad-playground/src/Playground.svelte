@@ -4,14 +4,24 @@
   by the core compiled to WebAssembly, in a worker (runner.js says when). The editor marks what
   `check` finds and where the run failed or warned (marks.js); the viewer pane says how the run
   went and lists its problems, one clicked taking the editor there. A model is exported in any
-  format the core writes, and the viewer's screenshot saved, as downloads. It keeps nothing of
-  the page's: the page gives the script it starts with (`source`).
+  format the core writes, and the viewer's screenshot saved, as downloads. The console under the
+  model keeps each run (what it printed, its warnings and its error) and the core's log. It
+  keeps nothing of the page's: the page gives the script it starts with (`source`).
 -->
 <script>
   import { onMount, untrack } from 'svelte';
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText, EXPORT_FORMATS } from '@kupcad/protocol';
-  import { ParamsPanel, problemsOf, runStatusOf, ViewerPane } from '@kupcad/ui';
+  import {
+    appendLines,
+    ConsolePanel,
+    linesOfLog,
+    linesOfRun,
+    ParamsPanel,
+    problemsOf,
+    runStatusOf,
+    ViewerPane,
+  } from '@kupcad/ui';
   import { createKupcadWorker } from '@kupcad/wasm';
   import { download } from './download.js';
   import { marksOf } from './marks.js';
@@ -19,7 +29,7 @@
 
   /** @import { Editor as EditorClass } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-  /** @import { Problem } from '@kupcad/ui' */
+  /** @import { ConsoleLine, Problem } from '@kupcad/ui' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { KupcadApi, WorkerWasmSource } from '@kupcad/wasm/types' */
 
@@ -48,6 +58,7 @@
   let overrides = $state(/** @type {ParamValues} */ ({}));
   /** What went wrong outside a run: a call that failed, an export. */
   let notice = $state('');
+  let consoleLines = $state(/** @type {ConsoleLine[]} */ ([]));
   /** @type {KupcadApi | null} */
   let core = null;
   /** @type {Runner | null} */
@@ -61,7 +72,7 @@
   const parameters = $derived(header?.params.schema.parameters ?? []);
 
   onMount(() => {
-    const made = kupcad ? null : createKupcadWorker(wasm ? { wasm } : {});
+    const made = kupcad ? null : createKupcadWorker(wasm ? { wasm, log } : { log });
     core = kupcad ?? made;
     runner = new Runner(/** @type {KupcadApi} */ (core), {
       onfindings: (next, of) => {
@@ -70,6 +81,7 @@
       onpreview: (preview, of) => {
         ran = { preview, source: of };
         notice = '';
+        consoleLines = appendLines(consoleLines, linesOfRun(preview.header, name));
       },
       onerror: (error) => (notice = errorText(error)),
     });
@@ -79,6 +91,11 @@
       made?.terminate();
     };
   });
+
+  /** @param {string} line of the core's log, which goes to the console */
+  function log(line) {
+    consoleLines = appendLines(consoleLines, linesOfLog(line));
+  }
 
   /** @param {string} next the user's script */
   function edited(next) {
@@ -91,9 +108,9 @@
     runner?.run(value, values, { now: true });
   }
 
-  /** @param {Problem} problem one with a line, clicked */
-  function revealProblem(problem) {
-    if (problem.line !== null) editor?.reveal(problem.line, problem.column ?? 1);
+  /** @param {Problem | ConsoleLine} place a problem or a console line with a line, clicked */
+  function reveal(place) {
+    if (place.line !== null) editor?.reveal(place.line, place.column ?? 1);
   }
 
   /** @param {Event & { currentTarget: HTMLSelectElement }} event */
@@ -122,23 +139,26 @@
     {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
   </section>
   <section class="view" aria-label="Model">
-    <ViewerPane
-      model={ran?.preview.model ?? null}
-      options={viewerOptions}
-      {status}
-      {problems}
-      onproblem={revealProblem}
-      onscreenshot={screenshot}
-    >
-      {#snippet actions()}
-        <select class="kc-control" aria-label="Export" onchange={exportChosen}>
-          <option value="" selected disabled>Export…</option>
-          {#each EXPORT_FORMATS as choice (choice.format)}
-            <option value={choice.format} title={choice.detail}>{choice.label}</option>
-          {/each}
-        </select>
-      {/snippet}
-    </ViewerPane>
+    <div class="model">
+      <ViewerPane
+        model={ran?.preview.model ?? null}
+        options={viewerOptions}
+        {status}
+        {problems}
+        onproblem={reveal}
+        onscreenshot={screenshot}
+      >
+        {#snippet actions()}
+          <select class="kc-control" aria-label="Export" onchange={exportChosen}>
+            <option value="" selected disabled>Export…</option>
+            {#each EXPORT_FORMATS as choice (choice.format)}
+              <option value={choice.format} title={choice.detail}>{choice.label}</option>
+            {/each}
+          </select>
+        {/snippet}
+      </ViewerPane>
+    </div>
+    <ConsolePanel lines={consoleLines} onreveal={reveal} onclear={() => (consoleLines = [])} />
   </section>
   {#if header && parameters.length > 0}
     <aside class="params" aria-label="Parameters">
@@ -170,8 +190,15 @@
     border-right: 1px solid var(--kc-border);
   }
   .view {
+    display: flex;
+    flex-direction: column;
     flex: 3 1 0;
     min-width: 0;
+  }
+  .model {
+    position: relative;
+    flex: 1;
+    min-height: 0;
   }
   .params {
     width: 18em;

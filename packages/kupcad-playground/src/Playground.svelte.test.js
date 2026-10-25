@@ -40,6 +40,12 @@ const statusText = () => screen.queryByRole('status')?.textContent?.replace(/\s+
 const partsListed = () =>
   screen.queryByRole('list', { name: 'Parts' })?.textContent?.replace(/\s+/g, ' ').trim();
 
+/** The console's lines, as they read. */
+const consoleLines = () =>
+  [...screen.getByRole('log').querySelectorAll('li')].map((li) =>
+    li.textContent?.replace(/\s+/g, ' ').trim(),
+  );
+
 /**
  * What the editor marks: each mark's message and the text it marks.
  * @param {EditorView} view
@@ -73,6 +79,18 @@ describe('Playground', () => {
     );
     await fireEvent.click(problem);
     expect(view.state.selection.main.head).toBe(view.state.doc.line(2).from);
+  });
+
+  it('keeps what each run printed in the console under the model, a line of it taking the editor there', async () => {
+    const { view } = await playground('puts "made"\ncube(1)\nraise "boom"\n');
+    await vi.waitFor(() => expect(consoleLines()).toHaveLength(3), RUN_MS);
+    expect(consoleLines()).toEqual([
+      expect.stringMatching(/^bracket: Failed · \d+ ms$/),
+      'made',
+      'Error: RuntimeError: boom line 3',
+    ]);
+    await fireEvent.click(screen.getByRole('button', { name: /Error: RuntimeError: boom/ }));
+    expect(view.state.selection.main.head).toBe(view.state.doc.line(3).from);
   });
 
   it('runs the script again once an edit stays a moment', async () => {

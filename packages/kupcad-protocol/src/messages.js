@@ -34,6 +34,8 @@ const HOST_MESSAGES = {
   overrides: (m) => isString(m.uri) && isParamValues(m.values),
   /** @param {Record<string, unknown>} m */
   presets: (m) => isString(m.uri) && Array.isArray(m.names) && m.names.every(isString),
+  /** @param {Record<string, unknown>} m */
+  log: (m) => isString(m.text),
 };
 
 /** Each viewer message's fields, checked: by its type. */
