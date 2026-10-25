@@ -1,6 +1,8 @@
-//! Generates the VS Code TextMate grammar (`zig build grammar`): `generateTextMateJson` takes
-//! the keywords from the lexer and the function and method names from the stdlib manifest and
-//! classes, so highlighting follows the language, and `main` writes it to the given path.
+//! Generates the grammars highlighting follows the language by (`zig build grammar`): the VS
+//! Code TextMate grammar (`generateTextMateJson`) and the words of `@kupcad/editor`'s CodeMirror
+//! highlighting (`generateVocabularyJson`). Both take the keywords from the lexer and the
+//! function and method names from the stdlib manifest and classes (`Vocabulary`); `main` writes
+//! them to the paths given.
 
 const std = @import("std");
 const kupcad_lexer = @import("frontend/lexer.zig");
@@ -19,66 +21,109 @@ const log_helpers = @import("log.zig");
 /// `for`, the loop variables (up to a comment), then the first standalone `in`.
 pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 
-/// Core generation logic separated for testing
+/// The language's words, each kind highlighting tells apart: the lexer's keywords, the stdlib's
+/// global functions and methods by their category, and the methods of its classes. The lists
+/// borrow the names, which are the program's; `deinit` frees the lists.
+pub const Vocabulary = struct {
+    keywords: std.ArrayList([]const u8) = .empty,
+    /// Every global function, whatever its category.
+    functions: std.ArrayList([]const u8) = .empty,
+    builtins: std.ArrayList([]const u8) = .empty,
+    prim_3d: std.ArrayList([]const u8) = .empty,
+    prim_2d: std.ArrayList([]const u8) = .empty,
+    /// Every method of a Solid or a Sketch, whatever its category.
+    mesh_methods: std.ArrayList([]const u8) = .empty,
+    transforms: std.ArrayList([]const u8) = .empty,
+    csg_ops: std.ArrayList([]const u8) = .empty,
+    workplanes: std.ArrayList([]const u8) = .empty,
+    inspections: std.ArrayList([]const u8) = .empty,
+    /// The methods of the value classes (Object, Array, Map, String, ...).
+    core_methods: std.ArrayList([]const u8) = .empty,
+
+    pub fn collect(allocator: std.mem.Allocator) !Vocabulary {
+        var words: Vocabulary = .{};
+        errdefer words.deinit(allocator);
+        for (kupcad_lexer.keywords.keys()) |key| try words.keywords.append(allocator, key);
+        for (manifest.global_functions) |gf| {
+            try words.functions.append(allocator, gf.name);
+            switch (gf.category) {
+                .primitive_3d => try words.prim_3d.append(allocator, gf.name),
+                .primitive_2d => try words.prim_2d.append(allocator, gf.name),
+                .io, .file_io => try words.builtins.append(allocator, gf.name),
+                else => {},
+            }
+        }
+        for (manifest.mesh_methods) |mm| {
+            try words.mesh_methods.append(allocator, mm.name);
+            switch (mm.category) {
+                .transform => try words.transforms.append(allocator, mm.name),
+                .csg_operator => try words.csg_ops.append(allocator, mm.name),
+                .workplane_method => try words.workplanes.append(allocator, mm.name),
+                .inspection_method => try words.inspections.append(allocator, mm.name),
+                else => {},
+            }
+        }
+        inline for (.{ object_class, array_class, map_class, string_class, number_class, symbol_class, boolean_class, math_class, gc_class }) |class| {
+            for (class.methods) |m| try words.core_methods.append(allocator, m.name);
+        }
+        return words;
+    }
+
+    pub fn deinit(self: *Vocabulary, allocator: std.mem.Allocator) void {
+        inline for (comptime @typeInfo(Vocabulary).@"struct".field_names) |name| @field(self, name).deinit(allocator);
+    }
+};
+
+/// The words `@kupcad/editor` highlights by (its `src/vocabulary.json`): the keywords, the global
+/// functions, and the methods (a Solid's or a value's), each list sorted, each word once.
+pub fn generateVocabularyJson(allocator: std.mem.Allocator) ![]const u8 {
+    var words = try Vocabulary.collect(allocator);
+    defer words.deinit(allocator);
+    var methods: std.ArrayList([]const u8) = .empty;
+    defer methods.deinit(allocator);
+    try methods.appendSlice(allocator, words.mesh_methods.items);
+    try methods.appendSlice(allocator, words.core_methods.items);
+    const vocabulary = .{
+        .keywords = sortedOnce(&words.keywords),
+        .functions = sortedOnce(&words.functions),
+        .methods = sortedOnce(&methods),
+    };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try out.writer.print("{f}\n", .{std.json.fmt(vocabulary, .{ .whitespace = .indent_2 })});
+    return try allocator.dupe(u8, out.written());
+}
+
+/// `list`'s words sorted, each once (in place: the slice is the list's).
+fn sortedOnce(list: *std.ArrayList([]const u8)) []const []const u8 {
+    std.mem.sortUnstable([]const u8, list.items, {}, lessThan);
+    var kept: usize = 0;
+    for (list.items) |word| {
+        if (kept > 0 and std.mem.eql(u8, list.items[kept - 1], word)) continue;
+        list.items[kept] = word;
+        kept += 1;
+    }
+    list.shrinkRetainingCapacity(kept);
+    return list.items;
+}
+
+fn lessThan(_: void, a: []const u8, b: []const u8) bool {
+    return std.mem.order(u8, a, b) == .lt;
+}
+
+/// The TextMate grammar of the VS Code extension (`syntaxes/kupcad.tmLanguage.json`).
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
-    var keywords: std.ArrayList([]const u8) = .empty;
-    var builtins: std.ArrayList([]const u8) = .empty;
-    var prim_3d: std.ArrayList([]const u8) = .empty;
-    var prim_2d: std.ArrayList([]const u8) = .empty;
-    var transforms: std.ArrayList([]const u8) = .empty;
-    var csg_ops: std.ArrayList([]const u8) = .empty;
-    var workplanes: std.ArrayList([]const u8) = .empty;
-    var inspections: std.ArrayList([]const u8) = .empty;
-    var core_methods: std.ArrayList([]const u8) = .empty;
-
-    defer {
-        keywords.deinit(allocator);
-        builtins.deinit(allocator);
-        prim_3d.deinit(allocator);
-        prim_2d.deinit(allocator);
-        transforms.deinit(allocator);
-        csg_ops.deinit(allocator);
-        workplanes.deinit(allocator);
-        inspections.deinit(allocator);
-        core_methods.deinit(allocator);
-    }
-
-    // Extract Keywords directly from the actual frontend Lexer
-    for (kupcad_lexer.keywords.keys()) |key| {
-        try keywords.append(allocator, key);
-    }
-
-    // Extract Native Functions from the actual Stdlib Manifest
-    for (manifest.global_functions) |gf| {
-        switch (gf.category) {
-            .primitive_3d => try prim_3d.append(allocator, gf.name),
-            .primitive_2d => try prim_2d.append(allocator, gf.name),
-            .io, .file_io => try builtins.append(allocator, gf.name),
-            else => {},
-        }
-    }
-
-    // Extract Methods from the actual Stdlib Manifest
-    for (manifest.mesh_methods) |mm| {
-        switch (mm.category) {
-            .transform => try transforms.append(allocator, mm.name),
-            .csg_operator => try csg_ops.append(allocator, mm.name),
-            .workplane_method => try workplanes.append(allocator, mm.name),
-            .inspection_method => try inspections.append(allocator, mm.name),
-            else => {},
-        }
-    }
-
-    // Dynamically extract all Primitive Class methods
-    for (object_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (array_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (map_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (string_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (number_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (symbol_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (boolean_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (math_class.methods) |m| try core_methods.append(allocator, m.name);
-    for (gc_class.methods) |m| try core_methods.append(allocator, m.name);
+    var words = try Vocabulary.collect(allocator);
+    defer words.deinit(allocator);
+    const keywords = &words.keywords;
+    const builtins = &words.builtins;
+    const prim_3d = &words.prim_3d;
+    const prim_2d = &words.prim_2d;
+    const transforms = &words.transforms;
+    const csg_ops = &words.csg_ops;
+    const workplanes = &words.workplanes;
+    const inspections = &words.inspections;
+    const core_methods = &words.core_methods;
 
     // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
     if (builtins.items.len == 0) try builtins.append(allocator, "dummy_builtin");
@@ -137,14 +182,14 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(kw_match);
 
     // Build Method Matchers using the consolidated helper
-    const builtins_match = try buildMethodRegex(allocator, &builtins, "dummy_builtin");
-    const p3d_match = try buildMethodRegex(allocator, &prim_3d, "dummy_prim_3d");
-    const p2d_match = try buildMethodRegex(allocator, &prim_2d, "dummy_prim_2d");
-    const tf_match = try buildMethodRegex(allocator, &transforms, "dummy_tf");
-    const csg_match = try buildMethodRegex(allocator, &csg_ops, "dummy_csg");
-    const wp_match = try buildMethodRegex(allocator, &workplanes, "dummy_wp");
-    const insp_match = try buildMethodRegex(allocator, &inspections, "dummy_insp");
-    const core_match = try buildMethodRegex(allocator, &core_methods, "dummy_core");
+    const builtins_match = try buildMethodRegex(allocator, builtins, "dummy_builtin");
+    const p3d_match = try buildMethodRegex(allocator, prim_3d, "dummy_prim_3d");
+    const p2d_match = try buildMethodRegex(allocator, prim_2d, "dummy_prim_2d");
+    const tf_match = try buildMethodRegex(allocator, transforms, "dummy_tf");
+    const csg_match = try buildMethodRegex(allocator, csg_ops, "dummy_csg");
+    const wp_match = try buildMethodRegex(allocator, workplanes, "dummy_wp");
+    const insp_match = try buildMethodRegex(allocator, inspections, "dummy_insp");
+    const core_match = try buildMethodRegex(allocator, core_methods, "dummy_core");
 
     defer allocator.free(builtins_match);
     defer allocator.free(p3d_match);
@@ -342,28 +387,26 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     return try allocator.dupe(u8, out.written());
 }
 
-/// CLI Entry Point
+/// Writes the TextMate grammar to the first path given, and the editor's vocabulary to the second.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
     var args_iter = std.process.Args.Iterator.init(init.minimal.args);
     _ = args_iter.skip(); // skip executable name
-
-    const output_path = args_iter.next() orelse {
-        log_helpers.printStderr(io, "Error: Missing output file path argument.\n", .{});
+    const grammar_path = args_iter.next();
+    const vocabulary_path = args_iter.next();
+    if (grammar_path == null or vocabulary_path == null) {
+        log_helpers.printStderr(io, "Usage: gen_grammar <tmLanguage.json> <vocabulary.json>\n", .{});
         std.process.exit(1);
-    };
+    }
 
-    // Automatically parse our live system
-    const json_content = try generateTextMateJson(allocator);
-    defer allocator.free(json_content);
-
+    const grammar = try generateTextMateJson(allocator);
+    defer allocator.free(grammar);
+    const vocabulary = try generateVocabularyJson(allocator);
+    defer allocator.free(vocabulary);
     const cwd = std.Io.Dir.cwd();
-    try cwd.writeFile(io, .{
-        .sub_path = output_path,
-        .data = json_content,
-    });
-
-    log_helpers.printStdout(io, "Successfully generated TextMate grammar at: {s}\n", .{output_path});
+    try cwd.writeFile(io, .{ .sub_path = grammar_path.?, .data = grammar });
+    try cwd.writeFile(io, .{ .sub_path = vocabulary_path.?, .data = vocabulary });
+    log_helpers.printStdout(io, "Wrote the TextMate grammar to {s} and the editor's vocabulary to {s}\n", .{ grammar_path.?, vocabulary_path.? });
 }

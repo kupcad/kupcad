@@ -546,6 +546,9 @@ pub fn build(b: *std.Build) void {
         }
         // So is the README, whose table of error codes a test keeps complete.
         mod.addAnonymousImport("docs/README.md", .{ .root_source_file = b.path("docs/README.md") });
+        // And the grammars `zig build grammar` writes, which a test keeps up to date.
+        mod.addAnonymousImport("grammar/kupcad.tmLanguage.json", .{ .root_source_file = b.path("../packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json") });
+        mod.addAnonymousImport("grammar/vocabulary.json", .{ .root_source_file = b.path("../packages/kupcad-editor/src/vocabulary.json") });
 
         const mod_tests = b.addTest(.{
             .root_module = mod,
@@ -635,8 +638,9 @@ pub fn build(b: *std.Build) void {
 
         const run_gen_grammar = b.addRunArtifact(gen_grammar_exe);
         run_gen_grammar.addArg("../packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json");
+        run_gen_grammar.addArg("../packages/kupcad-editor/src/vocabulary.json");
 
-        const gen_step = b.step("grammar", "Generate VS Code TextMate grammar JSON");
+        const gen_step = b.step("grammar", "Generate the VS Code TextMate grammar and the editor's vocabulary");
         gen_step.dependOn(&run_gen_grammar.step);
     }
 }

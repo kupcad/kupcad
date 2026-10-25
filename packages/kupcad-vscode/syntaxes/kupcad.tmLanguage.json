@@ -195,11 +195,11 @@
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|assert|warn|benchmark|import_stl|import_step|import_json)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(puts|print|inspect|debugger|param|assert|warn|benchmark|import_stl|import_obj|import_3mf|import_step|import_json|import_font|import_dxf|import_svg)(?![\\\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(class|inspect|is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reject|compact|reduce|first|last|contains?|flatten|max|min|sum|sort|to_h|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|upcase|downcase|split|replace|to_f|to_i|trim|starts_with?|ends_with?|to_sym|to_s|times|upto|downto|round|ceil|floor|abs|odd?|even?|zero?|positive?|negative?|integer?|finite?|nan?|infinite?|clamp|between?|invert|sin|cos|tan|asin|acos|atan|atan2|sind|cosd|tand|asind|acosd|atand|atan2d|sqrt|cbrt|exp|log|log2|log10|deg2rad|rad2deg|lerp|hypot|sign|snap|remap|smoothstep|close?|gcd|lcm|collect|bytes_allocated)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(class|inspect|is_a?|respond_to?|nil?|empty?|method|tap|into|dup|clone|length|size|push|pop|shift|unshift|slice|join|each|map|filter|reject|compact|reduce|first|last|contains?|include?|flatten|max|min|sum|sort|to_h|each_with_index|each_cons|each_slice|zip|uniq|reverse|any?|all?|none?|find|count|take|drop|flat_map|sort_by|min_by|max_by|group_by|keys|values|key?|delete|get|merge|symbolize_keys|stringify_keys|to_a|fetch|dig|transform_values|upcase|downcase|split|chars|rjust|ljust|replace|to_f|to_i|trim|strip|starts_with?|start_with?|ends_with?|end_with?|to_sym|to_s|times|upto|downto|round|ceil|floor|abs|mm|cm|m|inch|odd?|even?|zero?|positive?|negative?|integer?|finite?|nan?|infinite?|clamp|between?|invert|sin|cos|tan|asin|acos|atan|atan2|sind|cosd|tand|asind|acosd|atand|atan2d|sqrt|cbrt|exp|log|log2|log10|deg2rad|rad2deg|lerp|hypot|polar|sign|snap|remap|smoothstep|close?|gcd|lcm|collect|bytes_allocated)(?![\\\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
@@ -211,7 +211,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|helix|loft|trim_by_plane|minkowski|offset|transform|repeat_linear|repeat_polar|material|named|highlight|ghost)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(translate|rotate|scale|resize|project|slice|center|align|mirror|split_by_plane|decompose|simplify|extrude|revolve|hull|helix|loft|sweep|trim_by_plane|minkowski|offset|shell|transform|repeat_linear|repeat_polar|material|named|highlight|ghost)(?![\\\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
@@ -223,7 +223,7 @@
       "name": "support.function.workplane.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(genus|bbox|volume|surface_area|min_gap|contains?|ray_cast|bom)(?![\\\\w?!])",
+      "match": "(?<![\\\\w])(genus|bbox|volume|surface_area|area|center_of_mass|intersects?|mass|min_gap|contains?|ray_cast|bom)(?![\\\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {

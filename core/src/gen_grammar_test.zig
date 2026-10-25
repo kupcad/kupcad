@@ -83,3 +83,36 @@ test "gen_grammar: single-quoted strings are strings, with only \\\\ and \\' as 
     // In the JSON, each backslash of the pattern is written twice
     try testing.expect(std.mem.find(u8, json, "\"\\\\\\\\['\\\\\\\\]\"") != null);
 }
+
+test "gen_grammar: the editor's vocabulary is the lexer's keywords and the stdlib's functions and methods, sorted, each once" {
+    const allocator = testing.allocator;
+    const output = try gen_grammar.generateVocabularyJson(allocator);
+    defer allocator.free(output);
+    const Vocabulary = struct { keywords: []const []const u8, functions: []const []const u8, methods: []const []const u8 };
+    const parsed = try std.json.parseFromSlice(Vocabulary, allocator, output, .{});
+    defer parsed.deinit();
+    const words = parsed.value;
+    try testing.expect(contains(words.keywords, "def") and contains(words.keywords, "do") and !contains(words.keywords, "cube"));
+    // A global function of any category: a primitive, the parameters', a highlight
+    try testing.expect(contains(words.functions, "cube") and contains(words.functions, "param") and contains(words.functions, "highlight"));
+    // A Solid's method, and a value's
+    try testing.expect(contains(words.methods, "translate") and contains(words.methods, "map"));
+    for ([_][]const []const u8{ words.keywords, words.functions, words.methods }) |list| {
+        for (list[1..], list[0 .. list.len - 1]) |word, before| try testing.expect(std.mem.order(u8, before, word) == .lt);
+    }
+}
+
+fn contains(list: []const []const u8, word: []const u8) bool {
+    for (list) |each| if (std.mem.eql(u8, each, word)) return true;
+    return false;
+}
+
+test "gen_grammar: the grammars in the packages are what it writes now (else: zig build grammar)" {
+    const allocator = testing.allocator;
+    const grammar = try gen_grammar.generateTextMateJson(allocator);
+    defer allocator.free(grammar);
+    try testing.expectEqualStrings(grammar, @embedFile("grammar/kupcad.tmLanguage.json"));
+    const vocabulary = try gen_grammar.generateVocabularyJson(allocator);
+    defer allocator.free(vocabulary);
+    try testing.expectEqualStrings(vocabulary, @embedFile("grammar/vocabulary.json"));
+}
