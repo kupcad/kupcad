@@ -1,5 +1,6 @@
 //! Shared helpers for the pkg test files: in-memory tarballs, absolute-path
-//! file writes and store row counts. No `test` blocks; not registered in root.zig.
+//! file writes, store row counts and a slow HTTP host. No `test` blocks; not registered
+//! in root.zig.
 
 const std = @import("std");
 const testing = std.testing;
@@ -104,3 +105,72 @@ pub fn countRows(store: *Store, sql: []const u8) !i64 {
     defer stmt.deinit();
     return (try stmt.one(struct { n: i64 }, .{})).?.n;
 }
+
+// ---------------------------------------------------------------------------
+// A slow HTTP host
+// ---------------------------------------------------------------------------
+
+/// Serves one GET on 127.0.0.1, on a thread of its own, as a host that slows and stops does:
+/// its head (unless `head` is false), then `pieces` bytes of a body of `length`, one each
+/// `gap`, and then nothing, the connection held open until `stop`.
+pub const SlowServer = struct {
+    server: std.Io.net.Server,
+    port: u16,
+    options: Options,
+    stopping: std.Io.Event = .unset,
+    thread: std.Thread,
+
+    pub const Options = struct {
+        head: bool = true,
+        pieces: usize = 0,
+        gap: std.Io.Duration = .zero,
+        length: usize = 64,
+    };
+
+    pub fn start(self: *SlowServer, options: Options) !void {
+        const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+        const server = try address.listen(testing.io, .{});
+        self.* = .{ .server = server, .port = server.socket.address.getPort(), .options = options, .thread = undefined };
+        errdefer self.server.deinit(testing.io);
+        self.thread = try std.Thread.spawn(.{}, serve, .{self});
+    }
+
+    /// Also when no client came: a throwaway connection wakes a pending accept.
+    pub fn stop(self: *SlowServer) void {
+        self.stopping.set(testing.io);
+        const address = std.Io.net.IpAddress.parse("127.0.0.1", self.port) catch unreachable;
+        if (address.connect(testing.io, .{ .mode = .stream })) |s| s.close(testing.io) else |_| {}
+        self.thread.join();
+        self.server.deinit(testing.io);
+    }
+
+    /// The URL of `path` on this host, in `buffer`.
+    pub fn url(self: *const SlowServer, buffer: []u8, path: []const u8) ![]const u8 {
+        return std.mem.print(buffer, "http://127.0.0.1:{d}{s}", .{ self.port, path });
+    }
+
+    fn serve(self: *SlowServer) void {
+        self.serveOne() catch {};
+    }
+
+    fn serveOne(self: *SlowServer) !void {
+        const stream = try self.server.accept(testing.io);
+        defer stream.close(testing.io);
+        if (self.stopping.isSet()) return;
+        var r_buf: [4096]u8 = undefined;
+        var reader = stream.reader(testing.io, &r_buf);
+        while (!std.mem.eql(u8, try reader.interface.takeDelimiterInclusive('\n'), "\r\n")) {}
+        var w_buf: [256]u8 = undefined;
+        var writer = stream.writer(testing.io, &w_buf);
+        if (self.options.head) {
+            try writer.interface.print("HTTP/1.1 200 OK\r\nContent-Length: {d}\r\n\r\n", .{self.options.length});
+            try writer.interface.flush();
+            for (0..self.options.pieces) |_| {
+                try testing.io.sleep(self.options.gap, .awake);
+                try writer.interface.writeByte('x');
+                try writer.interface.flush();
+            }
+        }
+        self.stopping.waitUncancelable(testing.io);
+    }
+};

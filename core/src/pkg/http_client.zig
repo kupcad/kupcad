@@ -1,16 +1,20 @@
-//! The package manager's HTTP: `request` connects with a timeout and default headers, and
-//! `Get` follows redirects itself, only those `redirectAllowed` permits. Used by
+//! The package manager's HTTP: `Get` follows redirects itself, only those `redirectAllowed`
+//! permits, and `watched` abandons a request that receives nothing for a while. Used by
 //! providers/fetcher.zig.
 
 const std = @import("std");
 const validate = @import("validate.zig");
 
-pub const CONNECTION_TIMEOUT_NS: u64 = 10 * std.time.ns_per_s;
 pub const DEFAULT_USER_AGENT = "KupCAD/" ++ @import("build_info").version;
 /// Most redirects one request follows (a GitHub archive link takes one).
 pub const MAX_REDIRECTS: usize = 5;
 /// Room for a request's URL, a redirect's target included.
 pub const MAX_URL_BYTES: usize = 8 * 1024;
+/// How long a request may receive nothing before it is abandoned: from its start until its
+/// body begins, then between any two parts of its body. std.http.Client reads without a
+/// timeout, and drops the one its connect is given, so a host that stopped sending held
+/// `kupcad pkg install` for good.
+pub const STALL_TIMEOUT: std.Io.Duration = .fromSeconds(30);
 
 /// What a GET accepts: bodies are read as they come (JSON, or an archive that is already
 /// gzipped), so a compressed one reached the JSON parser still compressed. A server that
@@ -21,9 +25,8 @@ const IDENTITY_ONLY = blk: {
     break :blk accepted;
 };
 
-/// A GET that follows redirects itself, so each hop connects through `request` (with its
-/// timeout) and must pass `redirectAllowed`. std.http.Client's own following connected to
-/// wherever a Location pointed, with neither.
+/// A GET that follows redirects itself, so each hop must pass `redirectAllowed`.
+/// std.http.Client's own following connected to wherever a Location pointed.
 pub const Get = struct {
     request: std.http.Client.Request,
     /// The current URL and the next one, by turns, each written out whole: a resolved
@@ -41,9 +44,12 @@ pub const Get = struct {
         var current: usize = 0;
         var redirects: usize = 0;
         while (true) {
-            self.request = try request(client, .GET, uri, .{
+            self.request = try client.request(.GET, uri, .{
                 .redirect_behavior = .unhandled,
-                .headers = .{ .accept_encoding = .{ .override = "identity" } },
+                .headers = .{
+                    .accept_encoding = .{ .override = "identity" },
+                    .user_agent = .{ .override = DEFAULT_USER_AGENT },
+                },
             });
             self.request.accept_encoding = IDENTITY_ONLY;
             const response = receive(&self.request) catch |err| {
@@ -76,40 +82,6 @@ pub const Get = struct {
     }
 };
 
-/// Loads the system's root certificates into `client` (and the time TLS checks expiry
-/// against), once. std.http.Client does this in its own `request` only when it opens the
-/// connection itself; `request` above opens it first, for the timeout, so every HTTPS
-/// download panicked on the missing time instead.
-pub fn loadRootCertificates(client: *std.http.Client) !void {
-    const io = client.io;
-    if (try hasRootCertificates(client)) return;
-    var bundle: std.crypto.Certificate.Bundle = .empty;
-    defer bundle.deinit(client.allocator);
-    const now = std.Io.Clock.real.now(io);
-    bundle.rescan(client.allocator, io, now) catch |err| switch (err) {
-        error.Canceled => |e| return e,
-        else => return error.CertificateBundleLoadFailure,
-    };
-    try installRootCertificates(client, &bundle, now);
-}
-
-fn hasRootCertificates(client: *std.http.Client) !bool {
-    try client.ca_bundle_lock.lockShared(client.io);
-    defer client.ca_bundle_lock.unlockShared(client.io);
-    return client.now != null;
-}
-
-/// Gives `client` the certificates in `bundle` (taken: `bundle` is left with the client's
-/// old ones, for the caller to free) and the time to check them at, unless another thread
-/// gave it some first. Apart from reading the system's store, this is all loading does.
-pub fn installRootCertificates(client: *std.http.Client, bundle: *std.crypto.Certificate.Bundle, now: std.Io.Timestamp) !void {
-    try client.ca_bundle_lock.lock(client.io);
-    defer client.ca_bundle_lock.unlock(client.io);
-    if (client.now != null) return; // another thread loaded them meanwhile
-    client.now = now;
-    std.mem.swap(std.crypto.Certificate.Bundle, &client.ca_bundle, bundle);
-}
-
 /// `location` resolved against `base` (in `scratch`), written out whole in `out`.
 fn resolveRedirect(base: std.Uri, location: ?[]const u8, scratch: *[MAX_URL_BYTES]u8, out: *[MAX_URL_BYTES]u8) !std.Uri {
     const target = location orelse return error.HttpRedirectLocationMissing;
@@ -139,43 +111,91 @@ pub fn redirectAllowed(from: std.Uri, to: std.Uri) bool {
     return true;
 }
 
-/// Helper to establish a network connection with strict timeouts and default headers.
-pub fn request(
-    client: *std.http.Client,
-    method: std.http.Method,
-    uri: std.Uri,
-    options: std.http.Client.RequestOptions,
-) !std.http.Client.Request {
-    const protocol = std.http.Client.Protocol.fromUri(uri) orelse return error.UnsupportedUriScheme;
+/// What a watched request received so far, in bytes: `run` reads its body through a
+/// `Counted`, which counts it here.
+pub const Received = std.atomic.Value(u64);
 
-    // Explicitly define the fallback port mapping since `protocol.port()` is private
-    const default_port: u16 = switch (protocol) {
-        .plain => 80,
-        .tls => 443,
+/// A reader of `in` that counts what it reads in `received`, for `watched`.
+pub const Counted = struct {
+    in: *std.Io.Reader,
+    received: *Received,
+    interface: std.Io.Reader,
+
+    pub fn init(in: *std.Io.Reader, received: *Received) Counted {
+        return .{ .in = in, .received = received, .interface = .{
+            .vtable = &.{ .stream = stream, .discard = discard },
+            .buffer = &.{},
+            .seek = 0,
+            .end = 0,
+        } };
+    }
+
+    fn stream(r: *std.Io.Reader, w: *std.Io.Writer, limit: std.Io.Limit) std.Io.Reader.StreamError!usize {
+        const self: *Counted = @fieldParentPtr("interface", r);
+        const n = try self.in.stream(w, limit);
+        _ = self.received.fetchAdd(n, .monotonic);
+        return n;
+    }
+
+    fn discard(r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
+        const self: *Counted = @fieldParentPtr("interface", r);
+        const n = try self.in.discard(limit);
+        _ = self.received.fetchAdd(n, .monotonic);
+        return n;
+    }
+};
+
+/// What `watched(…, run, …)` returns: `run`'s result, or error.DownloadStalled.
+pub fn Watched(comptime run: anytype) type {
+    const result = @typeInfo(@typeInfo(@TypeOf(run)).@"fn".return_type.?).error_union;
+    return (error{DownloadStalled} || std.Io.ConcurrentError || result.error_set)!result.payload;
+}
+
+/// `run(args…, received)` on a thread of its own, abandoned once `received` hasn't grown for
+/// `stall` (noticed within twice that): error.DownloadStalled. A request that ended as it was
+/// abandoned keeps what it got. Canceling the caller cancels the request too.
+pub fn watched(io: std.Io, stall: std.Io.Duration, comptime run: anytype, args: anytype) Watched(run) {
+    const Task = struct {
+        fn call(task_io: std.Io, done: *std.Io.Event, task_args: @TypeOf(args), received: *Received) @typeInfo(@TypeOf(run)).@"fn".return_type.? {
+            defer done.set(task_io);
+            return @call(.auto, run, task_args ++ .{received});
+        }
     };
-    const port = uri.port orelse default_port;
+    var received: Received = .init(0);
+    var done: std.Io.Event = .unset;
+    var task = try io.concurrent(Task.call, .{ io, &done, args, &received });
+    const stalled = untilStalled(io, &done, &received, stall) catch |err| switch (err) {
+        // What the request got meanwhile is the caller's still, who sees the cancelation at
+        // its next point
+        error.Canceled => {
+            const result = task.cancel(io);
+            io.recancel();
+            return result;
+        },
+    };
+    if (!stalled) return task.await(io);
+    return task.cancel(io) catch error.DownloadStalled;
+}
 
-    var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
-    const host_name = try std.Io.net.HostName.fromUri(uri, &host_buf);
-
-    if (protocol == .tls) try loadRootCertificates(client);
-    const conn = try client.connectTcpOptions(.{
-        .host = host_name,
-        .port = port,
-        .protocol = protocol,
-        .timeout = .{ .duration = .{ .raw = .fromNanoseconds(CONNECTION_TIMEOUT_NS), .clock = .awake } },
-    });
-    errdefer {
-        conn.closing = true;
-        client.connection_pool.release(conn, client.io);
+/// Waits until `done`, or until `received` hasn't grown for `stall`; whether it stalled.
+fn untilStalled(io: std.Io, done: *std.Io.Event, received: *const Received, stall: std.Io.Duration) std.Io.Cancelable!bool {
+    const window: std.Io.Clock.Duration = .{ .raw = stall, .clock = .awake };
+    var seen = received.load(.monotonic);
+    var deadline = std.Io.Clock.Timestamp.now(io, .awake).addDuration(window);
+    while (true) {
+        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+            error.Canceled => |e| return e,
+            // Or woken early: it stalled only once nothing came all the while
+            error.Timeout => {
+                const now = std.Io.Clock.Timestamp.now(io, .awake);
+                const count = received.load(.monotonic);
+                if (count != seen) {
+                    seen = count;
+                    deadline = now.addDuration(window);
+                } else if (now.raw.nanoseconds >= deadline.raw.nanoseconds) return true;
+                continue;
+            },
+        };
+        return false;
     }
-
-    var final_opts = options;
-    final_opts.connection = conn;
-
-    if (final_opts.headers.user_agent == .default) {
-        final_opts.headers.user_agent = .{ .override = DEFAULT_USER_AGENT };
-    }
-
-    return client.request(method, uri, final_opts);
 }

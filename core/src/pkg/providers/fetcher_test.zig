@@ -4,6 +4,9 @@ const Fetcher = @import("fetcher.zig").Fetcher;
 const ParsedPackage = @import("provider.zig").ParsedPackage;
 const semver = @import("../semver.zig");
 const Release = @import("fetcher.zig").Release;
+const Cafs = @import("../cafs.zig").Cafs;
+const MemoryVfs = @import("../../vfs/memory.zig").MemoryVfs;
+const SlowServer = @import("../test_helpers.zig").SlowServer;
 
 const SHA_A: [40]u8 = @splat('a');
 const SHA_B: [40]u8 = @splat('b');
@@ -109,4 +112,25 @@ test "Fetcher: a ref is a version range only when it starts with an operator" {
     try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^1.x"));
     try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^1.0/../x"));
     try testing.expectError(error.InvalidRef, ParsedPackage.parse("github.com/u/r@^"));
+}
+
+test "Fetcher: an archive whose host stops sending is abandoned" {
+    // Its head, then nothing: the install waited for good
+    var server: SlowServer = undefined;
+    try server.start(.{});
+    defer server.stop();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+    var files = MemoryVfs.init(testing.allocator);
+    defer files.deinit();
+    var cafs = try Cafs.init(testing.allocator, testing.io, root, files.vfs());
+    defer cafs.deinit();
+
+    var fetcher = Fetcher.init(testing.allocator, testing.io);
+    defer fetcher.deinit();
+    fetcher.stall = .fromMilliseconds(100);
+    var url_buf: [64]u8 = undefined;
+    try testing.expectError(error.DownloadStalled, fetcher.downloadArchive(try server.url(&url_buf, "/p.tar.gz"), &cafs, .flat));
 }

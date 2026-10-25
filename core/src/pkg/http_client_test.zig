@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const http_client = @import("http_client.zig");
+const SlowServer = @import("test_helpers.zig").SlowServer;
 
 fn allowed(from: []const u8, to: []const u8) !bool {
     return http_client.redirectAllowed(try std.Uri.parse(from), try std.Uri.parse(to));
@@ -120,24 +121,75 @@ test "HTTP client: Get stops after MAX_REDIRECTS" {
     try testing.expectEqual(http_client.MAX_REDIRECTS + 1, server.served);
 }
 
-test "HTTP client: root certificates are installed once, with the time to check them at" {
-    // Opening the connection ourselves (for the timeout) skipped std's own loading, so
-    // every HTTPS download panicked on the missing certificate time. An empty bundle stands
-    // in for the system's store, which the test used to read, so it passed or failed with
-    // the machine it ran on.
+/// The body of a GET of `url`, read through a `Counted`: what `watched` runs.
+fn readBody(client: *std.http.Client, url: []const u8, received: *http_client.Received) ![]u8 {
+    const get = try testing.allocator.create(http_client.Get);
+    defer testing.allocator.destroy(get);
+    var response = try get.send(client, url);
+    defer get.deinit();
+    var body: http_client.Counted = .init(response.reader(&.{}), received);
+    return body.interface.allocRemaining(testing.allocator, .limited(1024));
+}
+
+/// `readBody` of `path` on `server`, watched for `stall`.
+fn watchedBody(server: *const SlowServer, stall: std.Io.Duration) ![]u8 {
     var client = std.http.Client{ .allocator = testing.allocator, .io = testing.io };
     defer client.deinit();
-    try testing.expect(client.now == null);
-    var first: std.crypto.Certificate.Bundle = .empty;
-    defer first.deinit(testing.allocator);
-    const when: std.Io.Timestamp = .{ .nanoseconds = 1_700_000_000 * std.time.ns_per_s };
-    try http_client.installRootCertificates(&client, &first, when);
-    try testing.expectEqual(when.nanoseconds, client.now.?.nanoseconds);
+    var url_buf: [64]u8 = undefined;
+    return http_client.watched(testing.io, stall, readBody, .{ &client, try server.url(&url_buf, "/p.tar.gz") });
+}
 
-    // A second load keeps the first: the client is already set up.
-    var second: std.crypto.Certificate.Bundle = .empty;
-    defer second.deinit(testing.allocator);
-    try http_client.installRootCertificates(&client, &second, .{ .nanoseconds = 0 });
-    try testing.expectEqual(when.nanoseconds, client.now.?.nanoseconds);
-    try http_client.loadRootCertificates(&client); // returns at once, reading nothing
+test "HTTP client: a request whose host never answers is abandoned" {
+    // It waited for the head for good: std.http.Client reads without a timeout
+    var server: SlowServer = undefined;
+    try server.start(.{ .head = false });
+    defer server.stop();
+    try testing.expectError(error.DownloadStalled, watchedBody(&server, .fromMilliseconds(100)));
+}
+
+test "HTTP client: a request whose body stops coming is abandoned" {
+    var server: SlowServer = undefined;
+    try server.start(.{ .pieces = 3, .gap = .fromMilliseconds(10) });
+    defer server.stop();
+    try testing.expectError(error.DownloadStalled, watchedBody(&server, .fromMilliseconds(100)));
+}
+
+test "HTTP client: a request that keeps receiving isn't abandoned, however long it takes" {
+    // Its 10 pieces take 500 ms, past twice the stall: only a pause that long ends it
+    var server: SlowServer = undefined;
+    try server.start(.{ .pieces = 10, .gap = .fromMilliseconds(50), .length = 10 });
+    defer server.stop();
+    const body = try watchedBody(&server, .fromMilliseconds(200));
+    defer testing.allocator.free(body);
+    try testing.expectEqualStrings("xxxxxxxxxx", body);
+}
+
+test "HTTP client: canceling a watched request's caller cancels the request" {
+    var server: SlowServer = undefined;
+    try server.start(.{ .head = false });
+    defer server.stop();
+    const started = std.Io.Clock.Timestamp.now(testing.io, .awake);
+    var caller = try testing.io.concurrent(watchedBody, .{ &server, .fromSeconds(60) });
+    try testing.io.sleep(.fromMilliseconds(50), .awake);
+    if (caller.cancel(testing.io)) |body| {
+        testing.allocator.free(body);
+        return error.TestUnexpectedResult;
+    } else |_| {}
+    const waited = started.durationTo(std.Io.Clock.Timestamp.now(testing.io, .awake));
+    try testing.expect(waited.raw.nanoseconds < std.time.ns_per_s * 10);
+}
+
+test "HTTP client: Counted counts what it reads and what it skips" {
+    var in: std.Io.Reader = .fixed("hello, world");
+    var received: http_client.Received = .init(0);
+    var counted: http_client.Counted = .init(&in, &received);
+    var buf: [5]u8 = undefined;
+    try counted.interface.readSliceAll(&buf);
+    try testing.expectEqualStrings("hello", &buf);
+    try counted.interface.discardAll(2);
+    try testing.expectEqual(7, received.load(.monotonic));
+    const rest = try counted.interface.allocRemaining(testing.allocator, .limited(64));
+    defer testing.allocator.free(rest);
+    try testing.expectEqualStrings("world", rest);
+    try testing.expectEqual(12, received.load(.monotonic));
 }

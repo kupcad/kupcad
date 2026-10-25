@@ -19,6 +19,8 @@ pub const Fetcher = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     client: std.http.Client,
+    /// How long a request may receive nothing before it is abandoned (`http_client.watched`).
+    stall: std.Io.Duration = http_client.STALL_TIMEOUT,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Fetcher {
         const client = std.http.Client{ .allocator = allocator, .io = io };
@@ -79,14 +81,19 @@ pub const Fetcher = struct {
 
     /// GETs a provider API URL and returns its (bounded) body; caller frees.
     fn fetchApiBody(self: *Fetcher, url_str: []const u8) ![]u8 {
+        return http_client.watched(self.io, self.stall, readApiBody, .{ self, url_str });
+    }
+
+    fn readApiBody(self: *Fetcher, url_str: []const u8, received: *http_client.Received) ![]u8 {
         const get = try self.allocator.create(http_client.Get);
         defer self.allocator.destroy(get);
         var response = try get.send(&self.client, url_str);
         defer get.deinit();
         try checkStatus(response.head.status);
 
+        var body: http_client.Counted = .init(response.reader(&.{}), received);
         // Bounded: a hostile host could otherwise stream an endless body into memory.
-        return response.reader(&.{}).allocRemaining(self.allocator, .limited(limits.MAX_API_RESPONSE_BYTES)) catch |err| switch (err) {
+        return body.interface.allocRemaining(self.allocator, .limited(limits.MAX_API_RESPONSE_BYTES)) catch |err| switch (err) {
             error.StreamTooLong => error.ApiResponseTooLarge,
             else => err,
         };
@@ -146,13 +153,18 @@ pub const Fetcher = struct {
     }
 
     pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
+        return http_client.watched(self.io, self.stall, readArchive, .{ self, url_str, cafs, layout });
+    }
+
+    fn readArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout, received: *http_client.Received) !cafs_mod.Archive {
         const get = try self.allocator.create(http_client.Get);
         defer self.allocator.destroy(get);
         var response = try get.send(&self.client, url_str);
         defer get.deinit();
         try checkStatus(response.head.status);
 
-        return extractLimited(self.allocator, response.reader(&.{}), cafs, layout);
+        var body: http_client.Counted = .init(response.reader(&.{}), received);
+        return extractLimited(self.allocator, &body.interface, cafs, layout);
     }
 
     /// Extracts a `file:` archive from the local filesystem (top-level deps only).
