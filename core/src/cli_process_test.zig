@@ -5,6 +5,7 @@
 const std = @import("std");
 const testing = std.testing;
 const options = @import("cli_test_options");
+const pkg_helpers = @import("pkg/test_helpers.zig");
 
 const VALID_SCRIPT = "cube(10)\n";
 
@@ -296,6 +297,37 @@ test "kupcad: run in a subfolder of the project keeps the memory limit of its .k
     defer run.deinit();
     try testing.expectEqual(@as(u8, 1), run.code);
     try testing.expect(std.mem.find(u8, run.stdout, "200000") == null);
+}
+
+test "kupcad: pkg add of a local package records it, and keeps what else kupcad.json says" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "kupcad.json", .data = "{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {}\n}\n" });
+    const archive = try pkg_helpers.buildTarGz(testing.allocator, &.{.{ .name = "main.kup", .data = "export { part }\npart = cube(1)\n" }});
+    defer testing.allocator.free(archive);
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "screws.tar.gz", .data = archive });
+    const spec = try std.fmt.allocPrint(testing.allocator, "file:{s}/screws.tar.gz", .{sb.path});
+    defer testing.allocator.free(spec);
+    const arg = try std.fmt.allocPrint(testing.allocator, "screws={s}", .{spec});
+    defer testing.allocator.free(arg);
+
+    const added = try kupcadIn(sb.path, &.{ "pkg", "add", arg }, &env);
+    defer added.deinit();
+    errdefer std.debug.print("{s}\n", .{added.stderr});
+    try testing.expectEqual(@as(u8, 0), added.code);
+    // It used to write back the name, the version and the dependencies alone
+    const saved = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(saved);
+    const expected = try std.fmt.allocPrint(testing.allocator, "{{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {{\n    \"screws\": \"{s}\"\n  }}\n}}\n", .{spec});
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, saved);
+    // And locked
+    try sb.tmp.dir.access(testing.io, "kupcad.lock", .{});
 }
 
 test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {

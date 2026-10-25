@@ -88,6 +88,26 @@ test "Manifest: forward compatibility (ignores unknown JSON fields)" {
 
     try testing.expectEqualStrings("future-app", manifest.name);
     try testing.expectEqualStrings("2.0.0", manifest.version);
+
+    // Saved with a dependency added: what it doesn't read is kept, where it was
+    try manifest.setDependency("std", "github.com/kupcad/std@v1");
+    try manifest.save(fs);
+    const saved = try fs.readFile(testing.allocator, "kupcad.json");
+    defer testing.allocator.free(saved);
+    try testing.expectEqualStrings(
+        \\{
+        \\  "name": "future-app",
+        \\  "version": "2.0.0",
+        \\  "license": "MIT",
+        \\  "authors": [
+        \\    "Alice"
+        \\  ],
+        \\  "dependencies": {
+        \\    "std": "github.com/kupcad/std@v1"
+        \\  }
+        \\}
+        \\
+    , saved);
 }
 
 // Audit fix: hostile manifests used to panic on `.?`/`.object` and unvalidated

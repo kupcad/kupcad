@@ -1,6 +1,6 @@
 //! `Manifest`: a project's kupcad.json, its name, version and dependencies (alias to URL),
-//! loaded and validated (`load`), changed (`setDependency`), and written back with sorted
-//! keys (`save`).
+//! loaded and validated (`load`), changed (`setDependency`), and written back (`save`): the
+//! dependencies sorted, what it doesn't read (a description, a license) kept as it was.
 
 const std = @import("std");
 const validate = @import("validate.zig");
@@ -9,11 +9,16 @@ const Vfs = @import("../vfs/vfs.zig").Vfs;
 const string_map = @import("string_map.zig");
 pub const StringMap = string_map.StringMap;
 
+/// The keys a manifest reads and writes itself, in the order a new one has them.
+const OWN_KEYS = [_][]const u8{ "name", "version", "dependencies" };
+
 pub const Manifest = struct {
     allocator: std.mem.Allocator,
     name: []const u8,
     version: []const u8,
     dependencies: StringMap,
+    /// The file it was loaded from, whose other keys `save` writes back where they were
+    file: ?std.json.Parsed(std.json.Value) = null,
 
     /// Creates a new manifest with default values
     pub fn init(allocator: std.mem.Allocator, name: []const u8) !Manifest {
@@ -29,6 +34,7 @@ pub const Manifest = struct {
         self.allocator.free(self.name);
         self.allocator.free(self.version);
         string_map.deinitOwned(self.allocator, &self.dependencies);
+        if (self.file) |*file| file.deinit();
     }
 
     /// Loads and parses kupcad.json from disk
@@ -39,8 +45,9 @@ pub const Manifest = struct {
         };
         defer allocator.free(buffer);
 
-        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, buffer, .{});
-        defer parsed.deinit();
+        // Kept past the buffer, for its other keys: its strings its own
+        var parsed = try std.json.parseFromSlice(std.json.Value, allocator, buffer, .{ .allocate = .alloc_always });
+        errdefer parsed.deinit();
 
         // Validate the shape instead of `.?`/`.object` panicking on hostile input.
         if (parsed.value != .object) return error.InvalidManifest;
@@ -49,15 +56,14 @@ pub const Manifest = struct {
         const version_val = root.get("version") orelse return error.InvalidManifest;
         if (name_val != .string or version_val != .string) return error.InvalidManifest;
 
-        var manifest = Manifest{
-            .allocator = allocator,
-            .name = try allocator.dupe(u8, name_val.string),
-            .version = try allocator.dupe(u8, version_val.string),
-            .dependencies = StringMap.init(allocator),
-        };
-        errdefer manifest.deinit();
-        try readDependencies(allocator, root, &manifest.dependencies);
-        return manifest;
+        const name = try allocator.dupe(u8, name_val.string);
+        errdefer allocator.free(name);
+        const version = try allocator.dupe(u8, version_val.string);
+        errdefer allocator.free(version);
+        var dependencies = StringMap.init(allocator);
+        errdefer string_map.deinitOwned(allocator, &dependencies);
+        try readDependencies(allocator, root, &dependencies);
+        return .{ .allocator = allocator, .name = name, .version = version, .dependencies = dependencies, .file = parsed };
     }
 
     /// The `dependencies` of the kupcad.json in `json_bytes` (alias -> URL, owned): what the
@@ -95,38 +101,52 @@ pub const Manifest = struct {
         try string_map.putOwned(self.allocator, &self.dependencies, alias, url);
     }
 
-    /// Saves the current state back to kupcad.json deterministically
+    /// Writes it to kupcad.json: the file's keys in its order, each it doesn't read as it
+    /// was, then any of its own the file lacked (a new one's name, version and dependencies);
+    /// the dependencies sorted by alias, so the file changes as little as it can.
     pub fn save(self: *Manifest, fs: Vfs) !void {
-        var out_str: std.ArrayList(u8) = .empty;
-        defer out_str.deinit(self.allocator);
-
-        // Extract and sort keys for deterministic serialization
-        var keys: std.ArrayList([]const u8) = .empty;
-        defer keys.deinit(self.allocator);
-
-        var key_it = self.dependencies.keyIterator();
-        while (key_it.next()) |k| try keys.append(self.allocator, k.*);
-        string_map.sortKeys(keys.items);
-
-        // All strings are JSON-escaped so a `"` in a name/alias can't inject keys.
-        const header = try self.allocator.print("{{\n  \"name\": {f},\n  \"version\": {f},\n  \"dependencies\": {{", .{ std.json.fmt(self.name, .{}), std.json.fmt(self.version, .{}) });
-        defer self.allocator.free(header);
-        try out_str.appendSlice(self.allocator, header);
-
-        if (keys.items.len > 0) {
-            try out_str.appendSlice(self.allocator, "\n");
-            for (keys.items, 0..) |k, i| {
-                const v = self.dependencies.get(k).?;
-                const comma = if (i < keys.items.len - 1) "," else "";
-                const line = try self.allocator.print("    {f}: {f}{s}\n", .{ std.json.fmt(k, .{}), std.json.fmt(v, .{}), comma });
-                defer self.allocator.free(line);
-                try out_str.appendSlice(self.allocator, line);
+        var out: std.Io.Writer.Allocating = .init(self.allocator);
+        defer out.deinit();
+        // Every string JSON-escaped, so a `"` in a name or an alias can't add a key
+        var json: std.json.Stringify = .{ .writer = &out.writer, .options = .{ .whitespace = .indent_2 } };
+        try json.beginObject();
+        const kept: ?std.json.ObjectMap = if (self.file) |file| file.value.object else null;
+        if (kept) |object| {
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                try json.objectField(entry.key_ptr.*);
+                if (!try self.writeOwn(&json, entry.key_ptr.*)) try json.write(entry.value_ptr.*);
             }
-            try out_str.appendSlice(self.allocator, "  }\n}");
-        } else {
-            try out_str.appendSlice(self.allocator, "}\n}");
         }
+        for (OWN_KEYS) |key| {
+            if (kept) |object| if (object.contains(key)) continue;
+            try json.objectField(key);
+            _ = try self.writeOwn(&json, key);
+        }
+        try json.endObject();
+        try out.writer.writeByte('\n');
+        try fs.writeFile("kupcad.json", out.written());
+    }
 
-        try fs.writeFile("kupcad.json", out_str.items);
+    /// Writes its value of `key`, if `key` is one of its own (OWN_KEYS): whether it was.
+    fn writeOwn(self: *const Manifest, json: *std.json.Stringify, key: []const u8) !bool {
+        if (std.mem.eql(u8, key, "name")) {
+            try json.write(self.name);
+        } else if (std.mem.eql(u8, key, "version")) {
+            try json.write(self.version);
+        } else if (std.mem.eql(u8, key, "dependencies")) {
+            var keys: std.ArrayList([]const u8) = .empty;
+            defer keys.deinit(self.allocator);
+            var key_it = self.dependencies.keyIterator();
+            while (key_it.next()) |k| try keys.append(self.allocator, k.*);
+            string_map.sortKeys(keys.items);
+            try json.beginObject();
+            for (keys.items) |alias| {
+                try json.objectField(alias);
+                try json.write(self.dependencies.get(alias).?);
+            }
+            try json.endObject();
+        } else return false;
+        return true;
     }
 };
