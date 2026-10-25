@@ -4,9 +4,8 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { EXPORT_FORMATS } from '@kupcad/protocol';
+import { EXPORT_FORMATS, errorText } from '@kupcad/protocol';
 import { buildArguments, runBuild } from './export.js';
-import { errorText } from '../errors.js';
 import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */

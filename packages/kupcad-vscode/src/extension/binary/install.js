@@ -5,9 +5,9 @@
 // one version (two windows) don't write into each other's.
 
 import { randomUUID } from 'node:crypto';
+import { errorText } from '@kupcad/protocol';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { errorText } from '../../errors.js';
 import { extractFile } from './archive.js';
 import { assetFor, CHECKSUMS, checksumOf, sha256 } from './assets.js';
 

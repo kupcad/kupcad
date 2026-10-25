@@ -9,8 +9,8 @@
 -->
 <script>
   import { onMount } from 'svelte';
+  import { errorText } from '@kupcad/protocol';
   import { ParamsPanel, problemsOf, runStatusOf, ViewerPane } from '@kupcad/ui';
-  import { errorText } from '../errors.js';
   import { toBase64 } from './base64.js';
   import { connectViewport } from './socket.js';
 
@@ -37,10 +37,6 @@
   let presets = $state(/** @type {string[]} */ ([]));
   /** Why the viewer can't show the frame's model, until the next frame. */
   let unshown = $state('');
-  /** The panel's values of each document shown, by URI. */
-  const valuesOf = new Map();
-  /** The presets' names of each document shown, by URI. */
-  const presetsOf = new Map();
 
   const header = $derived(preview?.header ?? null);
   /** How the shown document's run went, for the pane's status line. */
@@ -60,17 +56,19 @@
 
   onMount(() => {
     const stopListening = host.listen((message) => {
+      // The host holds the values and presets of every document: it says the shown one's
+      // with each document, and again when they change
       if (message.type === 'document') {
         if (message.document?.uri !== shown?.uri) preview = null;
         shown = message.document;
-        overrides = (shown && valuesOf.get(shown.uri)) ?? {};
-        presets = (shown && presetsOf.get(shown.uri)) ?? [];
+        overrides = {};
+        presets = [];
+      } else if (message.uri !== shown?.uri) {
+        return;
       } else if (message.type === 'overrides') {
-        valuesOf.set(message.uri, message.values);
-        if (message.uri === shown?.uri) overrides = message.values;
+        overrides = message.values;
       } else {
-        presetsOf.set(message.uri, message.names);
-        if (message.uri === shown?.uri) presets = message.names;
+        presets = message.names;
       }
     });
     const disconnect = viewportUrl
@@ -95,9 +93,7 @@
 
   /** @param {ParamValues} values */
   function changed(values) {
-    if (!shown) return;
-    valuesOf.set(shown.uri, values);
-    host.post({ type: 'setParams', uri: shown.uri, values });
+    if (shown) host.post({ type: 'setParams', uri: shown.uri, values });
   }
 
   /** @param {Event & { currentTarget: HTMLSelectElement }} event */

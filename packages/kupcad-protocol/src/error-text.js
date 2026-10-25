@@ -1,4 +1,4 @@
-// What an error says, for a person: the host's messages and logs, and the page's problems.
+// What an error says, for a person: a host's messages and logs, a page's notices.
 
 /**
  * An Error's message, else the thing thrown itself.

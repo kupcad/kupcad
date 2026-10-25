@@ -47,6 +47,8 @@ client.sendRequest('workspace/executeCommand', {
   one as it arrives untyped (`postMessage`), and `isParamValues` the values in it.
 * `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
   `build`), each with its name and what it is for, in the order a host offers them.
+* `errorText(error)`: what an error says, for a person: an Error's message, anything else
+  thrown as text. Every host's messages and logs say it the same way.
 * `characterAt(text, column)`: where a column the core names (1-based, in UTF-8 bytes: a
   warning's, a finding's) is in a line's text, as JavaScript and an editor count (UTF-16 code
   units from 0).

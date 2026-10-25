@@ -2,8 +2,7 @@
 // frame (@kupcad/protocol's readFrame). A socket that closes (the server restarted, or wasn't
 // up yet) is opened again, a little later each time.
 
-import { readFrame } from '@kupcad/protocol';
-import { errorText } from '../errors.js';
+import { errorText, readFrame } from '@kupcad/protocol';
 
 /** @import { Preview } from '@kupcad/protocol/types' */
 

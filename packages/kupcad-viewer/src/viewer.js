@@ -32,6 +32,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { applyRenderMode, applySelection, applyTheme } from './appearance.js';
 import {
   boundsOf,
+  halfFovTangent,
   orbited,
   orthographicHalfHeight,
   perspectiveDistance,
@@ -734,7 +735,7 @@ export class Viewer extends EventTarget {
     const target = this.#controls.target;
     const from = this.#camera;
     const direction = from.position.clone().sub(target).normalize();
-    const halfTan = Math.tan(((FOV_DEG / 2) * Math.PI) / 180);
+    const halfTan = halfFovTangent(FOV_DEG);
     if (projection === 'orthographic') {
       const distance = from.position.distanceTo(target);
       this.#halfHeight = distance * halfTan;
@@ -913,7 +914,7 @@ export class Viewer extends EventTarget {
     const seen =
       this.#camera === this.#orthographic
         ? (2 * this.#halfHeight) / this.#orthographic.zoom
-        : 2 * this.#camera.position.distanceTo(target) * Math.tan(((FOV_DEG / 2) * Math.PI) / 180);
+        : 2 * this.#camera.position.distanceTo(target) * halfFovTangent(FOV_DEG);
     const perPx = seen / this.#height;
     const move = new Vector3(x * perPx, -y * perPx, 0).applyQuaternion(this.#camera.quaternion);
     this.#camera.position.add(move);

@@ -3,9 +3,9 @@
 // the user sees of it: a download's progress, why one failed and what to do, an update to take.
 
 import * as fs from 'node:fs/promises';
+import { errorText } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { errorText } from '../../errors.js';
 import { install as installRelease, installedVersions } from './install.js';
 import { probe as probeVersion } from './probe.js';
 import { newestInRange, readReleases as readReleaseList, RELEASES_PAGE } from './releases.js';

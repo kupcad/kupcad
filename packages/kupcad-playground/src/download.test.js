@@ -3,7 +3,7 @@ import { download } from './download.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('saves bytes, or a blob, as the file named, and lets go of its URL', () => {
+it('saves bytes, or a blob, as the file named, and lets go of its URL', async () => {
   /** @type {Blob[]} */
   const blobs = [];
   vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
@@ -25,5 +25,8 @@ it('saves bytes, or a blob, as the file named, and lets go of its URL', () => {
     { href: 'blob:2', download: 'bracket.png' },
   ]);
   expect(blobs[0].size).toBe(3);
+  // Once the browser has taken them
+  expect(revoke).not.toHaveBeenCalled();
+  await new Promise((resolve) => setTimeout(resolve));
   expect(revoke).toHaveBeenCalledTimes(2);
 });

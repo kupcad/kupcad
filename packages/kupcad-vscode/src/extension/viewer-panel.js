@@ -6,8 +6,7 @@
 // for the page, again when their file changes, one applied, the panel's values saved as one.
 
 import * as vscode from 'vscode';
-import { characterAt, isViewerMessage } from '@kupcad/protocol';
-import { errorText } from '../errors.js';
+import { characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptName } from './scripts.js';
@@ -18,7 +17,7 @@ import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 /** @import { Presets } from './presets.js' */
 /** @import { ScriptValues } from './values.js' */
 
-export const VIEW_TYPE = 'kupcad.viewer';
+const VIEW_TYPE = 'kupcad.viewer';
 const TITLE = 'KupCAD Viewer';
 /** Where the built page is, under the extension. */
 export const PAGE_DIR = 'dist-webview';

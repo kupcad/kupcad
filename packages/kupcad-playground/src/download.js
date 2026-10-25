@@ -13,5 +13,7 @@ export function download(data, name) {
   link.href = url;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(url);
+  // Let go once the browser has taken the download: a URL revoked at once was, in some
+  // browsers, revoked before a large download of it began
+  setTimeout(() => URL.revokeObjectURL(url));
 }

@@ -32,6 +32,13 @@ export const VIEWS = {
 };
 
 /**
+ * The tangent of half a vertical field of view of `fovDeg`: how far up the view reaches, per
+ * unit of distance from a perspective camera.
+ * @param {number} fovDeg
+ */
+export const halfFovTangent = (fovDeg) => Math.tan((fovDeg * Math.PI) / 360);
+
+/**
  * The sphere a camera must see to show all of `box`: one around a point when the box is
  * empty (no model yet).
  * @param {Box3} box
@@ -52,8 +59,8 @@ export function boundsOf(box) {
  * @returns {number}
  */
 export function perspectiveDistance(sphere, fovDeg, aspect, margin = 1.15) {
-  const vertical = (fovDeg * Math.PI) / 180 / 2;
-  const horizontal = Math.atan(Math.tan(vertical) * aspect);
+  const vertical = (fovDeg * Math.PI) / 360;
+  const horizontal = Math.atan(halfFovTangent(fovDeg) * aspect);
   const half = Math.min(vertical, horizontal);
   return (sphere.radius * margin) / Math.sin(half);
 }

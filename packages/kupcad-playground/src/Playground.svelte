@@ -10,7 +10,7 @@
 <script>
   import { onMount, untrack } from 'svelte';
   import { Editor } from '@kupcad/editor/svelte';
-  import { EXPORT_FORMATS } from '@kupcad/protocol';
+  import { errorText, EXPORT_FORMATS } from '@kupcad/protocol';
   import { ParamsPanel, problemsOf, runStatusOf, ViewerPane } from '@kupcad/ui';
   import { createKupcadWorker } from '@kupcad/wasm';
   import { download } from './download.js';
@@ -71,7 +71,7 @@
         ran = { preview, source: of };
         notice = '';
       },
-      onerror: (error) => (notice = whyOf(error)),
+      onerror: (error) => (notice = errorText(error)),
     });
     runner.run(value, {}, { now: true });
     return () => {
@@ -106,18 +106,13 @@
       download(bytes, `${name}.${format}`);
       notice = '';
     } catch (error) {
-      notice = `The ${format.toUpperCase()} wasn't made: ${whyOf(error)}`;
+      notice = `The ${format.toUpperCase()} wasn't made: ${errorText(error)}`;
     }
   }
 
   /** @param {Blob} image */
   function screenshot(image) {
     download(image, `${name}.png`);
-  }
-
-  /** @param {unknown} error */
-  function whyOf(error) {
-    return error instanceof Error ? error.message : String(error);
   }
 </script>
 

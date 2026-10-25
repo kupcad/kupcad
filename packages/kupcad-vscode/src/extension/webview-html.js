@@ -5,7 +5,7 @@
 import * as crypto from 'node:crypto';
 
 /** Where the language server's viewport socket listens. */
-export const VIEWPORT_HOST = '127.0.0.1';
+const VIEWPORT_HOST = '127.0.0.1';
 const NONCE_BYTES = 16;
 
 export const createNonce = () => crypto.randomBytes(NONCE_BYTES).toString('base64');

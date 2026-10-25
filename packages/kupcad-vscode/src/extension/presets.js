@@ -2,8 +2,7 @@
 // read and edit: `bracket.kup`'s in `bracket.presets.json`,
 // `{ "presets": { "Small": { "width": 20 } } }`. Free of the `vscode` import.
 
-import { isParamValues } from '@kupcad/protocol';
-import { errorText } from '../errors.js';
+import { errorText, isParamValues } from '@kupcad/protocol';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
 

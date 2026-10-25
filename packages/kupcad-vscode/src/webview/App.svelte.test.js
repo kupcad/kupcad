@@ -147,13 +147,25 @@ describe('App', () => {
       values: { width: 40 },
     });
 
-    // Another document, then back: its values come back with it
+    // Another document: none set until the host says what it holds for it, and what it
+    // holds for a document not shown stays out
     await viewer.tell({ type: 'document', document: LID });
+    viewer.socket.on.frame(await previewOf(SCRIPT, LID.uri));
+    await tick();
+    expect(screen.queryByRole('button', { name: 'Revert width' })).toBeNull();
+    await viewer.tell({ type: 'overrides', uri: PART.uri, values: { width: 40 } });
+    expect(screen.queryByRole('button', { name: 'Revert width' })).toBeNull();
     await viewer.tell({ type: 'overrides', uri: LID.uri, values: { width: 12 } });
+    expect(screen.getByRole('button', { name: 'Revert width' })).toBeTruthy();
+    // Back: the host says the document's values again, as the panel does with each document
     await viewer.tell({ type: 'document', document: PART });
+    await viewer.tell({ type: 'overrides', uri: PART.uri, values: { width: 40 } });
     viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
     await tick();
     expect(screen.getByRole('button', { name: 'Revert width' })).toBeTruthy();
+    expect(
+      viewer.posted.filter((m) => /** @type {{ type: string }} */ (m).type === 'setParams'),
+    ).toHaveLength(1);
   });
 
   it('lists why the run failed, and what it warned of; one with a line, clicked, is revealed', async () => {

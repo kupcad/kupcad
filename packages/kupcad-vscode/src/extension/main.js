@@ -3,10 +3,10 @@
 // an update or a setting changed, and opens the viewer, a webview the server sends its models to.
 
 import * as fs from 'node:fs';
+import { errorText } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, CHECK_FOR_UPDATES_COMMAND } from './binary/manager.js';
-import { errorText } from '../errors.js';
 import { registerExportCommands } from './commands.js';
 import { LanguageServer } from './server.js';
 import { NOT_RUNNING } from './scripts.js';

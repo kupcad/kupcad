@@ -3,6 +3,7 @@
 // viewport shows, and the values a document's parameters take.
 
 import * as vscode from 'vscode';
+import { errorText } from '@kupcad/protocol';
 import { LanguageClient, State, TransportKind } from 'vscode-languageclient/node';
 import {
   isCompatible,
@@ -11,7 +12,6 @@ import {
   SET_PARAMS_COMMAND,
   VIEWPORT_READY_NOTIFICATION,
 } from '@kupcad/protocol';
-import { errorText } from '../errors.js';
 import { FILE_SCHEME, LANGUAGE_ID } from './scripts.js';
 
 /** @import { ParamValues, ViewportReady } from '@kupcad/protocol/types' */
