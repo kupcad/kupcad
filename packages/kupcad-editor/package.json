@@ -1,0 +1,50 @@
+{
+  "name": "@kupcad/editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KupCAD's code editor for the web: CodeMirror 6 with the language's highlighting and the core's findings marked, and a Svelte component around it.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./svelte": {
+      "svelte": "./src/svelte.js",
+      "default": "./src/svelte.js"
+    }
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/legacy-modes": "^6.5.5",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@kupcad/protocol": "workspace:*",
+    "@lezer/highlight": "^1.2.5"
+  },
+  "devDependencies": {
+    "@kupcad/wasm": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@testing-library/svelte": "catalog:",
+    "@types/node": "catalog:",
+    "jsdom": "catalog:",
+    "svelte": "catalog:",
+    "svelte-check": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.2"
+  },
+  "peerDependenciesMeta": {
+    "svelte": {
+      "optional": true
+    }
+  }
+}

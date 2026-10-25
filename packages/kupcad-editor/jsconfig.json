@@ -1,0 +1,9 @@
+{
+  "extends": "../../jsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["es2023", "dom"],
+    "maxNodeModuleJsDepth": 0,
+    "resolveJsonModule": true
+  },
+  "include": ["src", "*.config.js"]
+}
