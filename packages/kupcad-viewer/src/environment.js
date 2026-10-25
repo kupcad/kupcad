@@ -1,5 +1,5 @@
 // What a model stands on, on the XY plane at z = 0: a grid sized to the model, a build plate,
-// or nothing.
+// or nothing; and the axes through the origin, where the coordinates are zero.
 
 import {
   BufferGeometry,
@@ -23,6 +23,12 @@ const PLATE_STEP_MM = 10;
 const PLATE_BELOW_MM = 0.01;
 /** A grid's side, with no model to size it to. */
 const DEFAULT_GRID_MM = 100;
+/** The axes are drawn this far above the floor, so its lines through the origin don't hide them. */
+const AXES_LIFT_MM = 0.02;
+/** The Z axis rises this much of the floor's side. */
+const Z_AXIS_SHARE = 0.25;
+/** The axes' colours, as CAD and slicers draw them: X red, Y green, Z blue. */
+const AXIS_COLORS = /** @type {const} */ (['#e5484d', '#30a46c', '#3e63dd']);
 
 /**
  * What `kind` stands a model of `box` on, in the theme's colours.
@@ -44,6 +50,33 @@ export function environmentOf(kind, box, plate, theme) {
     );
     surface.position.z = -PLATE_BELOW_MM;
     group.add(surface, lines(plate.width, plate.depth, PLATE_STEP_MM, theme.grid));
+  }
+  return group;
+}
+
+/**
+ * The axes through the origin, where the coordinates are zero: X and Y across a floor
+ * `side` long, Z up from the origin.
+ * @param {Environment} kind
+ * @param {Box3} box the model's bounds
+ * @param {Plate} plate
+ * @returns {Group}
+ */
+export function axesOf(kind, box, plate) {
+  const side = kind === 'plate' ? Math.max(plate.width, plate.depth) : gridSide(box);
+  const half = side / 2;
+  const ends = [
+    [-half, 0, AXES_LIFT_MM, half, 0, AXES_LIFT_MM],
+    [0, -half, AXES_LIFT_MM, 0, half, AXES_LIFT_MM],
+    [0, 0, AXES_LIFT_MM, 0, 0, side * Z_AXIS_SHARE],
+  ];
+  const group = new Group();
+  for (const [i, positions] of ends.entries()) {
+    const geometry = new BufferGeometry().setAttribute(
+      'position',
+      new Float32BufferAttribute(positions, 3),
+    );
+    group.add(new LineSegments(geometry, new LineBasicMaterial({ color: AXIS_COLORS[i] })));
   }
   return group;
 }

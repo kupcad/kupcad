@@ -1,4 +1,4 @@
-import { Color, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
+import { Color, LineBasicMaterial, MeshStandardMaterial, PlaneGeometry, Vector3 } from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GHOST_OPACITY } from './model.js';
 import { dracoModelOf, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
@@ -107,6 +107,21 @@ async function plateDepths(drawn) {
     depths.push(-corner.applyMatrix4(camera.matrixWorldInverse).z);
   }
   return { camera, depths };
+}
+
+/**
+ * How many X axes (red lines) `scene` draws.
+ * @param {Scene} scene
+ */
+function xAxes(scene) {
+  let found = 0;
+  scene.traverse((object) => {
+    const material = /** @type {Partial<Mesh>} */ (object).material;
+    if (material instanceof LineBasicMaterial && material.color.getHexString() === 'e5484d') {
+      found += 1;
+    }
+  });
+  return found;
 }
 
 const BLOCK = 'cube(20, center: true).named("block")';
@@ -556,6 +571,12 @@ describe('Viewer', () => {
     expect(viewer.edges).toBe(true);
     viewer.setEdges(false);
     expect(viewer.edges).toBe(false);
+    // The axes through the origin, drawn until they are asked away
+    expect(viewer.axes).toBe(true);
+    expect(xAxes(await sceneDrawn(drawn))).toBe(1);
+    viewer.setAxes(false);
+    expect(viewer.axes).toBe(false);
+    expect(xAxes(await sceneDrawn(drawn))).toBe(0);
     viewer.setEnvironment('none');
     expect(viewer.environment).toBe('none');
     await nextFrame();

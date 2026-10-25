@@ -9,6 +9,8 @@ import { BACKGROUND, CAP } from './colors.js';
 const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('#viewer'));
 const theme = { ...LIGHT, background: BACKGROUND, cap: CAP };
 const viewer = new Viewer(canvas, { theme, environment: 'none', motionMs: 0 });
+// The test reads the model's pixels, where the axes would cross the origin
+viewer.setAxes(false);
 const cube = new ViewCube(
   /** @type {HTMLCanvasElement} */ (document.querySelector('#cube')),
   viewer,

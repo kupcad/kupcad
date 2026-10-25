@@ -29,7 +29,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { applyRenderMode, applySelection } from './appearance.js';
 import { boundsOf, orthographicHalfHeight, perspectiveDistance, VIEWS } from './camera.js';
 import { disposeObject } from './dispose.js';
-import { environmentOf } from './environment.js';
+import { axesOf, environmentOf } from './environment.js';
 import { faceAt } from './faces.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
@@ -130,6 +130,8 @@ export class Viewer extends EventTarget {
   #renderMode = 'solid';
   /** The shapes' edges are drawn (a wireframe's always are). */
   #edges = true;
+  /** The axes through the origin are drawn. */
+  #axes = true;
   /** @type {Projection} */
   #projection = 'perspective';
   /** The named view the camera looks from, or null for none (turned by hand). @type {View | null} */
@@ -214,6 +216,9 @@ export class Viewer extends EventTarget {
   }
   get edges() {
     return this.#edges;
+  }
+  get axes() {
+    return this.#axes;
   }
   get projection() {
     return this.#projection;
@@ -322,6 +327,17 @@ export class Viewer extends EventTarget {
     this.#renderMode = mode;
     this.#applyRenderMode();
     this.#applySection();
+    this.#invalidate();
+  }
+
+  /**
+   * Draws the axes through the origin (X red, Y green, Z blue), where the coordinates are zero,
+   * or not.
+   * @param {boolean} visible
+   */
+  setAxes(visible) {
+    this.#axes = visible;
+    this.#rebuildEnvironment();
     this.#invalidate();
   }
 
@@ -557,6 +573,7 @@ export class Viewer extends EventTarget {
     this.#environment.clear();
     const box = this.#modelBox();
     this.#environment.add(environmentOf(this.#environmentKind, box, this.#plate, this.#theme));
+    if (this.#axes) this.#environment.add(axesOf(this.#environmentKind, box, this.#plate));
     this.#sceneSphere = boundsOf(box.union(new Box3().setFromObject(this.#environment)));
     this.#fitDepth();
   }

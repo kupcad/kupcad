@@ -12,6 +12,7 @@ await viewer.setModel(preview.model); // @kupcad/protocol's Model, from a previe
 // when a model asked for later replaced it before it was shown
 viewer.setRenderMode('xray'); // 'solid' | 'xray' | 'wireframe'
 viewer.setEdges(false); // the shapes' edges hidden (a wireframe's stay)
+viewer.setAxes(false); // the X (red), Y (green) and Z (blue) axes through the origin hidden
 viewer.setCamera({ projection: 'orthographic', view: 'front' }); // moves there, framing the model
 viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as the view cube's corner does
 new ViewCube(cubeCanvas, viewer, { theme: DARK }); // the cube, on a canvas of its own
