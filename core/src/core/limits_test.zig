@@ -10,6 +10,8 @@ const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
+const registry = @import("../stdlib/registry.zig");
+const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const InterpretResult = @import("../vm/vm.zig").InterpretResult;
 const support = @import("../test_support.zig");
 const zip = @import("../exporters/zip.zig");
@@ -47,6 +49,10 @@ const CASES = .{
     .MAX_DRAWING_PIECES = drawingPieces,
     .MAX_PACKAGE_PART_BYTES = packagePartBytes,
     .MAX_PLACED_TRIANGLES = placedTriangles,
+    .MAX_PLACED_VERTICES = placedVertices,
+    .MAX_MESH_BYTES = meshBytes,
+    .MAX_READ_BYTES = readBytes,
+    .MAX_FILES_READ = filesRead,
     .MAX_FONT_BYTES = fontBytes,
     .MAX_JSON_DEPTH = jsonDepth,
     .MAX_TOKENS = tokens,
@@ -225,6 +231,73 @@ fn placedTriangles() !void {
     defer testing.allocator.free(package);
     const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} triangles; a script reads at most that", .{limits.MAX_PLACED_TRIANGLES});
     try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
+}
+
+fn placedVertices() !void {
+    // One triangle among a thousand vertices, an object of 16 of it, and 16 of that, four
+    // deep: 65 536 placements, each welding its thousand vertices
+    var model: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer model.deinit();
+    const w = &model.writer;
+    try w.writeAll("<model><resources><object id=\"1\"><mesh><vertices>");
+    for (0..1000) |i| try w.print("<vertex x=\"{d}\" y=\"0\" z=\"0\"/>", .{i});
+    try w.writeAll("</vertices><triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/></triangles></mesh></object>");
+    for ([_]u8{ 2, 3, 4, 5 }) |id| {
+        try w.print("<object id=\"{d}\"><components>", .{id});
+        for (0..16) |_| try w.print("<component objectid=\"{d}\"/>", .{id - 1});
+        try w.writeAll("</components></object>");
+    }
+    try w.writeAll("</resources><build><item objectid=\"5\"/></build></model>");
+    const package = try zip.write(testing.allocator, &.{.{ .name = "3D/3dmodel.model", .data = model.written() }});
+    defer testing.allocator.free(package);
+    const expected = std.fmt.comptimePrint("ImportError: could not read 3MF file 'big.3mf': its build would place more than {d} vertices; a script reads at most that", .{limits.MAX_PLACED_VERTICES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import part from \"./big.3mf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.3mf", .data = package }} }});
+}
+
+fn meshBytes() !void {
+    // Refused by its size before it is parsed, so what it holds doesn't matter
+    const data = try testing.allocator.alloc(u8, limits.MAX_MESH_BYTES + 1);
+    defer testing.allocator.free(data);
+    @memset(data, 0);
+    const expected = std.fmt.comptimePrint("ImportError: STL file 'big.stl' is {d} bytes; a script reads at most {d}", .{ limits.MAX_MESH_BYTES + 1, limits.MAX_MESH_BYTES });
+    try support.expectScripts(&.{.{ .src = support.rescued("import_stl(\"big.stl\")"), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.stl", .data = data }} }});
+}
+
+fn readBytes() !void {
+    // A file on disk past what a read takes, which the file system refuses before it reads
+    // (or allocates) any of it: the file is sparse, as big as it says and no bytes written
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    {
+        var file = try tmp.dir.createFile(testing.io, "huge.stl", .{});
+        defer file.close(testing.io);
+        try file.setLength(testing.io, limits.MAX_READ_BYTES + 1);
+    }
+    var nvfs = NativeVfs.init(testing.io, tmp.dir);
+    try testing.expectError(error.FileTooBig, nvfs.vfs().readFile(testing.allocator, "huge.stl"));
+}
+
+fn filesRead() !void {
+    // Without a file system every read fails, which the script rescues: a host watching
+    // what the run read would watch each path, up to the limit
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    try registry.registerStandardLibrary(&vm);
+    vm.mute_errors = true;
+    const source =
+        \\n = 0
+        \\(1..300).each do |i|
+        \\  begin
+        \\    import_json("missing-#{i}.json")
+        \\  rescue ImportError
+        \\    n += 1
+        \\  end
+        \\end
+        \\n
+    ;
+    try testing.expectEqual(.ok, try support.runOn(&vm, source));
+    try testing.expectEqual(@as(f64, 300), vm.finalValue().asNumber());
+    try testing.expectEqual(limits.MAX_FILES_READ, vm.files_read.count());
 }
 
 fn fontBytes() !void {

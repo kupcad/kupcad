@@ -144,3 +144,17 @@ test "NativeVfs: a symlink inside the root that leads out of it is followed nowh
     defer testing.allocator.free(written);
     try testing.expectEqualStrings("new", written);
 }
+
+test "NativeVfs: a file past what a read takes isn't read, nor allocated for" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "big.stl", .data = "12345" });
+    var nvfs = NativeVfs.init(testing.io, tmp.dir);
+    nvfs.max_read_bytes = 4;
+    const fs = nvfs.vfs();
+    try testing.expectError(error.FileTooBig, fs.readFile(testing.allocator, "big.stl"));
+    nvfs.max_read_bytes = 5;
+    const data = try fs.readFile(testing.allocator, "big.stl");
+    defer testing.allocator.free(data);
+    try testing.expectEqualStrings("12345", data);
+}

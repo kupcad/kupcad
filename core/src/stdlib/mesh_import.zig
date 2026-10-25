@@ -8,6 +8,7 @@
 const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
+const limits = @import("../core/limits.zig");
 const arguments = @import("arguments.zig");
 const Signature = @import("signature.zig").Signature;
 const stl = @import("../exporters/3d/stl.zig");
@@ -37,7 +38,7 @@ fn requestOf(vm: *VM, args: []const value.Value, comptime method: []const u8, co
 /// `import logo from "./logo.stl"` calls.
 pub fn nativeImportStl(vm: *VM, args: []const value.Value) !value.Value {
     const request = try requestOf(vm, args, "import_stl", "an STL file");
-    const file = try file_import.read(vm, request.path, "STL", null);
+    const file = try file_import.read(vm, request.path, "STL", limits.MAX_MESH_BYTES);
     defer vm.allocator.free(file);
     const mesh = stl.parseStlBuffer(vm.allocator, file) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
@@ -51,7 +52,7 @@ pub fn nativeImportStl(vm: *VM, args: []const value.Value) !value.Value {
 /// united. What `import bracket from "./bracket.obj"` calls.
 pub fn nativeImportObj(vm: *VM, args: []const value.Value) !value.Value {
     const request = try requestOf(vm, args, "import_obj", "an OBJ file");
-    const file = try file_import.read(vm, request.path, "OBJ", null);
+    const file = try file_import.read(vm, request.path, "OBJ", limits.MAX_MESH_BYTES);
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
     var model = obj_read.read(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, request.path, "OBJ", &diag);
@@ -67,7 +68,7 @@ pub fn nativeImportObj(vm: *VM, args: []const value.Value) !value.Value {
 /// "./bracket.3mf"` calls.
 pub fn nativeImport3mf(vm: *VM, args: []const value.Value) !value.Value {
     const request = try requestOf(vm, args, "import_3mf", "a 3MF file");
-    const file = try file_import.read(vm, request.path, "3MF", null);
+    const file = try file_import.read(vm, request.path, "3MF", limits.MAX_MESH_BYTES);
     defer vm.allocator.free(file);
     var diag: Diagnostic = .{};
     var model = threemf_read.read(vm.allocator, file, &diag) catch |err| return file_import.unreadable(vm, err, request.path, "3MF", &diag);

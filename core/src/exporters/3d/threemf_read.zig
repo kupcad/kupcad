@@ -56,11 +56,11 @@ pub fn read(allocator: std.mem.Allocator, data: []const u8, diag: *Diagnostic) E
     const root = try package.part(try package.modelPath());
     if (root.items.len == 0) return diag.fail("{s}: its build places nothing", .{root.path});
 
-    var triangles: u64 = 0;
+    var placed: Placed = .{};
     for (root.items) |item| {
-        const object = try package.objectOf(root, item);
-        triangles += try package.countOf(object, 0);
-        if (triangles > limits.MAX_PLACED_TRIANGLES) return diag.fail("its build would place more than {d} triangles; a script reads at most that", .{limits.MAX_PLACED_TRIANGLES});
+        placed = placed.plus(try package.countOf(try package.objectOf(root, item), 0));
+        if (placed.triangles > limits.MAX_PLACED_TRIANGLES) return diag.fail("its build would place more than {d} triangles; a script reads at most that", .{limits.MAX_PLACED_TRIANGLES});
+        if (placed.vertices > limits.MAX_PLACED_VERTICES) return diag.fail("its build would place more than {d} vertices; a script reads at most that", .{limits.MAX_PLACED_VERTICES});
     }
     var meshes: std.ArrayList(imported_mesh.Mesh) = .empty;
     // The root's unit is the package's: a part of it is in the same one
@@ -119,8 +119,23 @@ const Object = struct {
     triangles: std.ArrayList([3]u32) = .empty,
     components: std.ArrayList(Ref) = .empty,
     read: bool,
-    /// The triangles it places, its components' counted, once counted
-    placed: ?u64 = null,
+    /// What it places, its components' counted, once counted
+    placed: ?Placed = null,
+};
+
+/// What a build places: the triangles, and the vertices (each placement welds an object's
+/// afresh, so a vertex is placed as many times as its object is).
+const Placed = struct {
+    triangles: u64 = 0,
+    vertices: u64 = 0,
+
+    /// This and `other`, each sum held just past its limit: past it is past it.
+    fn plus(self: Placed, other: Placed) Placed {
+        return .{
+            .triangles = @min(self.triangles + other.triangles, limits.MAX_PLACED_TRIANGLES + 1),
+            .vertices = @min(self.vertices + other.vertices, limits.MAX_PLACED_VERTICES + 1),
+        };
+    }
 };
 
 /// A model part of the package: its objects by id, its build's items, its unit.
@@ -225,15 +240,13 @@ const Package = struct {
         return p.objects.get(ref.object) orelse self.diag.fail("{s} line {d}: it places object {d}, which {s} hasn't", .{ in.path, ref.line, ref.object, p.path });
     }
 
-    /// How many triangles `object` places, its components' counted (each object once).
-    fn countOf(self: *Package, object: *Object, depth: usize) Error!u64 {
+    /// What `object` places, its components' counted (each object once).
+    fn countOf(self: *Package, object: *Object, depth: usize) Error!Placed {
         if (object.placed) |known| return known;
         if (depth > MAX_COMPONENT_NESTING) return self.diag.fail("{s}: its objects hold objects more than {d} deep (does one hold itself?)", .{ object.part.path, MAX_COMPONENT_NESTING });
-        var count: u64 = if (object.read) object.triangles.items.len else 0;
+        var count: Placed = if (object.read) .{ .triangles = object.triangles.items.len, .vertices = object.vertices.items.len } else .{};
         for (object.components.items) |component| {
-            count += try self.countOf(try self.objectOf(object.part, component), depth + 1);
-            // A sum past what u64 holds is past the limit long before
-            count = @min(count, limits.MAX_PLACED_TRIANGLES + 1);
+            count = count.plus(try self.countOf(try self.objectOf(object.part, component), depth + 1));
         }
         object.placed = count;
         return count;

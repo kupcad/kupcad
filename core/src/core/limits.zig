@@ -82,8 +82,19 @@ pub const MAX_DRAWING_PIECES: usize = 1_000_000;
 // to, so a small archive could ask for more than memory holds.
 pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 // Most triangles a 3MF's build places: components within components multiply, so a small
-// file could ask for more than memory holds.
+// file could ask for more than memory holds; and most vertices, as many as the triangles
+// could name (an object placed is welded afresh each time, vertex by vertex).
 pub const MAX_PLACED_TRIANGLES: usize = 20_000_000;
+pub const MAX_PLACED_VERTICES: usize = 3 * MAX_PLACED_TRIANGLES;
+// Largest mesh file `import_stl`, `import_obj` and `import_3mf` read: five million
+// triangles as binary STL (50 bytes each), which the kernel takes minutes over already.
+pub const MAX_MESH_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
+// Largest file the native file system reads for a script at all: the largest any import
+// takes. A read allocates the file's size first, so no file past it is read whole.
+pub const MAX_READ_BYTES: usize = MAX_MESH_BYTES;
+// Most distinct files one run is remembered reading (VM.files_read, which a watching host
+// watches): a script trying paths in a loop would have the editor watch each one.
+pub const MAX_FILES_READ: usize = 256;
 // Largest font file `import_font` reads: the biggest CJK fonts are about 20 MiB, and the file
 // stays in memory while the run lasts.
 pub const MAX_FONT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB

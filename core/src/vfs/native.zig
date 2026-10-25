@@ -4,11 +4,15 @@
 //! file from the package store outside it.
 
 const std = @import("std");
+const limits = @import("../core/limits.zig");
 const Vfs = @import("vfs.zig").Vfs;
 
 pub const NativeVfs = struct {
     io: std.Io,
     root_dir: std.Io.Dir,
+    /// Largest file a read takes (error.FileTooBig past it): a read allocates the file's
+    /// size first, and no import takes more.
+    max_read_bytes: u64 = limits.MAX_READ_BYTES,
 
     /// Initializes NativeVfs using the provided directory.
     pub fn init(io: std.Io, root_dir: std.Io.Dir) NativeVfs {
@@ -87,6 +91,7 @@ pub const NativeVfs = struct {
         defer file.close(self.io);
 
         const stat = try file.stat(self.io);
+        if (stat.size > self.max_read_bytes) return error.FileTooBig;
         const file_size: usize = @intCast(stat.size);
 
         const buffer = try allocator.alloc(u8, file_size);

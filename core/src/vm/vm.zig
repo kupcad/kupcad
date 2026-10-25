@@ -1658,7 +1658,10 @@ pub const VM = struct {
     /// (owned by `allocator`). The path is noted in files_read even when the file can't be
     /// read, so a watching host rebuilds once it is created or fixed.
     pub fn readScriptFile(self: *VM, path: []const u8) ![]u8 {
-        _ = try owned_keys.getOrPutOwned(&self.files_read, self.allocator, path);
+        // Up to a point: a script trying paths in a loop would have a host watch them all
+        if (self.files_read.contains(path) or self.files_read.count() < limits.MAX_FILES_READ) {
+            _ = try owned_keys.getOrPutOwned(&self.files_read, self.allocator, path);
+        }
         return self.vfs.readFile(self.allocator, path);
     }
 
