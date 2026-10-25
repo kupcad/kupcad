@@ -74,15 +74,16 @@ pub const Watcher = struct {
     }
 
     /// One look at the watched files: the ones whose mtime differs from the last seen
-    /// (older too: `>` missed a `git checkout` restoring an older file) are read again,
-    /// and the workspace rebuilt. Returns whether anything had changed.
+    /// (older too: `>` missed a `git checkout` restoring an older file; gone, 0, as a data
+    /// file's: its reload fails, which is told once) are read again, and the workspace
+    /// rebuilt. Returns whether anything had changed.
     pub fn poll(self: *Watcher) !bool {
         var changed = false;
         var i: usize = 0;
         // A reload may add modules (new imports), which later iterations then see.
         while (i < self.session.workspace.modules.items.len) : (i += 1) {
             const path = self.session.workspace.modules.items[i].path;
-            const mtime = self.mtimeOf(path) orelse continue;
+            const mtime = self.mtimeOf(path) orelse 0;
             if (self.mtimes.get(path)) |seen| if (seen == mtime) continue;
             try self.mtimes.put(self.session.allocator, path, mtime);
             self.listener.notify(.{ .changed = path });

@@ -145,6 +145,31 @@ test "Daemon Watcher: an edit to an imported module rebuilds the script" {
     try testing.expectApproxEqAbs(@as(f64, 8000), fx.rootVolume(root), 1e-6);
 }
 
+test "Daemon Watcher: a module deleted is told once, and rebuilt from when it is back" {
+    // A module whose file went was passed over: the build stayed "up to date" without it
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try fx.write("lib.kup", "side = 10\nexport side\n");
+    try fx.write("main.kup", "import { side } from \"./lib.kup\"\nx = cube(side)\n");
+    const root = try fx.load("main.kup");
+    defer testing.allocator.free(root);
+    var recorder = Recorder{ .session = &fx.session };
+    defer recorder.deinit();
+    var watcher = try Watcher.init(&fx.session, testing.io, recorder.listener());
+    defer watcher.deinit();
+    try testing.expect(watcher.evaluate());
+
+    try fx.tmp.dir.deleteFile(testing.io, "lib.kup");
+    _ = try watcher.poll();
+    try testing.expectEqualSlices(std.meta.Tag(watcher_mod.Event), &.{ .built, .changed, .reload_failed }, recorder.events.items);
+    _ = try watcher.poll();
+    try testing.expectEqual(@as(usize, 3), recorder.events.items.len);
+
+    try fx.write("lib.kup", "side = 20\nexport side\n");
+    try testing.expect(try watcher.poll());
+    try testing.expectApproxEqAbs(@as(f64, 8000), fx.rootVolume(root), 1e-6);
+}
+
 test "Daemon Watcher: an edit to a module reached through a re-export rebuilds the script" {
     var fx = try Fixture.init();
     defer fx.deinit();
