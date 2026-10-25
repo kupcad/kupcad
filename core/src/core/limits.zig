@@ -74,6 +74,7 @@ pub const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 // Largest JSON file `import_json` reads: its values take several times its size.
 pub const MAX_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 // Largest drawing `import_dxf` and `import_svg` read: its outlines take several times its size.
+// An SVG's <use>s read no more of it again than this either.
 pub const MAX_DRAWING_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 // Most elements an SVG drawing's clones (<use>s) draw: nested, they multiply, so a small
 // file could ask for more than memory holds.

@@ -248,6 +248,23 @@ test "SVG read: uses that draw themselves, or more than they may, are refused" {
         "<g id=\"b\"><use href=\"#a\"/><use href=\"#a\"/></g></defs><use href=\"#b\"/><use href=\"#b\"/><use href=\"#b\"/></svg>";
     try testing.expectError(error.Unreadable, svg_read.read(testing.allocator, nested, .{ .tolerance = 1e-6, .max_cloned = 10 }, &diag));
     try testing.expectEqualStrings("its <use>s would draw more than 10 elements; a script reads at most that", diag.message());
+
+    // A use of a use of a use, three hundred deep: deeper than elements nest
+    var chain: std.ArrayList(u8) = .empty;
+    defer chain.deinit(testing.allocator);
+    try chain.appendSlice(testing.allocator, MM ++ "<defs>");
+    for (0..300) |i| try chain.print(testing.allocator, "<use id=\"u{d}\" href=\"#u{d}\"/>", .{ i, i + 1 });
+    try chain.appendSlice(testing.allocator, "<rect id=\"u300\" width=\"1\" height=\"1\"/></defs><use href=\"#u0\"/></svg>");
+    try expectRefused(chain.items, "line 1: elements nest deeper than 256");
+
+    // Uses of a group that draws nothing: each reads it all again, though it draws none of it
+    const hidden = MM ++ "<g id=\"h\" display=\"none\"><rect width=\"1\" height=\"1\"/><rect width=\"1\" height=\"1\"/></g>" ++
+        "<use href=\"#h\"/><use href=\"#h\"/><use href=\"#h\"/></svg>";
+    var reread: svg_read.Diagnostic = .{};
+    try testing.expectError(error.Unreadable, svg_read.read(testing.allocator, hidden, .{ .tolerance = 1e-6, .max_reread = 200 }, &reread));
+    try testing.expectEqualStrings("its <use>s would read more than 200 bytes of it again; a script reads at most that", reread.message());
+    var once = try svg_read.read(testing.allocator, hidden, .{ .tolerance = 1e-6, .max_reread = 400 }, &reread);
+    once.deinit();
 }
 
 test "SVG read: what can't be read says why and where" {

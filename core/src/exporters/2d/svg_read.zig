@@ -63,6 +63,9 @@ pub const Options = struct {
     tolerance: f64,
     /// How many elements `use`s may draw: nested, they multiply.
     max_cloned: usize = limits.MAX_DRAWING_PIECES,
+    /// How many bytes of the file `use`s may read again: each reads what it names anew, what
+    /// it draws and what it doesn't (a hidden group's elements), so they multiply too.
+    max_reread: usize = limits.MAX_DRAWING_BYTES,
 };
 
 /// The outlines read (closed) and the open paths (strokes alone), each in the file's
@@ -140,6 +143,8 @@ const Reader = struct {
     use_root: ?Tag = null,
     /// How many elements `use`s have drawn
     cloned: usize = 0,
+    /// How many bytes of the file `use`s have read again
+    reread: usize = 0,
     /// The rules of the file's `<style>` elements
     sheet: css.Sheet = .{},
 
@@ -161,7 +166,13 @@ const Reader = struct {
     /// the element its next tag starts and what it holds.
     fn readTags(self: *Reader, scanner: *Scanner, comptime one: bool) Error!void {
         const depth = self.frames.items.len;
+        var from = scanner.pos;
         while (try scanner.next(self.diag)) |tag| {
+            if (self.using.items.len > 0) {
+                self.reread += scanner.pos - from;
+                if (self.reread > self.options.max_reread) return self.diag.fail("its <use>s would read more than {d} bytes of it again; a script reads at most that", .{self.options.max_reread});
+            }
+            from = scanner.pos;
             if (tag.closing) {
                 if (self.frames.items.len == depth) return self.diag.fail("line {d}: </{s}> closes no element", .{ lineOf(self.text, tag.offset), tag.name });
                 const open = self.frames.pop().?;
@@ -189,6 +200,8 @@ const Reader = struct {
         }
         var placed = frame;
         placed.matrix = affine2.compose(frame.matrix, affine2.translation(try self.length(tag, "x") orelse 0, try self.length(tag, "y") orelse 0));
+        // A use of a use of a use nests as elements do (and the reader with it, on its stack)
+        if (self.frames.items.len >= MAX_NESTING) return self.diag.fail("line {d}: elements nest deeper than {d}", .{ line, MAX_NESTING });
         try self.frames.append(self.arena, placed);
         defer _ = self.frames.pop();
         try self.using.append(self.arena, id);
