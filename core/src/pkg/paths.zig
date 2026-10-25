@@ -1,6 +1,7 @@
 //! Where the package manager keeps its global state: `getHomeDir` finds the user's home
 //! directory (the profile folder on Windows, `HOME` elsewhere), and `getGlobalDir` returns
-//! `KUPCAD_HOME` or `~/.kupcad`.
+//! `KUPCAD_HOME` or `~/.kupcad`, an absolute path either way (the store links its files into
+//! a project from it).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -9,6 +10,7 @@ const WIN_FOLDERID_GUID = "{5E6C858F-0E22-4760-9AFE-EA3317B67173}";
 
 pub const PathError = error{
     HomeNotFound,
+    RelativeKupcadHome,
 } || std.mem.Allocator.Error;
 
 /// Resolves the user's home directory.
@@ -37,12 +39,12 @@ pub fn getHomeDir(allocator: std.mem.Allocator, env_map: *const std.process.Envi
         }
 
         // Windows Fallback
-        if (env_map.get("USERPROFILE")) |val| {
+        if (absoluteVar(env_map, "USERPROFILE")) |val| {
             return try allocator.dupe(u8, val);
         }
     } else {
         // POSIX / WASI Native
-        if (env_map.get("HOME")) |val| {
+        if (absoluteVar(env_map, "HOME")) |val| {
             return try allocator.dupe(u8, val);
         }
     }
@@ -52,12 +54,21 @@ pub fn getHomeDir(allocator: std.mem.Allocator, env_map: *const std.process.Envi
 
 /// Resolves the global ~/.kupcad cache directory (or KUPCAD_HOME).
 pub fn getGlobalDir(allocator: std.mem.Allocator, env_map: *const std.process.Environ.Map) PathError![]const u8 {
-    if (env_map.get("KUPCAD_HOME")) |custom_path| {
+    // Empty, it is unset: it would put the store at the file system's root
+    if (env_map.get("KUPCAD_HOME")) |custom_path| if (custom_path.len > 0) {
+        // Relative, it would move with the directory a command starts in
+        if (!std.fs.path.isAbsolute(custom_path)) return error.RelativeKupcadHome;
         return try allocator.dupe(u8, custom_path);
-    }
+    };
 
     const home_dir = try getHomeDir(allocator, env_map);
     defer allocator.free(home_dir);
 
     return try allocator.print("{s}/.kupcad", .{home_dir});
+}
+
+/// The variable `name`, when it is an absolute path: an empty or relative home is none.
+fn absoluteVar(env_map: *const std.process.Environ.Map, name: []const u8) ?[]const u8 {
+    const val = env_map.get(name) orelse return null;
+    return if (std.fs.path.isAbsolute(val)) val else null;
 }

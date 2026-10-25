@@ -81,7 +81,7 @@ and `kupcad --version` prints the version. Environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `KUPCAD_HOME` | Package cache directory (default `~/.kupcad`) |
+| `KUPCAD_HOME` | Package cache directory, an absolute path (default `~/.kupcad`; empty is unset) |
 | `KUPCAD_VIEWPORT_PORT` | Preferred port for the LSP viewport WebSocket (default `9001`, falls back to a free port) |
 
 ## Developer notes

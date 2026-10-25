@@ -137,7 +137,14 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
     if (request == .init) return initManifest(allocator, fs, .forProcess(init));
 
-    const global_dir = try paths.getGlobalDir(allocator, init.environ_map);
+    const global_dir = paths.getGlobalDir(allocator, init.environ_map) catch |err| {
+        switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.HomeNotFound => log_helpers.printStderr(init.io, "Error: no home folder to keep packages in: set HOME, or KUPCAD_HOME to the folder\n", .{}),
+            error.RelativeKupcadHome => log_helpers.printStderr(init.io, "Error: KUPCAD_HOME is '{s}': it must be an absolute path\n", .{init.environ_map.get("KUPCAD_HOME").?}),
+        }
+        return .failure;
+    };
     defer allocator.free(global_dir);
 
     var cafs = try Cafs.init(allocator, init.io, global_dir, fs);
