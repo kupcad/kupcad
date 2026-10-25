@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHostMessage, isParamValues, isViewerMessage } from './index.js';
+import { isHostMessage, isParamValues, isViewerMessage, MAX_ARRAY_DEPTH } from './index.js';
 
 describe('isHostMessage', () => {
   it('takes the messages a host sends, field for field', () => {
@@ -22,7 +22,7 @@ describe('isHostMessage', () => {
       { type: 'documents', document: null },
       { type: 'document' },
       { type: 'document', document: { uri: 'file:///w/a.kup' } },
-      { type: 'overrides', uri: 'file:///w/a.kup', values: { w: [3] } },
+      { type: 'overrides', uri: 'file:///w/a.kup', values: { w: { a: 3 } } },
       { type: 'overrides', values: {} },
       { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 2] },
       { type: 'log', text: 3 },
@@ -68,10 +68,35 @@ describe('isViewerMessage', () => {
   });
 });
 
-it('reads parameter values as names to a number, a string or a boolean', () => {
+/**
+ * Values whose one array is `depth` deep.
+ * @param {number} depth
+ */
+function nested(depth) {
+  /** @type {unknown} */
+  let value = [];
+  for (let i = 1; i < depth; i++) value = [value];
+  return { w: value };
+}
+
+it('reads parameter values as names to a number, a string, a boolean or an array of them', () => {
   expect(isParamValues({})).toBe(true);
   expect(isParamValues({ w: 1, s: 'm4', b: false })).toBe(true);
+  expect(
+    isParamValues({
+      size: [10, 20],
+      holes: [
+        [0, 0],
+        [10, 'x', true],
+      ],
+      none: [],
+    }),
+  ).toBe(true);
   expect(isParamValues({ w: null })).toBe(false);
   expect(isParamValues({ w: {} })).toBe(false);
+  expect(isParamValues({ w: [1, null] })).toBe(false);
+  expect(isParamValues({ w: [{ a: 1 }] })).toBe(false);
   expect(isParamValues([1])).toBe(false);
+  expect(isParamValues(nested(MAX_ARRAY_DEPTH))).toBe(true);
+  expect(isParamValues(nested(MAX_ARRAY_DEPTH + 1))).toBe(false);
 });

@@ -46,7 +46,9 @@ client.sendRequest('workspace/executeCommand', {
   viewer say to each other: the document shown, its panel's values, its presets' names and the
   host's log (`log`, for the viewer's console) one way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
   in the script to reveal (`reveal`: a warning's line and column) the other. `isHostMessage` and `isViewerMessage` read
-  one as it arrives untyped (`postMessage`), and `isParamValues` the values in it. A
+  one as it arrives untyped (`postMessage`), and `isParamValues` the values in it (a
+  `ParamValue` is a number, a string, a boolean, or an array of them nested at most
+  `MAX_ARRAY_DEPTH`, the core's). A
   `ViewerHost` is the host as its viewer talks to it (`post`, `listen`).
 * Presets (`Presets`): a script's named sets of values, kept beside it as JSON a person edits
   (`bracket.kup`'s in `bracket.presets.json`, `{ "presets": { "Small": { "width": 20 } } }`).
@@ -57,7 +59,8 @@ client.sendRequest('workspace/executeCommand', {
   `build`), each with its name and what it is for, in the order a host offers them.
 * What every host of the viewer does alike (`host.js`): `ScriptValues`, the values each
   script's parameters were given (what the server runs it with, what an export builds it
-  with); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
+  with), and `paramOptions(values)`, those values as `kupcad build`'s `-p` options (`paramText`,
+  an array's as JSON); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
   names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
   message names when it isn't the one shown, which a host refuses.
 * `whyBuildFailed(stderr)`: what a failed `kupcad build` said of why (the run's error, a syntax

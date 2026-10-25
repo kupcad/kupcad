@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { anotherDocument, ScriptValues, viewportUrl } from './host.js';
+import { anotherDocument, paramOptions, ScriptValues, viewportUrl } from './host.js';
 
 describe('host', () => {
+  it('writes values as kupcad build takes them: an array as JSON', () => {
+    expect(
+      paramOptions({
+        w: 40,
+        label: 'Gear A',
+        on: false,
+        holes: [
+          [0, 0],
+          [10, 0],
+        ],
+      }),
+    ).toEqual(['-p', 'w=40', '-p', 'label=Gear A', '-p', 'on=false', '-p', 'holes=[[0,0],[10,0]]']);
+  });
+
   it("reads the viewport socket's URL from a port, and none from what is no port", () => {
     expect(viewportUrl(9001)).toBe('ws://127.0.0.1:9001');
     // The app used whatever came: ws://127.0.0.1:undefined

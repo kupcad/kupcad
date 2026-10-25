@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { BRACKET, schemaOf } from './fixtures.test-helper.js';
 import {
   controlOf,
+  elementSpec,
   groupsOf,
   isOverridden,
+  newElement,
+  sameValue,
   shownValue,
   stepOf,
   validate,
@@ -103,4 +106,101 @@ it('overrides are set and taken away by name, the rest kept', () => {
   const set = withOverride({ width: 40 }, 'label', 'B');
   expect(set).toEqual({ width: 40, label: 'B' });
   expect(withoutOverride(set, 'width')).toEqual({ label: 'B' });
+});
+
+/**
+ * An Array parameter's spec, as the schema gives one: `xs`, of numbers by its default.
+ * @param {Partial<ParamSpec>} [fields]
+ * @returns {ParamSpec}
+ */
+const arraySpec = (fields = {}) => ({
+  name: 'xs',
+  type: 'array',
+  default_value: [10, 20],
+  validate: { min: null, max: null, in: null },
+  step: null,
+  unit: null,
+  group: null,
+  title: null,
+  description: null,
+  ...fields,
+});
+
+/** @param {number | null} min @param {number | null} max @param {(string | number)[] | null} [choices] */
+const rules = (min, max, choices = null) => ({ min, max, in: choices });
+
+describe('an Array parameter', () => {
+  it("is a list of its elements' controls, each of the kind its default's elements are", () => {
+    expect(controlOf(arraySpec())).toBe('list');
+    expect(controlOf(elementSpec(arraySpec()))).toBe('number');
+    expect(controlOf(elementSpec(arraySpec({ validate: rules(0, 100) })))).toBe('slider');
+    expect(controlOf(elementSpec(arraySpec({ default_value: [true] })))).toBe('toggle');
+    expect(controlOf(elementSpec(arraySpec({ default_value: ['a'] })))).toBe('text');
+    const sizes = arraySpec({ default_value: ['m3'], validate: rules(null, null, ['m3', 'm4']) });
+    expect(controlOf(elementSpec(sizes))).toBe('select');
+    // An array in it is a text field of its JSON
+    const points = elementSpec(arraySpec({ default_value: [[0, 0]] }));
+    expect(controlOf(points, true)).toBe('json');
+    expect(points.default_value).toEqual([0, 0]);
+    // Of no one kind, or none, text: as the script takes an untyped value
+    expect(elementSpec(arraySpec({ default_value: [1, 'a'] })).type).toBe('string');
+    expect(elementSpec(arraySpec({ default_value: null })).type).toBe('string');
+    expect(
+      elementSpec(arraySpec({ default_value: null, validate: rules(null, null, [2, 4]) })).type,
+    ).toBe('number');
+  });
+
+  it('takes an array, each element as its kind, refusing one by its place', () => {
+    const ranged = arraySpec({ validate: rules(0, 100) });
+    expect(validate(ranged, ['5', 20])).toEqual({ value: [5, 20] });
+    expect(validate(ranged, '[1, 2]')).toEqual({ value: [1, 2] });
+    expect(validate(ranged, [])).toEqual({ value: [] });
+    expect(validate(ranged, ['x'])).toEqual({ error: '[0] must be a number' });
+    expect(validate(ranged, [1, 500])).toEqual({ error: '[1] must be at most 100' });
+    expect(validate(ranged, 'wide')).toEqual({ error: 'must be an array, as [10, 20]' });
+    const sizes = arraySpec({ default_value: ['m3'], validate: rules(null, null, ['m3', 'm4']) });
+    expect(validate(sizes, ['m4'])).toEqual({ value: ['m4'] });
+    expect(validate(sizes, ['m5'])).toEqual({ error: '[0] must be one of m3, m4' });
+    // An array in it, from its text field's JSON, its numbers in the range too
+    const points = arraySpec({ default_value: [[0, 0]], validate: rules(null, 10) });
+    expect(validate(points, ['[1, 2]', [3, 4]])).toEqual({
+      value: [
+        [1, 2],
+        [3, 4],
+      ],
+    });
+    expect(validate(points, ['[1'])).toEqual({ error: '[0] must be an array, as [10, 20]' });
+    expect(validate(points, [5])).toEqual({ error: '[0] must be an array, as [10, 20]' });
+    expect(validate(points, [[1, 50]])).toEqual({ error: '[0] [1] must be at most 10' });
+  });
+
+  it('is the same value as another by its elements', () => {
+    expect(sameValue([1, [2, 'a']], [1, [2, 'a']])).toBe(true);
+    expect(sameValue([1, [2]], [1, [3]])).toBe(false);
+    expect(sameValue([1], [1, 2])).toBe(false);
+    expect(sameValue([1], 1)).toBe(false);
+    expect(sameValue(null, null)).toBe(true);
+    expect(sameValue(2, 2)).toBe(true);
+  });
+
+  it('gives a new element as a copy of the last, else a blank of its kind', () => {
+    expect(newElement(arraySpec(), [1, [2]])).toEqual([2]);
+    expect(newElement(arraySpec(), [])).toBe(0);
+    expect(newElement(arraySpec({ validate: rules(5, null) }), [])).toBe(5);
+    expect(newElement(arraySpec({ validate: rules(null, -3) }), [])).toBe(-3);
+    expect(newElement(arraySpec({ default_value: [true] }), [])).toBe(false);
+    expect(newElement(arraySpec({ default_value: ['a'] }), [])).toBe('');
+    expect(newElement(arraySpec({ default_value: [[0, 0]] }), [])).toEqual([]);
+    expect(
+      newElement(
+        arraySpec({ default_value: ['m3'], validate: rules(null, null, ['m3', 'm4']) }),
+        [],
+      ),
+    ).toBe('m3');
+    // A copy: changing it leaves the one it was copied from
+    const last = [1];
+    const added = /** @type {number[]} */ (newElement(arraySpec(), [last]));
+    added.push(2);
+    expect(last).toEqual([1]);
+  });
 });

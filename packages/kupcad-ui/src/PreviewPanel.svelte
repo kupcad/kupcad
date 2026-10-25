@@ -15,6 +15,7 @@
   import { errorText } from '@kupcad/protocol';
   import ConsolePanel from './ConsolePanel.svelte';
   import { appendLines, linesOfLog, linesOfRun } from './console.js';
+  import { plainValues } from './values.svelte.js';
   import ParamsPanel from './ParamsPanel.svelte';
   import { memorySettings, sizeSetting } from './settings.js';
   import Splitter from './Splitter.svelte';
@@ -153,8 +154,7 @@
   }
 
   function savePreset() {
-    if (shown)
-      host.post({ type: 'savePreset', uri: shown.uri, values: $state.snapshot(overrides) });
+    if (shown) host.post({ type: 'savePreset', uri: shown.uri, values: plainValues(overrides) });
   }
 
   /** Asks the host to export the shown document, with its values. */

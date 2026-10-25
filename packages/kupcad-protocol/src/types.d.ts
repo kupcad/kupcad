@@ -90,17 +90,24 @@ export interface Meta {
   author: string | null;
 }
 
-/** One `param(:name, default: ...)` of a script. */
+/** A parameter's value: an Array parameter's an array of them, nested at most `MAX_ARRAY_DEPTH`. */
+export type ParamValue = number | string | boolean | ParamValue[];
+
+/** One `param(:name, ...)` of a script. */
 export interface ParamSpec {
   name: string;
-  /** A Symbol parameter is a 'string' with its choices in `validate.in`. */
-  type: 'number' | 'string' | 'boolean';
-  /** Null when the default is computed. */
-  default_value: number | string | boolean | null;
+  /**
+   * `type:`'s, else its default's, else its choices', else 'string'. A Symbol parameter is a
+   * 'string' with its choices in `validate.in`.
+   */
+  type: 'number' | 'string' | 'boolean' | 'array';
+  /** Null when there is none (it is nil until given a value), or the default is computed. */
+  default_value: ParamValue | null;
   validate: {
+    /** For a number, and for every number in an array. */
     min: number | null;
     max: number | null;
-    /** The allowed values, when the script lists them as literals. */
+    /** The allowed values (each element's, for an array), when the script lists them as literals. */
     in: (number | string | boolean)[] | null;
   };
   step: number | null;
@@ -116,7 +123,7 @@ export interface ParamSpec {
 export type ExportFormat = 'stl' | 'glb' | 'gltf' | 'step' | '3mf' | 'obj' | 'svg' | 'dxf';
 
 /** Parameter values by name, as a host gives them and a frame says a run took them. */
-export type ParamValues = Record<string, number | string | boolean>;
+export type ParamValues = Record<string, ParamValue>;
 
 /**
  * A place in a source: 1-based lines and columns (UTF-8 bytes), and the byte offset and length

@@ -64,8 +64,15 @@ describe('preview', () => {
     const failed = await kupcad.preview('cube(1)\nraise "boom"');
     expect(failed.model).toEqual({ kind: 'none' });
     expect(failed.header.error).toMatchObject({ message: 'RuntimeError: boom', line: 2 });
-    const refused = await kupcad.preview('cube(2)', { params: { w: /** @type {any} */ ([1]) } });
-    expect(refused.header.error?.message).toMatch(/^parameters: parameter 'w' is an array/);
+    const refused = await kupcad.preview('cube(2)', {
+      params: { w: /** @type {any} */ ({ a: 1 }) },
+    });
+    expect(refused.header.error?.message).toMatch(/^parameters: parameter 'w' is an object/);
+    // An Array parameter takes an array
+    const listed = await kupcad.preview('xs = param(:xs, default: [1])\ncube(xs.length)', {
+      params: { xs: [1, 2, 3] },
+    });
+    expect(listed.header.params.values).toEqual({ xs: [1, 2, 3] });
   });
 
   it('gives a Sketch as SVG', async () => {

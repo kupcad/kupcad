@@ -80,7 +80,18 @@ describe('the host', () => {
   it('exports the script where the person saves it, in its format, with its values', async () => {
     const { host, show, services } = hostOn();
     show(PART);
-    host.post({ type: 'setParams', uri: PART.uri, values: { width: 40, hollow: true } });
+    host.post({
+      type: 'setParams',
+      uri: PART.uri,
+      values: {
+        width: 40,
+        hollow: true,
+        holes: [
+          [0, 0],
+          [10, 0],
+        ],
+      },
+    });
     host.post({ type: 'export', uri: PART.uri });
     await settled();
     const asked = services.save.mock.calls[0][0];
@@ -98,6 +109,8 @@ describe('the host', () => {
     expect(services.exportModel).toHaveBeenCalledWith('/w/part.kup', '/out/part.3mf', '3mf', [
       ['width', '40'],
       ['hollow', 'true'],
+      // An array as kupcad build -p reads one
+      ['holes', '[[0,0],[10,0]]'],
     ]);
   });
 

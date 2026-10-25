@@ -3,21 +3,30 @@
 // the script takes (its schema's `validate`), checked before it leaves the panel; the run is
 // the final check, and a frame names a value it refused.
 
-/** @import { ParamSpec, ParamValues } from '@kupcad/protocol/types' */
+import { MAX_ARRAY_DEPTH } from '@kupcad/protocol';
+
+/** @import { ParamSpec, ParamValue, ParamValues } from '@kupcad/protocol/types' */
 
 /**
  * A slider (with a number beside it) for a number between a min and a max; a number field for
- * one without; a select for a choice of listed values; a toggle for a boolean; a text field.
- * @typedef {'slider' | 'number' | 'select' | 'toggle' | 'text'} Control
+ * one without; a select for a choice of listed values; a toggle for a boolean; a list of
+ * controls, one per element, for an array; a text field of its JSON for an array in an array;
+ * a text field.
+ * @typedef {'slider' | 'number' | 'select' | 'toggle' | 'list' | 'json' | 'text'} Control
  */
 
-/** @typedef {number | string | boolean} Value */
+/** @typedef {ParamValue} Value */
+
+/** What a nested array a text field gives must look like. */
+const AN_ARRAY = 'must be an array, as [10, 20]';
 
 /**
  * @param {ParamSpec} spec
+ * @param {boolean} [nested] an element of an array, whose own arrays are text
  * @returns {Control}
  */
-export function controlOf(spec) {
+export function controlOf(spec, nested = false) {
+  if (spec.type === 'array') return nested ? 'json' : 'list';
   if (spec.validate.in) return 'select';
   if (spec.type === 'boolean') return 'toggle';
   if (spec.type === 'string') return 'text';
@@ -89,12 +98,87 @@ export const isOverridden = (overrides, name) => Object.hasOwn(overrides, name);
 const ownValue = (values, name) => (Object.hasOwn(values, name) ? values[name] : undefined);
 
 /**
+ * Each element of an Array parameter, as a parameter of its own: of the kind its default's
+ * elements share (else its choices'; else text, as the script takes an untyped value), with the
+ * parameter's range (for every number in it), choices, step and unit. An element that is an
+ * array keeps the default's first, which says what its own elements are.
+ * @param {ParamSpec} spec an 'array' one
+ * @returns {ParamSpec}
+ */
+export function elementSpec(spec) {
+  const elements = Array.isArray(spec.default_value) ? spec.default_value : [];
+  const type = sharedType(elements) ?? sharedType(spec.validate.in ?? []) ?? 'string';
+  return { ...spec, type, default_value: type === 'array' ? (elements[0] ?? null) : null };
+}
+
+/**
+ * The type all of `values` have; null when there are none, or they differ.
+ * @param {ParamValue[]} values
+ * @returns {ParamSpec['type'] | null}
+ */
+function sharedType(values) {
+  const types = new Set(values.map(typeOfValue));
+  return types.size === 1 ? /** @type {ParamSpec['type']} */ ([...types][0]) : null;
+}
+
+/** @param {ParamValue} value */
+const typeOfValue = (value) => (Array.isArray(value) ? 'array' : typeof value);
+
+/**
+ * What a new element of `spec`'s array starts as: a copy of the last, else its first choice,
+ * else what is blank for its kind (a number in its range).
+ * @param {ParamSpec} spec an 'array' one
+ * @param {readonly ParamValue[]} items
+ * @returns {ParamValue}
+ */
+export function newElement(spec, items) {
+  if (items.length > 0) return structuredClone(items[items.length - 1]);
+  const element = elementSpec(spec);
+  if (element.validate.in) return element.validate.in[0];
+  switch (element.type) {
+    case 'number': {
+      // Zero, into its range
+      const { min, max } = element.validate;
+      return Math.min(Math.max(0, min ?? -Infinity), max ?? Infinity);
+    }
+    case 'boolean':
+      return false;
+    case 'array':
+      return [];
+    default:
+      return '';
+  }
+}
+
+/**
+ * Whether `a` and `b` are one value: arrays by their elements.
+ * @param {Value | null} a
+ * @param {Value | null} b
+ * @returns {boolean}
+ */
+export function sameValue(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return a === b;
+  return a.length === b.length && a.every((item, index) => sameValue(item, b[index]));
+}
+
+/**
  * What a control gave, as the parameter's value, or why the script wouldn't take it.
  * @param {ParamSpec} spec
  * @param {Value} input
  * @returns {{ value: Value } | { error: string }}
  */
 export function validate(spec, input) {
+  return validateAt(spec, input, MAX_ARRAY_DEPTH);
+}
+
+/**
+ * @param {ParamSpec} spec
+ * @param {Value} input
+ * @param {number} depth how much deeper its arrays may nest
+ * @returns {{ value: Value } | { error: string }}
+ */
+function validateAt(spec, input, depth) {
+  if (spec.type === 'array') return validateArray(spec, input, depth);
   const choices = spec.validate.in;
   if (choices) {
     const choice = choices.find((listed) => String(listed) === String(input));
@@ -111,6 +195,37 @@ export function validate(spec, input) {
   if (min !== null && number < min) return { error: `must be at least ${min}` };
   if (max !== null && number > max) return { error: `must be at most ${max}` };
   return { value: number };
+}
+
+/**
+ * An array a list gave, or a text field of its JSON: each element as `elementSpec` takes it.
+ * @param {ParamSpec} spec an 'array' one
+ * @param {Value} input
+ * @param {number} depth
+ * @returns {{ value: Value } | { error: string }}
+ */
+function validateArray(spec, input, depth) {
+  let items = input;
+  if (typeof items === 'string') {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      return { error: AN_ARRAY };
+    }
+  }
+  if (!Array.isArray(items) || depth === 0) return { error: AN_ARRAY };
+  const element = elementSpec(spec);
+  /** @type {ParamValue[]} */
+  const read = [];
+  for (const [index, item] of items.entries()) {
+    const result =
+      element.type === 'array' && typeof item !== 'string' && !Array.isArray(item)
+        ? { error: AN_ARRAY }
+        : validateAt(element, item, depth - 1);
+    if ('error' in result) return { error: `[${index}] ${result.error}` };
+    read.push(result.value);
+  }
+  return { value: read };
 }
 
 /**

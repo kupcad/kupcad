@@ -11,6 +11,7 @@ export { appendLines, linesOfLog, linesOfRun } from './console.js';
 export { problemsOf, runStatusOf } from './run-status.js';
 export { localSettings, memorySettings, sizeSetting } from './settings.js';
 export { watchTokens } from './theme.js';
+export { plainValues } from './values.svelte.js';
 export { connectViewport } from './viewport-socket.js';
 
 /** @typedef {import('./console.js').ConsoleLine} ConsoleLine */

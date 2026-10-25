@@ -161,7 +161,7 @@ describe('ViewerPanel', () => {
       throw new Error('the server stopped');
     };
     const { webview, log } = open(server);
-    webview.receive({ type: 'setParams', uri: PART_URI, values: { w: [3] } });
+    webview.receive({ type: 'setParams', uri: PART_URI, values: { w: { a: 3 } } });
     expect(server.asked).toEqual([]);
     expect(log.lines[0]).toMatch(/^warn: The viewer sent a message of no known shape/);
     await vi.waitFor(() => expect(log.lines).toContain('error: show: the server stopped'));

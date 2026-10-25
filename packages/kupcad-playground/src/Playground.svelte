@@ -21,6 +21,7 @@
     linesOfRun,
     localSettings,
     ParamsPanel,
+    plainValues,
     problemsOf,
     runStatusOf,
     sizeSetting,
@@ -130,7 +131,7 @@
   /** @param {string} next the user's script */
   function edited(next) {
     findings = [];
-    runner?.run(next, $state.snapshot(overrides));
+    runner?.run(next, plainValues(overrides));
   }
 
   /** @param {ParamValues} values the panel's */
@@ -149,7 +150,7 @@
     event.currentTarget.value = '';
     if (!core || !format) return;
     try {
-      const bytes = await core.build(value, { format, params: $state.snapshot(overrides) });
+      const bytes = await core.build(value, { format, params: plainValues(overrides) });
       download(bytes, `${name}.${format}`);
       notice = '';
     } catch (error) {

@@ -45,7 +45,11 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   title that folds away (a header bar of its own, `--kc-section-bg` and `--kc-section-fg`, VS
   Code's side bar section headers in its webview), the parameters of no group first: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
-  toggle, a text field; `step:` and `unit:` as given. A slider without a `step:` moves by 1
+  toggle, a text field, and for an array a list: a control per element (`elementSpec`: of the
+  kind its default's elements are, with the parameter's range, choices, step and unit; an array
+  in it a text field of its JSON), each with a remove, and an add that copies the last
+  (`newElement`), a refusal naming the element (`[1] must be a number`); `step:` and `unit:` as
+  given. A slider without a `step:` moves by 1
   (`stepOf`), and one over a range narrower than 1 by the power of ten that gives it ten
   positions at least; a value typed in its field is taken whatever its step. Each parameter is rows of its own, a line
   between one and the next: its `title:` (its name where it has none, and as the title's tooltip),
@@ -58,7 +62,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   `aria-invalid`). A choice
   with no value yet (the script computes its default, and no run took one) shows none.
   `overrides` (bindable) is what the panel sets; `onchange` gets it at each change, for the host
-  to send to the core.
+  to send to the core (`plainValues`, a state's values as plain data a message or a worker can
+  carry).
 * **`ConsolePanel`** (`console.js`): the console under a model, as OpenSCAD's: each run
   (`linesOfRun`: a line of how it went, then what it printed, its warnings and its error, a line
   that names a place clickable, `onreveal`) and a host's log (`linesOfLog`), the newest

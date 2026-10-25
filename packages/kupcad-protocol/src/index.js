@@ -28,13 +28,20 @@ export const SET_PARAMS_COMMAND = 'kupcad.setParams';
  */
 export const PREVIEW_COMMAND = 'kupcad.preview';
 
-export { isHostMessage, isParamValues, isViewerMessage } from './messages.js';
+export { isHostMessage, isParamValues, isViewerMessage, MAX_ARRAY_DEPTH } from './messages.js';
 export { characterAt } from './places.js';
 export { errorText } from './error-text.js';
 export { whyBuildFailed } from './build-output.js';
 export { EXPORT_FORMATS } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
-export { anotherDocument, ScriptValues, VIEWPORT_HOST, viewportUrl } from './host.js';
+export {
+  anotherDocument,
+  paramOptions,
+  paramText,
+  ScriptValues,
+  VIEWPORT_HOST,
+  viewportUrl,
+} from './host.js';
 
 /** The bytes before a frame's header: its length, u32 little-endian. */
 const LENGTH_BYTES = 4;

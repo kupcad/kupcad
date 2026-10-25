@@ -3,7 +3,10 @@
 // what the viewer asks the host to do. Each side reads the other's messages with a guard, as
 // they arrive untyped (`postMessage`).
 
-/** @import { HostMessage, ParamValues, ViewerMessage } from './types.js' */
+/** @import { HostMessage, ParamValue, ParamValues, ViewerMessage } from './types.js' */
+
+/** Arrays nested deeper than this are no parameter's value (core/src/core/param_values.zig's). */
+export const MAX_ARRAY_DEPTH = 32;
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -13,15 +16,23 @@ const isString = (value) => typeof value === 'string';
 const isPlace = (value) => Number.isInteger(value) && /** @type {number} */ (value) >= 1;
 
 /**
- * Whether `value` is parameter values: names to a number, a string or a boolean.
+ * Whether `value` is parameter values: names to a number, a string, a boolean, or an array of
+ * them.
  * @param {unknown} value
  * @returns {value is ParamValues}
  */
 export function isParamValues(value) {
-  return (
-    isObject(value) &&
-    Object.values(value).every((v) => ['number', 'string', 'boolean'].includes(typeof v))
-  );
+  return isObject(value) && Object.values(value).every((v) => isParamValue(v, MAX_ARRAY_DEPTH));
+}
+
+/**
+ * @param {unknown} value
+ * @param {number} depth how much deeper its arrays may nest
+ * @returns {value is ParamValue}
+ */
+function isParamValue(value, depth) {
+  if (Array.isArray(value)) return depth > 0 && value.every((v) => isParamValue(v, depth - 1));
+  return ['number', 'string', 'boolean'].includes(typeof value);
 }
 
 /** Each host message's fields, checked: by its type. */

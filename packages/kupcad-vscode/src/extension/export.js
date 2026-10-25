@@ -2,7 +2,7 @@
 // so what is written is what the CLI builds. Free of the `vscode` import.
 
 import { execFile } from 'node:child_process';
-import { whyBuildFailed } from '@kupcad/protocol';
+import { paramOptions, whyBuildFailed } from '@kupcad/protocol';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
 /** What a build may say, at most: its log and why it failed. */
@@ -19,7 +19,7 @@ export class BuildError extends Error {
 
 /**
  * `kupcad build`'s arguments: the script, the output in `format` (whatever its name's extension),
- * and a `-p name=value` for each value.
+ * and a `-p name=value` for each value (`paramOptions`).
  * @param {string} script
  * @param {string} output
  * @param {ExportFormat} format
@@ -27,8 +27,7 @@ export class BuildError extends Error {
  * @returns {string[]}
  */
 export function buildArguments(script, output, format, values) {
-  const params = Object.entries(values).flatMap(([name, value]) => ['-p', `${name}=${value}`]);
-  return ['build', script, '-o', output, '-f', format, ...params];
+  return ['build', script, '-o', output, '-f', format, ...paramOptions(values)];
 }
 
 /**

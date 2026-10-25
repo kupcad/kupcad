@@ -109,14 +109,15 @@ export interface Preview { header: FrameHeader; model: Model }
 /** `kupcad doc`'s schema, as extract_params_wasm and every frame give it. */
 export interface UiSchema { meta: Meta; parameters: ParamSpec[] }
 export interface Meta { title: string | null; description: string | null; author: string | null }
+export type ParamValue = number | string | boolean | ParamValue[];   // arrays nested at most 32 deep
 export interface ParamSpec {
   name: string;
-  type: 'number' | 'string' | 'boolean';   // a Symbol parameter is a 'string' with `validate.in`
-  default_value: number | string | boolean | null;   // null when the default is computed
+  type: 'number' | 'string' | 'boolean' | 'array';   // `type:`'s, else the default's, else 'string'; a Symbol parameter is a 'string' with `validate.in`
+  default_value: ParamValue | null;   // null when there is none (nil), or the default is computed
   validate: { min: number | null; max: number | null; in: (number | string | boolean)[] | null };
   step: number | null; unit: string | null; group: string | null;
 }
-export type ParamValues = Record<string, number | string | boolean>;
+export type ParamValues = Record<string, ParamValue>;
 
 /** check_code_wasm's findings; `check --format json` adds the file's `path`. */
 export interface Finding extends Range {

@@ -1,9 +1,25 @@
 // What every host of the viewer's page does alike (the VS Code extension's panel, the desktop
-// app's page): keeps the values each script's parameters were given, reads the viewport
-// socket's URL from the port the language server names, and takes a page's message about the
-// document shown alone. The hosts differ in the rest (presets, exports, where a place is shown).
+// app's page): keeps the values each script's parameters were given, and writes them as
+// `kupcad build -p` takes them, reads the viewport socket's URL from the port the language
+// server names, and takes a page's message about the document shown alone. The hosts differ in the rest (presets, exports, where a place is shown).
 
-/** @import { ParamValues, ShownDocument, ViewerMessage } from './types.js' */
+/** @import { ParamValue, ParamValues, ShownDocument, ViewerMessage } from './types.js' */
+
+/**
+ * `values` as `kupcad build` options: `-p name=text` each, an array's text its JSON (`String`
+ * wrote `[10, 20]` as `10,20`, which no Array parameter reads).
+ * @param {ParamValues} values
+ * @returns {string[]}
+ */
+export const paramOptions = (values) =>
+  Object.entries(values).flatMap(([name, value]) => ['-p', `${name}=${paramText(value)}`]);
+
+/**
+ * `value` as the text after `-p name=`.
+ * @param {ParamValue} value
+ * @returns {string}
+ */
+export const paramText = (value) => (Array.isArray(value) ? JSON.stringify(value) : String(value));
 
 /** Where the language server's viewport socket listens. */
 export const VIEWPORT_HOST = '127.0.0.1';

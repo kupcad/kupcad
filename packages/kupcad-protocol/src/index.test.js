@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   isCompatible,
+  MAX_ARRAY_DEPTH,
+  PREVIEW_COMMAND,
   PROTOCOL_VERSION,
   ProtocolError,
   readFrame,
   SET_PARAMS_COMMAND,
-  PREVIEW_COMMAND,
   VIEWPORT_READY_NOTIFICATION,
 } from './index.js';
 // Headers the core's preview worker sent (their timings made fixed)
@@ -116,6 +117,9 @@ describe('the protocol', () => {
   it("is the core's: its version and its names are the ones the core's sources declare", () => {
     expect(coreSource('preview/frame.zig')).toContain(
       `pub const PROTOCOL_VERSION: u32 = ${PROTOCOL_VERSION};`,
+    );
+    expect(coreSource('core/param_values.zig')).toContain(
+      `pub const MAX_ARRAY_DEPTH = ${MAX_ARRAY_DEPTH};`,
     );
     const lsp = coreSource('cli/lsp.zig');
     expect(lsp).toContain(

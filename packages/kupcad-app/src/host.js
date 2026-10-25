@@ -7,6 +7,7 @@ import {
   anotherDocument,
   EXPORT_FORMATS,
   errorText,
+  paramText,
   ScriptValues,
   whyBuildFailed,
 } from '@kupcad/protocol';
@@ -88,7 +89,7 @@ export function createHost(services) {
       return;
     }
     const params = Object.entries(values.of(script.uri)).map(
-      ([name, value]) => /** @type {[string, string]} */ ([name, String(value)]),
+      ([name, value]) => /** @type {[string, string]} */ ([name, paramText(value)]),
     );
     try {
       await services.exportModel(script.path, output, format, params);

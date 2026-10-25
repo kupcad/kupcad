@@ -30,6 +30,10 @@ describe('export', () => {
         width: 40,
         hollow: true,
         label: 'A b=c',
+        holes: [
+          [0, 0],
+          [10, 0],
+        ],
       }),
     ).toEqual([
       'build',
@@ -44,6 +48,8 @@ describe('export', () => {
       'hollow=true',
       '-p',
       'label=A b=c',
+      '-p',
+      'holes=[[0,0],[10,0]]',
     ]);
     // A name without the format's extension is still written in it
     expect(buildArguments('/w/part.kup', '/w/part', '3mf', {})).toEqual([
