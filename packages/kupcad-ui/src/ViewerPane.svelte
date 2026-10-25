@@ -17,7 +17,7 @@
   import { watchTokens } from './theme.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
-  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
   /** @import { Snippet } from 'svelte' */
   /** @import { RunStatus } from './run-status.js' */
@@ -104,15 +104,17 @@
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
 
-  // The view follows the viewer's (its keys, and a turn by hand, change it too), and the
-  // tooltip what the pointer is over
+  // The view follows the viewer's (its keys, and a turn by hand, change it too), the section
+  // too (the wheel with Option moves it), and the tooltip what the pointer is over
   $effect(() => {
     const shown = viewer;
     if (!shown) return;
     shown.addEventListener('view', followView);
+    shown.addEventListener('section', followSection);
     shown.addEventListener('hover', followHover);
     return () => {
       shown.removeEventListener('view', followView);
+      shown.removeEventListener('section', followSection);
       shown.removeEventListener('hover', followHover);
     };
   });
@@ -120,6 +122,14 @@
   /** @param {Event} event the viewer's 'view' */
   function followView(event) {
     view = /** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view;
+  }
+
+  /** @param {Event} event the viewer's 'section' */
+  function followSection(event) {
+    const moved = /** @type {CustomEvent<{ section: Section }>} */ (event).detail.section;
+    sectioned = true;
+    axis = moved.axis;
+    offset = moved.offset;
   }
 
   /** @param {Event} event the viewer's 'hover' */

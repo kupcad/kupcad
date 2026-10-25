@@ -175,6 +175,21 @@ describe('ViewerPane', () => {
     expect(Number(slider.max)).toBeCloseTo(20, 6);
   });
 
+  it('follows the section the wheel moves in the viewer, with Option', async () => {
+    const { viewer } = await pane();
+    const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
+    // The parts reach from z 0 to 7: 2000 pixels cross them, from the top down
+    await fireEvent.wheel(canvas, { deltaY: 1000, altKey: true });
+    expect(
+      /** @type {HTMLInputElement} */ (screen.getByRole('checkbox', { name: 'Section' })).checked,
+    ).toBe(true);
+    const slider = /** @type {HTMLInputElement} */ (
+      screen.getByRole('slider', { name: 'Section offset' })
+    );
+    expect(Number(slider.value)).toBeCloseTo(3.5, 1);
+    expect(viewer.section?.offset).toBeCloseTo(3.5, 6);
+  });
+
   it('says how the viewer looks at a drawing: from the top, orthographic', async () => {
     const { viewer } = await pane('square(10)');
     expect(viewer.projection).toBe('orthographic');

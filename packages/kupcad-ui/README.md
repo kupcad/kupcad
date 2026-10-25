@@ -35,8 +35,9 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   By the pointer a tooltip says what is under it: the part, its copies, volume and size (the
   frame's), and the face, flat with its area and the way it faces, or curved (`measures.js`).
   `bind:viewer` gives the viewer itself. The controls show how the viewer looks (a drawing
-  switches it to the top view, orthographic), and a section stays where it was put through an
-  edit of the script, while the model still reaches it.
+  switches it to the top view, orthographic; a turn of the wheel with Option moves the section,
+  and its slider), and a section stays where it was put through an edit of the script, while the
+  model still reaches it.
 * **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
   toggle, a text field; `step:` and `unit:` as given. Each shows the value set in the panel, else
