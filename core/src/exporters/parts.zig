@@ -230,18 +230,42 @@ fn identity(vm: *const VM, part: Part) u64 {
     return hasher.final();
 }
 
-/// Its volume and size, from the shape as it is made.
-fn measure(vm: *VM, part: *Part) !void {
+/// A part's volume (mm³) and the extent of its bounding box along x, y and z (mm), as it
+/// is made.
+pub const Measures = struct { volume: f64, size: [3]f64 };
+
+/// What a part's measures are when its engine can't take them: refused (the bill of
+/// materials, whose numbers they are), or left out (a preview, which shows the part anyway).
+pub const Unmeasurable = enum { refuse, leave_out };
+
+/// Its volume and size, from the shape as it is made; for a shape whose engine can't take
+/// them, a NotImplementedError, or null, as `unmeasurable` says.
+pub fn measuresOf(vm: *VM, part: Part, unmeasurable: Unmeasurable) !?Measures {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
-    const shape = try shapeOf(vm, part.*);
+    const shape = try shapeOf(vm, part);
     vm.push(shape);
     const solid = try vm.ensureConcrete(shape);
-    try vm.requireFeature(solid.engine, .volume);
-    try vm.requireFeature(solid.engine, .bounding_box);
-    part.volume = kernel.volume(solid);
-    const box = kernel.boundingBox(solid) orelse return vm.fail(.GeometryError, "bom could not compute the bounding box of a part", .{});
-    for (&part.size, box.min, box.max) |*extent, low, high| extent.* = high - low;
+    for ([_]kernel.Feature{ .volume, .bounding_box }) |feature| {
+        if (kernel.supports(solid.engine, feature)) continue;
+        if (unmeasurable == .leave_out) return null;
+        try vm.requireFeature(solid.engine, feature);
+    }
+    const box = kernel.boundingBox(solid) orelse return switch (unmeasurable) {
+        .leave_out => null,
+        .refuse => vm.fail(.GeometryError, "bom could not compute the bounding box of a part", .{}),
+    };
+    var size: [3]f64 = undefined;
+    for (&size, box.min, box.max) |*extent, low, high| extent.* = high - low;
+    return .{ .volume = kernel.volume(solid), .size = size };
+}
+
+/// Its volume and size, which the bill of materials gives: an engine that can't take them
+/// is refused.
+fn measure(vm: *VM, part: *Part) !void {
+    const measured = (try measuresOf(vm, part.*, .refuse)).?;
+    part.volume = measured.volume;
+    part.size = measured.size;
 }
 
 /// `part`'s shape, as made, before its placement: a new Solid the caller roots while it

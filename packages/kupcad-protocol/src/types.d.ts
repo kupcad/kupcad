@@ -33,6 +33,12 @@ export interface Part {
   /** "#rrggbb", or null for a part without a colour of its own. */
   color: string | null;
   opacity: number;
+  /**
+   * Its volume (mm³) and size (its bounding box's extent along x, y and z, mm), as it is made,
+   * before its copies are placed: null, or absent from an older core, where it wasn't measured.
+   */
+  volume?: number | null;
+  size?: [number, number, number] | null;
 }
 
 /**

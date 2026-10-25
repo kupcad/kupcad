@@ -172,7 +172,8 @@ fn shown(arena: std.mem.Allocator, vm: *VM, warnings: *std.ArrayList(frame.Warni
 }
 
 /// The parts `solids` are copies of, each with the names of its copies' nodes as the GLB
-/// export gives them (parts.CopyNames, in the Solids' order).
+/// export gives them (parts.CopyNames, in the Solids' order), and its measures where its
+/// engine can take them.
 fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]const frame.Part {
     const grouping = try parts_mod.group(vm, arena, solids);
     var names = try parts_mod.CopyNames.init(arena, &grouping);
@@ -180,13 +181,18 @@ fn partsOf(arena: std.mem.Allocator, vm: *VM, solids: []const value.Value) ![]co
     @memset(nodes, .empty);
     for (grouping.copies) |copy| try nodes[copy.part].append(arena, try names.next(arena, copy));
     const out = try arena.alloc(frame.Part, grouping.parts.len);
-    for (grouping.parts, nodes, out) |part, part_nodes, *o| o.* = .{
-        .name = part_nodes.items[0],
-        .count = part.count,
-        .nodes = part_nodes.items,
-        .color = if (part.material) |m| try hexColor(arena, m) else null,
-        .opacity = if (part.material) |m| m.alpha else 1,
-    };
+    for (grouping.parts, nodes, out) |part, part_nodes, *o| {
+        const measured = try parts_mod.measuresOf(vm, part, .leave_out);
+        o.* = .{
+            .name = part_nodes.items[0],
+            .count = part.count,
+            .nodes = part_nodes.items,
+            .color = if (part.material) |m| try hexColor(arena, m) else null,
+            .opacity = if (part.material) |m| m.alpha else 1,
+            .volume = if (measured) |m| m.volume else null,
+            .size = if (measured) |m| m.size else null,
+        };
+    }
     return out;
 }
 

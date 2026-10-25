@@ -51,6 +51,11 @@ pub const Part = struct {
     /// "#rrggbb", or null for a part without a colour of its own.
     color: ?[]const u8,
     opacity: f64,
+    /// Its volume, mm³, and its size (the extent of its bounding box along x, y and z, mm), as
+    /// it is made, before its copies are placed: null where its engine can't measure them.
+    /// Added in protocol version 1, optional: no version bump.
+    volume: ?f64 = null,
+    size: ?[3]f64 = null,
 };
 
 /// A warning of the run, at the line and column (1-based, the column in UTF-8 bytes) the

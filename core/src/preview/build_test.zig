@@ -58,6 +58,14 @@ test "preview: a model's Solids as GLB, its parts named as the GLB's nodes, with
     try testing.expectEqualStrings("bolt", h.parts[1].name);
     try testing.expectEqual(@as(u32, 2), h.parts[1].count);
     try testing.expectEqualStrings("#cc3333", h.parts[1].color.?);
+    // Each part measured as made, before its copies are placed: the plate 25 mm a side (the
+    // run's width), the bolt 5 mm high and up to 4 across, its facets short of a cylinder's
+    try testing.expectApproxEqAbs(@as(f64, 25 * 25 * 25), h.parts[0].volume.?, 1e-6);
+    try testing.expectEqualSlices(f64, &.{ 25, 25, 25 }, &h.parts[0].size.?);
+    const bolt = h.parts[1];
+    for (bolt.size.?[0..2]) |across| try testing.expect(across > 3.7 and across <= 4 + 1e-9);
+    try testing.expectApproxEqAbs(@as(f64, 5), bolt.size.?[2], 1e-9);
+    try testing.expect(bolt.volume.? > 0.8 * std.math.pi * 4 * 5 and bolt.volume.? < std.math.pi * 4 * 5);
     // Every node a part names is a node of the GLB, by the same name
     const nodes = try glbNodeNames(arena.allocator(), read.body);
     var named: usize = 0;
