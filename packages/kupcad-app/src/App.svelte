@@ -231,15 +231,13 @@
         onchange={(size) => settings.set(KEYS.editor, size)}
       />
       <section class="preview" aria-label="Preview">
-        {#key viewportUrl}
-          <PreviewPanel
-            host={preview.host}
-            {viewportUrl}
-            {viewerOptions}
-            {settings}
-            presets={false}
-          />
-        {/key}
+        <PreviewPanel
+          host={preview.host}
+          {viewportUrl}
+          {viewerOptions}
+          {settings}
+          presets={false}
+        />
       </section>
     </div>
   {:else}

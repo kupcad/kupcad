@@ -107,28 +107,36 @@
         presets = message.names;
       }
     });
-    const disconnect = viewportUrl
-      ? connect(viewportUrl, {
-          open: () => host.post({ type: 'ready' }),
-          state: (open) => (connected = open),
-          frame: (next) => {
-            // The socket sends every viewer the frame of the document the server shows: one of
-            // another (late, or with none shown here) isn't this page's
-            if (!shown || next.header.document !== shown.uri) return;
-            preview = next;
-            unshown = '';
-            const thisRun = JSON.stringify(next.header);
-            if (thisRun !== lastRun) {
-              lastRun = thisRun;
-              consoleLines = appendLines(consoleLines, linesOfRun(next.header, shown.name));
-            }
-          },
-          problem: (message) => host.post({ type: 'problem', message }),
-        })
-      : () => {};
+    return stopListening;
+  });
+
+  // The socket of the server up now: one started again (it ended) has another, and the panel
+  // keeps what it shows and its console across it
+  $effect(() => {
+    const url = viewportUrl;
+    if (!url) return;
+    const disconnect = untrack(() =>
+      connect(url, {
+        open: () => host.post({ type: 'ready' }),
+        state: (open) => (connected = open),
+        frame: (next) => {
+          // The socket sends every viewer the frame of the document the server shows: one of
+          // another (late, or with none shown here) isn't this page's
+          if (!shown || next.header.document !== shown.uri) return;
+          preview = next;
+          unshown = '';
+          const thisRun = JSON.stringify(next.header);
+          if (thisRun !== lastRun) {
+            lastRun = thisRun;
+            consoleLines = appendLines(consoleLines, linesOfRun(next.header, shown.name));
+          }
+        },
+        problem: (message) => host.post({ type: 'problem', message }),
+      }),
+    );
     return () => {
-      stopListening();
       disconnect();
+      connected = false;
     };
   });
 

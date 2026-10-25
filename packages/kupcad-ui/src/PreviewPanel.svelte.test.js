@@ -50,7 +50,7 @@ function page({
       opened.closed = true;
     };
   };
-  const { unmount } = render(PreviewPanel, {
+  const { unmount, rerender } = render(PreviewPanel, {
     props: {
       host,
       viewportUrl,
@@ -63,6 +63,8 @@ function page({
   return {
     posted,
     unmount,
+    /** The server's socket is at `url` now (null: there is none). @param {string | null} url */
+    viewport: (url) => rerender({ viewportUrl: url }),
     get socket() {
       return /** @type {{ url: string, on: ViewportEvents, closed: boolean }} */ (socket);
     },
@@ -94,6 +96,24 @@ describe('PreviewPanel', () => {
     expect(status()).toBe('Open a .kup file to see its model.');
     await viewer.tell({ type: 'document', document: PART });
     expect(status()).toBe('Running part.kup…');
+  });
+
+  it('follows the server to its socket as it starts again, its console kept', async () => {
+    const viewer = page({ viewportUrl: null });
+    await viewer.tell({ type: 'document', document: PART });
+    await viewer.viewport('ws://127.0.0.1:9001');
+    const first = viewer.socket;
+    expect(first.url).toBe('ws://127.0.0.1:9001');
+    await viewer.tell({ type: 'log', text: 'kupcad lsp ended (code 1); starting it again\n' });
+    await viewer.viewport(null);
+    expect(first.closed).toBe(true);
+    expect(status()).toBe('Waiting for the KupCAD language server…');
+    await viewer.viewport('ws://127.0.0.1:9002');
+    expect(viewer.socket.url).toBe('ws://127.0.0.1:9002');
+    viewer.socket.on.state(true);
+    await tick();
+    expect(status()).toBe('Running part.kup…');
+    expect(consoleLines()).toEqual(['kupcad lsp ended (code 1); starting it again']);
   });
 
   it("asks the host for a frame when the socket opens, and tells it a frame it can't read", () => {
