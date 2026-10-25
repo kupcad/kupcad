@@ -35,15 +35,26 @@ export function frameMessage(message) {
   return framed;
 }
 
-/** The messages in a stream of LSP frames, as its chunks arrive, cut wherever they are. */
+/**
+ * The messages in a stream of LSP frames, as its chunks arrive, cut wherever they are. A stream
+ * that isn't framed so (a header with no length, or none where one should be) is `onError`'s:
+ * the messages before the fault are read, what follows it is dropped, and reading starts over
+ * with the next chunk.
+ */
 export class MessageReader {
   #pending = new Uint8Array(0);
+  /** @type {(error: FramingError) => void} */
+  #onError;
+
+  /** @param {(error: FramingError) => void} onError */
+  constructor(onError) {
+    this.#onError = onError;
+  }
 
   /**
    * The messages `chunk` completes, in order; what it starts waits for the next.
    * @param {Uint8Array} chunk
    * @returns {string[]}
-   * @throws {FramingError} for a header with no length, or none where one should be
    */
   push(chunk) {
     const joined = new Uint8Array(this.#pending.length + chunk.length);
@@ -56,13 +67,15 @@ export class MessageReader {
       const headerEnd = indexOf(joined, HEADER_END, at);
       if (headerEnd === -1) {
         if (joined.length - at > MAX_HEADER_BYTES) {
-          throw new FramingError(`no LSP header in the first ${MAX_HEADER_BYTES} bytes`);
+          return this.#unframed(messages, `no LSP header in the first ${MAX_HEADER_BYTES} bytes`);
         }
         break;
       }
       const header = new TextDecoder().decode(joined.subarray(at, headerEnd));
       const length = CONTENT_LENGTH.exec(header)?.[1];
-      if (length === undefined) throw new FramingError(`an LSP header with no length: ${header}`);
+      if (length === undefined) {
+        return this.#unframed(messages, `an LSP header with no length: ${header}`);
+      }
       const bodyStart = headerEnd + HEADER_END.length;
       const bodyEnd = bodyStart + Number(length);
       if (bodyEnd > joined.length) break;
@@ -70,6 +83,17 @@ export class MessageReader {
       at = bodyEnd;
     }
     this.#pending = joined.slice(at);
+    return messages;
+  }
+
+  /**
+   * `messages`, read before a fault in the framing: what follows it is dropped.
+   * @param {string[]} messages
+   * @param {string} why
+   */
+  #unframed(messages, why) {
+    this.#pending = new Uint8Array(0);
+    this.#onError(new FramingError(why));
     return messages;
   }
 }
@@ -106,17 +130,9 @@ function indexOf(bytes, needle, from) {
 export function streamTransport(stream, onError) {
   /** @type {Set<(message: string) => void>} */
   const handlers = new Set();
-  const reader = new MessageReader();
+  const reader = new MessageReader(onError);
   stream.read((chunk) => {
-    /** @type {string[]} */
-    let messages;
-    try {
-      messages = reader.push(chunk);
-    } catch (error) {
-      onError(/** @type {FramingError} */ (error));
-      return;
-    }
-    for (const message of messages) for (const handler of handlers) handler(message);
+    for (const message of reader.push(chunk)) for (const handler of handlers) handler(message);
   });
   return {
     send: (message) => stream.write(frameMessage(message)),

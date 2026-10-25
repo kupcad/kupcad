@@ -14,6 +14,10 @@ import {
 /** @import { ByteStream } from './language-server.js' */
 
 const decoder = new TextDecoder();
+/** A reader's `onError` where every stream is framed: one that isn't fails the test. */
+const unframed = (/** @type {FramingError} */ error) => {
+  throw error;
+};
 /** Two messages, one with a character of two UTF-8 bytes, as a server sends them back to back. */
 const TWO = [
   '{"jsonrpc":"2.0","id":1,"result":{"label":"é"}}',
@@ -47,7 +51,7 @@ afterEach(() => {
 function serverStream(answer) {
   /** @type {((chunk: Uint8Array) => void) | null} */
   let toClient = null;
-  const reader = new MessageReader();
+  const reader = new MessageReader(unframed);
   return {
     write(bytes) {
       for (const message of reader.push(bytes)) {
@@ -68,13 +72,13 @@ describe('frames', () => {
   it('read back as the messages, cut wherever the chunks are, a character included', () => {
     const stream = concat(TWO.map(frameMessage));
     for (let cut = 1; cut < stream.length; cut++) {
-      const reader = new MessageReader();
+      const reader = new MessageReader(unframed);
       const got = [...reader.push(stream.subarray(0, cut)), ...reader.push(stream.subarray(cut))];
       expect(got, `cut at ${cut}`).toEqual(TWO);
     }
     // Both in one chunk, and byte by byte
-    expect(new MessageReader().push(stream)).toEqual(TWO);
-    const bytewise = new MessageReader();
+    expect(new MessageReader(unframed).push(stream)).toEqual(TWO);
+    const bytewise = new MessageReader(unframed);
     expect([...stream].flatMap((byte) => bytewise.push(Uint8Array.of(byte)))).toEqual(TWO);
   });
 
@@ -82,11 +86,26 @@ describe('frames', () => {
     const typed = new TextEncoder().encode(
       'Content-Type: application/vscode-jsonrpc; charset=utf-8\r\ncontent-length: 2\r\n\r\n{}',
     );
-    expect(new MessageReader().push(typed)).toEqual(['{}']);
+    expect(new MessageReader(unframed).push(typed)).toEqual(['{}']);
+    const onError = vi.fn();
     const lengthless = new TextEncoder().encode('Content-Type: x\r\n\r\n{}');
-    expect(() => new MessageReader().push(lengthless)).toThrow(FramingError);
+    expect(new MessageReader(onError).push(lengthless)).toEqual([]);
     const noise = new TextEncoder().encode('x'.repeat(2048));
-    expect(() => new MessageReader().push(noise)).toThrow(FramingError);
+    expect(new MessageReader(onError).push(noise)).toEqual([]);
+    expect(onError.mock.calls.map(([error]) => error.message)).toEqual([
+      'an LSP header with no length: Content-Type: x',
+      'no LSP header in the first 1024 bytes',
+    ]);
+    expect(onError.mock.calls[0][0]).toBeInstanceOf(FramingError);
+  });
+
+  it('give the messages before a header that is no LSP header, and start over after it', () => {
+    const onError = vi.fn();
+    const reader = new MessageReader(onError);
+    const lengthless = new TextEncoder().encode('Content-Type: x\r\n\r\n{}');
+    expect(reader.push(concat([frameMessage('{"id":1}'), lengthless]))).toEqual(['{"id":1}']);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(reader.push(frameMessage('{"id":2}'))).toEqual(['{"id":2}']);
   });
 });
 

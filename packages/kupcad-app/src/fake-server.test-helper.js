@@ -23,7 +23,9 @@ export function fakeServer({
    * @param {ProcessEvents} on
    */
   const spawn = async (origin, on) => {
-    const reader = new MessageReader();
+    const reader = new MessageReader((error) => {
+      throw error;
+    });
     const process = { origin, on, received: /** @type {any[]} */ ([]), killed: false };
     processes.push(process);
     /** @param {object} message */

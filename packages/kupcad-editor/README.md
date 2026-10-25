@@ -48,7 +48,8 @@ editor.dispose();
   `kupcad lsp` (the desktop app), over any stream of bytes, its child process's stdin and
   stdout. `streamTransport(stream, onError)` frames each message as LSP frames them on stdio
   (`Content-Length`, then the JSON) and reads the server's frames back however its chunks are
-  cut (`MessageReader`); `languageServerClient({ rootUri, notifications })` is the client with
+  cut (`MessageReader`); a stream that isn't framed so is `onError`'s, the messages before the
+  fault read and reading started over with the next chunk. `languageServerClient({ rootUri, notifications })` is the client with
   every feature the package has, a server's own notifications (`kupcad/viewportReady`) handled
   by the host. An editor given `languageServer: { client, uri }` opens its script on the server
   (`kupcad`, its language) and takes the server's diagnostics, completion (in place of the
