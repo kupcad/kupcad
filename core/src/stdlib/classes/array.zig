@@ -296,19 +296,43 @@ pub fn arrayMin(vm: *VM, arr: *value.ObjArray) !value.Value {
 fn arrayExtreme(vm: *VM, arr: *value.ObjArray, comptime name: []const u8, comptime wanted: std.math.Order) !value.Value {
     const items = arr.items.items;
     if (items.len == 0) return value.Value.initNil();
+    try requireOrdered(vm, items, name, .items, "");
     var best = items[0];
-    for (items, 0..) |item, i| {
-        // Each element, not only the first: after a String, a nil passed the check below
-        // and was read as a String (found by the runtime fuzz test)
-        if (!item.isNumber() and !item.isString()) return vm.fail(.TypeError, name ++ " needs Numbers or Strings, got {s} at index {d}", .{ vm.typeName(item), i });
-        if (item.isNumber() != best.isNumber()) return vm.fail(.TypeError, name ++ " can't compare {s} with {s}", .{ vm.typeName(best), vm.typeName(item) });
-        if (item.isNumber() and std.math.isNan(item.asNumber())) {
-            return vm.fail(.MathError, name ++ ": the Array holds NaN at index {d}", .{i});
-        }
-        const order = if (item.isNumber()) std.math.order(item.asNumber(), best.asNumber()) else std.mem.order(u8, item.asString().chars, best.asString().chars);
-        if (order == wanted) best = item;
-    }
+    for (items) |item| if (orderOf(item, best) == wanted) {
+        best = item;
+    };
     return best;
+}
+
+/// What a native that orders values compares, as its errors say it: the Array's items, or
+/// the keys its block gave them.
+const Compared = enum { items, keys };
+
+/// Checks `values` are all Numbers or all Strings, as `sort`, `min`, `max` and their `_by`s
+/// order them (`orderOf`), and none NaN, which orders with nothing; `hint` follows a TypeError
+/// of the items. Each value, not only the first: after a String, a nil passed and was read
+/// as a String (found by the runtime fuzz test).
+fn requireOrdered(vm: *VM, values: []const value.Value, comptime method: []const u8, comptime compared: Compared, comptime hint: []const u8) !void {
+    for (values, 0..) |v, i| {
+        if (!v.isNumber() and !v.isString()) return switch (compared) {
+            .items => vm.fail(.TypeError, method ++ " needs Numbers or Strings, got {s} at index {d}" ++ hint, .{ vm.typeName(v), i }),
+            .keys => vm.fail(.TypeError, method ++ ": the block gives Numbers or Strings to compare, got {s} for the item at index {d}", .{ vm.typeName(v), i }),
+        };
+        if (v.isNumber() != values[0].isNumber()) return switch (compared) {
+            .items => vm.fail(.TypeError, method ++ " can't compare {s} with {s}" ++ hint, .{ vm.typeName(values[0]), vm.typeName(v) }),
+            .keys => vm.fail(.TypeError, method ++ ": the block gave {s} and {s}, which can't be compared", .{ vm.typeName(values[0]), vm.typeName(v) }),
+        };
+        if (v.isNumber() and std.math.isNan(v.asNumber())) return switch (compared) {
+            .items => vm.fail(.MathError, method ++ ": the Array holds NaN at index {d}", .{i}),
+            .keys => vm.fail(.MathError, method ++ ": the block gave NaN for the item at index {d}", .{i}),
+        };
+    }
+}
+
+/// How two values `requireOrdered` passed order: Numbers by value, Strings bytewise.
+fn orderOf(a: value.Value, b: value.Value) std.math.Order {
+    if (a.isNumber()) return std.math.order(a.asNumber(), b.asNumber());
+    return std.mem.order(u8, a.asString().chars, b.asString().chars);
 }
 
 /// Array#sum: the Numbers added up (0 for an empty Array). Anything else is a TypeError
@@ -327,8 +351,8 @@ pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
     return value.Value.initNumber(sum);
 }
 
-/// How Array#sort orders two values: natively for Numbers or Strings, else by the block,
-/// which must give a Number (its sign). The block can raise or `break`, which a sort's
+/// How Array#sort orders two values: natively for Numbers or Strings (`orderOf`, the items
+/// checked first), else by the block, which must give a Number (its sign). The block can raise or `break`, which a sort's
 /// comparator can't report, so the first such outcome is kept here and the sort finishes
 /// in whatever order; the native then raises (or returns the break value).
 const SortOrder = struct {
@@ -359,9 +383,7 @@ const SortOrder = struct {
             }
             return res.asNumber() < 0;
         }
-        if (a.isNumber() and b.isNumber()) return a.asNumber() < b.asNumber();
-        if (a.isString() and b.isString()) return std.mem.order(u8, a.asString().chars, b.asString().chars) == .lt;
-        return self.vm.fail(.ArgumentError, "sort can't compare {s} with {s}; give it a block", .{ self.vm.typeName(a), self.vm.typeName(b) });
+        return orderOf(a, b) == .lt;
     }
 };
 
@@ -373,13 +395,14 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
+    if (block == null) try requireOrdered(vm, arr.items.items, "sort", .items, "; give it a block");
     const new_arr = try scope.array();
     try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items);
 
-    var order = SortOrder{ .vm = vm, .block = block };
-    std.sort.pdq(value.Value, new_arr.items.items, &order, SortOrder.lessThan);
-    if (order.failed) |err| return err;
-    if (order.broke) |v| return v;
+    var sorting = SortOrder{ .vm = vm, .block = block };
+    std.sort.pdq(value.Value, new_arr.items.items, &sorting, SortOrder.lessThan);
+    if (sorting.failed) |err| return err;
+    if (sorting.broke) |v| return v;
     return value.Value.initObj(&new_arr.obj);
 }
 
@@ -670,21 +693,6 @@ fn keyed(vm: *VM, scope: HandleScope, arr: *value.ObjArray, closure: *value.ObjC
     return .{ .items = items, .keys = keys };
 }
 
-/// Checks the keys a block gave sort_by, min_by and max_by are all Numbers or all Strings,
-/// as `sort`, `min` and `max` compare, and none NaN.
-fn requireOrderedKeys(vm: *VM, keys: []const value.Value, comptime method: []const u8) !void {
-    for (keys, 0..) |key, i| {
-        if (!key.isNumber() and !key.isString()) return vm.fail(.TypeError, method ++ ": the block gives Numbers or Strings to compare, got {s} for the item at index {d}", .{ vm.typeName(key), i });
-        if (key.isNumber() != keys[0].isNumber()) return vm.fail(.TypeError, method ++ ": the block gave {s} and {s}, which can't be compared", .{ vm.typeName(keys[0]), vm.typeName(key) });
-        if (key.isNumber() and std.math.isNan(key.asNumber())) return vm.fail(.MathError, method ++ ": the block gave NaN for the item at index {d}", .{i});
-    }
-}
-
-fn keyOrder(a: value.Value, b: value.Value) std.math.Order {
-    if (a.isNumber()) return std.math.order(a.asNumber(), b.asNumber());
-    return std.mem.order(u8, a.asString().chars, b.asString().chars);
-}
-
 /// Array#sort_by { |x| key }: a copy ordered by each item's key (Numbers or Strings), the
 /// block called once per item; items with equal keys keep their order.
 pub fn arraySortBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !value.Value {
@@ -693,13 +701,13 @@ pub fn arraySortBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !v
     const by = try keyed(vm, scope, arr, closure);
     if (by.broke) |v| return v;
     const keys = by.keys.items.items;
-    try requireOrderedKeys(vm, keys, "sort_by");
+    try requireOrdered(vm, keys, "sort_by", .keys, "");
     const order = try vm.allocator.alloc(usize, keys.len);
     defer vm.allocator.free(order);
     for (order, 0..) |*o, i| o.* = i;
     std.mem.sort(usize, order, keys, struct {
         fn lessThan(ks: []const value.Value, a: usize, b: usize) bool {
-            return keyOrder(ks[a], ks[b]) == .lt;
+            return orderOf(ks[a], ks[b]) == .lt;
         }
     }.lessThan);
     const sorted = try vm.gc.allocateArrayOf(vm, by.items.items.items);
@@ -724,10 +732,10 @@ fn extremeBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure, comptime
     if (by.broke) |v| return v;
     const keys = by.keys.items.items;
     if (keys.len == 0) return value.Value.initNil();
-    try requireOrderedKeys(vm, keys, method);
+    try requireOrdered(vm, keys, method, .keys, "");
     var best: usize = 0;
     for (keys, 0..) |key, i| {
-        if (keyOrder(key, keys[best]) == wanted) best = i;
+        if (orderOf(key, keys[best]) == wanted) best = i;
     }
     return by.items.items.items[best];
 }

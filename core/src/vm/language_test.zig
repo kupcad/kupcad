@@ -93,7 +93,9 @@ test "Language: sort is bounded whatever the input, and reports what it can't co
         .{ .src = "s = (1..300).to_a.sort { |a, b| b <=> a }\nr = [s.first, s.last]", .expected = .{ .nums = &.{ 300, 1 } } },
         .{ .src = "r = [3, 1, 2].sort", .expected = .{ .nums = &.{ 1, 2, 3 } } },
         .{ .src = "r = [\"pear\", \"apple\", \"fig\"].sort.join(\",\")", .expected = .{ .str = "apple,fig,pear" } },
-        .{ .src = rescued("[1, \"a\"].sort"), .expected = .{ .str = "ArgumentError: sort can't compare String with Number; give it a block" } },
+        .{ .src = rescued("[1, \"a\"].sort"), .expected = .{ .str = "TypeError: sort can't compare Number with String; give it a block" } },
+        // NaN orders with nothing: the sort's order was whatever the comparisons gave
+        .{ .src = rescued("[3, Number::NAN, 1].sort"), .expected = .{ .str = "MathError: sort: the Array holds NaN at index 1" } },
         .{ .src = rescued("[2, 1].sort { |a, b| \"x\" }"), .expected = .{ .str = "TypeError: sort block must return a Number (-1, 0, 1)." } },
         .{ .src = rescued("[2, 1].sort { |a, b| raise \"no\" }"), .expected = .{ .str = "RuntimeError: no" } },
         .{ .src = "r = [2, 1, 3].sort { |a, b| break 7 }", .expected = .{ .num = 7 } },
