@@ -13,11 +13,16 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 pub const DEFAULT_PORT: u16 = 9001;
 /// Upper bound for the HTTP upgrade request. Browsers send ~500 bytes; anything past this is abuse.
 pub const MAX_HANDSHAKE_BYTES: usize = 8 * 1024;
-/// Hard cap on simultaneous connections (handshaking + upgraded). Each costs two OS threads.
+/// Hard cap on open connections (handshaking + upgraded). Each costs two OS threads. One more
+/// is let in past them by closing one still handshaking (makeRoom); ones closing count too,
+/// until their threads end, up to twice the cap.
 pub const MAX_CLIENTS: usize = 8;
 /// How long a connection may take to finish its upgrade request before it is closed, so a
 /// socket that connects and sends nothing can't hold one of the MAX_CLIENTS slots for good.
 pub const HANDSHAKE_TIMEOUT_MS: i64 = 5000;
+/// How long the accept loop waits after accept fails (out of file descriptors, say) before
+/// it tries again, instead of spinning.
+const ACCEPT_RETRY_MS: i64 = 50;
 /// Largest client->server frame we accept. The viewport only sends tiny control messages.
 pub const MAX_INCOMING_FRAME_BYTES: u64 = 64 * 1024;
 /// Browser origins allowed to open the viewport socket. Any web page can open a WebSocket to
@@ -382,13 +387,14 @@ pub const ViewportWsServer = struct {
             const stream = self.server.accept(self.io) catch |err| {
                 if (!self.running.load(.acquire)) break;
                 log.err("WebSocket accept error: {}", .{err});
+                self.io.sleep(std.Io.Duration.fromMilliseconds(ACCEPT_RETRY_MS), .awake) catch {};
                 continue;
             };
 
             self.mutex.lockUncancelable(self.io);
-            if (!self.running.load(.acquire) or self.clients.items.len >= MAX_CLIENTS) {
+            if (!self.running.load(.acquire) or !self.makeRoom()) {
                 // Bounded resources: refuse instead of spawning an unbounded number of threads.
-                if (self.running.load(.acquire)) log.warn("Viewport connection refused: {d} clients connected", .{MAX_CLIENTS});
+                if (self.running.load(.acquire)) log.warn("Viewport connection refused: {d} viewers connected", .{MAX_CLIENTS});
                 stream.close(self.io);
                 self.mutex.unlock(self.io);
                 continue;
@@ -414,6 +420,29 @@ pub const ViewportWsServer = struct {
             };
             thread.detach();
         }
+    }
+
+    /// Whether a connection may be let in; the server lock is held. Under MAX_CLIENTS open
+    /// ones it may; at the cap, one still handshaking is closed for it, so sockets that
+    /// connect and send nothing can't keep a viewer out (a viewer upgrades at once, and an
+    /// upgraded one is never closed so). Ones closing are listed until their threads end:
+    /// past twice the cap, none is let in.
+    fn makeRoom(self: *ViewportWsServer) bool {
+        if (self.clients.items.len >= 2 * MAX_CLIENTS) return false;
+        var open: usize = 0;
+        var handshaking: ?*Client = null;
+        for (self.clients.items) |c| {
+            c.mutex.lockUncancelable(self.io);
+            defer c.mutex.unlock(self.io);
+            if (c.closed) continue;
+            open += 1;
+            if (!c.upgraded and handshaking == null) handshaking = c;
+        }
+        if (open < MAX_CLIENTS) return true;
+        const closed = handshaking orelse return false;
+        log.warn("Viewport connection closed: still handshaking, and a new one came at the cap of {d}", .{MAX_CLIENTS});
+        closed.markClosed();
+        return true;
     }
 
     fn connectionThread(client: *Client) void {

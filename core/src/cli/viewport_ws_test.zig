@@ -65,6 +65,14 @@ test "ViewportWs: readHttpHeaders rejects oversized requests" {
     try testing.expectError(error.HeaderTooLarge, ws.readHttpHeaders(&big));
 }
 
+test "ViewportWs: readHttpHeaders says a request cut off before its blank line is incomplete" {
+    // The peer hung up mid-request, with room left to read more, as a socket's reader has:
+    // what it sent is no request to parse
+    var buffer: [ws.MAX_HANDSHAKE_BYTES]u8 = undefined;
+    var cut: testing.Reader = .init(&buffer, &.{.{ .buffer = browser_upgrade_request[0 .. browser_upgrade_request.len - 2] }});
+    try testing.expectError(error.IncompleteHandshake, ws.readHttpHeaders(&cut.interface));
+}
+
 test "ViewportWs: parseHandshake validates method, Upgrade and key" {
     const key_line = "Sec-WebSocket-Key: " ++ SEC_WEBSOCKET_KEY ++ "\r\n";
     const cases = [_]struct { req: []const u8, err: anyerror }{
