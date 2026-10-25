@@ -138,7 +138,8 @@ fn sind(deg: f64) f64 {
     return lookup(&EXACT_SIN, turn) orelse @sin(turn * std.math.pi / 180.0);
 }
 fn cosd(deg: f64) f64 {
-    return sind(deg + 90.0);
+    // Within a turn first: a quarter turn added to 1e17 adds nothing
+    return sind(@mod(deg, 360.0) + 90.0);
 }
 /// NaN at ±90° and the like, where the tangent has no value (a MathError).
 fn tand(deg: f64) f64 {

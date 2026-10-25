@@ -1012,6 +1012,9 @@ test "Stdlib: Math has degree trigonometry, exact at the angles CAD uses most" {
         .{ .src = "r = [Math.atan2d(1, 1), Math.atan2d(1, -1), Math.atan2d(0, -3), Math.atan2d(-2, 0), Math.atan2d(0, 0)].inspect", .expected = .{ .str = "[45, 135, 180, -90, 0]" } },
         // Away from those angles they agree with the radian functions.
         .{ .src = "r = Math.close?(Math.sind(20), Math.sin(Math.deg2rad(20)), 1e-15) && Math.close?(Math.atand(0.3), Math.rad2deg(Math.atan(0.3)), 1e-12)", .expected = .{ .boolean = true } },
+        // An angle a quarter turn adds nothing to is its sine's and its cosine's alike
+        .{ .src = "r = [1e17, -1e19, 1e300].all? { |a| Math.close?(Math.sind(a) ** 2 + Math.cosd(a) ** 2, 1, 1e-12) }", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(10).rotate(1e17, 1e19, 1e30).volume", .expected = .{ .num = 1000 } },
         .{ .src = comptime rescued("Math.tand(90)"), .expected = .{ .str = "MathError: Math.tand(90) has no real result" } },
         .{ .src = comptime rescued("Math.asind(2)"), .expected = .{ .str = "MathError: Math.asind(2) has no real result" } },
     });

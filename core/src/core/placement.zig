@@ -59,7 +59,7 @@ pub const Placement = struct {
     /// About one axis (0, 1, 2 for x, y, z), as Manifold's rX, rY and rZ.
     fn axisRotation(axis: usize, deg: f64) Placement {
         const s = sinDegrees(deg);
-        const c = sinDegrees(deg + QUARTER_TURN);
+        const c = cosDegrees(deg);
         var p = identity;
         const a = (axis + 1) % 3;
         const b = (axis + 2) % 3;
@@ -81,7 +81,7 @@ pub fn eulerOfAxisAngle(axis: [3]f64, deg: f64) [3]f64 {
     const len = @sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
     const k = [3]f64{ axis[0] / len, axis[1] / len, axis[2] / len };
     const s = sinDegrees(deg);
-    const c = sinDegrees(deg + QUARTER_TURN);
+    const c = cosDegrees(deg);
     const t = 1 - c;
     // r[row][col]
     const r = [3][3]f64{
@@ -103,6 +103,12 @@ pub fn eulerOfAxisAngle(axis: [3]f64, deg: f64) [3]f64 {
 fn snapped(deg: f64) f64 {
     const quarters = @round(deg / QUARTER_TURN) * QUARTER_TURN;
     return if (@abs(deg - quarters) <= SNAP_DEGREES) quarters else deg;
+}
+
+/// The cosine of `deg` degrees: the sine a quarter turn on, within a turn first (a quarter
+/// turn added to 1e17 adds nothing).
+fn cosDegrees(deg: f64) f64 {
+    return sinDegrees(@mod(deg, 4 * QUARTER_TURN) + QUARTER_TURN);
 }
 
 /// The sine of `deg` degrees, exact at multiples of 90° (Manifold's sind: the remainder

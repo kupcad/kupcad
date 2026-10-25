@@ -113,6 +113,9 @@ pub fn parseRotation(vm: *VM, args: []const value.Value, planar: bool, comptime 
         if (planar and p[2] != 0) return vm.fail(.ValueError, "rotate: " ++ what ++ " turns about a point [x, y] (it lies in the XY plane), got z {f}", .{value.fmtNumber(p[2])});
         turn.about = p;
     }
+    // Within a turn: the kernels take a cosine as the sine a quarter turn on (Manifold's
+    // cosd), which a quarter turn added to 1e17 isn't. Exact, the same turn.
+    for (&turn.angles) |*angle| angle.* = @mod(angle.*, 360);
     return turn;
 }
 
