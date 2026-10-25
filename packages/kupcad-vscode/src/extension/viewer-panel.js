@@ -1,16 +1,16 @@
 // The viewer: a webview panel beside the editor, showing the .kup document the editor shows.
 // Its page (src/webview/) gets the model straight from the language server's viewport socket;
 // the panel tells it which document it shows and the values the document's parameters take,
-// and passes on what it asks: a frame (`ready`), new values, a screenshot to save. It keeps the
-// document's presets (presets-file.js): their names for the page, again when their file changes,
-// one applied, the panel's values saved as one.
+// and passes on what it asks: a frame (`ready`), new values, a screenshot to save, a place in the
+// script to show in its editor. It keeps the document's presets (presets-file.js): their names
+// for the page, again when their file changes, one applied, the panel's values saved as one.
 
 import * as vscode from 'vscode';
 import { isViewerMessage } from '@kupcad/protocol';
 import { errorText } from '../errors.js';
 import { EXPORT_COMMAND } from './commands.js';
 import { PresetsFile } from './presets-file.js';
-import { fileName, isScriptFile, scriptName } from './scripts.js';
+import { characterAt, fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
 /** @import { HostMessage, ParamValues, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
@@ -174,6 +174,34 @@ export class ViewerPanel {
       case 'problem':
         this.#options.log.warn(`The viewer: ${message.message}`);
         return;
+      case 'reveal':
+        void this.#revealPlace(message.uri, message.line, message.column);
+        return;
+    }
+  }
+
+  /**
+   * Shows the script at a place its run named (1-based, its column in UTF-8 bytes): in the
+   * editor showing it, else in one showing another file, else beside the panel.
+   * @param {string} uri
+   * @param {number} line
+   * @param {number} column
+   */
+  async #revealPlace(uri, line, column) {
+    try {
+      const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(uri));
+      const at = Math.min(line, document.lineCount) - 1;
+      const place = new vscode.Position(at, characterAt(document.lineAt(at).text, column));
+      const editors = vscode.window.visibleTextEditors;
+      const editor = editors.find((shown) => shown.document.uri.toString() === uri) ?? editors[0];
+      await vscode.window.showTextDocument(document, {
+        viewColumn: editor?.viewColumn ?? vscode.ViewColumn.Beside,
+        selection: new vscode.Range(place, place),
+      });
+    } catch (error) {
+      void vscode.window.showErrorMessage(
+        `${fileName(vscode.Uri.parse(uri))} can't be shown: ${errorText(error)}`,
+      );
     }
   }
 

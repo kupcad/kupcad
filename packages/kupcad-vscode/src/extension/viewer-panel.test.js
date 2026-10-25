@@ -360,3 +360,56 @@ describe('ViewerPanel export', () => {
     await vi.waitFor(() => expect(exported).toEqual([PART_URI]));
   });
 });
+
+/**
+ * The page names a place in part.kup: what the panel showed for it, once it showed it or said why
+ * not.
+ * @param {{ line: number, column: number }} place
+ */
+async function reveal(place) {
+  const { webview } = open();
+  webview.receive({ type: 'reveal', uri: PART_URI, ...place });
+  await vi.waitFor(() => expect(fake.shownDocuments.length + fake.messages.length).toBe(1));
+  return fake.shownDocuments[0];
+}
+
+describe('ViewerPanel reveal', () => {
+  it("shows the script at the place the page names, as VS Code counts it, in the script's editor", async () => {
+    const part = documentAt('/work/part.kup');
+    part.text = 'x = 1\nlabel = "é" + 2';
+    fake.activeDocument = part;
+    fake.visibleEditors = [
+      { document: documentAt('/work/other.kup'), viewColumn: 1 },
+      { document: part, viewColumn: 2 },
+    ];
+    // Column 14 of line 2, in UTF-8 bytes, is the `+`: é is two bytes, and one character
+    const shown = await reveal({ line: 2, column: 14 });
+    expect(shown.uri).toBe(PART_URI);
+    expect(shown.viewColumn).toBe(2);
+    expect(shown.selection?.start).toEqual({ line: 1, character: 12 });
+    expect(shown.selection?.end).toEqual({ line: 1, character: 12 });
+  });
+
+  it("shows it in another file's editor when none shows it, else beside the panel", async () => {
+    documentAt('/work/part.kup').text = 'x = 1';
+    fake.visibleEditors = [{ document: documentAt('/work/other.kup'), viewColumn: 1 }];
+    expect((await reveal({ line: 1, column: 1 })).viewColumn).toBe(1);
+    fake.visibleEditors = [];
+    fake.shownDocuments = [];
+    // A line past the end, the script shorter now: its last
+    const shown = await reveal({ line: 9, column: 3 });
+    expect(shown.viewColumn).toBe(-2);
+    expect(shown.selection?.start).toEqual({ line: 0, character: 2 });
+  });
+
+  it("says why the script can't be shown", async () => {
+    vi.spyOn(workspace, 'openTextDocument').mockRejectedValueOnce(new Error('the file is gone'));
+    await reveal({ line: 1, column: 1 });
+    expect(fake.messages).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        text: "part.kup can't be shown: the file is gone",
+      }),
+    );
+  });
+});

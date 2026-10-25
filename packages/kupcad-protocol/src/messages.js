@@ -9,6 +9,8 @@
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 /** @param {unknown} value @returns {value is string} */
 const isString = (value) => typeof value === 'string';
+/** @param {unknown} value @returns {value is number} a 1-based line or column */
+const isPlace = (value) => Number.isInteger(value) && /** @type {number} */ (value) >= 1;
 
 /**
  * Whether `value` is parameter values: names to a number, a string or a boolean.
@@ -49,6 +51,8 @@ const VIEWER_MESSAGES = {
   screenshot: (m) => isString(m.png),
   /** @param {Record<string, unknown>} m */
   problem: (m) => isString(m.message),
+  /** @param {Record<string, unknown>} m */
+  reveal: (m) => isString(m.uri) && isPlace(m.line) && isPlace(m.column),
 };
 
 /**

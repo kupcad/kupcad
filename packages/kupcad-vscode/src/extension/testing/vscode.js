@@ -100,7 +100,29 @@ export class RelativePattern {
   }
 }
 
-export const ViewColumn = { One: 1, Beside: -2 };
+export const ViewColumn = { One: 1, Two: 2, Beside: -2 };
+
+export class Position {
+  /**
+   * @param {number} line
+   * @param {number} character
+   */
+  constructor(line, character) {
+    this.line = line;
+    this.character = character;
+  }
+}
+
+export class Range {
+  /**
+   * @param {Position} start
+   * @param {Position} end
+   */
+  constructor(start, end) {
+    this.start = start;
+    this.end = end;
+  }
+}
 export const ProgressLocation = { SourceControl: 1, Window: 10, Notification: 15 };
 
 export const env = {
@@ -146,10 +168,21 @@ export function documentAt(file, languageId = 'kupcad', scheme = 'file') {
     languageId,
     isDirty: false,
     saves: 0,
+    /** What it holds: a test sets it. */
+    text: '',
     async save() {
       document.saves += 1;
       document.isDirty = false;
       return true;
+    },
+    get lineCount() {
+      return document.text.split('\n').length;
+    },
+    /** @param {number} line */
+    lineAt(line) {
+      const lines = document.text.split('\n');
+      if (line < 0 || line >= lines.length) throw new Error(`Illegal value for line: ${line}`);
+      return { text: lines[line] };
     },
   };
   fake.documents.set(document.uri.toString(), document);
@@ -312,6 +345,10 @@ export const fake = {
   /** @type {ReturnType<typeof documentAt> | undefined} */
   activeDocument: undefined,
   activeEditorChanged: new EventEmitter(),
+  /** The editors shown, each with its column. @type {{ document: ReturnType<typeof documentAt>, viewColumn: number }[]} */
+  visibleEditors: [],
+  /** What `showTextDocument` was asked to show, and where. @type {{ uri: string, viewColumn: number | undefined, selection: Range | undefined }[]} */
+  shownDocuments: [],
   /** @type {ReturnType<typeof logChannel>[]} */
   logs: [],
 
@@ -346,6 +383,8 @@ export function resetFake() {
   fake.saveAnswer = undefined;
   fake.activeDocument = undefined;
   fake.activeEditorChanged = new EventEmitter();
+  fake.visibleEditors = [];
+  fake.shownDocuments = [];
   fake.logs = [];
 }
 
@@ -370,6 +409,21 @@ export const window = {
   },
   /** @param {(editor: unknown) => void} listener */
   onDidChangeActiveTextEditor: (listener) => fake.activeEditorChanged.event(listener),
+  get visibleTextEditors() {
+    return fake.visibleEditors;
+  },
+  /**
+   * @param {ReturnType<typeof documentAt>} document
+   * @param {{ viewColumn?: number, selection?: Range }} [options]
+   */
+  async showTextDocument(document, options = {}) {
+    fake.shownDocuments.push({
+      uri: document.uri.toString(),
+      viewColumn: options.viewColumn,
+      selection: options.selection,
+    });
+    return { document };
+  },
   /**
    * @param {string} viewType
    * @param {string} title

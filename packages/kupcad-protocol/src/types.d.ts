@@ -197,4 +197,6 @@ export type ViewerMessage =
   /** A screenshot, a PNG's bytes in base64, for the host to save. */
   | { type: 'screenshot'; png: string }
   /** Something the viewer couldn't do, for the host's log. */
-  | { type: 'problem'; message: string };
+  | { type: 'problem'; message: string }
+  /** The document is shown in its editor at a place its run named: a Warning's line and column. */
+  | { type: 'reveal'; uri: string; line: number; column: number };

@@ -46,6 +46,18 @@ describe('isViewerMessage', () => {
     );
     expect(isViewerMessage({ type: 'applyPreset', uri: 'file:///w/a.kup' })).toBe(false);
     expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup' })).toBe(true);
+    expect(isViewerMessage({ type: 'reveal', uri: 'file:///w/a.kup', line: 3, column: 1 })).toBe(
+      true,
+    );
+    // A place is a line and a column from 1
+    for (const [line, column] of [
+      [0, 1],
+      [3, 0],
+      [1.5, 1],
+      [3, null],
+    ]) {
+      expect(isViewerMessage({ type: 'reveal', uri: 'file:///w/a.kup', line, column })).toBe(false);
+    }
     expect(isViewerMessage({ type: 'setParams', uri: 'file:///w/a.kup', values: null })).toBe(
       false,
     );

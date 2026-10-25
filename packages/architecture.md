@@ -140,7 +140,7 @@ export interface ViewportReady { port: number; protocolVersion: number }
 export interface SetParamsArgument { uri: string; values: ParamValues }
 /** The one argument of the `kupcad.preview` command: the document the viewport shows. */
 export interface PreviewArgument { uri: string }
-/** A host and its viewer: the document shown and its values; ready, setParams, a screenshot, a problem. */
+/** A host and its viewer: the document shown and its values; ready, setParams, a screenshot, a problem, a place to reveal. */
 export type HostMessage = ...; export type ViewerMessage = ...;
 ```
 
@@ -168,7 +168,8 @@ The messages between a host and a viewer (the extension's webview bridge) are th
 (`messages.js`, `HostMessage` and `ViewerMessage`): the host tells the viewer the document it
 shows, the values its panel holds and the names of its presets, and the viewer tells the host it
 is ready for a frame, the values its panel gives, a preset to apply or to save, a screenshot to
-save and a problem to log. They arrive untyped
+save, a problem to log and a place in the script to show in its editor (a warning's line and
+column, which a host that counts columns otherwise converts). They arrive untyped
 (`postMessage`), so each side reads the other's with a guard (`isHostMessage`,
 `isViewerMessage`) and drops what isn't one.
 
