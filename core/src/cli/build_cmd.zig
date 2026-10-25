@@ -19,6 +19,7 @@ const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
+const ScriptOptions = @import("script_options.zig").ScriptOptions;
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -50,23 +51,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     return run(allocator, args_iter, .forProcess(init));
 }
 
-/// What `kupcad build` was asked to do.
-const Options = struct {
-    input_path: []const u8,
-    exports: ExportFlags = .{},
-    /// The values `-p` and `-P` give, in order: the later of two for one parameter wins.
-    params: api.ParamValues = .{},
-
-    fn deinit(self: *Options, allocator: std.mem.Allocator) void {
-        self.exports.deinit(allocator);
-        self.params.deinit(allocator);
-    }
-};
-
 /// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).
 /// User-facing failures are reported and return `.failure`; unexpected errors propagate.
 pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter) !Outcome {
-    var options = try parseOptions(allocator, args_iter, reporter) orelse return .failure;
+    var options = try ScriptOptions.parse(allocator, args_iter, reporter, .always, USAGE) orelse return .failure;
     defer options.deinit(allocator);
 
     // A one-shot command: one session is all it needs, reading and writing the disk from
@@ -78,46 +66,6 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     defer manager.deinit();
     const session = try runScript(allocator, &manager, &root, &options.params, &options.exports, reporter) orelse return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
-}
-
-/// The options in `args`, or null, the refusal reported.
-fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !?Options {
-    var options: Options = .{ .input_path = "" };
-    errdefer options.deinit(allocator);
-    var given = false;
-    while (args.next()) |arg| {
-        switch (try param_flags.take(allocator, arg, args, &options.params, reporter)) {
-            .taken => continue,
-            .refused => return refuse(allocator, &options),
-            .other => {},
-        }
-        switch (try options.exports.take(allocator, arg, args, reporter)) {
-            .taken => continue,
-            .refused => return refuse(allocator, &options),
-            .other => {},
-        }
-        if (std.mem.startsWith(u8, arg, "-")) {
-            reporter.err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
-            return refuse(allocator, &options);
-        } else if (given) {
-            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ options.input_path, arg });
-            return refuse(allocator, &options);
-        } else {
-            options.input_path = arg;
-            given = true;
-        }
-    }
-    if (!given) {
-        reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
-        return refuse(allocator, &options);
-    }
-    if (!try options.exports.settle(allocator, reporter)) return refuse(allocator, &options);
-    return options;
-}
-
-fn refuse(allocator: std.mem.Allocator, options: *Options) ?Options {
-    options.deinit(allocator);
-    return null;
 }
 
 /// Runs the script `root` names (its file system `manager`'s) in a session of `manager`, set

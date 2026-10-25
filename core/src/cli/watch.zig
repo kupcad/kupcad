@@ -16,10 +16,10 @@ const SessionManager = @import("../session/session_manager.zig").SessionManager;
 const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
-const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
+const ScriptOptions = @import("script_options.zig").ScriptOptions;
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
 
@@ -37,70 +37,11 @@ pub const USAGE =
     \\
 ;
 
-/// What `kupcad watch` was asked to do.
-pub const Options = struct {
-    file_path: []const u8,
-    /// `-p` and `-P`, as `kupcad build` takes them: every build of the session uses them.
-    params: api.ParamValues = .{},
-    /// What each build that succeeds writes, when `writes`.
-    exports: ExportFlags = .{},
-    /// Whether an export option was given: without one, a build writes nothing.
-    writes: bool = false,
-
-    pub fn deinit(self: *Options, allocator: std.mem.Allocator) void {
-        self.exports.deinit(allocator);
-        self.params.deinit(allocator);
-    }
-};
-
-/// The options in `args` (`next() ?[]const u8`), or null, the refusal reported.
-pub fn parseOptions(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !?Options {
-    var options: Options = .{ .file_path = "" };
-    var given = false;
-    errdefer options.deinit(allocator);
-    while (args.next()) |arg| {
-        switch (try param_flags.take(allocator, arg, args, &options.params, reporter)) {
-            .taken => continue,
-            .refused => return refuse(allocator, &options),
-            .other => {},
-        }
-        switch (try options.exports.take(allocator, arg, args, reporter)) {
-            .taken => {
-                options.writes = true;
-                continue;
-            },
-            .refused => return refuse(allocator, &options),
-            .other => {},
-        }
-        if (std.mem.startsWith(u8, arg, "-")) {
-            reporter.err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
-            return refuse(allocator, &options);
-        }
-        if (given) {
-            reporter.err("Error: Expected one input file, got '{s}' and '{s}'\n", .{ options.file_path, arg });
-            return refuse(allocator, &options);
-        }
-        options.file_path = arg;
-        given = true;
-    }
-    if (!given) {
-        reporter.err("Error: Missing input file path.\n\n" ++ USAGE, .{});
-        return refuse(allocator, &options);
-    }
-    if (options.writes and !try options.exports.settle(allocator, reporter)) return refuse(allocator, &options);
-    return options;
-}
-
-fn refuse(allocator: std.mem.Allocator, options: *Options) ?Options {
-    options.deinit(allocator);
-    return null;
-}
-
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const reporter: Reporter = .forProcess(init);
-    var options = try parseOptions(allocator, args_iter, reporter) orelse return .failure;
+    var options = try ScriptOptions.parse(allocator, args_iter, reporter, .when_given, USAGE) orelse return .failure;
     defer options.deinit(allocator);
-    const file_path = options.file_path;
+    const file_path = options.input_path;
 
     // Spin up the cache controller; the script reads and writes the disk from where its
     // imports are

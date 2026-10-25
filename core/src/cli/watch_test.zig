@@ -6,12 +6,13 @@ const std = @import("std");
 const testing = std.testing;
 const watch = @import("watch.zig");
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
+const ScriptOptions = @import("script_options.zig").ScriptOptions;
 const Args = @import("args.zig").Args;
 
-/// The options `args` give, or null; `output` receives what was reported.
-fn parse(args: []const []const u8, output: *std.Io.Writer.Allocating) !?watch.Options {
+/// The options `args` give `kupcad watch`, or null; `output` receives what was reported.
+fn parse(args: []const []const u8, output: *std.Io.Writer.Allocating) !?ScriptOptions {
     var it: Args = .{ .items = args };
-    return watch.parseOptions(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer });
+    return ScriptOptions.parse(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer }, .when_given, watch.USAGE);
 }
 
 test "kupcad watch: takes the file and parameter values, as build does, the later one winning" {
@@ -25,7 +26,7 @@ test "kupcad watch: takes the file and parameter values, as build does, the late
     defer output.deinit();
     var options = (try parse(&.{ "-P", params_path, "model.kup", "-p", "width=50" }, &output)) orelse return error.TestRefused;
     defer options.deinit(testing.allocator);
-    try testing.expectEqualStrings("model.kup", options.file_path);
+    try testing.expectEqualStrings("model.kup", options.input_path);
     try testing.expectEqualStrings("50", options.params.map.get("width").?.text);
     // The file's other values stay
     try testing.expectEqualStrings("A", options.params.map.get("label").?.text);
