@@ -2571,6 +2571,20 @@ test "Stdlib: a VM its host gave no file system reads no file and writes none" {
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "vm_no_files.stl", .{}));
 }
 
+test "Stdlib: an export writes a file named for its format alone, never the project's own" {
+    // `cube(1).export_stl("main.kup")` wrote a mesh over the script, and a dependency could
+    // rewrite .kupcad.json (its memory limit) or kupcad.json
+    try test_support.expectScripts(&.{
+        .{ .src = comptime rescued("cube(1).export_stl(\"main.kup\")"), .expected = .{ .str = "ArgumentError: export_stl writes a .stl file, not 'main.kup'" } },
+        .{ .src = comptime rescued("cube(1).export_step(\".kupcad.json\")"), .expected = .{ .str = "ArgumentError: export_step writes a .step or .stp file, not '.kupcad.json'" } },
+        .{ .src = comptime rescued("cube(1).export_3mf(\"kupcad.lock\")"), .expected = .{ .str = "ArgumentError: export_3mf writes a .3mf file, not 'kupcad.lock'" } },
+        .{ .src = comptime rescued("square(1).export_svg(\"parts/plate.dxf\")"), .expected = .{ .str = "ArgumentError: export_svg writes a .svg file, not 'parts/plate.dxf'" } },
+        // Named for it, in any case, it is written (here refused only for want of a disk)
+        .{ .src = comptime rescued("cube(1).export_stl(\"part.STL\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'part.STL': AccessDenied" } },
+        .{ .src = comptime rescued("cube(1).export_gltf(\"part.json\")"), .expected = .{ .str = "ArgumentError: export_gltf writes a .gltf or .glb file, not 'part.json'" } },
+    });
+}
+
 test "Stdlib: import_stl errors are rescuable ImportErrors, a mesh that encloses nothing too" {
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();

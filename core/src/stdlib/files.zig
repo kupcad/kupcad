@@ -41,6 +41,7 @@ fn shapesOf(vm: *VM, receiver: value.Value, comptime method: []const u8, format:
 /// Writes `receiver` to `filepath` in `format` as `options` say, as `kupcad build` writes
 /// the model: the script's `method`. An empty model is an error naming the file.
 fn exportTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: ExportFormat, options: ExportOptions, comptime method: []const u8) !void {
+    try requireNamedFor(vm, filepath, &.{format}, method);
     var held: std.ArrayList(value.Value) = .empty;
     defer held.deinit(vm.allocator);
     const shapes = try shapesOf(vm, receiver, method, format, &held);
@@ -50,6 +51,25 @@ fn exportTo(vm: *VM, receiver: value.Value, filepath: []const u8, format: Export
     };
     defer vm.allocator.free(bytes);
     try writeFile(vm, filepath, bytes, method);
+}
+
+/// Refuses `path` unless it is named as a file of one of `formats` is (`.stl`, in any case):
+/// a script writes model files alone, so neither it nor a package it imports writes over the
+/// project's scripts or settings (`export_stl("main.kup")` wrote a mesh over the script).
+fn requireNamedFor(vm: *VM, path: []const u8, formats: []const ExportFormat, comptime method: []const u8) !void {
+    const named = ExportFormat.forExtension(std.fs.path.extension(path));
+    for (formats) |format| if (named == format) return;
+    var buffer: [64]u8 = undefined;
+    var names = std.Io.Writer.fixed(&buffer);
+    var count: usize = 0;
+    for (formats) |format| count += format.extensions().len;
+    var i: usize = 0;
+    for (formats) |format| for (format.extensions()) |ext| {
+        const sep = if (i == 0) "" else if (i + 1 == count) " or " else ", ";
+        names.print("{s}{s}", .{ sep, ext }) catch {};
+        i += 1;
+    };
+    return vm.fail(.ArgumentError, method ++ " writes a {s} file, not '{s}'", .{ names.buffered(), path });
 }
 
 /// Writes `bytes` to `path` through the VM's file system; a write it refuses (a host that
@@ -92,6 +112,7 @@ pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_o
 /// `solid.export_gltf(path, draco)` and `assembly.export_gltf(path, draco)`: the parts kept
 /// apart, each a node named after it; glTF JSON for a `.gltf` path, binary glTF otherwise.
 pub fn meshExportGltf(vm: *VM, receiver: value.Value, filepath: []const u8, draco_opt: ?bool) !value.Value {
+    try requireNamedFor(vm, filepath, &.{ .gltf, .glb }, "export_gltf");
     const format: ExportFormat = if (gltf.Container.forPath(filepath) == .gltf) .gltf else .glb;
     try exportTo(vm, receiver, filepath, format, .{ .draco = draco_opt orelse false }, "export_gltf");
     return receiver;
