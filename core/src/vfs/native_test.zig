@@ -145,6 +145,35 @@ test "NativeVfs: a symlink inside the root that leads out of it is followed nowh
     try testing.expectEqualStrings("new", written);
 }
 
+test "NativeVfs: a symlink to nothing is written through nowhere, and a stale one is made again" {
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest; // a symlink needs a privilege there
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "root/store/new");
+    try tmp.dir.createDirPath(testing.io, "outside");
+    // A project's links to what isn't there (yet): a file and a folder outside it, and a
+    // package gone from the store
+    try tmp.dir.symLink(testing.io, "../outside/model.stl", "root/model.stl", .{});
+    try tmp.dir.symLink(testing.io, "../outside/gone", "root/gone", .{});
+    try tmp.dir.symLink(testing.io, "store/old", "root/dep", .{});
+    var root = try tmp.dir.openDir(testing.io, "root", .{});
+    defer root.close(testing.io);
+    var nvfs = NativeVfs.init(testing.io, root);
+    const fs = nvfs.vfs();
+
+    try testing.expectError(error.AccessDenied, fs.writeFile("model.stl", "solid"));
+    try testing.expectError(error.AccessDenied, fs.writeFile("gone/model.stl", "solid"));
+    try testing.expectError(error.AccessDenied, fs.makePath("gone/sub"));
+    try testing.expectError(error.AccessDenied, fs.readFile(testing.allocator, "model.stl"));
+    try testing.expect(tmp.dir.statFile(testing.io, "outside/model.stl", .{}) == error.FileNotFound);
+    try testing.expect(tmp.dir.statFile(testing.io, "outside/gone", .{}) == error.FileNotFound);
+    // A link is replaced, not written through: the stale one is made again
+    try fs.symLink("store/new", "dep");
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try root.readLink(testing.io, "dep", &buf);
+    try testing.expectEqualStrings("store/new", buf[0..n]);
+}
+
 test "NativeVfs: a file past what a read takes isn't read, nor allocated for" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
