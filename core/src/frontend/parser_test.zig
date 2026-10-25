@@ -2476,6 +2476,27 @@ test "KupCAD Parser: Error Recovery (synchronize)" {
     try testing.expectEqual(@as(usize, 2), pt.parser.diagnostics.list.items.len);
 }
 
+test "KupCAD Parser: a statement cut off at its line's end is reported, and the next line read" {
+    // As a script half typed has them: a keyword with nothing after it on its line
+    const cuts = [_][]const u8{ "module", "def", "private", "import", "export 5", "def +(o) = 5" };
+    for (cuts) |cut| {
+        const source = try std.fmt.allocPrint(testing.allocator, "x = 2\n{s}\nputs x\n", .{cut});
+        defer testing.allocator.free(source);
+        var pt = try KTest.init(source);
+        defer pt.deinit();
+        const tree = &pt.parser.b.tree;
+        const stmts = tree.getNodes(tree.block(pt.getNode(try pt.parser.parseProgram())).stmts);
+        const diagnostics = pt.parser.diagnostics.list.items;
+        if (diagnostics.len == 0) std.debug.print("'{s}' is reported nowhere\n", .{cut});
+        try testing.expect(diagnostics.len > 0);
+        // Where it is cut, on its own line
+        try testing.expect(diagnostics[0].loc.offset >= "x = 2\n".len and diagnostics[0].loc.offset <= "x = 2\n".len + cut.len);
+        // `x = 2` and `puts x`, around it
+        if (stmts.len != 2) std.debug.print("'{s}': {d} statements\n", .{ cut, stmts.len });
+        try testing.expectEqual(@as(usize, 2), stmts.len);
+    }
+}
+
 test "KupCAD Parser: Nested String Interpolation AST" {
     const source = "\"Outer #{ \"Inner #{1 + 2}\" } end\"";
     var pt = try KTest.init(source);
@@ -3571,7 +3592,7 @@ test "KupCAD Parser: Malformed Default Parameters Synchronization" {
     defer pt.deinit();
 
     _ = pt.parser.parseStatement() catch blk: {
-        pt.parser.synchronize();
+        pt.parser.synchronize(0);
         break :blk pt.parser.parseStatement() catch unreachable;
     };
 
@@ -3905,7 +3926,7 @@ test "KupCAD Parser Edge Case: Malformed Empty Collections" {
 
     // The parser should synchronize and flag Unexpected Tokens without crashing
     _ = pt.parser.parseStatement() catch {}; // arr = [,]
-    pt.parser.synchronize();
+    pt.parser.synchronize(0);
     _ = pt.parser.parseStatement() catch {}; // obj = {,}
 
     try testing.expect(pt.parser.diagnostics.list.items.len >= 2);

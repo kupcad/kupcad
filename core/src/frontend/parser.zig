@@ -355,8 +355,11 @@ pub const Parser = struct {
         return expr;
     }
 
-    pub fn synchronize(self: *Parser) void {
-        self.advance();
+    /// Skips what is left of a statement that failed (which started at `from`): to its line's
+    /// end, `;`, or a keyword that starts another. Past one token at least when it took none,
+    /// to move on; else not past the line's end, which the next statement may follow.
+    pub fn synchronize(self: *Parser, from: u24) void {
+        if (self.tok_idx == from) self.advance();
         while (self.tag(0) != .eof) {
             if (self.tag(0) == .newline or self.tag(0) == .semicolon) return;
 
@@ -497,6 +500,8 @@ pub const Parser = struct {
         defer self.scratch_nodes.shrinkRetainingCapacity(s_len);
         while (self.tag(0) != .eof) {
             self.skipIgnored();
+            const stmt_start = self.tok_idx;
+            const reported = self.diagnostics.list.items.len;
             var is_end = false;
             for (end_tags) |end_tag| {
                 if (self.tag(0) == end_tag) {
@@ -511,17 +516,31 @@ pub const Parser = struct {
                 // `puts 1 2` used to run as `puts 1` and then `2`; Ruby rejects it too.
                 if (!self.atStatementEnd(end_tags)) {
                     self.reportError(self.getLoc(self.tok_idx), .@"unexpected-token", "Expected a line break or ';' before '{s}'", .{self.lexeme(0)});
-                    self.synchronize();
+                    self.synchronize(stmt_start);
                 }
             } else |err| {
                 // Depth errors abort the whole parse: recovering would just re-hit the
                 // limit on every following nested statement and flood diagnostics.
                 if (err == ParseError.OutOfMemory or err == ParseError.AstTooDeep) return err;
-                self.synchronize();
+                // A statement that failed says why: where it gave no reason, what it stopped at
+                if (self.diagnostics.list.items.len == reported) self.reportUnexpected();
+                self.synchronize(stmt_start);
             }
         }
         const end_tok = self.tok_idx;
         return self.b.block(&.{}, self.scratch_nodes.items[s_len..], end_tok, start_tok) catch ParseError.OutOfMemory;
+    }
+
+    /// The token a statement stopped at, said: the line's (or the file's) end after what came
+    /// before it, or the token.
+    fn reportUnexpected(self: *Parser) void {
+        const at = self.getLoc(self.tok_idx);
+        const before = if (self.tok_idx > 0) self.tokens.lexeme(self.source, self.tok_idx - 1) else "";
+        switch (self.tag(0)) {
+            .newline, .semicolon, .comment => self.reportError(at, .@"unexpected-token", "The statement ends too soon: something should follow '{s}'", .{before}),
+            .eof => self.reportError(at, .@"unexpected-token", "The file ends too soon: something should follow '{s}'", .{before}),
+            else => self.reportError(at, .@"unexpected-token", "Unexpected '{s}'", .{self.lexeme(0)}),
+        }
     }
 
     /// Whether a statement may end here: at a line break, `;`, a comment, the end of the
