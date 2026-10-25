@@ -4,29 +4,6 @@
 import { execFile } from 'node:child_process';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
-
-/**
- * @typedef {object} FormatChoice
- * @property {ExportFormat} format the file's extension too
- * @property {string} label
- * @property {string} detail what it is for
- */
-
-/** The formats an export offers, in the order it offers them. @type {FormatChoice[]} */
-export const FORMATS = [
-  { format: 'stl', label: 'STL', detail: 'A mesh, for a slicer or any 3D tool' },
-  {
-    format: '3mf',
-    label: '3MF',
-    detail: 'A mesh with its parts, copies and colours, for a slicer',
-  },
-  { format: 'step', label: 'STEP', detail: 'Exact geometry, for CAD (the B-Rep engine)' },
-  { format: 'glb', label: 'GLB', detail: 'Binary glTF, with its parts and colours, for the web' },
-  { format: 'gltf', label: 'glTF', detail: 'glTF as JSON' },
-  { format: 'obj', label: 'OBJ', detail: 'Wavefront OBJ, a part an object' },
-  { format: 'svg', label: 'SVG', detail: 'A drawing on XY, for a laser cutter' },
-  { format: 'dxf', label: 'DXF', detail: 'The drawing as DXF, for CAD and CNC' },
-];
 /** What a build may say, at most: its log and why it failed. */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 /**

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BuildError, buildArguments, FORMATS, runBuild, whyItFailed } from './export.js';
+import { BuildError, buildArguments, runBuild, whyItFailed } from './export.js';
 
 const POSIX = process.platform !== 'win32';
 
@@ -24,19 +24,6 @@ function kupcad(body) {
 }
 
 describe('export', () => {
-  it('offers each format kupcad build writes, once', () => {
-    expect(FORMATS.map((f) => f.format).toSorted()).toEqual([
-      '3mf',
-      'dxf',
-      'glb',
-      'gltf',
-      'obj',
-      'step',
-      'stl',
-      'svg',
-    ]);
-  });
-
   it("builds the script to the output in the format picked, a -p for each of the viewer's values", () => {
     expect(
       buildArguments('/w/part.kup', '/w/part.stl', 'stl', {

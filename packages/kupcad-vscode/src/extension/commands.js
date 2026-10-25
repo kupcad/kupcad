@@ -4,7 +4,8 @@
 
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { buildArguments, FORMATS, runBuild } from './export.js';
+import { EXPORT_FORMATS } from '@kupcad/protocol';
+import { buildArguments, runBuild } from './export.js';
 import { errorText } from '../errors.js';
 import { FILE_SCHEME, fileName, LANGUAGE_ID, NOT_RUNNING, scriptName } from './scripts.js';
 
@@ -43,7 +44,7 @@ async function exportScript(options, given) {
   const { document, kupcad } = ready;
   const name = scriptName(document.uri);
   const choice = await vscode.window.showQuickPick(
-    FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
+    EXPORT_FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
     { title: `Export ${name}`, placeHolder: 'The format' },
   );
   if (!choice) return;

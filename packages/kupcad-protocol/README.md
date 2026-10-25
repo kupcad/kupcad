@@ -45,6 +45,8 @@ client.sendRequest('workspace/executeCommand', {
   way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
   in the script to reveal (`reveal`: a warning's line and column) the other. `isHostMessage` and `isViewerMessage` read
   one as it arrives untyped (`postMessage`), and `isParamValues` the values in it.
+* `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
+  `build`), each with its name and what it is for, in the order a host offers them.
 * `characterAt(text, column)`: where a column the core names (1-based, in UTF-8 bytes: a
   warning's, a finding's) is in a line's text, as JavaScript and an editor count (UTF-16 code
   units from 0).

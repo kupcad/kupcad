@@ -106,7 +106,8 @@ Two programs, built separately by Vite:
   screenshot, and shows the script at a place a run named, its column of UTF-8 bytes counted
   as VS Code counts: `@kupcad/protocol`'s `characterAt`), `presets.js` says what a script's presets file holds and `presets-file.js` reads,
   writes and watches it (the panel lists, applies and saves them), `commands.js` exports (over
-  `export.js`: the formats, `kupcad build`'s arguments, why a build failed), `values.js` keeps the values each script was
+  `export.js`: `kupcad build`'s arguments, why a build failed; the formats are
+  `@kupcad/protocol`'s `EXPORT_FORMATS`), `values.js` keeps the values each script was
   given, which the server runs it with and an export builds it with, and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.
