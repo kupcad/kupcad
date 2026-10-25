@@ -75,9 +75,13 @@ pub const MAX_SOURCE_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 pub const MAX_JSON_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 // Largest drawing `import_dxf` and `import_svg` read: its outlines take several times its size.
 pub const MAX_DRAWING_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
-// Most pieces a drawing's blocks (DXF INSERTs) or clones (SVG <use>s) place: nested,
-// they multiply, so a small file could ask for more than memory holds.
+// Most elements an SVG drawing's clones (<use>s) draw: nested, they multiply, so a small
+// file could ask for more than memory holds.
 pub const MAX_DRAWING_PIECES: usize = 1_000_000;
+// Most points a DXF drawing's entities place (vertices, centres, ends), a block's as often as
+// INSERTs place it: nested, they multiply. More than a drawing of MAX_DRAWING_BYTES gives
+// itself (a point takes 10 bytes at least), so only blocks multiplying past that are refused.
+pub const MAX_DRAWING_POINTS: usize = 8_000_000;
 // Largest file of a 3MF package `import_3mf` unpacks: a zip's file says what it unpacks
 // to, so a small archive could ask for more than memory holds.
 pub const MAX_PACKAGE_PART_BYTES: usize = 512 * 1024 * 1024; // 512 MiB

@@ -319,4 +319,32 @@ test "DXF read: what can't be read says why and where" {
     try expectRefused(file("", "0\nARC\n10\n0\n20\n0\n40\n1\n50\n0\n"), "line 11: the ARC has no group 51");
     try expectRefused(file("9\n$INSUNITS\n70\n99\n", ""), "line 8: its units ($INSUNITS 99) aren't a unit DXF names");
     try expectRefused(file("", "0\nSPLINE\n71\n3\n72\n4\n10\n0\n20\n0\n10\n1\n20\n1\n10\n2\n20\n0\n10\n3\n20\n1\n40\n0\n40\n0\n40\n1\n40\n1\n"), "line 11: the SPLINE on layer '0' has 4 knots for 4 control points of degree 3: it needs 8");
+    // Flags (group 70) are a 16-bit number
+    try expectRefused(file("", "0\nLWPOLYLINE\n70\n1e30\n10\n0\n20\n0\n10\n1\n20\n0\n"), "line 11: the LWPOLYLINE on layer '0' has flags (group 70) of 1e30: they are a 16-bit number");
+    try expectRefused(file("", "0\nPOLYLINE\n70\n1\n0\nVERTEX\n70\n-1e19\n10\n0\n20\n0\n0\nSEQEND\n"), "line 15: the VERTEX on layer '0' has flags (group 70) of -1e19: they are a 16-bit number");
+}
+
+test "DXF read: numbers far out are read or refused, never past what the reader holds" {
+    // A line whose end is further than a cell's index holds: its ends are still compared
+    var diag: dxf_read.Diagnostic = .{};
+    try testing.expectError(error.Unreadable, dxf_read.read(testing.allocator, file("", "0\nLINE\n10\n0\n20\n0\n11\n1e300\n21\n0\n"), .{ .tolerance = 1e-6 }, &diag));
+    try testing.expectStringStartsWith(diag.message(), "an outline on layer '0' doesn't close: it runs from [0, 0] to [1");
+    // An arc from an angle no turn can be added to: from where it starts, a whole turn
+    var arc = try read(file("", "0\nARC\n10\n0\n20\n0\n40\n2\n50\n1e300\n51\n1e300\n"), null);
+    defer arc.deinit();
+    try testing.expectEqual(@as(usize, 1), arc.outlines.len);
+    try testing.expectApproxEqRel(4 * std.math.pi, path.signedArea(arc.outlines[0].start, arc.outlines[0].segments), 1e-9);
+    var ellipse = try read(file("", "0\nELLIPSE\n10\n0\n20\n0\n11\n2\n21\n0\n40\n0.5\n41\n1e15\n42\n1e15\n"), null);
+    defer ellipse.deinit();
+    // Within what cubics of an eighth of a turn each keep to an ellipse
+    try testing.expectApproxEqRel(2 * std.math.pi, path.signedArea(ellipse.outlines[0].start, ellipse.outlines[0].segments), 1e-4);
+
+    // A block of a long polyline, placed in an array of copies: more points than a drawing
+    // gives itself
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.appendSlice(testing.allocator, "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nlong\n10\n0\n20\n0\n0\nLWPOLYLINE\n");
+    for (0..2000) |i| try text.print(testing.allocator, "10\n{d}\n20\n{d}\n", .{ i, i % 2 });
+    try text.appendSlice(testing.allocator, "0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nlong\n10\n0\n20\n0\n70\n100\n71\n100\n0\nENDSEC\n0\nEOF\n");
+    try expectRefused(text.items, "its blocks would place 20000000 points; a script reads at most 8000000");
 }

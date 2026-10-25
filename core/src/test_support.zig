@@ -116,6 +116,14 @@ pub fn rescued(comptime src: []const u8) []const u8 {
     return "r = begin\n  " ++ src ++ "\n  \"no error\"\n" ++ RESCUE_BY_KIND ++ "end";
 }
 
+/// `text` `times` over, at compile time: a test's long input.
+pub fn repeat(comptime text: []const u8, comptime times: usize) []const u8 {
+    @setEvalBranchQuota(10 * times);
+    var out: []const u8 = "";
+    for (0..times) |_| out = out ++ text;
+    return out;
+}
+
 /// What a script should leave in the global `r`.
 pub const Expected = union(enum) {
     nums: []const f64,

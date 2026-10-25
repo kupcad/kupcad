@@ -31,14 +31,7 @@ const FILES = [_]support.ScriptFile{
 
 /// `levels` Arrays, each the only element of the one around it.
 fn nested(comptime levels: usize) []const u8 {
-    return repeat("[", levels) ++ repeat("]", levels);
-}
-
-fn repeat(comptime text: []const u8, comptime times: usize) []const u8 {
-    @setEvalBranchQuota(10 * times);
-    var out: []const u8 = "";
-    for (0..times) |_| out = out ++ text;
-    return out;
+    return support.repeat("[", levels) ++ support.repeat("]", levels);
 }
 
 fn case(comptime src: []const u8, expected: support.Expected) support.ScriptCase {

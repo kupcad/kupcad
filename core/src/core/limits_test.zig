@@ -47,6 +47,7 @@ const CASES = .{
     .MAX_JSON_BYTES = jsonBytes,
     .MAX_DRAWING_BYTES = drawingBytes,
     .MAX_DRAWING_PIECES = drawingPieces,
+    .MAX_DRAWING_POINTS = drawingPoints,
     .MAX_PACKAGE_PART_BYTES = packagePartBytes,
     .MAX_PLACED_TRIANGLES = placedTriangles,
     .MAX_PLACED_VERTICES = placedVertices,
@@ -195,11 +196,22 @@ fn drawingBytes() !void {
 }
 
 fn drawingPieces() !void {
-    // A block of a line, a block of a thousand of those, and a thousand and one of that:
+    // Ten squares in a group, a hundred uses of it in another, a hundred of those in a
+    // third, and eleven uses of that: refused as their elements pass the cap
+    const a = comptime "<g id=\"a\">" ++ support.repeat("<rect width=\"1\" height=\"1\"/>", 10) ++ "</g>";
+    const b = comptime "<g id=\"b\">" ++ support.repeat("<use href=\"#a\"/>", 100) ++ "</g>";
+    const c = comptime "<g id=\"c\">" ++ support.repeat("<use href=\"#b\"/>", 100) ++ "</g>";
+    const svg = comptime "<svg width=\"10mm\" height=\"10mm\" viewBox=\"0 0 10 10\"><defs>" ++ a ++ b ++ c ++ "</defs>" ++ support.repeat("<use href=\"#c\"/>", 11) ++ "</svg>";
+    const expected = std.fmt.comptimePrint("ImportError: could not read SVG file 'big.svg': its <use>s would draw more than {d} elements; a script reads at most that", .{limits.MAX_DRAWING_PIECES});
+    try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.svg\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.svg", .data = svg }} }});
+}
+
+fn drawingPoints() !void {
+    // A block of a line (two points), a block of a thousand of those, and 4001 of that:
     // counted before any is placed
     const blocks = "0\nBLOCK\n2\na\n0\nLINE\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDBLK\n0\nBLOCK\n2\nb\n0\nINSERT\n2\na\n10\n0\n20\n0\n70\n1000\n44\n2\n0\nENDBLK\n";
-    const dxf = "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nb\n10\n0\n20\n0\n70\n1001\n44\n3000\n0\nENDSEC\n0\nEOF\n";
-    const expected = std.fmt.comptimePrint("ImportError: could not read DXF file 'big.dxf': its blocks would place 1001000 pieces; a script reads at most {d}", .{limits.MAX_DRAWING_PIECES});
+    const dxf = "0\nSECTION\n2\nBLOCKS\n" ++ blocks ++ "0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nINSERT\n2\nb\n10\n0\n20\n0\n70\n4001\n44\n3000\n0\nENDSEC\n0\nEOF\n";
+    const expected = std.fmt.comptimePrint("ImportError: could not read DXF file 'big.dxf': its blocks would place 8002000 points; a script reads at most {d}", .{limits.MAX_DRAWING_POINTS});
     try support.expectScripts(&.{.{ .src = support.rescued("import plate from \"./big.dxf\""), .expected = .{ .str = expected }, .files = &.{.{ .path = "big.dxf", .data = dxf }} }});
 }
 

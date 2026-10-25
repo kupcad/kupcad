@@ -19,6 +19,7 @@ const bezier = @import("../../core/bezier.zig");
 const bspline = @import("../../core/bspline.zig");
 const affine2 = @import("../../core/affine2.zig");
 const limits = @import("../../core/limits.zig");
+const grid = @import("grid.zig");
 pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 
 /// The layer of an entity that names none.
@@ -30,6 +31,8 @@ const BINARY_SENTINEL = "AutoCAD Binary DXF";
 const PLANE_SLACK = 1.0 / 64.0;
 /// How deep blocks nest in blocks at most: deeper is a block that inserts itself.
 const MAX_BLOCK_NESTING = 64;
+/// Flags (group 70) are a 16-bit number: one past what it holds is no flags.
+const MAX_FLAGS: f64 = std.math.maxInt(u16);
 /// The entities that draw outlines.
 const DRAWN = std.StaticStringMap(void).initComptime(.{ .{"LINE"}, .{"ARC"}, .{"CIRCLE"}, .{"LWPOLYLINE"}, .{"POLYLINE"}, .{"SPLINE"}, .{"ELLIPSE"} });
 
@@ -172,6 +175,21 @@ const Entity = struct {
         return try self.number(code, diag) orelse diag.fail("line {d}: the {s} has no group {d}", .{ self.line, self.kind, code });
     }
 
+    /// How many points it gives (groups 10 and 11: each a vertex's, centre's, end's x), one
+    /// at least: what it draws grows with them.
+    fn points(self: Entity) usize {
+        var n: usize = 0;
+        for (self.pairs) |pair| n += @intFromBool(pair.code == 10 or pair.code == 11);
+        return @max(1, n);
+    }
+
+    /// Its flags (group 70), 0 without them.
+    fn flags(self: Entity, diag: *Diagnostic) error{Unreadable}!i64 {
+        const n = try self.number(70, diag) orelse return 0;
+        if (!(@abs(n) <= MAX_FLAGS)) return diag.fail("line {d}: the {s} on layer '{s}' has flags (group 70) of {s}: they are a 16-bit number", .{ self.line, self.kind, self.layer(), std.mem.trim(u8, self.string(70).?, " \t") });
+        return @intFromFloat(n);
+    }
+
     /// Its normal (210, 220, 230): whether it is the XY plane's turned over (-z), which
     /// mirrors the entity's own x; another plane is an error.
     fn flipped(self: Entity, diag: *Diagnostic) error{Unreadable}!bool {
@@ -206,8 +224,8 @@ const Reader = struct {
     /// The ENTITIES section's entities, and each block's, by its name
     model: std.ArrayList(Entity) = .empty,
     blocks: std.StringHashMapUnmanaged(Block) = .empty,
-    /// How many pieces each block places, once counted
-    block_pieces: std.StringHashMapUnmanaged(usize) = .empty,
+    /// How many points each block places, once counted
+    block_points: std.StringHashMapUnmanaged(usize) = .empty,
     /// Where the entities being drawn go: the INSERTs they are in
     place: Placement = .{},
 
@@ -252,11 +270,11 @@ const Reader = struct {
         }
     }
 
-    /// Every entity the model's INSERTs place, counted before any is: a block within a
-    /// block within a block can place more than a drawing holds.
+    /// Every entity the model's INSERTs place, its points counted before any is: a block
+    /// within a block within a block can place more than a drawing holds.
     fn drawModel(self: *Reader) Error!void {
-        const count = try self.piecesOf(self.model.items, 0);
-        if (count > limits.MAX_DRAWING_PIECES) return self.diag.fail("its blocks would place {d} pieces; a script reads at most {d}", .{ count, limits.MAX_DRAWING_PIECES });
+        const count = try self.pointsOf(self.model.items, 0);
+        if (count > limits.MAX_DRAWING_POINTS) return self.diag.fail("its blocks would place {d} points; a script reads at most {d}", .{ count, limits.MAX_DRAWING_POINTS });
         try self.draw(self.model.items);
     }
 
@@ -313,20 +331,21 @@ const Reader = struct {
         return .{ counts[0], counts[1] };
     }
 
-    /// How many pieces `entities` place, their INSERTs' blocks counted once each.
-    fn piecesOf(self: *Reader, entities: []const Entity, depth: usize) Error!usize {
+    /// How many points the entities that draw place (a POLYLINE's VERTEXes too), their
+    /// INSERTs' blocks counted once each.
+    fn pointsOf(self: *Reader, entities: []const Entity, depth: usize) Error!usize {
         var total: usize = 0;
         for (entities) |entity| {
-            if (DRAWN.has(entity.kind)) {
-                total +|= 1;
+            if (DRAWN.has(entity.kind) or std.mem.eql(u8, entity.kind, "VERTEX")) {
+                total +|= entity.points();
                 continue;
             }
             if (!std.mem.eql(u8, entity.kind, "INSERT")) continue;
             const name, const block = try self.blockOf(entity);
             if (depth >= MAX_BLOCK_NESTING) return self.diag.fail("line {d}: blocks nest deeper than {d} in the block '{s}', which may insert itself", .{ entity.line, MAX_BLOCK_NESTING, name });
-            const each = self.block_pieces.get(name) orelse blk: {
-                const n = try self.piecesOf(block.entities, depth + 1);
-                try self.block_pieces.put(self.arena, name, n);
+            const each = self.block_points.get(name) orelse blk: {
+                const n = try self.pointsOf(block.entities, depth + 1);
+                try self.block_points.put(self.arena, name, n);
                 break :blk n;
             };
             const columns, const rows = try self.copiesOf(entity);
@@ -469,10 +488,8 @@ const Reader = struct {
         const flip = try entity.flipped(self.diag);
         const center = try self.point(entity, 10, flip);
         const radius = try self.radiusOf(entity);
-        const start = try entity.required(50, self.diag);
-        var end = try entity.required(51, self.diag);
         // Counter-clockwise from start to end, in the entity's own plane
-        while (end <= start) end += 360;
+        const start, const end = sweepOf(try entity.required(50, self.diag), try entity.required(51, self.diag), 360);
         var segment = path.arcByAngles(.{ 0, 0 }, radius, start, end);
         var from = path.pointAt(segment.arc.?, start);
         if (flip) {
@@ -515,12 +532,11 @@ const Reader = struct {
             v.at[0] = -v.at[0];
             v.bulge = -v.bulge;
         };
-        const flags = try entity.number(70, self.diag) orelse 0;
-        try self.addPolyline(layer, vertices.items, @mod(@as(i64, @intFromFloat(flags)), 2) == 1);
+        try self.addPolyline(layer, vertices.items, try entity.flags(self.diag) & 1 != 0);
     }
 
     fn startPolyline(self: *Reader, entity: Entity, layer: []const u8) Error!void {
-        const flags: i64 = @intFromFloat(try entity.number(70, self.diag) orelse 0);
+        const flags = try entity.flags(self.diag);
         // 16 a polygon mesh, 64 a polyface mesh: surfaces, not outlines
         self.polyline = .{ .entity_line = entity.line, .layer = layer, .closed = flags & 1 != 0, .mesh = flags & (16 | 64) != 0, .flipped = try entity.flipped(self.diag) };
     }
@@ -528,7 +544,7 @@ const Reader = struct {
     fn readVertex(self: *Reader, entity: Entity) Error!void {
         const polyline = &(self.polyline orelse return);
         if (polyline.mesh) return;
-        const flags: i64 = @intFromFloat(try entity.number(70, self.diag) orelse 0);
+        const flags = try entity.flags(self.diag);
         // 16: a spline's frame control point, not a point it passes
         if (flags & 16 != 0) return;
         const at = try self.point(entity, 10, polyline.flipped);
@@ -616,7 +632,7 @@ const Reader = struct {
         for (given) |q| {
             if (fits.items.len == 0 or !std.meta.eql(q, fits.items[fits.items.len - 1])) try fits.append(self.arena, q);
         }
-        const flags: i64 = @intFromFloat(try entity.number(70, self.diag) orelse 0);
+        const flags = try entity.flags(self.diag);
         const closed = flags & 1 != 0 and fits.items.len > 2;
         if (closed and !std.meta.eql(fits.items[0], fits.items[fits.items.len - 1])) try fits.append(self.arena, fits.items[0]);
         if (fits.items.len < 2) return;
@@ -643,9 +659,7 @@ const Reader = struct {
         const ratio = try entity.required(40, self.diag);
         const a = std.math.hypot(major[0], major[1]);
         if (!(a > 0) or !(ratio > 0 and ratio <= 1)) return self.diag.fail("line {d}: the ELLIPSE on layer '{s}' has a major axis of {d} and a ratio of {d}", .{ entity.line, layer, a, ratio });
-        const start = try entity.number(41, self.diag) orelse 0;
-        var end = try entity.number(42, self.diag) orelse 2 * std.math.pi;
-        while (end <= start) end += 2 * std.math.pi;
+        const start, const end = sweepOf(try entity.number(41, self.diag) orelse 0, try entity.number(42, self.diag) orelse 2 * std.math.pi, 2 * std.math.pi);
         // The minor axis is the major turned a quarter about the normal: left of it about
         // +z, right of it (a negative ry) about -z
         const b = a * ratio;
@@ -730,6 +744,16 @@ fn tangentOf(given: ?[2]f64) ?[2]f64 {
     return if (length > 0 and std.math.isFinite(length)) t else null;
 }
 
+/// An arc's angles from `start` counter-clockwise to `end`, in a turn of `period` (360
+/// degrees, 2π): its start within the first turn, its end after it by the sweep, a whole
+/// turn for one that ends where it starts, and at most one. Reckoned, not turned a turn at a
+/// time: a turn added to a start of 1e300 adds nothing.
+fn sweepOf(start: f64, end: f64, period: f64) [2]f64 {
+    const sweep = if (end > start) @min(end - start, period) else period - @mod(start - end, period);
+    const from = @mod(start, period);
+    return .{ from, from + sweep };
+}
+
 fn near(a: [2]f64, b: [2]f64, tolerance: f64) bool {
     return std.math.hypot(a[0] - b[0], a[1] - b[1]) <= tolerance;
 }
@@ -771,24 +795,19 @@ const EndIndex = struct {
     }
 
     fn add(self: *EndIndex, end: End) !void {
-        const entry = try self.cells.getOrPut(self.arena, self.cellOf(end.point));
+        const entry = try self.cells.getOrPut(self.arena, grid.cellOf(end.point, self.cell));
         if (!entry.found_existing) entry.value_ptr.* = .empty;
         try entry.value_ptr.append(self.arena, end);
     }
 
-    fn cellOf(self: *const EndIndex, p: [2]f64) [2]i64 {
-        // Saturating: a point far out shares an edge cell, still compared by distance
-        return .{ std.math.lossyCast(i64, @floor(p[0] / self.cell)), std.math.lossyCast(i64, @floor(p[1] / self.cell)) };
-    }
-
     /// An end of a piece not yet `used` within the tolerance of `p`.
     fn meeting(self: *const EndIndex, p: [2]f64, used: []const bool) ?Found {
-        const at = self.cellOf(p);
+        const at = grid.cellOf(p, self.cell);
         var dx: i64 = -1;
         while (dx <= 1) : (dx += 1) {
             var dy: i64 = -1;
             while (dy <= 1) : (dy += 1) {
-                const ends = self.cells.get(.{ at[0] + dx, at[1] + dy }) orelse continue;
+                const ends = self.cells.get(grid.around(at, dx, dy)) orelse continue;
                 for (ends.items) |end| {
                     if (!used[end.piece] and near(end.point, p, self.tolerance)) return .{ .piece = end.piece, .at_start = end.at_start };
                 }
