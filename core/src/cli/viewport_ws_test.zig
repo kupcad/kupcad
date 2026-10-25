@@ -332,7 +332,7 @@ test "ViewportWs: the host's origin upgrades over a real socket, a near one is r
     try testing.expect(std.mem.startsWith(u8, try other.handshake(upgradeRequest("Origin: tauri://localhost.evil.example\r\n")), "HTTP/1.1 403"));
 }
 
-test "ViewportWs: connections are capped, slots are freed on close, deinit wakes stalled handshakes" {
+test "ViewportWs: connections are capped, a viewer gets in past idle ones, deinit wakes stalled handshakes" {
     const warnings = test_support.expectWarnings();
     defer warnings.restore();
     var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
@@ -340,16 +340,33 @@ test "ViewportWs: connections are capped, slots are freed on close, deinit wakes
     defer if (server_live) server.deinit();
     try server.start();
 
-    var streams: [ws.MAX_CLIENTS]std.Io.net.Stream = undefined;
-    var open_count: usize = 0;
-    defer for (streams[0..open_count]) |s| s.close(testing.io);
-    for (&streams) |*s| {
-        s.* = try connect(server.port);
-        open_count += 1;
+    var idle: [ws.MAX_CLIENTS]TestClient = undefined;
+    var idle_count: usize = 0;
+    defer for (idle[0..idle_count]) |*c| c.close();
+    for (&idle) |*c| {
+        try c.open(server.port);
+        idle_count += 1;
     }
     try waitForClients(&server, ws.MAX_CLIENTS);
 
-    // One over the cap: the server must close it instead of spawning another thread.
+    // A viewer past them gets in, and one of them is closed: sockets that connect and send
+    // nothing used to hold every slot, the viewer refused
+    var viewers: [ws.MAX_CLIENTS + 1]TestClient = undefined;
+    var viewer_count: usize = 0;
+    defer for (viewers[0..viewer_count]) |*c| c.close();
+    try viewers[0].open(server.port);
+    viewer_count = 1;
+    try testing.expect(std.mem.startsWith(u8, try viewers[0].handshake(browser_upgrade_request), "HTTP/1.1 101"));
+    try waitForClients(&server, ws.MAX_CLIENTS);
+
+    // Viewers fill every slot, then one more is refused: an upgraded viewer is never closed
+    for (idle[0..idle_count]) |*c| c.close();
+    idle_count = 0;
+    try waitForClients(&server, 1);
+    while (viewer_count < ws.MAX_CLIENTS) : (viewer_count += 1) {
+        try viewers[viewer_count].open(server.port);
+        try testing.expect(std.mem.startsWith(u8, try viewers[viewer_count].handshake(browser_upgrade_request), "HTTP/1.1 101"));
+    }
     {
         var extra: TestClient = undefined;
         try extra.open(server.port);
@@ -363,11 +380,14 @@ test "ViewportWs: connections are capped, slots are freed on close, deinit wakes
 
     // Closing half of them unregisters exactly those clients (removal by identity).
     const keep = ws.MAX_CLIENTS / 2;
-    for (streams[keep..]) |s| s.close(testing.io);
-    open_count = keep;
+    for (viewers[keep..viewer_count]) |*c| c.close();
+    viewer_count = keep;
     try waitForClients(&server, keep);
 
-    // The remaining threads are blocked reading headers; deinit must still return.
+    // A handshake stalled when deinit comes: deinit must still return.
+    try idle[0].open(server.port);
+    idle_count = 1;
+    try waitForClients(&server, keep + 1);
     server_live = false;
     server.deinit();
 }
