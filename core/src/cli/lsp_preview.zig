@@ -176,8 +176,12 @@ pub const SessionPreview = struct {
     io: std.Io,
     /// The open documents' text, as imports read it before the files on disk.
     documents: MemoryVfs,
-    /// The project's files, read-only; null when there are none to read (tests).
+    /// The project's files, read-only, once a folder is named (setRoot): the working
+    /// directory the server was started in is no project of the user's, whatever is in it.
+    /// Null before, and when there are none to read (tests).
     workspace: ?NativeVfs,
+    /// Whether the files of a workspace folder are read, once one is named.
+    read_workspace: bool,
     /// The directory `workspace` was re-rooted at, closed with the preview.
     workspace_dir: ?std.Io.Dir = null,
     /// What every run here reads through, and can't write: the documents are untrusted.
@@ -223,19 +227,20 @@ pub const SessionPreview = struct {
         last_import: ?[]const u8 = null,
     };
 
-    /// `read_workspace`: imports may read the files under the working directory (until
-    /// `setRoot` names the workspace folder).
+    /// `read_workspace`: imports may read the files of the workspace folder, once `setRoot`
+    /// names it.
     pub fn init(self: *SessionPreview, allocator: std.mem.Allocator, io: std.Io, read_workspace: bool) !void {
         self.* = .{
             .allocator = allocator,
             .io = io,
             .documents = MemoryVfs.init(allocator),
-            .workspace = if (read_workspace) NativeVfs.init(io, std.Io.Dir.cwd()) else null,
+            .workspace = null,
+            .read_workspace = read_workspace,
             .sandbox = undefined,
             .session = undefined,
         };
         errdefer self.documents.deinit();
-        self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), if (self.workspace) |*w| w.vfs() else null);
+        self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), null);
         self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.observer = .{ .context = self, .ran = ranImpl };
         self.session.vm.useInteractiveLimits();
@@ -269,11 +274,13 @@ pub const SessionPreview = struct {
     }
 
     pub fn setRoot(self: *SessionPreview, root: []const u8) !void {
-        const workspace = if (self.workspace) |*w| w else return;
+        if (!self.read_workspace) return;
         const dir = try std.Io.Dir.cwd().openDir(self.io, root, .{});
         if (self.workspace_dir) |old| old.close(self.io);
         self.workspace_dir = dir;
-        workspace.root_dir = dir;
+        self.workspace = NativeVfs.init(self.io, dir);
+        // The sandbox reads it after the open documents; the preview lives in place
+        if (self.workspace) |*w| self.sandbox.layers[1] = w.vfs();
     }
 
     /// Replaces the module's source; the modules importing it are evaluated again with it.

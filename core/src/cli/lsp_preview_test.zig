@@ -356,3 +356,31 @@ test "LSP preview: the warnings taken are those of the modules that ran since, a
     _ = try frameOf(a, &preview, "other.kup");
     try testing.expectEqualDeep(@as([]const []const u8, &.{ "lib.kup", "main.kup", "other.kup" }), try pathsOf(a, try preview.takeRunWarnings(a)));
 }
+
+test "LSP preview: the files on disk are read once a workspace folder is named, and the working directory's never" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, true);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true; // the run's error would print to the test log
+    // A data file in the working directory, as a hostile script opened alone would hope
+    const cwd = std.Io.Dir.cwd();
+    try cwd.writeFile(testing.io, .{ .sub_path = "lsp_preview_test_size.json", .data = "{\"w\": 3}" });
+    defer cwd.deleteFile(testing.io, "lsp_preview_test_size.json") catch {};
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "lsp_preview_test_size.json", .data = "{\"w\": 2}" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
+    defer testing.allocator.free(root);
+
+    try preview.update("part.kup", "cube(import_json(\"lsp_preview_test_size.json\")[:w])\n");
+    const alone = try frameOf(a, &preview, "part.kup");
+    try testing.expectEqualStrings("none", alone.header.kind);
+    try testing.expect(std.mem.find(u8, alone.header.@"error".?.message, "lsp_preview_test_size.json") != null);
+    // The folder named, its file is read (the failed run runs again)
+    try preview.setRoot(root);
+    const named = try frameOf(a, &preview, "part.kup");
+    try testing.expectEqualStrings("3d", named.header.kind);
+}

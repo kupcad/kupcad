@@ -84,12 +84,13 @@ test "ViewportWs: parseHandshake validates method, Upgrade and key" {
     try testing.expect(hs.origin == null);
 }
 
-test "ViewportWs: Origin allowlist only admits VS Code webviews and the local dev server" {
+test "ViewportWs: Origin allowlist only admits VS Code webviews" {
     // Guards against foreign web pages opening the viewport socket.
     const cases = [_]struct { origin: ?[]const u8, allowed: bool }{
         .{ .origin = "vscode-webview://abc123", .allowed = true },
-        .{ .origin = "http://localhost:5173", .allowed = true },
-        .{ .origin = "http://127.0.0.1:5173", .allowed = true },
+        // A page served locally (a dev server, a stray tab) is any page
+        .{ .origin = "http://localhost:5173", .allowed = false },
+        .{ .origin = "http://127.0.0.1:5173", .allowed = false },
         .{ .origin = null, .allowed = true }, // non-browser local client
         .{ .origin = "https://evil.example", .allowed = false },
         .{ .origin = "http://localhost:5173.evil.example", .allowed = false },

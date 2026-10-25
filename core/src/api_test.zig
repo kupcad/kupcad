@@ -79,6 +79,14 @@ test "API: checkCode reports compile errors as well as syntax errors and lints" 
     try testing.expect(found);
 }
 
+test "API: buildModel runs under the interactive limits when asked, as a browser's build is" {
+    // Natively a build runs without an instruction limit: this one would never end
+    var diag: api.BuildDiagnostic = .{};
+    defer diag.deinit(testing.allocator);
+    try testing.expectError(error.RuntimeError, api.buildModel(testing.allocator, testing.io, "while true\nend\ncube(1)", .{ .format = .stl, .diagnostic = &diag, .interactive = true }));
+    try testing.expect(std.mem.find(u8, diag.message.?, "Execution limit") != null);
+}
+
 test "API: buildModel with a diagnostic returns model bytes and no message for a valid script" {
     var diag: api.BuildDiagnostic = .{};
     defer diag.deinit(testing.allocator);

@@ -20,16 +20,11 @@ pub const MAX_CLIENTS: usize = 8;
 pub const HANDSHAKE_TIMEOUT_MS: i64 = 5000;
 /// Largest client->server frame we accept. The viewport only sends tiny control messages.
 pub const MAX_INCOMING_FRAME_BYTES: u64 = 64 * 1024;
-/// Port of the Vite dev server serving the webview in development (webview/vite.config.js).
-pub const DEV_SERVER_PORT: u16 = 5173;
 /// Browser origins allowed to open the viewport socket. Any web page can open a WebSocket to
 /// 127.0.0.1, so without this check a malicious site could read the user's models.
-/// `vscode-webview://` is a prefix (the host part is a per-webview random id).
+/// `vscode-webview://` is a prefix (the host part is a per-webview random id). The webview is
+/// built into the extension, never served by a dev server, so no http origin is allowed.
 pub const ALLOWED_ORIGIN_PREFIXES = [_][]const u8{"vscode-webview://"};
-pub const ALLOWED_ORIGINS_EXACT = [_][]const u8{
-    std.fmt.comptimePrint("http://localhost:{d}", .{DEV_SERVER_PORT}),
-    std.fmt.comptimePrint("http://127.0.0.1:{d}", .{DEV_SERVER_PORT}),
-};
 
 const WS_OPCODE_CLOSE: u8 = 0x8;
 const WS_OPCODE_BINARY: u8 = 0x2;
@@ -97,9 +92,6 @@ pub fn isOriginAllowed(origin: ?[]const u8) bool {
     const o = origin orelse return true;
     for (ALLOWED_ORIGIN_PREFIXES) |prefix| {
         if (std.mem.startsWith(u8, o, prefix) and o.len > prefix.len) return true;
-    }
-    for (ALLOWED_ORIGINS_EXACT) |allowed| {
-        if (std.mem.eql(u8, o, allowed)) return true;
     }
     return false;
 }

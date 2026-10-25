@@ -335,6 +335,9 @@ pub const BuildOptions = struct {
     /// When the build fails with a message, `diagnostic.message` is set to it. Pass a
     /// fresh `.{}`.
     diagnostic: ?*BuildDiagnostic = null,
+    /// Under the interactive limits (instructions and memory), as a preview runs: a build in
+    /// a browser, where a page waits on it and a runaway script would hang its worker.
+    interactive: bool = false,
 };
 
 /// Runs `source` and exports the resulting geometry as `options.format`. Caller owns the
@@ -353,7 +356,7 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
         return error.SyntaxError;
     }
 
-    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .engine = format.requiredEngine() });
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .engine = format.requiredEngine(), .interactive = options.interactive });
     defer vm.deinit();
 
     var out_chunk = chunk.Chunk.init();
@@ -391,6 +394,7 @@ const RunSetup = struct {
     vfs: Vfs = .none,
     params: ?*const ParamValues = null,
     engine: ?geom.EngineType = null,
+    interactive: bool = false,
 };
 
 /// A VM for one run of `doc` as `setup` says: its errors placed by the document's lines (so
@@ -401,6 +405,7 @@ fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: 
     errdefer vm.deinit();
     vm.vfs = setup.vfs;
     vm.line_index = &doc.line_index;
+    if (setup.interactive) vm.useInteractiveLimits();
     try registry.registerStandardLibrary(&vm);
     if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);

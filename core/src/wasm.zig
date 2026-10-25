@@ -126,7 +126,7 @@ fn inner_build_model(source: []const u8, params_json: []const u8, files: []const
     }
     var vfs = try filesOf(files);
     defer vfs.deinit();
-    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = vfs.vfs(), .diagnostic = diagnostic });
+    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = vfs.vfs(), .diagnostic = diagnostic, .interactive = true });
 }
 
 fn inner_preview(source: []const u8, params_json: []const u8, files: []const u8) ![]const u8 {
