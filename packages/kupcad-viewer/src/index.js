@@ -2,5 +2,5 @@
 // (`@kupcad/viewer/svelte`).
 
 export { ViewCube } from './view-cube.js';
-export { RENDER_MODES, VIEW_NAMES, Viewer, ViewerError } from './viewer.js';
+export { RENDER_MODES, Viewer, ViewerError } from './viewer.js';
 export { DARK, LIGHT } from './theme.js';

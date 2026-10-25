@@ -80,9 +80,10 @@ const VIEW_KEYS = /** @type {Record<string, View>} */ ({
 /** Scrolling this many CSS pixels with Option moves the section across the whole model. */
 const SECTION_SWEEP_PX = 2000;
 
-/** The render modes and views a toolbar offers, in order. */
+/** The render modes a toolbar offers, in order. */
 export const RENDER_MODES = /** @type {const} */ (['solid', 'xray', 'wireframe']);
-export const VIEW_NAMES = /** @type {View[]} */ (Object.keys(VIEWS));
+/** The views the camera turns to, by name. */
+const VIEW_NAMES = /** @type {View[]} */ (Object.keys(VIEWS));
 
 /** A model the viewer can't show, saying why. */
 export class ViewerError extends Error {

@@ -7,11 +7,10 @@ export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as Splitter } from './Splitter.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
-export { appendLines, linesOfLog, linesOfRun, MAX_LINES } from './console.js';
-export { controlOf, groupsOf, isOverridden, shownValue, stepOf, validate } from './params.js';
-export { describeRun, problemsOf, runStatusOf } from './run-status.js';
+export { appendLines, linesOfLog, linesOfRun } from './console.js';
+export { problemsOf, runStatusOf } from './run-status.js';
 export { localSettings, memorySettings, sizeSetting } from './settings.js';
-export { themeFromTokens, watchTokens } from './theme.js';
+export { watchTokens } from './theme.js';
 export { connectViewport } from './viewport-socket.js';
 
 /** @typedef {import('./console.js').ConsoleLine} ConsoleLine */
