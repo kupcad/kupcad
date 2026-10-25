@@ -28,7 +28,7 @@ pub fn compileModule(vm: *VM, path: []const u8, source: []const u8, namespace: *
     comp.module_namespace = namespace;
     comp.module_path = path; // its own imports are its neighbours
     comp.compile(doc.tree.root) catch |err| {
-        const where = if (comp.errorDiagnostic()) |d| d.formatLine(vm.allocator, &doc.line_index) catch null else null;
+        const where = comp.errorLine(vm.allocator, &doc.line_index);
         defer if (where) |w| vm.allocator.free(w);
         return vm.fail(.ImportError, "could not compile '{s}': {s}", .{ path, where orelse @errorName(err) });
     };

@@ -3,6 +3,7 @@
 //! then links them into the project (`linkWorkspace`).
 
 const std = @import("std");
+const owned_keys = @import("../core/owned_keys.zig");
 const Manifest = @import("manifest.zig").Manifest;
 const lockfile_mod = @import("lockfile.zig");
 const Lockfile = lockfile_mod.Lockfile;
@@ -65,9 +66,7 @@ pub const Resolver = struct {
 
     pub fn deinit(self: *Resolver) void {
         self.fetcher.deinit();
-        var it = self.visited.keyIterator();
-        while (it.next()) |k| self.allocator.free(k.*);
-        self.visited.deinit(self.allocator);
+        owned_keys.deinit(&self.visited, self.allocator, .borrowed);
     }
 
     /// Installs the manifest's dependency tree. Returns only once every worker has
@@ -350,11 +349,7 @@ pub const Resolver = struct {
 
             // Track created directories to minimize redundant VFS syscalls
             var created_dirs: std.StringHashMapUnmanaged(void) = .empty;
-            defer {
-                var key_it = created_dirs.keyIterator();
-                while (key_it.next()) |k| self.allocator.free(k.*);
-                created_dirs.deinit(self.allocator);
-            }
+            defer owned_keys.deinit(&created_dirs, self.allocator, .borrowed);
 
             var sanitize_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
             var file_it = files.iterator();

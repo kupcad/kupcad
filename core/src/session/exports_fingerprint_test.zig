@@ -28,6 +28,16 @@ test "exports fingerprint: an export's value changes it, the same values keep it
     try testing.expect((try fingerprint("w = cube(1)\nexport { w }")).? != (try fingerprint("w = cube(2)\nexport { w }")).?);
 }
 
+test "exports fingerprint: an assembly is hashed by its name and its parts" {
+    // It counted as changed whenever its module ran, so every importer ran again
+    const arm = (try fingerprint("a = assemble(name: \"Arm\", parts: [cube(1)])\nexport { a }")).?;
+    try testing.expectEqual(arm, (try fingerprint("a = assemble(name: \"Arm\", parts: [cube(1)])\nexport { a }")).?);
+    try testing.expect(arm != (try fingerprint("a = assemble(name: \"Leg\", parts: [cube(1)])\nexport { a }")).?);
+    try testing.expect(arm != (try fingerprint("a = assemble(name: \"Arm\", parts: [cube(2)])\nexport { a }")).?);
+    // Not the Array of its parts
+    try testing.expect(arm != (try fingerprint("a = [cube(1)]\nexport { a }")).?);
+}
+
 test "exports fingerprint: a function or an object counts as changed whenever its module runs" {
     try testing.expectEqual(@as(?u64, null), try fingerprint("def f\n  1\nend\nexport { f }"));
     try testing.expectEqual(@as(?u64, null), try fingerprint("class P\nend\nexport { P }"));

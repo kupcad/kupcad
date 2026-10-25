@@ -136,7 +136,7 @@ fn renderBytecode(init: std.process.Init, allocator: std.mem.Allocator, file_pat
         reportCompileError(init.io, allocator, &compiler, &doc, err);
         return false;
     };
-    try disassembler.disassembleChunk(allocator, &main_chunk, "main", &out.writer);
+    try disassembler.disassembleChunk(&main_chunk, "main", &out.writer);
     return true;
 }
 
@@ -208,7 +208,7 @@ fn printUsage(io: std.Io) void {
 
 /// "Compilation failed: line:col: message", or the error name when the compiler kept none.
 fn reportCompileError(io: std.Io, allocator: std.mem.Allocator, compiler: *const Compiler, doc: *const api.Document, err: anyerror) void {
-    const where = if (compiler.errorDiagnostic()) |d| d.formatLine(allocator, &doc.line_index) catch null else null;
+    const where = compiler.errorLine(allocator, &doc.line_index);
     defer if (where) |w| allocator.free(w);
     log_helpers.printStderr(io, "Compilation failed: {s}\n", .{where orelse @errorName(err)});
 }

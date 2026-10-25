@@ -3676,26 +3676,10 @@ pub const VM = struct {
     }
 
     pub fn valuesCaseEqual(self: *VM, case_val: value.Value, test_val: value.Value) bool {
+        // `when SomeClass` is `is_a?(SomeClass)`, whatever the value
         if (case_val.isClass()) {
-            if (test_val.isInstance()) {
-                return isSubclassOf(test_val.asInstance().class, case_val.asClass());
-            } else if (test_val.isObject()) {
-                const c = case_val.asClass();
-                switch (test_val.asObj().obj_type) {
-                    .string => return c == self.string_class,
-                    .array => return c == self.array_class,
-                    .map => return c == self.map_class,
-                    .json_object => return c == self.json_object_class,
-                    .symbol => return c == self.symbol_class,
-                    .range => return c == self.range_class,
-                    .font => return c == self.font_class,
-                    .random => return c == self.random_class,
-                    else => return false,
-                }
-            } else if (test_val.isNumber()) {
-                return case_val.asClass() == self.number_class;
-            }
-            return false;
+            const class = self.getClass(test_val) orelse return false;
+            return isSubclassOf(class, case_val.asClass());
         } else if (case_val.isRange()) {
             const range = case_val.asRange();
             if (!test_val.isNumber()) return false;

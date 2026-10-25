@@ -6,6 +6,7 @@
 //! part, PartFileNames naming them) and the parts list. `kupcad watch` takes them too.
 
 const std = @import("std");
+const owned_keys = @import("../core/owned_keys.zig");
 const api = @import("../api.zig");
 const parts_mod = @import("../exporters/parts.zig");
 const naming = @import("../exporters/names.zig");
@@ -364,9 +365,7 @@ pub const PartFileNames = struct {
     taken: std.StringHashMapUnmanaged(void) = .empty,
 
     pub fn deinit(self: *PartFileNames, allocator: std.mem.Allocator) void {
-        var it = self.taken.keyIterator();
-        while (it.next()) |name| allocator.free(name.*);
-        self.taken.deinit(allocator);
+        owned_keys.deinit(&self.taken, allocator, .borrowed);
     }
 
     /// The next part's file name, with `extension`; caller owns it.

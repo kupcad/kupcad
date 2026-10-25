@@ -37,7 +37,7 @@ test "Disassembler: decodes inline-cache operands, 32-bit jumps, switch tables a
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
-    try disassembler.disassembleChunk(testing.allocator, &out_chunk, "main", &out.writer);
+    try disassembler.disassembleChunk(&out_chunk, "main", &out.writer);
     const text = out.written();
     try testing.expect(std.mem.find(u8, text, "| ic 0") != null);
     try testing.expect(std.mem.find(u8, text, "op_switch        3 cases") != null);

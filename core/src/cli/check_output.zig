@@ -116,19 +116,15 @@ pub const Counts = struct { files: usize, errors: usize, warnings: usize, infos:
 /// A file path as a SARIF artifact URI: forward slashes, with every byte outside RFC
 /// 3986's unreserved set (and `/`) percent-encoded.
 fn pathUri(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    for (path) |c| {
-        const separator = c == '/' or c == '\\';
-        const unreserved = std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
-        if (separator) {
-            try out.append(allocator, '/');
-        } else if (unreserved) {
-            try out.append(allocator, c);
-        } else {
-            var hex: [3]u8 = undefined;
-            _ = std.mem.print(&hex, "%{X:0>2}", .{c}) catch unreachable;
-            try out.appendSlice(allocator, &hex);
-        }
-    }
-    return out.toOwnedSlice(allocator);
+    const forward = try allocator.dupe(u8, path);
+    defer allocator.free(forward);
+    std.mem.replaceScalar(u8, forward, '\\', '/');
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    errdefer out.deinit();
+    try std.Uri.Component.percentEncode(&out.writer, forward, isUriPathChar);
+    return out.toOwnedSlice();
+}
+
+fn isUriPathChar(c: u8) bool {
+    return c == '/' or std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == '_' or c == '~';
 }

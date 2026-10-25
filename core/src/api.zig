@@ -7,6 +7,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const VM = @import("vm/vm.zig").VM;
 const chunk = @import("vm/chunk.zig");
+const value_hash = @import("vm/value_hash.zig");
 const value = @import("core/value.zig");
 const Compiler = @import("compiler/compiler.zig").Compiler;
 const registry = @import("stdlib/registry.zig");
@@ -69,7 +70,6 @@ pub fn formatDocument(allocator: std.mem.Allocator, doc: *const Document, config
     if (doc.tree.root == .none) return error.SyntaxError;
     var formatter = Formatter.forDocument(allocator, doc, config);
     defer formatter.deinit();
-    try formatter.registerDefaultRules();
     const formatted = try formatter.format(&doc.tree, doc.tree.root);
     errdefer allocator.free(formatted);
     if (!try formatKeepsProgram(allocator, doc, formatted)) return error.FormatChangedProgram;
@@ -192,10 +192,11 @@ pub fn fixKeepsModel(allocator: std.mem.Allocator, io: std.Io, original: ?u64, c
     return after == before;
 }
 
-/// A hash of the model `source` builds: its shapes' DAG node hashes (which cover every
-/// operation, number and setting below them, by content, and need no kernel work), its
-/// ghosts' meshes and its materials. Null when it can't be told: the script doesn't parse
-/// or compile, fails, passes the interactive limits, or leaves a shape with no DAG node.
+/// A hash of the model `source` builds: its final value by content (vm/value_hash.zig: a
+/// shape by its DAG node's hash, which covers every operation, number and setting below it
+/// and needs no kernel work), its ghosts' meshes and its materials. Null when it can't be
+/// told: the script doesn't parse or compile, fails, passes the interactive limits, or
+/// leaves a value not hashed by content (a shape with no DAG node, a function).
 /// The script runs with every write discarded, so one that exports leaves no file, and
 /// with its output dropped: `kupcad check --fix` printed what the script `puts`.
 fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
@@ -220,7 +221,7 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     if (vm.interpret(&program) != .ok) return null;
 
     var hasher = std.hash.Wyhash.init(0);
-    if (!hashShapes(&hasher, &vm, vm.finalValue(), 0)) return null;
+    if (!value_hash.hashValue(&hasher, vm.dag_builder.node_hashes.items, vm.finalValue(), value_hash.MAX_DEPTH)) return null;
     for (vm.display_list.items) |ghost| {
         if (!(kernel.hashMesh(&hasher, allocator, ghost) catch return null)) hasher.update(std.mem.asBytes(&ghost.engine));
     }
@@ -232,30 +233,6 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
 pub fn modelFingerprintForTest(allocator: std.mem.Allocator, io: std.Io, source: []const u8) !?u64 {
     if (!builtin.is_test) @compileError("tests only");
     return modelFingerprint(allocator, io, source);
-}
-
-/// Feeds the DAG hashes of the shapes in `val` (a shape, or an Array or assembly of them)
-/// to `hasher`; false for a shape that has no DAG node.
-fn hashShapes(hasher: *std.hash.Wyhash, vm: *const VM, val: value.Value, depth: usize) bool {
-    const hashes = vm.dag_builder.node_hashes.items;
-    const node: ?u32 = if (val.isGeometry()) val.asGeometry().dag_idx else if (val.isCrossSection()) val.asCrossSection().dag_idx else null;
-    if (node) |idx| {
-        if (idx >= hashes.len) return false;
-        hasher.update(std.mem.asBytes(&hashes[idx]));
-        return true;
-    }
-    if (val.isPath()) {
-        const p = val.asPath();
-        hasher.update(std.mem.asBytes(&p.start));
-        hasher.update(std.mem.sliceAsBytes(p.segments));
-        return true;
-    }
-    const items: []const value.Value = if (val.isAssembly()) val.asAssembly().parts.items.items else if (val.isArray()) val.asArray().items.items else return true;
-    if (depth >= model_mod.MAX_MODEL_NESTING) return false;
-    for (items) |item| {
-        if (!hashShapes(hasher, vm, item, depth + 1)) return false;
-    }
-    return true;
 }
 
 /// Syntax and compile errors: the findings no rule made.
@@ -341,8 +318,7 @@ pub const BuildOptions = struct {
 };
 
 /// Runs `source` and exports the resulting geometry as `options.format`. Caller owns the
-/// bytes. Fails with error.SyntaxError if the script does not parse cleanly. It took its
-/// options as eight positional parameters, in two functions.
+/// bytes. Fails with error.SyntaxError if the script does not parse cleanly.
 pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, options: BuildOptions) ![]const u8 {
     const format = options.format;
     const diagnostic = options.diagnostic;

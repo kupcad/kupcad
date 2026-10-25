@@ -10,6 +10,7 @@ const Compiler = @import("../compiler/compiler.zig").Compiler;
 const Document = @import("../frontend/document.zig").Document;
 const VM = @import("vm.zig").VM;
 const helpers = @import("vm_test_helpers.zig");
+const support = @import("../test_support.zig");
 const executeAndAssertStack = helpers.executeAndAssertStack;
 const writeGlobalOp = helpers.writeGlobalOp;
 const compileAndRun = helpers.compileAndRun;
@@ -435,6 +436,29 @@ test "VM: case statement subsumption (===) with ranges and classes" {
     try testing.expectEqual(@as(f64, 100.0), arr_obj.items.items[0].asNumber()); // Matches Class
     try testing.expectEqual(@as(f64, 200.0), arr_obj.items.items[1].asNumber()); // Matches Range
     try testing.expectEqual(@as(f64, 300.0), arr_obj.items.items[2].asNumber()); // Fallback
+}
+
+test "VM: case matches a class as is_a? does, a built-in value's too" {
+    try support.expectScripts(&.{.{
+        .src =
+        \\def kind(x)
+        \\  case x
+        \\  when Geometry
+        \\    "solid"
+        \\  when Path
+        \\    "path"
+        \\  when Proc
+        \\    "proc"
+        \\  when Number
+        \\    "number"
+        \\  when Object
+        \\    x.is_a?(String) ? "string" : "other"
+        \\  end
+        \\end
+        \\r = [cube(1), polyline([[0, 0], [1, 1]]), -> { 1 }, 2, "s", :sym].map { |x| kind(x) }.join(",")
+        ,
+        .expected = .{ .str = "solid,path,proc,number,string,other" },
+    }});
 }
 
 test "VM: Object Reflection (is_a? and respond_to?)" {

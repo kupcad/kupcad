@@ -19,6 +19,7 @@ const manifest = @import("../stdlib/manifest.zig");
 const scope_mod = @import("scope.zig");
 const emitter_mod = @import("emitter.zig");
 const Document = @import("../frontend/document.zig").Document;
+const LineIndex = @import("../core/line_index.zig").LineIndex;
 
 /// Room for a compile error message such as "'cube' is a built-in and can't be assigned".
 const MAX_FAILURE_MESSAGE_LEN = 192;
@@ -344,6 +345,13 @@ pub const Compiler = struct {
     pub fn errorDiagnostic(self: *const Compiler) ?common_errors.Diagnostic {
         const failure = if (self.failure) |*f| f else return null;
         return .{ .loc = .{ .offset = failure.offset, .length = 1, .file_id = 0 }, .code = failure.code, .message = failure.message() };
+    }
+
+    /// The first compile error as "line:col: message [code]" (`Diagnostic.formatLine`),
+    /// owned by the caller; null when the compiler kept none, or it can't be allocated.
+    pub fn errorLine(self: *const Compiler, allocator: std.mem.Allocator, line_index: *const LineIndex) ?[]u8 {
+        const found = self.errorDiagnostic() orelse return null;
+        return found.formatLine(allocator, line_index) catch null;
     }
 
     /// Records the first compile error (on the root compiler, which the caller holds) and

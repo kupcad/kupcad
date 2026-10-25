@@ -5,8 +5,7 @@
 const std = @import("std");
 const chunk = @import("../../vm/chunk.zig");
 
-pub fn disassembleChunk(allocator: std.mem.Allocator, c: *const chunk.Chunk, name: []const u8, writer: anytype) !void {
-    _ = allocator;
+pub fn disassembleChunk(c: *const chunk.Chunk, name: []const u8, writer: anytype) !void {
     try writer.print("== {s} ==\n", .{name});
 
     var offset: usize = 0;

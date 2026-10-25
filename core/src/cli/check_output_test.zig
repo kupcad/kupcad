@@ -16,7 +16,8 @@ test "SARIF: every result names a declared rule and every path is a URI" {
         .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .warning, .message = "nothing to suppress", .origin = .{ .rule = suppressions.RULE } },
         .{ .loc = .{ .offset = 4, .length = 1, .file_id = 0 }, .severity = .info, .message = "unused", .origin = .{ .rule = "unused-variable" } },
     };
-    try collector.add("my parts/ünit#1.kup", "x = 1\ny = 2\n", &diags);
+    // A Windows separator is a URI's `/`
+    try collector.add("work/my parts\\ünit#1.kup", "x = 1\ny = 2\n", &diags);
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
@@ -34,7 +35,7 @@ test "SARIF: every result names a declared rule and every path is a URI" {
         for (rules) |rule| declared = declared or std.mem.eql(u8, rule.object.get("id").?.string, rule_id);
         try testing.expect(declared);
         const location = r.object.get("locations").?.array.items[0].object.get("physicalLocation").?.object;
-        try testing.expectEqualStrings("my%20parts/%C3%BCnit%231.kup", location.get("artifactLocation").?.object.get("uri").?.string);
+        try testing.expectEqualStrings("work/my%20parts/%C3%BCnit%231.kup", location.get("artifactLocation").?.object.get("uri").?.string);
         try testing.expect(location.get("region").?.object.get("startLine").?.integer >= 1);
         try testing.expect(location.get("region").?.object.get("startColumn").?.integer >= 1);
     }

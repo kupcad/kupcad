@@ -393,11 +393,6 @@ pub const Tree = struct {
     /// parentheses the author wrote.
     grouped: std.AutoHashMapUnmanaged(NodeIndex, void) = .empty,
 
-    pub fn init(allocator: std.mem.Allocator) Tree {
-        _ = allocator;
-        return .{};
-    }
-
     pub fn deinit(self: *Tree, allocator: std.mem.Allocator) void {
         self.nodes.deinit(allocator);
         self.extra_data.deinit(allocator);
@@ -829,7 +824,7 @@ pub const Builder = struct {
     pub fn init(allocator: std.mem.Allocator) Builder {
         return .{
             .allocator = allocator,
-            .tree = Tree.init(allocator),
+            .tree = .{},
         };
     }
 

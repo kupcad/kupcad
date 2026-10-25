@@ -179,7 +179,7 @@ test {
     _ = @import("cli/doc_test.zig");
     _ = @import("cli/check_output_test.zig");
     _ = @import("core/string_escape_test.zig");
-    _ = @import("tools/fmt/rules/sort_imports_test.zig");
+    _ = @import("tools/fmt/sort_imports_test.zig");
 
     // Linter Tests
     _ = @import("tools/lint/linter_test.zig");

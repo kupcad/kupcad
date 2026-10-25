@@ -308,12 +308,16 @@ test "API: a lint fix is kept only when it builds the same model" {
     // (dropped a ghost, a material, an engine setting, a size) was written back.
     try testing.expect(try keepsModel("x = 1\ncube(10)\n", "_x = 1\ncube(10)\n"));
     try testing.expect(try keepsModel("a = cube(10)\nb = a.translate(1, 0, 0)\nb\n", "_a = cube(10)\nb = _a.translate(1, 0, 0)\nb\n"));
+    try testing.expect(try keepsModel("p = cube(1)\nassemble(name: \"Arm\", parts: [p])\n", "_p = cube(1)\nassemble(name: \"Arm\", parts: [_p])\n"));
     const changed = [_][2][]const u8{
         .{ "cube(10)\n", "cube(11)\n" },
         .{ "cube(10).material(color: \"#ff0000\")\n", "cube(10).material(color: \"#00ff00\")\n" },
         .{ "g = cube(5).ghost\ncube(10)\n", "cube(10)\n" },
         .{ "CAD.config(engine: :brep)\ncube(10)\n", "cube(10)\n" },
         .{ "[cube(1), cube(2)]\n", "[cube(1)]\n" },
+        // An assembly by its name, which its export writes, and its parts
+        .{ "assemble(name: \"Arm\", parts: [cube(1)])\n", "assemble(name: \"Leg\", parts: [cube(1)])\n" },
+        .{ "assemble(name: \"Arm\", parts: [cube(1)])\n", "assemble(name: \"Arm\", parts: [cube(2)])\n" },
         .{ "cube(10)\n", "cube(\n" }, // no longer parses
         .{ "cube(10)\n", "cube(10).undefined_thing\n" }, // fails where the original ran
     };

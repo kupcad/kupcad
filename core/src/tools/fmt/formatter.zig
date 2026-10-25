@@ -15,8 +15,7 @@ const string_escape = @import("../../core/string_escape.zig");
 const lexer = @import("../../frontend/lexer.zig");
 const identifier = @import("../../core/identifier.zig");
 const TokenTag = lexer.Tag;
-const FormatRule = @import("rules/rule.zig").FormatRule;
-const SortImportsRule = @import("rules/sort_imports.zig").SortImportsRule;
+const sort_imports = @import("sort_imports.zig");
 
 /// What opens a `%q` string, before its delimiter.
 const PERCENT_Q = "%q";
@@ -36,15 +35,12 @@ pub const Formatter = struct {
     line_index: *const LineIndex,
     comments: []const token.Comment,
     config: Config,
-    rules: std.ArrayList(FormatRule) = .empty,
 
     comment_idx: usize = 0,
     indent_level: usize = 0,
     /// Set while a construct is printed on one line to measure it (layOut): everything
     /// inside it is then printed flat too, and decides nothing on its own.
     flat: bool = false,
-
-    sort_imports_rule: SortImportsRule = .{},
 
     /// A formatter for a parsed document: its source, tokens, line index and comments.
     pub fn forDocument(allocator: std.mem.Allocator, doc: *const Document, config: Config) Formatter {
@@ -65,14 +61,7 @@ pub const Formatter = struct {
         };
     }
 
-    pub fn registerDefaultRules(self: *Formatter) !void {
-        if (self.config.sort_imports) {
-            try self.rules.append(self.allocator, self.sort_imports_rule.rule());
-        }
-    }
-
     pub fn deinit(self: *Formatter) void {
-        self.rules.deinit(self.allocator);
         self.out.deinit(self.allocator);
     }
 
@@ -194,7 +183,7 @@ pub const Formatter = struct {
     }
 
     /// For each statement: whether a comment sits on its lines or between it and the
-    /// statement before it (what a rule that reorders statements must leave alone).
+    /// statement before it (what import sorting must leave alone).
     fn commentedStatements(self: *Formatter, allocator: std.mem.Allocator, tree: *const ast.Tree, stmts: []const ast.NodeIndex) Error![]const bool {
         const commented = try allocator.alloc(bool, stmts.len);
         var ci = self.comment_idx;
@@ -457,14 +446,11 @@ pub const Formatter = struct {
         var temp_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer temp_arena.deinit();
 
-        const commented = try self.commentedStatements(temp_arena.allocator(), tree, stmts);
-        var print_stmts = stmts;
-        for (self.rules.items) |rule| {
-            print_stmts = rule.processBlockStmts(temp_arena.allocator(), tree, print_stmts, commented);
-        }
+        const temp = temp_arena.allocator();
+        const print_stmts = if (self.config.sort_imports) try sort_imports.sortedImports(temp, tree, stmts, try self.commentedStatements(temp, tree, stmts)) else stmts;
 
-        // Lines come from the statement at the same position in the source: a rule may
-        // have swapped statements (sorted imports), and the comments and blank lines
+        // Lines come from the statement at the same position in the source: sorting may
+        // have swapped imports, and the comments and blank lines
         // between positions are the source's. (The sorted import's own line was used, so
         // a header comment got a blank line below it.)
         var prev_last_line: u32 = 0;

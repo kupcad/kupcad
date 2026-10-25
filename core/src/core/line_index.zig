@@ -34,20 +34,10 @@ pub const LineIndex = struct {
         allocator.free(self.line_starts);
     }
 
-    /// Finds the 0-indexed line number for a given byte offset using binary search.
+    /// The 0-based line `offset` is on (binary search: the last line starting at or before it).
     pub fn getLine(self: *const LineIndex, offset: u32) u32 {
-        var left: usize = 0;
-        var right: usize = self.line_starts.len;
-
-        while (left < right) {
-            const mid = left + (right - left) / 2;
-            if (self.line_starts[mid] > offset) {
-                right = mid;
-            } else {
-                left = mid + 1;
-            }
-        }
-        return @intCast(left - 1);
+        const after = std.sort.upperBound(u32, self.line_starts, offset, orderOf);
+        return @intCast(after - 1);
     }
 
     /// The text of 0-based `line` of `source` (the text this index was built from), without
@@ -100,3 +90,7 @@ pub const LineIndex = struct {
         });
     }
 };
+
+fn orderOf(offset: u32, line_start: u32) std.math.Order {
+    return std.math.order(offset, line_start);
+}

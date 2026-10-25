@@ -41,7 +41,6 @@ pub const Vocabulary = struct {
     mesh_methods: std.ArrayList([]const u8) = .empty,
     transforms: std.ArrayList([]const u8) = .empty,
     csg_ops: std.ArrayList([]const u8) = .empty,
-    workplanes: std.ArrayList([]const u8) = .empty,
     inspections: std.ArrayList([]const u8) = .empty,
     /// The methods of the classes (Object, Array, Map, String, CAD, Math, ...).
     core_methods: std.ArrayList([]const u8) = .empty,
@@ -70,7 +69,6 @@ pub const Vocabulary = struct {
             switch (mm.category) {
                 .transform => try words.transforms.append(allocator, mm.name),
                 .csg_operator => try words.csg_ops.append(allocator, mm.name),
-                .workplane_method => try words.workplanes.append(allocator, mm.name),
                 .inspection_method => try words.inspections.append(allocator, mm.name),
                 else => {},
             }
@@ -128,90 +126,19 @@ fn lessThan(_: void, a: []const u8, b: []const u8) bool {
 pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     var words = try Vocabulary.collect(allocator);
     defer words.deinit(allocator);
-    const keywords = &words.keywords;
-    const builtins = &words.builtins;
-    const prim_3d = &words.prim_3d;
-    const prim_2d = &words.prim_2d;
-    const transforms = &words.transforms;
-    const csg_ops = &words.csg_ops;
-    const workplanes = &words.workplanes;
-    const inspections = &words.inspections;
-    const core_methods = &words.core_methods;
-
-    // Supply dummy fallbacks if a list is empty to avoid crashing the TextMate Regex engine
-    if (builtins.items.len == 0) try builtins.append(allocator, "dummy_builtin");
-    if (prim_3d.items.len == 0) try prim_3d.append(allocator, "dummy_prim_3d");
-    if (prim_2d.items.len == 0) try prim_2d.append(allocator, "dummy_prim_2d");
-    if (csg_ops.items.len == 0) try csg_ops.append(allocator, "dummy_csg_op");
-    if (workplanes.items.len == 0) try workplanes.append(allocator, "dummy_wp");
-    if (inspections.items.len == 0) try inspections.append(allocator, "dummy_insp");
-    if (core_methods.items.len == 0) try core_methods.append(allocator, "dummy_core");
-
-    // Join into OR groups (e.g., "box|cylinder|sphere")
-    const joined_kw = try std.mem.join(allocator, "|", keywords.items);
-    const joined_p3d = try std.mem.join(allocator, "|", prim_3d.items);
-    const joined_p2d = try std.mem.join(allocator, "|", prim_2d.items);
-    const joined_tf = try std.mem.join(allocator, "|", transforms.items);
-    const joined_csg = try std.mem.join(allocator, "|", csg_ops.items);
-    const joined_wp = try std.mem.join(allocator, "|", workplanes.items);
-    const joined_insp = try std.mem.join(allocator, "|", inspections.items);
-    defer allocator.free(joined_kw);
-    defer allocator.free(joined_p3d);
-    defer allocator.free(joined_p2d);
-    defer allocator.free(joined_tf);
-    defer allocator.free(joined_csg);
-    defer allocator.free(joined_wp);
-    defer allocator.free(joined_insp);
-
-    // Helper to safely fallback, deduplicate, join, and wrap categories into TextMate Regex format
-    const buildMethodRegex = struct {
-        fn apply(alloc: std.mem.Allocator, list: *std.ArrayList([]const u8), dummy: []const u8) ![]const u8 {
-            if (list.items.len == 0) try list.append(alloc, dummy);
-
-            // Deduplicate the list using a StringHashMap as a Set
-            var seen: std.StringHashMapUnmanaged(void) = .empty;
-            defer seen.deinit(alloc);
-
-            var unique_list = std.ArrayList([]const u8).empty;
-            defer unique_list.deinit(alloc);
-
-            for (list.items) |item| {
-                if (!seen.contains(item)) {
-                    try seen.put(alloc, item, {});
-                    try unique_list.append(alloc, item);
-                }
-            }
-
-            const joined = try std.mem.join(alloc, "|", unique_list.items);
-            defer alloc.free(joined);
-            return alloc.print("(?<![\\\\w])({s})(?![\\\\w?!])", .{joined});
-        }
-    }.apply;
-
-    // Build Keyword Matcher (Keywords use a slightly different regex constraint)
-    const kw_joined = try std.mem.join(allocator, "|", keywords.items);
-    defer allocator.free(kw_joined);
-    const kw_match = try allocator.print("(?<![\\\\w.])({s})(?![\\\\w?!])", .{kw_joined});
-    defer allocator.free(kw_match);
-
-    // Build Method Matchers using the consolidated helper
-    const builtins_match = try buildMethodRegex(allocator, builtins, "dummy_builtin");
-    const p3d_match = try buildMethodRegex(allocator, prim_3d, "dummy_prim_3d");
-    const p2d_match = try buildMethodRegex(allocator, prim_2d, "dummy_prim_2d");
-    const tf_match = try buildMethodRegex(allocator, transforms, "dummy_tf");
-    const csg_match = try buildMethodRegex(allocator, csg_ops, "dummy_csg");
-    const wp_match = try buildMethodRegex(allocator, workplanes, "dummy_wp");
-    const insp_match = try buildMethodRegex(allocator, inspections, "dummy_insp");
-    const core_match = try buildMethodRegex(allocator, core_methods, "dummy_core");
-
-    defer allocator.free(builtins_match);
-    defer allocator.free(p3d_match);
-    defer allocator.free(p2d_match);
-    defer allocator.free(tf_match);
-    defer allocator.free(csg_match);
-    defer allocator.free(wp_match);
-    defer allocator.free(insp_match);
-    defer allocator.free(core_match);
+    // The matches live as long as the grammar is written
+    var arena: std.heap.ArenaAllocator = .init(allocator);
+    defer arena.deinit();
+    const matches = arena.allocator();
+    // A keyword after a `.` is a method's name
+    const kw_match = try wordsMatch(matches, &words.keywords, ".");
+    const builtins_match = try wordsMatch(matches, &words.builtins, "");
+    const p3d_match = try wordsMatch(matches, &words.prim_3d, "");
+    const p2d_match = try wordsMatch(matches, &words.prim_2d, "");
+    const tf_match = try wordsMatch(matches, &words.transforms, "");
+    const csg_match = try wordsMatch(matches, &words.csg_ops, "");
+    const insp_match = try wordsMatch(matches, &words.inspections, "");
+    const core_match = try wordsMatch(matches, &words.core_methods, "");
 
     // Define the grammar using anonymous list literals (tuples) for arrays
     const grammar = .{
@@ -238,7 +165,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
             .{ .include = "#primitives_2d" },
             .{ .include = "#transforms" },
             .{ .include = "#csg_operators" },
-            .{ .include = "#workplanes" },
             .{ .include = "#inspections" },
             .{ .include = "#numbers" },
             .{ .include = "#operators" },
@@ -354,10 +280,6 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
                 .match = csg_match,
                 .name = "support.function.csg.kupcad",
             },
-            .workplanes = .{
-                .match = wp_match,
-                .name = "support.function.workplane.kupcad",
-            },
             .inspections = .{
                 .match = insp_match,
                 .name = "support.function.inspection.kupcad",
@@ -398,6 +320,16 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
     defer out.deinit();
     try out.writer.print("{f}", .{std.json.fmt(grammar, .{ .whitespace = .indent_2 })});
     return try allocator.dupe(u8, out.written());
+}
+
+/// A TextMate match for any of `list`'s words (sorted, each once), whole: no word character,
+/// `?` or `!` follows it, and none of `not_after`'s characters nor a word character comes
+/// before it. error.EmptyWordList for no words: an empty group would match everywhere.
+fn wordsMatch(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), comptime not_after: []const u8) ![]const u8 {
+    if (list.items.len == 0) return error.EmptyWordList;
+    const alternatives = try std.mem.join(allocator, "|", sortedOnce(list));
+    defer allocator.free(alternatives);
+    return allocator.print("(?<![\\\\w" ++ not_after ++ "])({s})(?![\\\\w?!])", .{alternatives});
 }
 
 /// Writes the TextMate grammar to the first path given, and the editor's vocabulary to the second.

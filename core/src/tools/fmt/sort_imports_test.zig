@@ -1,11 +1,11 @@
 const std = @import("std");
 const testing = std.testing;
-const ast = @import("../../../core/ast.zig");
-const lexer_mod = @import("../../../frontend/lexer.zig");
-const parser_mod = @import("../../../frontend/parser.zig");
-const SortImportsRule = @import("sort_imports.zig").SortImportsRule;
+const ast = @import("../../core/ast.zig");
+const lexer_mod = @import("../../frontend/lexer.zig");
+const parser_mod = @import("../../frontend/parser.zig");
+const sort_imports = @import("sort_imports.zig");
 
-test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
+test "sort imports: sorts standard contiguous imports" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -21,12 +21,10 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
-    var rule_impl = SortImportsRule{};
-    const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
+    const sorted_stmts = try sort_imports.sortedImports(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -37,7 +35,7 @@ test "Formatter Rule: SortImportsRule sorts standard contiguous imports" {
     try testing.expectEqualStrings("z_lib.kup", parser.b.tree.getString(parser.b.tree.importStmt(n2).path));
 }
 
-test "Formatter Rule: SortImportsRule handles named and destructured imports" {
+test "sort imports: handles named and destructured imports" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -53,12 +51,10 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
-    var rule_impl = SortImportsRule{};
-    const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
+    const sorted_stmts = try sort_imports.sortedImports(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -81,7 +77,7 @@ test "Formatter Rule: SortImportsRule handles named and destructured imports" {
     try testing.expectEqualStrings("ThreadedInsert", parser.b.tree.getString(hardware_symbols[0].original));
 }
 
-test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
+test "sort imports: respects non-contiguous blocks" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -101,12 +97,10 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
-    var rule_impl = SortImportsRule{};
-    const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
+    const stmts = try sort_imports.sortedImports(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(stmts[0]).?;
     const n1 = parser.b.tree.getNode(stmts[1]).?;
@@ -127,7 +121,7 @@ test "Formatter Rule: SortImportsRule respects non-contiguous blocks" {
     try testing.expectEqualStrings("y.kup", parser.b.tree.getString(parser.b.tree.importStmt(n4).path));
 }
 
-test "Formatter Rule: SortImportsRule handles imports with trailing attributes" {
+test "sort imports: handles imports with trailing attributes" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
 
@@ -142,12 +136,10 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     var parser = try parser_mod.Parser.init(tokens, source, arena.allocator());
     const tree_idx = try parser.parseProgram();
 
-    var rule_impl = SortImportsRule{};
-    const rule = rule_impl.rule();
     const root_node = parser.b.tree.getNode(tree_idx).?;
     const root_block = parser.b.tree.block(root_node);
 
-    const sorted_stmts = rule.processBlockStmts(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
+    const sorted_stmts = try sort_imports.sortedImports(arena.allocator(), &parser.b.tree, parser.b.tree.getNodes(root_block.stmts), try uncommented(arena.allocator(), parser.b.tree.getNodes(root_block.stmts).len));
 
     const n0 = parser.b.tree.getNode(sorted_stmts[0]).?;
     const n1 = parser.b.tree.getNode(sorted_stmts[1]).?;
@@ -167,7 +159,7 @@ test "Formatter Rule: SortImportsRule handles imports with trailing attributes" 
     try testing.expectEqual(ast.Tag.symbol, val_node.tag);
 }
 
-/// No statement has a comment attached: the rule may reorder any of them.
+/// No statement has a comment attached: any of them may be reordered.
 fn uncommented(allocator: std.mem.Allocator, count: usize) ![]const bool {
     const flags = try allocator.alloc(bool, count);
     @memset(flags, false);

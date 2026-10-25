@@ -249,7 +249,8 @@ pub const GlobalCache = struct {
 };
 
 /// A 2-way polymorphic inline cache at one property or invoke site: per class, the method
-/// found (`cached_val`), or the field offset when the name is a field (`cached_val` nil).
+/// found (`cached_val_1`, `cached_val_2`), or the field offset when the name is a field
+/// (the value nil).
 /// Valid for `VM.method_epoch` as of `epoch`: defining, redefining or mixing in a method
 /// anywhere bumps the epoch, so no site keeps calling a method that was replaced (it did,
 /// and after a collection it called freed memory). The GC traces the entries.
