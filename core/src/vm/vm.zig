@@ -2020,6 +2020,7 @@ pub const VM = struct {
         // A def takes the arguments it declares; a block or lambda is lenient (missing
         // ones are nil, extra ones dropped), as documented.
         if (func.is_method) if (self.arityError(closure, provided_args)) |res| return res;
+        if (func.is_method and func.has_kwargs) if (self.keywordError(closure, kwargs)) |res| return res;
 
         // Execute unified padding logic
         self.padClosureFrame(closure, provided_args, base_slot, kwargs, block_val) catch |err| return self.allocationFailed(err);
@@ -3875,6 +3876,35 @@ pub const VM = struct {
         if (func.splat_pos != null) return self.raiseError(.ArgumentError, "{s} takes at least {d} argument{s}, got {d}", .{ name, min, plural(min), provided });
         if (min == max) return self.raiseError(.ArgumentError, "{s} takes {d} argument{s}, got {d}", .{ name, min, plural(min), provided });
         return self.raiseError(.ArgumentError, "{s} takes {d} to {d} arguments, got {d}", .{ name, min, max, provided });
+    }
+
+    /// A def's call against the keywords it declares (its chunk's): none it doesn't take
+    /// unless it takes **opts (a misspelt one named before the one it misses), and each it
+    /// requires given; null when they fit, as a built-in's are checked. A block or lambda is
+    /// lenient, as with its arguments.
+    fn keywordError(self: *VM, closure: *const value.ObjClosure, kwargs: ?value.Value) ?InterpretResult {
+        const exec_chunk: *const chunk.Chunk = @ptrCast(@alignCast(closure.function.chunk.?));
+        const given: ?*value.ObjMap = if (kwargs) |k| (if (k.isMap()) k.asMap() else null) else null;
+        const name = self.closureName(closure);
+        if (given != null and !exec_chunk.open_keywords) next_key: for (given.?.map.keys()) |key| {
+            for (exec_chunk.keywords.items) |keyword| {
+                if (exec_chunk.constants.items[keyword.name].isEqual(key)) continue :next_key;
+            }
+            var accepted: std.Io.Writer.Allocating = .init(self.allocator);
+            defer accepted.deinit();
+            for (exec_chunk.keywords.items, 0..) |keyword, i| {
+                accepted.writer.print("{s}{s}", .{ if (i > 0) ", " else "", exec_chunk.constants.items[keyword.name].nameChars().? }) catch return self.allocationFailed(error.OutOfMemory);
+            }
+            const written = key.nameChars() orelse return self.raiseError(.ArgumentError, "{s} keywords must be names", .{name});
+            return self.raiseError(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ name, written, accepted.written() });
+        };
+        for (exec_chunk.keywords.items) |keyword| {
+            const key = exec_chunk.constants.items[keyword.name];
+            if (keyword.required and (given == null or !given.?.map.contains(key))) {
+                return self.raiseError(.ArgumentError, "{s} needs the keyword '{s}'", .{ name, key.nameChars().? });
+            }
+        }
+        return null;
     }
 
     fn plural(count: usize) []const u8 {

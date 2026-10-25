@@ -298,6 +298,10 @@ pub const DebugSpan = struct {
     source_offset: u32,
 };
 
+/// A keyword parameter of a def: its name's constant (the Symbol a call's keyword Map is
+/// keyed by), and whether a call must give it (it has no default).
+pub const Keyword = struct { name: u32, required: bool };
+
 /// Set of live chunks whose constant pools are GC roots.
 ///
 /// A chunk under compilation is not reachable from any ObjFunction yet (the
@@ -356,6 +360,10 @@ pub const Chunk = struct {
     max_stack_slots: usize,
     local_count: usize,
     local_names: std.ArrayList([]const u8), // For REPL introspection
+    /// A def's keyword parameters, which the VM checks a call's keywords against; any
+    /// keyword is taken besides them when `open_keywords` (it declares `**opts`).
+    keywords: std.ArrayList(Keyword) = .empty,
+    open_keywords: bool = false,
     // GC root registration (see ChunkRegistry). A registered chunk must not be
     // moved by value, since the registry stores its address.
     registry: ?*ChunkRegistry = null,
@@ -445,6 +453,7 @@ pub const Chunk = struct {
         self.global_caches.deinit(allocator);
         self.debug_spans.deinit(allocator);
         self.constants.deinit(allocator);
+        self.keywords.deinit(allocator);
         for (self.local_names.items) |name| allocator.free(name);
         self.local_names.deinit(allocator);
         self.* = init();

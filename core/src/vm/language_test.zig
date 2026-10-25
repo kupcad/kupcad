@@ -290,6 +290,14 @@ test "Language: a def takes the arguments it declares" {
         .{ .src = "def k(a, b: 2)\n  a + b\nend\nr = [k(1), k(1, b: 5)]", .expected = .{ .nums = &.{ 3, 6 } } },
         .{ .src = rescued("def k(a, b: 2)\n  a + b\nend\nk(1, 2)"), .expected = .{ .str = "ArgumentError: k takes 1 argument, got 2" } },
         .{ .src = rescued("def p(a)\n  a\nend\np(1, x: 2)"), .expected = .{ .str = "ArgumentError: p takes no keyword arguments" } },
+        // A keyword with no default is required, and one it doesn't declare is refused (a
+        // missing one was nil, and a mistyped one dropped): as a built-in's are
+        .{ .src = rescued("def kw(a, k:, size: 1)\n  a\nend\nkw(1)"), .expected = .{ .str = "ArgumentError: kw needs the keyword 'k'" } },
+        .{ .src = rescued("def kw(a, k:, size: 1)\n  a\nend\nkw(1, k: 2, sise: 3)"), .expected = .{ .str = "ArgumentError: kw does not take a keyword 'sise' (it accepts: k, size)" } },
+        .{ .src = rescued("class A\n  def initialize(name:)\n    @name = name\n  end\nend\nA.new(nme: \"x\")"), .expected = .{ .str = "ArgumentError: initialize does not take a keyword 'nme' (it accepts: name)" } },
+        // Given nil, it is given; **opts takes the rest
+        .{ .src = "def kw(a, k:)\n  [a, k]\nend\nr = kw(1, k: nil).inspect", .expected = .{ .str = "[1, nil]" } },
+        .{ .src = "def o(a, k: 1, **opts)\n  opts.length\nend\nr = o(1, x: 1, y: 2)", .expected = .{ .num = 2 } },
         .{ .src = "def q(m, n = 0)\n  m\nend\nr = q({ x: 1 })[:x]", .expected = .{ .num = 1 } },
         .{ .src = "class P\n  def initialize(x)\n    @x = x\n  end\nend\n" ++ "r = begin\n  P.new\nrescue ArgumentError => e\n  e.message\nend", .expected = .{ .str = "initialize takes 1 argument, got 0" } },
         // super forwards the keyword Map as keywords

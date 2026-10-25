@@ -2777,6 +2777,7 @@ pub const Compiler = struct {
 
         var child_compiler = try self.childCompiler(child_chunk, func, is_method);
         defer child_compiler.deinit();
+        for (params) |param| child_chunk.open_keywords = child_chunk.open_keywords or param.modifier == .double_splat;
         try child_compiler.declareParams(params, layout);
         if (layout.has_kwargs) try child_compiler.emitKeywordParams(params, layout.map_slot);
         try child_compiler.emitPositionalDefaults(params);
@@ -2870,6 +2871,7 @@ pub const Compiler = struct {
         for (params) |param| {
             if (!param.is_keyword) continue;
             const kw_name_idx = try self.makeSymbolConstant(self.tree.getString(param.name));
+            try self.current_chunk.keywords.append(self.allocator, .{ .name = @intCast(kw_name_idx), .required = param.default_value == .none });
             if (kw_name_idx <= limits.MAX_SHORT_CONSTANTS) {
                 try self.emitOp(.op_extract_kwarg);
                 try self.emitByte(map_slot);
