@@ -110,3 +110,37 @@ test "NativeVfs: re-linking replaces stale symlinks but never real files" {
     defer testing.allocator.free(data);
     try testing.expectEqualStrings("keep me", data);
 }
+
+test "NativeVfs: a symlink inside the root that leads out of it is followed nowhere" {
+    if (builtin.target.os.tag == .windows) return error.SkipZigTest; // a symlink needs a privilege there
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "root/real");
+    try tmp.dir.createDirPath(testing.io, "outside");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "outside/secret.txt", .data = "secret" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "root/real/own.txt", .data = "own" });
+    // A link the project came with, as the OS resolves it: out of the root, and in it
+    try tmp.dir.symLink(testing.io, "../outside", "root/out", .{});
+    try tmp.dir.symLink(testing.io, "real", "root/in", .{});
+    var root = try tmp.dir.openDir(testing.io, "root", .{});
+    defer root.close(testing.io);
+    var nvfs = NativeVfs.init(testing.io, root);
+    const fs = nvfs.vfs();
+
+    // The path is inside as written; what it names isn't
+    try testing.expectError(error.AccessDenied, fs.readFile(testing.allocator, "out/secret.txt"));
+    try testing.expectError(error.AccessDenied, fs.writeFile("out/new.txt", "x"));
+    try testing.expectError(error.AccessDenied, fs.makePath("out/sub/dir"));
+    try testing.expectError(error.AccessDenied, fs.hardLink("real/own.txt", "out/own.txt"));
+    try testing.expectError(error.AccessDenied, fs.symLink("real", "out/link"));
+    try testing.expectError(error.AccessDenied, fs.readFile(testing.allocator, "out"));
+    try testing.expect(tmp.dir.statFile(testing.io, "outside/new.txt", .{}) == error.FileNotFound);
+    // Through the link that stays inside, everything works
+    const own = try fs.readFile(testing.allocator, "in/own.txt");
+    defer testing.allocator.free(own);
+    try testing.expectEqualStrings("own", own);
+    try fs.writeFile("in/new.txt", "new");
+    const written = try tmp.dir.readFileAlloc(testing.io, "root/real/new.txt", testing.allocator, .limited(16));
+    defer testing.allocator.free(written);
+    try testing.expectEqualStrings("new", written);
+}

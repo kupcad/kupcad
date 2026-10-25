@@ -1,6 +1,7 @@
-//! `NativeVfs`: the `Vfs` over a real directory, confining every path to it (no absolute
-//! paths, no `..` above it, symlink targets kept inside); `hardLinkTrusted` links in a file
-//! from the package store outside it.
+//! `NativeVfs`: the `Vfs` over a real directory, confining every path to it: no absolute
+//! paths, no `..` above it, symlink targets kept inside, and what a path really names (a
+//! symlink inside the root may lead out of it) under the root; `hardLinkTrusted` links in a
+//! file from the package store outside it.
 
 const std = @import("std");
 const Vfs = @import("vfs.zig").Vfs;
@@ -28,7 +29,36 @@ pub const NativeVfs = struct {
         };
     }
 
-    /// Validates that a path does not escape the virtual filesystem root
+    /// Refuses `path` unless it stays in the root: as written (ensureSafePath), and as the
+    /// file system resolves it, where a symlink inside the root may lead outside it (a
+    /// project cloned from the internet may hold one). What isn't there yet (a file to
+    /// write, directories to make) is judged by the nearest of its ancestors that is.
+    fn confine(self: *NativeVfs, path: []const u8) !void {
+        try ensureSafePath(path);
+        var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const root = root_buf[0..try self.root_dir.realPath(self.io, &root_buf)];
+        var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+        const real = try self.realOfNearest(path, &buf);
+        const inside = std.mem.startsWith(u8, real, root) and
+            (real.len == root.len or std.fs.path.isSep(real[root.len]));
+        if (!inside) return error.AccessDenied;
+    }
+
+    /// The real path of `path`, or of the nearest ancestor of it that exists: the root's,
+    /// for one at the top.
+    fn realOfNearest(self: *NativeVfs, path: []const u8, buf: []u8) ![]const u8 {
+        var at: ?[]const u8 = path;
+        while (at) |sub_path| : (at = std.fs.path.dirname(sub_path)) {
+            const len = self.root_dir.realPathFile(self.io, sub_path, buf) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => return err,
+            };
+            return buf[0..len];
+        }
+        return buf[0..try self.root_dir.realPath(self.io, buf)];
+    }
+
+    /// Validates that a path does not escape the virtual filesystem root, as written
     fn ensureSafePath(path: []const u8) !void {
         if (std.fs.path.isAbsolute(path)) return error.AccessDenied;
 
@@ -45,14 +75,14 @@ pub const NativeVfs = struct {
     }
 
     fn makePath(ptr: *anyopaque, path: []const u8) anyerror!void {
-        try ensureSafePath(path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(path);
         try self.root_dir.createDirPath(self.io, path);
     }
 
     fn readFile(ptr: *anyopaque, allocator: std.mem.Allocator, path: []const u8) anyerror![]u8 {
-        try ensureSafePath(path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(path);
         const file = try self.root_dir.openFile(self.io, path, .{});
         defer file.close(self.io);
 
@@ -69,15 +99,15 @@ pub const NativeVfs = struct {
     }
 
     fn writeFile(ptr: *anyopaque, path: []const u8, data: []const u8) anyerror!void {
-        try ensureSafePath(path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(path);
         try self.root_dir.writeFile(self.io, .{ .sub_path = path, .data = data });
     }
 
     fn hardLink(ptr: *anyopaque, old_path: []const u8, new_path: []const u8) anyerror!void {
-        try ensureSafePath(old_path);
-        try ensureSafePath(new_path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(old_path);
+        try self.confine(new_path);
         try self.root_dir.hardLink(old_path, self.root_dir, new_path, self.io, .{});
     }
 
@@ -88,8 +118,8 @@ pub const NativeVfs = struct {
     /// re-installs refresh links.
     fn hardLinkTrusted(ptr: *anyopaque, trusted_abs_source: []const u8, new_path: []const u8) anyerror!void {
         if (!std.fs.path.isAbsolute(trusted_abs_source)) return error.AccessDenied;
-        try ensureSafePath(new_path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(new_path);
         const cwd = std.Io.Dir.cwd();
         cwd.hardLink(trusted_abs_source, self.root_dir, new_path, self.io, .{}) catch |err| switch (err) {
             error.PathAlreadyExists => {
@@ -130,9 +160,9 @@ pub const NativeVfs = struct {
     }
 
     fn symLink(ptr: *anyopaque, target_path: []const u8, link_path: []const u8) anyerror!void {
-        try ensureSafePath(link_path);
-        try ensureSafeLinkTarget(link_path, target_path);
         const self: *NativeVfs = @ptrCast(@alignCast(ptr));
+        try self.confine(link_path);
+        try ensureSafeLinkTarget(link_path, target_path);
         self.root_dir.symLink(self.io, target_path, link_path, .{}) catch |err| switch (err) {
             error.PathAlreadyExists => {
                 // Re-install: replace a stale *symlink* (e.g. pointing at an old commit),
