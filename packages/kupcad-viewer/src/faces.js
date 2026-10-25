@@ -15,6 +15,10 @@ const FLAT_COS = Math.cos((0.5 * Math.PI) / 180);
 const SMOOTH_COS = Math.cos((EDGE_ANGLE_DEG * Math.PI) / 180);
 /** Two corners nearer than this, of the geometry's size, are one point: its triangles meet there. */
 const SAME_POINT = 1e-6;
+/** Slots in a hash table per key it is given, at least: it stays at most half full. */
+const TABLE_ROOM = 2;
+/** Odd numbers that spread a key's parts over a hash table's slots. */
+const SPREAD = [0x9e3779b1, 0x85ebca77, 0xc2b2ae3d];
 /** A face's way is an axis's when this close to it (the cosine). */
 const AXIS_COS = Math.cos((1 * Math.PI) / 180);
 /** The axes a face may face, and what the views call them. */
@@ -29,12 +33,24 @@ const AXES = /** @type {const} */ ([
 
 /**
  * A geometry's triangles, which meet which across an edge, and the face each was found in (-1
- * for none yet).
+ * for none yet). A triangle's sides are numbered `triangle * 3 + corner`, each from its corner
+ * to the next.
  * @typedef {object} Topology
  * @property {Float32Array} normals a unit normal per triangle, 3 numbers each
- * @property {Int32Array[]} neighbours each triangle's, across its edges
+ * @property {Int32Array} edgeOf the edge each side lies on, by its ends' points
+ * @property {Int32Array} start where each edge's sides begin in `sides` (one more, the end)
+ * @property {Int32Array} sides the sides on each edge, edge by edge
  * @property {Int32Array} faceOf
- * @property {{ triangles: number[], flat: boolean }[]} faces
+ * @property {FaceOf[]} faces
+ */
+
+/**
+ * A face's triangles, and its area in the scene as last found, with the mesh's matrix it was
+ * found for: a pointer moving over the face asks again on every frame.
+ * @typedef {object} FaceOf
+ * @property {number[]} triangles
+ * @property {boolean} flat
+ * @property {{ matrix: Matrix4, value: number } | null} area
  */
 
 /** @type {WeakMap<BufferGeometry, Topology>} */
@@ -49,7 +65,7 @@ const topologies = new WeakMap();
 export function faceAt(mesh, triangle) {
   const geometry = mesh.geometry;
   const face = faceContaining(geometry, triangle);
-  const area = face.triangles.reduce((sum, t) => sum + worldArea(geometry, t, mesh.matrixWorld), 0);
+  const area = areaOf(face, geometry, mesh.matrixWorld);
   if (!face.flat) return { flat: false, area, normal: null, facing: null };
   const normal = worldNormal(geometry, triangle, mesh.matrixWorld);
   return {
@@ -88,7 +104,9 @@ function faceContaining(geometry, triangle) {
 
 /**
  * The triangles of `geometry`, their normals, and which meet which: across an edge whose two
- * corners each triangle has (by their places, as a mesh's faces each have corners of their own).
+ * ends each triangle has (by their points, as a mesh's faces each have corners of their own).
+ * Typed arrays throughout: a mesh of a million triangles took seconds, a string and an array
+ * made for each.
  * @param {BufferGeometry} geometry
  * @returns {Topology}
  */
@@ -96,48 +114,113 @@ function topologyOf(geometry) {
   const position = geometry.getAttribute('position');
   const index = geometry.getIndex();
   const count = (index ? index.count : position.count) / 3;
-  geometry.computeBoundingBox();
-  const size = geometry.boundingBox?.getSize(new Vector3()).length() || 1;
-  const step = size * SAME_POINT;
-  /** @param {number} i */
-  const pointKey = (i) =>
-    `${Math.round(position.getX(i) / step)},${Math.round(position.getY(i) / step)},${Math.round(position.getZ(i) / step)}`;
-  /** @param {number} triangle @param {number} corner */
-  const vertex = (triangle, corner) =>
-    index ? index.getX(triangle * 3 + corner) : triangle * 3 + corner;
+  const sideCount = count * 3;
+  /** @param {number} side */
+  const vertex = (side) => (index ? index.getX(side) : side);
+  const pointOf = pointsOf(geometry);
   const normals = new Float32Array(count * 3);
-  /** @type {Map<string, number[]>} */
-  const byEdge = new Map();
   const a = new Vector3();
   const b = new Vector3();
   const c = new Vector3();
   for (let t = 0; t < count; t++) {
-    a.fromBufferAttribute(position, vertex(t, 0));
-    b.fromBufferAttribute(position, vertex(t, 1));
-    c.fromBufferAttribute(position, vertex(t, 2));
-    const normal = c.clone().sub(b).cross(a.clone().sub(b)).normalize();
-    normals.set([normal.x, normal.y, normal.z], t * 3);
-    const keys = [0, 1, 2].map((corner) => pointKey(vertex(t, corner)));
-    for (let edge = 0; edge < 3; edge++) {
-      const ends = [keys[edge], keys[(edge + 1) % 3]].toSorted().join('|');
-      const sharing = byEdge.get(ends);
-      if (sharing) sharing.push(t);
-      else byEdge.set(ends, [t]);
-    }
+    a.fromBufferAttribute(position, vertex(t * 3));
+    b.fromBufferAttribute(position, vertex(t * 3 + 1));
+    c.fromBufferAttribute(position, vertex(t * 3 + 2));
+    c.sub(b)
+      .cross(a.sub(b))
+      .normalize()
+      .toArray(normals, t * 3);
   }
-  /** @type {number[][]} */
-  const meeting = Array.from({ length: count }, () => []);
-  for (const triangles of byEdge.values()) {
-    for (const t of triangles) {
-      for (const other of triangles) if (other !== t) meeting[t].push(other);
-    }
+  // Each side's ends, the lower point first, so a side and its twin are one key
+  const low = new Int32Array(sideCount);
+  const high = new Int32Array(sideCount);
+  for (let side = 0; side < sideCount; side++) {
+    const next = side % 3 === 2 ? side - 2 : side + 1;
+    const p = pointOf[vertex(side)];
+    const q = pointOf[vertex(next)];
+    low[side] = Math.min(p, q);
+    high[side] = Math.max(p, q);
   }
+  const edges = intern(
+    sideCount,
+    (side) => Math.imul(low[side], SPREAD[0]) ^ Math.imul(high[side], SPREAD[1]),
+    (side, other) => low[side] === low[other] && high[side] === high[other],
+  );
+  const start = new Int32Array(edges.count + 1);
+  for (let side = 0; side < sideCount; side++) start[edges.ids[side] + 1]++;
+  for (let edge = 0; edge < edges.count; edge++) start[edge + 1] += start[edge];
+  const sides = new Int32Array(sideCount);
+  const filled = start.slice(0, edges.count);
+  for (let side = 0; side < sideCount; side++) sides[filled[edges.ids[side]]++] = side;
   return {
     normals,
-    neighbours: meeting.map((list) => Int32Array.from(list)),
+    edgeOf: edges.ids,
+    start,
+    sides,
     faceOf: new Int32Array(count).fill(-1),
     faces: [],
   };
+}
+
+/**
+ * The point each vertex of `geometry` is at: vertices nearer than SAME_POINT of its size are at
+ * one.
+ * @param {BufferGeometry} geometry
+ */
+function pointsOf(geometry) {
+  const position = geometry.getAttribute('position');
+  geometry.computeBoundingBox();
+  const size = geometry.boundingBox?.getSize(new Vector3()).length() || 1;
+  const step = size * SAME_POINT;
+  const grid = new Float64Array(position.count * 3);
+  for (let v = 0; v < position.count; v++) {
+    grid[v * 3] = Math.round(position.getX(v) / step);
+    grid[v * 3 + 1] = Math.round(position.getY(v) / step);
+    grid[v * 3 + 2] = Math.round(position.getZ(v) / step);
+  }
+  return intern(
+    position.count,
+    (v) =>
+      Math.imul(grid[v * 3], SPREAD[0]) ^
+      Math.imul(grid[v * 3 + 1], SPREAD[1]) ^
+      Math.imul(grid[v * 3 + 2], SPREAD[2]),
+    (v, w) =>
+      grid[v * 3] === grid[w * 3] &&
+      grid[v * 3 + 1] === grid[w * 3 + 1] &&
+      grid[v * 3 + 2] === grid[w * 3 + 2],
+  ).ids;
+}
+
+/**
+ * Ids for `count` keys, the same for equal keys and counted from 0 in the order they first
+ * come: by an open-addressing table of the first key of each id.
+ * @param {number} count
+ * @param {(key: number) => number} hash
+ * @param {(key: number, other: number) => boolean} same
+ * @returns {{ ids: Int32Array, count: number }}
+ */
+function intern(count, hash, same) {
+  let size = 1;
+  while (size < count * TABLE_ROOM) size *= 2;
+  const mask = size - 1;
+  const firsts = new Int32Array(size).fill(-1);
+  const ids = new Int32Array(count);
+  let distinct = 0;
+  for (let key = 0; key < count; key++) {
+    for (let slot = hash(key) & mask; ; slot = (slot + 1) & mask) {
+      const first = firsts[slot];
+      if (first < 0) {
+        firsts[slot] = key;
+        ids[key] = distinct++;
+        break;
+      }
+      if (same(key, first)) {
+        ids[key] = ids[first];
+        break;
+      }
+    }
+  }
+  return { ids, count: distinct };
 }
 
 /**
@@ -147,7 +230,7 @@ function topologyOf(geometry) {
  * @param {number} seed
  */
 function findFace(topology, seed) {
-  const { normals, neighbours, faceOf, faces } = topology;
+  const { normals, edgeOf, start, sides, faceOf, faces } = topology;
   const id = faces.length;
   /** @param {number} t @param {number} u */
   const cos = (t, u) =>
@@ -159,14 +242,18 @@ function findFace(topology, seed) {
   let flat = true;
   for (let at = 0; at < triangles.length; at++) {
     const t = triangles[at];
-    for (const u of neighbours[t]) {
-      if (faceOf[u] >= 0 || cos(t, u) < SMOOTH_COS) continue;
-      faceOf[u] = id;
-      triangles.push(u);
-      if (cos(seed, u) < FLAT_COS) flat = false;
+    for (let side = t * 3; side < t * 3 + 3; side++) {
+      const edge = edgeOf[side];
+      for (let on = start[edge]; on < start[edge + 1]; on++) {
+        const u = Math.floor(sides[on] / 3);
+        if (faceOf[u] >= 0 || cos(t, u) < SMOOTH_COS) continue;
+        faceOf[u] = id;
+        triangles.push(u);
+        if (cos(seed, u) < FLAT_COS) flat = false;
+      }
     }
   }
-  faces.push({ triangles, flat });
+  faces.push({ triangles, flat, area: null });
 }
 
 /**
@@ -188,13 +275,29 @@ function corners(geometry, triangle, matrix) {
 }
 
 /**
+ * The area of `face` of `geometry` in the scene, by the mesh's `matrix` to it.
+ * @param {FaceOf} face
  * @param {BufferGeometry} geometry
- * @param {number} triangle
  * @param {Matrix4} matrix
  */
-function worldArea(geometry, triangle, matrix) {
-  const [a, b, c] = corners(geometry, triangle, matrix);
-  return c.sub(b).cross(a.sub(b)).length() / 2;
+function areaOf(face, geometry, matrix) {
+  if (face.area?.matrix.equals(matrix)) return face.area.value;
+  const position = geometry.getAttribute('position');
+  const index = geometry.getIndex();
+  /** @param {number} side */
+  const vertex = (side) => (index ? index.getX(side) : side);
+  const a = new Vector3();
+  const b = new Vector3();
+  const c = new Vector3();
+  let value = 0;
+  for (const t of face.triangles) {
+    a.fromBufferAttribute(position, vertex(t * 3)).applyMatrix4(matrix);
+    b.fromBufferAttribute(position, vertex(t * 3 + 1)).applyMatrix4(matrix);
+    c.fromBufferAttribute(position, vertex(t * 3 + 2)).applyMatrix4(matrix);
+    value += c.sub(b).cross(a.sub(b)).length() / 2;
+  }
+  face.area = { matrix: matrix.clone(), value };
+  return value;
 }
 
 /**
