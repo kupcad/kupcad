@@ -105,7 +105,56 @@ describe('extractFile', () => {
   it('says so of a zip that is no zip', () => {
     expect(() => extractFile(new Uint8Array(100), 'zip', 'kupcad.exe')).toThrow(/no zip/);
   });
+
+  it("says what is broken in a zip: its directory, the binary's entry, or how it is compressed", () => {
+    const sound = archived('kupcad.exe', 'sound.zip', ['zip', '-qr0']);
+    // The directory's first entry no longer starts as one
+    const directory = sound.slice();
+    directory.set([0, 0, 0, 0], indexOf(directory, [0x50, 0x4b, 0x01, 0x02]));
+    expect(() => extractFile(directory, 'zip', 'kupcad.exe')).toThrow(/directory is broken/);
+    // The entries' local headers no longer start as such
+    const entries = sound.slice();
+    for (let at = indexOf(entries, [0x50, 0x4b, 0x03, 0x04]); at >= 0;) {
+      entries.set([0, 0, 0, 0], at);
+      at = indexOf(entries, [0x50, 0x4b, 0x03, 0x04]);
+    }
+    expect(() => extractFile(entries, 'zip', 'kupcad.exe')).toThrow(/entry is broken/);
+    // The binary compressed by a method this reads not (99): its directory entry's
+    const method = sound.slice();
+    const binaryEntry = directoryEntryOf(method, 'kupcad.exe');
+    new DataView(method.buffer).setUint16(binaryEntry + 10, 99, true);
+    expect(() => extractFile(method, 'zip', 'kupcad.exe')).toThrow(/can't read \(99\)/);
+  });
 });
+
+/**
+ * Where `bytes` first hold `sequence`, or -1.
+ * @param {Uint8Array} bytes
+ * @param {number[]} sequence
+ */
+function indexOf(bytes, sequence) {
+  for (let at = 0; at + sequence.length <= bytes.length; at++) {
+    if (sequence.every((byte, i) => bytes[at + i] === byte)) return at;
+  }
+  return -1;
+}
+
+/**
+ * Where the central directory entry of `name` starts in `zip`.
+ * @param {Uint8Array} zip
+ * @param {string} name
+ */
+function directoryEntryOf(zip, name) {
+  const view = new DataView(zip.buffer);
+  const text = new TextDecoder();
+  for (let at = indexOf(zip, [0x50, 0x4b, 0x01, 0x02]); at >= 0 && at < zip.length;) {
+    if (view.getUint32(at, true) !== 0x02014b50) break;
+    const nameLength = view.getUint16(at + 28, true);
+    if (text.decode(zip.subarray(at + 46, at + 46 + nameLength)) === name) return at;
+    at += 46 + nameLength + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
+  }
+  throw new Error(`no entry ${name}`);
+}
 
 describe('assets', () => {
   it('names the archive of each platform the core is built for, and none for another', () => {

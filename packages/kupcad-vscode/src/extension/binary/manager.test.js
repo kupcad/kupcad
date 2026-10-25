@@ -210,6 +210,21 @@ describe('BinaryManager.checkForUpdates', () => {
     expect(installed).toEqual([]);
   });
 
+  it("says why it couldn't look for a newer release when asked, and logs it otherwise", async () => {
+    // No releases to list: the look fails with "offline"
+    const { manager } = await runningOwn({});
+    expect(await manager.checkForUpdates({ asked: false })).toBeNull();
+    expect(fake.messages).toEqual([]);
+    expect(await manager.checkForUpdates({ asked: true })).toBeNull();
+    expect(fake.messages).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        text: "Couldn't look for a newer kupcad: offline",
+      }),
+    );
+    expect(fake.logs[0].lines).toContain("warn: couldn't look for a newer kupcad: offline");
+  });
+
   it('says a newer release out of range needs a newer extension', async () => {
     const { manager } = await runningOwn({ releases: [release('0.2.0'), release('0.1.2')] });
     expect(await manager.checkForUpdates({ asked: false })).toBeNull();
