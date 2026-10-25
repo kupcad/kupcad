@@ -5,11 +5,12 @@
 
 import { isCompatible, PROTOCOL_VERSION, ProtocolError, readFrame } from '@kupcad/protocol';
 import { KupcadCrashError, KupcadError } from './errors.js';
+import { packFiles } from './files.js';
 import { loadModule } from './load.js';
 import { createWasi, WasiExit } from './wasi.js';
 
 /** @import { Finding, Preview, UiSchema, VersionInfo } from '@kupcad/protocol/types' */
-/** @import { BuildOptions, CallOptions, CreateOptions, KupcadApi, KupcadExports, KupcadFiles, PreviewOptions } from './types.js' */
+/** @import { BuildOptions, CallOptions, CreateOptions, KupcadApi, KupcadExports, PreviewOptions } from './types.js' */
 
 /** The module this package ships, built by core/build.zig and copied in by `pnpm build`. */
 const DEFAULT_WASM = new URL('../dist/kupcad.wasm', import.meta.url);
@@ -18,6 +19,8 @@ const USIZE_BYTES = 4;
 /** The longest message get_last_error holds (core/src/wasm.zig's MAX_ERROR_MSG_LEN). */
 const MAX_ERROR_BYTES = 1024;
 const DEFAULT_FORMAT = 'glb';
+/** What a call without files gives the core. */
+const NO_FILES = new Uint8Array();
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -75,24 +78,12 @@ export class Kupcad {
   #outLen;
   /** Why the module can't be used again, once it stopped. @type {KupcadCrashError | null} */
   #crashed = null;
-  /** @type {KupcadFiles} */
-  files;
 
   /** @param {KupcadExports} exports an instantiated, initialized kupcad.wasm's */
   constructor(exports) {
     this.#exports = exports;
     this.#outLen = address(exports.wasm_alloc(USIZE_BYTES));
     if (this.#outLen === 0) throw new KupcadError('kupcad.wasm has no memory to start in');
-    this.files = {
-      put: async (path, data) =>
-        this.#run(() => {
-          const stored = this.#withInputs([path, data], ([p, d]) =>
-            this.#exports.put_file_wasm(p.ptr, p.len, d.ptr, d.len),
-          );
-          if (!stored) throw new KupcadError(`kupcad.wasm couldn't keep ${path}: out of memory`);
-        }),
-      clear: async () => this.#run(() => this.#exports.clear_vfs_wasm()),
-    };
   }
 
   /** The module's linear memory, in bytes: it grows as builds need, and stays grown. */
@@ -108,10 +99,13 @@ export class Kupcad {
   async preview(source, options = {}) {
     options.signal?.throwIfAborted();
     const params = options.params ? JSON.stringify(options.params) : '';
+    const files = options.files ? packFiles(options.files) : NO_FILES;
     return this.#run(() =>
       readFrame(
-        this.#withInputs([source, params], ([s, p]) =>
-          this.#take(this.#exports.preview_wasm(s.ptr, s.len, p.ptr, p.len, this.#outLen)),
+        this.#withInputs([source, params, files], ([s, p, f]) =>
+          this.#take(
+            this.#exports.preview_wasm(s.ptr, s.len, p.ptr, p.len, f.ptr, f.len, this.#outLen),
+          ),
         ),
       ),
     );
@@ -125,16 +119,19 @@ export class Kupcad {
   async build(source, options = {}) {
     options.signal?.throwIfAborted();
     const params = options.params ? JSON.stringify(options.params) : '';
+    const files = options.files ? packFiles(options.files) : NO_FILES;
     const format = options.format ?? DEFAULT_FORMAT;
     const draco = options.draco ? 1 : 0;
     return this.#run(() =>
-      this.#withInputs([source, params, format], ([s, p, f]) =>
+      this.#withInputs([source, params, files, format], ([s, p, fs, f]) =>
         this.#take(
           this.#exports.build_model_wasm(
             s.ptr,
             s.len,
             p.ptr,
             p.len,
+            fs.ptr,
+            fs.len,
             f.ptr,
             f.len,
             draco,

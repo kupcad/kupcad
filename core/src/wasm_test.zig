@@ -14,8 +14,9 @@ const locus = kupcad.locus;
 const math = locus.math;
 const eigen = locus.eigen;
 
-/// What build_model_wasm takes for "no parameter values".
+/// What build_model_wasm takes for "no parameter values", and for "no files".
 const NO_PARAMS: []const u8 = "";
+const NO_FILES: []const u8 = "";
 
 test "WASM Interop: format_code_wasm handles invalid and empty inputs gracefully" {
     // Test Syntax Error Handling
@@ -187,7 +188,7 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
 
     // Test STL export via WASM (use_draco: false)
     var stl_len: usize = 0;
-    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, stl_fmt.ptr, stl_fmt.len, false, &stl_len);
+    const stl_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, stl_fmt.ptr, stl_fmt.len, false, &stl_len);
 
     // The build should successfully yield a pointer to memory
     try testing.expect(stl_ptr != null);
@@ -205,7 +206,7 @@ test "WASM Interop: build_model_wasm evaluates geometry and exports requested fo
 
     // Test GLB export via WASM (use_draco: false)
     var glb_len: usize = 0;
-    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, glb_fmt.ptr, glb_fmt.len, false, &glb_len);
+    const glb_ptr = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, glb_fmt.ptr, glb_fmt.len, false, &glb_len);
 
     try testing.expect(glb_ptr != null);
     try testing.expect(glb_len > 20);
@@ -308,7 +309,7 @@ test "WASM Interop: build_model_wasm supports benchmark blocks (vm.io must be a 
     ;
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, fmt.ptr, fmt.len, false, &out_len);
+    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, fmt.ptr, fmt.len, false, &out_len);
     try testing.expect(res != null);
     try testing.expect(out_len > 84);
     wasm.wasm_free(@constCast(res.?), out_len);
@@ -323,7 +324,7 @@ fn expectBuildFailure(src: []const u8) ![]const u8 {
 fn expectBuildFailureWith(src: []const u8, params: []const u8) ![]const u8 {
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, fmt.ptr, fmt.len, false, &out_len);
+    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, NO_FILES.ptr, NO_FILES.len, fmt.ptr, fmt.len, false, &out_len);
     if (res) |ptr| {
         wasm.wasm_free(@constCast(ptr), out_len);
         return error.TestUnexpectedResult;
@@ -387,7 +388,7 @@ fn expectBuildLength(src: []const u8) !usize {
 fn expectBuildLengthWith(src: []const u8, params: []const u8) !usize {
     const fmt = "stl";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+    const res = wasm.build_model_wasm(src.ptr, src.len, params.ptr, params.len, NO_FILES.ptr, NO_FILES.len, fmt.ptr, fmt.len, false, &out_len) orelse {
         std.debug.print("build failed: {s}\n", .{std.mem.sliceTo(wasm.get_last_error(), 0)});
         return error.BuildFailed;
     };
@@ -420,13 +421,13 @@ test "WASM Interop: repeated builds, previews, checks and formats don't grow the
     const once = struct {
         fn run(source: []const u8, format: []const u8) !void {
             var len: usize = 0;
-            const built = wasm.build_model_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, format.ptr, format.len, true, &len) orelse return error.BuildFailed;
+            const built = wasm.build_model_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, format.ptr, format.len, true, &len) orelse return error.BuildFailed;
             wasm.wasm_free(@constCast(built), len);
             const checked = wasm.check_code_wasm(source.ptr, source.len, &len) orelse return error.CheckFailed;
             wasm.wasm_free(@constCast(checked), len);
             const formatted = wasm.format_code_wasm(source.ptr, source.len, &len) orelse return error.FormatFailed;
             wasm.wasm_free(@constCast(formatted), len);
-            const previewed = wasm.preview_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, &len) orelse return error.PreviewFailed;
+            const previewed = wasm.preview_wasm(source.ptr, source.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, &len) orelse return error.PreviewFailed;
             wasm.wasm_free(@constCast(previewed), len);
             _ = try expectBuildFailure("raise \"x\"");
         }
@@ -477,16 +478,53 @@ test "WASM Interop: a recursion through built-ins is an error, not a trapped ins
     try testing.expect(try expectBuildLength("cube(1)") > 84); // and the next build works
 }
 
-test "WASM Interop: a build imports the files put in the VFS, and not after clear_vfs_wasm" {
-    const lib_path = "parts/plate.kup";
-    const lib = "def plate(w)\n  cube(w, w, 1)\nend\nexport { plate }";
-    try testing.expect(wasm.put_file_wasm(lib_path.ptr, lib_path.len, lib.ptr, lib.len));
-    const main = "import { plate } from \"./parts/plate.kup\"\nplate(3)";
-    try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength(main));
+/// Builds `src` as STL with the files given, and returns its bytes' length (freeing them);
+/// the core's message when it fails.
+fn buildWithFiles(src: []const u8, files: []const kupcad.vfs_packed.File) !union(enum) { built: usize, failed: []const u8 } {
+    const packed_bytes = try kupcad.vfs_packed.pack(testing.allocator, files);
+    defer testing.allocator.free(packed_bytes);
+    const fmt = "stl";
+    var out_len: usize = 0;
+    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, packed_bytes.ptr, packed_bytes.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+        return .{ .failed = std.mem.sliceTo(wasm.get_last_error(), 0) };
+    };
+    wasm.wasm_free(@constCast(res), out_len);
+    return .{ .built = out_len };
+}
 
-    wasm.clear_vfs_wasm();
-    const msg = try expectBuildFailure(main);
+test "WASM Interop: a build imports the files given with it, and the next call none of them" {
+    const plate: kupcad.vfs_packed.File = .{ .path = "parts/plate.kup", .content = "def plate(w)\n  cube(w, w, 1)\nend\nexport { plate }" };
+    const size: kupcad.vfs_packed.File = .{ .path = "size.json", .content = "{\"w\": 3}" };
+    const main = "import { plate } from \"./parts/plate.kup\"\nplate(import_json(\"size.json\")[:w])";
+    try testing.expectEqual(@as(usize, 84 + 12 * 50), (try buildWithFiles(main, &.{ plate, size })).built);
+    // Without them, the import is what fails: the files were that call's alone
+    const msg = (try buildWithFiles(main, &.{})).failed;
     try testing.expect(std.mem.find(u8, msg, "plate.kup") != null);
+    // Files packed wrong are the host's fault, not the script's: refused as such
+    var out_len: usize = 0;
+    const fmt = "stl";
+    const cut = "\x05\x00\x00\x00ab";
+    try testing.expect(wasm.build_model_wasm(main.ptr, main.len, NO_PARAMS.ptr, NO_PARAMS.len, cut.ptr, cut.len, fmt.ptr, fmt.len, false, &out_len) == null);
+    try testing.expectEqualStrings("Build Error: MalformedFiles", std.mem.sliceTo(wasm.get_last_error(), 0));
+}
+
+test "WASM Interop: a preview imports the files given with it" {
+    const lib: kupcad.vfs_packed.File = .{ .path = "lib.kup", .content = "side = 2\nexport side\n" };
+    const packed_bytes = try kupcad.vfs_packed.pack(testing.allocator, &.{lib});
+    defer testing.allocator.free(packed_bytes);
+    const src = "import { side } from \"./lib.kup\"\ncube(side)";
+    var len: usize = 0;
+    const res = wasm.preview_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, packed_bytes.ptr, packed_bytes.len, &len) orelse return error.PreviewFailed;
+    defer wasm.wasm_free(@constCast(res), len);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const read = try kupcad.test_support.readFrame(arena.allocator(), res[0..len]);
+    try testing.expectEqualStrings("3d", read.header.kind);
+    // Without the file, the frame says why
+    var missing = try previewOf(src, NO_PARAMS);
+    defer missing.arena.deinit();
+    try testing.expectEqualStrings("none", missing.kind);
+    try testing.expect(std.mem.find(u8, missing.message.?, "lib.kup") != null);
 }
 
 test "WASM Interop: check_code_wasm's JSON is check --format json's finding, without its path" {
@@ -597,7 +635,7 @@ test "WASM Interop: build_model_wasm writes 3MF, a zip of the model's parts" {
     const src = "bolt = cylinder(r: 1, h: 5)\nassemble(name: \"pair\", parts: [bolt, bolt.translate(3, 0, 0)])";
     const fmt = "3mf";
     var out_len: usize = 0;
-    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, fmt.ptr, fmt.len, false, &out_len) orelse {
+    const res = wasm.build_model_wasm(src.ptr, src.len, NO_PARAMS.ptr, NO_PARAMS.len, NO_FILES.ptr, NO_FILES.len, fmt.ptr, fmt.len, false, &out_len) orelse {
         std.debug.print("build failed: {s}\n", .{std.mem.sliceTo(wasm.get_last_error(), 0)});
         return error.BuildFailed;
     };
@@ -609,7 +647,7 @@ test "WASM Interop: build_model_wasm writes 3MF, a zip of the model's parts" {
 /// error's message, and whether its body is a GLB.
 fn previewOf(src: []const u8, params: []const u8) !struct { kind: []const u8, message: ?[]const u8, glb: bool, arena: std.heap.ArenaAllocator } {
     var len: usize = 0;
-    const res = wasm.preview_wasm(src.ptr, src.len, params.ptr, params.len, &len) orelse return error.PreviewFailed;
+    const res = wasm.preview_wasm(src.ptr, src.len, params.ptr, params.len, NO_FILES.ptr, NO_FILES.len, &len) orelse return error.PreviewFailed;
     defer wasm.wasm_free(@constCast(res), len);
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     errdefer arena.deinit();

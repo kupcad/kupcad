@@ -1,13 +1,14 @@
 //! The exports of the WebAssembly build, over `api.zig`: `format_code_wasm`, `check_code_wasm`,
-//! `extract_params_wasm`, `build_model_wasm` and `preview_wasm`, a build reading files from an
-//! in-memory VFS filled with `put_file_wasm`, plus `version_wasm`, `wasm_alloc`/`wasm_free`
-//! and `get_last_error`.
+//! `extract_params_wasm`, `build_model_wasm` and `preview_wasm` (a build and a preview read
+//! the files given with the call, packed as vfs/packed.zig has them, from an in-memory VFS of
+//! that call alone), plus `version_wasm`, `wasm_alloc`/`wasm_free` and `get_last_error`.
 
 const std = @import("std");
 const api = @import("api.zig");
 const version = @import("version.zig");
 const lint_finding = @import("tools/lint/finding.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
+const packed_files = @import("vfs/packed.zig");
 
 // Use the thread-safe C allocator provided by wasi-libc
 // This prevents spinlock deadlocks in multi-threaded wasm and gracefully
@@ -45,19 +46,6 @@ fn setLastError(msg: []const u8) void {
     if (len < MAX_ERROR_MSG_LEN) last_error_buf[len] = 0;
 }
 
-// --- Global VFS State ---
-// SAFETY: Initialized securely in getMemVfs() before any external access.
-var global_mem_vfs: MemoryVfs = undefined;
-var vfs_initialized: bool = false;
-
-fn getMemVfs() *MemoryVfs {
-    if (!vfs_initialized) {
-        global_mem_vfs = MemoryVfs.init(allocator);
-        vfs_initialized = true;
-    }
-    return &global_mem_vfs;
-}
-
 pub export fn get_last_error() [*:0]const u8 {
     return &last_error_buf;
 }
@@ -74,26 +62,14 @@ pub export fn wasm_free(ptr: [*]u8, len: usize) void {
     allocator.free(ptr[0..len]);
 }
 
-pub export fn clear_vfs_wasm() void {
-    if (vfs_initialized) {
-        global_mem_vfs.deinit();
-    }
-    global_mem_vfs = MemoryVfs.init(allocator);
-    vfs_initialized = true;
-}
-
-pub export fn put_file_wasm(
-    path_ptr: [*]const u8,
-    path_len: usize,
-    content_ptr: [*]const u8,
-    content_len: usize,
-) bool {
-    const path = path_ptr[0..path_len];
-    const content = content_ptr[0..content_len];
-
-    // MemoryVfs internally dupes the memory, making it safe from JS GC sweeps
-    getMemVfs().vfs().writeFile(path, content) catch return false;
-    return true;
+/// The files a call was given (vfs/packed.zig's buffer; empty for none), as the file system
+/// its script reads and writes: in memory, this call's alone, so no script sees another's
+/// files, and a script's exports go nowhere. The caller deinits it.
+fn filesOf(files: []const u8) !MemoryVfs {
+    var vfs = MemoryVfs.init(allocator);
+    errdefer vfs.deinit();
+    try packed_files.unpack(vfs.vfs(), files);
+    return vfs;
 }
 
 // --- Inner Zig Native Functions ---
@@ -138,9 +114,9 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
     return try out.toOwnedSlice();
 }
 
-fn inner_build_model(source: []const u8, params_json: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
-    // File access still goes through the in-memory VFS override; the Io is only used for
-    // clocks/stdio by stdlib diagnostics and the debugger.
+fn inner_build_model(source: []const u8, params_json: []const u8, files: []const u8, format: []const u8, use_draco: bool, diagnostic: *api.BuildDiagnostic) ![]const u8 {
+    // The Io is only used for clocks/stdio by stdlib diagnostics and the debugger: the files
+    // are the call's own.
     const export_format = api.ExportFormat.parse(format) orelse return error.UnsupportedFormat;
     var params: api.ParamValues = .{};
     defer params.deinit(allocator);
@@ -148,17 +124,21 @@ fn inner_build_model(source: []const u8, params_json: []const u8, format: []cons
         diagnostic.message = refusal;
         return error.InvalidParams;
     }
-    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = getMemVfs().vfs(), .diagnostic = diagnostic });
+    var vfs = try filesOf(files);
+    defer vfs.deinit();
+    return try api.buildModel(allocator, wasmIo(), source, .{ .format = export_format, .draco = use_draco, .params = &params, .vfs = vfs.vfs(), .diagnostic = diagnostic });
 }
 
-fn inner_preview(source: []const u8, params_json: []const u8) ![]const u8 {
+fn inner_preview(source: []const u8, params_json: []const u8, files: []const u8) ![]const u8 {
     var params: api.ParamValues = .{};
     defer params.deinit(allocator);
     if (try putParams(&params, params_json)) |refusal| {
         defer allocator.free(refusal);
         return api.previewFailure(allocator, source, refusal);
     }
-    return api.previewScript(allocator, wasmIo(), source, .{ .params = &params, .vfs = getMemVfs().vfs() });
+    var vfs = try filesOf(files);
+    defer vfs.deinit();
+    return api.previewScript(allocator, wasmIo(), source, .{ .params = &params, .vfs = vfs.vfs() });
 }
 
 /// Sets `params` from `json`, a JSON object of names and values (empty for none). Null when
@@ -230,18 +210,21 @@ pub export fn check_code_wasm(source_ptr: [*]const u8, source_len: usize, out_le
 }
 
 /// The preview frame (preview/frame.zig) of `source` with the parameter values in `params`
-/// (a JSON object, as build_model_wasm takes; empty for none): its model as GLB or SVG, with
+/// (a JSON object, as build_model_wasm takes; empty for none) and the files it imports in
+/// `files` (packed as vfs/packed.zig has them; empty for none): its model as GLB or SVG, with
 /// its parts, warnings, parameters and, when it failed, why. A script that doesn't run, and
 /// values that aren't JSON, give a frame saying so; null (and get_last_error) only when the
-/// module itself fails.
+/// module itself fails, or the files aren't packed right.
 pub export fn preview_wasm(
     source_ptr: [*]const u8,
     source_len: usize,
     params_ptr: [*]const u8,
     params_len: usize,
+    files_ptr: [*]const u8,
+    files_len: usize,
     out_len: *usize,
 ) ?[*]const u8 {
-    if (inner_preview(source_ptr[0..source_len], params_ptr[0..params_len])) |res| {
+    if (inner_preview(source_ptr[0..source_len], params_ptr[0..params_len], files_ptr[0..files_len])) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {
@@ -253,13 +236,16 @@ pub export fn preview_wasm(
 }
 
 /// Builds `source` with the parameter values in `params` (a JSON object of names and
-/// numbers, strings or booleans, as `kupcad build -P` reads; empty for none) and exports it
-/// as `format`.
+/// numbers, strings or booleans, as `kupcad build -P` reads; empty for none) and the files it
+/// imports in `files` (packed as vfs/packed.zig has them; empty for none), and exports it as
+/// `format`.
 pub export fn build_model_wasm(
     source_ptr: [*]const u8,
     source_len: usize,
     params_ptr: [*]const u8,
     params_len: usize,
+    files_ptr: [*]const u8,
+    files_len: usize,
     format_ptr: [*]const u8,
     format_len: usize,
     use_draco: bool,
@@ -267,12 +253,13 @@ pub export fn build_model_wasm(
 ) ?[*]const u8 {
     const source = source_ptr[0..source_len];
     const params = params_ptr[0..params_len];
+    const files = files_ptr[0..files_len];
     const format = format_ptr[0..format_len];
 
     var diagnostic: api.BuildDiagnostic = .{};
     defer diagnostic.deinit(allocator);
 
-    if (inner_build_model(source, params, format, use_draco, &diagnostic)) |res| {
+    if (inner_build_model(source, params, files, format, use_draco, &diagnostic)) |res| {
         out_len.* = res.len;
         return res.ptr;
     } else |err| {

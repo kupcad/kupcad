@@ -110,13 +110,21 @@ describe('build', () => {
     expect(logged).toContain('error(vm): RuntimeError: boom');
   });
 
-  it('reads the files put, and not once they are cleared', async () => {
-    const reads = 'cube(import_json("size.json")[:side])';
-    await kupcad.files.put('size.json', '{"side": 3}');
-    expect((await kupcad.build(reads, { format: 'stl' })).byteLength).toBeGreaterThan(84);
-    await kupcad.files.put('size.json', new TextEncoder().encode('{"side": 4}'));
-    await kupcad.files.clear();
-    await expect(kupcad.build(reads)).rejects.toThrow(/could not read JSON file 'size.json'/);
+  it('reads the files given with the call, a module or data, and the next call none of them', async () => {
+    const reads =
+      'import { side } from "./lib.kup"\ncube(side + import_json("data/size.json")[:side])';
+    const files = {
+      'lib.kup': 'side = 1\nexport side\n',
+      'data/size.json': new TextEncoder().encode('{"side": 2}'),
+    };
+    // A cube of 3: 12 triangles of 50 bytes after the header
+    expect((await kupcad.build(reads, { format: 'stl', files })).byteLength).toBe(84 + 12 * 50);
+    const { header } = await kupcad.preview(reads, { files });
+    expect(header.kind).toBe('3d');
+    // Without them, the import fails, in a build as in a preview
+    await expect(kupcad.build(reads)).rejects.toThrow(/lib\.kup/);
+    const { header: missing } = await kupcad.preview(reads);
+    expect(missing.error?.message).toMatch(/lib\.kup/);
   });
 });
 

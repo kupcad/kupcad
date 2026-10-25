@@ -55,22 +55,6 @@ const counted = (counts) => async (options) => {
   });
 };
 
-/**
- * The real core, refusing to keep `huge.bin` as it would a file past its memory.
- * @param {CreateOptions} options
- * @returns {Promise<KupcadApi>}
- */
-async function refusingHuge(options) {
-  const kupcad = await createKupcad(options);
-  const put = kupcad.files.put;
-  kupcad.files.put = async (path, data) => {
-    if (path === 'huge.bin')
-      throw new KupcadError("kupcad.wasm couldn't keep huge.bin: out of memory");
-    return put(path, data);
-  };
-  return kupcad;
-}
-
 const silent = () => {};
 
 /**
@@ -143,33 +127,20 @@ describe('createKupcadWorker', () => {
     kupcad.terminate();
   });
 
-  it('stops the worker of a call aborted while it runs; the next call starts one given the files put', async () => {
+  it('stops the worker of a call aborted while it runs; the next call starts another', async () => {
     const { spawn, started } = inProcess(createKupcad);
     const kupcad = createKupcadWorker({ worker: spawn, log: silent });
-    await kupcad.files.put('size.json', '{"side": 3}');
     const controller = new AbortController();
     const running = kupcad.check('x = 1', { signal: controller.signal });
     controller.abort();
     await expect(running).rejects.toThrow(/abort/i);
     expect(started[0].terminated).toBe(true);
-    const stl = await kupcad.build('cube(import_json("size.json")[:side])', { format: 'stl' });
+    // The files a call brings cross to the worker with it
+    const stl = await kupcad.build('cube(import_json("size.json")[:side])', {
+      format: 'stl',
+      files: { 'size.json': '{"side": 3}' },
+    });
     expect(stl.byteLength).toBeGreaterThan(84);
-    expect(started).toHaveLength(2);
-    kupcad.terminate();
-  });
-
-  it('clears the files put, and gives a new worker none of them', async () => {
-    const { spawn, started } = inProcess(createKupcad);
-    const kupcad = createKupcadWorker({ worker: spawn, log: silent });
-    const reads = 'cube(import_json("size.json")[:side])';
-    await kupcad.files.put('size.json', '{"side": 3}');
-    await kupcad.files.clear();
-    await expect(kupcad.build(reads)).rejects.toBeInstanceOf(KupcadError);
-    const controller = new AbortController();
-    const running = kupcad.check('x = 1', { signal: controller.signal });
-    controller.abort();
-    await expect(running).rejects.toThrow(/abort/i);
-    await expect(kupcad.build(reads)).rejects.toBeInstanceOf(KupcadError);
     expect(started).toHaveLength(2);
     kupcad.terminate();
   });
@@ -267,24 +238,6 @@ describe('createKupcadWorker', () => {
     const options = /** @type {any} */ ({ params: { width: () => 3 } });
     await expect(kupcad.preview('cube(1)', options)).rejects.toThrow(/clone/i);
     expect(await kupcad.format('z=3')).toBe('z = 3\n');
-    kupcad.terminate();
-  });
-
-  it('gives a new worker none of the files the last one refused', async () => {
-    const { spawn, started } = inProcess(refusingHuge);
-    const kupcad = createKupcadWorker({ worker: spawn, log: silent });
-    await expect(kupcad.files.put('huge.bin', new Uint8Array(8))).rejects.toBeInstanceOf(
-      KupcadError,
-    );
-    await kupcad.files.put('size.json', '{"side": 3}');
-    // The worker stopped: the next starts with the files kept, and starts
-    const controller = new AbortController();
-    const running = kupcad.check('x = 1', { signal: controller.signal });
-    controller.abort();
-    await expect(running).rejects.toThrow(/abort/i);
-    const stl = await kupcad.build('cube(import_json("size.json")[:side])', { format: 'stl' });
-    expect(stl.byteLength).toBeGreaterThan(84);
-    expect(started).toHaveLength(2);
     kupcad.terminate();
   });
 

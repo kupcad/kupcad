@@ -11,6 +11,8 @@ pub const locus = @import("locus/src/root.zig");
 pub const manifest = @import("stdlib/manifest.zig");
 /// For the WebAssembly tests (wasm_test.zig), which run scripts through this module.
 pub const test_support = @import("test_support.zig");
+/// How a host packs the files it gives a wasm build (the wasm tests pack them so).
+pub const vfs_packed = @import("vfs/packed.zig");
 pub const std_options = @import("log.zig").std_options;
 pub const SessionManager = @import("session/session_manager.zig").SessionManager;
 
@@ -192,6 +194,7 @@ test {
 
     // VFS
     _ = @import("vfs/memory_test.zig");
+    _ = @import("vfs/packed_test.zig");
     _ = @import("vfs/native_test.zig");
     _ = @import("vfs/readonly_test.zig");
     _ = @import("vfs/vfs_test.zig");

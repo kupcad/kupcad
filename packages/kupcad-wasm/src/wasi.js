@@ -1,7 +1,7 @@
 // WASI (preview 1) for kupcad.wasm: what its C and Zig runtimes ask of a host, answered
-// without one, the same in a browser and in Node. The module keeps the files scripts read in
-// its own memory (`put_file_wasm`), so it gets no file system: no directory is preopened and
-// every file call answers ENOSYS. Its clocks and randomness are the host's, and what it writes
+// without one, the same in a browser and in Node. The files a script reads come with its call,
+// in the module's own memory (`files`), so it gets no file system: no directory is preopened
+// and every file call answers ENOSYS. Its clocks and randomness are the host's, and what it writes
 // to stdout and stderr, its log, goes to a callback a line at a time.
 
 const ERRNO = { SUCCESS: 0, BADF: 8, INVAL: 28, NOSYS: 52 };

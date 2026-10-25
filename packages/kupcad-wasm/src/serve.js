@@ -15,14 +15,11 @@ const CALLS = {
   format: (kupcad, [source]) => kupcad.format(source),
   params: (kupcad, [source]) => kupcad.params(source),
   version: (kupcad) => kupcad.version(),
-  putFile: (kupcad, [path, data]) => kupcad.files.put(path, data),
-  clearFiles: (kupcad) => kupcad.files.clear(),
 };
 
 /**
- * Serves the core on `port`: an `init` message makes it (`create`, the module given and the
- * files put), and each `call` is answered with a `reply`. The core's log goes as `log`
- * messages.
+ * Serves the core on `port`: an `init` message makes it (`create`, the module given), and each
+ * `call` is answered with a `reply`. The core's log goes as `log` messages.
  * @param {PortLike} port
  * @param {(options: CreateOptions) => Promise<KupcadApi>} [create]
  */
@@ -33,11 +30,7 @@ export function serve(port, create = createKupcad) {
   const send = (message, transfer = []) => port.postMessage(message, transfer);
 
   /** @param {Extract<ToWorker, { type: 'init' }>} init */
-  const start = async ({ wasm, files }) => {
-    const made = await create({ wasm, log: (line) => send({ type: 'log', line }) });
-    for (const [path, data] of files) await made.files.put(path, data);
-    return made;
-  };
+  const start = ({ wasm }) => create({ wasm, log: (line) => send({ type: 'log', line }) });
 
   /** @param {Extract<ToWorker, { type: 'call' }>} call */
   const answer = async ({ id, method, args }) => {

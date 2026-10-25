@@ -17,7 +17,8 @@ const stl = await kupcad.build(source, { format: 'stl' }); // Uint8Array
 const findings = await kupcad.check(source);
 const formatted = await kupcad.format(source);
 const schema = await kupcad.params(source); // the parameter panel's controls, without a run
-await kupcad.files.put('plate.dxf', bytes); // what the script imports
+// The files the script reads, by the paths it names: a module it imports, data (an STL, a JSON)
+await kupcad.build(source, { files: { 'lib.kup': libSource, 'plate.dxf': bytes } });
 ```
 
 ## In a worker, or in this thread
@@ -25,8 +26,8 @@ await kupcad.files.put('plate.dxf', bytes); // what the script imports
 * `createKupcadWorker(options)` runs the core in a module Web Worker. Calls run one at a time,
   the next waiting its turn. A call's `signal` (an `AbortSignal`) drops it while it waits, and
   stops the worker while it runs: a script can't be stopped inside the module, so the worker is
-  ended and a new one starts with the next call, given the files the last one kept (a put it
-  refused isn't given again). A worker whose core stopped (a trap) is replaced the same way. A
+  ended and a new one starts with the next call. A worker whose core stopped (a trap) is replaced
+  the same way. A
   call that can't be sent (the worker doesn't start, or its arguments can't be posted to one) is
   refused with why, and the next goes. `terminate()` ends it for good.
 * `createKupcad(options)` instantiates the core in this thread: the same calls, for Node, tests
@@ -55,8 +56,11 @@ page means it.
 
 The module asks its host for WASI. A browser has none and Node's would give it a file system, so
 the package answers it itself (`src/wasi.js`): the host's clocks and randomness, the log, and no
-files (a script reads what `files.put` gave). Every string and buffer is copied in and freed after
-the call; every result is copied out and freed. `pnpm build` copies the module from the core's
+files. A script reads the files its call brings (`files`, by the paths the script names them):
+they are packed into one buffer (`src/files.js`, as `core/src/vfs/packed.zig` reads it) and
+kept in an in-memory file system of that call alone, so no script sees another's files and a
+script's exports go nowhere. Every string and buffer is copied in and freed after the call;
+every result is copied out and freed. `pnpm build` copies the module from the core's
 build (`pnpm build:core:wasm` at the root) into `dist/`, which the package ships; its version is
 the core's, which the tests hold it to.
 

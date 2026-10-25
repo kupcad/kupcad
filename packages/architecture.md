@@ -177,18 +177,18 @@ column, which a host that counts columns otherwise converts). They arrive untype
 
 The core's exports are plain C-style functions over linear memory (`core/src/wasm.zig`:
 `preview_wasm`, `build_model_wasm`, `check_code_wasm`, `format_code_wasm`,
-`extract_params_wasm`, `version_wasm`, `put_file_wasm`, `clear_vfs_wasm`,
-`wasm_alloc`/`wasm_free`, `get_last_error`). This package is the typed face over them:
+`extract_params_wasm`, `version_wasm`, `wasm_alloc`/`wasm_free`, `get_last_error`). This
+package is the typed face over them:
 
 ```js
 const kupcad = await createKupcad({ wasm, log });  // instantiates once; createKupcadWorker() alike
-await kupcad.preview(source, { params, signal })   // -> Preview (protocol's readFrame of preview_wasm)
-await kupcad.build(source, { params, format: 'glb', draco: false, signal }) // -> Uint8Array
+await kupcad.preview(source, { params, files, signal })   // -> Preview (protocol's readFrame of preview_wasm)
+await kupcad.build(source, { params, files, format: 'glb', draco: false, signal }) // -> Uint8Array
 await kupcad.check(source)   // -> Finding[]
 await kupcad.format(source)  // -> string
 await kupcad.params(source)  // -> UiSchema
 await kupcad.version()       // -> VersionInfo (version_wasm), checked against PROTOCOL_VERSION
-await kupcad.files.put('plate.dxf', bytes); await kupcad.files.clear()  // the VFS imports read
+// files: { 'lib.kup': source, 'plate.dxf': bytes }, what the script imports, this call's alone
 ```
 
 * **Memory** is handled inside: strings and buffers are copied in with `wasm_alloc`, results
@@ -200,8 +200,7 @@ await kupcad.files.put('plate.dxf', bytes); await kupcad.files.clear()  // the V
   Worker, passing buffers as transferables, with one call in flight and the next queued (a build
   can take seconds; the page must not freeze). A call's `AbortSignal` drops it while it waits and
   stops the worker while it runs, which is what the core's instruction cap can't do from
-  outside; the next call starts a worker given the files the last one kept, as after a crash (a
-  file it refused, given again, failed every new worker's start). A call that can't be posted
+  outside; the next call starts a worker, as after a crash. A call that can't be posted
   (no worker starts, arguments a worker can't be given) is refused, and the queue goes on. The
   worker's side (`serve`) and the client's are tested over a `MessageChannel` with the real
   module, the worker itself being a stand-in in Node.
@@ -211,6 +210,14 @@ await kupcad.files.put('plate.dxf', bytes); await kupcad.files.clear()  // the V
   list of imports. `Kupcad.fromExports(exports)` takes a module a host instantiated itself.
 * **A trap** (or an exit) leaves the instance unusable: it is a `KupcadCrashError` for that call
   and each after; a worker's is replaced on the next call.
+* **Files come with the call** (`files`, paths to contents), packed into one buffer
+  (`src/files.js`; `core/src/vfs/packed.zig` unpacks it into an in-memory file system of that
+  call alone). The module held a file system across calls before (`put_file_wasm`,
+  `clear_vfs_wasm`), which made every call depend on the ones before it, a worker replaced
+  after a crash had to be given the files again, and a script could read what another had
+  exported. A call that is its arguments alone is the simpler contract; a host with many large
+  files (the PWA) can keep a worker and send them each time, or cache in the core later, when
+  measured.
 * **Two builds** of the module come from core: `kupcad.wasm` and the threaded one
   (`-Dwasm_threads`, which needs `SharedArrayBuffer` and so cross-origin isolation). The package
   ships the plain one; the threaded one, a second entry a host opts into when its headers allow,

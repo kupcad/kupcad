@@ -1,13 +1,13 @@
 // The core in a Web Worker, with createKupcad's API: a long build runs there and the page goes
 // on. Calls run one at a time, the next waiting its turn. A call's AbortSignal drops it while
-// it waits, and stops the worker while it runs: the worker is replaced on the next call, and
-// given the files put so far, as one that crashed is.
+// it waits, and stops the worker while it runs: the worker is replaced on the next call, as
+// one that crashed is.
 
 import { ProtocolError } from '@kupcad/protocol';
 import { KupcadCrashError, KupcadError } from './errors.js';
 
 /** @import { Finding, Preview, UiSchema, VersionInfo } from '@kupcad/protocol/types' */
-/** @import { BuildOptions, CallOptions, FromWorker, KupcadApi, KupcadFiles, Method, PreviewOptions, SentError, ToWorker, WorkerLike, WorkerOptions, WorkerWasmSource } from './types.js' */
+/** @import { BuildOptions, CallOptions, FromWorker, KupcadApi, Method, PreviewOptions, SentError, ToWorker, WorkerLike, WorkerOptions, WorkerWasmSource } from './types.js' */
 
 /**
  * @typedef {object} Call
@@ -49,30 +49,14 @@ export class KupcadWorker {
   /** @type {Call | null} */
   #running = null;
   #nextId = 1;
-  /** The files the worker kept, by path: what a new worker is given. @type {Map<string, Uint8Array | string>} */
-  #files = new Map();
   /** @type {Error | null} */
   #terminated = null;
-  /** @type {KupcadFiles} */
-  files;
 
   /** @param {WorkerOptions} options */
   constructor(options) {
     this.#spawn = options.worker ?? moduleWorker;
     this.#wasm = postable(options.wasm);
     this.#log = options.log ?? ((line) => console.debug(line));
-    // Kept once the worker took them: one it refused, given to every new worker, failed
-    // each one's start
-    this.files = {
-      put: async (path, data) => {
-        await this.#call('putFile', [path, data]);
-        this.#files.set(path, data);
-      },
-      clear: async () => {
-        await this.#call('clearFiles', []);
-        this.#files.clear();
-      },
-    };
   }
 
   /**
@@ -208,7 +192,7 @@ export class KupcadWorker {
       }
     });
     try {
-      worker.postMessage({ type: 'init', wasm: this.#wasm, files: [...this.#files] });
+      worker.postMessage({ type: 'init', wasm: this.#wasm });
     } catch (error) {
       worker.terminate();
       throw error;

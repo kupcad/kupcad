@@ -20,6 +20,12 @@ export interface CallOptions {
 export interface PreviewOptions extends CallOptions {
   /** The parameters' values; those not given take their defaults. */
   params?: ParamValues;
+  /**
+   * The files the script reads, by the paths it names them by (`import { } from "./lib.kup"`
+   * reads `lib.kup`, `import_json("data/size.json")` reads `data/size.json`): a module it
+   * imports, data it reads. The core keeps them for this call alone.
+   */
+  files?: Record<string, Uint8Array | string>;
 }
 
 export interface BuildOptions extends PreviewOptions {
@@ -36,12 +42,6 @@ export interface CreateOptions {
   log?: (line: string) => void;
 }
 
-/** The files a script reads (`import_json`, `import_stl`, an imported module), in the module. */
-export interface KupcadFiles {
-  put(path: string, data: Uint8Array | string): Promise<void>;
-  clear(): Promise<void>;
-}
-
 /** What both `createKupcad` and `createKupcadWorker` give. */
 export interface KupcadApi {
   /** The script's preview frame: a run that fails, or values refused, is a frame saying why. */
@@ -56,7 +56,6 @@ export interface KupcadApi {
   params(source: string, options?: CallOptions): Promise<UiSchema>;
   /** What the module says of itself. */
   version(): Promise<VersionInfo>;
-  readonly files: KupcadFiles;
 }
 
 /** The exports of kupcad.wasm (core/src/wasm.zig). Pointers and lengths are byte offsets. */
@@ -71,6 +70,8 @@ export interface KupcadExports {
     sourceLen: number,
     params: number,
     paramsLen: number,
+    files: number,
+    filesLen: number,
     outLen: number,
   ): number;
   build_model_wasm(
@@ -78,6 +79,8 @@ export interface KupcadExports {
     sourceLen: number,
     params: number,
     paramsLen: number,
+    files: number,
+    filesLen: number,
     format: number,
     formatLen: number,
     draco: number,
@@ -87,8 +90,6 @@ export interface KupcadExports {
   format_code_wasm(source: number, sourceLen: number, outLen: number): number;
   extract_params_wasm(source: number, sourceLen: number, outLen: number): number;
   version_wasm(outLen: number): number;
-  put_file_wasm(path: number, pathLen: number, data: number, dataLen: number): number;
-  clear_vfs_wasm(): void;
 }
 
 /** Where a worker's module comes from: what can be posted to it (not a Response). */
@@ -101,16 +102,8 @@ export interface WorkerOptions extends Omit<CreateOptions, 'wasm'> {
   worker?: () => WorkerLike;
 }
 
-/** What a client calls the worker's core with: the methods of KupcadApi and its files'. */
-export type Method =
-  | 'preview'
-  | 'build'
-  | 'check'
-  | 'format'
-  | 'params'
-  | 'version'
-  | 'putFile'
-  | 'clearFiles';
+/** What a client calls the worker's core with: the methods of KupcadApi. */
+export type Method = 'preview' | 'build' | 'check' | 'format' | 'params' | 'version';
 
 /** A failure, as it crosses to the client: `fatal` when the worker's core can't go on. */
 export interface SentError {
@@ -124,7 +117,6 @@ export type ToWorker =
       type: 'init';
       /** A URL as its href. */
       wasm: Exclude<WorkerWasmSource, URL> | undefined;
-      files: [string, Uint8Array | string][];
     }
   | { type: 'call'; id: number; method: Method; args: unknown[] };
 
