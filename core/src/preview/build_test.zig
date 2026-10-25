@@ -7,6 +7,9 @@ const api = @import("../api.zig");
 const frame = @import("frame.zig");
 const ParamValues = @import("../core/param_values.zig").ParamValues;
 const test_support = @import("../test_support.zig");
+const run_report = @import("../vm/run_report.zig");
+const preview_build = @import("build.zig");
+const Document = @import("../frontend/document.zig").Document;
 
 /// A frame read back: its header, and its body, both owned by the arena.
 const Read = struct { header: test_support.FrameHeader, body: []const u8 };
@@ -148,6 +151,42 @@ test "preview: a warning the run gave says where" {
     try testing.expect(std.mem.find(u8, warnings[0].message, "brep") != null);
     try testing.expectEqual(@as(?u32, 3), warnings[0].line);
     try testing.expect(warnings[0].column != null);
+}
+
+test "preview: what the run printed is the frame's, as printed, cut past what a run keeps" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const ran = (try preview(a, "puts \"width\", 20\nprint \"é\"\ninspect [1, :a]\ncube(1)\n", "")).header;
+    try testing.expectEqualStrings("width\n20\né[line 3, col 1] [1, :a]\n", ran.output);
+    try testing.expect(!ran.outputCut);
+    // A run that fails keeps what it printed before
+    const failed = (try preview(a, "puts \"before\"\nraise \"boom\"\n", "")).header;
+    try testing.expectEqualStrings("before\n", failed.output);
+    try testing.expect(failed.@"error" != null);
+    // Printed in a loop: the start is kept, cut between characters
+    const looped = (try preview(a, "20000.times { print \"ééé\" }\ncube(1)\n", "")).header;
+    try testing.expect(looped.outputCut);
+    try testing.expect(looped.output.len <= run_report.MAX_OUTPUT_BYTES);
+    try testing.expect(std.unicode.utf8ValidateSlice(looped.output));
+}
+
+test "preview: bytes a run printed that aren't UTF-8 are text in the frame, each sequence U+FFFD" {
+    // A script's strings are UTF-8, but bytes a file gave (a font's name) may not be, and JSON
+    // would write them as an array of numbers
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source = "cube(1)\n";
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    var vm = try test_support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try test_support.runOn(&vm, source));
+    try vm.report.addOutput(testing.allocator, "a\xFFb");
+    const bytes = try preview_build.ofRun(testing.allocator, .{ .doc = &doc, .source = source }, .{ .vm = &vm, .ok = true, .run_ns = 0 });
+    defer testing.allocator.free(bytes);
+    const read = try test_support.readFrame(arena.allocator(), bytes);
+    try testing.expectEqualStrings("a\u{FFFD}b", read.header.output);
 }
 
 test "preview: the run is a preview (CAD.preview?), where a script can lighten its model" {

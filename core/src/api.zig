@@ -371,6 +371,8 @@ const RunSetup = struct {
     params: ?*const ParamValues = null,
     engine: ?geom.EngineType = null,
     interactive: bool = false,
+    /// A preview's run: `CAD.preview?` true, what it prints kept for its frame.
+    preview: bool = false,
 };
 
 /// A VM for one run of `doc` as `setup` says: its errors placed by the document's lines (so
@@ -382,6 +384,7 @@ fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: 
     vm.vfs = setup.vfs;
     vm.line_index = &doc.line_index;
     if (setup.interactive) vm.useInteractiveLimits();
+    vm.previewing = setup.preview;
     try registry.registerStandardLibrary(&vm);
     if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);
@@ -404,11 +407,9 @@ pub fn previewScript(allocator: std.mem.Allocator, io: std.Io, source: []const u
     defer doc.deinit();
     const script: preview_build.Script = .{ .doc = &doc, .source = source };
     if (doc.diagnostics.len > 0) return preview_build.ofDiagnostic(allocator, script, doc.diagnostics[0]);
-    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params });
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = options.vfs, .params = options.params, .interactive = true, .preview = true });
     defer vm.deinit();
     vm.mute_errors = true;
-    vm.previewing = true;
-    vm.useInteractiveLimits();
 
     var program = chunk.Chunk.init();
     defer program.free(allocator);

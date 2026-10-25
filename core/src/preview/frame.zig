@@ -37,6 +37,11 @@ pub const Header = struct {
     /// A `3d` frame's parts, as the parts list groups its Solids.
     parts: []const Part = &.{},
     warnings: []const Warning = &.{},
+    /// What the run printed (`puts`, `print`, `inspect`), as it printed it, for the console beside
+    /// the model; `outputCut` when it printed more than a run keeps (MAX_OUTPUT_BYTES). Added
+    /// in protocol version 1, optional: no version bump.
+    output: []const u8 = "",
+    outputCut: bool = false,
     params: Params,
     /// Why the run failed (`kind` is then `none`), or null.
     @"error": ?Failure = null,

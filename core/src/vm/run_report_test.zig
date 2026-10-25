@@ -187,3 +187,38 @@ test "run report: a refused value whose error was rescued names no parameter" {
     try testing.expectEqual(.runtime_error, try run(&vm, refused_then_rescued ++ "raise \"boom\"\n"));
     try testing.expect(vm.report.refused_param == null);
 }
+
+test "run report: what a run printed is kept up to the most it keeps, cut between characters" {
+    var report: RunReport = .{};
+    defer report.deinit(testing.allocator);
+    try report.addOutput(testing.allocator, "a\n");
+    try testing.expectEqualStrings("a\n", report.output.items);
+    // Up to one byte short of the most, then a character of two bytes: it doesn't fit, whole
+    const filler = try testing.allocator.alloc(u8, run_report.MAX_OUTPUT_BYTES - report.output.items.len - 1);
+    defer testing.allocator.free(filler);
+    @memset(filler, 'x');
+    try report.addOutput(testing.allocator, filler);
+    try testing.expect(!report.output_cut);
+    try report.addOutput(testing.allocator, "é");
+    try testing.expect(report.output_cut);
+    try testing.expectEqual(run_report.MAX_OUTPUT_BYTES - 1, report.output.items.len);
+    try testing.expect(std.unicode.utf8ValidateSlice(report.output.items));
+    // A run's report starts empty
+    report.clear(testing.allocator);
+    try testing.expectEqual(@as(usize, 0), report.output.items.len);
+    try testing.expect(!report.output_cut);
+}
+
+test "run report: a preview's run keeps what it prints, any other run writes it out" {
+    var shown = try VM.init(testing.allocator, testing.io);
+    defer shown.deinit();
+    shown.previewing = true;
+    try @import("../stdlib/registry.zig").registerStandardLibrary(&shown);
+    try testing.expectEqual(.ok, try run(&shown, "puts 1 + 1"));
+    try testing.expectEqualStrings("2\n", shown.report.output.items);
+
+    var built = try support.initVm();
+    defer built.deinit();
+    try testing.expectEqual(.ok, try run(&built, "puts 1 + 1"));
+    try testing.expectEqualStrings("", built.report.output.items);
+}

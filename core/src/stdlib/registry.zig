@@ -22,6 +22,12 @@ fn defaultPrintHandler(vm: *VM, message: []const u8) void {
     std.Io.File.stderr().writeStreamingAll(vm.io, message) catch return;
 }
 
+/// What a preview's run prints is kept in its report, for its frame (the console beside the
+/// model), not written where no one reads it (a language server's worker's stderr).
+fn keepPrinted(vm: *VM, message: []const u8) void {
+    vm.report.addOutput(vm.allocator, message) catch return;
+}
+
 // --- Bootstrap Helpers ---
 
 fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !*value.ObjClass {
@@ -177,7 +183,7 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.host = .{
         .binary_handler = manifest.cadBinaryHandler,
         .missing_method_hint = manifest.missingMethodHint,
-        .print_handler = defaultPrintHandler,
+        .print_handler = if (vm.previewing) keepPrinted else defaultPrintHandler,
         .mesh_destructor = kernel.destruct,
         .compile_module = module_compiler.compileModule,
     };
