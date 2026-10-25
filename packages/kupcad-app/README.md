@@ -92,5 +92,6 @@ lifecycle on a stand-in server (its handshake through the framing, the viewport'
 commands, restarts, a server that ends before it is up or doesn't start again), and the window on stand-ins (a folder
 opened, a script opened, an edit saved with ⌘S, the question on closing). `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
-model from the viewport socket. The Rust side tests its commands' arguments, and that a release build doesn't admit Vite's
-origin.
+model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
+their real paths (no `..`, no symlink, which the file system's scope matched as written), and
+that a release build doesn't admit Vite's origin.

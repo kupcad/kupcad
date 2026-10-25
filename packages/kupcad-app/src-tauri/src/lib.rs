@@ -7,7 +7,7 @@
 
 mod server;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_fs::FsExt;
@@ -30,16 +30,22 @@ async fn export_model(
     format: String,
     params: Vec<(String, String)>,
 ) -> Result<(), String> {
-    let args = build_args(&script, &output, &format, &params)?;
+    // By their real paths: the scope matches a path as written, and `picked/../elsewhere`
+    // matched the folder picked
+    let script = existing(&script)?;
+    let output = to_write(&output)?;
     let scope = app.fs_scope();
     for path in [&script, &output] {
         if !scope.is_allowed(path) {
             return Err(format!(
-                "{path} isn't in the folder opened, nor where a model was saved"
+                "{} isn't in the folder opened, nor where a model was saved",
+                path.display()
             ));
         }
     }
-    let folder = Path::new(&script)
+    let (script, output) = (script.to_string_lossy(), output.to_string_lossy());
+    let args = build_args(&script, &output, &format, &params)?;
+    let folder = Path::new(script.as_ref())
         .parent()
         .ok_or("the script has no folder")?;
     let built = app
@@ -78,6 +84,24 @@ fn launch_folder(app: AppHandle) -> Result<Option<String>, String> {
         .allow_directory(&path, true)
         .map_err(|e| e.to_string())?;
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// The real path of the file at `path`, which is there: no `..`, no symlink.
+fn existing(path: &str) -> Result<PathBuf, String> {
+    std::fs::canonicalize(path).map_err(|e| format!("{path} can't be read: {e}"))
+}
+
+/// The real path a file written at `path` gets: its folder's (which is there), then its name.
+fn to_write(path: &str) -> Result<PathBuf, String> {
+    let given = Path::new(path);
+    let name = given
+        .file_name()
+        .ok_or_else(|| format!("{path} names no file"))?;
+    let folder = given
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .ok_or_else(|| format!("{path} has no folder"))?;
+    Ok(existing(&folder.to_string_lossy())?.join(name))
 }
 
 /// `kupcad build`'s arguments for an export, or why they can't be: a format it doesn't write,
@@ -132,7 +156,51 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::build_args;
+    use super::{build_args, existing, to_write};
+    use std::path::PathBuf;
+
+    /// A folder of the test's own, made afresh.
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kupcad-app-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("picked/sub")).unwrap();
+        std::fs::canonicalize(dir).unwrap()
+    }
+
+    #[test]
+    fn an_exports_paths_are_real_ones_no_dot_dot_left_to_match_a_folder() {
+        let dir = folder("paths");
+        std::fs::write(dir.join("picked/part.kup"), "cube(1)").unwrap();
+        // Written as the page might: through `..`, out of the folder picked
+        let dotted = dir.join("picked/sub/../../part.stl");
+        assert_eq!(
+            to_write(&dotted.to_string_lossy()).unwrap(),
+            dir.join("part.stl")
+        );
+        let script = dir.join("picked/sub/../part.kup");
+        assert_eq!(
+            existing(&script.to_string_lossy()).unwrap(),
+            dir.join("picked/part.kup")
+        );
+        // A file that isn't there yet is fine, a folder that isn't there isn't
+        assert!(to_write(&dir.join("gone/part.stl").to_string_lossy()).is_err());
+        assert!(existing(&dir.join("picked/gone.kup").to_string_lossy()).is_err());
+        assert!(to_write("part.stl").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_exports_folder_reached_by_a_symlink_is_where_the_symlink_leads() {
+        let dir = folder("symlink");
+        std::os::unix::fs::symlink(&dir, dir.join("picked/out")).unwrap();
+        let through = dir.join("picked/out/part.stl");
+        assert_eq!(
+            to_write(&through.to_string_lossy()).unwrap(),
+            dir.join("part.stl")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn an_export_is_kupcad_build_with_its_format_and_values() {
