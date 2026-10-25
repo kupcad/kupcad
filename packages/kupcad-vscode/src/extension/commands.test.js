@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXPORT_COMMAND, registerExportCommands } from './commands.js';
 import { BuildError } from './export.js';
 // The module Vitest gives the code as `vscode`
-import { commands, documentAt, fake, resetFake, Uri, window } from './testing/vscode.js';
+import { commands, documentAt, fake, resetFake, Uri, window, workspace } from './testing/vscode.js';
 import { ScriptValues } from './values.js';
 
 const PART_URI = 'file:///work/part.kup';
@@ -129,6 +129,15 @@ describe('export', () => {
     fake.cancelProgress();
     await running;
     expect(fake.messages).toEqual([]);
+  });
+
+  it("says why an export failed before it built: the script given can't be opened", async () => {
+    registered();
+    vi.spyOn(workspace, 'openTextDocument').mockRejectedValueOnce(new Error('the file is gone'));
+    await commands.executeCommand(EXPORT_COMMAND, 'file:///work/gone.kup');
+    expect(fake.messages).toEqual([
+      expect.objectContaining({ level: 'error', text: 'The export failed: the file is gone' }),
+    ]);
   });
 
   it('says what is missing: a script, a saved file, a kupcad to build with', async () => {

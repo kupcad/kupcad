@@ -167,6 +167,32 @@ describe('ViewerPanel', () => {
     await vi.waitFor(() => expect(log.lines).toContain('error: show: the server stopped'));
   });
 
+  it('acts on the document it shows alone: a message naming another is refused, and logged', async () => {
+    /** @type {unknown[]} */
+    const exported = [];
+    commands.registerCommand('kupcad.export', (/** @type {unknown} */ uri) => exported.push(uri));
+    fake.activeDocument = PART;
+    documentAt('/work/other.kup').text = 'x = 1';
+    const { webview, server, log } = open();
+    const other = 'file:///work/other.kup';
+    webview.receive({ type: 'setParams', uri: other, values: { w: 3 } });
+    webview.receive({ type: 'applyPreset', uri: other, name: 'Small' });
+    webview.receive({ type: 'savePreset', uri: other, values: { w: 3 } });
+    webview.receive({ type: 'export', uri: other });
+    webview.receive({ type: 'reveal', uri: other, line: 1, column: 1 });
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(server.asked).toEqual([['preview', PART_URI]]);
+    expect(fake.inputs).toEqual([]);
+    expect(exported).toEqual([]);
+    expect(fake.shownDocuments).toEqual([]);
+    expect(log.lines.filter((line) => line.includes("which it isn't shown: refused"))).toHaveLength(
+      5,
+    );
+    // The shown document's own reach their handlers
+    webview.receive({ type: 'reveal', uri: PART_URI, line: 1, column: 1 });
+    await vi.waitFor(() => expect(fake.shownDocuments).toHaveLength(1));
+  });
+
   it("says why a screenshot wasn't saved", async () => {
     fake.activeDocument = PART;
     const { webview } = open();
@@ -367,6 +393,8 @@ describe('ViewerPanel export', () => {
  * @param {{ line: number, column: number }} place
  */
 async function reveal(place) {
+  // The panel shows part.kup: it acts on the document it shows alone
+  fake.activeDocument ??= fake.documents.get(PART_URI) ?? documentAt('/work/part.kup');
   const { webview } = open();
   webview.receive({ type: 'reveal', uri: PART_URI, ...place });
   await vi.waitFor(() => expect(fake.shownDocuments.length + fake.messages.length).toBe(1));

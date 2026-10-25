@@ -35,6 +35,8 @@
   let connected = $state(false);
   let overrides = $state(/** @type {ParamValues} */ ({}));
   let presets = $state(/** @type {string[]} */ ([]));
+  /** Why the viewer can't show the frame's model, until the next frame. */
+  let unshown = $state('');
   /** The panel's values of each document shown, by URI. */
   const valuesOf = new Map();
   /** The presets' names of each document shown, by URI. */
@@ -52,6 +54,7 @@
     if (!connected) return 'Connecting to the language server…';
     if (!shown) return 'Open a .kup file to see its model.';
     if (!preview) return `Running ${shown.name}…`;
+    if (unshown) return `The model can't be shown: ${unshown}`;
     return null;
   }
 
@@ -79,6 +82,7 @@
             // another (late, or with none shown here) isn't this page's
             if (next.header.document !== shown?.uri) return;
             preview = next;
+            unshown = '';
           },
           problem: (message) => host.post({ type: 'problem', message }),
         })
@@ -127,9 +131,10 @@
     host.post({ type: 'screenshot', png: toBase64(new Uint8Array(await image.arrayBuffer())) });
   }
 
-  /** @param {unknown} error */
+  /** @param {unknown} error the viewer's: a model it can't show */
   function failed(error) {
-    host.post({ type: 'problem', message: errorText(error) });
+    unshown = errorText(error);
+    host.post({ type: 'problem', message: unshown });
   }
 </script>
 

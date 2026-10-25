@@ -149,6 +149,12 @@ export class ViewerPanel {
 
   /** @param {ViewerMessage} message */
   #handle(message) {
+    // The page acts on the document the panel shows, and on no other: a page naming another
+    // would have the host write beside it, build it or open it
+    if ('uri' in message && message.uri !== this.#shown?.uri) {
+      this.#options.log.warn(`The viewer named ${message.uri}, which it isn't shown: refused`);
+      return;
+    }
     switch (message.type) {
       case 'ready':
         // A page loaded again (a new port, a reload) knows nothing yet

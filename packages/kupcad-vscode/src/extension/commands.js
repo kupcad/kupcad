@@ -30,7 +30,15 @@ const REVEAL = 'Reveal';
  * @returns {vscode.Disposable[]}
  */
 export function registerExportCommands(options) {
-  return [vscode.commands.registerCommand(EXPORT_COMMAND, (given) => exportScript(options, given))];
+  return [
+    vscode.commands.registerCommand(EXPORT_COMMAND, (given) =>
+      // What the export says for itself (a build that failed) it said; this is the rest: a
+      // script gone before it was opened, a dialog that failed
+      exportScript(options, given).catch((error) => {
+        void vscode.window.showErrorMessage(`The export failed: ${errorText(error)}`);
+      }),
+    ),
+  ];
 }
 
 /**

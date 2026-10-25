@@ -177,6 +177,23 @@ describe('App', () => {
     expect(problems().querySelector('button')).toBeNull();
   });
 
+  it("says why the viewer can't show a frame's model, until the next frame, and tells the host", async () => {
+    const viewer = page();
+    viewer.socket.on.state(true);
+    await viewer.tell({ type: 'document', document: PART });
+    const good = await previewOf('cube(1)', PART.uri);
+    // A model the viewer refuses: Draco-compressed, with no decoder given
+    const glb = await (await testCore()).build('cube(1)', { format: 'glb', draco: true });
+    viewer.socket.on.frame({ header: good.header, model: { kind: '3d', glb, parts: [] } });
+    await vi.waitFor(() => expect(status()).toMatch(/^The model can't be shown: .*Draco/));
+    expect(viewer.posted.at(-1)).toMatchObject({
+      type: 'problem',
+      message: expect.stringContaining('Draco'),
+    });
+    viewer.socket.on.frame(good);
+    await vi.waitFor(() => expect(status()).toBeNull());
+  });
+
   it('gives the host a screenshot as base64', async () => {
     const viewer = page();
     await viewer.tell({ type: 'document', document: PART });
