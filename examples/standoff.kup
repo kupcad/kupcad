@@ -2,6 +2,7 @@
 standoff_dist = param(
   :standoff_dist,
   default: 20.0,
+  group: "Frame",
   validate: { min: 15.0, max: 35.0 },
   title: "Standoff spacing",
   description: "Centre to centre of the two frame standoffs it clips onto",
@@ -9,6 +10,7 @@ standoff_dist = param(
 standoff_dia = param(
   :standoff_dia,
   default: 5.0,
+  group: "Frame",
   validate: { min: 3.0, max: 8.0 },
   title: "Standoff diameter",
   description: "The frame standoffs' outside diameter",
@@ -16,18 +18,21 @@ standoff_dia = param(
 standoff_height = param(
   :standoff_height,
   default: 25.0,
+  group: "Frame",
   title: "Sleeve height",
   description: "How far the sleeves run down the standoffs",
 )
 wall_thickness = param(
   :wall_thickness,
   default: 1.6,
+  group: "Frame",
   title: "Wall thickness",
   description: "Around each standoff",
 )
 fit_tolerance = param(
   :fit_tolerance,
   default: 0.2,
+  group: "Frame",
   title: "Fit tolerance",
   description: "Added to the standoff's diameter, for a friction fit",
 )
@@ -36,23 +41,25 @@ fit_tolerance = param(
 antenna_angle = param(
   :antenna_angle,
   default: 25.0,
+  group: "Antenna platform",
   title: "Antenna angle",
   description: "How far the platform tilts back, in degrees",
 )
 platform_offset = param(
   :platform_offset,
   default: 23.0,
+  group: "Antenna platform",
   title: "Antenna offset",
   description: "From the standoffs to the antenna's hole",
 )
-platform_w = param(:platform_w, default: 15.0)
-platform_padding = param(:platform_padding, default: 8.0)
-mounting_thick = param(:mounting_thick, default: 2.5)
+platform_w = param(:platform_w, default: 15.0, group: "Antenna platform")
+platform_padding = param(:platform_padding, default: 8.0, group: "Antenna platform")
+mounting_thick = param(:mounting_thick, default: 2.5, group: "Antenna platform")
 
 # [Hardware Specifications]
-sma_hole_dia = param(:sma_hole_dia, default: 6.6)
-sma_hex_flat = param(:sma_hex_flat, default: 8.2)
-shoulder_thick = param(:shoulder_thick, default: 1.25)
+sma_hole_dia = param(:sma_hole_dia, default: 6.6, group: "Hardware")
+sma_hex_flat = param(:sma_hex_flat, default: 8.2, group: "Hardware")
+shoulder_thick = param(:shoulder_thick, default: 1.25, group: "Hardware")
 
 # Internal Math
 platform_l = platform_offset + platform_padding
