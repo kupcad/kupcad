@@ -15,6 +15,7 @@ const std = @import("std");
 const affine2 = @import("../../core/affine2.zig");
 const geom = @import("../../core/geometry_handle.zig");
 const drawing = @import("drawing.zig");
+const grid = @import("grid.zig");
 const sketch_curves = @import("sketch_curves.zig");
 const Curves = sketch_curves.Curves;
 
@@ -152,9 +153,8 @@ const PointIndex = struct {
     tolerance: f64,
     /// Each point on a curve, chained per cell.
     entries: std.ArrayList(Entry) = .empty,
-    cells: std.AutoHashMapUnmanaged(Cell, u32) = .empty,
+    cells: std.AutoHashMapUnmanaged([2]i64, u32) = .empty,
 
-    const Cell = struct { x: i64, y: i64 };
     const Entry = struct { on: On, next: ?u32 };
 
     fn init(allocator: std.mem.Allocator, curves: *const Curves, tolerance: f64) !PointIndex {
@@ -175,14 +175,10 @@ const PointIndex = struct {
     }
 
     fn add(self: *PointIndex, p: [2]f64, on: On) !void {
-        const gop = try self.cells.getOrPut(self.allocator, self.cellOf(p));
+        const gop = try self.cells.getOrPut(self.allocator, grid.cellOf(p, self.tolerance));
         const head: ?u32 = if (gop.found_existing) gop.value_ptr.* else null;
         try self.entries.append(self.allocator, .{ .on = on, .next = head });
         gop.value_ptr.* = @intCast(self.entries.items.len - 1);
-    }
-
-    fn cellOf(self: *const PointIndex, p: [2]f64) Cell {
-        return .{ .x = @intFromFloat(@floor(p[0] / self.tolerance)), .y = @intFromFloat(@floor(p[1] / self.tolerance)) };
     }
 
     /// The point of a curve `p` is, if it is one.
@@ -230,13 +226,13 @@ const PointIndex = struct {
 
     /// The curves' points within the tolerance of `p`, in the cells around it.
     fn near_points(self: *const PointIndex, p: [2]f64) NearPoints {
-        return .{ .index = self, .p = p, .cell = self.cellOf(p) };
+        return .{ .index = self, .p = p, .cell = grid.cellOf(p, self.tolerance) };
     }
 
     const NearPoints = struct {
         index: *const PointIndex,
         p: [2]f64,
-        cell: Cell,
+        cell: [2]i64,
         /// Which of the 9 cells around `p`'s is being walked, and where in its chain.
         around: u8 = 0,
         at: ?u32 = null,
@@ -246,7 +242,7 @@ const PointIndex = struct {
                 if (self.at == null) {
                     const dx: i64 = @as(i64, self.around % 3) - 1;
                     const dy: i64 = @as(i64, self.around / 3) - 1;
-                    self.at = self.index.cells.get(.{ .x = self.cell.x + dx, .y = self.cell.y + dy });
+                    self.at = self.index.cells.get(grid.around(self.cell, dx, dy));
                     if (self.at == null) {
                         self.around += 1;
                         continue;

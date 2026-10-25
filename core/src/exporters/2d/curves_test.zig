@@ -64,6 +64,18 @@ test "curves: a contour of a circle's points is the circle, two half turns" {
     }
 }
 
+test "curves: a circle further out than a cell's index holds is still matched, not a crash" {
+    const points = try circlePoints(.{ 1e15, -1e15 }, 1e3, 12);
+    defer testing.allocator.free(points);
+    const circles = [_]Circle{.{ .center = .{ 1e15, -1e15 }, .radius = 1e3, .points = points, .closed = true }};
+    const contours = try contoursOf(&.{points});
+    defer contours.deinit(testing.allocator);
+    const outlines = try outlinesOf(contours, &circles, 1e-6);
+    defer freeOutlines(outlines);
+    try testing.expectEqual(@as(usize, 1), outlines.len);
+    for (outlines[0].edges) |e| try testing.expectEqual(@as(f64, 1e3), e.arc.?.radius);
+}
+
 test "curves: a run of chords is one arc, a cut chord a line, a hole's arc runs clockwise" {
     // A circle of 8 points with the two top points replaced by a flat cut (a boolean's
     // crossing points lie on the chords, not the circle), traversed clockwise as a hole
