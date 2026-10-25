@@ -77,6 +77,9 @@ importers:
       '@codemirror/lint':
         specifier: ^6.9.7
         version: 6.9.7
+      '@codemirror/lsp-client':
+        specifier: ^6.3.0
+        version: 6.3.0
       '@codemirror/search':
         specifier: ^6.7.2
         version: 6.7.2
@@ -503,6 +506,9 @@ packages:
 
   '@codemirror/lint@6.9.7':
     resolution: {integrity: sha512-28/+iWLYxKxsvGYhSYL7zaCZqLz5+FFFDq9tVsvGv9kv8RY4fFAchJ5WX9M3YrrRlTIsECjsXPqeNgnSmNP2dg==}
+
+  '@codemirror/lsp-client@6.3.0':
+    resolution: {integrity: sha512-ZWtzuML77TnI2cXQrdLXb+HfJIldWPAeLZKRqct/Hq4RJUazg8Y0c9VqKyWDUsr1Y9TRefQKBWZ3B/eyVt1/Nw==}
 
   '@codemirror/search@6.7.2':
     resolution: {integrity: sha512-gUYkYhT2+n/+VGZ+8EzE5WFkYZUZYm1VOKDudIsNqh42uRVQJ0a6Yss9sdKT3MeOYfuL1N6AZA57oza0Oyr0LA==}
@@ -1367,6 +1373,11 @@ packages:
   magic-string@1.4.3:
     resolution: {integrity: sha512-z12OxmaPGE0F4xlpGdjuAUckipLpQlTAuAmyGhNoD7ODpYUzvDfvtxUbjM/jwznyP178oju/KDdyi220wNJ0RQ==}
 
+  marked@15.0.12:
+    resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
+    engines: {node: '>= 18'}
+    hasBin: true
+
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
 
@@ -1994,6 +2005,17 @@ snapshots:
       '@codemirror/view': 6.43.15
       crelt: 1.0.7
 
+  '@codemirror/lsp-client@6.3.0':
+    dependencies:
+      '@codemirror/autocomplete': 6.20.4
+      '@codemirror/language': 6.13.1
+      '@codemirror/lint': 6.9.7
+      '@codemirror/state': 6.7.6
+      '@codemirror/view': 6.43.15
+      '@lezer/highlight': 1.2.5
+      marked: 15.0.12
+      vscode-languageserver-protocol: 3.18.4
+
   '@codemirror/search@6.7.2':
     dependencies:
       '@codemirror/state': 6.7.6
@@ -2608,6 +2630,8 @@ snapshots:
   magic-string@1.4.3:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  marked@15.0.12: {}
 
   mdn-data@2.27.1: {}
 

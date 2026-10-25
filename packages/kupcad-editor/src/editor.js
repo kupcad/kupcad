@@ -1,8 +1,10 @@
 // The editor: CodeMirror 6 for a KupCAD script, for any host; Editor.svelte wraps it for Svelte.
 // It highlights the language and completes its words (language.js), indents its blocks, and
 // marks the findings its host gives it (findings.js: the core's `check`, a run's error), each
-// underlined and in the gutter, its fix an action. It tells its host of each change the user
-// makes to the script; one the host makes (setValue) it doesn't.
+// underlined and in the gutter, its fix an action. With a language server
+// (language-server.js), the server completes, marks and answers instead: hovers, signatures,
+// formatting, renaming, definitions. It tells its host of each change the user makes to the
+// script; one the host makes (setValue) it doesn't.
 
 import {
   autocompletion,
@@ -32,18 +34,23 @@ import { diagnosticsOf, positionOf } from './findings.js';
 import { kupcad } from './language.js';
 import { editorTheme, highlightStyle } from './theme.js';
 
+/** @import { LSPClient } from '@codemirror/lsp-client' */
 /** @import { Mark } from './findings.js' */
 
 /** A change the host made (setValue): not the user's, so not told back. */
 const fromHost = Annotation.define();
 /** Two spaces a level, as `kupcad fmt` indents. */
 const INDENT = '  ';
+/** The language, as a language server is told a document's (and VS Code names it). */
+export const LANGUAGE_ID = 'kupcad';
 
 /**
  * @typedef {object} EditorOptions
  * @property {string} [value] the script it starts with
  * @property {(value: string) => void} [onchange] the user changed the script: it now is `value`
  * @property {string} [label] what the script is, for a screen reader
+ * @property {{ client: LSPClient, uri: string }} [languageServer] the server the script is known
+ *   to, by its URI: it completes and marks the script then, and the host gives no findings
  */
 
 export class Editor {
@@ -54,7 +61,7 @@ export class Editor {
    * @param {HTMLElement} parent where it goes
    * @param {EditorOptions} [options]
    */
-  constructor(parent, { value = '', onchange, label = 'The script' } = {}) {
+  constructor(parent, { value = '', onchange, label = 'The script', languageServer } = {}) {
     this.#view = new EditorView({
       parent,
       state: EditorState.create({
@@ -73,7 +80,7 @@ export class Editor {
           highlightActiveLine(),
           highlightSelectionMatches(),
           lintGutter(),
-          kupcad(),
+          kupcad({ complete: !languageServer }),
           syntaxHighlighting(highlightStyle),
           editorTheme,
           keymap.of([
@@ -85,6 +92,7 @@ export class Editor {
             ...lintKeymap,
             indentWithTab,
           ]),
+          languageServer ? languageServer.client.plugin(languageServer.uri, LANGUAGE_ID) : [],
           EditorView.contentAttributes.of({ 'aria-label': label }),
           EditorView.updateListener.of((update) => {
             const user = !update.transactions.some((tr) => tr.annotation(fromHost));

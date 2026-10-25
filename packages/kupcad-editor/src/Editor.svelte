@@ -2,7 +2,8 @@
   @component
   The editor for Svelte: CodeMirror on a KupCAD script, filling its box. `value` is bindable (the
   user's changes set it, a host's reach the editor), and so is `editor`, the Editor itself, for
-  what isn't state: `reveal(line, column)`, `focus()`. `findings` are marked as given.
+  what isn't state: `reveal(line, column)`, `focus()`. `findings` are marked as given; with a
+  `languageServer` (set when it mounts) the server's are, and no findings are given.
 -->
 <script>
   import { onMount } from 'svelte';
@@ -17,6 +18,8 @@
    * @property {Editor | null} [editor] the Editor, once mounted; bindable
    * @property {string} [label] what the script is, for a screen reader
    * @property {(value: string) => void} [onchange] the user changed the script
+   * @property {import('./editor.js').EditorOptions['languageServer']} [languageServer] the
+   *   server the script is known to, by its URI
    */
 
   /** @type {Props} */
@@ -26,6 +29,7 @@
     editor = $bindable(null),
     label = 'The script',
     onchange,
+    languageServer,
   } = $props();
 
   /** @type {HTMLDivElement} */
@@ -35,6 +39,7 @@
     const made = new Editor(root, {
       value,
       label,
+      languageServer,
       onchange: (next) => {
         value = next;
         onchange?.(next);

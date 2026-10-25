@@ -118,10 +118,14 @@ export function completeKupcad(context) {
   return { from: before.from + 1, options: METHOD_OPTIONS, validFor: METHOD_NAME };
 }
 
-/** KupCAD for an editor: the language, and completion of its words. */
-export function kupcad() {
+/**
+ * KupCAD for an editor: the language, and completion of its words unless something else
+ * completes them (a language server, which knows the script's own names too).
+ * @param {{ complete?: boolean }} [options]
+ */
+export function kupcad({ complete = true } = {}) {
   return new LanguageSupport(
     kupcadLanguage,
-    kupcadLanguage.data.of({ autocomplete: completeKupcad }),
+    complete ? kupcadLanguage.data.of({ autocomplete: completeKupcad }) : [],
   );
 }
