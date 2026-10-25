@@ -14,6 +14,15 @@ test "SemVer: Parses valid version strings" {
     try testing.expectEqual(@as(u64, 0), v2.patch);
 }
 
+test "SemVer: refuses what is no version: a fourth part, a sign, separators, an empty part" {
+    // A release tagged 1.2.3.4 was taken for 1.2.3, and v+1.2 for 1.2
+    for ([_][]const u8{ "1.2.3.4", "+1.2", "v+1.2", "1_0.2", "1..2", "1.2.", "", "v", "-1", "1.2.3-rc.1", " 1.2" }) |text| {
+        errdefer std.debug.print("taken: '{s}'\n", .{text});
+        try testing.expectError(error.InvalidSemVer, semver.Version.parse(text));
+    }
+    try testing.expectError(error.Overflow, semver.Version.parse("99999999999999999999.0"));
+}
+
 test "SemVer: Exact Constraints (=)" {
     const c = try semver.Constraint.parse("=1.5.0");
     try testing.expect(c.satisfies(try semver.Version.parse("1.5.0")));

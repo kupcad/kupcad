@@ -9,23 +9,20 @@ pub const Version = struct {
     minor: u64,
     patch: u64,
 
-    /// Parses a standard semver string (e.g. "1.2.3" or "v1.2")
+    /// Parses a version as a tag names one ("1.2.3", "v1.2"): one to three parts of plain
+    /// digits, a part left out 0. A fourth part, a sign, a `_` (which parseInt takes) or a
+    /// pre-release suffix is no version: `1.2.3.4` was taken for 1.2.3.
     pub fn parse(str: []const u8) !Version {
-        var clean_str = str;
-        if (std.mem.startsWith(u8, clean_str, "v")) {
-            clean_str = clean_str[1..];
-        }
-
+        const clean_str = if (std.mem.startsWith(u8, str, "v")) str[1..] else str;
+        var parts: [3]u64 = @splat(0);
         var it = std.mem.splitScalar(u8, clean_str, '.');
-        const major_str = it.next() orelse return error.InvalidSemVer;
-        const minor_str = it.next() orelse "0";
-        const patch_str = it.next() orelse "0";
-
-        return Version{
-            .major = try std.fmt.parseInt(u64, major_str, 10),
-            .minor = try std.fmt.parseInt(u64, minor_str, 10),
-            .patch = try std.fmt.parseInt(u64, patch_str, 10),
-        };
+        var count: usize = 0;
+        while (it.next()) |part| : (count += 1) {
+            if (count == parts.len or part.len == 0) return error.InvalidSemVer;
+            for (part) |c| if (!std.ascii.isDigit(c)) return error.InvalidSemVer;
+            parts[count] = try std.fmt.parseInt(u64, part, 10);
+        }
+        return .{ .major = parts[0], .minor = parts[1], .patch = parts[2] };
     }
 
     pub fn compare(self: Version, other: Version) std.math.Order {
