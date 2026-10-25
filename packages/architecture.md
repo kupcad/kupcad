@@ -284,9 +284,12 @@ pixels, rather than comparing a screenshot, holds on any machine's GPU.
 
 The panels a host places around an editor, as Svelte 5 components:
 
-* `ViewerPane`: the viewer with its toolbar (render mode, view, projection, floor, a section
-  plane along an axis over the model's bounds, fit, screenshot) and the part list, each part with
-  its colour and copies, a click selecting its copies as a click in the viewer does.
+* `ViewerPane`: the viewer with a panel beside it, which a toolbar button hides: the view's
+  controls (render mode, edges, axes, floor, fit, projection, views) over the part list, each
+  part with its colour and copies, a click selecting its copies as a click in the viewer does. A
+  toolbar above (a section plane along an axis over the model's bounds, screenshot, a host's own
+  buttons); below, the run's status line over its problems (`problemsOf(header)`: why it failed,
+  then its warnings), one with a line clicked given to the host to show in the script.
 * `ParamsPanel`: controls generated from a `UiSchema`, grouped by `group:`, a slider with a number
   between `min` and `max`, a number field with `step:` and `unit:`, a select for `in:` choices, a
   toggle for a boolean; values validated against the schema before they leave the panel (its
@@ -295,8 +298,7 @@ The panels a host places around an editor, as Svelte 5 components:
   does.
 * Later, with the hosts that need them: `PresetsBar` (named sets of parameter values, saved and
   loaded through the host: a JSON file beside the script in VS Code, local storage in the
-  playground), `LogPanel` (the run's warnings and errors linked to their line) and `StatusBar`
-  (building, done in n ms, failed; the core's version).
+  playground), and the core's version in the status line.
 
 They talk only in protocol types and Svelte props and callbacks (`onchange={(values) => ...}`),
 hold no engine and fetch nothing. A host wires them: the playground to its worker, the extension's

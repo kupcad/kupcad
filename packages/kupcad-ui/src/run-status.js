@@ -1,5 +1,5 @@
-// How the run a viewer shows went, for its status line: from the preview frame's header, the same
-// for every host.
+// How the run a viewer shows went, for its status line, and what it said went wrong: from the
+// preview frame's header, the same for every host.
 
 /** @import { FrameHeader } from '@kupcad/protocol/types' */
 
@@ -10,6 +10,16 @@
  * @property {'running' | 'ready' | 'failed'} state
  * @property {number} [runMs]
  * @property {number} [warnings]
+ */
+
+/**
+ * Something the run said went wrong: why it failed, or a warning, and where in the script it
+ * was (a 1-based line and column, in UTF-8 bytes), null where it wasn't running.
+ * @typedef {object} Problem
+ * @property {'error' | 'warning'} severity
+ * @property {string} message
+ * @property {number | null} line
+ * @property {number | null} column
  */
 
 /** @type {Record<RunStatus['state'], string>} */
@@ -38,4 +48,31 @@ export function describeRun(run) {
   if (run.runMs !== undefined) said.push(`${Math.round(run.runMs)} ms`);
   if (run.warnings) said.push(`${run.warnings} warning${run.warnings === 1 ? '' : 's'}`);
   return said.join(' · ');
+}
+
+/**
+ * What the run whose frame is `header` said went wrong: why it failed first, then its warnings;
+ * nothing while none came (null).
+ * @param {FrameHeader | null} header
+ * @returns {Problem[]}
+ */
+export function problemsOf(header) {
+  if (!header) return [];
+  /** @type {Problem[]} */
+  const problems = header.warnings.map(({ message, line, column }) => ({
+    severity: 'warning',
+    message,
+    line,
+    column,
+  }));
+  const { error } = header;
+  if (error) {
+    problems.unshift({
+      severity: 'error',
+      message: error.message,
+      line: error.line,
+      column: error.column,
+    });
+  }
+  return problems;
 }

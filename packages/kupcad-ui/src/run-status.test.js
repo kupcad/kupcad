@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeRun, runStatusOf } from './run-status.js';
+import { describeRun, problemsOf, runStatusOf } from './run-status.js';
 
 /** @import { FrameHeader } from '@kupcad/protocol/types' */
 
@@ -32,5 +32,24 @@ describe('a run status', () => {
     expect(describeRun({ state: 'failed', runMs: 3, warnings: 2 })).toBe(
       'Failed · 3 ms · 2 warnings',
     );
+  });
+});
+
+describe("a run's problems", () => {
+  it('are why it failed, then its warnings, each where it was', () => {
+    expect(problemsOf(null)).toEqual([]);
+    expect(problemsOf(headerOf({}))).toEqual([]);
+    const failed = headerOf({
+      error: { message: 'boom', line: 2, column: 5, param: 'width' },
+      warnings: [
+        { message: 'mended', line: 1, column: 1 },
+        { message: 'meshed coarse', line: null, column: null },
+      ],
+    });
+    expect(problemsOf(failed)).toEqual([
+      { severity: 'error', message: 'boom', line: 2, column: 5 },
+      { severity: 'warning', message: 'mended', line: 1, column: 1 },
+      { severity: 'warning', message: 'meshed coarse', line: null, column: null },
+    ]);
   });
 });

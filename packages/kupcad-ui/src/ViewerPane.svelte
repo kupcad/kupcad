@@ -1,12 +1,13 @@
 <!--
   @component
-  The viewer, its view cube in a corner and the view's controls in a column over it (fit, the
-  render mode, edges, the floor, perspective, the views), what is under the pointer by it (the
-  part, its copies, volume and size, the face and its area), a section through the model, a
-  screenshot and a host's own actions (which take the controls' look by .kc-control) in a bar
-  above, the model's parts beside it (a click on one selecting its copies as a click in the
-  viewer does), and how its run went below. Themed by the --kc-viewer-* tokens unless given a
-  `theme`.
+  The viewer, its view cube in a corner and what is under the pointer by it (the part, its
+  copies, volume and size, the face and its area). Beside it a panel, which the toolbar's Panel
+  button hides: the view's controls (the render mode; edges, axes, the floor; fit, perspective,
+  the views) over the model's parts (a click on one selecting its copies, as a click in the
+  viewer does), half of it each. A bar above: a section through the model, a screenshot and a
+  host's own actions (which take the controls' look by .kc-control). Below: how its run went,
+  and what it said went wrong, one with a line clicked given to the host (`onproblem`). Themed
+  by the --kc-viewer-* tokens unless given a `theme`.
 -->
 <script>
   import { onMount } from 'svelte';
@@ -20,7 +21,7 @@
   /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
   /** @import { Snippet } from 'svelte' */
-  /** @import { RunStatus } from './run-status.js' */
+  /** @import { Problem, RunStatus } from './run-status.js' */
 
   /**
    * @typedef {object} Props
@@ -32,6 +33,9 @@
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
    * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export)
    * @property {RunStatus | null} [status] how the run shown went, or none to say
+   * @property {Problem[]} [problems] what the run shown said went wrong (`problemsOf(header)`)
+   * @property {(problem: Problem) => void} [onproblem] a problem with a line clicked: the host
+   *   shows the script there; without it, none can be clicked
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
    */
 
@@ -45,6 +49,8 @@
     onscreenshot,
     actions,
     status = null,
+    problems = [],
+    onproblem,
     onerror,
   } = $props();
 
@@ -57,6 +63,8 @@
     xray: { text: 'X-ray', name: 'X-ray' },
     wireframe: { text: 'Wire', name: 'Wireframe' },
   };
+  /** What a problem's kind is called. @type {Record<Problem['severity'], string>} */
+  const SEVERITIES = { error: 'Error', warning: 'Warning' };
   /**
    * The views with a button: the cube, and the keys, give the rest.
    * @type {{ view: View, text: string }[]}
@@ -74,11 +82,17 @@
   /** The tooltip stands this far right of and below the pointer. */
   const TOOLTIP_OFFSET_PX = 14;
 
+  /** The panel's and its groups' ids: this pane's own. */
+  const id = $props.id();
+
   /** @type {HTMLDivElement} */
   let root;
+  /** The panel beside the viewer is shown. */
+  let panel = $state(true);
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
   let renderMode = $state(/** @type {RenderMode} */ ('solid'));
   let edges = $state(true);
+  let axes = $state(true);
   let orthographic = $state(false);
   /** The named view the viewer looks from: none once it was turned by hand. */
   let view = $state(/** @type {View | null} */ ('iso'));
@@ -199,6 +213,15 @@
       <button type="button" class="kc-control" onclick={screenshot}>Screenshot</button>
     {/if}
     {@render actions?.()}
+    <button
+      type="button"
+      class="kc-control panel-toggle"
+      aria-controls="{id}-panel"
+      aria-expanded={panel}
+      onclick={() => (panel = !panel)}
+    >
+      Panel
+    </button>
   </div>
   <div class="body">
     <div class="canvas">
@@ -208,6 +231,7 @@
         {environment}
         {renderMode}
         {edges}
+        {axes}
         projection={orthographic ? 'orthographic' : 'perspective'}
         {section}
         bind:selected
@@ -216,9 +240,25 @@
         onmodel={modelShown}
         {onerror}
       />
+      {#if hovered && (hovered.part || hovered.face)}
+        <div
+          class="tooltip"
+          role="tooltip"
+          style:left="{hovered.x + TOOLTIP_OFFSET_PX}px"
+          style:top="{hovered.y + TOOLTIP_OFFSET_PX}px"
+        >
+          {#if hovered.part}
+            <p class="title">{hoveredPart ? partTitle(hoveredPart) : hovered.part}</p>
+            {#if hoveredMeasures}<p>{hoveredMeasures}</p>{/if}
+          {/if}
+          {#if hovered.face}<p>{faceLine(hovered.face)}</p>{/if}
+        </div>
+      {/if}
+    </div>
+    <aside class="panel" id="{id}-panel" aria-label="View and parts" hidden={!panel}>
       <div class="controls" role="toolbar" aria-label="View" aria-orientation="vertical">
-        <button type="button" class="kc-control" onclick={() => viewer?.fit()}>Fit</button>
-        <div class="group" role="group" aria-label="Render mode">
+        <div class="group modes" role="group" aria-labelledby="{id}-mode">
+          <p class="caption" id="{id}-mode">Render mode</p>
           {#each RENDER_MODES as mode (mode)}
             <button
               type="button"
@@ -231,7 +271,8 @@
             </button>
           {/each}
         </div>
-        <div class="group">
+        <div class="group" role="group" aria-labelledby="{id}-show">
+          <p class="caption" id="{id}-show">Show</p>
           <button
             type="button"
             class="kc-control"
@@ -239,6 +280,14 @@
             onclick={() => (edges = !edges)}
           >
             Edges
+          </button>
+          <button
+            type="button"
+            class="kc-control"
+            aria-pressed={axes}
+            onclick={() => (axes = !axes)}
+          >
+            Axes
           </button>
           <button
             type="button"
@@ -256,6 +305,10 @@
           >
             Plate
           </button>
+        </div>
+        <div class="group" role="group" aria-labelledby="{id}-camera">
+          <p class="caption" id="{id}-camera">Camera</p>
+          <button type="button" class="kc-control" onclick={() => viewer?.fit()}>Fit</button>
           <button
             type="button"
             class="kc-control"
@@ -265,8 +318,6 @@
           >
             Persp
           </button>
-        </div>
-        <div class="group" role="group" aria-label="Views">
           {#each VIEW_BUTTONS as button (button.view)}
             <button
               type="button"
@@ -279,46 +330,62 @@
           {/each}
         </div>
       </div>
-      {#if hovered && (hovered.part || hovered.face)}
-        <div
-          class="tooltip"
-          role="tooltip"
-          style:left="{hovered.x + TOOLTIP_OFFSET_PX}px"
-          style:top="{hovered.y + TOOLTIP_OFFSET_PX}px"
-        >
-          {#if hovered.part}
-            <p class="title">{hoveredPart ? partTitle(hoveredPart) : hovered.part}</p>
-            {#if hoveredMeasures}<p>{hoveredMeasures}</p>{/if}
-          {/if}
-          {#if hovered.face}<p>{faceLine(hovered.face)}</p>{/if}
+      <div class="parts">
+        <p class="caption" id="{id}-parts">Parts</p>
+        {#if parts.length > 0}
+          <ul aria-labelledby="{id}-parts">
+            {#each parts as part (part.name)}
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={selected === part.name}
+                  onclick={() => (selected = selected === part.name ? null : part.name)}
+                >
+                  <span class="swatch" style:background={part.color ?? 'var(--kc-muted)'}></span>
+                  <span class="name">{part.name}</span>
+                  {#if part.count > 1}<span class="count">×{part.count}</span>{/if}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p class="none">None</p>
+        {/if}
+      </div>
+    </aside>
+  </div>
+  {#if status || problems.length > 0}
+    <div class="run">
+      {#if status}
+        <div class="status" role="status">
+          <span class="dot {status.state}"></span>
+          {statusText}
         </div>
       {/if}
-    </div>
-    {#if parts.length > 0}
-      <ul class="parts" aria-label="Parts">
-        {#each parts as part (part.name)}
-          <li>
-            <button
-              type="button"
-              aria-pressed={selected === part.name}
-              onclick={() => (selected = selected === part.name ? null : part.name)}
-            >
-              <span class="swatch" style:background={part.color ?? 'var(--kc-muted)'}></span>
-              <span class="name">{part.name}</span>
-              {#if part.count > 1}<span class="count">×{part.count}</span>{/if}
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </div>
-  {#if status}
-    <div class="status" role="status">
-      <span class="dot {status.state}"></span>
-      {statusText}
+      {#if problems.length > 0}
+        <ul class="problems" aria-label="Problems">
+          {#each problems as problem, index (index)}
+            <li class={problem.severity}>
+              {#if onproblem && problem.line !== null}
+                <button type="button" onclick={() => onproblem(problem)}>
+                  {@render said(problem)}
+                </button>
+              {:else}
+                {@render said(problem)}
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 </div>
+
+{#snippet said(/** @type {Problem} */ problem)}
+  <span class="severity">{SEVERITIES[problem.severity]}</span>
+  <span class="message">{problem.message}</span>
+  {#if problem.line !== null}<span class="place">line {problem.line}</span>{/if}
+{/snippet}
 
 <style>
   .kc-viewer-pane {
@@ -342,6 +409,12 @@
   .spacer {
     flex: 1;
   }
+  /* Pressed while the panel shows, as the view's toggles are while on */
+  .panel-toggle[aria-expanded='true'] {
+    color: var(--kc-accent-fg);
+    background: var(--kc-accent);
+    border-color: var(--kc-accent);
+  }
   label {
     display: flex;
     align-items: center;
@@ -356,26 +429,6 @@
     position: relative;
     flex: 1;
     min-width: 0;
-  }
-  /* Under the view cube (8px from the top, 96px high) */
-  .controls {
-    position: absolute;
-    top: 112px;
-    right: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    width: 64px;
-  }
-  .group {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .controls button {
-    width: 100%;
-    padding: 2px 4px;
-    font-size: 0.92em;
   }
   .tooltip {
     position: absolute;
@@ -393,33 +446,56 @@
   .tooltip .title {
     font-weight: 600;
   }
-  .status {
+  /* The controls over the parts, half of it each */
+  .panel {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px var(--kc-gap);
-    border-top: 1px solid var(--kc-border);
-    color: var(--kc-muted);
+    flex-direction: column;
+    width: 12em;
+    min-height: 0;
+    border-left: 1px solid var(--kc-border);
   }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--kc-muted);
+  .panel[hidden] {
+    display: none;
   }
-  .dot.ready {
-    background: var(--kc-accent);
+  .controls,
+  .parts {
+    flex: 1 1 50%;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--kc-gap);
   }
-  .dot.failed {
-    background: var(--kc-error);
+  .controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--kc-gap);
   }
   .parts {
+    border-top: 1px solid var(--kc-border);
+  }
+  .caption {
+    margin: 0 0 2px;
+    color: var(--kc-muted);
+    font-size: 0.92em;
+  }
+  .group {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(4.5em, 1fr));
+    gap: 2px;
+  }
+  .group.modes {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .group .caption {
+    grid-column: 1 / -1;
+  }
+  .group button {
+    padding: 2px 4px;
+    font-size: 0.92em;
+  }
+  .parts ul {
     list-style: none;
     margin: 0;
-    padding: var(--kc-gap);
-    min-width: 10em;
-    overflow: auto;
-    border-left: 1px solid var(--kc-border);
+    padding: 0;
   }
   .parts button {
     display: flex;
@@ -440,6 +516,10 @@
     background: var(--kc-accent);
     border-color: var(--kc-accent);
   }
+  .none {
+    margin: 0;
+    color: var(--kc-muted);
+  }
   .swatch {
     width: 10px;
     height: 10px;
@@ -454,5 +534,77 @@
   }
   [aria-pressed='true'] .count {
     color: inherit;
+  }
+  /* How the run went, and what it said went wrong: a few lines, scrolled past them */
+  .run {
+    border-top: 1px solid var(--kc-border);
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px var(--kc-gap);
+    color: var(--kc-muted);
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--kc-muted);
+  }
+  .dot.ready {
+    background: var(--kc-accent);
+  }
+  .dot.failed {
+    background: var(--kc-error);
+  }
+  .problems {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 2px;
+    max-height: 6.5em;
+    overflow: auto;
+  }
+  .problems li {
+    display: flex;
+    gap: 6px;
+    padding: 1px var(--kc-gap);
+  }
+  .problems button {
+    display: flex;
+    flex: 1;
+    gap: 6px;
+    min-width: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+  .problems button:hover .message {
+    text-decoration: underline;
+  }
+  .severity {
+    flex: none;
+    font-weight: 600;
+  }
+  .error .severity {
+    color: var(--kc-error);
+  }
+  .warning .severity {
+    color: var(--kc-warning);
+  }
+  .message {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .place {
+    flex: none;
+    color: var(--kc-muted);
   }
 </style>

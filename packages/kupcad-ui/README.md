@@ -24,14 +24,17 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 />
 ```
 
-* **`ViewerPane`**: @kupcad/viewer with its view cube in the corner and a column of controls
-  over it under the cube (Fit; Solid, Wire, X-ray; Edges, Grid, Plate, Persp toggles; the Iso,
-  Top, Front and Right views, the one looked from pressed, a turn by hand pressing none), a bar
-  above (a section through the model along an axis, screenshot, and an `actions` snippet: a
-  host's own buttons, the VS Code extension's Export), the model's parts beside it, each with its
-  colour and copies (a click on one selects its copies, as a click in the viewer does:
-  `bind:selected`), and a status line below from `status` (`runStatusOf(header)` makes it of a
-  frame's header: Running…, then Ready or Failed, with the run's time and its warnings).
+* **`ViewerPane`**: @kupcad/viewer with its view cube in the corner, and a panel beside it that
+  the toolbar's Panel button hides: the view's controls in its top half (Solid, Wire, X-ray;
+  Edges, Axes, Grid and Plate toggles; Fit, Persp, and the Iso, Top, Front and Right views, the
+  one looked from pressed, a turn by hand pressing none), the model's parts in its bottom half,
+  each with its colour and copies (a click on one selects its copies, as a click in the viewer
+  does: `bind:selected`). A bar above: a section through the model along an axis, screenshot, and
+  an `actions` snippet (a host's own buttons, the VS Code extension's Export). Below, a status
+  line from `status` (`runStatusOf(header)` makes it of a frame's header: Running…, then Ready or
+  Failed, with the run's time and its warnings) over the run's problems from `problems`
+  (`problemsOf(header)`: why it failed, then its warnings), a few lines high; one with a line,
+  clicked, goes to `onproblem`, for the host to show the script there.
   By the pointer a tooltip says what is under it: the part, its copies, volume and size (the
   frame's), and the face, flat with its area and the way it faces, or curved (`measures.js`).
   `bind:viewer` gives the viewer itself. The controls show how the viewer looks (a drawing

@@ -4,5 +4,5 @@
 export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
 export { controlOf, groupsOf, isOverridden, shownValue, validate } from './params.js';
-export { describeRun, runStatusOf } from './run-status.js';
+export { describeRun, problemsOf, runStatusOf } from './run-status.js';
 export { themeFromTokens, watchTokens } from './theme.js';

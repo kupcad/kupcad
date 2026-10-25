@@ -17,6 +17,7 @@
   --kc-accent: #2f80ed;
   --kc-accent-fg: #ffffff;
   --kc-error: #cf222e;
+  --kc-warning: #9a6700;
   --kc-radius: 4px;
   --kc-gap: 8px;
 }
@@ -31,5 +32,6 @@
     --kc-accent: #5aa0ff;
     --kc-accent-fg: #0d0e10;
     --kc-error: #ff7b72;
+    --kc-warning: #d29922;
   }
 }

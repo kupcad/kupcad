@@ -7,6 +7,7 @@ import { modelOf, PARTS } from './fixtures.test-helper.js';
 import ViewerPane from './ViewerPane.svelte';
 
 /** @import { Viewer } from '@kupcad/viewer' */
+/** @import { Problem } from './run-status.js' */
 
 /**
  * The pane showing `source`'s model (the parts', by default), once the viewer shows it: the
@@ -83,7 +84,7 @@ describe('ViewerPane', () => {
     expect(viewer.selected).toBeNull();
   });
 
-  it("sets the viewer's render mode, edges, floor, perspective and view from the controls over it", async () => {
+  it("sets the viewer's render mode, edges, axes, floor, perspective and view from its controls", async () => {
     const { viewer } = await pane();
     expect(screen.getByRole('toolbar', { name: 'View' })).toBeTruthy();
     // Drawn as .kc-control, the look a host's own actions take
@@ -95,6 +96,10 @@ describe('ViewerPane', () => {
     expect([pressed('Wireframe'), pressed('X-ray')]).toEqual(['true', 'false']);
     await fireEvent.click(screen.getByRole('button', { name: 'Edges' }));
     expect(viewer.edges).toBe(false);
+    expect(viewer.axes).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Axes' }));
+    expect(viewer.axes).toBe(false);
+    expect(pressed('Axes')).toBe('false');
     await fireEvent.click(screen.getByRole('button', { name: 'Perspective' }));
     expect(viewer.projection).toBe('orthographic');
     await fireEvent.click(screen.getByRole('button', { name: 'Plate' }));
@@ -196,7 +201,7 @@ describe('ViewerPane', () => {
     expect([pressed('Perspective'), pressed('Top')]).toEqual(['false', 'true']);
   });
 
-  it('offers no section through a drawing, which the viewer cuts not', async () => {
+  it('offers no section through a drawing, which the viewer cuts not, and lists no parts', async () => {
     const { show } = await pane();
     const sectioned = /** @type {HTMLInputElement} */ (
       screen.getByRole('checkbox', { name: 'Section' })
@@ -204,6 +209,10 @@ describe('ViewerPane', () => {
     expect(sectioned.disabled).toBe(false);
     await show('square(10)');
     expect(sectioned.disabled).toBe(true);
+    expect(screen.queryByRole('list', { name: 'Parts' })).toBeNull();
+    expect(document.querySelector('.parts')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Parts None',
+    );
   });
 
   it('keeps a section where it was through an edit, and puts it across a model it misses', async () => {
@@ -236,7 +245,7 @@ describe('ViewerPane', () => {
     expect(fit).toHaveBeenCalledOnce();
   });
 
-  it("ends its toolbar with the host's own buttons", async () => {
+  it("ends its toolbar with the host's own buttons, then the panel's", async () => {
     const viewer = bound(/** @type {Viewer | null} */ (null));
     render(ViewerPane, {
       props: {
@@ -254,7 +263,58 @@ describe('ViewerPane', () => {
       },
     });
     const toolbar = /** @type {HTMLElement} */ (document.querySelector('.toolbar'));
-    expect(toolbar.lastElementChild?.textContent).toBe('Export…');
+    const buttons = [...toolbar.querySelectorAll('button')].map((b) => b.textContent?.trim());
+    expect(buttons.slice(-2)).toEqual(['Export…', 'Panel']);
+  });
+
+  it('hides the panel of controls and parts, and shows it again', async () => {
+    await pane();
+    const toggle = screen.getByRole('button', { name: 'Panel' });
+    const panel = /** @type {HTMLElement} */ (
+      document.getElementById(/** @type {string} */ (toggle.getAttribute('aria-controls')))
+    );
+    expect(panel.getAttribute('aria-label')).toBe('View and parts');
+    expect([toggle.getAttribute('aria-expanded'), panel.hidden]).toEqual(['true', false]);
+    // The controls over the parts, in the one panel
+    expect(panel.contains(screen.getByRole('toolbar', { name: 'View' }))).toBe(true);
+    expect(panel.contains(screen.getByRole('list', { name: 'Parts' }))).toBe(true);
+    await fireEvent.click(toggle);
+    expect([toggle.getAttribute('aria-expanded'), panel.hidden]).toEqual(['false', true]);
+    await fireEvent.click(toggle);
+    expect(panel.hidden).toBe(false);
+  });
+
+  it('lists what the run said went wrong, one with a line clicked given to the host', async () => {
+    /** @type {Problem[]} */
+    const clicked = [];
+    /** @type {Problem[]} */
+    const problems = [
+      { severity: 'error', message: 'undefined variable `w`', line: 3, column: 7 },
+      { severity: 'warning', message: 'meshed coarse', line: null, column: null },
+    ];
+    const { rerender } = render(ViewerPane, {
+      props: {
+        model: await modelOf(PARTS),
+        options: { renderer: stubRenderer().renderer },
+        problems,
+        onproblem: (/** @type {Problem} */ problem) => clicked.push(problem),
+      },
+    });
+    const list = screen.getByRole('list', { name: 'Problems' });
+    const said = [...list.querySelectorAll('li')].map((li) =>
+      li.textContent?.replace(/\s+/g, ' ').trim(),
+    );
+    expect(said).toEqual(['Error undefined variable `w` line 3', 'Warning meshed coarse']);
+    // The warning has no line: nothing to show in the script
+    const buttons = list.querySelectorAll('button');
+    expect(buttons).toHaveLength(1);
+    await fireEvent.click(buttons[0]);
+    expect(clicked).toEqual([problems[0]]);
+    // Without a host to show them, none is clicked; with none, there is no list
+    await rerender({ onproblem: undefined });
+    expect(screen.getByRole('list', { name: 'Problems' }).querySelector('button')).toBeNull();
+    await rerender({ problems: [] });
+    expect(screen.queryByRole('list', { name: 'Problems' })).toBeNull();
   });
 
   it('gives a screenshot to its host', async () => {
