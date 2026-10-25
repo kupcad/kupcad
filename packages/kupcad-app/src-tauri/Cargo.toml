@@ -1,0 +1,31 @@
+[package]
+name = "kupcad-app"
+version = "0.1.0"
+description = "KupCAD's desktop app"
+license = "AGPL-3.0-only"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[lib]
+# The library's name differs from the binary's (cargo#8519 on Windows)
+name = "kupcad_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+
+# A small app: https://tauri.app/concept/size/
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

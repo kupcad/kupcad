@@ -1,0 +1,38 @@
+{
+  "name": "@kupcad/app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KupCAD's desktop app (Tauri): a folder of scripts, an editor on the bundled kupcad's language server, and its preview.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri",
+    "sidecar": "node scripts/sidecar.js",
+    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.js"
+  },
+  "dependencies": {
+    "@kupcad/editor": "workspace:*",
+    "@kupcad/protocol": "workspace:*",
+    "@kupcad/ui": "workspace:*",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.3",
+    "@tauri-apps/plugin-fs": "^2.7.1"
+  },
+  "devDependencies": {
+    "@codemirror/view": "^6.43.15",
+    "@kupcad/viewer": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@tauri-apps/cli": "^2.12.4",
+    "@testing-library/svelte": "catalog:",
+    "@types/node": "catalog:",
+    "jsdom": "catalog:",
+    "svelte": "catalog:",
+    "svelte-check": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

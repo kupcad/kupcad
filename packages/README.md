@@ -20,7 +20,7 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 | `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, ui |
 | `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, ui |
 | `kupcad-tree-sitter` | — | The tree-sitter grammar, for editors that highlight with it. | — |
-| `kupcad-app` (later) | private | The desktop app (Tauri): a native `kupcad` binary, `@kupcad/ui`, and an editor with the language server. | ui, viewer |
+| `kupcad-app` | `@kupcad/app` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol |
 | `kupcad-pwa` (later) | private | The web app: the playground with files, projects and exports, installable. | playground |
 
 The site (Astro: the playground's page, the documentation) is in a repository of its own, and
@@ -44,6 +44,7 @@ pnpm changeset                     # describe a change to a published package
 pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
 pnpm dev:vscode                    # kupcad and the extension built, a VS Code window to try it in
 pnpm dev:playground                # the core built to WebAssembly, the playground at 127.0.0.1:4321
+pnpm dev:app                       # kupcad built and bundled, the desktop app on examples/ (Rust needed)
 ```
 
 Trying the extension from a checkout (F5, or `pnpm dev:vscode`) is in its README,

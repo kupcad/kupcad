@@ -22,7 +22,7 @@ flowchart BT
     subgraph hosts ["Hosts"]
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
         vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: ui + viewer"]
-        app["kupcad-app (Tauri)<br/>native binary + LSP"]
+        app["@kupcad/app (Tauri)<br/>bundled kupcad + LSP"]
         docs["the site (own repository)<br/>Astro: the playground,<br/>the docs later"]
         pwa["kupcad-pwa"]
     end
@@ -478,11 +478,20 @@ Six platforms at 10–20 MB each would make the extension huge and tie every ext
 core release. The download happens once per version and is verified; it is what rust-analyzer,
 the Zig extension and others do.
 
-### The desktop app (`kupcad-app`, later)
+### The desktop app (`@kupcad/app`)
 
-Tauri around `@kupcad/ui`, `@kupcad/editor` with its language-server client (or Monaco, section
-6), and the same binary manager (shared from the extension as `@kupcad/binary` when the second user appears). Files are
-the real file system; export is `kupcad build` as in VS Code.
+Tauri 2 around a folder of scripts: the folder's tree, the script open in `@kupcad/editor` with its
+language-server client (`streamTransport` over the server's stdio), and `@kupcad/ui`'s
+`PreviewPanel`, its host the page itself. It bundles its `kupcad` (`bundle.externalBin`: the app
+and the core always match, and it works offline) rather than downloading one as the extension
+does. The native side runs the language server for the page, at most one (a reloaded page
+replaces the one it left, the app stops it when it exits), with `--viewport-origin` naming the
+page's origin, so the viewport socket admits the webview and no other page; it exports with
+`kupcad build`, only a script of the folder opened into a file the person saved. The page has no
+shell permission: the binary runs through the app's commands alone. Files are the real file
+system, the dialogs putting what the person picks in the app's scope. Tests: the page's modules
+and window under jsdom on a stand-in server, the page's server on the real `kupcad lsp`
+(`test:integration`), the Rust commands' arguments.
 
 ### The PWA (`kupcad-pwa`, later)
 
@@ -526,4 +535,6 @@ the truth.
    GLB's part extras, section 8).
 4. **The playground** (done: `@kupcad/editor`, `@kupcad/playground` and its page), then the
    site, in a repository of its own: the playground's page and the docs.
-5. **The PWA, then the desktop app**, which reuse everything above.
+5. **The desktop app** (started: a folder, the editor on the bundled language server, the
+   preview; presets and release builds to come), then **the PWA**, in a repository of its own,
+   which reuse everything above.

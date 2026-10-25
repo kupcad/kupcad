@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- KupCAD's app icon (placeholder): a solid, drawn as a part's edges are -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#2f6fd6"/>
+  <path d="M512 232 L762 376 L512 520 L262 376 Z" fill="#ffffff" fill-opacity="0.28"/>
+  <g fill="none" stroke="#ffffff" stroke-width="44" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M512 232 L762 376 L762 664 L512 808 L262 664 L262 376 Z"/>
+    <path d="M262 376 L512 520 L762 376 M512 520 L512 808"/>
+  </g>
+</svg>

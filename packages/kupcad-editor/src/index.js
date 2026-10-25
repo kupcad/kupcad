@@ -15,3 +15,5 @@ export {
 export { editorTheme, highlightStyle } from './theme.js';
 
 /** @typedef {import('./findings.js').Mark} Mark */
+/** @typedef {import('./language-server.js').ByteStream} ByteStream */
+/** @typedef {import('@codemirror/lsp-client').LSPClient} LSPClient */

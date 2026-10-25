@@ -1,0 +1,6 @@
+# Cargo's build
+/target/
+# Tauri's capability schemas, made by each build
+/gen/schemas
+# The bundled kupcad, copied from the core's build (`pnpm sidecar`)
+/binaries/

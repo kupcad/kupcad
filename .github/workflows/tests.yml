@@ -166,6 +166,28 @@ jobs:
         if: matrix.name == 'linux debug'
         run: pnpm check:drawings
 
+      # The desktop app's page and its server on the real kupcad lsp, the one check:examples
+      # built: the handshake, a script's diagnostics, and its model from the viewport socket
+      - name: Run the desktop app on the real kupcad lsp
+        if: matrix.name == 'linux debug'
+        run: |
+          pnpm install --frozen-lockfile --filter '@kupcad/app...'
+          pnpm --filter @kupcad/app test:integration
+
+      # The desktop app's native side, on the kupcad check:examples built as its sidecar: macOS
+      # needs no WebKit packages to build it
+      - name: Lint and test the desktop app's native side
+        if: matrix.name == 'macos debug'
+        run: |
+          rustup toolchain install "$(awk '$1 == "rust" { print $2 }' .tool-versions)" --profile minimal --component clippy
+          rustup default "$(awk '$1 == "rust" { print $2 }' .tool-versions)"
+          pnpm install --frozen-lockfile --filter '@kupcad/app...'
+          pnpm --filter @kupcad/app build
+          pnpm --filter @kupcad/app sidecar
+          cd packages/kupcad-app/src-tauri
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+
       - name: Run wasm tests
         if: matrix.wasm_task != ''
         run: pnpm ${{ matrix.wasm_task }}

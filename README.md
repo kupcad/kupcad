@@ -48,10 +48,12 @@ To try the front ends from a checkout:
 ```sh
 pnpm dev:vscode       # kupcad and the VS Code extension built, a VS Code window with it on examples/
 pnpm dev:playground   # the core built to WebAssembly, the playground at http://127.0.0.1:4321/
+pnpm dev:app          # kupcad built and bundled, the desktop app (Tauri, needs Rust) on examples/
 ```
 
-The [extension's README](packages/kupcad-vscode/README.md#development) and the
-[playground's](packages/kupcad-playground/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
+The [extension's README](packages/kupcad-vscode/README.md#development), the
+[playground's](packages/kupcad-playground/README.md#running-it) and the
+[desktop app's](packages/kupcad-app/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
 
 ## Usage
 
