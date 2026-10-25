@@ -22,7 +22,8 @@
     "fmt:check": "oxfmt --check packages vitest.svelte.js && prettier --check 'packages/**/*.svelte'",
     "test:packages": "pnpm -r test",
     "test:browser": "pnpm -r --if-present test:browser",
-    "dev:vscode": "pnpm build:core:native && pnpm --filter @kupcad/vscode build && code --extensionDevelopmentPath=\"$PWD/packages/kupcad-vscode\" examples"
+    "dev:vscode": "pnpm build:core:native && pnpm --filter @kupcad/vscode build && code --extensionDevelopmentPath=\"$PWD/packages/kupcad-vscode\" examples",
+    "dev:playground": "pnpm build:core:wasm && pnpm --filter @kupcad/wasm build && pnpm --filter @kupcad/site dev"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",

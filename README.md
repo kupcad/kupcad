@@ -43,6 +43,16 @@ cd core && zig build test -Dtest-filter="Compiler Guardrail"   # a subset
 
 A passing run prints nothing but the summary. A test that provokes a warning on purpose calls `test_support.expectWarnings()` first, so any warning that does appear is a real one.
 
+To try the front ends from a checkout:
+
+```sh
+pnpm dev:vscode       # kupcad and the VS Code extension built, a VS Code window with it on examples/
+pnpm dev:playground   # the core built to WebAssembly, the playground at http://127.0.0.1:4321/playground
+```
+
+The [extension's README](packages/kupcad-vscode/README.md#development) and the
+[site's](packages/kupcad-site/README.md) say more; [packages/](packages/README.md) has the rest.
+
 ## Usage
 
 ```sh

@@ -1,0 +1,19 @@
+---
+// The playground on one of the examples, filling the window. It runs in the browser alone
+// (client:only): the core is WebAssembly in a worker, the viewer WebGL.
+import { Playground } from '@kupcad/playground';
+import Page from '../layouts/Page.astro';
+import standoff from '../../../../examples/standoff.kup?raw';
+---
+
+<Page title="KupCAD playground">
+  <main>
+    <Playground client:only="svelte" source={standoff} name="standoff" />
+  </main>
+</Page>
+
+<style>
+  main {
+    height: 100vh;
+  }
+</style>

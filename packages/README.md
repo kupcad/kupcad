@@ -16,8 +16,9 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 | `kupcad-wasm` | `@kupcad/wasm` | The core compiled to WebAssembly (`kupcad.wasm`, built by `core/build.zig`) with a typed JavaScript API around its exports, and a Web Worker wrapper so a build never blocks the page. | protocol |
 | `kupcad-viewer` | `@kupcad/viewer` | The 3D viewer: a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking; and a thin Svelte component around it. | protocol, three |
 | `kupcad-ui` | `@kupcad/ui` | The Svelte components a KupCAD host shows beside its editor: the viewer pane with its toolbar, the parameter panel, presets, the log, and the theme tokens they share. | protocol, viewer |
-| `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting, indentation, the findings of `check` as gutter marks, and later a language-server client. For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
-| `kupcad-playground` | `@kupcad/playground` | Editor on the left, viewer on the right, parameters below, all running on `@kupcad/wasm` in the browser. One Svelte component the docs site embeds, and the heart of the PWA. | wasm, editor, ui |
+| `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting by the core's vocabulary, indentation, completion, the findings of `check` marked with their fixes, and later a language-server client. For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
+| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, ui |
+| `kupcad-site` | `@kupcad/site` (private) | The site, Astro: the playground's page now, the documentation later. | playground, ui |
 | `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, ui |
 | `kupcad-tree-sitter` | — | The tree-sitter grammar, for editors that highlight with it. | — |
 | `kupcad-app` (later) | private | The desktop app (Tauri): a native `kupcad` binary, `@kupcad/ui`, and an editor with the language server. | ui, viewer |
@@ -40,6 +41,7 @@ pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
 pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
 pnpm dev:vscode                    # kupcad and the extension built, a VS Code window to try it in
+pnpm dev:playground                # the core built to WebAssembly, the site at 127.0.0.1:4321/playground
 ```
 
 Trying the extension from a checkout (F5, or `pnpm dev:vscode`) is in its README,

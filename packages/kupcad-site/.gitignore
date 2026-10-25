@@ -1,0 +1,6 @@
+# Astro's build and the types it writes
+dist/
+.astro/
+# Playwright's output
+test-results/
+playwright-report/

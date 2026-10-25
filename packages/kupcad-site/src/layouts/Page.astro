@@ -1,0 +1,31 @@
+---
+// A page of the site: its title, the --kc-* tokens the components are styled by (light or dark
+// as the visitor's system is), and the page filling the window.
+import '@kupcad/ui/tokens.css';
+
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
+
+<style is:global>
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    color: var(--kc-fg);
+    background: var(--kc-bg);
+    font-family: var(--kc-font);
+    font-size: var(--kc-font-size);
+  }
+</style>

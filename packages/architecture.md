@@ -23,7 +23,7 @@ flowchart BT
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
         vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: ui + viewer"]
         app["kupcad-app (Tauri)<br/>native binary + LSP"]
-        docs["docs site"]
+        docs["@kupcad/site<br/>Astro: the playground,<br/>the docs later"]
         pwa["kupcad-pwa"]
     end
 
@@ -326,9 +326,18 @@ the desktop app, and the extension gives Monaco no advantage.
 
 Both need a tokenizer written for the language, of similar size. The PWA decides it: Monaco is
 a poor editor on a phone, and the playground sits on documentation pages where megabytes count.
-`@kupcad/editor` is CodeMirror 6, for every web host: highlighting and indentation now, `check`'s
-findings as gutter marks and underlines, and the language-server client when the desktop app
-comes (over the native binary's `kupcad lsp`). Monaco stays an option for the desktop app alone,
+`@kupcad/editor` is CodeMirror 6, for every web host: highlighting, indentation and completion
+now, `check`'s findings as gutter marks and underlines (a fix an action), and the
+language-server client when the desktop app comes (over the native binary's `kupcad lsp`).
+
+Its tokenizer is CodeMirror's Ruby mode, whose literals are KupCAD's (strings with
+interpolation, single-quoted ones, `%w` and `%q`, heredocs, symbols) and which indents the
+blocks, with each word classed by the core's vocabulary: `src/vocabulary.json`, the lexer's
+keywords, every global function and every method, which `zig build grammar` writes beside the
+VS Code TextMate grammar from the same lists (a core test fails while either file is behind the
+generator). So `raise` is a function and `import` a keyword, as KupCAD has them. A Lezer grammar
+would know more (a hash key from a symbol by the parser's rules, not the mode's), at the cost of
+a second grammar of the language to keep in step. Monaco stays an option for the desktop app alone,
 if it must feel exactly like VS Code; that would be a second small package, not a change to this
 one.
 
@@ -339,12 +348,26 @@ a host may bring another.
 
 ### The playground (`@kupcad/playground`)
 
-One component: `<Playground source={...} wasm={url} />`. It runs the source through
-`createKupcadWorker()` on each change (debounced, the last run cancelled if still going),
-shows the model, the findings in the editor, the parameters from `params()`, and rebuilds when a
-value changes (`build` takes the values as its JSON parameters). It keeps nothing of the host's:
-the docs site embeds it in a page with a script of the page's own, the PWA wraps it with files and
-projects. Exports (`build` with another format) download as files.
+One component: `<Playground source={...} name="bracket" />` (and `kupcad` for a core of the
+host's, `wasm` for another module). It runs the script in `createKupcadWorker()`'s worker
+(`Runner`): once an edit stays a moment (300 ms), at once when a parameter's value changes, the
+run under way stopped by the next. A run is `check`, whose findings the editor marks at once,
+then `preview`: the model and how the run went in `@kupcad/ui`'s `ViewerPane`, the parameters in
+its `ParamsPanel`, and the run's error and warnings marked in the editor too (not the error where
+`check` found errors: a script that doesn't parse fails for that). A problem clicked takes the
+editor to its line. Exports (`build` in a format of `EXPORT_FORMATS`, with the panel's values)
+and the screenshot download as files named after `name`. It keeps nothing of the host's: the
+site embeds it in a page with a script of the page's own, the PWA will wrap it with files and
+projects.
+
+### The site (`@kupcad/site`)
+
+Astro, its interactive parts Svelte islands: `/playground` is the playground on an example
+(`client:only`: the core is WebAssembly in a worker, the viewer WebGL), the docs pages come
+later. The worker is bundled as an ES module (`vite.worker.format`), the core's module and
+three.js's decoders as assets. Its smoke test builds the site and drives the page in headless
+Chromium: the example runs to Ready in the real worker, its parts and parameters show, `param` is
+highlighted, and a script that raises says so.
 
 ### The VS Code extension (`@kupcad/vscode`)
 
@@ -495,5 +518,6 @@ the truth.
    as diagnostics. This is the first thing a user installs, so it comes before the web hosts.
    Left for later: a part clicked in the viewer taking the editor to where it was named (the
    GLB's part extras, section 8).
-4. **The playground** and the docs site that embeds it.
+4. **The playground** (done: `@kupcad/editor`, `@kupcad/playground`, and `@kupcad/site` with its
+   `/playground` page), then the docs pages of the site.
 5. **The PWA, then the desktop app**, which reuse everything above.

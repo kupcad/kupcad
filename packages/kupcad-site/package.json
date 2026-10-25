@@ -1,0 +1,27 @@
+{
+  "name": "@kupcad/site",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KupCAD's site, Astro: the playground now, the documentation later.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@astrojs/svelte": "^9.1.1",
+    "@kupcad/playground": "workspace:*",
+    "@kupcad/ui": "workspace:*",
+    "astro": "^7.4.2",
+    "svelte": "catalog:"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.12",
+    "@playwright/test": "^1.64.1",
+    "typescript": "6.0.3"
+  }
+}
