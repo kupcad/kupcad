@@ -17,6 +17,15 @@ import { assetFor, CHECKSUMS, checksumOf, sha256 } from './assets.js';
 const EXECUTABLE = 0o755;
 /** What renaming a folder onto one that is there says: ENOTEMPTY, EEXIST, or EPERM on Windows. */
 const TAKEN = ['ENOTEMPTY', 'EEXIST', 'EPERM'];
+/**
+ * The hosts a release's file may come from, over HTTPS: GitHub, and the storage it redirects a
+ * download to. A download that lands anywhere else is refused, whatever it holds.
+ */
+const DOWNLOAD_HOSTS = [
+  'github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+];
 
 /** Why a release couldn't be installed, in words a person acts on. */
 export class InstallError extends Error {
@@ -117,6 +126,11 @@ async function download(get, url, progress) {
     response = await get(url);
   } catch (error) {
     throw new InstallError(`couldn't download ${url}: ${errorText(error)}`);
+  }
+  // Where the redirects led: a response made here has no URL of its own
+  const landed = new URL(response.url || url);
+  if (landed.protocol !== 'https:' || !DOWNLOAD_HOSTS.includes(landed.hostname)) {
+    throw new InstallError(`couldn't download ${url}: it came from ${landed.hostname}, not GitHub`);
   }
   if (!response.ok || !response.body) {
     throw new InstallError(`couldn't download ${url}: the server answered ${response.status}`);

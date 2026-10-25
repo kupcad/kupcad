@@ -48,18 +48,30 @@ const serving = (files) => async (url) => {
   return new Response(stream, { headers: { 'content-length': String(bytes.length) } });
 };
 
+/**
+ * `get`, its answers redirected to `to`, as GitHub redirects a download to its storage.
+ * @param {typeof fetch} get
+ * @param {string} to
+ * @returns {typeof fetch}
+ */
+const redirectedTo = (get, to) => async (url) => {
+  const response = await get(url);
+  Object.defineProperty(response, 'url', { value: `${to}${new URL(String(url)).pathname}` });
+  return response;
+};
+
 /** A network that is down. */
 const offline = async () => {
   throw new TypeError('fetch failed');
 };
 
-/** A release whose files are at example.com. */
+/** A release whose files are in the repository's release downloads. */
 const release = {
   version: VERSION,
   prerelease: false,
   assets: {
-    [ARCHIVE]: 'https://example.com/archive',
-    'checksums.txt': 'https://example.com/checksums',
+    [ARCHIVE]: 'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive',
+    'checksums.txt': 'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums',
   },
 };
 
@@ -67,8 +79,8 @@ const release = {
 function servedRelease() {
   const bytes = archive();
   const get = serving({
-    'https://example.com/archive': bytes,
-    'https://example.com/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
+    'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive': bytes,
+    'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
   });
   return { get, dir: path.join(dir, 'bin'), platform: 'linux', arch: 'x64' };
 }
@@ -84,8 +96,8 @@ describe('install', () => {
     async () => {
       const bytes = archive();
       const get = serving({
-        'https://example.com/archive': bytes,
-        'https://example.com/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
+        'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive': bytes,
+        'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
       });
       /** @type {[number, number | null][]} */
       const progress = [];
@@ -105,11 +117,29 @@ describe('install', () => {
     },
   );
 
+  it.runIf(POSIX)(
+    "takes a download GitHub's storage serves, and refuses one redirected anywhere else",
+    async () => {
+      const served = servedRelease();
+      const github = {
+        ...served,
+        get: redirectedTo(served.get, 'https://release-assets.githubusercontent.com'),
+      };
+      expect(await install(release, github)).toBe(path.join(served.dir, VERSION, 'kupcad'));
+      fs.rmSync(served.dir, { recursive: true, force: true });
+      const elsewhere = { ...served, get: redirectedTo(served.get, 'https://evil.example') };
+      await expect(install(release, elsewhere)).rejects.toThrow(
+        "couldn't download https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums: it came from evil.example, not GitHub",
+      );
+      expect(await installedVersions(served.dir, 'kupcad')).toEqual([]);
+    },
+  );
+
   it("refuses an archive that doesn't match its checksum, and installs nothing", async () => {
     const bytes = archive();
     const get = serving({
-      'https://example.com/archive': bytes,
-      'https://example.com/checksums': `${'0'.repeat(64)}  ${ARCHIVE}\n`,
+      'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive': bytes,
+      'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': `${'0'.repeat(64)}  ${ARCHIVE}\n`,
     });
     const bin = path.join(dir, 'bin');
     await expect(
@@ -121,7 +151,9 @@ describe('install', () => {
   });
 
   it('says what is missing: a build for the platform, the archive, its checksum, the server', async () => {
-    const get = serving({ 'https://example.com/checksums': 'nothing' });
+    const get = serving({
+      'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': 'nothing',
+    });
     const at = { get, dir, platform: 'linux', arch: 'x64' };
     await expect(install(release, { ...at, platform: 'aix' })).rejects.toThrow(
       "kupcad isn't built for aix on x64",
@@ -134,7 +166,7 @@ describe('install', () => {
       'the server answered 404',
     );
     await expect(install(release, { ...at, get: offline })).rejects.toThrow(
-      "couldn't download https://example.com/checksums: fetch failed",
+      "couldn't download https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums: fetch failed",
     );
   });
 });

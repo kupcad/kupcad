@@ -9,6 +9,8 @@ import { compareVersions, formatVersion, parseVersion, satisfies } from './versi
 export const RELEASES_URL = 'https://api.github.com/repos/kupcad/kupcad/releases?per_page=50';
 /** Where a person installs one by hand. */
 export const RELEASES_PAGE = 'https://github.com/kupcad/kupcad/releases';
+/** Where the repository's release files are downloaded from: an asset elsewhere is none. */
+export const RELEASE_DOWNLOADS = 'https://github.com/kupcad/kupcad/releases/download/';
 const NOT_MODIFIED = 304;
 
 /**
@@ -26,7 +28,7 @@ const NOT_MODIFIED = 304;
 
 /**
  * The releases the API lists (`GET /repos/{owner}/{repo}/releases`): published, tagged with a
- * version.
+ * version, their files those in the repository's release downloads (RELEASE_DOWNLOADS).
  * @param {unknown} json
  * @returns {Release[]}
  */
@@ -37,7 +39,10 @@ export function releasesOf(json) {
     if (!version || release.draft) return [];
     /** @type {Record<string, string>} */
     const assets = {};
-    for (const asset of release.assets ?? []) assets[asset.name] = asset.browser_download_url;
+    for (const asset of release.assets ?? []) {
+      const url = String(asset?.browser_download_url ?? '');
+      if (url.startsWith(RELEASE_DOWNLOADS)) assets[asset.name] = url;
+    }
     return [{ version: formatVersion(version), prerelease: Boolean(release.prerelease), assets }];
   });
 }

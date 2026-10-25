@@ -9,7 +9,7 @@ const listed = (/** @type {string} */ tag, /** @type {object} */ more = {}) => (
   assets: [
     {
       name: `kupcad_${tag.slice(1)}_linux_amd64.tar.gz`,
-      browser_download_url: `https://example.com/${tag}.tar.gz`,
+      browser_download_url: `https://github.com/kupcad/kupcad/releases/download/${tag}/kupcad.tar.gz`,
     },
   ],
   ...more,
@@ -30,9 +30,24 @@ describe('releases', () => {
     expect(releases[2]).toEqual({
       version: '0.1.2',
       prerelease: false,
-      assets: { 'kupcad_0.1.2_linux_amd64.tar.gz': 'https://example.com/v0.1.2.tar.gz' },
+      assets: {
+        'kupcad_0.1.2_linux_amd64.tar.gz':
+          'https://github.com/kupcad/kupcad/releases/download/v0.1.2/kupcad.tar.gz',
+      },
     });
     expect(() => releasesOf({ message: 'Not Found' })).toThrow(/no list/);
+    // A file anywhere but the repository's release downloads isn't one of its files
+    const elsewhere = listed('v0.1.2', {
+      assets: [
+        { name: 'checksums.txt', browser_download_url: 'https://example.com/checksums.txt' },
+        {
+          name: 'other.txt',
+          browser_download_url:
+            'http://github.com/kupcad/kupcad/releases/download/v0.1.2/other.txt',
+        },
+      ],
+    });
+    expect(releasesOf([elsewhere])[0].assets).toEqual({});
   });
 
   it('takes the newest in range, a pre-release only on its channel', () => {
