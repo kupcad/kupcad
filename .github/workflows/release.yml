@@ -21,7 +21,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -77,13 +77,13 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@v1
+        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
         with:
           zig-version-file: .tool-versions
 
@@ -114,23 +114,26 @@ jobs:
 
       # On the system it ships for, as it ships: it reports the tag's version and builds an
       # example
+      # The version comes in through the environment, never into the script's text
       - name: Run it
         working-directory: examples
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           kupcad=../out/bin/${{ matrix.binary }}
-          test "$("$kupcad" --version)" = "kupcad ${{ needs.version.outputs.version }}"
+          test "$("$kupcad" --version)" = "kupcad $VERSION"
           "$kupcad" build standoff.kup -o standoff.stl
           test -s standoff.stl
 
       - name: Keep the binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.platform }}
           path: out/bin/${{ matrix.binary }}
           if-no-files-found: error
 
       - name: Keep its symbols
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: symbols-${{ matrix.platform }}
           path: symbols/
@@ -176,12 +179,12 @@ jobs:
         shell: bash
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/setup@v3
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
           version: '^11.25'
           runtime: node@24
@@ -192,7 +195,7 @@ jobs:
         run: echo "version=$(awk '$1 == "rust" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master, 2026-10-25
         with:
           toolchain: ${{ steps.rust.outputs.version }}
 
@@ -205,7 +208,7 @@ jobs:
 
       # The app bundles the CLI this release ships for its platform, built and checked above
       - name: Collect the kupcad built for this platform
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-${{ matrix.platform }}
           path: cli
@@ -224,9 +227,11 @@ jobs:
 
       # The kupcad the app runs is the release's: it reports the tag's version
       - name: Check the bundled kupcad
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           kupcad=packages/kupcad-app/src-tauri/target/release/${{ matrix.binary }}
-          test "$("$kupcad" --version)" = "kupcad ${{ needs.version.outputs.version }}"
+          test "$("$kupcad" --version)" = "kupcad $VERSION"
 
       # Named as the release names its files: kupcad-desktop_<version>_<os>_<arch>
       - name: Name the installers
@@ -245,7 +250,7 @@ jobs:
           test -n "$(ls desktop)"
 
       - name: Keep the installers
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-${{ matrix.platform }}
           path: desktop/
@@ -263,24 +268,26 @@ jobs:
     steps:
       # The submodules hold the vendored libraries' license files the archives carry
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: Collect the binaries and their symbols
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
 
       # A folder per platform, as package-release.sh takes them: the binary, and its symbols
       # in symbols/
       - name: Package them
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir binaries
           for dir in artifacts/release-*; do mv "$dir" "binaries/${dir#artifacts/release-}"; done
           for dir in artifacts/symbols-*; do mv "$dir" "binaries/${dir#artifacts/symbols-}/symbols"; done
-          core/scripts/package-release.sh "${{ needs.version.outputs.version }}" binaries dist
+          core/scripts/package-release.sh "$VERSION" binaries dist
 
       # The desktop app's installers beside the CLI, their SHA-256 in the same checksums.txt
       - name: Add the desktop installers

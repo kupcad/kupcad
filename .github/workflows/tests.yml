@@ -21,20 +21,20 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/setup@v3
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
           version: '^11.25'
           runtime: node@24
           cache: true
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@v1
+        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
         with:
           zig-version-file: .tool-versions
 
@@ -59,7 +59,7 @@ jobs:
 
       - name: Cache Playwright's browsers
         id: playwright-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
@@ -106,27 +106,26 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: true
           persist-credentials: false
 
       - name: Install pnpm
-        uses: pnpm/setup@v3
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
         with:
           version: '^11.25'
           runtime: node@24
           cache: true
 
       - name: Install Zig
-        uses: xyzzylabs/setup-zig@v1
+        uses: xyzzylabs/setup-zig@7e5af686da64007a0797898801de180e5f4d3762 # v1.0.5
         with:
           zig-version-file: .tool-versions
 
       - name: Setup `wasmtime`
         if: matrix.wasm_task != ''
-        uses: bytecodealliance/actions/wasmtime/setup@v1
-
+        uses: bytecodealliance/actions/wasmtime/setup@9152e710e9f7182e4c29ad218e4f335a7b203613 # v1.1.3
       - name: Run `wasmtime version`
         if: matrix.wasm_task != ''
         run: "wasmtime --version"
@@ -146,7 +145,7 @@ jobs:
 
       - name: Install Python
         if: matrix.name == 'linux debug'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version-file: .tool-versions
           cache: pip
