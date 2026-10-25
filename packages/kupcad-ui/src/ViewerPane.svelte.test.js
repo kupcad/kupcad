@@ -111,6 +111,33 @@ describe('ViewerPane', () => {
     expect([pressed('Top'), pressed('Front')]).toEqual(['true', 'false']);
   });
 
+  it('shows what the pointer is over by it: the part, its copies and measures, the face', async () => {
+    const { viewer } = await pane();
+    /** @param {import('@kupcad/viewer/types').HoverDetail} detail */
+    const hover = async (detail) => {
+      viewer.dispatchEvent(new CustomEvent('hover', { detail }));
+      await tick();
+    };
+    const face = {
+      flat: true,
+      area: 12.57,
+      normal: /** @type {[number, number, number]} */ ([0, 0, 1]),
+      facing: '+Z (top)',
+    };
+    await hover({ part: 'bolt', face, x: 40, y: 30 });
+    const tip = screen.getByRole('tooltip');
+    expect(tip.textContent).toContain('bolt ×2');
+    // Measured by the core as made: up to 4 mm across, 5 high
+    expect(tip.textContent).toMatch(/[\d.]+ mm³ · [\d.]+ × [\d.]+ × 5 mm/);
+    expect(tip.textContent).toContain('Flat face · 12.6 mm² · facing +Z (top)');
+    expect([tip.style.left, tip.style.top]).toEqual(['54px', '44px']);
+    // A nameless part's face alone, and nothing once the pointer is over nothing
+    await hover({ part: null, face: { ...face, flat: false }, x: 0, y: 0 });
+    expect(screen.getByRole('tooltip').textContent?.trim()).toBe('Curved face · 12.6 mm²');
+    await hover(null);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it('says how the run went: its state, its time and its warnings', async () => {
     const { rerender } = render(ViewerPane, {
       props: {

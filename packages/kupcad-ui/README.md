@@ -32,6 +32,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   colour and copies (a click on one selects its copies, as a click in the viewer does:
   `bind:selected`), and a status line below from `status` (`runStatusOf(header)` makes it of a
   frame's header: Running…, then Ready or Failed, with the run's time and its warnings).
+  By the pointer a tooltip says what is under it: the part, its copies, volume and size (the
+  frame's), and the face, flat with its area and the way it faces, or curved (`measures.js`).
   `bind:viewer` gives the viewer itself. The controls show how the viewer looks (a drawing
   switches it to the top view, orthographic), and a section stays where it was put through an
   edit of the script, while the model still reaches it.

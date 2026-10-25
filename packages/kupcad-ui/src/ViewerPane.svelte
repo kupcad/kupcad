@@ -1,7 +1,8 @@
 <!--
   @component
   The viewer, its view cube in a corner and the view's controls in a column over it (fit, the
-  render mode, edges, the floor, perspective, the views), a section through the model, a
+  render mode, edges, the floor, perspective, the views), what is under the pointer by it (the
+  part, its copies, volume and size, the face and its area), a section through the model, a
   screenshot and a host's own actions (which take the controls' look by .kc-control) in a bar
   above, the model's parts beside it (a click on one selecting its copies as a click in the
   viewer does), and how its run went below. Themed by the --kc-viewer-* tokens unless given a
@@ -11,11 +12,12 @@
   import { onMount } from 'svelte';
   import { RENDER_MODES } from '@kupcad/viewer';
   import { Viewer } from '@kupcad/viewer/svelte';
+  import { faceLine, partMeasures, partTitle } from './measures.js';
   import { describeRun } from './run-status.js';
   import { watchTokens } from './theme.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
-  /** @import { Axis, Bounds, Environment, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
   /** @import { Snippet } from 'svelte' */
   /** @import { RunStatus } from './run-status.js' */
@@ -69,6 +71,8 @@
   const AXES = ['x', 'y', 'z'];
   /** A section's slider takes this many steps across the model. */
   const SECTION_STEPS = 200;
+  /** The tooltip stands this far right of and below the pointer. */
+  const TOOLTIP_OFFSET_PX = 14;
 
   /** @type {HTMLDivElement} */
   let root;
@@ -85,6 +89,8 @@
   let bounds = $state(/** @type {Bounds | null} */ (null));
   /** The model shown is a solid's: a drawing isn't cut, and offered no section. */
   let solid = $state(false);
+  /** What the pointer is over, as the viewer says. */
+  let hovered = $state(/** @type {HoverDetail} */ (null));
 
   const parts = $derived(/** @type {Part[]} */ (model?.kind === '3d' ? model.parts : []));
   const along = $derived(AXES.indexOf(axis));
@@ -93,20 +99,32 @@
   );
   const section = $derived(sectioned && span ? { axis, offset } : null);
   const statusText = $derived(status ? describeRun(status) : '');
+  const hoveredPart = $derived(parts.find((part) => part.name === hovered?.part) ?? null);
+  const hoveredMeasures = $derived(hoveredPart ? partMeasures(hoveredPart) : null);
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
 
-  // The view follows the viewer's: its keys, and a turn by hand, change it too
+  // The view follows the viewer's (its keys, and a turn by hand, change it too), and the
+  // tooltip what the pointer is over
   $effect(() => {
     const shown = viewer;
     if (!shown) return;
     shown.addEventListener('view', followView);
-    return () => shown.removeEventListener('view', followView);
+    shown.addEventListener('hover', followHover);
+    return () => {
+      shown.removeEventListener('view', followView);
+      shown.removeEventListener('hover', followHover);
+    };
   });
 
   /** @param {Event} event the viewer's 'view' */
   function followView(event) {
     view = /** @type {CustomEvent<{ view: View | null }>} */ (event).detail.view;
+  }
+
+  /** @param {Event} event the viewer's 'hover' */
+  function followHover(event) {
+    hovered = /** @type {CustomEvent<HoverDetail>} */ (event).detail;
   }
 
   /**
@@ -251,6 +269,20 @@
           {/each}
         </div>
       </div>
+      {#if hovered && (hovered.part || hovered.face)}
+        <div
+          class="tooltip"
+          role="tooltip"
+          style:left="{hovered.x + TOOLTIP_OFFSET_PX}px"
+          style:top="{hovered.y + TOOLTIP_OFFSET_PX}px"
+        >
+          {#if hovered.part}
+            <p class="title">{hoveredPart ? partTitle(hoveredPart) : hovered.part}</p>
+            {#if hoveredMeasures}<p>{hoveredMeasures}</p>{/if}
+          {/if}
+          {#if hovered.face}<p>{faceLine(hovered.face)}</p>{/if}
+        </div>
+      {/if}
     </div>
     {#if parts.length > 0}
       <ul class="parts" aria-label="Parts">
@@ -334,6 +366,22 @@
     width: 100%;
     padding: 2px 4px;
     font-size: 0.92em;
+  }
+  .tooltip {
+    position: absolute;
+    max-width: 22em;
+    padding: 4px 8px;
+    border: 1px solid var(--kc-border);
+    border-radius: var(--kc-radius);
+    background: var(--kc-bg);
+    pointer-events: none;
+  }
+  .tooltip p {
+    margin: 0;
+    white-space: nowrap;
+  }
+  .tooltip .title {
+    font-weight: 600;
   }
   .status {
     display: flex;
