@@ -118,10 +118,14 @@ pub const Cafs = struct {
 
     /// Hard links a file from CAFS to the local project store via VFS.
     /// The CAFS blob path is absolute and owned by us, so it goes through the
-    /// VFS's trusted-source link API; the destination stays sandboxed.
+    /// VFS's trusted-source link API; the destination stays sandboxed. The blob is what
+    /// its name says first (verifyBlob): a store's file is linked into every project
+    /// installing it, and written through such a link (where the store's files can be
+    /// written to), it would reach them all.
     pub fn linkBlob(self: *Cafs, hash_hex: []const u8, dest_path: []const u8) !void {
         const source_path = try self.blobPath(hash_hex);
         defer self.allocator.free(source_path);
+        try self.verifyBlob(source_path, hash_hex);
 
         self.fs.hardLinkTrusted(source_path, dest_path) catch |err| switch (err) {
             // NOTE: AccessDenied is deliberately *not* here: it means the sandbox
@@ -272,6 +276,24 @@ pub const Cafs = struct {
         }
 
         return hash_hex;
+    }
+
+    /// error.BlobCorrupted unless the blob at `path` hashes to `hash_hex`, its name.
+    fn verifyBlob(self: *Cafs, path: []const u8, hash_hex: []const u8) !void {
+        var file = try std.Io.Dir.cwd().openFile(self.io, path, .{});
+        defer file.close(self.io);
+        var hasher = Sha256.init(.{});
+        var buf: [8192]u8 = undefined;
+        while (true) {
+            const n = file.readStreaming(self.io, &.{&buf}) catch |err| switch (err) {
+                error.EndOfStream => break,
+                else => return err,
+            };
+            hasher.update(buf[0..n]);
+        }
+        const digest = hasher.finalResult();
+        const hex = std.fmt.bytesToHex(digest, .lower);
+        if (!std.mem.eql(u8, &hex, hash_hex)) return error.BlobCorrupted;
     }
 
     /// Reads a CAFS blob (trusted, absolute path) with an explicit size cap.

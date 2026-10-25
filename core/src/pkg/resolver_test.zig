@@ -51,12 +51,18 @@ const Fixture = struct {
         self.tmp.cleanup();
     }
 
-    fn writeBlob(self: *Fixture, hash: []const u8, data: []const u8) !void {
-        const path = try self.cafs.blobPath(hash);
+    /// Puts a blob of `data` in the store, under its name there: its SHA-256, in hex,
+    /// which linking checks it against.
+    fn writeBlob(self: *Fixture, data: []const u8) ![64]u8 {
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(data, &digest, .{});
+        const hash = std.fmt.bytesToHex(digest, .lower);
+        const path = try self.cafs.blobPath(&hash);
         defer testing.allocator.free(path);
         var f = try std.Io.Dir.cwd().createFile(testing.io, path, .{});
         defer f.close(testing.io);
         try f.writeStreamingAll(testing.io, data);
+        return hash;
     }
 
     /// Records the package at `url`, at `commit`, in the store, lockfile and manifest (as
@@ -143,15 +149,15 @@ test "Resolver: linkWorkspace links locked packages (flat and nested files) into
     try fx.init();
     defer fx.deinit();
 
-    try fx.writeBlob("1234567890abcdef", "def init() 10 end");
-    try fx.writeBlob("hash1", "mock content");
+    const main_hash = try fx.writeBlob("def init() 10 end");
+    const nested_hash = try fx.writeBlob("mock content");
 
     var files = std.StringHashMap([]const u8).init(testing.allocator);
     defer files.deinit();
-    try files.put("main.kup", "1234567890abcdef");
+    try files.put("main.kup", &main_hash);
     // Several files in one deep directory share the cached directory creation.
-    try files.put("src/deep/nested/a.kup", "hash1");
-    try files.put("src/deep/nested/b.kup", "hash1");
+    try files.put("src/deep/nested/a.kup", &nested_hash);
+    try files.put("src/deep/nested/b.kup", &nested_hash);
     const pkg_id = try fx.addPackage("testpkg", "github.com/user/testpkg", "commit1", &files);
     defer testing.allocator.free(pkg_id);
 
@@ -212,10 +218,10 @@ test "Resolver: linkWorkspace rejects unsafe lockfile and index paths" {
         var fx: Fixture = undefined;
         try fx.init();
         defer fx.deinit();
-        try fx.writeBlob("h", "x");
+        const hash = try fx.writeBlob("x");
         var files = std.StringHashMap([]const u8).init(testing.allocator);
         defer files.deinit();
-        try files.put("../../../../../escape.kup", "h");
+        try files.put("../../../../../escape.kup", &hash);
         testing.allocator.free(try fx.addPackage("dep", "github.com/user/dep", "commit1", &files));
         try testing.expectError(error.UnsafeArchivePath, fx.link());
     }

@@ -2,6 +2,7 @@
 //! integrity and dependencies of every installed package (`LockedPackage`).
 
 const std = @import("std");
+const validate = @import("validate.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const semver = @import("semver.zig");
 
@@ -95,7 +96,12 @@ pub const Lockfile = struct {
                     errdefer deps.deinit();
 
                     if (pkg_val.object.get("resolved")) |r| {
-                        if (r == .string) resolved = try allocator.dupe(u8, r.string);
+                        if (r == .string and r.string.len > 0) {
+                            // Joined into the store's paths and the archive's URL: a commit
+                            // id (or a content hash), or nothing
+                            validate.validateCommitSha(r.string) catch return error.InvalidResolvedCommit;
+                            resolved = try allocator.dupe(u8, r.string);
+                        }
                     }
                     if (pkg_val.object.get("ref")) |r| {
                         if (r == .string) ref = try allocator.dupe(u8, r.string);

@@ -104,7 +104,7 @@ test "Lockfile: strings are JSON-escaped on save" {
         var deps = StringMap.init(testing.allocator);
         try deps.put(try testing.allocator.dupe(u8, evil_alias), try testing.allocator.dupe(u8, "github.com/a/b"));
         try lockfile.packages.put(try testing.allocator.dupe(u8, "github.com-a-p"), .{
-            .resolved = try testing.allocator.dupe(u8, "abc"),
+            .resolved = try testing.allocator.dupe(u8, "0123456789abcdef0123456789abcdef01234567"),
             .ref = try testing.allocator.dupe(u8, "ma\"in"),
             .integrity = try testing.allocator.dupe(u8, "sha256-x"),
             .dependencies = deps,
@@ -118,4 +118,16 @@ test "Lockfile: strings are JSON-escaped on save" {
     try testing.expectEqual(@as(usize, 1), pkg.dependencies.count());
     try testing.expect(pkg.dependencies.get(evil_alias) != null);
     try testing.expectEqualStrings("ma\"in", pkg.ref);
+}
+
+test "Lockfile: a package's resolved commit is one, or the lock is refused" {
+    var mem_vfs = MemoryVfs.init(testing.allocator);
+    defer mem_vfs.deinit();
+    // It is joined into a store path and an archive URL before it is checked at link time
+    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"../../x\",\"ref\":\"main\",\"integrity\":\"\"}}}");
+    try testing.expectError(error.InvalidResolvedCommit, Lockfile.load(testing.allocator, mem_vfs.vfs()));
+    try mem_vfs.vfs().writeFile("kupcad.lock", "{\"version\":\"1.0\",\"packages\":{\"github.com/u/r\":{\"resolved\":\"0123456789abcdef0123456789abcdef01234567\",\"ref\":\"main\",\"integrity\":\"\"}}}");
+    var lock = try Lockfile.load(testing.allocator, mem_vfs.vfs());
+    defer lock.deinit();
+    try testing.expectEqualStrings("0123456789abcdef0123456789abcdef01234567", lock.packages.get("github.com/u/r").?.resolved);
 }

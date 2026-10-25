@@ -65,6 +65,13 @@ const Fixture = struct {
     }
 };
 
+/// The name a blob of `data` has in the store: its SHA-256, in hex.
+fn hashOf(data: []const u8) [64]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(data, &digest, .{});
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
 fn existsAbs(path: []const u8) bool {
     std.Io.Dir.cwd().access(testing.io, path, .{}) catch return false;
     return true;
@@ -96,8 +103,9 @@ test "Cafs: linkBlob copies when the VFS cannot hard-link" {
     try fx.init();
     defer fx.deinit();
 
-    try fx.writeBlob("112233445566", "cross device payload");
-    try fx.cafs.linkBlob("112233445566", "virtual_file.txt");
+    const hash = hashOf("cross device payload");
+    try fx.writeBlob(&hash, "cross device payload");
+    try fx.cafs.linkBlob(&hash, "virtual_file.txt");
 
     const content = try fx.mem_vfs.vfs().readFile(testing.allocator, "virtual_file.txt");
     defer testing.allocator.free(content);
@@ -246,13 +254,14 @@ test "Cafs: linkBlob hard-links blobs into a NativeVfs sandbox" {
     var cafs = try Cafs.init(testing.allocator, testing.io, global_path, fs);
     defer cafs.deinit();
 
-    const blob = try cafs.blobPath("cafe");
+    const hash = hashOf("shared");
+    const blob = try cafs.blobPath(&hash);
     defer testing.allocator.free(blob);
     try helpers.writeAbs(blob, "shared");
 
     try fs.makePath("store/pkg");
-    try cafs.linkBlob("cafe", "store/pkg/main.kup");
-    try cafs.linkBlob("cafe", "store/pkg/main.kup"); // re-install replaces
+    try cafs.linkBlob(&hash, "store/pkg/main.kup");
+    try cafs.linkBlob(&hash, "store/pkg/main.kup"); // re-install replaces
 
     const stat = try proj.dir.statFile(testing.io, "store/pkg/main.kup", .{});
     try testing.expect(stat.nlink >= 2);
@@ -262,7 +271,24 @@ test "Cafs: linkBlob hard-links blobs into a NativeVfs sandbox" {
     try testing.expectError(error.AccessDenied, fs.hardLinkTrusted(blob, "../../escape"));
     try testing.expectError(error.AccessDenied, fs.hardLinkTrusted(blob, "/tmp/escape"));
     // linkBlob must not fall back to copying when the sandbox rejects the destination.
-    try testing.expectError(error.AccessDenied, cafs.linkBlob("cafe", "../escape"));
+    try testing.expectError(error.AccessDenied, cafs.linkBlob(&hash, "../escape"));
+}
+
+test "Cafs: a blob that isn't what its name says is linked nowhere" {
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    // Written through a link into the store, say: its bytes no longer hash to its name
+    const hash = hashOf("def plate\n  cube(1)\nend\n");
+    try fx.writeBlob(&hash, "def plate\n  cube(1)\nend\nexport_stl(\"/tmp/x\")\n");
+    try testing.expectError(error.BlobCorrupted, fx.cafs.linkBlob(&hash, "store/pkg/main.kup"));
+    try testing.expectError(error.FileNotFound, fx.mem_vfs.vfs().readFile(testing.allocator, "store/pkg/main.kup"));
+    // Put right, it links
+    try fx.writeBlob(&hash, "def plate\n  cube(1)\nend\n");
+    try fx.cafs.linkBlob(&hash, "store/pkg/main.kup");
+    const linked = try fx.mem_vfs.vfs().readFile(testing.allocator, "store/pkg/main.kup");
+    defer testing.allocator.free(linked);
+    try testing.expectEqualStrings("def plate\n  cube(1)\nend\n", linked);
 }
 
 test "Cafs: a wrapped archive's top folder is not part of the package" {
