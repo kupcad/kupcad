@@ -23,7 +23,9 @@ pub const MAX_INCOMING_FRAME_BYTES: u64 = 64 * 1024;
 /// Browser origins allowed to open the viewport socket. Any web page can open a WebSocket to
 /// 127.0.0.1, so without this check a malicious site could read the user's models.
 /// `vscode-webview://` is a prefix (the host part is a per-webview random id). The webview is
-/// built into the extension, never served by a dev server, so no http origin is allowed.
+/// built into the extension, never served by a dev server, so no http origin is allowed. A
+/// host that starts the server for a page of its own names that page's origin, exactly
+/// (`kupcad lsp --viewport-origin`, `ViewportWsServer.host_origin`): the desktop app's webview.
 pub const ALLOWED_ORIGIN_PREFIXES = [_][]const u8{"vscode-webview://"};
 
 const WS_OPCODE_CLOSE: u8 = 0x8;
@@ -85,15 +87,37 @@ pub fn parseHandshake(req: []const u8) !Handshake {
     return .{ .key = key, .origin = headerValue(req, "Origin") };
 }
 
-/// Returns true if a connection with this Origin may upgrade. A missing Origin means a
+/// Returns true if a connection with this Origin may upgrade: a VS Code webview's, or exactly
+/// `host_origin`, the page the host started the server for. A missing Origin means a
 /// non-browser client (browsers always send it on WebSocket upgrades); such a process already
 /// runs locally with the user's privileges, so it is allowed.
-pub fn isOriginAllowed(origin: ?[]const u8) bool {
+pub fn isOriginAllowed(origin: ?[]const u8, host_origin: ?[]const u8) bool {
     const o = origin orelse return true;
+    if (host_origin) |host| {
+        if (std.mem.eql(u8, o, host)) return true;
+    }
     for (ALLOWED_ORIGIN_PREFIXES) |prefix| {
         if (std.mem.startsWith(u8, o, prefix) and o.len > prefix.len) return true;
     }
     return false;
+}
+
+/// Whether `text` is an origin a host may name (`--viewport-origin`): a scheme, `://` and a
+/// host with an optional port, nothing after it. Not `null`, the origin a sandboxed page or a
+/// file has, which any such page shares.
+pub fn isOriginValue(text: []const u8) bool {
+    const sep = std.mem.find(u8, text, "://") orelse return false;
+    const scheme = text[0..sep];
+    const authority = text[sep + 3 ..];
+    if (scheme.len == 0 or !std.ascii.isAlphabetic(scheme[0])) return false;
+    for (scheme) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '+' or c == '-' or c == '.')) return false;
+    }
+    if (authority.len == 0) return false;
+    for (authority) |c| {
+        if (!(std.ascii.isAlphanumeric(c) or c == '-' or c == '.' or c == ':')) return false;
+    }
+    return true;
 }
 
 pub fn computeAcceptKey(client_key: []const u8) [28]u8 {
@@ -271,6 +295,9 @@ pub const ViewportWsServer = struct {
     listen_thread: ?std.Thread = null,
     /// See HANDSHAKE_TIMEOUT_MS; tests shorten it.
     handshake_timeout: std.Io.Duration = .fromMilliseconds(HANDSHAKE_TIMEOUT_MS),
+    /// The one origin besides VS Code's webviews that may connect (isOriginAllowed): the page
+    /// of the host that started the server, `kupcad lsp --viewport-origin`. Borrowed.
+    host_origin: ?[]const u8 = null,
 
     /// Binds 127.0.0.1:`port`. Pass 0 for an OS-assigned port; read `.port` for the result.
     pub fn init(allocator: std.mem.Allocator, io: std.Io, port: u16) !ViewportWsServer {
@@ -419,7 +446,7 @@ pub const ViewportWsServer = struct {
         var writer_wrapper = client.stream.writer(self.io, &w_buf);
         const writer = &writer_wrapper.interface;
 
-        if (!isOriginAllowed(hs.origin)) {
+        if (!isOriginAllowed(hs.origin, self.host_origin)) {
             log.warn("Rejected viewport connection from origin '{s}'", .{hs.origin.?});
             writer.writeAll("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n") catch {};
             writer.flush() catch {};

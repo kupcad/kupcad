@@ -84,7 +84,7 @@ test "ViewportWs: parseHandshake validates method, Upgrade and key" {
     try testing.expect(hs.origin == null);
 }
 
-test "ViewportWs: Origin allowlist only admits VS Code webviews" {
+test "ViewportWs: Origin allowlist only admits VS Code webviews, without a host's origin" {
     // Guards against foreign web pages opening the viewport socket.
     const cases = [_]struct { origin: ?[]const u8, allowed: bool }{
         .{ .origin = "vscode-webview://abc123", .allowed = true },
@@ -102,7 +102,36 @@ test "ViewportWs: Origin allowlist only admits VS Code webviews" {
     };
     for (cases) |case| {
         errdefer std.debug.print("origin: {?s}\n", .{case.origin});
-        try testing.expectEqual(case.allowed, ws.isOriginAllowed(case.origin));
+        try testing.expectEqual(case.allowed, ws.isOriginAllowed(case.origin, null));
+    }
+}
+
+test "ViewportWs: the host's own origin is admitted exactly, and only a real origin can be named" {
+    // `kupcad lsp --viewport-origin tauri://localhost`: the desktop app's webview
+    const host = "tauri://localhost";
+    const cases = [_]struct { origin: ?[]const u8, allowed: bool }{
+        .{ .origin = host, .allowed = true },
+        .{ .origin = "vscode-webview://abc123", .allowed = true },
+        .{ .origin = null, .allowed = true },
+        // Anything near it is another page
+        .{ .origin = "tauri://localhost.evil.example", .allowed = false },
+        .{ .origin = "tauri://localhost:1420", .allowed = false },
+        .{ .origin = "tauri://localhos", .allowed = false },
+        .{ .origin = "http://localhost", .allowed = false },
+        .{ .origin = "null", .allowed = false },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("origin: {?s}\n", .{case.origin});
+        try testing.expectEqual(case.allowed, ws.isOriginAllowed(case.origin, host));
+    }
+    for ([_][]const u8{ "tauri://localhost", "http://tauri.localhost", "http://localhost:1420" }) |origin| {
+        try testing.expect(ws.isOriginValue(origin));
+    }
+    // `null` (a sandboxed page's, a file's) is every such page's; a path, a pattern or
+    // nothing names no one page
+    for ([_][]const u8{ "null", "", "tauri://", "://localhost", "http://localhost/app", "http://*", "1http://x", "http://local host", "localhost:1420" }) |origin| {
+        errdefer std.debug.print("value: {s}\n", .{origin});
+        try testing.expect(!ws.isOriginValue(origin));
     }
 }
 
@@ -282,6 +311,25 @@ test "ViewportWs: foreign Origin is refused with 403 and the connection is dropp
     const resp = try client.handshake(upgradeRequest("Origin: https://evil.example\r\n"));
     try testing.expect(std.mem.startsWith(u8, resp, "HTTP/1.1 403"));
     try waitForClients(&server, 0);
+}
+
+test "ViewportWs: the host's origin upgrades over a real socket, a near one is refused" {
+    const warnings = test_support.expectWarnings();
+    defer warnings.restore();
+    var server = try ViewportWsServer.init(testing.allocator, testing.io, 0);
+    defer server.deinit();
+    server.host_origin = "tauri://localhost";
+    try server.start();
+
+    var app: TestClient = undefined;
+    try app.open(server.port);
+    defer app.close();
+    try testing.expect(std.mem.startsWith(u8, try app.handshake(upgradeRequest("Origin: tauri://localhost\r\n")), "HTTP/1.1 101"));
+
+    var other: TestClient = undefined;
+    try other.open(server.port);
+    defer other.close();
+    try testing.expect(std.mem.startsWith(u8, try other.handshake(upgradeRequest("Origin: tauri://localhost.evil.example\r\n")), "HTTP/1.1 403"));
 }
 
 test "ViewportWs: connections are capped, slots are freed on close, deinit wakes stalled handshakes" {

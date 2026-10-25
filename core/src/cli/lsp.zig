@@ -59,14 +59,22 @@ const COMMANDS = [_][]const u8{ SET_PARAMS_COMMAND, PREVIEW_COMMAND };
 /// it for that transport): the server's only one, so it changes nothing. Refused, the server
 /// ended before it started, and the extension's never ran.
 pub const STDIO_FLAG = "--stdio";
+/// The origin of a page of the host's own that may read the viewport socket (the desktop
+/// app's webview), as the page's `location.origin` gives it.
+pub const VIEWPORT_ORIGIN_FLAG = "--viewport-origin";
 
 pub const USAGE =
-    \\Usage: kupcad lsp [--stdio]
+    \\Usage: kupcad lsp [--stdio] [--viewport-origin <origin>]
     \\
     \\Starts the language server on stdin and stdout (--stdio, which language clients
     \\give, says so; it is the only transport). Editors start it themselves;
     \\the VS Code extension runs it for .kup files. It runs scripts in a worker
     \\process of its own (kupcad lsp --preview-worker), which it restarts if it crashes.
+    \\
+    \\Options:
+    \\  --viewport-origin <origin>  Let the page at <origin> (scheme://host[:port], such as
+    \\                              tauri://localhost) read the viewport socket, besides
+    \\                              VS Code's webviews
     \\
 ;
 
@@ -1249,12 +1257,22 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
+    var host_origin: ?[]const u8 = null;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) {
             try lsp_worker.runWorker(init.io, allocator);
             return .success;
         }
         if (std.mem.eql(u8, arg, STDIO_FLAG)) continue;
+        if (std.mem.eql(u8, arg, VIEWPORT_ORIGIN_FLAG)) {
+            const origin = args.next() orelse "";
+            if (!viewport_ws.isOriginValue(origin)) {
+                Reporter.forProcess(init).err("Error: {s} takes an origin (scheme://host[:port]), got '{s}'\n\n" ++ USAGE, .{ VIEWPORT_ORIGIN_FLAG, origin });
+                return .failure;
+            }
+            host_origin = origin;
+            continue;
+        }
         Reporter.forProcess(init).err("Error: Unknown option '{s}'\n\n" ++ USAGE, .{arg});
         return .failure;
     }
@@ -1280,6 +1298,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
     var ws_server: ?*ViewportWsServer = null;
     if (ViewportWsServer.initWithFallback(allocator, init.io, preferred_port)) |srv| {
         ws_storage = srv;
+        ws_storage.host_origin = host_origin;
         if (ws_storage.start()) |_| {
             ws_server = &ws_storage;
         } else |err| {

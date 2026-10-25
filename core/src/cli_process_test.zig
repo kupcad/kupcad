@@ -125,6 +125,8 @@ test "kupcad: help, version and unknown commands" {
         .{ .args = &.{ "pkg", "add", "--help" }, .code = 0, .contains = "Usage: kupcad pkg" },
         .{ .args = &.{ "lsp", "--help" }, .code = 0, .contains = "Usage: kupcad lsp" },
         .{ .args = &.{ "lsp", "--tcp" }, .code = 1, .contains = "Unknown option '--tcp'" },
+        .{ .args = &.{ "lsp", "--viewport-origin" }, .code = 1, .contains = "--viewport-origin takes an origin (scheme://host[:port]), got ''" },
+        .{ .args = &.{ "lsp", "--stdio", "--viewport-origin", "null" }, .code = 1, .contains = "got 'null'" },
         .{ .args = &.{ "dev", "-h" }, .code = 0, .contains = "Usage: kupcad dev" },
         .{ .args = &.{"--help"}, .code = 0, .contains = "Run 'kupcad <command> --help'" },
     });
