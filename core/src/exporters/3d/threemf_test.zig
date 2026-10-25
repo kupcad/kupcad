@@ -163,6 +163,17 @@ test "3mf: a part is one object, each copy an item placing it where the kernel h
     try testing.expectEqualStrings("M3 bolt", got.model.names.items[0]);
 }
 
+test "3mf: a name's tab and line break are written as references, other control characters left out" {
+    // Written raw, XML forbids a control character, and a parser reads a tab or a line
+    // break in an attribute as a space
+    var got = try exportAndCheck(
+        \\cube(1).named("left\tbracket\nrev \aB")
+    );
+    defer got.model.deinit();
+    defer testing.allocator.free(got.xml);
+    try testing.expect(std.mem.find(u8, got.xml, "name=\"left&#9;bracket&#10;rev B\"") != null);
+}
+
 test "3mf: a Solid on its own is placed too, and its colour is its triangles' material" {
     var got = try exportAndCheck("cube(10).material(color: \"#FF8000\", alpha: 0.5).translate(5, 0, 0).rotate(0, 0, 90)");
     defer got.model.deinit();

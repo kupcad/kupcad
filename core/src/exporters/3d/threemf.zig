@@ -140,7 +140,9 @@ fn writeTransform(w: *std.Io.Writer, placement: Placement) !void {
     }
 }
 
-/// `text` in an XML attribute or element.
+/// `text` as XML text or an attribute's value: the markup characters as entities, a tab and
+/// a line break as character references (an attribute's raw one reads back as a space), and
+/// the other control characters left out, which XML 1.0 has no way to hold.
 fn writeEscaped(w: *std.Io.Writer, text: []const u8) !void {
     for (text) |c| switch (c) {
         '&' => try w.writeAll("&amp;"),
@@ -148,6 +150,8 @@ fn writeEscaped(w: *std.Io.Writer, text: []const u8) !void {
         '>' => try w.writeAll("&gt;"),
         '"' => try w.writeAll("&quot;"),
         '\'' => try w.writeAll("&apos;"),
+        '\t', '\n', '\r' => try w.print("&#{d};", .{c}),
+        0...8, 0x0B, 0x0C, 0x0E...0x1F => {},
         else => try w.writeByte(c),
     };
 }
