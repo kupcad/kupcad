@@ -33,6 +33,15 @@ pnpm test:integration    # the page's server on the real kupcad (core/zig-out/bi
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
+## Releases
+
+A version tag builds the app on each system and architecture the CLI ships for, around that
+platform's release `kupcad` (`.github/workflows/release.yml`, the `desktop` job), and the
+release carries the installers beside the CLI's archives, in its `checksums.txt` too:
+`kupcad-desktop_<version>_<os>_<arch>` as a `.dmg` (macOS), a `.deb` and an `.rpm` (Linux, and
+an `.AppImage` for x86_64) or a `_setup.exe` (Windows). They aren't signed yet, so macOS and
+Windows warn before they open one; signing needs the certificates as the repository's secrets.
+
 ## How it is put together
 
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its

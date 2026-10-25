@@ -99,8 +99,11 @@ To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prin
 push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow
 checks the tag matches, builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
-built), and publishes the archives and their checksums as the tag's GitHub release; a tag like
-`v0.2.0-rc.1` makes a pre-release. The binaries ship without their debug information; each
+built), builds the desktop app around each (`kupcad-desktop_<version>_<os>_<arch>`: a `.dmg`
+on macOS, `.deb` and `.rpm` on Linux and an `.AppImage` for x86_64, a `_setup.exe` on Windows),
+and publishes the archives, the installers and their checksums as the tag's GitHub release; a
+tag like `v0.2.0-rc.1` makes a pre-release. The installers aren't signed yet: macOS and Windows
+warn before they open one. The binaries ship without their debug information; each
 platform's goes next to its archive as `kupcad_<version>_<os>_<arch>_symbols` (Linux's
 `kupcad.debug`, macOS's `kupcad.dSYM`, Windows's `kupcad.pdb`), to turn a crash report's addresses
 into files and lines. `core/scripts/package-release.sh` packages the binaries with their licenses

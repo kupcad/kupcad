@@ -1,8 +1,9 @@
 name: Release
 
 # A version tag (v0.2.0, or v0.2.0-rc.1 for a pre-release) builds the kupcad CLI on a runner
-# of each system and architecture it ships for, checks each binary runs there, and publishes
-# them, packaged with their licenses (core/scripts/package-release.sh), as the tag's GitHub
+# of each system and architecture it ships for, checks each binary runs there, builds the
+# desktop app around it on each, and publishes them, the CLI packaged with its licenses
+# (core/scripts/package-release.sh) and the app's installers beside it, as the tag's GitHub
 # release.
 on:
   push:
@@ -135,9 +136,124 @@ jobs:
           path: symbols/
           if-no-files-found: error
 
+  desktop:
+    name: Build the desktop app ${{ matrix.platform }}
+    needs: [version, build]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Built on the oldest Ubuntu the runners have: the app links the glibc it is built
+          # with, and an older one runs on more distributions
+          - platform: linux_amd64
+            os: ubuntu-22.04
+            binary: kupcad
+            bundles: deb,rpm,appimage
+          - platform: linux_arm64
+            os: ubuntu-22.04-arm
+            binary: kupcad
+            bundles: deb,rpm
+          - platform: darwin_arm64
+            os: macos-latest
+            binary: kupcad
+            bundles: dmg
+          - platform: darwin_amd64
+            os: macos-15-intel
+            binary: kupcad
+            bundles: dmg
+          - platform: windows_amd64
+            os: windows-latest
+            binary: kupcad.exe
+            bundles: nsis
+          - platform: windows_arm64
+            os: windows-11-arm
+            binary: kupcad.exe
+            bundles: nsis
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/setup@v3
+        with:
+          version: '^11.25'
+          runtime: node@24
+          cache: true
+
+      - name: Read the Rust version
+        id: rust
+        run: echo "version=$(awk '$1 == "rust" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+
+      # The webview and what the bundles need (Tauri's prerequisites for Linux)
+      - name: Install the system's libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
+
+      # The app bundles the CLI this release ships for its platform, built and checked above
+      - name: Collect the kupcad built for this platform
+        uses: actions/download-artifact@v8
+        with:
+          name: release-${{ matrix.platform }}
+          path: cli
+
+      - name: Bundle it as the app's kupcad
+        run: |
+          chmod +x "cli/${{ matrix.binary }}"
+          pnpm install --frozen-lockfile --filter '@kupcad/app...'
+          pnpm --filter @kupcad/app sidecar "$GITHUB_WORKSPACE/cli/${{ matrix.binary }}"
+
+      - name: Build the installers
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          pnpm --filter @kupcad/app tauri build --bundles ${{ matrix.bundles }} --config "{\"version\": \"$VERSION\"}"
+
+      # The kupcad the app runs is the release's: it reports the tag's version
+      - name: Check the bundled kupcad
+        run: |
+          kupcad=packages/kupcad-app/src-tauri/target/release/${{ matrix.binary }}
+          test "$("$kupcad" --version)" = "kupcad ${{ needs.version.outputs.version }}"
+
+      # Named as the release names its files: kupcad-desktop_<version>_<os>_<arch>
+      - name: Name the installers
+        env:
+          NAME: kupcad-desktop_${{ needs.version.outputs.version }}_${{ matrix.platform }}
+        run: |
+          shopt -s nullglob
+          bundle=packages/kupcad-app/src-tauri/target/release/bundle
+          mkdir desktop
+          for f in "$bundle"/dmg/*.dmg; do cp "$f" "desktop/$NAME.dmg"; done
+          for f in "$bundle"/deb/*.deb; do cp "$f" "desktop/$NAME.deb"; done
+          for f in "$bundle"/rpm/*.rpm; do cp "$f" "desktop/$NAME.rpm"; done
+          for f in "$bundle"/appimage/*.AppImage; do cp "$f" "desktop/$NAME.AppImage"; done
+          for f in "$bundle"/nsis/*-setup.exe; do cp "$f" "desktop/${NAME}_setup.exe"; done
+          ls desktop
+          test -n "$(ls desktop)"
+
+      - name: Keep the installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: desktop/
+          if-no-files-found: error
+
   release:
     name: Publish the release
-    needs: [version, build]
+    needs: [version, build, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -163,6 +279,12 @@ jobs:
           for dir in artifacts/symbols-*; do mv "$dir" "binaries/${dir#artifacts/symbols-}/symbols"; done
           core/scripts/package-release.sh "${{ needs.version.outputs.version }}" binaries dist
 
+      # The desktop app's installers beside the CLI, their SHA-256 in the same checksums.txt
+      - name: Add the desktop installers
+        run: |
+          mv artifacts/desktop-*/* dist/
+          (cd dist && sha256sum kupcad-desktop_* >> checksums.txt)
+
       # A tag with a suffix (v0.2.0-rc.1) is a pre-release
       - name: Publish
         env:
@@ -171,4 +293,4 @@ jobs:
         run: |
           prerelease=()
           if [[ $TAG == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" dist/kupcad_* dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
+          gh release create "$TAG" dist/kupcad_* dist/kupcad-desktop_* dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
