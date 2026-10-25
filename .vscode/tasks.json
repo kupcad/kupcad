@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "kupcad: build the extension and kupcad",
+      "type": "shell",
+      "command": "pnpm build:core:native && pnpm --filter @kupcad/vscode build",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

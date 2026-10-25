@@ -121,15 +121,38 @@ the socket itself. The host and the page say the rest to each other in `@kupcad/
 
 ## Development
 
+To try the extension from a checkout, from the repository's root:
+
 ```sh
 pnpm install
-pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/
-pnpm --filter @kupcad/vscode watch     # both, rebuilt as they change
-pnpm --filter @kupcad/vscode test      # the host's tests in Node, the page's under jsdom
-pnpm --filter @kupcad/vscode check     # svelte-check over both
+pnpm dev:vscode
 ```
 
-Run it with F5 (an Extension Development Host) after a build; with `watch` running, a change to
-the host needs the window reloaded, one to the page `Developer: Reload Webviews`. The host's tests
-run against a stand-in for VS Code's API (`src/extension/testing/vscode.js`, which Vitest gives
-the code as `vscode`); the page's mount it on models the real core makes (`@kupcad/wasm`).
+It builds `kupcad` (`core/zig-out/bin/kupcad`) and the extension, then opens a VS Code window on
+`examples/` with this extension in it, in place of an installed one. It needs the `code`
+command: in VS Code, `Shell Command: Install 'code' command in PATH`.
+
+Or open the repository in VS Code and press F5 (`Run and Debug`, `KupCAD extension`, from
+`.vscode/launch.json`): the same build, then an Extension Development Host on `examples/`, with
+the debugger on the host's code. Either way the extension runs in development, so it takes the
+checkout's `kupcad`, not a release (a `kupcad.serverPath` you set still comes first). Open a
+`.kup` file, then `KupCAD: Open Viewer`.
+
+While you work on it:
+
+```sh
+pnpm --filter @kupcad/vscode watch     # the host and the page, rebuilt as they change
+pnpm --filter @kupcad/vscode test      # the host's tests in Node, the page's under jsdom
+pnpm --filter @kupcad/vscode check     # svelte-check over both
+pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/, once
+```
+
+With `watch` running, a change to the host needs the window reloaded (`Developer: Reload
+Window`), one to the page (`src/webview/`, or `@kupcad/ui` and `@kupcad/viewer`, which it
+bundles) `Developer: Reload Webviews`. A change to the core needs `pnpm build:core:native`, then
+the window reloaded, which starts the language server again. The webview's own developer tools
+are `Developer: Open Webview Developer Tools`; the host logs to the `KupCAD` output.
+
+The host's tests run against a stand-in for VS Code's API (`src/extension/testing/vscode.js`,
+which Vitest gives the code as `vscode`); the page's mount it on models the real core makes
+(`@kupcad/wasm`).

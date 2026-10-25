@@ -39,7 +39,11 @@ pnpm check                         # oxlint, oxfmt --check, and tsc over every p
 pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
 pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
+pnpm dev:vscode                    # kupcad and the extension built, a VS Code window to try it in
 ```
+
+Trying the extension from a checkout (F5, or `pnpm dev:vscode`) is in its README,
+[Development](kupcad-vscode/README.md#development).
 
 Each package has the same shape:
 
