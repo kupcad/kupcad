@@ -501,7 +501,7 @@ test "Language: include and inheritance mistakes are TypeErrors, not silent stop
 test "Language: on_face and Workplane are withheld until the sketching API exists" {
     // on_face returned a Workplane with no methods: an API that led nowhere.
     try expectScripts(&.{
-        .{ .src = rescued("cube(1).on_face(:top) { }"), .expected = .{ .str = "NoMethodError: undefined method 'on_face' for Geometry" } },
+        .{ .src = rescued("cube(1).on_face(:top) { }"), .expected = .{ .str = "NoMethodError: undefined method 'on_face' for Solid" } },
         .{ .src = "r = defined?(Workplane).nil?", .expected = .{ .boolean = true } },
     });
 }

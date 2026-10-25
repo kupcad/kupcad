@@ -721,15 +721,19 @@ pub const Value = packed struct {
                     const op_str = if (r.is_exclusive) "..." else "..";
                     try writer.print("{f}{s}{f}", .{ fmtNumber(r.start), op_str, fmtNumber(r.end) });
                 },
-                .geometry => try writer.print("<Geometry DAG:{d}>", .{@as(*ObjGeometry, @alignCast(@fieldParentPtr("obj", obj))).dag_idx}),
-                .cross_section => {
-                    const cs: *ObjCrossSection = @alignCast(@fieldParentPtr("obj", obj));
-                    try writer.print("<CrossSection DAG:{d}>", .{cs.dag_idx});
-                },
+                // Its class alone: what it measures is the kernel's to work out, which
+                // printing it mustn't start
+                .geometry => try writer.writeAll("#<Solid>"),
+                .cross_section => try writer.writeAll("#<Sketch>"),
                 .path => {
                     const p: *ObjPath = @alignCast(@fieldParentPtr("obj", obj));
                     const end = p.end();
-                    try writer.print("<Path {d} segment{s} from [{f}, {f}] to [{f}, {f}]>", .{ p.segments.len, if (p.segments.len == 1) "" else "s", fmtNumber(p.start[0]), fmtNumber(p.start[1]), fmtNumber(end[0]), fmtNumber(end[1]) });
+                    try writer.print("#<Path {d} segment{s} from [{f}, {f}] to [{f}, {f}]>", .{ p.segments.len, if (p.segments.len == 1) "" else "s", fmtNumber(p.start[0]), fmtNumber(p.start[1]), fmtNumber(end[0]), fmtNumber(end[1]) });
+                },
+                .assembly => {
+                    const assembly = obj.as(ObjAssembly);
+                    const count = assembly.parts.items.items.len;
+                    try writer.print("#<Assembly {s}, {d} part{s}>", .{ assembly.name.chars, count, if (count == 1) "" else "s" });
                 },
                 .workplane => try writer.writeAll("<Workplane>"),
                 // puts and interpolation give its name, inspect says what it is too

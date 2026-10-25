@@ -256,7 +256,7 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
 
     // The target used to be evaluated as a Geometry whatever it was.
     if (!target.isGeometry() and !target.isCrossSection()) {
-        return vm.fail(.TypeError, "align expects a Geometry or CrossSection to align to, got {s}", .{arguments.typeName(vm, target)});
+        return vm.fail(.TypeError, "align expects a Solid or Sketch to align to, got {s}", .{arguments.typeName(vm, target)});
     }
     const my_bbox = try arguments.boundsOf(vm, receiver, "align");
     const target_bbox = try arguments.boundsOf(vm, target, "align");

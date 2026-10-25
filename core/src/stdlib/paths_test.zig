@@ -12,7 +12,7 @@ test "paths: a line, an arc and a polyline join where one ends and the next star
     try expectScripts(&.{
         .{ .src = BRACKET ++ "r = p.start + p.end", .expected = .{ .nums = &.{ 0, 0, 0, 10 } } },
         .{ .src = BRACKET ++ "r = p.length", .expected = .{ .num = 10 + 5 * std.math.pi + 10 } },
-        .{ .src = BRACKET ++ "r = \"#{p.class} #{p.inspect}\"", .expected = .{ .str = "Path <Path 3 segments from [0, 0] to [0, 10]>" } },
+        .{ .src = BRACKET ++ "r = \"#{p.class} #{p.inspect}\"", .expected = .{ .str = "Path #<Path 3 segments from [0, 0] to [0, 10]>" } },
         .{ .src = "r = line([0, 0], [3, 4]).length", .expected = .{ .num = 5 } },
         // The short arc of radius 5 over a chord of 10 is a half circle; the long way is the other half
         .{ .src = "r = arc(r: 5, start: [0, 0], to: [10, 0]).length", .expected = .{ .num = 5 * std.math.pi } },
@@ -61,14 +61,14 @@ test "paths: moves keep the arcs, a close encloses, a stroke gives a width" {
         // The rectangle 10 by 10 with a half disc of radius 5 on its right, the disc drawn
         // with the resolution's chords (a little under the exact 12.5π)
         .{ .src = BRACKET ++ "v = p.close.extrude(1).volume\nr = v > 138 && v < 100 + 12.5 * Math::PI", .expected = .{ .boolean = true } },
-        .{ .src = BRACKET ++ "r = \"#{p.close.class} #{p.stroke(2).class}\"", .expected = .{ .str = "CrossSection CrossSection" } },
+        .{ .src = BRACKET ++ "r = \"#{p.close.class} #{p.stroke(2).class}\"", .expected = .{ .str = "Sketch Sketch" } },
         // A straight stroke of 10 by 2 with round caps, butt ends, or square ends
         .{ .src = "r = line([0, 0], [10, 0]).stroke(2, cap: :butt).extrude(1).volume", .expected = .{ .num = 20 } },
         .{ .src = "r = line([0, 0], [10, 0]).stroke(2, cap: :square).extrude(1).volume", .expected = .{ .num = 24 } },
         .{ .src = "v = line([0, 0], [10, 0]).stroke(2, segments: 64).extrude(1).volume\nr = v > 23 && v < 20 + Math::PI", .expected = .{ .boolean = true } },
         .{ .src = rescued("line([0, 0], [10, 0]).stroke(2, cap: :fancy)"), .expected = .{ .str = "ValueError: stroke cap must be round, butt or square, got 'fancy'" } },
         // A label stays through moves and a join
-        .{ .src = "p = line([0, 0], [1, 0]).named(\"edge\").material(color: \"#00FF00\")\nr = \"#{p.translate(x: 1).inspect}\"", .expected = .{ .str = "<Path 1 segment from [1, 0] to [2, 0]>" } },
+        .{ .src = "p = line([0, 0], [1, 0]).named(\"edge\").material(color: \"#00FF00\")\nr = \"#{p.translate(x: 1).inspect}\"", .expected = .{ .str = "#<Path 1 segment from [1, 0] to [2, 0]>" } },
     });
 }
 
@@ -99,17 +99,17 @@ test "paths: fillet and chamfer round or cut each corner where two lines meet" {
     try expectScripts(&.{
         // 7 along, a quarter of the circle of radius 3, 7 up
         .{ .src = ELL ++ "r = p.fillet(3).length", .expected = .{ .num = 14 + 1.5 * std.math.pi } },
-        .{ .src = ELL ++ "r = p.fillet(r: 3).inspect", .expected = .{ .str = "<Path 3 segments from [0, 0] to [10, 10]>" } },
+        .{ .src = ELL ++ "r = p.fillet(r: 3).inspect", .expected = .{ .str = "#<Path 3 segments from [0, 0] to [10, 10]>" } },
         // 7 along, across a corner of 3 by 3, 7 up
         .{ .src = ELL ++ "r = p.chamfer(3).length", .expected = .{ .num = 14 + 3 * std.math.sqrt2 } },
         .{ .src = ELL ++ "r = p.chamfer(size: 3).bbox.size", .expected = .{ .nums = &.{ 10, 10, 0 } } },
         // Turning right, the arc turns right too; a keyword wins over the same size given positionally
         .{ .src = "r = polyline([[0, 0], [10, 0], [10, -10]]).fillet(1, r: 3).length", .expected = .{ .num = 14 + 1.5 * std.math.pi } },
         // Beside an arc: the line, the fillet and what is left of the arc
-        .{ .src = "r = line([0, 0], [10, 0]).arc_to([15, -5], r: 5).fillet(1).inspect", .expected = .{ .str = "<Path 3 segments from [0, 0] to [15, -5]>" } },
+        .{ .src = "r = line([0, 0], [10, 0]).arc_to([15, -5], r: 5).fillet(1).inspect", .expected = .{ .str = "#<Path 3 segments from [0, 0] to [15, -5]>" } },
         .{ .src = comptime rescued("line([0, 0], [10, 0]).arc_to([7, 3], r: 3).fillet(4)"), .expected = .{ .str = "ValueError: fillet: no arc of r = 4 touches both sides at point 1, [10, 0]: an arc there turns that way more tightly, or the sides don't come that close" } },
         // No corner where the path goes on straight, nor where an arc goes on smoothly
-        .{ .src = "r = polyline([[0, 0], [5, 0], [10, 0]]).fillet(1).inspect", .expected = .{ .str = "<Path 2 segments from [0, 0] to [10, 0]>" } },
+        .{ .src = "r = polyline([[0, 0], [5, 0], [10, 0]]).fillet(1).inspect", .expected = .{ .str = "#<Path 2 segments from [0, 0] to [10, 0]>" } },
         .{ .src = BRACKET ++ "r = p.fillet(1).length == p.length", .expected = .{ .boolean = true } },
         // Closed, the ends meet at a sharp corner: two rounded corners and two sharp ones
         .{ .src = "r = polyline([[0, 0], [10, 0], [10, 10], [0, 10]]).fillet(5).close.extrude(1).volume < 100", .expected = .{ .boolean = true } },

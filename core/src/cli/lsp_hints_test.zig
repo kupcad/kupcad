@@ -36,7 +36,7 @@ test "LSP hints: methods of solids and sketches, from their Signatures" {
     defer arena.deinit();
     const a = arena.allocator();
     // The hand-written table these replace showed revolve's `deg` as `segments`.
-    try testing.expectEqualStrings(":CrossSection@1 r@11 deg@24", try hintsOf(a, "p = circle(2)\np.revolve(90)"));
+    try testing.expectEqualStrings(":Sketch@1 r@11 deg@24", try hintsOf(a, "p = circle(2)\np.revolve(90)"));
     try testing.expectEqualStrings("size@7 h@18", try hintsOf(a, "square(4).extrude(10)"));
     try testing.expectEqualStrings("size@5 x@18 y@21 z@24", try hintsOf(a, "cube(1).translate(1, 2, 3)"));
     // A method of the script's own class is its own.
@@ -47,13 +47,13 @@ test "LSP hints: a variable assigned a built-in's result gets its class" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    // `slice` gives a Sketch: the hint said Geometry, guessed from the method's category.
-    try testing.expectEqualStrings(":Geometry@4 size@12 :CrossSection@16 height@30", try hintsOf(a, "part = cube(1)\ns = part.slice(1)"));
+    // `slice` gives a Sketch: the hint said Solid, guessed from the method's category.
+    try testing.expectEqualStrings(":Solid@4 size@12 :Sketch@16 height@30", try hintsOf(a, "part = cube(1)\ns = part.slice(1)"));
     // A method that keeps its receiver's kind is typed by the receiver.
-    try testing.expectEqualStrings(":CrossSection@2 size@12 :CrossSection@16", try hintsOf(a, "sk = square(1)\nt = sk.translate(x: 1)"));
+    try testing.expectEqualStrings(":Sketch@2 size@12 :Sketch@16", try hintsOf(a, "sk = square(1)\nt = sk.translate(x: 1)"));
     try testing.expectEqualStrings(":Number@1 size@9", try hintsOf(a, "v = cube(2).volume"));
     // An import is a Sketch, or with paths: true an Array; with a flag only the run knows, nothing
-    try testing.expectEqualStrings(":CrossSection@4 path@19", try hintsOf(a, "logo = import_svg(\"logo.svg\")"));
+    try testing.expectEqualStrings(":Sketch@4 path@19", try hintsOf(a, "logo = import_svg(\"logo.svg\")"));
     try testing.expectEqualStrings(":Array@5 path@20", try hintsOf(a, "lines = import_svg(\"logo.svg\", paths: true)"));
     try testing.expectEqualStrings("path@20", try hintsOf(a, "lines = import_svg(\"logo.svg\", paths: flag)"));
     // Not for the script's own methods, nor for what gives nil.

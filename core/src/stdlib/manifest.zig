@@ -67,8 +67,8 @@ pub const Result = enum {
     /// The class a script sees (`.class`), when it is always the same one.
     pub fn className(self: Result) ?[]const u8 {
         return switch (self) {
-            .solid => "Geometry",
-            .sketch => "CrossSection",
+            .solid => "Solid",
+            .sketch => "Sketch",
             .path => "Path",
             .number => "Number",
             .boolean => "Boolean",
@@ -127,10 +127,10 @@ pub const MeshMethod = struct {
 };
 
 pub const core_namespaces = [_][]const u8{
-    "Object",   "Array",        "String", "Map",      "Number",      "Range",  "Symbol",   "Boolean",
-    "Geometry", "CrossSection", "Solid",  "Sketch2D", "BoundingBox", "Math",   "GC",       "Kernel",
-    "CAD",      "NilClass",     "Proc",   "Method",   "Class",       "Module", "Assembly", "JsonObject",
-    "Font",     "Path",         "Random",
+    "Object",   "Array",  "String", "Map",         "Number", "Range",    "Symbol",     "Boolean",
+    "Shape",    "Solid",  "Sketch", "BoundingBox", "Math",   "GC",       "Kernel",     "CAD",
+    "NilClass", "Proc",   "Method", "Class",       "Module", "Assembly", "JsonObject", "Font",
+    "Path",     "Random",
     // "Workplane": hidden with on_face (see the method table)
 };
 

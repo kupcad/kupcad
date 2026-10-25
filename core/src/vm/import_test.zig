@@ -757,19 +757,19 @@ test "VM: op_import supports cross-file class inheritance hierarchy" {
 
     // Base shape library
     const base_source =
-        \\class Shape
+        \\class Figure
         \\  def area
         \\    0
         \\  end
         \\end
-        \\export Shape
+        \\export Figure
     ;
-    try mem_vfs.vfs().writeFile("shape.kup", base_source);
+    try mem_vfs.vfs().writeFile("figure.kup", base_source);
 
     // Child shape library extending imported base class
     const square_source =
-        \\import { Shape } from "./shape.kup"
-        \\class Square < Shape
+        \\import { Figure } from "./figure.kup"
+        \\class Square < Figure
         \\  def area
         \\    16
         \\  end

@@ -584,11 +584,11 @@ test "VM Edge Case: Robot Mount Bracket execution safely resolves Spatial Querie
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // Test that the return is the valid constructed Geometry
+    // Test that the return is the valid constructed Solid
     try testing.expect(result.isGeometry());
 }
 
-test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respond_to?)" {
+test "VM: Solids and Sketches are First-Class Objects (is_a? and respond_to?)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -596,8 +596,8 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
     // Prove that primitives are true classes and methods resolve instantly
     const source =
         \\[
-        \\  cube(10).is_a?(Geometry),
-        \\  square(10).is_a?(CrossSection),
+        \\  cube(10).is_a?(Solid),
+        \\  square(10).is_a?(Sketch),
         \\  cube(10).respond_to?(:translate),
         \\  square(10).respond_to?(:extrude),
         \\  cube(10).is_a?(Object)
@@ -623,7 +623,7 @@ test "VM: Geometries and CrossSections are First-Class Objects (is_a? and respon
     try testing.expectEqual(true, arr_obj.items.items[4].asBool());
 }
 
-test "VM CAD: Geometry processing inside functional array iterators (.map)" {
+test "VM CAD: Solid processing inside functional array iterators (.map)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -739,7 +739,7 @@ test "VM: polyhedron generates custom 3D mesh from multidimensional arrays" {
 
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
 
-    // Verify it yielded a valid Geometry object
+    // Verify it yielded a valid Solid object
     try testing.expect(result.isGeometry());
 
     // Verify the data was stored securely in the DAG Builder arrays
@@ -747,7 +747,7 @@ test "VM: polyhedron generates custom 3D mesh from multidimensional arrays" {
     try testing.expectEqual(@as(usize, 4), vm.dag_builder.poly_faces.items.len);
 }
 
-test "VM: text() primitive generates a valid 2D CrossSection" {
+test "VM: text() primitive generates a valid 2D Sketch" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
@@ -1712,7 +1712,7 @@ test "VM CAD: regular_polygon creates 2D cross sections" {
     const source =
         \\poly = regular_polygon(8, r: 10)
         \\solid = poly.extrude(5)
-        \\[poly.is_a?(CrossSection), solid.bbox.x_size]
+        \\[poly.is_a?(Sketch), solid.bbox.x_size]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -1746,7 +1746,7 @@ test "VM CAD: torus synthesizes properly via revolve" {
     const source =
         \\ring = torus(major_r: 10, minor_r: 2)
         \\box = ring.bbox
-        \\[ring.is_a?(Geometry), box.x_size, box.z_size]
+        \\[ring.is_a?(Solid), box.x_size, box.z_size]
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -1802,7 +1802,7 @@ test "VM: Evaluates nested spatial tuple destructuring inside blocks" {
     try testing.expectEqual(@as(f64, 60.0), res.asNumber());
 }
 
-test "VM CAD: 2D CrossSection bounding boxes map correctly to Z=0 dimensions" {
+test "VM CAD: 2D Sketch bounding boxes map correctly to Z=0 dimensions" {
     const source =
         \\ s = square(x: 10, y: 20, center: true)
         \\ b = s.bbox
@@ -1842,15 +1842,15 @@ test "VM CAD: 2D CrossSection bounding boxes map correctly to Z=0 dimensions" {
     _ = try executeAndAssertStack(&vm, &out_chunk, 1);
 }
 
-test "VM: Solid and Sketch2D static class method execution" {
+test "VM: Solid and Sketch static class method execution" {
     const alloc = testing.allocator;
 
     const source =
         \\s = Solid.cube(10.0)
         \\c = Solid.cylinder(5.0, 20.0)
         \\p = Solid.sphere(8.0)
-        \\sq = Sketch2D.square(15.0)
-        \\circ = Sketch2D.circle(6.0)
+        \\sq = Sketch.square(15.0)
+        \\circ = Sketch.circle(6.0)
         \\[s, c, p, sq, circ]
     ;
 
@@ -1885,7 +1885,7 @@ test "VM: Solid and Sketch2D static class method execution" {
     try testing.expect(result_arr.items.items[4].isCrossSection());
 }
 
-test "VM: Instance export methods on Solid and Geometry objects" {
+test "VM: Instance export methods on Solid and Solid objects" {
     const alloc = testing.allocator;
     const test_stl = "vm_test_out.stl";
     const test_glb = "vm_test_out.glb";

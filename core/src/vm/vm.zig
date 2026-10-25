@@ -216,8 +216,9 @@ pub const VM = struct {
     boolean_class: ?*value.ObjClass = null,
     bbox_class: ?*value.ObjClass = null,
     object_class: ?*value.ObjClass = null,
-    geometry_class: ?*value.ObjClass = null,
-    cross_section_class: ?*value.ObjClass = null,
+    /// The shapes' classes, each a Shape: a solid's, a sketch's and a path's.
+    solid_class: ?*value.ObjClass = null,
+    sketch_class: ?*value.ObjClass = null,
     path_class: ?*value.ObjClass = null,
     /// The classes of values that are not instances (Ruby's NilClass, Proc, Method,
     /// Class, Module), so every value has a class.
@@ -1209,7 +1210,13 @@ pub const VM = struct {
             // `class A < x` with no class: it stopped the run with no message.
             return self.raiseError(.TypeError, "a superclass must be a Class, got {s}", .{self.typeName(super_val)});
         }
-        self.stack[self.stack_top - 1].asClass().superclass = super_val.asClass();
+        const superclass = super_val.asClass();
+        // A built-in value comes from literals, constructors and methods, so an instance of
+        // a subclass would be none: `N.new.abs` read an instance as a number
+        if (superclass.is_value_class) {
+            return self.raiseError(.TypeError, "{s} can't be subclassed: its values come from literals, constructors and methods; a class of your own can hold one", .{superclass.name.chars});
+        }
+        self.stack[self.stack_top - 1].asClass().superclass = superclass;
         self.method_epoch +%= 1;
         return .ok;
     }
@@ -3090,9 +3097,9 @@ pub const VM = struct {
         if (receiver.isInstance()) {
             return receiver.asInstance().class;
         } else if (receiver.isGeometry()) {
-            return self.geometry_class;
+            return self.solid_class;
         } else if (receiver.isCrossSection()) {
-            return self.cross_section_class;
+            return self.sketch_class;
         } else if (receiver.isObject()) {
             switch (receiver.asObj().obj_type) {
                 .string => return self.string_class,

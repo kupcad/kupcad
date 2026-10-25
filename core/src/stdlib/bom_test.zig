@@ -66,7 +66,7 @@ test "bom: a sketch carries its name and material through its moves, for a drawi
     // A sketch's label isn't the Solid extruded from it
     try support.expectScripts(&.{
         .{ .src = source ++ "\nr = solid.bom[0][:name]", .expected = .nil },
-        .{ .src = source ++ "\nr = \"#{hole.class} #{renamed.class} #{solid.volume > 2}\"", .expected = .{ .str = "CrossSection CrossSection true" } },
+        .{ .src = source ++ "\nr = \"#{hole.class} #{renamed.class} #{solid.volume > 2}\"", .expected = .{ .str = "Sketch Sketch true" } },
     });
 }
 
@@ -88,7 +88,7 @@ test "bom: every value it makes stays rooted while the parts are measured" {
 test "bom: what it can't take is an error saying why" {
     try support.expectScripts(&.{
         .{ .src = support.rescued("cube(1).named(\"  \")"), .expected = .{ .str = "ValueError: named expects a name, got \"  \"" } },
-        .{ .src = support.rescued("square(1).bom"), .expected = .{ .str = "NoMethodError: undefined method 'bom' for CrossSection" } },
+        .{ .src = support.rescued("square(1).bom"), .expected = .{ .str = "NoMethodError: undefined method 'bom' for Sketch" } },
         .{ .src = support.rescued("cube(1).material(density: 0)"), .expected = .{ .str = "ValueError: material expects density (g/cm³) to be a finite number greater than zero, got 0" } },
         .{ .src = support.rescued("CAD.with_config(engine: :brep) { cube(1).bom }"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure volume yet; build this part with engine: :manifold" } },
     });

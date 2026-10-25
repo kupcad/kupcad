@@ -30,7 +30,7 @@ const expectRuns = test_support.expectRuns;
 const TETRA_PTS = "[[0,0,0],[1,0,0],[0,1,0],[0,0,1]]";
 const TETRA_FACES = "[[0,1,2],[0,3,1],[0,2,3],[1,3,2]]";
 
-test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive instances" {
+test "Stdlib: Formalized Solid and Sketch classes generate identical primitive instances" {
     const alloc = testing.allocator;
 
     // 1. Verify thin global alias 'cube()' and static method 'Solid.cube()'
@@ -61,10 +61,10 @@ test "Stdlib: Formalized Solid and Sketch2D classes generate identical primitive
     try testing.expect(arr_3d.items.items[0].isGeometry());
     try testing.expect(arr_3d.items.items[1].isGeometry());
 
-    // 2. Verify thin global alias 'square()' and static method 'Sketch2D.square()'
+    // 2. Verify thin global alias 'square()' and static method 'Sketch.square()'
     const src_2d =
         \\s1 = square(10)
-        \\s2 = Sketch2D.square(10)
+        \\s2 = Sketch.square(10)
         \\[s1, s2]
     ;
     var doc_2d = try Document.parse(alloc, src_2d);
@@ -416,7 +416,7 @@ test "Stdlib: a count that no integer holds says what is wrong, not the integer 
 }
 
 test "Stdlib: geometry keeps the settings it was made under, wherever it is evaluated" {
-    // Geometry is evaluated lazily; it used to be built under the settings in force then,
+    // Solid is evaluated lazily; it used to be built under the settings in force then,
     // so CAD.with_config was lost on anything measured or exported after the block.
     try expectScripts(&.{
         .{ .src = "a = nil\nCAD.with_config(engine: :brep) do\n  a = cube(10)\nend\n" ++ comptime rescued("a.volume"), .expected = .{ .str = brepLacks(.volume) } },
@@ -1191,9 +1191,9 @@ test "Stdlib: a Sketch's hull is a Sketch, of the sketch alone or with others" {
         .{ .src = ELL ++ "r = polygon(ell).hull.area", .expected = .{ .num = 400 - 112.5 } },
         .{ .src = "r = square(1).hull(square(1).translate(3, 0)).area", .expected = .{ .num = 4 } },
         .{ .src = "r = square(1).hull([square(1).translate(3, 0), square(1).translate(0, 3)]).area", .expected = .{ .num = 16 - 4.5 } },
-        .{ .src = "r = \"#{square(1).hull.class} #{cube(1).hull.class}\"", .expected = .{ .str = "CrossSection Geometry" } },
-        .{ .src = comptime rescued("square(1).hull(cube(1))"), .expected = .{ .str = "TypeError: hull expects a Sketch or an Array of them for argument 1, got Geometry" } },
-        .{ .src = comptime rescued("cube(1).hull(square(1))"), .expected = .{ .str = "TypeError: hull expects a Solid or an Array of them for argument 1, got CrossSection" } },
+        .{ .src = "r = \"#{square(1).hull.class} #{cube(1).hull.class}\"", .expected = .{ .str = "Sketch Solid" } },
+        .{ .src = comptime rescued("square(1).hull(cube(1))"), .expected = .{ .str = "TypeError: hull expects a Sketch or an Array of them for argument 1, got Solid" } },
+        .{ .src = comptime rescued("cube(1).hull(square(1))"), .expected = .{ .str = "TypeError: hull expects a Solid or an Array of them for argument 1, got Sketch" } },
     });
 }
 
@@ -1227,7 +1227,7 @@ test "Stdlib: loft joins concave profiles, and runs through several sections at 
         .{ .src = "r = square(4).loft([square(4), square(4)], [10, 25]).volume", .expected = .{ .num = 16 * 25 } },
         .{ .src = comptime rescued("square(4).loft([square(4)], [10, 20])"), .expected = .{ .str = "ArgumentError: loft takes its sections as an Array and their heights as an Array of as many, got 1 section and 2 heights" } },
         .{ .src = comptime rescued("square(4).loft([square(4), square(2)], [10, 5])"), .expected = .{ .str = "ValueError: loft's heights rise from the base: height 1 is 5, not above 10" } },
-        .{ .src = comptime rescued("square(4).loft([cube(1)], [10])"), .expected = .{ .str = "TypeError: loft expects a CrossSection at index 0 of the sections, got Geometry" } },
+        .{ .src = comptime rescued("square(4).loft([cube(1)], [10])"), .expected = .{ .str = "TypeError: loft expects a Sketch at index 0 of the sections, got Solid" } },
         .{ .src = comptime rescued("square(4).loft([square(4)], 10)"), .expected = .{ .str = "TypeError: loft expects an Array for heights, got Number" } },
     });
 }
@@ -1301,7 +1301,7 @@ test "Stdlib: a Sketch repeats as a Solid does, in x and y" {
         .{ .src = "p = square(1).translate(5, 0).repeat_polar(4)\nr = [p.area] + p.bbox.size", .expected = .{ .nums = &.{ 4, 12, 12, 0 } } },
         // Over 90 degrees, three copies 45 apart
         .{ .src = "r = square(1).translate(5, 0).repeat_polar(3, 90).bbox.max.map { |v| v.round(6) }", .expected = .{ .nums = &.{ 6, 6, 0 } } },
-        .{ .src = "r = \"#{square(1).repeat_linear(1, [2, 0]).class} #{square(1).repeat_polar(1).class}\"", .expected = .{ .str = "CrossSection CrossSection" } },
+        .{ .src = "r = \"#{square(1).repeat_linear(1, [2, 0]).class} #{square(1).repeat_polar(1).class}\"", .expected = .{ .str = "Sketch Sketch" } },
         // Then swept like any sketch
         .{ .src = "r = circle(r: 1, segments: 4).translate(5, 0).repeat_polar(6).extrude(2).volume.round(9)", .expected = .{ .num = 24 } },
         .{ .src = comptime rescued("square(1).repeat_linear(2, [0, 0, 1])"), .expected = .{ .str = "ArgumentError: repeat_linear: a Sketch repeats in x and y, not z (got a z step of 1)" } },
@@ -1313,7 +1313,7 @@ test "Stdlib: a sketch's area, its holes left out" {
         .{ .src = "r = square(10).area", .expected = .{ .num = 100 } },
         // A diamond of half-diagonal 2 (a circle drawn with 4 segments) cut out
         .{ .src = "r = (square(10) - circle(r: 2, segments: 4).translate(5, 5)).area", .expected = .{ .num = 92 } },
-        .{ .src = comptime rescued("cube(1).area"), .expected = .{ .str = "NoMethodError: undefined method 'area' for Geometry" } },
+        .{ .src = comptime rescued("cube(1).area"), .expected = .{ .str = "NoMethodError: undefined method 'area' for Solid" } },
         .{ .src = comptime rescued("CAD.config(engine: :brep)\nsquare(2).area"), .expected = .{ .str = "NotImplementedError: the brep engine can't measure sketches (bbox, align, center) yet; build this part with engine: :manifold" } },
     });
 }
@@ -1365,7 +1365,7 @@ test "Stdlib: a shape responds to the methods of its kind only" {
     try expectScripts(&.{
         .{ .src = "r = \"#{square(1).respond_to?(:genus)} #{cube(1).respond_to?(:genus)} #{square(1).respond_to?(:extrude)} #{cube(1).respond_to?(:extrude)} #{square(1).respond_to?(:offset)} #{square(1).respond_to?(:hull)}\"", .expected = .{ .str = "false true true false true true" } },
         // A Sketch takes a name and a material too, for a drawing
-        .{ .src = "r = \"#{square(1).respond_to?(:named)} #{square(1).named(\"a\").material(color: \"#FF0000\").class}\"", .expected = .{ .str = "true CrossSection" } },
+        .{ .src = "r = \"#{square(1).respond_to?(:named)} #{square(1).named(\"a\").material(color: \"#FF0000\").class}\"", .expected = .{ .str = "true Sketch" } },
     });
 }
 
@@ -1461,17 +1461,17 @@ test "Stdlib: errors carry their real cause, never a generic message" {
     // Sketch passed where a Solid was assumed, undefined behaviour).
     try expectScripts(&.{
         .{ .src = comptime rescued("nil.foo"), .expected = .{ .str = "NoMethodError: undefined method 'foo' for nil" } },
-        .{ .src = comptime rescued("cube(1).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Geometry" } },
-        .{ .src = comptime rescued("square(1).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).genus"), .expected = .{ .str = "NoMethodError: undefined method 'genus' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).decompose"), .expected = .{ .str = "NoMethodError: undefined method 'decompose' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).export_stl(\"a.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
-        .{ .src = comptime rescued("cube(1).align(5, \"x\", \"min\")"), .expected = .{ .str = "TypeError: align expects a Geometry or CrossSection to align to, got Number" } },
+        .{ .src = comptime rescued("cube(1).extrude(1)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Solid" } },
+        .{ .src = comptime rescued("square(1).volume"), .expected = .{ .str = "NoMethodError: undefined method 'volume' for Sketch" } },
+        .{ .src = comptime rescued("square(1).genus"), .expected = .{ .str = "NoMethodError: undefined method 'genus' for Sketch" } },
+        .{ .src = comptime rescued("square(1).decompose"), .expected = .{ .str = "NoMethodError: undefined method 'decompose' for Sketch" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"a.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for Sketch" } },
+        .{ .src = comptime rescued("cube(1).align(5, \"x\", \"min\")"), .expected = .{ .str = "TypeError: align expects a Solid or Sketch to align to, got Number" } },
         .{ .src = comptime rescued("import_step(\"a.step\")"), .expected = .{ .str = "NotImplementedError: import_step is not supported yet" } },
         // Operators name themselves and both operands.
         .{ .src = comptime rescued("[1] + nil"), .expected = .{ .str = "TypeError: '+' can't combine Array and nil" } },
         .{ .src = comptime rescued("\"a\" * 2"), .expected = .{ .str = "TypeError: '*' can't combine String and Number" } },
-        .{ .src = comptime rescued("cube(1) | cube(1)"), .expected = .{ .str = "TypeError: '|' can't combine Geometry and Geometry" } },
+        .{ .src = comptime rescued("cube(1) | cube(1)"), .expected = .{ .str = "TypeError: '|' can't combine Solid and Solid" } },
         .{ .src = comptime rescued("-\"a\""), .expected = .{ .str = "TypeError: unary '-' expects a number, got String" } },
         .{ .src = comptime rescued("(1..nil)"), .expected = .{ .str = "TypeError: a range needs numbers or single characters, got Number..nil" } },
         // param checks its keywords, and its failures are typed.
@@ -1735,13 +1735,13 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         .{ .src = comptime rescued("cube(1).repeat_linear"), .expected = .{ .str = "ArgumentError: repeat_linear requires a 'count' number" } },
         .{ .src = comptime rescued("cube(1).repeat_polar"), .expected = .{ .str = "ArgumentError: repeat_polar requires a 'count' number" } },
         // Measurements
-        .{ .src = comptime rescued("cube(1).min_gap(5)"), .expected = .{ .str = "TypeError: min_gap expects a Geometry to measure against, got Number" } },
+        .{ .src = comptime rescued("cube(1).min_gap(5)"), .expected = .{ .str = "TypeError: min_gap expects a Solid to measure against, got Number" } },
         .{ .src = comptime rescued("cube(1).contains?"), .expected = .{ .str = "ArgumentError: contains? expects a point [x, y, z]" } },
         .{ .src = comptime rescued("square(1).contains?"), .expected = .{ .str = "ArgumentError: contains? on a sketch expects a point [x, y]" } },
         .{ .src = comptime rescued("cube(1).ray_cast([0, 0, 0])"), .expected = .{ .str = "ArgumentError: ray_cast expects an origin [x, y, z] and an end point [x, y, z]" } },
         // Sweeps, offsets, materials and parameters
-        .{ .src = comptime rescued("square(1).loft"), .expected = .{ .str = "ArgumentError: loft requires a target CrossSection and a z-height" } },
-        .{ .src = comptime rescued("square(1).loft(cube(1), 5)"), .expected = .{ .str = "TypeError: loft expects a CrossSection for the target, got Geometry" } },
+        .{ .src = comptime rescued("square(1).loft"), .expected = .{ .str = "ArgumentError: loft requires a target Sketch and a z-height" } },
+        .{ .src = comptime rescued("square(1).loft(cube(1), 5)"), .expected = .{ .str = "TypeError: loft expects a Sketch for the target, got Solid" } },
         .{ .src = comptime rescued("cube(1).offset(0)"), .expected = .{ .str = "ValueError: a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got 0" } },
         .{ .src = comptime rescued("cube(1).offset(1, join: :miter)"), .expected = .{ .str = "ValueError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :miter" } },
         .{ .src = comptime rescued("cube(1).material"), .expected = .{ .str = "ArgumentError: material requires keyword arguments (e.g. color: \"#FF0000\")" } },
@@ -1764,7 +1764,7 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         .{ .src = comptime rescued("(cube(1) - cube(2)).export_3mf(\"x.3mf\")"), .expected = .{ .str = "GeometryError: export_3mf: the model is empty, there is nothing to write to 'x.3mf'" } },
         .{ .src = comptime rescued("(cube(1) - cube(2)).export_obj(\"x.obj\")"), .expected = .{ .str = "GeometryError: export_obj: the model is empty, there is nothing to write to 'x.obj'" } },
         .{ .src = comptime rescued("(cube(1) - cube(2)).export_gltf(\"x.gltf\")"), .expected = .{ .str = "GeometryError: export_gltf: the model is empty, there is nothing to write to 'x.gltf'" } },
-        .{ .src = comptime rescued("square(1).export_stl(\"x.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"x.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for Sketch" } },
     });
 }
 
@@ -2306,13 +2306,13 @@ test "Stdlib: near-zero normals and subnormal factors are rejected, not silently
     });
 }
 
-test "Stdlib: tiny-but-normal and huge vectors, CrossSection z scale and nil step still build" {
+test "Stdlib: tiny-but-normal and huge vectors, Sketch z scale and nil step still build" {
     try expectScripts(&.{
         // The smallest normals that still normalize keep working, as do huge ones.
         .{ .src = "r = cube(1).mirror(1e-150, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
         .{ .src = "r = cube(1).mirror(1e200, 0, 0).volume.round(6)", .expected = .{ .num = 1 } },
         .{ .src = "r = cube(10).translate(x: -5).trim_by_plane(1e-150, 0, 0).volume.round(6)", .expected = .{ .num = 500 } },
-        // A CrossSection ignores the z factor, so a 0 there is harmless.
+        // A Sketch ignores the z factor, so a 0 there is harmless.
         .{ .src = "r = square(1).scale(2, 2, 0).extrude(1).volume.round(6)", .expected = .{ .num = 4 } },
         // A nil step (a forwarded optional parameter) means no offset.
         .{ .src = "r = cube(1).repeat_linear(3, nil).volume.round(6)", .expected = .{ .num = 1 } },
@@ -2798,7 +2798,7 @@ test "Stdlib: booleans and hull take only shapes of the receiver's kind, nil inc
     const cases = [_]struct { []const u8, []const u8 }{
         .{ "cube(1).union(nil)", "TypeError: union expects a Solid or an Array of them for argument 1, got nil" },
         .{ "cube(1).union([cube(2), nil])", "TypeError: union expects a Solid at index 1 of argument 1, got nil; leave out the nils with .compact" },
-        .{ "cube(1).difference(cube(2), square(1))", "TypeError: difference expects a Solid or an Array of them for argument 2, got CrossSection" },
+        .{ "cube(1).difference(cube(2), square(1))", "TypeError: difference expects a Solid or an Array of them for argument 2, got Sketch" },
         .{ "square(2).intersection(5)", "TypeError: intersection expects a Sketch or an Array of them for argument 1, got Number" },
         .{ "cube(1).hull([cube(2), [cube(3)]])", "TypeError: hull expects a Solid at index 1 of argument 1, got Array" },
         .{ "union([cube(1), nil])", "TypeError: union expects only Solids, got nil at index 1; leave out the nils with .compact" },
@@ -2883,7 +2883,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         } else null;
         if (call) |src| {
             const sketch_receiver = comptime std.mem.startsWith(u8, src, "s.");
-            const expected = comptime if (m.result == .receiver) (if (sketch_receiver) "CrossSection" else "Geometry") else m.result.className().?;
+            const expected = comptime if (m.result == .receiver) (if (sketch_receiver) "Sketch" else "Solid") else m.result.className().?;
             try expectScripts(&.{.{ .src = "c = cube(2)\ns = square(2)\nr = \"#{(" ++ src ++ ").class}\"", .expected = .{ .str = expected } }});
             checked += 1;
         } else {
@@ -2900,7 +2900,7 @@ test "Stdlib: export_step refuses a mesh part by name, and writes an exact one" 
     defer mem_vfs.deinit();
     const cases = [_]ScriptCase{
         .{ .src = rescued("cube(1).export_step(\"m.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and the model was built by the manifold engine (a mesh); build it with engine: :brep" } },
-        .{ .src = "CAD.config(engine: :brep)\nr = \"#{cube(1).export_step(\"b.step\").class}\"", .expected = .{ .str = "Geometry" } },
+        .{ .src = "CAD.config(engine: :brep)\nr = \"#{cube(1).export_step(\"b.step\").class}\"", .expected = .{ .str = "Solid" } },
     };
     for (cases) |case| {
         errdefer std.debug.print("script: {s}\n", .{case.src});
@@ -2944,7 +2944,7 @@ test "Stdlib: assemble takes Solids and assemblies, naming the first that is nei
     // Anything else was accepted and then left out of every export without a word.
     try expectScripts(&.{
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [cube(1), 5])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got Number at index 1" } },
-        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got CrossSection at index 0" } },
+        .{ .src = comptime rescued("assemble(name: \"k\", parts: [square(1)])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got Sketch at index 0" } },
         .{ .src = comptime rescued("assemble(name: \"k\", parts: [nil])"), .expected = .{ .str = "TypeError: assemble expects Solids and assemblies in parts, got nil at index 0; leave out the nils with .compact" } },
         // As deep as a model's Arrays may nest, and no deeper
         .{ .src = comptime rescued("a = assemble(name: \"0\", parts: [cube(1)])\n64.times { |i| a = assemble(name: i.to_s, parts: [a]) }"), .expected = .{ .str = "ValueError: assemble: assemblies nest at most 64 deep" } },
@@ -2961,7 +2961,7 @@ test "Stdlib: an assembly of assemblies keeps them, and is measured, listed, mov
     var mem_vfs = MemoryVfs.init(testing.allocator);
     defer mem_vfs.deinit();
     try expectScripts(&.{
-        .{ .src = ROBOT ++ "r = robot.parts.map { |p| \"#{p.class}\" }.join(\" \")", .expected = .{ .str = "Assembly Assembly Geometry" } },
+        .{ .src = ROBOT ++ "r = robot.parts.map { |p| \"#{p.class}\" }.join(\" \")", .expected = .{ .str = "Assembly Assembly Solid" } },
         .{ .src = ROBOT ++ "r = robot.bbox.size", .expected = .{ .nums = &.{ 10, 12, 6 } } },
         .{ .src = ROBOT ++ "r = robot.bom.map { |row| \"#{row[:name]} x#{row[:count]}\" }.join(\", \")", .expected = .{ .str = "bar x2, bolt x2, base x1" } },
         .{ .src = ROBOT ++ "r = robot.translate(5, 0, 0).bbox.min", .expected = .{ .nums = &.{ 5, 0, 0 } } },
@@ -2989,9 +2989,9 @@ test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ, and
         .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_3mf(\"kit.3mf\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", true).class}\"", .expected = .{ .str = "Assembly" } },
-        .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Geometry" } },
+        .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Solid" } },
         .{ .src = kit ++ "r = \"#{a.export_svg(\"kit.svg\").class} #{a.export_dxf(\"kit.dxf\").class}\"", .expected = .{ .str = "Assembly Assembly" } },
-        .{ .src = "r = \"#{square(2).named(\"g\").export_svg(\"g.svg\").class} #{cube(1).export_dxf(\"c.dxf\").class}\"", .expected = .{ .str = "CrossSection Geometry" } },
+        .{ .src = "r = \"#{square(2).named(\"g\").export_svg(\"g.svg\").class} #{cube(1).export_dxf(\"c.dxf\").class}\"", .expected = .{ .str = "Sketch Solid" } },
         .{ .src = kit ++ comptime rescued("a.export_step(\"kit.step\")"), .expected = .{ .str = "NotImplementedError: STEP export needs exact geometry, and part 1 of 2 was built by the manifold engine (a mesh); build it with engine: :brep" } },
         .{ .src = "CAD.config(engine: :brep)\na = assemble(name: \"b\", parts: [cube(1), cylinder(r: 1, h: 2)])\nr = \"#{a.export_step(\"b.step\").class}\"", .expected = .{ .str = "Assembly" } },
     };
@@ -3059,11 +3059,11 @@ test "Stdlib: every export refuses a Sketch the same way" {
     // Each export collected its parts its own way, and glTF answered a Sketch with a
     // TypeError of its own wording.
     try expectScripts(&.{
-        .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).export_3mf(\"s.3mf\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_3mf' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).export_obj(\"s.obj\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_obj' for CrossSection" } },
-        .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for CrossSection" } },
+        .{ .src = comptime rescued("square(1).export_stl(\"s.stl\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_stl' for Sketch" } },
+        .{ .src = comptime rescued("square(1).export_gltf(\"s.glb\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_gltf' for Sketch" } },
+        .{ .src = comptime rescued("square(1).export_3mf(\"s.3mf\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_3mf' for Sketch" } },
+        .{ .src = comptime rescued("square(1).export_obj(\"s.obj\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_obj' for Sketch" } },
+        .{ .src = comptime rescued("square(1).export_step(\"s.step\")"), .expected = .{ .str = "NoMethodError: undefined method 'export_step' for Sketch" } },
     });
 }
 

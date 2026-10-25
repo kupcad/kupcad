@@ -378,12 +378,12 @@ fn perTurnAbout(vm: *VM, receiver: value.Value, axis: Axis, ops: []const kernel.
 pub fn meshLoft(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isCrossSection()) return arguments.notDefinedFor(vm, "loft", receiver);
     if (args.len < 2) {
-        return vm.fail(.ArgumentError, "loft requires a target CrossSection and a z-height", .{});
+        return vm.fail(.ArgumentError, "loft requires a target Sketch and a z-height", .{});
     }
     const base = receiver.asCrossSection().dag_idx;
     if (args[0].isArray()) return loftThrough(vm, base, args[0].asArray().items.items, args[1]);
     if (!args[0].isCrossSection()) {
-        return vm.fail(.TypeError, "loft expects a CrossSection for the target, got {s}", .{arguments.typeName(vm, args[0])});
+        return vm.fail(.TypeError, "loft expects a Sketch for the target, got {s}", .{arguments.typeName(vm, args[0])});
     }
 
     const cs_top = args[0].asCrossSection();
@@ -407,7 +407,7 @@ fn loftThrough(vm: *VM, base: u32, sections: []const value.Value, heights_val: v
     var from = base;
     var z: f64 = 0;
     for (sections, heights, 0..) |section, height_val, i| {
-        if (!section.isCrossSection()) return vm.fail(.TypeError, "loft expects a CrossSection at index {d} of the sections, got {s}", .{ i, arguments.typeName(vm, section) });
+        if (!section.isCrossSection()) return vm.fail(.TypeError, "loft expects a Sketch at index {d} of the sections, got {s}", .{ i, arguments.typeName(vm, section) });
         const height = try arguments.requireNumber(vm, height_val, "loft", "a height");
         if (!(height > z)) return vm.fail(.ValueError, "loft's heights rise from the base: height {d} is {f}, not above {f}", .{ i, value.fmtNumber(height), value.fmtNumber(z) });
         const step = try dag.addLoft(from, section.asCrossSection().dag_idx, height - z);

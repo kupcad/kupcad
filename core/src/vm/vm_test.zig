@@ -529,7 +529,7 @@ test "VM: Inline Caching correctly populates monomorphic and polymorphic slots" 
     // Verify the Inline Caches
     // The `translate` method call is tracked by an inline cache.
     // We expect at least one cache to have BOTH slots populated
-    // (Slot 1 = Geometry class, Slot 2 = CrossSection class).
+    // (Slot 1 = Solid class, Slot 2 = Sketch class).
     var polymorphic_hit = false;
 
     for (out_chunk.inline_caches.items) |ic| {
@@ -538,8 +538,8 @@ test "VM: Inline Caching correctly populates monomorphic and polymorphic slots" 
             const class2 = ic.cached_class_2.?.name.chars;
 
             // Check if it captured both CAD types
-            if ((std.mem.eql(u8, class1, "Geometry") and std.mem.eql(u8, class2, "CrossSection")) or
-                (std.mem.eql(u8, class1, "CrossSection") and std.mem.eql(u8, class2, "Geometry")))
+            if ((std.mem.eql(u8, class1, "Solid") and std.mem.eql(u8, class2, "Sketch")) or
+                (std.mem.eql(u8, class1, "Sketch") and std.mem.eql(u8, class2, "Solid")))
             {
                 polymorphic_hit = true;
                 break;

@@ -109,7 +109,7 @@ test "import kind: a run reads the file as its type says, whatever the file is c
     try support.expectScripts(&.{
         .{ .src = "import m from \"./machine.dat\" with { type: \"json\" }\nr = m[:teeth]", .expected = .{ .num = 12 }, .files = &files },
         .{ .src = "import m from \"./MACHINE.JSON\"\nr = m[:teeth]", .expected = .{ .num = 20 }, .files = &files },
-        .{ .src = "import part from \"./scan.bin\" with { type: :stl }\nr = part.class == Geometry", .expected = .{ .boolean = true }, .files = &files },
+        .{ .src = "import part from \"./scan.bin\" with { type: :stl }\nr = part.class == Solid", .expected = .{ .boolean = true }, .files = &files },
         .{ .src = "import { x } from \"./lib.json\" with { type: \"kup\" }\nr = x", .expected = .{ .num = 5 }, .files = &files },
     });
 }

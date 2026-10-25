@@ -1,7 +1,7 @@
 //! `registerStandardLibrary`: sets up a VM's built-in environment: the global functions of
 //! `manifest.zig`, the `Object` class and its methods, the exceptions, the value classes,
-//! `Kernel`, `Solid` and `Sketch2D`, the `GC`, `Math` and `CAD` objects, `params`, and the
-//! host hooks.
+//! the shapes (`Shape`, and `Solid`, `Sketch` and `Path` under it), `Kernel`, the `GC`, `Math`
+//! and `CAD` objects, `params`, and the host hooks.
 
 const std = @import("std");
 const VM = @import("../vm/vm.zig").VM;
@@ -34,6 +34,13 @@ fn defineBuiltinClass(vm: *VM, name: []const u8, superclass: ?*value.ObjClass) !
 /// A built-in kind of value (see ObjClass.is_value_class), under Object.
 fn defineValueClass(vm: *VM, name: []const u8) !*value.ObjClass {
     const class = try defineBuiltinClass(vm, name, vm.object_class);
+    class.is_value_class = true;
+    return class;
+}
+
+/// A kind of shape (Solid, Sketch, Path), under `shape`: a value class, as Shape is.
+fn defineShapeClass(vm: *VM, name: []const u8, shape: *value.ObjClass) !*value.ObjClass {
+    const class = try defineBuiltinClass(vm, name, shape);
     class.is_value_class = true;
     return class;
 }
@@ -93,9 +100,11 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     vm.symbol_class = try defineValueClass(vm, "Symbol");
     vm.boolean_class = try defineValueClass(vm, "Boolean");
     vm.bbox_class = try defineValueClass(vm, "BoundingBox");
-    vm.geometry_class = try defineValueClass(vm, "Geometry");
-    vm.cross_section_class = try defineValueClass(vm, "CrossSection");
-    vm.path_class = try defineValueClass(vm, "Path");
+    // The shapes: each made by its constructors (cube, square, line), none by `.new`
+    const shape_class = try defineValueClass(vm, "Shape");
+    vm.solid_class = try defineShapeClass(vm, "Solid", shape_class);
+    vm.sketch_class = try defineShapeClass(vm, "Sketch", shape_class);
+    vm.path_class = try defineShapeClass(vm, "Path", shape_class);
     vm.nil_class = try defineValueClass(vm, "NilClass");
     vm.proc_class = try defineValueClass(vm, "Proc");
     vm.method_class = try defineValueClass(vm, "Method");
@@ -112,20 +121,15 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     try bindNew(vm, vm.map_class.?, "Map.new", common.wrapMethod(map_class_mod.mapNew));
     try bindNew(vm, vm.random_class.?, "Random.new", common.wrapMethod(random_class_mod.randomNew));
 
-    // --- Formalize Kernel, Solid and Sketch2D Classes ---
     const kernel_class = try defineBuiltinClass(vm, "Kernel", vm.object_class);
-    const solid_class = try defineBuiltinClass(vm, "Solid", vm.geometry_class);
-    const sketch2d_class = try defineBuiltinClass(vm, "Sketch2D", vm.cross_section_class);
-    // Shapes come from their constructors (Solid.cube, Sketch2D.square), not `.new`.
-    solid_class.is_value_class = true;
-    sketch2d_class.is_value_class = true;
 
-    // Kernel.puts, Solid.cube, Sketch2D.square: the global functions, as class methods too.
+    // Kernel.puts, Solid.cube, Sketch.square, Path.line: the global functions, as class
+    // methods too.
     for (manifest.global_functions) |def| {
         const class = switch (def.category) {
             .io => kernel_class,
-            .primitive_3d => solid_class,
-            .primitive_2d => sketch2d_class,
+            .primitive_3d => vm.solid_class.?,
+            .primitive_2d => vm.sketch_class.?,
             .primitive_path => vm.path_class.?,
             else => continue,
         };
@@ -133,15 +137,15 @@ pub fn registerStandardLibrary(vm: *VM) !void {
     }
 
     // Bind CAD methods natively to the classes
-    try vm.geometry_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
-    try vm.cross_section_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.solid_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
+    try vm.sketch_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.mesh_methods.len);
     try vm.assembly_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.assembly_methods.len);
     for (manifest.assembly_methods) |def| try bindNativeMethod(vm, vm.assembly_class.?, def.name, def.func);
     try vm.path_class.?.methods.ensureUnusedCapacity(vm.gc.trackingAllocator(), manifest.path_methods.len);
     for (manifest.path_methods) |def| try bindNativeMethod(vm, vm.path_class.?, def.name, def.func);
     for (manifest.mesh_methods) |def| {
-        if (def.isOn(.solids)) try bindNativeMethod(vm, vm.geometry_class.?, def.name, def.func);
-        if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.cross_section_class.?, def.name, def.func);
+        if (def.isOn(.solids)) try bindNativeMethod(vm, vm.solid_class.?, def.name, def.func);
+        if (def.isOn(.sketches)) try bindNativeMethod(vm, vm.sketch_class.?, def.name, def.func);
     }
 
     // Set up GC module (as an instance of a pseudo-class)

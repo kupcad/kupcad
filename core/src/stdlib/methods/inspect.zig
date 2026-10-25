@@ -140,7 +140,7 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "min_gap", receiver);
     if (args.len < 1 or !args[0].isGeometry()) {
-        return vm.fail(.TypeError, "min_gap expects a Geometry to measure against, got {s}", .{if (args.len < 1) "nothing" else arguments.typeName(vm, args[0])});
+        return vm.fail(.TypeError, "min_gap expects a Solid to measure against, got {s}", .{if (args.len < 1) "nothing" else arguments.typeName(vm, args[0])});
     }
     const search_length: ?f64 = if (args.len > 1) try arguments.requireNumber(vm, args[1], "min_gap", "search_length") else null;
     if (search_length) |length| try arguments.requirePositive(vm, length, "min_gap", "search_length");

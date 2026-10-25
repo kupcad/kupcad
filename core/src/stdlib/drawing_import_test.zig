@@ -41,7 +41,7 @@ test "import_dxf: the outlines fill by nesting, a hole's island filled again, ei
         .{ .src = "import plate from \"./plate.txt\" with { type: \"dxf\" }\nr = plate.area", .expected = .{ .num = 320 }, .files = files },
         .{ .src = "r = import_dxf(\"plate.dxf\", layers: \"tabs\").area", .expected = .{ .num = 4 }, .files = files },
         .{ .src = "r = import_dxf(\"plate.dxf\", layers: [\"cut\", :tabs]).area", .expected = .{ .num = 320 }, .files = files },
-        .{ .src = "r = \"#{import_dxf(\"plate.dxf\").class}\"", .expected = .{ .str = "CrossSection" }, .files = files },
+        .{ .src = "r = \"#{import_dxf(\"plate.dxf\").class}\"", .expected = .{ .str = "Sketch" }, .files = files },
     });
 }
 

@@ -443,7 +443,7 @@ test "VM: case matches a class as is_a? does, a built-in value's too" {
         .src =
         \\def kind(x)
         \\  case x
-        \\  when Geometry
+        \\  when Solid
         \\    "solid"
         \\  when Path
         \\    "path"
@@ -459,6 +459,31 @@ test "VM: case matches a class as is_a? does, a built-in value's too" {
         ,
         .expected = .{ .str = "solid,path,proc,number,string,other" },
     }});
+}
+
+test "VM: a shape's class is its kind, each a Shape, printed without being built" {
+    try support.expectScripts(&.{
+        .{ .src = "r = [cube(1), square(1), line([0, 0], [1, 0]), assemble(name: \"Arm\", parts: [cube(1)])].map { |x| x.class }.join(\",\")", .expected = .{ .str = "Solid,Sketch,Path,Assembly" } },
+        .{ .src = "r = [cube(1), square(1), line([0, 0], [1, 0])].all? { |x| x.is_a?(Shape) }", .expected = .{ .boolean = true } },
+        .{ .src = "r = [cube(1).is_a?(Solid), cube(1).is_a?(Sketch), square(1).is_a?(Solid), assemble(name: \"A\", parts: [cube(1)]).is_a?(Shape)].inspect", .expected = .{ .str = "[true, false, false, false]" } },
+        // A class method makes the same kind as the global function
+        .{ .src = "r = [Solid.cube(1).class, Sketch.square(1).class, Path.line([0, 0], [1, 0]).class].join(\",\")", .expected = .{ .str = "Solid,Sketch,Path" } },
+        // inspect names the kind: what a shape measures is the kernel's, which printing mustn't start
+        .{ .src = "r = [cube(1), square(1).translate(x: 1), assemble(name: \"Arm\", parts: [cube(1), cube(2)])].inspect", .expected = .{ .str = "[#<Solid>, #<Sketch>, #<Assembly Arm, 2 parts>]" } },
+        .{ .src = "r = case square(1)\nwhen Solid then \"solid\"\nwhen Shape then \"shape\"\nend", .expected = .{ .str = "shape" } },
+        .{ .src = comptime support.rescued("cube(1).extrude(2)"), .expected = .{ .str = "NoMethodError: undefined method 'extrude' for Solid" } },
+    });
+}
+
+test "VM: a built-in value class can't be subclassed, an error class can" {
+    try support.expectScripts(&.{
+        .{ .src = comptime support.rescued("class Bracket < Solid\nend"), .expected = .{ .str = "TypeError: Solid can't be subclassed: its values come from literals, constructors and methods; a class of your own can hold one" } },
+        .{ .src = comptime support.rescued("class Any < Shape\nend"), .expected = .{ .str = "TypeError: Shape can't be subclassed: its values come from literals, constructors and methods; a class of your own can hold one" } },
+        // Accepted, a method of its instance read the instance as a number and crashed
+        .{ .src = comptime support.rescued("class N < Number\nend\nN.new.abs"), .expected = .{ .str = "TypeError: Number can't be subclassed: its values come from literals, constructors and methods; a class of your own can hold one" } },
+        .{ .src = comptime support.rescued("class L < Array\nend"), .expected = .{ .str = "TypeError: Array can't be subclassed: its values come from literals, constructors and methods; a class of your own can hold one" } },
+        .{ .src = "class FitError < StandardError\nend\nr = begin\n  raise FitError, \"too tight\"\nrescue FitError => e\n  e.message\nend", .expected = .{ .str = "too tight" } },
+    });
 }
 
 test "VM: Object Reflection (is_a? and respond_to?)" {

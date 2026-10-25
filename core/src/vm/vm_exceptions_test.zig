@@ -1168,7 +1168,7 @@ test "VM: Kernel error raised in a nested call frame unwinds to the rescue targe
     const result = try executeAndAssertStack(&vm, &out_chunk, 1);
     try testing.expect(result.isString());
     // The real cause, no longer the generic "CAD Kernel / Method Error"
-    try testing.expectEqualStrings("undefined method 'invalid_method' for Geometry", result.asString().chars);
+    try testing.expectEqualStrings("undefined method 'invalid_method' for Solid", result.asString().chars);
 }
 
 test "VM: Mid-expression throw safely unwinds without stack underflow" {
