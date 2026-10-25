@@ -5,3 +5,5 @@ export { Editor } from './editor.js';
 export { diagnosticsOf, positionOf } from './findings.js';
 export { completeKupcad, kupcad, kupcadLanguage } from './language.js';
 export { editorTheme, highlightStyle } from './theme.js';
+
+/** @typedef {import('./findings.js').Mark} Mark */
