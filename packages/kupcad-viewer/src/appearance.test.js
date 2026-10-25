@@ -5,6 +5,7 @@ import {
   applyRenderMode,
   applySelection,
   applyTheme,
+  edgeColorOf,
   SELECTION_TINT,
   XRAY_OPACITY,
 } from './appearance.js';
@@ -13,7 +14,10 @@ import { HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper
 import { DARK, LIGHT } from './theme.js';
 
 /** @import { MeshBasicMaterial, MeshStandardMaterial } from 'three' */
-/** @import { SceneModel, Shape } from './types.js' */
+/** @import { RenderMode, SceneModel, Shape } from './types.js' */
+
+/** How far apart a line's and its background's luminance must be, of 1, to be told apart. */
+const MIN_LINE_CONTRAST = 0.4;
 
 /** @returns {Promise<SceneModel>} */
 async function partsScene(source = PARTS_WITH_GHOST) {
@@ -32,6 +36,12 @@ function pinOf(scene) {
   return { pin, copy: pin.seenThrough };
 }
 
+/**
+ * A colour's relative luminance (WCAG's), 0 for black to 1 for white.
+ * @param {Color} color in linear sRGB, as three.js keeps it
+ */
+const luminance = (color) => 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+
 /** @param {Shape} shape */
 const materialOf = (shape) => /** @type {MeshStandardMaterial} */ (shape.mesh.material);
 
@@ -41,16 +51,16 @@ describe('applyRenderMode', () => {
     const plate = scene.shapes.find((shape) => shape.part === 'plate');
     const ghost = scene.shapes.find((shape) => shape.ghost);
     if (!plate || !ghost) throw new Error('no plate or ghost');
-    applyRenderMode(scene, 'xray', true);
+    applyRenderMode(scene, 'xray', true, LIGHT);
     expect(materialOf(plate)).toMatchObject({
       transparent: true,
       opacity: XRAY_OPACITY,
       depthWrite: false,
     });
-    applyRenderMode(scene, 'wireframe', true);
+    applyRenderMode(scene, 'wireframe', true, LIGHT);
     expect(materialOf(plate).visible).toBe(false);
     expect(plate.edges?.visible).toBe(true);
-    applyRenderMode(scene, 'solid', true);
+    applyRenderMode(scene, 'solid', true, LIGHT);
     expect(materialOf(plate)).toMatchObject({
       visible: true,
       transparent: false,
@@ -65,7 +75,7 @@ describe('applyRenderMode', () => {
     const scene = await partsScene(HIGHLIGHTED_PIN);
     const { copy } = pinOf(scene);
     const seen = /** @type {const} */ (['solid', 'xray', 'wireframe']).map((mode) => {
-      applyRenderMode(scene, mode, true);
+      applyRenderMode(scene, mode, true, LIGHT);
       return copy.visible;
     });
     expect(seen).toEqual([true, false, false]);
@@ -75,14 +85,45 @@ describe('applyRenderMode', () => {
     const scene = await partsScene();
     const plate = scene.shapes.find((shape) => shape.part === 'plate');
     if (!plate) throw new Error('no plate');
-    applyRenderMode(scene, 'solid', false);
+    applyRenderMode(scene, 'solid', false, LIGHT);
     expect(plate.edges?.visible).toBe(false);
-    applyRenderMode(scene, 'xray', false);
+    applyRenderMode(scene, 'xray', false, LIGHT);
     expect(plate.edges?.visible).toBe(false);
-    applyRenderMode(scene, 'wireframe', false);
+    applyRenderMode(scene, 'wireframe', false, LIGHT);
     expect(plate.edges?.visible).toBe(true);
-    applyRenderMode(scene, 'solid', true);
+    applyRenderMode(scene, 'solid', true, LIGHT);
     expect(plate.edges?.visible).toBe(true);
+  });
+
+  it("draws the edges in the theme's colour for where they are: a wireframe's on the background", async () => {
+    const scene = await partsScene();
+    const colorIn = (/** @type {RenderMode} */ mode) => {
+      applyRenderMode(scene, mode, true, DARK);
+      return `#${scene.edgeMaterial.color.getHexString()}`;
+    };
+    expect([colorIn('solid'), colorIn('xray'), colorIn('wireframe')]).toEqual([
+      DARK.edges,
+      DARK.edges,
+      DARK.wire,
+    ]);
+  });
+});
+
+describe('edgeColorOf', () => {
+  it("is the theme's edges over faces, its wire on the background: a wireframe, a drawing", () => {
+    expect(edgeColorOf('3d', 'solid', DARK)).toBe(DARK.edges);
+    expect(edgeColorOf('3d', 'xray', DARK)).toBe(DARK.edges);
+    expect(edgeColorOf('3d', 'wireframe', DARK)).toBe(DARK.wire);
+    expect(edgeColorOf('2d', 'solid', DARK)).toBe(DARK.wire);
+  });
+
+  it('draws a line on the background apart from it, in either theme', () => {
+    for (const theme of [LIGHT, DARK]) {
+      const line = new Color(theme.wire);
+      const background = new Color(theme.background);
+      const apart = Math.abs(luminance(line) - luminance(background));
+      expect(apart).toBeGreaterThan(MIN_LINE_CONTRAST);
+    }
   });
 });
 
@@ -108,10 +149,9 @@ describe('applySelection', () => {
 });
 
 describe('applyTheme', () => {
-  it("gives the edges, a ghost and a highlight the theme's colours, which the selection tints", async () => {
+  it("gives a ghost and a highlight the theme's colours, which the selection tints", async () => {
     const ghostly = await partsScene();
     applyTheme(ghostly, DARK);
-    expect(ghostly.edgeMaterial.color.getHexString()).toBe(DARK.edges.slice(1));
     const ghost = ghostly.shapes.find((shape) => shape.ghost);
     expect(ghost?.color.getHexString()).toBe(DARK.ghost.slice(1));
 

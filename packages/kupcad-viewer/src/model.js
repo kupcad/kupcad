@@ -207,7 +207,8 @@ function partAbove(object, partOf, nodeName) {
 function drawing(svg, theme) {
   const root = new Group();
   root.scale.y = -1;
-  const edgeMaterial = new LineBasicMaterial({ color: theme.edges });
+  // Outlines on the background
+  const edgeMaterial = new LineBasicMaterial({ color: theme.wire });
   /** @type {Shape[]} */
   const shapes = [];
   for (const path of new SVGLoader().parse(svg).paths) {

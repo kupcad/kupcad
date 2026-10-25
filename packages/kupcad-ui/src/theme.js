@@ -13,6 +13,7 @@ const TOKENS = /** @type {const} */ ({
   grid: '--kc-viewer-grid',
   plate: '--kc-viewer-plate',
   edges: '--kc-viewer-edges',
+  wire: '--kc-viewer-wire',
   selection: '--kc-viewer-selection',
   cap: '--kc-viewer-cap',
   ghost: '--kc-viewer-ghost',

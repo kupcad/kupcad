@@ -1,7 +1,9 @@
 import {
   Color,
+  EdgesGeometry,
   GreaterDepth,
   LineBasicMaterial,
+  LineSegments,
   MeshBasicMaterial,
   MeshStandardMaterial,
   PlaneGeometry,
@@ -77,6 +79,23 @@ function ghostColorsOf(scene) {
     }
   });
   return colors;
+}
+
+/**
+ * The colours of the shapes' edges in `scene` (the lines along a mesh's edges), each once, as
+ * `#rrggbb`.
+ * @param {Scene} scene
+ * @returns {string[]}
+ */
+function edgeColorsOf(scene) {
+  /** @type {Set<string>} */
+  const colors = new Set();
+  scene.traverse((object) => {
+    if (object instanceof LineSegments && object.geometry instanceof EdgesGeometry) {
+      colors.add(`#${/** @type {LineBasicMaterial} */ (object.material).color.getHexString()}`);
+    }
+  });
+  return [...colors];
 }
 
 /**
@@ -758,6 +777,20 @@ describe('Viewer', () => {
     );
     expect(ghostColorsOf(redrawn)).toEqual([new Color(DARK.ghost).getHexString()]);
     expect(planesOf(redrawn, 200)).toEqual([]);
+  });
+
+  it("draws a wireframe's edges, on the background, in its theme's wire colour", async () => {
+    const { viewer, drawn } = viewerOn({ theme: DARK, environment: 'none' });
+    viewer.setAxes(false);
+    await viewer.setModel(await modelOf('cube(2)'));
+    expect(edgeColorsOf(await sceneDrawn(drawn))).toEqual([DARK.edges]);
+    viewer.setRenderMode('wireframe');
+    expect(edgeColorsOf(await sceneDrawn(drawn))).toEqual([DARK.wire]);
+    // A theme set in a wireframe keeps to it
+    viewer.setTheme(LIGHT);
+    expect(edgeColorsOf(await sceneDrawn(drawn))).toEqual([LIGHT.wire]);
+    viewer.setRenderMode('solid');
+    expect(edgeColorsOf(await sceneDrawn(drawn))).toEqual([LIGHT.edges]);
   });
 
   it('switches render modes, environments and themes, and stops drawing once disposed', async () => {

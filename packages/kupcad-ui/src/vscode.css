@@ -22,6 +22,8 @@
   --kc-viewer-grid: var(--vscode-editorIndentGuide-background1, var(--vscode-panel-border));
   --kc-viewer-plate: var(--vscode-editorWidget-background);
   --kc-viewer-edges: var(--vscode-editorLineNumber-foreground);
+  /* Lines on the background (a wireframe, a drawing): the text's colour, which every theme sets apart from it */
+  --kc-viewer-wire: var(--vscode-editor-foreground);
   --kc-viewer-selection: var(--vscode-focusBorder);
   --kc-viewer-cap: var(--vscode-editorError-foreground);
   --kc-viewer-ghost: var(--vscode-editorInfo-foreground);

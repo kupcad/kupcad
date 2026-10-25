@@ -448,6 +448,7 @@ export class Viewer extends EventTarget {
     this.#hoverMark.setColor(theme.selection);
     this.#sectionView.setCapColor(theme.cap);
     applyTheme(this.#model, theme);
+    this.#applyRenderMode();
     this.#applySelection();
     this.#rebuildEnvironment();
     this.#invalidate();
@@ -577,7 +578,7 @@ export class Viewer extends EventTarget {
   }
 
   #applyRenderMode() {
-    applyRenderMode(this.#model, this.#renderMode, this.#edges);
+    applyRenderMode(this.#model, this.#renderMode, this.#edges, this.#theme);
   }
 
   #applySelection() {

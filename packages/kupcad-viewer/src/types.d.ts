@@ -8,8 +8,10 @@ export interface Theme {
   grid: string;
   /** The build plate's surface. */
   plate: string;
-  /** A solid's feature edges, and a drawing's outlines. */
+  /** A solid's feature edges, drawn over its faces. */
   edges: string;
+  /** Lines drawn on the background: a wireframe's edges and a drawing's outlines. */
+  wire: string;
   /** The selected part's tint and edges. */
   selection: string;
   /** Where a section cuts a solid. */

@@ -1,5 +1,6 @@
-// How a model's shapes look: their render mode, the selection, and the theme's colours of their
-// edges, a ghost and a highlight, set on their materials. Ghosts keep their own look.
+// How a model's shapes look: their render mode (and the theme's colour of their edges in it), the
+// selection, and the theme's colours of a ghost and a highlight, set on their materials. Ghosts
+// keep their own look.
 
 import { Color } from 'three';
 
@@ -15,13 +16,17 @@ export const SELECTION_TINT = 0.45;
  * Draws the model's shapes as `mode` says: as they are, see-through, or not at all but for their
  * edges (the mesh stays, for picking, and its edges with it); their edges with them when
  * `edges`, and always in a wireframe, which is nothing else. A highlight is seen through what
- * hides it only as they are: in x-ray everything is, and a wireframe has no faces.
+ * hides it only as they are: in x-ray everything is, and a wireframe has no faces. The edges take
+ * `theme`'s colour for where they are drawn (edgeColorOf).
  * @param {SceneModel | null} model
  * @param {RenderMode} mode
  * @param {boolean} edges
+ * @param {Theme} theme
  */
-export function applyRenderMode(model, mode, edges) {
-  for (const shape of model?.shapes ?? []) {
+export function applyRenderMode(model, mode, edges, theme) {
+  if (!model) return;
+  model.edgeMaterial.color.set(edgeColorOf(model.kind, mode, theme));
+  for (const shape of model.shapes) {
     if (shape.edges) shape.edges.visible = edges || mode === 'wireframe';
     if (shape.seenThrough) shape.seenThrough.visible = mode === 'solid';
     if (shape.ghost) continue;
@@ -33,6 +38,18 @@ export function applyRenderMode(model, mode, edges) {
     material.depthWrite = !xray;
     material.needsUpdate = true;
   }
+}
+
+/**
+ * The colour of a model's edges: over its faces, `theme`'s `edges`; on the background, where a
+ * wireframe's are and a drawing's outlines, its `wire` (a dark theme's edges, near black, were
+ * lost on its background there).
+ * @param {SceneModel['kind']} kind
+ * @param {RenderMode} mode
+ * @param {Theme} theme
+ */
+export function edgeColorOf(kind, mode, theme) {
+  return kind === '2d' || mode === 'wireframe' ? theme.wire : theme.edges;
 }
 
 /**
@@ -56,14 +73,13 @@ export function applySelection(model, part, selection, selectionEdges) {
 }
 
 /**
- * Gives the model the colours of `theme` it takes: its edges', a ghost's and a highlight's (the
- * selection, applied after, tints from them).
+ * Gives the model the colours of `theme` it takes besides its edges' (applyRenderMode's): a
+ * ghost's and a highlight's (the selection, applied after, tints from them).
  * @param {SceneModel | null} model
  * @param {Theme} theme
  */
 export function applyTheme(model, theme) {
   if (!model) return;
-  model.edgeMaterial.color.set(theme.edges);
   for (const shape of model.shapes) {
     if (shape.ghost) shape.color.set(theme.ghost);
     if (shape.seenThrough) {

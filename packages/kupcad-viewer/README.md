@@ -81,7 +81,9 @@ const png = await viewer.screenshot();
 * **Draco:** a model built with `--draco` needs `dracoDecoderPath`, where three.js's decoder files
   are; the decoder is loaded only when a model needs it.
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
-  `--vscode-*` variables).
+  `--vscode-*` variables). A line takes the colour for what it is drawn on: `edges` over a
+  solid's faces, `wire` on the background (a wireframe's edges, a drawing's outlines), so a dark
+  theme's dark edges don't vanish in a wireframe.
 
 The component's canvas is named for a screen reader by `label` ("The model" by default). `onmodel` is called for each model shown, not for one a later model replaced before it
 was. Without `onerror`, a model it can't show is an unhandled rejection; an error of `onmodel`'s
