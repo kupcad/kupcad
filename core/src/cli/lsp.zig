@@ -532,7 +532,7 @@ pub const Handler = struct {
         request: lsp.types.InitializeParams,
     ) lsp.types.InitializeResult {
         logger.info("Initializing server", .{});
-        self.setRoot(request) catch |err| logger.warn("Could not open the workspace folder: {}; imports are read from the current directory", .{err});
+        self.setRoot(request) catch |err| logger.warn("Could not open the workspace folder: {}; each document's imports are read from its project's folder", .{err});
 
         // The client's preferred encoding among the two columns are computed in: UTF-8 or
         // UTF-16 (the default every client supports). UTF-32 was announced when offered

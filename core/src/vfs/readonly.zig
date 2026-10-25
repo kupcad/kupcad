@@ -1,4 +1,4 @@
-//! `ReadOnlyVfs`: a VFS that reads through up to two layers and discards every write, for
+//! `ReadOnlyVfs`: a VFS that reads through up to three layers and discards every write, for
 //! the VMs the language server runs (cli/lsp.zig).
 
 const std = @import("std");
@@ -12,11 +12,11 @@ const log = std.log.scoped(.vfs_readonly);
 /// previews of scripts that export still render; reads go to the open editor buffers first and
 /// then (optionally) to a jailed, read-only view of the workspace for imports.
 pub const ReadOnlyVfs = struct {
-    layers: [2]?Vfs = .{ null, null },
+    layers: [3]?Vfs = .{ null, null, null },
     discarded_writes: usize = 0,
 
     pub fn init(primary: ?Vfs, fallback: ?Vfs) ReadOnlyVfs {
-        return .{ .layers = .{ primary, fallback } };
+        return .{ .layers = .{ primary, fallback, null } };
     }
 
     pub fn vfs(self: *ReadOnlyVfs) Vfs {

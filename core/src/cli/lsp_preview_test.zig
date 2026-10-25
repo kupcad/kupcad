@@ -384,3 +384,33 @@ test "LSP preview: the files on disk are read once a workspace folder is named, 
     const named = try frameOf(a, &preview, "part.kup");
     try testing.expectEqualStrings("3d", named.header.kind);
 }
+
+test "LSP preview: a document opened from outside the workspace imports its neighbours, and nothing past its project" {
+    // Its module path is absolute, which the workspace folder's files refused: its imports
+    // failed, with no workspace folder named too
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, true);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "proj/parts");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/kupcad.json", .data = "{}" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/lib.kup", .data = "side = 3\nexport side\n" });
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "secret.kup", .data = "side = 9\nexport side\n" });
+    const base = try tmp.dir.realPathFileAlloc(testing.io, ".", a);
+    const main = try std.fs.path.join(a, &.{ base, "proj", "parts", "main.kup" });
+    const uri = try std.fmt.allocPrint(a, "file://{s}", .{main});
+
+    try preview.update(main, "import { side } from \"../lib.kup\"\ncube(side)\n");
+    const imported = try frameFor(a, &preview, .{ .module_path = main, .uri = uri });
+    try testing.expectEqualStrings("3d", imported.header.kind);
+    // Past the project: no folder of its own grants it
+    try preview.update(main, "import { side } from \"../../secret.kup\"\ncube(side)\n");
+    const past = try frameFor(a, &preview, .{ .module_path = main, .uri = uri });
+    try testing.expectEqualStrings("none", past.header.kind);
+    try testing.expect(std.mem.find(u8, past.header.@"error".?.message, "secret.kup") != null);
+}

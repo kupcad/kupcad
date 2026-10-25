@@ -24,6 +24,8 @@ const ModuleId = @import("../frontend/workspace.zig").ModuleId;
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
+const Folders = @import("../vfs/folders.zig").Folders;
+const script_root = @import("script_root.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ParamValues = api.ParamValues;
 const FrameWarning = @import("../preview/frame.zig").Warning;
@@ -184,6 +186,9 @@ pub const SessionPreview = struct {
     read_workspace: bool,
     /// The directory `workspace` was re-rooted at, closed with the preview.
     workspace_dir: ?std.Io.Dir = null,
+    /// The project folders of documents opened from outside the workspace's (their module
+    /// paths absolute), read by absolute paths, when the workspace's files are read
+    outside: Folders,
     /// What every run here reads through, and can't write: the documents are untrusted.
     sandbox: ReadOnlyVfs,
     session: ScriptSession,
@@ -236,11 +241,13 @@ pub const SessionPreview = struct {
             .documents = MemoryVfs.init(allocator),
             .workspace = null,
             .read_workspace = read_workspace,
+            .outside = Folders.init(allocator, io),
             .sandbox = undefined,
             .session = undefined,
         };
         errdefer self.documents.deinit();
         self.sandbox = ReadOnlyVfs.init(self.documents.vfs(), null);
+        self.sandbox.layers[2] = self.outside.vfs();
         self.session = try ScriptSession.init(allocator, io, self.sandbox.vfs());
         self.session.observer = .{ .context = self, .ran = ranImpl };
         self.session.vm.useInteractiveLimits();
@@ -254,6 +261,7 @@ pub const SessionPreview = struct {
         owned_keys.deinit(&self.ran_since_taken, self.allocator, .borrowed);
         self.session.deinit();
         self.documents.deinit();
+        self.outside.deinit();
         if (self.workspace_dir) |d| d.close(self.io);
     }
 
@@ -289,6 +297,15 @@ pub const SessionPreview = struct {
     /// kept the first version it read.
     pub fn update(self: *SessionPreview, module_path: []const u8, source: []const u8) !void {
         self.dropHover();
+        // From outside the workspace's folder: its own project's files are read, as `kupcad
+        // run` reads them (a folder that can't be opened leaves its imports unread)
+        if (self.read_workspace and std.fs.path.isAbsolute(module_path)) {
+            if (std.fs.path.dirname(module_path)) |folder| {
+                const project = try script_root.projectFolder(self.io, self.allocator, folder);
+                defer self.allocator.free(project);
+                self.outside.add(project) catch |err| if (err == error.OutOfMemory) return err;
+            }
+        }
         try self.documents.vfs().writeFile(module_path, source);
         _ = try self.session.workspace.upsertModule(module_path, source);
         try self.session.loadImports();

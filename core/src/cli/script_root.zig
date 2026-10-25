@@ -37,7 +37,7 @@ pub const ScriptRoot = struct {
         const absolute = try std.fs.path.resolve(allocator, &.{ cwd, script_path });
         defer allocator.free(absolute);
         const folder = std.fs.path.dirname(absolute) orelse return error.FileNotFound;
-        const project = try projectOf(io, allocator, folder);
+        const project = try projectFolder(io, allocator, folder);
         defer allocator.free(project);
         const path = try std.fs.path.relativeAlloc(allocator, cwd, null, project, absolute);
         errdefer allocator.free(path);
@@ -85,7 +85,7 @@ fn isOutside(relative: []const u8) bool {
 
 /// The project folder `folder` is in (absolute): the nearest from it up holding one of
 /// PROJECT_FILES, else `folder` itself. Owned.
-fn projectOf(io: std.Io, allocator: std.mem.Allocator, folder: []const u8) ![]u8 {
+pub fn projectFolder(io: std.Io, allocator: std.mem.Allocator, folder: []const u8) ![]u8 {
     var at: ?[]const u8 = folder;
     while (at) |candidate| : (at = std.fs.path.dirname(candidate)) {
         for (PROJECT_FILES) |name| {
