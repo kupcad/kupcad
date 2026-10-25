@@ -32,6 +32,9 @@ const MAX_FRAME_BYTES: u32 = 1 << 30;
 const IO_BUFFER_BYTES = 64 * 1024;
 /// How often a waiting evaluation looks for a cancel to pass on.
 const CANCEL_POLL_MS = 5;
+/// How long a worker told to stop may take to answer before it is killed: one in the middle
+/// of a kernel call looks for no cancel until it returns, and the server waits on it.
+pub const CANCEL_GRACE: std.Io.Duration = .fromSeconds(1);
 /// Between the paths of a `files_read` reply: no path holds it.
 const PATH_SEPARATOR = 0;
 
@@ -325,6 +328,8 @@ pub const WorkerPreview = struct {
     params: std.StringHashMapUnmanaged([]u8) = .empty,
     worker: ?*Worker = null,
     cancel: std.atomic.Value(bool) = .init(false),
+    /// How long the worker may take to answer a cancel (CANCEL_GRACE).
+    cancel_grace: std.Io.Duration = CANCEL_GRACE,
     /// What the last worker was running when it ended, until `takeCrash` hands it out.
     crash: std.ArrayList(u8) = .empty,
     crashed: bool = false,
@@ -342,12 +347,8 @@ pub const WorkerPreview = struct {
     }
 
     pub fn deinit(self: *WorkerPreview) void {
-        if (self.worker) |w| {
-            // Killed, not asked: it may be in the middle of a long run.
-            w.child.kill(self.io);
-            self.allocator.destroy(w);
-            self.worker = null;
-        }
+        // Killed, not asked: it may be in the middle of a long run.
+        if (self.worker) |w| self.kill(w);
         owned_keys.deinit(&self.documents, self.allocator, .owned);
         owned_keys.deinit(&self.params, self.allocator, .owned);
         if (self.root) |r| self.allocator.free(r);
@@ -458,10 +459,11 @@ pub const WorkerPreview = struct {
         const module_path = target.module_path;
         const w = self.running() catch return .crashed;
         writeFrame(&w.writer.interface, .evaluate, &.{ &.{@backingInt(want)}, &u32Bytes(@intCast(module_path.len)), module_path, target.uri }) catch |err| return self.ended(w, err, module_path);
-        // The inbox sets `cancel` while this waits; it is passed on as it is set.
-        var forwarder = self.io.concurrent(forwardCancel, .{ self, w }) catch null;
-        const reply = readFrame(&w.reader.interface, self.allocator);
-        if (forwarder) |*f| f.cancel(self.io);
+        const reply = self.awaitReply(w) orelse {
+            logger.warn("The preview worker didn't stop within {d} ms of a cancel, running {s}: killed; the next run starts another", .{ self.cancel_grace.toMilliseconds(), module_path });
+            self.kill(w);
+            return .cancelled;
+        };
         const frame = reply catch |err| return self.ended(w, err, module_path);
         defer self.allocator.free(frame.payload);
         if (frame.kind != .reply or frame.payload.len < 1) return self.ended(w, error.BadFrame, module_path);
@@ -540,11 +542,59 @@ pub const WorkerPreview = struct {
         return frame;
     }
 
-    fn forwardCancel(self: *WorkerPreview, w: *Worker) void {
+    /// The worker's reply to an evaluation, read on a task of its own while this passes on a
+    /// cancel the inbox sets meanwhile; null when the worker hasn't answered `cancel_grace`
+    /// after one, its read given up so it can be killed.
+    fn awaitReply(self: *WorkerPreview, w: *Worker) ?anyerror!Frame {
+        var done: std.Io.Event = .unset;
+        var reading = self.io.concurrent(readReply, .{ self, w, &done }) catch
+            // Read here, then, with no cancel passed on
+            return readFrame(&w.reader.interface, self.allocator);
+        if (self.answered(w, &done)) return reading.await(self.io);
+        // One that came as it was given up on is still the reply
+        const late = reading.cancel(self.io) catch return null;
+        return late;
+    }
+
+    fn readReply(self: *WorkerPreview, w: *Worker, done: *std.Io.Event) anyerror!Frame {
+        defer done.set(self.io);
+        return readFrame(&w.reader.interface, self.allocator);
+    }
+
+    /// Waits for `done`, passing a cancel on as it is set; false when the worker hasn't
+    /// answered `cancel_grace` after one (or this was canceled itself).
+    fn answered(self: *WorkerPreview, w: *Worker, done: *std.Io.Event) bool {
+        const poll: std.Io.Clock.Duration = .{ .raw = .fromMilliseconds(CANCEL_POLL_MS), .clock = .awake };
         while (!self.cancel.load(.acquire)) {
-            self.io.sleep(.fromMilliseconds(CANCEL_POLL_MS), .awake) catch return;
+            done.waitTimeout(self.io, .{ .duration = poll }) catch |err| switch (err) {
+                error.Timeout => continue,
+                error.Canceled => {
+                    self.io.recancel();
+                    return false;
+                },
+            };
+            return true;
         }
         writeFrame(&w.writer.interface, .cancel, &.{}) catch {};
+        const deadline = std.Io.Clock.Timestamp.now(self.io, .awake).addDuration(.{ .raw = self.cancel_grace, .clock = .awake });
+        while (true) {
+            done.waitTimeout(self.io, .{ .deadline = deadline }) catch |err| switch (err) {
+                // Or woken early
+                error.Timeout => if (std.Io.Clock.Timestamp.now(self.io, .awake).raw.nanoseconds < deadline.raw.nanoseconds) continue else return false,
+                error.Canceled => {
+                    self.io.recancel();
+                    return false;
+                },
+            };
+            return true;
+        }
+    }
+
+    /// Ends a worker none reads from any more, its run unfinished.
+    fn kill(self: *WorkerPreview, w: *Worker) void {
+        self.worker = null;
+        w.child.kill(self.io);
+        self.allocator.destroy(w);
     }
 
     /// The worker stopped answering while it ran `module_path`: why, then a new one next time.

@@ -94,6 +94,28 @@ test "lsp worker: a worker that dies is a crash for the preview, and the next us
     try preview.remove("part.kup");
 }
 
+/// Sets `worker`'s cancel a little later, as the inbox does on an edit.
+fn cancelSoon(worker: *lsp_worker.WorkerPreview) std.Io.Cancelable!void {
+    try testing.io.sleep(.fromMilliseconds(50), .awake);
+    worker.preview().cancelToken().store(true, .release);
+}
+
+test "lsp worker: a worker that doesn't stop when told is killed, and its run is cancelled" {
+    // One in a long kernel call looks for no cancel: the server waited on it for good
+    if (builtin.target.os.tag != .linux and !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    const warnings = @import("../test_support.zig").expectWarnings(); // the kill is logged as one
+    defer warnings.restore();
+    // A stand-in that holds its stdout open and never answers (what it is sent fits the pipe)
+    const argv = [_][]const u8{ "/bin/sh", "-c", "exec sleep 600" };
+    var worker = lsp_worker.WorkerPreview.init(testing.allocator, testing.io, &argv);
+    defer worker.deinit();
+    worker.cancel_grace = .fromMilliseconds(100);
+    var canceller = try testing.io.concurrent(cancelSoon, .{&worker});
+    defer canceller.cancel(testing.io) catch {};
+    try testing.expectEqual(OutcomeTag.cancelled, std.meta.activeTag(worker.preview().evaluate(testing.allocator, .{ .module_path = "part.kup", .uri = URI }, .any)));
+    try testing.expect(worker.pid() == null);
+}
+
 test "lsp worker: the files a run read reach the server, and a change to one runs its readers again" {
     const path = "part.kup";
     const source = "s = import_json(\"b.json\")\ncube(import_json(\"a.json\")[:side])\n";
