@@ -86,26 +86,26 @@ test "Extractor: the schema is what param accepts, choices included, as JSON" {
     try testing.expectEqualStrings(
         \\{"meta":{"title":null,"description":null,"author":null},"parameters":[
     ++
-        \\{"name":"width","type":"number","default_value":20,"validate":{"min":10,"max":100,"in":null},"step":null,"unit":null,"group":null},
+        \\{"name":"width","type":"number","default_value":20,"validate":{"min":10,"max":100,"in":null},"step":null,"unit":null,"group":null,"title":null,"description":null},
     ++
-        \\{"name":"material","type":"string","default_value":"PLA","validate":{"min":null,"max":null,"in":["PLA","PETG","ABS"]},"step":null,"unit":null,"group":null},
+        \\{"name":"material","type":"string","default_value":"PLA","validate":{"min":null,"max":null,"in":["PLA","PETG","ABS"]},"step":null,"unit":null,"group":null,"title":null,"description":null},
     ++
-        \\{"name":"mount","type":"string","default_value":"screw","validate":{"min":null,"max":null,"in":["screw","clip"]},"step":null,"unit":null,"group":null},
+        \\{"name":"mount","type":"string","default_value":"screw","validate":{"min":null,"max":null,"in":["screw","clip"]},"step":null,"unit":null,"group":null,"title":null,"description":null},
     ++
-        \\{"name":"holes","type":"number","default_value":4,"validate":{"min":null,"max":null,"in":[2,4,-6]},"step":null,"unit":null,"group":null},
+        \\{"name":"holes","type":"number","default_value":4,"validate":{"min":null,"max":null,"in":[2,4,-6]},"step":null,"unit":null,"group":null,"title":null,"description":null},
     ++
-        \\{"name":"size","type":"number","default_value":1,"validate":{"min":null,"max":null,"in":null},"step":null,"unit":null,"group":null}]}
+        \\{"name":"size","type":"number","default_value":1,"validate":{"min":null,"max":null,"in":null},"step":null,"unit":null,"group":null,"title":null,"description":null}]}
     , out.written());
 }
 
-test "Extractor: step, unit and group, for a host's controls, from literals only" {
+test "Extractor: step, unit, group, title and description, for a host's controls, from literals only" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const source =
         \\u = "in"
-        \\width = param(:width, default: 20, step: 0.5, unit: "mm", group: "Size")
+        \\width = param(:width, default: 20, step: 0.5, unit: "mm", group: "Size", title: "Width", description: "Across the plate")
         \\label = param(:label, default: "A", group: :Text)
-        \\depth = param(:depth, default: 5, unit: u)
+        \\depth = param(:depth, default: 5, unit: u, title: "Depth #{u}")
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
@@ -114,8 +114,13 @@ test "Extractor: step, unit and group, for a host's controls, from literals only
     try testing.expectEqual(@as(f64, 0.5), width.step.?);
     try testing.expectEqualStrings("mm", width.unit.?);
     try testing.expectEqualStrings("Size", width.group.?);
+    try testing.expectEqualStrings("Width", width.title.?);
+    try testing.expectEqualStrings("Across the plate", width.description.?);
     try testing.expectEqualStrings("Text", schema.parameters[1].group.?);
     try testing.expect(schema.parameters[1].step == null);
-    // A variable's value is the run's to know
+    // Without them a host shows the name
+    try testing.expect(schema.parameters[1].title == null and schema.parameters[1].description == null);
+    // A variable's value, or a string built from one, is the run's to know
     try testing.expect(schema.parameters[2].unit == null);
+    try testing.expect(schema.parameters[2].title == null);
 }

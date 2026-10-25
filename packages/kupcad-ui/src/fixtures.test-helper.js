@@ -7,7 +7,7 @@ export { modelOf, schemaOf } from '@kupcad/wasm/testing';
 export const BRACKET = `# @title Bracket
 # @description A plate with holes
 w = param(:width, default: 20, validate: { min: 10, max: 100 }, unit: "mm", group: "Size")
-h = param(:height, default: 5, step: 0.5, group: "Size")
+h = param(:height, default: 5, step: 0.5, validate: { min: 1 }, group: "Size", title: "Height", description: "The plate's thickness")
 hollow = param(:hollow, default: false)
 label = param(:label, default: "A")
 size = param(:size, default: :m4, validate: { in: [:m3, :m4, :m5] }, group: "Holes")

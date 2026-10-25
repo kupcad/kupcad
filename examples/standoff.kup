@@ -1,13 +1,50 @@
 # [Frame Physical Dimensions]
-standoff_dist = param(:standoff_dist, default: 20.0, validate: { min: 15.0, max: 35.0 })
-standoff_dia = param(:standoff_dia, default: 5.0, validate: { min: 3.0, max: 8.0 })
-standoff_height = param(:standoff_height, default: 25.0)
-wall_thickness = param(:wall_thickness, default: 1.6)
-fit_tolerance = param(:fit_tolerance, default: 0.2)
+standoff_dist = param(
+  :standoff_dist,
+  default: 20.0,
+  validate: { min: 15.0, max: 35.0 },
+  title: "Standoff spacing",
+  description: "Centre to centre of the two frame standoffs it clips onto",
+)
+standoff_dia = param(
+  :standoff_dia,
+  default: 5.0,
+  validate: { min: 3.0, max: 8.0 },
+  title: "Standoff diameter",
+  description: "The frame standoffs' outside diameter",
+)
+standoff_height = param(
+  :standoff_height,
+  default: 25.0,
+  title: "Sleeve height",
+  description: "How far the sleeves run down the standoffs",
+)
+wall_thickness = param(
+  :wall_thickness,
+  default: 1.6,
+  title: "Wall thickness",
+  description: "Around each standoff",
+)
+fit_tolerance = param(
+  :fit_tolerance,
+  default: 0.2,
+  title: "Fit tolerance",
+  description: "Added to the standoff's diameter, for a friction fit",
+)
 
 # [Antenna Platform Settings]
-antenna_angle = param(:antenna_angle, default: 25.0)
-platform_offset = param(:platform_offset, default: 23.0)
+antenna_angle = param(
+  :antenna_angle,
+  default: 25.0,
+  title: "Antenna angle",
+  description: "How far the platform tilts back, in degrees",
+)
+platform_offset = param(
+  :platform_offset,
+  default: 23.0,
+  title: "Antenna offset",
+  description: "From the standoffs to the antenna's hole",
+)
 platform_w = param(:platform_w, default: 15.0)
 platform_padding = param(:platform_padding, default: 8.0)
 mounting_thick = param(:mounting_thick, default: 2.5)

@@ -14,7 +14,8 @@ const arguments = @import("arguments.zig");
 /// param(:name) reads a parameter; param(:name, default: v, validate: { min:, max:, in: })
 /// declares it, taking the host's value (`-p name=text`, `-P file.json`) over the default
 /// and reading it as the default's type: text from `-p` becomes a number, a boolean, a
-/// String or a Symbol as the parameter is one.
+/// String or a Symbol as the parameter is one. `step:`, `unit:`, `group:`, `title:` and
+/// `description:` are for a host's controls.
 pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
     const parsed = try arguments.parseKwargs(struct {
         default: ?value.Value = null,
@@ -23,6 +24,8 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
         step: ?f64 = null,
         unit: ?[]const u8 = null,
         group: ?[]const u8 = null,
+        title: ?[]const u8 = null,
+        description: ?[]const u8 = null,
     }, vm, args, "param");
     if (parsed.positional.len != 1) {
         return vm.fail(.ArgumentError, "param expects a parameter name (and keywords), got {d} positional arguments", .{parsed.positional.len});

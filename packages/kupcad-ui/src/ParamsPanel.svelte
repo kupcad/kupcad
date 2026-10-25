@@ -73,12 +73,14 @@
     margin: 0;
     color: var(--kc-muted);
   }
+  /* Its parameters, a line between each (ParamField) */
   fieldset {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    /* As wide as the panel, not as its widest control (a fieldset's own minimum) */
+    min-inline-size: 0;
     margin: 0;
-    padding: var(--kc-gap);
+    padding: 0 var(--kc-gap);
     border: 1px solid var(--kc-border);
     border-radius: var(--kc-radius);
   }

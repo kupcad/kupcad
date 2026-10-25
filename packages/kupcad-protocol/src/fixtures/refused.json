@@ -23,7 +23,9 @@
           },
           "step": null,
           "unit": null,
-          "group": null
+          "group": null,
+          "title": null,
+          "description": null
         }
       ]
     },
@@ -32,7 +34,7 @@
   "error": {
     "message": "ValueError: parameter :width value 5 is below its minimum 10",
     "line": 1,
-    "column": 49,
+    "column": 5,
     "param": "width"
   },
   "timing": {

@@ -43,11 +43,15 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   model still reaches it.
 * **`ParamsPanel`**: a control per parameter of the schema, grouped by `group:`: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
-  toggle, a text field; `step:` and `unit:` as given. Each shows the value set in the panel, else
+  toggle, a text field; `step:` and `unit:` as given. Each parameter is rows of its own, a line
+  between one and the next: its `title:` (its name where it has none, and as the title's tooltip),
+  its `description:` (the control's description for a screen reader too), then its control the
+  panel's whole width. Each shows the value set in the panel, else
   the one the run took. A value outside the schema's range is refused in the panel, saying why,
   and never leaves it; one the run refused (the frame's `error.param`) is shown on its control.
   A value set is marked and can be reverted, which takes its refusal away too; a refusal is the
-  control's description for a screen reader (`aria-describedby`, `aria-invalid`). A choice
+  control's description for a screen reader too, after the parameter's (`aria-describedby`,
+  `aria-invalid`). A choice
   with no value yet (the script computes its default, and no run took one) shows none.
   `overrides` (bindable) is what the panel sets; `onchange` gets it at each change, for the host
   to send to the core.

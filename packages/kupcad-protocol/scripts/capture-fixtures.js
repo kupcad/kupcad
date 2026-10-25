@@ -15,7 +15,7 @@ const FIXED_TIMING = { runMs: 1.25, renderMs: 0.5 };
 const SCRIPTS = {
   solid: {
     source: `# @title Bracket
-w = param(:width, default: 20, validate: { min: 10 }, unit: "mm", group: "Size")
+w = param(:width, default: 20, validate: { min: 10 }, unit: "mm", group: "Size", title: "Width")
 bolt = cylinder(r: 2, h: 5).named("bolt").material(color: "#cc3333")
 [cube(w).named("plate"), bolt.translate(x: 30), bolt.translate(x: 40)]
 `,

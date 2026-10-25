@@ -99,6 +99,10 @@ export interface ParamSpec {
   step: number | null;
   unit: string | null;
   group: string | null;
+  /** What its control is labelled (`title:`); a host shows `name` where it is null. */
+  title: string | null;
+  /** A line a host shows with its control (`description:`). */
+  description: string | null;
 }
 
 /** What a model is written as (`kupcad build -f`, `build_model_wasm`): core/src/exporters/format.zig. */

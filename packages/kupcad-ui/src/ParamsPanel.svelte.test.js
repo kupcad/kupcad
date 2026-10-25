@@ -42,6 +42,25 @@ describe('ParamsPanel', () => {
     ).toBe('m4');
   });
 
+  it('labels a control by its title, with its description, else by its name alone', async () => {
+    await panel();
+    const height = numberField('Height');
+    const description = screen.getByText("The plate's thickness");
+    expect(height.getAttribute('aria-describedby')).toBe(description.id);
+    // The name the script reads it by, where the title hides it
+    expect(screen.getByText('Height').getAttribute('title')).toBe('height');
+    expect(screen.getByText('width').hasAttribute('title')).toBe(false);
+    expect(numberField('width').hasAttribute('aria-describedby')).toBe(false);
+    // A refusal is described too, after the description
+    await fireEvent.change(height, { target: { value: '0' } });
+    expect(height.getAttribute('aria-describedby')).toBe(
+      `${description.id} ${screen.getByRole('alert').id}`,
+    );
+    await fireEvent.change(height, { target: { value: '2' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Revert Height' }));
+    expect(height.getAttribute('aria-describedby')).toBe(description.id);
+  });
+
   it('gives a value the script takes, marks it set, and takes it back on revert', async () => {
     const changes = await panel();
     await fireEvent.change(numberField('width'), { target: { value: '40' } });

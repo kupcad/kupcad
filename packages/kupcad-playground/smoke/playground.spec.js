@@ -11,7 +11,11 @@ test('runs the example in the browser: its model, its parts and parameters; an e
   // The core's worker loaded its module and ran the script
   await expect(page.getByRole('status')).toHaveText(/Ready · \d+ ms/, { timeout: 60_000 });
   await expect(page.getByRole('list', { name: 'Parts' })).toBeVisible();
-  await expect(page.getByRole('spinbutton', { name: 'standoff_dist' })).toBeVisible();
+  // A parameter by its title, with its description; one without, by its name
+  await expect(
+    page.getByRole('spinbutton', { name: 'Standoff spacing' }),
+  ).toHaveAccessibleDescription('Centre to centre of the two frame standoffs it clips onto');
+  await expect(page.getByRole('spinbutton', { name: 'platform_w' })).toBeVisible();
   // Highlighted as KupCAD: `param`, a function of the core's, in a colour of its own
   const colours = await page.evaluate(() => {
     const param = [...document.querySelectorAll('.cm-line span')].find(

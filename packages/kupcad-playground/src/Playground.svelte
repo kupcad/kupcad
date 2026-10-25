@@ -174,7 +174,7 @@
     min-width: 0;
   }
   .params {
-    width: 16em;
+    width: 18em;
     overflow: auto;
     padding: var(--kc-gap);
     border-left: 1px solid var(--kc-border);

@@ -52,6 +52,8 @@ describe('readFrame', () => {
       name: 'width',
       unit: 'mm',
       group: 'Size',
+      title: 'Width',
+      description: null,
     });
     if (model.kind !== '3d') throw new Error(`a ${model.kind} model`);
     expect(model.glb).toEqual(GLB);
@@ -70,8 +72,9 @@ describe('readFrame', () => {
     expect(model).toEqual({ kind: 'none' });
     expect(header.error).toEqual({
       message: 'ValueError: parameter :width value 5 is below its minimum 10',
+      // The `param` call that refused it
       line: 1,
-      column: 49,
+      column: 5,
       param: 'width',
     });
   });

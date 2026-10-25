@@ -33,6 +33,10 @@ pub const ParamMetadata = struct {
     unit: ?[]const u8 = null,
     /// The heading a control goes under, `group:`.
     group: ?[]const u8 = null,
+    /// What a control is labelled, `title:`; a host shows the name where there is none.
+    title: ?[]const u8 = null,
+    /// What a host shows with the control, `description:`.
+    description: ?[]const u8 = null,
 };
 
 pub const UiSchema = struct {
@@ -109,6 +113,8 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
     var step: ?f64 = null;
     var unit: ?[]const u8 = null;
     var group: ?[]const u8 = null;
+    var title: ?[]const u8 = null;
+    var description: ?[]const u8 = null;
 
     for (args) |arg| {
         if (arg.name == .none) continue;
@@ -132,6 +138,10 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
             unit = extractText(tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "group")) {
             group = extractText(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "title")) {
+            title = extractText(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "description")) {
+            description = extractText(tree, arg.value);
         }
     }
 
@@ -143,6 +153,8 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
         .step = step,
         .unit = unit,
         .group = group,
+        .title = title,
+        .description = description,
     };
 }
 

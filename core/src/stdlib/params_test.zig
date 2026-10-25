@@ -87,15 +87,17 @@ test "param: a value the parameter can't take is an error naming it and what was
     }
 }
 
-test "param: step, unit and group are a host's hints, checked but not applied to the value" {
+test "param: step, unit, group, title and description are a host's hints, checked but not applied to the value" {
     try support.expectScripts(&.{
         .{ .src = "r = param(:w, default: 10, step: 0.5, unit: \"mm\", group: \"Size\")", .expected = .{ .num = 10 } },
         .{ .src = "r = param(:label, default: \"A\", group: :Text)", .expected = .{ .str = "A" } },
+        .{ .src = "r = param(:w, default: 10, title: \"Width\", description: \"Across the plate\")", .expected = .{ .num = 10 } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, title: 5)"), .expected = .{ .str = "TypeError: param expects a String or Symbol for title, got Number" } },
         .{ .src = comptime support.rescued("param(:w, default: 1, step: 0)"), .expected = .{ .str = "ValueError: parameter :w step must be a number greater than 0, got 0" } },
         .{ .src = comptime support.rescued("param(:label, default: \"A\", step: 1)"), .expected = .{ .str = "ArgumentError: parameter :label is a string by its default, and step: is for a number" } },
         .{ .src = comptime support.rescued("param(:on, default: true, unit: \"mm\")"), .expected = .{ .str = "ArgumentError: parameter :on is a boolean by its default, and unit: is for a number" } },
         .{ .src = comptime support.rescued("param(:w, default: 1, step: \"x\")"), .expected = .{ .str = "TypeError: param expects a number for step, got String" } },
-        .{ .src = comptime support.rescued("param(:w, default: 1, colour: \"x\")"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'colour' (it accepts: default, validate, step, unit, group)" } },
+        .{ .src = comptime support.rescued("param(:w, default: 1, colour: \"x\")"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'colour' (it accepts: default, validate, step, unit, group, title, description)" } },
     });
     // A value off the step is the host's to give: -p 10.3 with step: 0.5 stays 10.3
     var vm = try support.initVm();

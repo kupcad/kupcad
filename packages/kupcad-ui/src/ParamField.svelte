@@ -1,8 +1,9 @@
 <!--
   @component
-  One parameter's control, as its schema says (params.js's controlOf), with its unit, a revert
-  while the panel overrides it, and why its value was refused: by the panel's own check, or by
-  the run (`refused`, the frame's error naming it).
+  One parameter, in rows: its title (its name where it has none) with a revert while the panel
+  overrides it, its description, its control as its schema says (params.js's controlOf) with its
+  unit, and why its value was refused: by the panel's own check, or by the run (`refused`, the
+  frame's error naming it).
 -->
 <script>
   import { controlOf, validate } from './params.js';
@@ -25,7 +26,10 @@
 
   const id = $props.id();
   const errorId = `${id}-error`;
+  const descriptionId = `${id}-description`;
   const control = $derived(controlOf(spec));
+  /** What the control is labelled by: its title, else its name. */
+  const label = $derived(spec.title || spec.name);
   /**
    * Why the value last given isn't one the script takes, and the value shown then: another
    * (a revert, the next run's) takes it away.
@@ -33,10 +37,13 @@
   let refusal = $state(/** @type {{ why: string, shown: Value | null } | null} */ (null));
   const invalid = $derived(refusal?.shown === value ? refusal.why : null);
   const message = $derived(invalid ?? refused);
-  /** What ties the control to its message, while there is one. */
-  const described = $derived(
-    message === null ? {} : { 'aria-invalid': true, 'aria-describedby': errorId },
-  );
+  /** What ties the control to its description and to its message, while there is one. */
+  const described = $derived({
+    'aria-invalid': message === null ? undefined : true,
+    'aria-describedby':
+      [spec.description && descriptionId, message !== null && errorId].filter(Boolean).join(' ') ||
+      undefined,
+  });
   const chosen = $derived(
     (spec.validate.in ?? []).findIndex((choice) => String(choice) === String(value)),
   );
@@ -76,7 +83,16 @@
 {/snippet}
 
 <div class="field" class:overridden>
-  <label for={id}>{spec.name}</label>
+  <div class="head">
+    <!-- The name the script reads it by, where the title hides it -->
+    <label for={id} title={spec.title ? spec.name : undefined}>{label}</label>
+    {#if overridden}
+      <button type="button" class="revert" aria-label="Revert {label}" onclick={revert}> ↺ </button>
+    {/if}
+  </div>
+  {#if spec.description}
+    <p class="description" id={descriptionId}>{spec.description}</p>
+  {/if}
   <div class="control">
     {#if control === 'slider'}
       <input
@@ -85,7 +101,7 @@
         max={spec.validate.max}
         step={spec.step ?? 'any'}
         value={value ?? ''}
-        aria-label="{spec.name} slider"
+        aria-label="{label} slider"
         onchange={fromInput}
         {...described}
       />
@@ -127,11 +143,6 @@
       />
     {/if}
     {#if spec.unit}<span class="unit">{spec.unit}</span>{/if}
-    {#if overridden}
-      <button type="button" class="revert" aria-label="Revert {spec.name}" onclick={revert}>
-        ↺
-      </button>
-    {/if}
   </div>
   {#if message !== null}
     <p class="error" id={errorId} role="alert">{message}</p>
@@ -140,13 +151,29 @@
 
 <style>
   .field {
-    display: grid;
-    grid-template-columns: minmax(6em, max-content) 1fr;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 0;
+  }
+  /* A line between one parameter and the next */
+  .field + .field {
+    border-top: 1px solid var(--kc-border);
+  }
+  .head {
+    display: flex;
     align-items: center;
-    gap: 2px var(--kc-gap);
+    justify-content: space-between;
+    gap: 4px;
   }
   label {
     color: var(--kc-muted);
+    overflow-wrap: anywhere;
+  }
+  .description {
+    margin: 0;
+    color: var(--kc-muted);
+    font-size: 0.92em;
   }
   .overridden label {
     color: var(--kc-fg);
@@ -158,8 +185,10 @@
     gap: 4px;
     min-width: 0;
   }
+  /* As wide as the row leaves it: its own width (a browser's 129px) would widen the panel */
   input[type='range'] {
     flex: 1;
+    width: 0;
     min-width: 4em;
   }
   .kc-control {
@@ -182,7 +211,6 @@
     padding: 0 2px;
   }
   .error {
-    grid-column: 2;
     margin: 0;
     color: var(--kc-error);
   }
