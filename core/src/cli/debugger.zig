@@ -14,6 +14,9 @@ const VM = @import("../vm/vm.zig").VM;
 const log = std.log.scoped(.debugger);
 
 const MAX_HISTORY = 100;
+/// How long after an Esc the rest of an arrow key's sequence may come: an Esc alone (no more
+/// within it) waited for two more bytes.
+const ESCAPE_FOLLOW_MS = 50;
 
 // DOD History Buffer
 const History = struct {
@@ -79,6 +82,8 @@ fn refreshLine(vm: *VM, stderr: std.Io.File, prompt: []const u8, buf: []const u8
     }
 }
 
+/// A line typed at `prompt`, owned; null at the end of input (Ctrl+D), error.Interrupted on
+/// Ctrl+C, which the terminal gives as a key while a line is read.
 fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     const stdin = std.Io.File.stdin();
     const stderr = std.Io.File.stderr();
@@ -101,6 +106,8 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         var raw = orig;
         raw.lflag.ICANON = false;
         raw.lflag.ECHO = false;
+        // Ctrl+C a key, not a signal: it killed the process with the terminal left raw
+        raw.lflag.ISIG = false;
         posix.tcsetattr(stdin_fd, .FLUSH, raw) catch |err| log.warn("Terminal config error: {}", .{err});
     }
     defer {
@@ -125,7 +132,10 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
         if (c == '\n' or c == '\r') {
             stderr.writeStreamingAll(vm.io, "\n") catch return null;
             return try vm.allocator.dupe(u8, buf[0..len]);
-        } else if (c == 3 or c == 4) { // Ctrl+C or Ctrl+D
+        } else if (c == 3) { // Ctrl+C: stop the run
+            stderr.writeStreamingAll(vm.io, "\n") catch return error.Interrupted;
+            return error.Interrupted;
+        } else if (c == 4) { // Ctrl+D: the end of input, the run goes on
             stderr.writeStreamingAll(vm.io, "\n") catch return null;
             return null;
         } else if (c == 127 or c == 8) { // Backspace
@@ -136,6 +146,9 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
                 try refreshLine(vm, stderr, prompt, buf[0..len], cursor);
             }
         } else if (c == 27) { // ANSI Escape sequence parsing
+            // An Esc alone: nothing follows soon
+            var follows = [_]posix.pollfd{.{ .fd = stdin_fd, .events = posix.POLL.IN, .revents = 0 }};
+            if ((posix.poll(&follows, ESCAPE_FOLLOW_MS) catch 0) == 0) continue;
             var seq1: [1]u8 = undefined;
             if ((stdin.readStreaming(vm.io, &.{&seq1}) catch 0) == 1 and seq1[0] == '[') {
                 var seq2: [1]u8 = undefined;
@@ -295,15 +308,15 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
 
     const target_depth = vm.frames.items.len;
     const repl_base_slot = vm.stack_top;
+    // However it ends, the REPL's closure and locals go: an early return left them on the
+    // stack, under the paused frame's values
+    defer vm.shrinkStack(repl_base_slot);
 
     // The closure, the caller's locals and the padding, then the frame's own depth.
     vm.ensureStackCapacity(vm.stack_top + 1 + @max(caller_locals.len, func.local_count) + eval_chunk.max_stack_slots) catch return;
     // Rooted while the closure is allocated (which can collect), then swapped for it.
     vm.push(value.Value.initObj(&func.obj));
-    const closure = vm.gc.allocateClosure(vm, func) catch {
-        _ = vm.pop();
-        return;
-    };
+    const closure = vm.gc.allocateClosure(vm, func) catch return;
     vm.stack[repl_base_slot] = value.Value.initObj(&closure.obj);
 
     const caller_base_slot = caller_frame.base_slot;
@@ -359,8 +372,13 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     } else {
         stderr.writeStreamingAll(vm.io, "Evaluation failed.\n") catch return;
     }
+}
 
-    vm.shrinkStack(repl_base_slot);
+/// Stops the paused run, as a failure: `.quit` and Ctrl+C. It used to exit the process, with
+/// success, its outputs unwritten and nothing it holds released.
+fn stopRun(vm: *VM) void {
+    std.Io.File.stderr().writeStreamingAll(vm.io, "Stopping the run.\n") catch {};
+    vm.cancel_token.store(true, .release);
 }
 
 pub fn debuggerLoop(vm: *VM) void {
@@ -381,6 +399,10 @@ pub fn debuggerLoop(vm: *VM) void {
 
     while (true) {
         const input_opt = readLine(vm, "(dbg) > ", &history) catch |err| {
+            if (err == error.Interrupted) {
+                stopRun(vm);
+                break;
+            }
             log.err("Debugger input error: {}", .{err});
             break;
         };
@@ -403,8 +425,8 @@ pub fn debuggerLoop(vm: *VM) void {
             vm.hooks.setStep(true);
             break;
         } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
-            stderr.writeStreamingAll(vm.io, "Exiting KupCAD...\n") catch return;
-            std.process.exit(0);
+            stopRun(vm);
+            break;
         } else if (std.mem.eql(u8, trimmed, ".l") or std.mem.eql(u8, trimmed, ".locals")) {
             printLocals(vm);
         } else if (std.mem.eql(u8, trimmed, ".st") or std.mem.eql(u8, trimmed, ".stack")) {
@@ -412,7 +434,7 @@ pub fn debuggerLoop(vm: *VM) void {
         } else if (std.mem.eql(u8, trimmed, ".g") or std.mem.eql(u8, trimmed, ".globals")) {
             printGlobals(vm);
         } else if (std.mem.eql(u8, trimmed, ".h") or std.mem.eql(u8, trimmed, ".help")) {
-            stderr.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Quit program\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
+            stderr.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Stop the run (Ctrl+C too)\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
         } else {
             evaluateContextually(vm, trimmed);
         }

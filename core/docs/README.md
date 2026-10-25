@@ -495,7 +495,7 @@ puts(GC.bytes_allocated)
 debugger()
 ```
 
-`puts`, `print` and `inspect` write to stderr. A preview's run (the editor's, the desktop app's, the browser's) keeps what it prints instead, for the console beside its model: its frame's `output`, the first 64 KiB of it (`outputCut` when there was more). `debugger()` opens an interactive prompt, also on stderr, when `kupcad build` or `kupcad watch` runs from a terminal; anywhere no one could answer it (piped input, the LSP, the viewport, the browser) it does nothing, so a forgotten breakpoint never stalls a build or an editor. At the prompt, `.step` runs to the next line and stops again, `.continue` resumes, `.locals`, `.stack` and `.globals` show the state, and an expression is evaluated in place.
+`puts`, `print` and `inspect` write to stderr. A preview's run (the editor's, the desktop app's, the browser's) keeps what it prints instead, for the console beside its model: its frame's `output`, the first 64 KiB of it (`outputCut` when there was more). `debugger()` opens an interactive prompt, also on stderr, when `kupcad build` or `kupcad watch` runs from a terminal (`.quit` or Ctrl+C there stops the run, which then fails; Ctrl+D goes on); anywhere no one could answer it (piped input, the LSP, the viewport, the browser) it does nothing, so a forgotten breakpoint never stalls a build or an editor. At the prompt, `.step` runs to the next line and stops again, `.continue` resumes, `.locals`, `.stack` and `.globals` show the state, and an expression is evaluated in place.
 
 KupCAD also provides non-destructive inline modifiers to alter visibility in the viewport and inject metadata:
 
