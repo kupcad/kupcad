@@ -181,8 +181,8 @@ fn plainCopy(vm: *VM, v: value.Value, depth: usize) !value.Value {
     }
     const entries = &v.asJsonObject().map;
     const copy = try scope.map();
-    try copy.map.ensureTotalCapacity(tracking, entries.count());
-    for (entries.keys(), entries.values()) |k, item| copy.map.putAssumeCapacity(k, try plainCopy(vm, item, depth - 1));
+    try copy.table.ensureTotalCapacity(tracking, entries.count());
+    for (entries.keys(), entries.values()) |k, item| copy.table.putAssumeCapacity(k, try plainCopy(vm, item, depth - 1));
     return value.Value.initObj(&copy.obj);
 }
 

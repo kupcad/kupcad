@@ -246,7 +246,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
 
         const d_str = try vm.allocateString("distance");
         vm.push(d_str);
-        try map_obj.map.put(vm.gc.trackingAllocator(), d_str, value.Value.initNumber(hit.distance));
+        try map_obj.table.put(vm.gc.trackingAllocator(), d_str, value.Value.initNumber(hit.distance));
         _ = vm.pop();
 
         const pos_str = try vm.allocateString("position");
@@ -256,7 +256,7 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[0]));
         try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[1]));
         try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[2]));
-        try map_obj.map.put(vm.gc.trackingAllocator(), pos_str, value.Value.initObj(&pos_arr.obj));
+        try map_obj.table.put(vm.gc.trackingAllocator(), pos_str, value.Value.initObj(&pos_arr.obj));
         _ = vm.pop();
         _ = vm.pop();
 

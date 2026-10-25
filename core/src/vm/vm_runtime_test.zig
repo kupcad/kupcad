@@ -1059,14 +1059,14 @@ test "VM: DOD map operations (build, insert, spread) transfer memory losslessly"
     try std.testing.expect(final_val.isMap());
     const result_map = final_val.asMap();
 
-    try std.testing.expectEqual(@as(usize, 5), result_map.map.count());
+    try std.testing.expectEqual(@as(usize, 5), result_map.count());
 
     const key_w = try vm.allocateString("w");
-    const val_w = result_map.map.get(key_w).?;
+    const val_w = result_map.table.get(key_w).?;
     try std.testing.expectEqual(@as(f64, 40.0), val_w.asNumber());
 
     const key_x = try vm.allocateString("x");
-    const val_x = result_map.map.get(key_x).?;
+    const val_x = result_map.table.get(key_x).?;
     try std.testing.expectEqual(@as(f64, 10.0), val_x.asNumber());
 }
 

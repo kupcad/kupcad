@@ -69,7 +69,7 @@ fn settingsMap(vm: *VM, comptime T: type, config: T) !value.Value {
         };
         vm.push(item); // the key's allocation may collect
         defer _ = vm.pop();
-        try map.map.put(vm.gc.trackingAllocator(), try vm.allocateSymbol(name), item);
+        try map.table.put(vm.gc.trackingAllocator(), try vm.allocateSymbol(name), item);
     }
     return value.Value.initObj(&map.obj);
 }

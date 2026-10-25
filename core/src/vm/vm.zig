@@ -455,7 +455,7 @@ pub const VM = struct {
     }
 
     pub fn mapSet(self: *VM, map: *value.ObjMap, key: value.Value, val: value.Value) !void {
-        try map.map.put(self.gc.trackingAllocator(), key, val);
+        try map.table.put(self.gc.trackingAllocator(), key, val);
     }
 
     pub fn ensureStackCapacity(self: *VM, required_capacity: usize) !void {
@@ -1046,7 +1046,7 @@ pub const VM = struct {
 
         // Root the map BEFORE allocating internal capacity to prevent GC sweeps
         self.push(map_val);
-        map_obj.map.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
+        map_obj.table.ensureTotalCapacity(self.gc.trackingAllocator(), pair_count) catch {
             return self.raiseOutOfMemory("building a Map", .{});
         };
 
@@ -1089,12 +1089,10 @@ pub const VM = struct {
         const source_val = self.stack[self.stack_top - 1];
         const target_map = self.stack[self.stack_top - 2].asMap();
         if (!source_val.isMap()) return self.raiseError(.TypeError, "only a Map can be spread with **", .{});
-        const source_map = source_val.asMap();
-        const keys = source_map.map.keys();
-        const values = source_map.map.values();
-        target_map.map.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.map.count() + keys.len) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
-        for (keys, values) |key, val| {
-            self.mapSet(target_map, key, val) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
+        var source = source_val.asMap().entries();
+        target_map.table.ensureTotalCapacity(self.gc.trackingAllocator(), target_map.table.count() + source.count) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
+        while (source.next()) |entry| {
+            self.mapSet(target_map, entry.key, entry.value) catch return self.raiseOutOfMemory("spreading a Map with **", .{});
         }
         // Pop only the spread source; the map stays on top
         _ = self.pop();
@@ -1383,7 +1381,7 @@ pub const VM = struct {
         if (frame.base_slot + map_slot < self.stack_top) {
             const map_val = self.stack[frame.base_slot + map_slot];
             if (map_val.isMap()) {
-                if (map_val.asMap().map.get(exec_chunk.constants.items[name_idx])) |v| extracted = v;
+                if (map_val.asMap().table.get(exec_chunk.constants.items[name_idx])) |v| extracted = v;
             }
         }
         self.push(extracted);
@@ -2163,7 +2161,7 @@ pub const VM = struct {
 
     pub fn findMapKey(self: *VM, map: *value.ObjMap, key: value.Value) ?usize {
         _ = self;
-        return map.map.getIndex(key);
+        return map.table.getIndex(key);
     }
 
     /// The i64 a number stands for in a bitwise op (truncated toward zero), or null
@@ -2926,8 +2924,7 @@ pub const VM = struct {
             self.push(value.Value.initNumber(span.at(taken)));
             return taken + 1;
         }
-        if (iterable.isMap()) return self.pushForEntry(frame, slot, &iterable.asMap().map, taken);
-        if (iterable.isJsonObject()) return self.pushForEntry(frame, slot, &iterable.asJsonObject().map, taken);
+        if (iterable.isMap() or iterable.isJsonObject()) return self.pushForEntry(frame, slot, .of(iterable), taken);
         return self.fail(.TypeError, "for expects an Array, a Range, a Map or a JsonObject, got {s}", .{self.typeName(iterable)});
     }
 
@@ -2936,9 +2933,10 @@ pub const VM = struct {
     /// when the loop began (kept in its third local) that is still there, with its value now.
     /// One deleted before its turn is passed over (walked by position, deleting the entry
     /// given skipped the next), and one added isn't given. `taken`: the keys passed.
-    fn pushForEntry(self: *VM, frame: *CallFrame, slot: usize, map: *const value.ValueMap, taken: u64) error{OutOfMemory}!?u64 {
+    fn pushForEntry(self: *VM, frame: *CallFrame, slot: usize, entries: value.Entries, taken: u64) error{OutOfMemory}!?u64 {
+        const map = entries.table;
         if (self.getLocal(frame, slot + 2).isNil()) {
-            const keys = try self.gc.allocateArrayOf(self, map.keys());
+            const keys = try self.gc.allocateArrayOfEntries(self, entries, .key);
             self.setLocal(frame, slot + 2, value.Value.initObj(&keys.obj));
         }
         const keys = self.getLocal(frame, slot + 2).asArray().items.items;
@@ -2965,7 +2963,7 @@ pub const VM = struct {
 
         if (target.isMap() or target.isJsonObject()) {
             const held = if (target.isMap())
-                target.asMap().map.get(index)
+                target.asMap().table.get(index)
             else
                 self.jsonObjectGet(target.asJsonObject(), index) catch return self.raiseError(.TypeError, error_kind.JSON_KEY_FMT, .{self.typeName(index)});
             self.stack_top -= 2;
@@ -3862,21 +3860,25 @@ pub const VM = struct {
         const exec_chunk: *const chunk.Chunk = @ptrCast(@alignCast(closure.function.chunk.?));
         const given: ?*value.ObjMap = if (kwargs) |k| (if (k.isMap()) k.asMap() else null) else null;
         const name = self.closureName(closure);
-        if (given != null and !exec_chunk.open_keywords) next_key: for (given.?.map.keys()) |key| {
-            for (exec_chunk.keywords.items) |keyword| {
-                if (exec_chunk.constants.items[keyword.name].isEqual(key)) continue :next_key;
+        if (given != null and !exec_chunk.open_keywords) {
+            var entries = given.?.entries();
+            next_key: while (entries.next()) |entry| {
+                const key = entry.key;
+                for (exec_chunk.keywords.items) |keyword| {
+                    if (exec_chunk.constants.items[keyword.name].isEqual(key)) continue :next_key;
+                }
+                var accepted: std.Io.Writer.Allocating = .init(self.allocator);
+                defer accepted.deinit();
+                for (exec_chunk.keywords.items, 0..) |keyword, i| {
+                    accepted.writer.print("{s}{s}", .{ if (i > 0) ", " else "", exec_chunk.constants.items[keyword.name].nameChars().? }) catch return self.allocationFailed(error.OutOfMemory);
+                }
+                const written = key.nameChars() orelse return self.raiseError(.ArgumentError, "{s} keywords must be names", .{name});
+                return self.raiseError(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ name, written, accepted.written() });
             }
-            var accepted: std.Io.Writer.Allocating = .init(self.allocator);
-            defer accepted.deinit();
-            for (exec_chunk.keywords.items, 0..) |keyword, i| {
-                accepted.writer.print("{s}{s}", .{ if (i > 0) ", " else "", exec_chunk.constants.items[keyword.name].nameChars().? }) catch return self.allocationFailed(error.OutOfMemory);
-            }
-            const written = key.nameChars() orelse return self.raiseError(.ArgumentError, "{s} keywords must be names", .{name});
-            return self.raiseError(.ArgumentError, "{s} does not take a keyword '{s}' (it accepts: {s})", .{ name, written, accepted.written() });
-        };
+        }
         for (exec_chunk.keywords.items) |keyword| {
             const key = exec_chunk.constants.items[keyword.name];
-            if (keyword.required and (given == null or !given.?.map.contains(key))) {
+            if (keyword.required and (given == null or !given.?.table.contains(key))) {
                 return self.raiseError(.ArgumentError, "{s} needs the keyword '{s}'", .{ name, key.nameChars().? });
             }
         }

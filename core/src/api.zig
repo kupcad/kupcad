@@ -275,7 +275,7 @@ pub fn injectParams(vm: *VM, values: *const ParamValues) !void {
         };
         vm.push(val);
         defer _ = vm.pop();
-        try params_map.map.put(vm.gc.trackingAllocator(), key, val);
+        try params_map.table.put(vm.gc.trackingAllocator(), key, val);
     }
 }
 

@@ -414,16 +414,16 @@ pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
 
     const new_map = try scope.map();
 
-    try new_map.map.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
+    try new_map.table.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
 
     for (arr.items.items) |item| {
         if (item.isArray()) {
             const inner_arr = item.asArray();
             const inner_items = inner_arr.items.items;
             if (inner_items.len >= 2) {
-                try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], inner_items[1]);
+                try new_map.table.put(vm.gc.trackingAllocator(), inner_items[0], inner_items[1]);
             } else if (inner_items.len == 1) {
-                try new_map.map.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
+                try new_map.table.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
             } else {
                 return vm.fail(.ArgumentError, "empty array cannot be converted to key-value pair.", .{});
             }
@@ -756,13 +756,13 @@ pub fn arrayGroupBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !
         var held = HandleScope.init(vm);
         defer held.deinit();
         vm.push(key);
-        if (groups.map.get(key)) |group| {
+        if (groups.table.get(key)) |group| {
             try group.asArray().items.append(vm.gc.trackingAllocator(), item);
             continue;
         }
         const group = try vm.gc.allocateArrayOf(vm, &.{item});
         vm.push(value.Value.initObj(&group.obj));
-        try groups.map.put(vm.gc.trackingAllocator(), key, value.Value.initObj(&group.obj));
+        try groups.table.put(vm.gc.trackingAllocator(), key, value.Value.initObj(&group.obj));
     }
     return value.Value.initObj(&groups.obj);
 }

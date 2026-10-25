@@ -55,7 +55,7 @@ fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isNil()) return value.Value.initBool(true);
     if (receiver.isString()) return value.Value.initBool(receiver.asString().chars.len == 0);
     if (receiver.isArray()) return value.Value.initBool(receiver.asArray().items.items.len == 0);
-    if (receiver.isMap()) return value.Value.initBool(receiver.asMap().map.count() == 0);
+    if (receiver.isMap()) return value.Value.initBool(receiver.asMap().count() == 0);
     if (receiver.isJsonObject()) return value.Value.initBool(receiver.asJsonObject().map.count() == 0);
     if (receiver.isGeometry()) {
         const solid = try vm.ensureConcrete(receiver);
@@ -111,7 +111,8 @@ fn objectDup(vm: *VM, receiver: value.Value) !value.Value {
         const copy = try vm.gc.allocateMap(vm);
         vm.push(value.Value.initObj(&copy.obj));
         defer _ = vm.pop();
-        copy.map = try receiver.asMap().map.clone(vm.gc.trackingAllocator());
+        copy.table = try receiver.asMap().table.clone(vm.gc.trackingAllocator());
+        copy.deleted = receiver.asMap().deleted;
         return value.Value.initObj(&copy.obj);
     }
     if (receiver.isInstance()) {

@@ -31,6 +31,12 @@ const TAG_NIL: u64 = 1;
 const TAG_FALSE: u64 = 2;
 const TAG_TRUE: u64 = 3;
 
+/// With QNAN, the key of a Map entry `ObjMap.delete` deleted, its place in the table in the
+/// bits below: no script value has it (nil, false and true lack it, a number is never QNAN).
+const TAG_DELETED: u64 = 1 << 48;
+/// A Map's deleted entries are dropped once they are this many and outnumber its live ones.
+const MIN_DELETED_DROPPED = 8;
+
 const VAL_NIL: u64 = QNAN | TAG_NIL;
 const VAL_FALSE: u64 = QNAN | TAG_FALSE;
 const VAL_TRUE: u64 = QNAN | TAG_TRUE;
@@ -135,8 +141,7 @@ pub fn contentEqual(a: Value, b: Value, depth: usize) bool {
         }
         return true;
     }
-    if (a.isMap() and b.isMap()) return entriesEqual(&a.asMap().map, &b.asMap().map, depth);
-    if (a.isJsonObject() and b.isJsonObject()) return entriesEqual(&a.asJsonObject().map, &b.asJsonObject().map, depth);
+    if ((a.isMap() and b.isMap()) or (a.isJsonObject() and b.isJsonObject())) return entriesEqual(.of(a), .of(b), depth);
     if (a.isRange() and b.isRange()) {
         const x = a.asRange();
         const y = b.asRange();
@@ -146,11 +151,12 @@ pub fn contentEqual(a: Value, b: Value, depth: usize) bool {
 }
 
 /// Whether two Maps (or two JsonObjects) hold the same keys with equal values.
-fn entriesEqual(xm: *const ValueMap, ym: *const ValueMap, depth: usize) bool {
-    if (xm.count() != ym.count()) return false;
-    for (xm.keys(), xm.values()) |key, x| {
-        const y = ym.get(key) orelse return false;
-        if (!contentEqual(x, y, depth - 1)) return false;
+fn entriesEqual(xs: Entries, ys: Entries, depth: usize) bool {
+    if (xs.count != ys.count) return false;
+    var it = xs;
+    while (it.next()) |x| {
+        const y = ys.table.get(x.key) orelse return false;
+        if (!contentEqual(x.value, y, depth - 1)) return false;
     }
     return true;
 }
@@ -170,10 +176,10 @@ fn contentHash(v: Value, depth: usize) u64 {
         const r = v.asRange();
         return mixed(@as(u64, @bitCast(r.start)) ^ mixed(@as(u64, @bitCast(r.end)) ^ mixed(@as(u64, @bitCast(r.step)) +% @intFromBool(r.is_exclusive))));
     }
-    const map = if (v.isMap()) &v.asMap().map else &v.asJsonObject().map;
+    var entries: Entries = .of(v);
     // A sum of the entries' hashes, which their order doesn't change
-    var h = mixed(map.count());
-    for (map.keys(), map.values()) |key, item| h +%= mixed(contentHash(key, depth - 1) ^ (contentHash(item, depth - 1) *% 31));
+    var h = mixed(entries.count);
+    while (entries.next()) |entry| h +%= mixed(contentHash(entry.key, depth - 1) ^ (contentHash(entry.value, depth - 1) *% 31));
     return h;
 }
 
@@ -192,9 +198,80 @@ fn mixed(bits: u64) u64 {
 /// Values by Value, in insertion order: a Map's entries, a JsonObject's.
 pub const ValueMap = std.array_hash_map.Custom(Value, Value, ValueContext, false);
 
+/// A Map. Deleting an entry leaves it in its place, its key a `Value.deletedKey` (no script
+/// value equals it, so no lookup finds it, and a key put again goes last) and its value nil:
+/// the entries after it don't move up, which re-hashed each of them. Once the deleted are
+/// many, the table is made again without them.
 pub const ObjMap = struct {
     obj: Obj,
-    map: ValueMap,
+    /// Every entry, the deleted ones too: look a key up or put one here, but count and walk
+    /// the entries with `count` and `entries`.
+    table: ValueMap,
+    /// How many of `table`'s entries are deleted.
+    deleted: usize = 0,
+
+    /// How many entries it holds.
+    pub fn count(self: *const ObjMap) usize {
+        return self.table.count() - self.deleted;
+    }
+
+    /// Its entries, in insertion order.
+    pub fn entries(self: *const ObjMap) Entries {
+        return .{ .table = &self.table, .count = self.count() };
+    }
+
+    /// Deletes `key`'s entry, giving its value; null when it has none.
+    pub fn delete(self: *ObjMap, allocator: std.mem.Allocator, key: Value) ?Value {
+        const index = self.table.getIndex(key) orelse return null;
+        const held = self.table.values()[index];
+        self.table.setKey(index, Value.deletedKey(index));
+        self.table.values()[index] = Value.initNil();
+        self.deleted += 1;
+        // Once they outnumber the live ones: so many deletes pay for the rebuild. Without
+        // the memory now, later.
+        if (self.deleted >= MIN_DELETED_DROPPED and self.deleted * 2 > self.table.count()) self.dropDeleted(allocator) catch {};
+        return held;
+    }
+
+    fn dropDeleted(self: *ObjMap, allocator: std.mem.Allocator) !void {
+        var live: ValueMap = .empty;
+        try live.ensureTotalCapacity(allocator, self.count());
+        var it = self.entries();
+        while (it.next()) |entry| live.putAssumeCapacityNoClobber(entry.key, entry.value);
+        self.table.deinit(allocator);
+        self.table = live;
+        self.deleted = 0;
+    }
+};
+
+pub const Entry = struct { key: Value, value: Value };
+
+/// A Map's or a JsonObject's entries as scripts see them, in insertion order: a Map's deleted
+/// ones left out. A walk reads the table as it goes: it meets an entry put meanwhile, but a
+/// delete meanwhile may make the table again, so a walk that runs a script's block walks a
+/// copy of the keys instead (classes/map.zig's Walk).
+pub const Entries = struct {
+    table: *const ValueMap,
+    /// How many there are.
+    count: usize,
+    at: usize = 0,
+
+    /// Those of `v`, a Map or a JsonObject.
+    pub fn of(v: Value) Entries {
+        if (v.isMap()) return v.asMap().entries();
+        const table = &v.asJsonObject().map;
+        return .{ .table = table, .count = table.count() };
+    }
+
+    pub fn next(self: *Entries) ?Entry {
+        const keys = self.table.keys();
+        while (self.at < keys.len) {
+            const i = self.at;
+            self.at += 1;
+            if (!keys[i].isDeleted()) return .{ .key = keys[i], .value = self.table.values()[i] };
+        }
+        return null;
+    }
 };
 
 /// A JSON object `import_json` read (class JsonObject): read-only, its keys Strings as the
@@ -713,6 +790,16 @@ pub const Value = packed struct {
 
     // --- Operations & Equality ---
 
+    /// The key of the deleted entry at `index` of a Map's table (ObjMap.delete): unique in it.
+    pub fn deletedKey(index: usize) Value {
+        std.debug.assert(index < TAG_DELETED);
+        return .{ .val = QNAN | TAG_DELETED | index };
+    }
+
+    pub inline fn isDeleted(self: Value) bool {
+        return self.val & (SIGN_BIT | QNAN | TAG_DELETED) == QNAN | TAG_DELETED;
+    }
+
     pub inline fn isEqual(self: Value, other: Value) bool {
         // Direct register comparison for fast-path equality!
         // Handles interned Strings, Symbols, Booleans, Nils, and exact Object instances in O(1).
@@ -770,15 +857,8 @@ pub const Value = packed struct {
                     }
                     try writer.writeAll("]");
                 },
-                .map => {
-                    const map = &obj.as(ObjMap).map;
-                    try writeEntries(map.keys(), map.values(), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}"));
-                },
-                // As a Map of its entries: `{"teeth" => 12}`
-                .json_object => {
-                    const map = &obj.as(ObjJsonObject).map;
-                    try writeEntries(map.keys(), map.values(), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}"));
-                },
+                // A JsonObject as a Map of its entries: `{"teeth" => 12}`
+                .map, .json_object => try writeEntries(.of(self), writer, Printing.enter(up, obj) orelse return writer.writeAll("{...}")),
                 .class => {
                     const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.writeAll(cls.name.chars); // `puts 5.class` prints Number, as in Ruby
@@ -829,10 +909,14 @@ pub const Value = packed struct {
 
 /// A Map's entries in braces, as written in a script: `{x: 1}` for a Symbol key,
 /// `{"x" => 1}` otherwise. `here` is the Map being printed.
-fn writeEntries(keys: []const Value, values: []const Value, writer: *std.Io.Writer, here: Printing) std.Io.Writer.Error!void {
+fn writeEntries(entries: Entries, writer: *std.Io.Writer, here: Printing) std.Io.Writer.Error!void {
     try writer.writeAll("{");
-    for (keys, values, 0..) |key, v, i| {
-        if (i > 0) try writer.writeAll(", ");
+    var it = entries;
+    var first = true;
+    while (it.next()) |entry| : (first = false) {
+        const key = entry.key;
+        const v = entry.value;
+        if (!first) try writer.writeAll(", ");
         // `k: 1` as a script writes it; a Symbol that isn't a name keeps `=>` (`:"a b" => 1`)
         if (key.isSymbol() and identifier.isLabelName(key.asSymbol().chars)) {
             try writer.print("{s}: ", .{key.asSymbol().chars});

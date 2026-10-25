@@ -115,6 +115,34 @@ test "Map: a block that deletes entries is given the others, each once" {
     });
 }
 
+test "Map: a deleted entry is gone from all that reads the Map, the rest in their order" {
+    const m = "m = { a: 1, b: 2, c: 3, d: 4 }\nm.delete(:b)\n";
+    try expectScripts(&.{
+        .{ .src = m ++ "r = \"#{m.keys} #{m.values} #{m.size} #{m.to_a} #{m.inspect} #{m.empty?}\"", .expected = .{ .str = "[:a, :c, :d] [1, 3, 4] 3 [[:a, 1], [:c, 3], [:d, 4]] {a: 1, c: 3, d: 4} false" } },
+        // Put again, it goes last, as a new key does
+        .{ .src = m ++ "m.delete(:a)\nm[:a] = 9\nm[:b] = 8\nr = m.inspect", .expected = .{ .str = "{c: 3, d: 4, a: 9, b: 8}" } },
+        .{ .src = m ++ "r = \"#{[m.key?(:b), m[:b], m.get(:b, 7), m.fetch(:b, 6), m.dig(:b)]}\"", .expected = .{ .str = "[false, nil, 7, 6, nil]" } },
+        .{ .src = comptime m ++ rescued("m.fetch(:zz)"), .expected = .{ .str = "KeyError: fetch: the Map has no key :zz (its keys: :a, :c, :d)" } },
+        .{ .src = m ++ "r = []\nm.each { |k, v| r.push(v) }\nfor k, v in m\n  r.push(v)\nend", .expected = .{ .nums = &.{ 1, 3, 4, 1, 3, 4 } } },
+        .{ .src = m ++ "r = m.map { |k, v| v } + m.filter { |k, v| true }.values + m.reject { |k, v| false }.values", .expected = .{ .nums = &.{ 1, 3, 4, 1, 3, 4, 1, 3, 4 } } },
+        .{ .src = m ++ "r = m.transform_values { |v| v * 2 }.merge({ e: 5 }).values + { **m, z: 0 }.values + m.dup.values", .expected = .{ .nums = &.{ 2, 6, 8, 5, 1, 3, 4, 0, 1, 3, 4 } } },
+        .{ .src = m ++ "r = m.symbolize_keys.stringify_keys.keys.join(\",\")", .expected = .{ .str = "a,c,d" } },
+        // Equal to a Map that never held it, and found as a key by one
+        .{ .src = m ++ "r = \"#{[m == { a: 1, c: 3, d: 4 }, { { a: 1, c: 3, d: 4 } => 7 }[m]]}\"", .expected = .{ .str = "[true, 7]" } },
+        .{ .src = m ++ "def f(a: 0, c: 0, d: 0) = a + c + d\nr = f(**m)", .expected = .{ .num = 8 } },
+        // Many deleted, the Map made again without them
+        .{ .src = "m = {}\n100.times { |i| m[i] = i }\n90.times { |i| m.delete(i) }\nm[5] = 1\nr = m.keys", .expected = .{ .nums = &.{ 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 5 } }, .gc_stress = true },
+    });
+}
+
+test "Map: emptying one, oldest first, takes a time its size alone" {
+    // Each delete moved the entries after it up and re-hashed them: emptying 10,000 took 4 s,
+    // 40,000 a minute
+    try expectScripts(&.{
+        .{ .src = "m = {}\n20000.times { |i| m[i] = i }\n20000.times { |i| m.delete(i) }\nr = [m.size, m.keys.length]", .expected = .{ .nums = &.{ 0, 0 } } },
+    });
+}
+
 test "Map: size, fetch and dig read entries, nested ones included" {
     const m = "m = { a: 1, b: [10, { c: \"deep\" }], \"s\" => 2 }\n";
     try expectScripts(&.{

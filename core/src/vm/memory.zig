@@ -314,9 +314,20 @@ pub const GC = struct {
         return ptr;
     }
 
+    /// An Array of `entries`' keys, or of their values, in order.
+    pub fn allocateArrayOfEntries(self: *GC, vm: *VM, entries: value.Entries, comptime part: std.meta.FieldEnum(value.Entry)) !*value.ObjArray {
+        const ptr = try self.allocateArray(vm);
+        // No collection runs from here on: only allocateObject collects
+        try ptr.items.ensureTotalCapacity(self.trackingAllocator(), entries.count);
+        var it = entries;
+        while (it.next()) |entry| ptr.items.appendAssumeCapacity(@field(entry, @tagName(part)));
+        return ptr;
+    }
+
     pub fn allocateMap(self: *GC, vm: *VM) !*value.ObjMap {
         const ptr = try self.allocateObject(vm, value.ObjMap, &self.maps, .map);
-        ptr.map = .empty;
+        ptr.table = .empty;
+        ptr.deleted = 0;
         return ptr;
     }
 
@@ -660,9 +671,10 @@ pub const GC = struct {
                 for (arr.items.items) |val| self.markValue(val);
             },
             .map => {
+                // Its deleted entries too: their keys and values are no objects
                 const map = obj.as(value.ObjMap);
-                for (map.map.keys()) |k| self.markValue(k);
-                for (map.map.values()) |v| self.markValue(v);
+                for (map.table.keys()) |k| self.markValue(k);
+                for (map.table.values()) |v| self.markValue(v);
             },
             .json_object => {
                 const object = obj.as(value.ObjJsonObject);
@@ -922,7 +934,7 @@ pub const GC = struct {
             },
             .map => {
                 const map_obj = obj.as(value.ObjMap);
-                map_obj.map.deinit(self.trackingAllocator());
+                map_obj.table.deinit(self.trackingAllocator());
                 self.destroyObject(value.ObjMap, map_obj);
             },
             .json_object => {

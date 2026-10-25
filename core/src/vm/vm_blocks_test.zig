@@ -379,7 +379,7 @@ test "VM: Splats (*args) and Keywords (**kwargs) compile and route perfectly" {
     // kwargs == {"x" => 100}
     const packed_kwargs = arr_obj.items.items[1];
     const map_obj: *value.ObjMap = @alignCast(@fieldParentPtr("obj", packed_kwargs.asObj()));
-    try testing.expectEqual(@as(usize, 1), map_obj.map.count());
+    try testing.expectEqual(@as(usize, 1), map_obj.count());
 }
 
 test "VM: LHS Splat Destructuring (a, *b, c = arr)" {
@@ -801,7 +801,7 @@ test "VM: CLI parameter injection overrides default script parameter values" {
     defer _ = vm.pop();
 
     // Replace map_obj.keys.append and map_obj.values.append with a single put
-    try map_obj.map.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(85.0));
+    try map_obj.table.put(vm.gc.trackingAllocator(), sym_key, value.Value.initNumber(85.0));
 
     // Script declares default: 50, but CLI injection should replace it with 85
     const source =

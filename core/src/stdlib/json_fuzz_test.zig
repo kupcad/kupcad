@@ -121,5 +121,8 @@ fn expectScriptData(v: value.Value, depth: usize) !void {
 fn expectPlain(v: value.Value) !void {
     try testing.expect(!v.isJsonObject());
     if (v.isArray()) for (v.asArray().items.items) |item| try expectPlain(item);
-    if (v.isMap()) for (v.asMap().map.values()) |item| try expectPlain(item);
+    if (v.isMap()) {
+        var entries = v.asMap().entries();
+        while (entries.next()) |entry| try expectPlain(entry.value);
+    }
 }

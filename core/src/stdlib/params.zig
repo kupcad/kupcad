@@ -82,7 +82,7 @@ pub fn nativeParam(vm: *VM, args: []const value.Value) anyerror!value.Value {
         if (global_params.isMap()) {
             const p_map = global_params.asMap();
             if (vm.findMapKey(p_map, sym_key)) |idx| {
-                injected_val = p_map.map.values()[idx];
+                injected_val = p_map.table.values()[idx];
             }
         }
     }

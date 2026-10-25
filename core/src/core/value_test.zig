@@ -154,3 +154,37 @@ test "Value: nameChars is a String's or a Symbol's text, and nothing for any oth
     try testing.expectEqual(@as(?[]const u8, null), value.Value.initNumber(1).nameChars());
     try testing.expectEqual(@as(?[]const u8, null), value.Value.initNil().nameChars());
 }
+
+test "Value: a Map's deleted entry keeps the rest in place, and goes once they outnumber it" {
+    const allocator = testing.allocator;
+    var map: value.ObjMap = .{ .obj = undefined, .table = .empty };
+    defer map.table.deinit(allocator);
+    for (0..100) |i| try map.table.put(allocator, .initNumber(@floatFromInt(i)), .initNumber(@floatFromInt(i * 10)));
+
+    try testing.expectEqual(@as(f64, 30), map.delete(allocator, .initNumber(3)).?.asNumber());
+    try testing.expect(map.delete(allocator, .initNumber(3)) == null);
+    try testing.expect(!map.table.contains(.initNumber(3)));
+    try testing.expectEqual(99, map.count());
+    // Put again, it goes last
+    try map.table.put(allocator, .initNumber(3), .initNumber(-1));
+    var entries = map.entries();
+    try testing.expectEqual(@as(f64, 0), entries.next().?.key.asNumber());
+    var last: value.Entry = undefined;
+    while (entries.next()) |entry| last = entry;
+    try testing.expectEqual(@as(f64, 3), last.key.asNumber());
+
+    // However many are deleted, the table holds no more of them than live entries, past a few
+    for (0..100) |i| {
+        _ = map.delete(allocator, .initNumber(@floatFromInt(i)));
+        try testing.expect(map.deleted < 8 or map.deleted * 2 <= map.table.count());
+    }
+    try testing.expectEqual(0, map.count());
+}
+
+test "Value: a deleted Map key is no script value" {
+    const key: value.Value = .deletedKey(7);
+    try testing.expect(key.isDeleted());
+    try testing.expect(!key.isNumber() and !key.isObject() and !key.isNil() and !key.isBool());
+    try testing.expect(!key.isEqual(.deletedKey(8)));
+    for ([_]value.Value{ .initNil(), .initBool(true), .initBool(false), .initNumber(std.math.nan(f64)), .initNumber(1) }) |v| try testing.expect(!v.isDeleted());
+}

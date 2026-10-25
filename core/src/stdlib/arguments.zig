@@ -337,15 +337,15 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
     const map = trailingKwargs(args) orelse return .{ .opts = initial, .positional = args };
 
     var opts = initial;
-    var it = map.map.iterator();
+    var it = map.entries();
     next_key: while (it.next()) |entry| {
-        const key = entry.key_ptr.*;
+        const key = entry.key;
         const name = key.nameChars() orelse {
             return vm.fail(.ArgumentError, "{s} keywords must be names, got a {s} key", .{ method, typeName(vm, key) });
         };
         inline for (accepted) |field_name| {
             if (std.mem.eql(u8, name, field_name)) {
-                @field(opts, field_name) = try readKwarg(@FieldType(T, field_name), vm, entry.value_ptr.*, method, field_name);
+                @field(opts, field_name) = try readKwarg(@FieldType(T, field_name), vm, entry.value, method, field_name);
                 continue :next_key;
             }
         }
@@ -359,9 +359,9 @@ pub fn parseKwargsOver(comptime T: type, initial: T, comptime accepted: []const 
 pub fn requireOneOf(vm: *VM, args: []const value.Value, comptime names: []const []const u8, method: []const u8) !void {
     const map = trailingKwargs(args) orelse return;
     var first: ?[]const u8 = null;
-    var it = map.map.iterator();
+    var it = map.entries();
     while (it.next()) |entry| {
-        const name = entry.key_ptr.nameChars() orelse continue;
+        const name = entry.key.nameChars() orelse continue;
         inline for (names) |alias| {
             if (std.mem.eql(u8, name, alias)) {
                 if (first) |earlier| return vm.fail(.ArgumentError, "{s} takes {s} or {s}, not both", .{ method, earlier, name });

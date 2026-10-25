@@ -48,8 +48,8 @@ pub fn hashValue(hasher: *std.hash.Wyhash, node_hashes: []const u64, v: value.Va
             _ = chars(hasher, .assembly, assembly.name.chars);
             return sequence(hasher, .array, node_hashes, assembly.parts.items.items, depth);
         },
-        .map => return entries(hasher, .map, node_hashes, &v.asMap().map, depth),
-        .json_object => return entries(hasher, .json_object, node_hashes, &v.asJsonObject().map, depth),
+        .map => return entries(hasher, .map, node_hashes, .of(v), depth),
+        .json_object => return entries(hasher, .json_object, node_hashes, .of(v), depth),
         .bbox => {
             const box = v.asBBox();
             _ = tag(hasher, .bounding_box);
@@ -102,12 +102,13 @@ fn sequence(hasher: *std.hash.Wyhash, kind: Kind, node_hashes: []const u64, item
     return true;
 }
 
-fn entries(hasher: *std.hash.Wyhash, kind: Kind, node_hashes: []const u64, map: *const value.ValueMap, depth: usize) bool {
+fn entries(hasher: *std.hash.Wyhash, kind: Kind, node_hashes: []const u64, held: value.Entries, depth: usize) bool {
     _ = tag(hasher, kind);
-    hasher.update(std.mem.asBytes(&map.count()));
-    for (map.keys(), map.values()) |k, item| {
-        if (!hashValue(hasher, node_hashes, k, depth - 1)) return false;
-        if (!hashValue(hasher, node_hashes, item, depth - 1)) return false;
+    hasher.update(std.mem.asBytes(&held.count));
+    var it = held;
+    while (it.next()) |entry| {
+        if (!hashValue(hasher, node_hashes, entry.key, depth - 1)) return false;
+        if (!hashValue(hasher, node_hashes, entry.value, depth - 1)) return false;
     }
     return true;
 }

@@ -20,28 +20,25 @@ pub fn mapNew(vm: *VM, class: value.Value) !value.Value {
 
 /// Map#keys -> its keys, in insertion order
 pub fn mapKeys(vm: *VM, map: *value.ObjMap) !value.Value {
-    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, map.map.keys())).obj);
+    return value.Value.initObj(&(try vm.gc.allocateArrayOfEntries(vm, map.entries(), .key)).obj);
 }
 
 /// Map#values
 pub fn mapValues(vm: *VM, map: *value.ObjMap) !value.Value {
-    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, map.map.values())).obj);
+    return value.Value.initObj(&(try vm.gc.allocateArrayOfEntries(vm, map.entries(), .value)).obj);
 }
 
 /// Map#key?(key)
 pub fn mapKey(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
     _ = vm;
-    return value.Value.initBool(map.map.contains(key));
+    return value.Value.initBool(map.table.contains(key));
 }
 
 /// Map#delete(key) -> the removed value, nil when absent. The other entries keep their
-/// order: those after it move up one (a swap-remove moved the last entry into the hole).
+/// order, at no cost (ObjMap.delete): moving those after it up re-hashed each of them, so
+/// emptying a Map took a time its size squared.
 pub fn mapDelete(vm: *VM, map: *value.ObjMap, key: value.Value) !value.Value {
-    _ = vm;
-    if (map.map.fetchOrderedRemove(key)) |kv| {
-        return kv.value;
-    }
-    return value.Value.initNil();
+    return map.delete(vm.gc.trackingAllocator(), key) orelse value.Value.initNil();
 }
 
 /// The entries a block is given, one at a time, by the iterators: the keys there when the
@@ -56,7 +53,9 @@ const Walk = struct {
 
     fn init(vm: *VM, scope: HandleScope, map: *value.ObjMap) !Walk {
         const keys = try scope.array();
-        try keys.items.appendSlice(vm.gc.trackingAllocator(), map.map.keys());
+        try keys.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.count());
+        var entries = map.entries();
+        while (entries.next()) |entry| keys.items.appendAssumeCapacity(entry.key);
         return .{ .map = map, .keys = keys };
     }
 
@@ -64,7 +63,7 @@ const Walk = struct {
         while (self.at < self.keys.items.items.len) {
             const key = self.keys.items.items[self.at];
             self.at += 1;
-            if (self.map.map.get(key)) |val| return .{ key, val };
+            if (self.map.table.get(key)) |val| return .{ key, val };
         }
         return null;
     }
@@ -96,17 +95,15 @@ pub fn mapToA(vm: *VM, map: *value.ObjMap) !value.Value {
 
     const new_arr = try scope.array();
 
-    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.count());
 
-    const keys = map.map.keys();
-    const values = map.map.values();
-
-    for (keys, 0..) |k, i| {
+    var entries = map.entries();
+    while (entries.next()) |entry| {
         const pair_arr = try scope.array();
 
         try pair_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), 2);
-        pair_arr.items.appendAssumeCapacity(k);
-        pair_arr.items.appendAssumeCapacity(values[i]);
+        pair_arr.items.appendAssumeCapacity(entry.key);
+        pair_arr.items.appendAssumeCapacity(entry.value);
 
         _ = vm.pop(); // Unprotect pair_arr
         new_arr.items.appendAssumeCapacity(value.Value.initObj(&pair_arr.obj));
@@ -128,7 +125,7 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
     defer scope.deinit();
     const new_arr = try scope.array();
 
-    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.map.count());
+    try new_arr.items.ensureTotalCapacity(vm.gc.trackingAllocator(), map.count());
     const closure = block_opt.?;
 
     var walk = try Walk.init(vm, scope, map);
@@ -149,13 +146,13 @@ pub fn mapMap(vm: *VM, map: *value.ObjMap, block_opt: ?*value.ObjClosure) !value
 /// Map#empty?
 pub fn mapEmpty(vm: *VM, map: *value.ObjMap) !value.Value {
     _ = vm;
-    return value.Value.initBool(map.map.count() == 0);
+    return value.Value.initBool(map.count() == 0);
 }
 
 /// Map#get(key, default)
 pub fn mapGet(vm: *VM, map: *value.ObjMap, key: value.Value, default_val: value.Value) !value.Value {
     _ = vm;
-    return map.map.get(key) orelse default_val;
+    return map.table.get(key) orelse default_val;
 }
 
 /// Map#merge(other_map)
@@ -164,15 +161,9 @@ pub fn mapMerge(vm: *VM, map: *value.ObjMap, other_map: *value.ObjMap) !value.Va
     defer scope.deinit();
     const new_map = try scope.map();
 
-    // Fast O(1) hash map merging
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        try new_map.map.put(vm.gc.trackingAllocator(), entry.key_ptr.*, entry.value_ptr.*);
-    }
-
-    var other_it = other_map.map.iterator();
-    while (other_it.next()) |entry| {
-        try new_map.map.put(vm.gc.trackingAllocator(), entry.key_ptr.*, entry.value_ptr.*);
+    for ([_]*value.ObjMap{ map, other_map }) |source| {
+        var entries = source.entries();
+        while (entries.next()) |entry| try new_map.table.put(vm.gc.trackingAllocator(), entry.key, entry.value);
     }
 
     return value.Value.initObj(&new_map.obj);
@@ -184,15 +175,15 @@ pub fn mapSymbolizeKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     defer scope.deinit();
     const new_map = try scope.map();
 
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        const k = entry.key_ptr.*;
+    var entries = map.entries();
+    while (entries.next()) |entry| {
+        const k = entry.key;
         var new_k = k;
         if (k.isString()) {
             const str = k.asString();
             new_k = try vm.allocateSymbol(str.chars);
         }
-        try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
+        try new_map.table.put(vm.gc.trackingAllocator(), new_k, entry.value);
     }
     return value.Value.initObj(&new_map.obj);
 }
@@ -203,15 +194,15 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
     defer scope.deinit();
     const new_map = try scope.map();
 
-    var it = map.map.iterator();
-    while (it.next()) |entry| {
-        const k = entry.key_ptr.*;
+    var entries = map.entries();
+    while (entries.next()) |entry| {
+        const k = entry.key;
         var new_k = k;
         if (k.isSymbol()) {
             const sym = k.asSymbol();
             new_k = try vm.allocateString(sym.chars);
         }
-        try new_map.map.put(vm.gc.trackingAllocator(), new_k, entry.value_ptr.*);
+        try new_map.table.put(vm.gc.trackingAllocator(), new_k, entry.value);
     }
     return value.Value.initObj(&new_map.obj);
 }
@@ -219,17 +210,16 @@ pub fn mapStringifyKeys(vm: *VM, map: *value.ObjMap) !value.Value {
 /// Map#size / Map#length: how many entries it holds.
 pub fn mapSize(vm: *VM, map: *value.ObjMap) !value.Value {
     _ = vm;
-    return value.Value.initNumber(@floatFromInt(map.map.count()));
+    return value.Value.initNumber(@floatFromInt(map.count()));
 }
 
 /// Map#fetch(key, default) -> the value under `key`; without one, `default` when it is
 /// given (nil too), else a KeyError naming the key and the keys the Map has.
 pub fn mapFetch(vm: *VM, map: *value.ObjMap, key: value.Value, default: []const value.Value) !value.Value {
     if (default.len > 1) return vm.fail(.ArgumentError, "fetch takes a key and at most one default, got {d} arguments", .{default.len + 1});
-    if (map.map.get(key)) |held| return held;
+    if (map.table.get(key)) |held| return held;
     if (default.len > 0) return default[0];
-    const keys = map.map.keys();
-    return vm.fail(.KeyError, "fetch: the Map has no key {s} ({s}{s})", .{ shown(vm, key), if (keys.len > 0) "its keys: " else "it has none", shownList(vm, keys) });
+    return vm.fail(.KeyError, "fetch: the Map has no key {s} ({s}{s})", .{ shown(vm, key), if (map.count() > 0) "its keys: " else "it has none", shownList(vm, map.entries()) });
 }
 
 /// Map#dig(key, *more) -> what the keys lead to, each a key into a Map (a String or a
@@ -246,7 +236,7 @@ pub fn mapDig(vm: *VM, map: *value.ObjMap, first: value.Value, more: []const val
 }
 
 fn digStep(vm: *VM, current: value.Value, step: value.Value) !value.Value {
-    if (current.isMap()) return current.asMap().map.get(step) orelse value.Value.initNil();
+    if (current.isMap()) return current.asMap().table.get(step) orelse value.Value.initNil();
     if (current.isJsonObject()) {
         const held = vm.jsonObjectGet(current.asJsonObject(), step) catch return vm.fail(.TypeError, "dig: " ++ error_kind.JSON_KEY_FMT, .{vm.typeName(step)});
         return held orelse value.Value.initNil();
@@ -268,15 +258,18 @@ fn shown(vm: *VM, v: value.Value) []const u8 {
     return out.written();
 }
 
-/// `keys` as `shown` writes them, as an error lists them ("a, b", "..." past
+/// The keys of `entries` as `shown` writes them, as an error lists them ("a, b", "..." past
 /// vm_mod.MAX_NAMES_LISTED).
-fn shownList(vm: *VM, keys: []const value.Value) []const u8 {
+fn shownList(vm: *VM, entries: value.Entries) []const u8 {
     var out: std.Io.Writer.Allocating = .init(vm.scratch_arena.allocator());
-    for (keys[0..@min(keys.len, vm_mod.MAX_NAMES_LISTED)], 0..) |key, i| {
-        if (i > 0) out.writer.writeAll(", ") catch return "";
-        key.stringify(true, &out.writer) catch return "";
+    var it = entries;
+    var listed: usize = 0;
+    while (it.next()) |entry| : (listed += 1) {
+        if (listed == vm_mod.MAX_NAMES_LISTED) break;
+        if (listed > 0) out.writer.writeAll(", ") catch return "";
+        entry.key.stringify(true, &out.writer) catch return "";
     }
-    if (keys.len > vm_mod.MAX_NAMES_LISTED) out.writer.writeAll(", ...") catch return "";
+    if (entries.count > vm_mod.MAX_NAMES_LISTED) out.writer.writeAll(", ...") catch return "";
     return out.written();
 }
 
@@ -305,7 +298,7 @@ fn keepEntries(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosure, truthy: 
             .broke => |v| return v,
             .value => |v| v,
         };
-        if (res.isFalsey() != truthy) try kept.map.put(vm.gc.trackingAllocator(), key, val);
+        if (res.isFalsey() != truthy) try kept.table.put(vm.gc.trackingAllocator(), key, val);
     }
     return value.Value.initObj(&kept.obj);
 }
@@ -327,7 +320,7 @@ pub fn mapTransformValues(vm: *VM, map: *value.ObjMap, closure: *value.ObjClosur
             .value => |v| v,
         };
         vm.push(result);
-        try out.map.put(vm.gc.trackingAllocator(), key, result);
+        try out.table.put(vm.gc.trackingAllocator(), key, result);
     }
     return value.Value.initObj(&out.obj);
 }
