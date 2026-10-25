@@ -24,7 +24,10 @@ async function previewOf(source, uri) {
 }
 
 /** The page, with a host and a socket the test plays. */
-function page({ viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001') } = {}) {
+function page({
+  viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001'),
+  presets = true,
+} = {}) {
   /** @type {unknown[]} */
   const posted = [];
   /** @type {((message: HostMessage) => void)[]} */
@@ -51,6 +54,7 @@ function page({ viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001
       viewportUrl,
       connect,
       viewerOptions: { renderer: stubRenderer().renderer },
+      presets,
     },
   });
   return {
@@ -73,7 +77,7 @@ const problems = () => screen.getByRole('list', { name: 'Problems' });
 /** The status line's text, if one shows. */
 const status = () => document.querySelector('.notice')?.textContent ?? null;
 
-describe('App', () => {
+describe('PreviewPanel', () => {
   it('says what it waits for: the server, its socket, a script, its model', async () => {
     const waiting = page({ viewportUrl: null });
     expect(status()).toBe('Waiting for the KupCAD language server…');
@@ -216,7 +220,7 @@ describe('App', () => {
   });
 });
 
-describe('App presets', () => {
+describe('PreviewPanel presets', () => {
   it("lists the document's presets, applies the one chosen, and saves the panel's values as one", async () => {
     const viewer = page();
     await viewer.tell({ type: 'document', document: PART });
@@ -255,6 +259,16 @@ describe('App presets', () => {
     );
     expect(picker.disabled).toBe(true);
     expect(picker.options[0].textContent?.trim()).toBe('No presets');
+  });
+
+  it('offers none for a host that keeps none, the parameters shown as they are', async () => {
+    const viewer = page({ presets: false });
+    await viewer.tell({ type: 'document', document: PART });
+    viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+    await tick();
+    expect(screen.getByRole('spinbutton', { name: 'width' })).toBeTruthy();
+    expect(screen.queryByRole('combobox', { name: 'Preset' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save as preset…' })).toBeNull();
   });
 });
 

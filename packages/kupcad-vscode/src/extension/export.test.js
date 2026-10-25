@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { BuildError, buildArguments, runBuild, whyItFailed } from './export.js';
+import { BuildError, buildArguments, runBuild } from './export.js';
 
 const POSIX = process.platform !== 'win32';
 
@@ -83,32 +83,5 @@ describe('export', () => {
     const running = runBuild(slow, [], { cwd: dir, signal: controller.signal });
     controller.abort();
     await expect(running).rejects.toMatchObject({ name: 'AbortError' });
-  });
-});
-
-describe('whyItFailed', () => {
-  it('says the first line of why, as kupcad build writes it, not its log, backtrace or summary', () => {
-    const runtime =
-      "info(session_manager): Initialized new session for /w/bad.kup\nerror(vm): RuntimeError: too thin\nerror(vm):     from script:1:8:in 'script'\nBuild failed: error.RuntimeError\n";
-    expect(whyItFailed(runtime)).toBe('RuntimeError: too thin');
-    const syntax =
-      "info(session_manager): Initialized\n/w/bad.kup:2:1: E: Invalid expression starting with '' [invalid-expression]\n\n^\n\nBuild failed: 1 error in /w/bad.kup\n";
-    expect(whyItFailed(syntax)).toBe(
-      "/w/bad.kup:2:1: E: Invalid expression starting with '' [invalid-expression]",
-    );
-    expect(whyItFailed('info(x): only the log\n')).toBeNull();
-  });
-
-  it("isn't taken in by the script's own output, before the error", () => {
-    const noisy =
-      "info(session_manager): Initialized\nhello\n[Warning] careful\nerror(vm): RuntimeError: boom\nerror(vm):     from script:3:8:in 'script'\nBuild failed: error.RuntimeError\n";
-    expect(whyItFailed(noisy)).toBe('RuntimeError: boom');
-    expect(whyItFailed("hello\nError: Unknown option '--bogus'\n\nUsage: kupcad build\n")).toBe(
-      "Unknown option '--bogus'",
-    );
-    expect(whyItFailed('hello\nBuild failed: error.OutOfMemory\n')).toBe(
-      'Build failed: error.OutOfMemory',
-    );
-    expect(whyItFailed('hello\n')).toBeNull();
   });
 });

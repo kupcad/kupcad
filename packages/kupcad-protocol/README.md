@@ -53,6 +53,9 @@ client.sendRequest('workspace/executeCommand', {
   system.
 * `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
   `build`), each with its name and what it is for, in the order a host offers them.
+* `whyBuildFailed(stderr)`: what a failed `kupcad build` said of why (the run's error, a syntax
+  error at its place, the CLI's refusal, its summary; not its log nor the script's own output),
+  for a host that runs it to tell the person; null when it said nothing that does.
 * `errorText(error)`: what an error says, for a person: an Error's message, anything else
   thrown as text. Every host's messages and logs say it the same way.
 * `characterAt(text, column)`: where a column the core names (1-based, in UTF-8 bytes: a

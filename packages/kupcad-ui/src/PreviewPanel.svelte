@@ -26,10 +26,17 @@
    * @property {string | null} viewportUrl the language server's socket, once it is up
    * @property {typeof connectViewport} [connect]
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
+   * @property {boolean} [presets] whether the host keeps presets, which the panel then offers
    */
 
   /** @type {Props} */
-  let { host, viewportUrl, connect = connectViewport, viewerOptions = {} } = $props();
+  let {
+    host,
+    viewportUrl,
+    connect = connectViewport,
+    viewerOptions = {},
+    presets: offersPresets = true,
+  } = $props();
 
   let shown = $state(/** @type {ShownDocument | null} */ (null));
   let preview = $state(/** @type {Preview | null} */ (null));
@@ -158,22 +165,24 @@
   </section>
   {#if header && parameters.length > 0}
     <aside class="params" aria-label="Parameters">
-      <div class="presets">
-        <select
-          class="kc-control"
-          aria-label="Preset"
-          disabled={presets.length === 0}
-          onchange={applyPreset}
-        >
-          <option value="" selected disabled>
-            {presets.length > 0 ? 'Apply a preset…' : 'No presets'}
-          </option>
-          {#each presets as name (name)}
-            <option value={name}>{name}</option>
-          {/each}
-        </select>
-        <button type="button" class="kc-control" onclick={savePreset}>Save as preset…</button>
-      </div>
+      {#if offersPresets}
+        <div class="presets">
+          <select
+            class="kc-control"
+            aria-label="Preset"
+            disabled={presets.length === 0}
+            onchange={applyPreset}
+          >
+            <option value="" selected disabled>
+              {presets.length > 0 ? 'Apply a preset…' : 'No presets'}
+            </option>
+            {#each presets as name (name)}
+              <option value={name}>{name}</option>
+            {/each}
+          </select>
+          <button type="button" class="kc-control" onclick={savePreset}>Save as preset…</button>
+        </div>
+      {/if}
       <ParamsPanel
         schema={header.params.schema}
         values={header.params.values}

@@ -61,7 +61,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   closes), the run's problems, and the parameters with the document's presets. It talks to the
   host as a `ViewerHost` (`@kupcad/protocol`'s `HostMessage` and `ViewerMessage`): the panel's
   values, a preset, an export, a screenshot (base64) or a problem's place go to the host, which
-  gives them to the server or acts on them.
+  gives them to the server or acts on them. A host that keeps no presets passes
+  `presets={false}`, and none are offered.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.
   `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads each as the page draws it,

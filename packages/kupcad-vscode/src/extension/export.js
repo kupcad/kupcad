@@ -2,21 +2,11 @@
 // so what is written is what the CLI builds. Free of the `vscode` import.
 
 import { execFile } from 'node:child_process';
+import { whyBuildFailed } from '@kupcad/protocol';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
 /** What a build may say, at most: its log and why it failed. */
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
-/**
- * The lines of a failed build that say why, best first, each giving its words: an error the run
- * raised (its log line), a syntax or compile error at its place, the CLI's refusal, its summary.
- * The script's own output (`puts`, a warning) is none of them.
- */
-const WHY = [
-  /^error\([^)]*\):\s*(.+)$/,
-  /^(.+:\d+:\d+: E: .+)$/,
-  /^Error: (.+)$/,
-  /^(\w+ failed: .+)$/,
-];
 
 /** Why `kupcad build` failed: what it said. */
 export class BuildError extends Error {
@@ -47,7 +37,7 @@ export function buildArguments(script, output, format, values) {
  * @param {string[]} args `buildArguments`'
  * @param {{ cwd: string, signal?: AbortSignal }} options
  * @returns {Promise<void>}
- * @throws {BuildError} saying what kupcad said
+ * @throws {BuildError} saying what kupcad said (`@kupcad/protocol`'s `whyBuildFailed`)
  */
 export function runBuild(kupcad, args, { cwd, signal }) {
   return new Promise((resolve, reject) => {
@@ -58,25 +48,8 @@ export function runBuild(kupcad, args, { cwd, signal }) {
       (error, _stdout, stderr) => {
         if (!error) return resolve();
         if (error.name === 'AbortError') return reject(error);
-        reject(new BuildError(whyItFailed(stderr) ?? error.message));
+        reject(new BuildError(whyBuildFailed(stderr) ?? error.message));
       },
     );
   });
-}
-
-/**
- * What a failed build said of why (`WHY`'s first line found), or null when it said nothing that
- * does.
- * @param {string} stderr
- * @returns {string | null}
- */
-export function whyItFailed(stderr) {
-  const lines = stderr.split('\n').map((line) => line.trim());
-  for (const pattern of WHY) {
-    for (const line of lines) {
-      const said = pattern.exec(line);
-      if (said) return said[1];
-    }
-  }
-  return null;
 }
