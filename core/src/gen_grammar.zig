@@ -16,6 +16,12 @@ const boolean_class = @import("stdlib/classes/boolean.zig");
 const math_class = @import("stdlib/classes/math.zig");
 const object_class = @import("stdlib/classes/object.zig");
 const gc_class = @import("stdlib/classes/gc.zig");
+const cad_class = @import("stdlib/classes/cad.zig");
+const bbox_class = @import("stdlib/classes/bbox.zig");
+const font_class = @import("stdlib/classes/font.zig");
+const json_object_class = @import("stdlib/classes/json_object.zig");
+const range_class = @import("stdlib/classes/range.zig");
+const random_class = @import("stdlib/classes/random.zig");
 const log_helpers = @import("log.zig");
 
 /// `for`, the loop variables (up to a comment), then the first standalone `in`.
@@ -26,18 +32,18 @@ pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
 /// borrow the names, which are the program's; `deinit` frees the lists.
 pub const Vocabulary = struct {
     keywords: std.ArrayList([]const u8) = .empty,
-    /// Every global function, whatever its category.
+    /// Every global function, whatever its category, and the language's intrinsics (`raise`).
     functions: std.ArrayList([]const u8) = .empty,
     builtins: std.ArrayList([]const u8) = .empty,
     prim_3d: std.ArrayList([]const u8) = .empty,
     prim_2d: std.ArrayList([]const u8) = .empty,
-    /// Every method of a Solid or a Sketch, whatever its category.
+    /// Every method of a Solid, a Sketch, a Path or an Assembly, whatever its category.
     mesh_methods: std.ArrayList([]const u8) = .empty,
     transforms: std.ArrayList([]const u8) = .empty,
     csg_ops: std.ArrayList([]const u8) = .empty,
     workplanes: std.ArrayList([]const u8) = .empty,
     inspections: std.ArrayList([]const u8) = .empty,
-    /// The methods of the value classes (Object, Array, Map, String, ...).
+    /// The methods of the classes (Object, Array, Map, String, CAD, Math, ...).
     core_methods: std.ArrayList([]const u8) = .empty,
 
     pub fn collect(allocator: std.mem.Allocator) !Vocabulary {
@@ -53,6 +59,12 @@ pub const Vocabulary = struct {
                 else => {},
             }
         }
+        for (manifest.language_intrinsics) |intrinsic| {
+            const name = intrinsic[0];
+            // `yield` is a keyword; `params` the parameters' map, not a call
+            if (kupcad_lexer.keywords.has(name) or intrinsic[1] == .protected_symbol) continue;
+            try words.functions.append(allocator, name);
+        }
         for (manifest.mesh_methods) |mm| {
             try words.mesh_methods.append(allocator, mm.name);
             switch (mm.category) {
@@ -63,7 +75,8 @@ pub const Vocabulary = struct {
                 else => {},
             }
         }
-        inline for (.{ object_class, array_class, map_class, string_class, number_class, symbol_class, boolean_class, math_class, gc_class }) |class| {
+        for (manifest.path_methods ++ manifest.assembly_methods) |mm| try words.mesh_methods.append(allocator, mm.name);
+        inline for (.{ object_class, array_class, map_class, string_class, number_class, symbol_class, boolean_class, math_class, gc_class, cad_class, bbox_class, font_class, json_object_class, range_class, random_class }) |class| {
             for (class.methods) |m| try words.core_methods.append(allocator, m.name);
         }
         return words;

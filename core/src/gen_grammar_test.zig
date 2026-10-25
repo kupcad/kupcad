@@ -93,10 +93,12 @@ test "gen_grammar: the editor's vocabulary is the lexer's keywords and the stdli
     defer parsed.deinit();
     const words = parsed.value;
     try testing.expect(contains(words.keywords, "def") and contains(words.keywords, "do") and !contains(words.keywords, "cube"));
-    // A global function of any category: a primitive, the parameters', a highlight
+    // A global function of any category (a primitive, the parameters', a highlight), and an
+    // intrinsic; not `yield`, a keyword
     try testing.expect(contains(words.functions, "cube") and contains(words.functions, "param") and contains(words.functions, "highlight"));
-    // A Solid's method, and a value's
-    try testing.expect(contains(words.methods, "translate") and contains(words.methods, "map"));
+    try testing.expect(contains(words.functions, "raise") and !contains(words.functions, "yield"));
+    // A Solid's method, a Path's, and a value's or a class's
+    try testing.expect(contains(words.methods, "translate") and contains(words.methods, "map") and contains(words.methods, "config"));
     for ([_][]const []const u8{ words.keywords, words.functions, words.methods }) |list| {
         for (list[1..], list[0 .. list.len - 1]) |word, before| try testing.expect(std.mem.order(u8, before, word) == .lt);
     }
