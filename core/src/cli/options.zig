@@ -83,7 +83,7 @@ pub fn CommandSetup(comptime Flags: type) type {
             };
             errdefer options.deinit(allocator);
 
-            const config_path = if (options.config_path) |p| try allocator.dupe(u8, p) else try findFromCwd(io, allocator);
+            const config_path = if (options.config_path) |p| try allocator.dupe(u8, p) else try ProjectConfig.find(io, allocator, ".");
             defer if (config_path) |p| allocator.free(p);
             var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
             const config = ProjectConfig.load(io, allocator, config_path, &where) catch |err| {
@@ -100,11 +100,4 @@ pub fn CommandSetup(comptime Flags: type) type {
             self.options.deinit(allocator);
         }
     };
-}
-
-/// The project's settings file for the current directory, as `ProjectConfig.find` looks.
-fn findFromCwd(io: std.Io, allocator: std.mem.Allocator) !?[]u8 {
-    const cwd = try std.process.currentPathAlloc(io, allocator);
-    defer allocator.free(cwd);
-    return ProjectConfig.find(io, allocator, cwd);
 }

@@ -282,6 +282,22 @@ test "kupcad: check run in a subfolder uses the project's .kupcad.json above it"
     try testing.expect(std.mem.find(u8, report, "unused.kup:1:1: E: Unused variable 'x'") != null);
 }
 
+test "kupcad: run in a subfolder of the project keeps the memory limit of its .kupcad.json" {
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    try sb.tmp.dir.createDirPath(testing.io, "parts");
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "parts/big.kup", .data = "puts (1..200000).to_a.length\ncube(1)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"vm_memory_limit\": 100000 }" });
+    const parts = try std.fs.path.join(testing.allocator, &.{ sb.path, "parts" });
+    defer testing.allocator.free(parts);
+
+    // The script named from its own folder: its folder was ".", which has nothing above it
+    const run = try kupcad(parts, &.{ "run", "big.kup" });
+    defer run.deinit();
+    try testing.expectEqual(@as(u8, 1), run.code);
+    try testing.expect(std.mem.find(u8, run.stdout, "200000") == null);
+}
+
 test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     var sb = try Sandbox.init();
     defer sb.deinit();

@@ -49,7 +49,13 @@ pub const ProjectConfig = struct {
     /// above it, as git finds a repository, so a project's settings hold in every folder of
     /// it whatever directory a tool starts in. Null if there is none; caller owns the path.
     pub fn find(io: std.Io, allocator: std.mem.Allocator, dir: []const u8) !?[]u8 {
-        var current: ?[]const u8 = dir;
+        // From the folder's absolute path: a relative one (".", a script's in the current
+        // directory) has no folder above it to look in
+        const cwd = try std.process.currentPathAlloc(io, allocator);
+        defer allocator.free(cwd);
+        const absolute = try std.fs.path.resolve(allocator, &.{ cwd, dir });
+        defer allocator.free(absolute);
+        var current: ?[]const u8 = absolute;
         while (current) |folder| : (current = std.fs.path.dirname(folder)) {
             const candidate = try std.fs.path.join(allocator, &.{ folder, FILE_NAME });
             if (std.Io.Dir.cwd().access(io, candidate, .{})) |_| return candidate else |err| {
