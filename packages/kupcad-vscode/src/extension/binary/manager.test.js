@@ -201,6 +201,16 @@ describe('BinaryManager.checkForUpdates', () => {
     expect(await takes.manager.checkForUpdates({ asked: false })).toBe('/storage/bin/0.1.3/kupcad');
   });
 
+  it('installs at once what a check the user asked for finds, autoUpdate or not', async () => {
+    const { manager, installed } = await runningOwn({
+      releases: [release('0.1.3')],
+      settings: { 'binary.autoUpdate': false },
+    });
+    expect(await manager.checkForUpdates({ asked: true })).toBe('/storage/bin/0.1.3/kupcad');
+    expect(installed).toEqual(['0.1.3']);
+    expect(fake.messages).toEqual([]);
+  });
+
   it('looks once a day unless asked', async () => {
     const { manager, installed, later } = await runningOwn({ releases: [release('0.1.2')] });
     expect(await manager.checkForUpdates({ asked: false })).toBeNull();

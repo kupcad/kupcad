@@ -57,7 +57,7 @@ const binaries = vi.hoisted(() => ({
   prunes: 0,
 }));
 vi.mock('./binary/manager.js', () => ({
-  CHECK_FOR_UPDATES_COMMAND: 'kupcad.checkForUpdates',
+  UPDATE_CLI_COMMAND: 'kupcad.updateCli',
   BinaryManager: class {
     /** @param {object} options */
     constructor(options) {
@@ -153,7 +153,7 @@ describe('activate', () => {
     await vi.waitFor(() =>
       expect(servers[0].restarts).toEqual([{ serverPath: '/storage/bin/0.1.3/kupcad' }]),
     );
-    await commands.executeCommand('kupcad.checkForUpdates');
+    await commands.executeCommand('kupcad.updateCli');
     expect(servers[0].restarts.at(-1)).toEqual({ serverPath: '/storage/bin/0.1.4/kupcad' });
     expect(binaries.asked).toEqual([false, true]);
     expect(binaries.prunes).toBe(2);
@@ -179,7 +179,7 @@ describe('activate', () => {
     expect(fake.messages[1].text).toMatch(/isn't running/);
 
     binaries.failStart = false;
-    await commands.executeCommand('kupcad.checkForUpdates');
+    await commands.executeCommand('kupcad.updateCli');
     expect(servers[0].restarts).toEqual([
       { serverPath: '/usr/local/bin/kupcad', viewportPort: 9001 },
     ]);

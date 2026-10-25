@@ -50,13 +50,14 @@ the range the extension declares (`kupcad.core` in its package.json) and speaks 
 an old `kupcad` on `PATH` never runs under a newer extension. When none fits, the newest release
 in range is downloaded from GitHub (a progress notification shows it), checked against the
 release's `checksums.txt` before it is unpacked, and installed; if that fails, the message says
-why and offers the releases page and the setting, and `KupCAD: Check for Updates` tries again.
+why and offers the releases page and the setting, and `KupCAD: Update CLI` tries again.
 Windows installing the same release at once each unpack it apart, and the first to finish
 installs it; an install already there is kept.
 
-Once a day (and on `KupCAD: Check for Updates`) the extension's own install looks for a newer
-release in range, and installs it and restarts the server with it, or asks first when
-`kupcad.binary.autoUpdate` is off; the installs it replaced are removed, but for the one before
+Once a day the extension's own install looks for a newer release in range, and installs it and
+restarts the server with it, or asks first when `kupcad.binary.autoUpdate` is off.
+`KupCAD: Update CLI` (in the command palette, and in a `.kup` editor's title bar menu beside
+Export…) looks at once, and installs what it finds without asking; the installs it replaced are removed, but for the one before
 (another window may still run it). A newer release out of range says the extension needs
 updating first. A `kupcad` from the setting, `PATH` or a checkout is updated where it came from.
 
@@ -71,7 +72,7 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
   always pick a free port). If the port is taken, the server falls back to a free one and the
   viewer follows it.
 * `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
-  instead of asking.
+  instead of asking. `KupCAD: Update CLI` looks at once.
 * `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.
 
 ## Security notes

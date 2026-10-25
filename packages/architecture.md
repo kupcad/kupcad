@@ -458,11 +458,11 @@ The extension ships no binary; it fetches a release of the core it runs with.
    is kept, and a folder of the version without its binary is replaced. A progress notification
    shows the download; a failure (offline, no archive for the platform, a checksum that doesn't
    match) says what went wrong and offers the releases page and the setting, and
-   `KupCAD: Check for Updates` tries again.
+   `KupCAD: Update CLI` tries again.
 3. **Update** (`BinaryManager.checkForUpdates`): once a day on activation (and on the
-   `KupCAD: Check for Updates` command) the releases list is read again; a newer version in range
-   is installed and the server restarted on it (`LanguageServer.restart`), or offered first with
-   `kupcad.binary.autoUpdate` off; a newer version out of range says the extension itself needs
+   `KupCAD: Update CLI` command) the releases list is read again; a newer version in range
+   is installed and the server restarted on it (`LanguageServer.restart`), or, for the daily look
+   with `kupcad.binary.autoUpdate` off, offered first; a newer version out of range says the extension itself needs
    updating. Checks run one after another (the daily one and the command's never install
    twice). Once the server runs the update, the installs older than it are removed
    (`BinaryManager.prune`) but the newest of them, which another window may still run. Prereleases are taken only with `kupcad.binary.channel: "prerelease"`. Only the

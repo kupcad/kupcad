@@ -18,7 +18,8 @@ import { compareVersions, parseVersion } from './versions.js';
 /** @import { Found } from './resolve.js' */
 /** @import { Version } from './versions.js' */
 
-export const CHECK_FOR_UPDATES_COMMAND = 'kupcad.checkForUpdates';
+/** Looks for a newer kupcad now, and installs it (`checkForUpdates`, asked). */
+export const UPDATE_CLI_COMMAND = 'kupcad.updateCli';
 /** An update is looked for once a day, at most, unless asked. */
 export const UPDATE_EVERY_MS = 24 * 60 * 60 * 1000;
 /** What the extension keeps between sessions: the last releases read (their ETag), and when. */
@@ -124,8 +125,9 @@ export class BinaryManager {
 
   /**
    * Looks for a newer release in range of the extension's own install, once a day unless
-   * `asked`: one is installed at once with `kupcad.binary.autoUpdate`, else when the user takes
-   * it. A newer release out of range says the extension needs updating first.
+   * `asked`: one is installed at once when asked for or with `kupcad.binary.autoUpdate`, else
+   * when the user takes it. A newer release out of range says the extension needs updating
+   * first.
    * @param {{ asked: boolean }} how
    * @returns {Promise<string | null>} the new install's path, for the server to run, or null
    */
@@ -194,7 +196,9 @@ export class BinaryManager {
 
     const inRange = newestInRange(list.releases, this.#options.range, this.#channel());
     if (inRange && newer(inRange)) {
+      // Asked, the user wants it: asking again would be one click too many
       const take =
+        asked ||
         this.#options.settings().get('binary.autoUpdate', true) ||
         (await vscode.window.showInformationMessage(
           `kupcad ${inRange.version} is out (this is ${running.version}).`,

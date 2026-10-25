@@ -54,8 +54,8 @@
         "category": "KupCAD"
       },
       {
-        "command": "kupcad.checkForUpdates",
-        "title": "Check for Updates",
+        "command": "kupcad.updateCli",
+        "title": "Update CLI",
         "category": "KupCAD"
       }
     ],
@@ -70,6 +70,11 @@
           "command": "kupcad.export",
           "when": "resourceLangId == kupcad",
           "group": "kupcad@1"
+        },
+        {
+          "command": "kupcad.updateCli",
+          "when": "resourceLangId == kupcad",
+          "group": "kupcad@2"
         }
       ]
     },
@@ -85,7 +90,7 @@
         "kupcad.binary.autoUpdate": {
           "type": "boolean",
           "default": true,
-          "description": "Install a newer release of kupcad at once when one is out (looked for once a day), instead of asking first. Only the extension's own install is updated."
+          "description": "Install a newer release of kupcad at once when one is out (looked for once a day), instead of asking first. Only the extension's own install is updated. The KupCAD: Update CLI command looks at once."
         },
         "kupcad.binary.channel": {
           "type": "string",

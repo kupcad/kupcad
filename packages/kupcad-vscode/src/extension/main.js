@@ -6,7 +6,7 @@ import * as fs from 'node:fs';
 import { errorText, ScriptValues } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { BinaryManager, CHECK_FOR_UPDATES_COMMAND } from './binary/manager.js';
+import { BinaryManager, UPDATE_CLI_COMMAND } from './binary/manager.js';
 import { registerExportCommands } from './commands.js';
 import { LanguageServer } from './server.js';
 import { NOT_RUNNING } from './scripts.js';
@@ -98,7 +98,7 @@ export async function activate(context) {
       });
     }),
     // With none running (an install that failed offline, say), it tries again
-    vscode.commands.registerCommand(CHECK_FOR_UPDATES_COMMAND, async () => {
+    vscode.commands.registerCommand(UPDATE_CLI_COMMAND, async () => {
       if (!server?.started) await startServer();
       else await runUpdate(await binaries.checkForUpdates({ asked: true }));
     }),
