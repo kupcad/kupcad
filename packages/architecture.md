@@ -217,7 +217,8 @@ await kupcad.version()       // -> VersionInfo (version_wasm), checked against P
   after a crash had to be given the files again, and a script could read what another had
   exported. A call that is its arguments alone is the simpler contract; a host with many large
   files (the PWA) can keep a worker and send them each time, or cache in the core later, when
-  measured.
+  measured. A build runs under the interactive limits (`api.buildModel`'s `interactive`), as a
+  preview does: a page waits on it, and a runaway script would hang its worker.
 * **Two builds** of the module come from core: `kupcad.wasm` and the threaded one
   (`-Dwasm_threads`, which needs `SharedArrayBuffer` and so cross-origin isolation). The package
   ships the plain one; the threaded one, a second entry a host opts into when its headers allow,

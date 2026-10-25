@@ -59,7 +59,8 @@ the package answers it itself (`src/wasi.js`): the host's clocks and randomness,
 files. A script reads the files its call brings (`files`, by the paths the script names them):
 they are packed into one buffer (`src/files.js`, as `core/src/vfs/packed.zig` reads it) and
 kept in an in-memory file system of that call alone, so no script sees another's files and a
-script's exports go nowhere. Every string and buffer is copied in and freed after the call;
+script's exports go nowhere. A build runs under the core's interactive limits (instructions,
+memory), as a preview does: a runaway script stops with an error instead of hanging the worker. Every string and buffer is copied in and freed after the call;
 every result is copied out and freed. `pnpm build` copies the module from the core's
 build (`pnpm build:core:wasm` at the root) into `dist/`, which the package ships; its version is
 the core's, which the tests hold it to.
