@@ -49,8 +49,10 @@ const png = await viewer.screenshot();
   the last solid was seen. The camera's depth takes in the model and what it stands on, however
   small the model and wherever the camera moves. A model without the selected part drops the
   selection, with a `select` event of null.
-* **Under the pointer** the viewer says, a frame at most (a `hover` event, null over nothing and
-  while a button drags the camera), the part and, on a solid, the face: what its feature edges
+* **Under the pointer** the viewer marks and says, a frame at most (a `hover` event, null over
+  nothing and while a button drags the camera), the part and, on a solid, the face. The copy under
+  it glows a little in the selection's colour and its face more (`hover-mark.js`: light added to
+  what is drawn there, so the mark shows on a part of any colour). The face is what its feature edges
   bound (`faces.js`: triangles joined where they meet at less than the edges' 20°), flat when it
   faces one way (its area in mm², its way, and `+Z (top)` when along an axis) or curved (its
   area). A ghost, seen through, is under nothing, and neither is what a section cut away.

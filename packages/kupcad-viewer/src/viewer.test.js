@@ -8,6 +8,7 @@ import {
   Vector3,
 } from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { COPY_GLOW, FACE_GLOW } from './hover-mark.js';
 import { GHOST_OPACITY } from './model.js';
 import { dracoModelOf, HIGHLIGHTED_PIN, modelOf, PARTS_WITH_GHOST } from './models.test-helper.js';
 import { stubRenderer } from './testing.js';
@@ -141,6 +142,31 @@ function wheelOn(canvas, init) {
   const event = new WheelEvent('wheel', { cancelable: true, ...init });
   canvas.dispatchEvent(event);
   return event.defaultPrevented;
+}
+
+/**
+ * The first solid's mesh in `scene`, and the hover's glows under it.
+ * @param {Scene} scene
+ */
+function blockIn(scene) {
+  /** @type {Mesh[]} */
+  const meshes = [];
+  scene.traverse((object) => {
+    if (/** @type {Partial<Mesh>} */ (object).material instanceof MeshStandardMaterial) {
+      meshes.push(/** @type {Mesh} */ (object));
+    }
+  });
+  const [mesh] = meshes;
+  /** @param {number} opacity */
+  const glowOf = (opacity) =>
+    /** @type {Mesh | undefined} */ (
+      mesh.children.find(
+        (child) =>
+          /** @type {MeshBasicMaterial} */ (/** @type {Mesh} */ (child).material)?.opacity ===
+          opacity,
+      )
+    );
+  return { mesh, copy: glowOf(COPY_GLOW), face: glowOf(FACE_GLOW) };
 }
 
 const BLOCK = 'cube(20, center: true).named("block")';
@@ -606,6 +632,45 @@ describe('Viewer', () => {
     pointer('pointermove', 2);
     await nextFrame();
     expect(said).toHaveLength(count);
+  });
+
+  it('marks what the pointer is over: its copy and its face glow, nothing once off it', async () => {
+    const { viewer, canvas, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    viewer.setCamera({ view: 'top' });
+    /** @param {number} x @param {number} [buttons] */
+    const pointAt = async (x, buttons = 0) => {
+      canvas.dispatchEvent(
+        Object.assign(new Event('pointermove'), { offsetX: x, offsetY: HEIGHT / 2, buttons }),
+      );
+      return sceneDrawn(drawn);
+    };
+    expect(blockIn(await sceneDrawn(drawn)).copy).toBeUndefined();
+    const over = blockIn(await pointAt(WIDTH / 2));
+    expect(over.copy).toBeDefined();
+    // The top face, seen from the top: two triangles, at the top of the block
+    const face = /** @type {Mesh} */ (over.face);
+    const position = face.geometry.getAttribute('position');
+    expect(position.count).toBe(6);
+    for (let i = 0; i < position.count; i++) {
+      const corner = new Vector3().fromBufferAttribute(position, i);
+      expect(corner.applyMatrix4(over.mesh.matrixWorld).z).toBeCloseTo(10, 4);
+    }
+    // In the selection's colour, cut at a section as the model is
+    const glowing = /** @type {MeshBasicMaterial} */ (face.material);
+    expect(glowing.color.getHexString()).toBe(LIGHT.selection.slice(1));
+    viewer.setTheme(DARK);
+    expect(glowing.color.getHexString()).toBe(DARK.selection.slice(1));
+    viewer.setSection({ axis: 'z', offset: 5 });
+    expect(glowing.clippingPlanes).toHaveLength(1);
+    viewer.setSection(null);
+    // Off the model, while dragging, and once a model replaced it: nothing marked
+    expect(blockIn(await pointAt(2)).copy).toBeUndefined();
+    await pointAt(WIDTH / 2);
+    expect(blockIn(await pointAt(WIDTH / 2, 1)).copy).toBeUndefined();
+    await pointAt(WIDTH / 2);
+    await viewer.setModel(await modelOf(BLOCK));
+    expect(blockIn(await sceneDrawn(drawn)).copy).toBeUndefined();
   });
 
   it('picks the part behind a ghost, which is seen through', async () => {

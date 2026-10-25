@@ -1,7 +1,8 @@
 // A mesh's faces, as its feature edges bound them: the triangles joined across their edges where
 // they meet at less than EDGE_ANGLE_DEG (model.js draws an edge where they meet at more). A face
 // is flat when its triangles all face one way, curved otherwise (a cylinder's side); its area is
-// in the scene's millimetres. A geometry's faces are found once, as the pointer first meets each.
+// in the scene's millimetres. A geometry's faces are found once, as the pointer first meets each;
+// a face's triangles are what the viewer marks the face under the pointer with.
 
 import { Vector3 } from 'three';
 import { EDGE_ANGLE_DEG } from './model.js';
@@ -47,13 +48,7 @@ const topologies = new WeakMap();
  */
 export function faceAt(mesh, triangle) {
   const geometry = mesh.geometry;
-  let topology = topologies.get(geometry);
-  if (!topology) {
-    topology = topologyOf(geometry);
-    topologies.set(geometry, topology);
-  }
-  if (topology.faceOf[triangle] < 0) findFace(topology, triangle);
-  const face = topology.faces[topology.faceOf[triangle]];
+  const face = faceContaining(geometry, triangle);
   const area = face.triangles.reduce((sum, t) => sum + worldArea(geometry, t, mesh.matrixWorld), 0);
   if (!face.flat) return { flat: false, area, normal: null, facing: null };
   const normal = worldNormal(geometry, triangle, mesh.matrixWorld);
@@ -63,6 +58,32 @@ export function faceAt(mesh, triangle) {
     normal: /** @type {[number, number, number]} */ (normal.toArray()),
     facing: AXES.find(({ axis }) => normal.dot(new Vector3(...axis)) >= AXIS_COS)?.name ?? null,
   };
+}
+
+/**
+ * The triangles of the face of `mesh` its triangle `triangle` is in: the same array for every
+ * triangle of the face (and every mesh of the geometry).
+ * @param {Mesh} mesh
+ * @param {number} triangle
+ * @returns {readonly number[]}
+ */
+export function faceTriangles(mesh, triangle) {
+  return faceContaining(mesh.geometry, triangle).triangles;
+}
+
+/**
+ * The face of `geometry` its triangle `triangle` is in, found the first time it is asked for.
+ * @param {BufferGeometry} geometry
+ * @param {number} triangle
+ */
+function faceContaining(geometry, triangle) {
+  let topology = topologies.get(geometry);
+  if (!topology) {
+    topology = topologyOf(geometry);
+    topologies.set(geometry, topology);
+  }
+  if (topology.faceOf[triangle] < 0) findFace(topology, triangle);
+  return topology.faces[topology.faceOf[triangle]];
 }
 
 /**

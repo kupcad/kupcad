@@ -6,7 +6,8 @@
 // selected part. The camera moves to a view over a moment (motion.js); turned by hand, it is in
 // no named view, which a 'view' event says. Its keys and its wheel (wheel.js) are Orca Slicer's;
 // the section the wheel moves, a 'section' event says. What is under the pointer (the part, the
-// face: faces.js) a 'hover' event says, a frame at most.
+// face: faces.js) a 'hover' event says, a frame at most, and the viewer marks: the copy and its
+// face glow in the selection's colour (hover-mark.js).
 
 import {
   AmbientLight,
@@ -40,6 +41,7 @@ import {
 import { disposeObject } from './dispose.js';
 import { axesOf, environmentOf } from './environment.js';
 import { faceAt } from './faces.js';
+import { HoverMark } from './hover-mark.js';
 import { disposeScene, isDracoCompressed, sceneOf } from './model.js';
 import { CameraMove, MOTION_MS, sameDirection, unit } from './motion.js';
 import { RENDER_ORDER, SectionView } from './section.js';
@@ -121,6 +123,8 @@ export class Viewer extends EventTarget {
   #raycaster = new Raycaster();
   /** The selected part's edges, in the selection's colour. */
   #selectionEdges = new LineBasicMaterial();
+  /** What the pointer is over, marked. */
+  #hoverMark = new HoverMark(LIGHT.selection);
   /** @type {SceneModel | null} */
   #model = null;
   /** The kind of the last model shown, which a model of nothing (one that failed) leaves. @type {SceneModel['kind'] | null} */
@@ -291,6 +295,8 @@ export class Viewer extends EventTarget {
       return false;
     }
     const before = this.#model;
+    // Its marks go with it: the next pointer move marks the new one
+    this.#markHover(null);
     if (before) {
       before.root.removeFromParent();
       disposeScene(before);
@@ -438,6 +444,7 @@ export class Viewer extends EventTarget {
     this.#theme = theme;
     this.#scene.background = new Color(theme.background);
     this.#selectionEdges.color.set(theme.selection);
+    this.#hoverMark.setColor(theme.selection);
     this.#sectionView.setCapColor(theme.cap);
     applyTheme(this.#model, theme);
     this.#applySelection();
@@ -484,11 +491,19 @@ export class Viewer extends EventTarget {
    * @returns {Hover | null}
    */
   hoverAt(x, y) {
-    const hit = this.#hitAt(x, y);
+    return this.#hoverOf(this.#hitAt(x, y));
+  }
+
+  /**
+   * What `hit` is: its part and, on a solid, its face; null for none.
+   * @param {{ shape: Shape, triangle: number | null } | null} hit
+   * @returns {Hover | null}
+   */
+  #hoverOf(hit) {
     if (!hit) return null;
     const face =
       this.#model?.kind === '3d' && hit.triangle !== null
-        ? faceAt(/** @type {import('three').Mesh} */ (hit.shape.mesh), hit.triangle)
+        ? faceAt(hit.shape.mesh, hit.triangle)
         : null;
     return { part: hit.shape.part, face };
   }
@@ -516,6 +531,7 @@ export class Viewer extends EventTarget {
     if (this.#hoverFrame) cancelAnimationFrame(this.#hoverFrame);
     this.#listeners.abort();
     this.#controls.dispose();
+    this.#hoverMark.dispose();
     if (this.#model) disposeScene(this.#model);
     disposeObject(this.#environment);
     this.#draco?.dispose();
@@ -570,7 +586,7 @@ export class Viewer extends EventTarget {
   #applySection() {
     this.#sectionView.apply(this.#section, this.#model, boundsOf(this.#modelBox()), {
       capped: this.#renderMode !== 'wireframe',
-      also: [this.#selectionEdges],
+      also: [this.#selectionEdges, ...this.#hoverMark.materials],
     });
   }
 
@@ -827,14 +843,29 @@ export class Viewer extends EventTarget {
     });
   }
 
-  /** Says what is under the pointer ('hover', its detail `hoverAt`'s with where), or nothing. */
+  /**
+   * Marks what is under the pointer, and says it ('hover', its detail `hoverAt`'s with where), or
+   * nothing.
+   */
   #sayHover() {
     const at = this.#pointer;
-    const under = at ? this.hoverAt(at.x, at.y) : null;
+    const hit = at ? this.#hitAt(at.x, at.y) : null;
+    this.#markHover(hit);
+    const under = this.#hoverOf(hit);
     if (!under && !this.#hovering) return;
     this.#hovering = under !== null;
     const detail = under && at ? { ...under, x: at.x, y: at.y } : null;
     this.dispatchEvent(new CustomEvent('hover', { detail }));
+  }
+
+  /**
+   * Marks what `hit` is (none: null): its copy, and on a solid its face; drawn again when the
+   * mark moved.
+   * @param {{ shape: Shape, triangle: number | null } | null} hit
+   */
+  #markHover(hit) {
+    const triangle = this.#model?.kind === '3d' ? (hit?.triangle ?? null) : null;
+    if (this.#hoverMark.mark(hit?.shape.mesh ?? null, triangle)) this.#invalidate();
   }
 
   /**
