@@ -7,7 +7,7 @@ drone_motor_arm
   part 3 manifold volume=13.821367840160528 area=27.92986398270483 min=78,-1.5,-1.5 max=81,1.5,1.5 genus=0 vertices=258 triangles=512
   exports glb
 standoff
-  part 1 manifold volume=5150.982915946414 area=4212.124101444654 min=-13.980861451446813,-4.070106383802021,0 max=14.1,28.09554139813615,25 genus=3 vertices=169 triangles=346
+  part 1 manifold volume=5150.982915946414 area=4212.124101444654 min=-13.980861451446813,-4.070106383802021,0 max=14.1,28.09554139813615,25 genus=3 vertices=171 triangles=350
   exports glb
 text
   part 1 manifold volume=719.1938254982233 area=2027.034469625105 min=0.8251953125,-2.03125,0 max=64.2236328125,7.5,5 genus=-7 vertices=586 triangles=1140

@@ -7,6 +7,10 @@ const EXAMPLES = [_][]const u8{ "cup", "drone_motor_arm", "standoff", "text" };
 /// Variation tuples tatfi's gvar keeps on the stack before it takes the heap (its default).
 const TATFI_GVAR_STACK_TUPLES = 32;
 
+/// Manifold's version, as its CMakeLists.txt sets it (MANIFOLD_VERSION_*): the header its
+/// CMake writes from cmake/version.h.in, which manifold.cpp includes, is written from it here.
+const MANIFOLD_VERSION = .{ .major = 3, .minor = 5, .patch = 1 };
+
 const manifold_sources = &[_][]const u8{
     "vendor/manifold/bindings/c/box.cpp",
     "vendor/manifold/bindings/c/conv.cpp",
@@ -142,7 +146,6 @@ const draco_sources = &[_][]const u8{
 
     // --- Core ---
     "vendor/draco/src/draco/core/bit_utils.cc",
-    "vendor/draco/src/draco/core/bounding_box.cc",
     "vendor/draco/src/draco/core/cycle_timer.cc",
     "vendor/draco/src/draco/core/data_buffer.cc",
     "vendor/draco/src/draco/core/decoder_buffer.cc",
@@ -326,6 +329,14 @@ pub fn build(b: *std.Build) void {
         .link_libcpp = true,
     });
     native_mod.addIncludePath(b.path("vendor/manifold/include"));
+    native_mod.addConfigHeader(b.addConfigHeader(.{
+        .style = .{ .cmake = b.path("vendor/manifold/cmake/version.h.in") },
+        .include_path = "manifold/version.h",
+    }, .{
+        .MANIFOLD_VERSION_MAJOR = MANIFOLD_VERSION.major,
+        .MANIFOLD_VERSION_MINOR = MANIFOLD_VERSION.minor,
+        .MANIFOLD_VERSION_PATCH = MANIFOLD_VERSION.patch,
+    }));
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c"));
     native_mod.addIncludePath(b.path("vendor/manifold/bindings/c/include"));
     native_mod.addIncludePath(b.path("vendor/draco/src"));

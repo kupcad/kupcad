@@ -1288,18 +1288,18 @@ test "VM: Block modifiers ghost do and highlight do apply to inner CSG" {
     try testing.expectEqual(.ghost, vm.materials.items[0].role);
 }
 
-test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operations" {
+test "VM: manifold.simplify_coplanar merges faces within the tolerance on boolean operations" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();
     try registry.registerStandardLibrary(&vm);
 
     // 1. Evaluate with simplify_coplanar: false
-    // Slices creates 10 rows of coplanar triangles along each side face
+    // A step on the top face lower than the tolerance. Manifold's booleans merge exactly
+    // coplanar faces themselves (an extrusion's slices no longer survive one); faces within
+    // the tolerance are the option's alone
     const source_unsimplified =
-        \\CAD.config(manifold: { simplify_coplanar: false })
-        \\a = square(size: 10).extrude(10, slices: 10)
-        \\b = cube(size: 2).translate(4, 4, 10)
-        \\a + b
+        \\CAD.config(tolerance: 0.01, manifold: { simplify_coplanar: false })
+        \\cube(10) + cube([4, 4, 0.001]).translate(3, 3, 10)
     ;
 
     var doc1 = try Document.parse(testing.allocator, source_unsimplified);
@@ -1323,10 +1323,8 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
 
     // 2. Evaluate with simplify_coplanar: true
     const source_simplified =
-        \\CAD.config(manifold: { simplify_coplanar: true })
-        \\a = square(size: 10).extrude(10, slices: 10)
-        \\b = cube(size: 2).translate(4, 4, 10)
-        \\a + b
+        \\CAD.config(tolerance: 0.01, manifold: { simplify_coplanar: true })
+        \\cube(10) + cube([4, 4, 0.001]).translate(3, 3, 10)
     ;
 
     var doc2 = try Document.parse(testing.allocator, source_simplified);
@@ -1345,9 +1343,9 @@ test "VM: manifold.simplify_coplanar merges coplanar triangles on boolean operat
         testing.allocator.free(mesh_simplified.tri_verts);
     }
 
-    // Unsimplified mesh retains the 10 height-slice subdivisions (~260+ indices)
-    // Simplified mesh dissolves the coplanar slice edges (~60-80 indices)
+    // The step's 28 triangles; simplified, the cube's 12
     try testing.expect(mesh_unsimplified.tri_verts.len > mesh_simplified.tri_verts.len);
+    try testing.expectEqual(12 * 3, mesh_simplified.tri_verts.len);
 }
 
 test "VM: .simplify() script method decimates mesh on demand" {
