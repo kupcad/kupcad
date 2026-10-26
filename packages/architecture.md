@@ -96,7 +96,7 @@ export interface Part {
 }
 /** Lines and columns are 1-based, columns in UTF-8 bytes; null where the script wasn't running. */
 export interface Warning { message: string; line: number | null; column: number | null }
-export interface Failure extends Warning { param: string | null }   // the parameter refused
+export interface Failure extends Warning { param: string | null; path: PathStep[] }   // the parameter refused, where in its value
 
 /** What a frame shows: its body, typed by its kind. */
 export type Model =
@@ -109,13 +109,22 @@ export interface Preview { header: FrameHeader; model: Model }
 /** `kupcad doc`'s schema, as extract_params_wasm and every frame give it. */
 export interface UiSchema { meta: Meta; parameters: ParamSpec[] }
 export interface Meta { title: string | null; description: string | null; author: string | null }
-export type ParamValue = number | string | boolean | ParamValue[];   // arrays nested at most 32 deep
-export interface ParamSpec {
+export type ParamScalar = number | string | boolean;
+export type PathStep = number | string;   // an element's index, a field's name
+export type ParamValue = ParamScalar | ParamValue[] | { [field: string]: ParamValue };   // two deep at most
+export interface Rule {                // core/src/core/param_rules.zig's: each part's rules nested
+  type: 'number' | 'string' | 'boolean' | 'array' | 'map';   // a Symbol is a 'string' with `in`
+  min: number | null; max: number | null; in: ParamScalar[] | null;
+  items: Rule | null;                  // a list's element
+  tuple: Rule[] | null;                // a tuple's places
+  fields: (Rule & { name: string })[] | null;   // a Map's fields
+  min_items: number | null; max_items: number | null;
+  title: string | null; unit: string | null; step: number | null;
+}
+export interface ParamSpec extends Rule {
   name: string;
-  type: 'number' | 'string' | 'boolean' | 'array';   // `type:`'s, else the default's, else 'string'; a Symbol parameter is a 'string' with `validate.in`
-  default_value: ParamValue | null;   // null when there is none (nil), or the default is computed
-  validate: { min: number | null; max: number | null; in: (number | string | boolean)[] | null };
-  step: number | null; unit: string | null; group: string | null;
+  default_value: ParamValue | null;    // null when there is none (nil), or the default is computed
+  group: string | null; description: string | null;
 }
 export type ParamValues = Record<string, ParamValue>;
 

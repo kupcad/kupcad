@@ -20,7 +20,7 @@ describe('a run status', () => {
     expect(runStatusOf(null)).toEqual({ state: 'running' });
     expect(runStatusOf(headerOf({}))).toEqual({ state: 'ready', runMs: 42, warnings: 0 });
     const failed = headerOf({
-      error: { message: 'boom', line: 2, column: 1, param: null },
+      error: { message: 'boom', line: 2, column: 1, param: null, path: [] },
       warnings: [{ message: 'mended', line: 1, column: 1 }],
     });
     expect(runStatusOf(failed)).toEqual({ state: 'failed', runMs: 42, warnings: 1 });
@@ -40,7 +40,7 @@ describe("a run's problems", () => {
     expect(problemsOf(null)).toEqual([]);
     expect(problemsOf(headerOf({}))).toEqual([]);
     const failed = headerOf({
-      error: { message: 'boom', line: 2, column: 5, param: 'width' },
+      error: { message: 'boom', line: 2, column: 5, param: 'width', path: [] },
       warnings: [
         { message: 'mended', line: 1, column: 1 },
         { message: 'meshed coarse', line: null, column: null },

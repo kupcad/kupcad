@@ -45,11 +45,13 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   title that folds away (a header bar of its own, `--kc-section-bg` and `--kc-section-fg`, VS
   Code's side bar section headers in its webview), the parameters of no group first: a slider with a
   number for one between a `min` and a `max`, a number field, a select of the `in:` choices, a
-  toggle, a text field, and for an array a list: a control per element (`elementSpec`: of the
-  kind its default's elements are, with the parameter's range, choices, step and unit; an array
-  in it a text field of its JSON), each with a remove, and an add that copies the last
-  (`newElement`), a refusal naming the element (`[1] must be a number`); `step:` and `unit:` as
-  given. A slider without a `step:` moves by 1
+  toggle, a text field; a tuple's places and a Map's fields side by side, each labelled on top
+  (`partsOf`: a place's `title:`, else its index; a field's, else its name); and a list as its
+  elements, each a control (a list of tuples or of Maps: a block of them) with a remove, and an
+  add that copies the last (`newElement`, else `blankOf`), each as its `min_items` and
+  `max_items` allow (`canRemove`, `canAdd`). A refusal names the place (`[1][:depth] must be at
+  least 0.1`) and marks the control there, the panel's own check's (`validate`, which gives the
+  path) and the run's (the frame's `error.path`). `step:` and `unit:` as given. A slider without a `step:` moves by 1
   (`stepOf`), and one over a range narrower than 1 by the power of ten that gives it ten
   positions at least; a value typed in its field is taken whatever its step. Each parameter is rows of its own, a line
   between one and the next: its `title:` (its name where it has none, and as the title's tooltip),

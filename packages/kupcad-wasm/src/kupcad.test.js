@@ -65,9 +65,9 @@ describe('preview', () => {
     expect(failed.model).toEqual({ kind: 'none' });
     expect(failed.header.error).toMatchObject({ message: 'RuntimeError: boom', line: 2 });
     const refused = await kupcad.preview('cube(2)', {
-      params: { w: /** @type {any} */ ({ a: 1 }) },
+      params: { w: /** @type {any} */ ([null]) },
     });
-    expect(refused.header.error?.message).toMatch(/^parameters: parameter 'w' is an object/);
+    expect(refused.header.error?.message).toMatch(/^parameters: parameter 'w' holds null/);
     // An Array parameter takes an array
     const listed = await kupcad.preview('xs = param(:xs, default: [1])\ncube(xs.length)', {
       params: { xs: [1, 2, 3] },

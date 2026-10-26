@@ -17,16 +17,19 @@
         {
           "name": "width",
           "type": "number",
-          "default_value": 20,
-          "validate": {
-            "min": 10,
-            "max": null,
-            "in": null
-          },
-          "step": null,
-          "unit": null,
-          "group": null,
+          "min": 10,
+          "max": null,
+          "in": null,
+          "items": null,
+          "tuple": null,
+          "fields": null,
+          "min_items": null,
+          "max_items": null,
           "title": null,
+          "unit": null,
+          "step": null,
+          "default_value": 20,
+          "group": null,
           "description": null
         }
       ]
@@ -34,10 +37,11 @@
     "values": {}
   },
   "error": {
-    "message": "ValueError: parameter :width value 5 is below its minimum 10",
+    "message": "ValueError: parameter :width expects a number at least 10, got 5",
     "line": 1,
     "column": 5,
-    "param": "width"
+    "param": "width",
+    "path": []
   },
   "timing": {
     "runMs": 1.25,

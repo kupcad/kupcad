@@ -6,8 +6,8 @@
 /** @import { ParamValue, ParamValues, ShownDocument, ViewerMessage } from './types.js' */
 
 /**
- * `values` as `kupcad build` options: `-p name=text` each, an array's text its JSON (`String`
- * wrote `[10, 20]` as `10,20`, which no Array parameter reads).
+ * `values` as `kupcad build` options: `-p name=text` each, an array's or an object's text its
+ * JSON (`String` wrote `[10, 20]` as `10,20`, which no Array parameter reads).
  * @param {ParamValues} values
  * @returns {string[]}
  */
@@ -19,7 +19,8 @@ export const paramOptions = (values) =>
  * @param {ParamValue} value
  * @returns {string}
  */
-export const paramText = (value) => (Array.isArray(value) ? JSON.stringify(value) : String(value));
+export const paramText = (value) =>
+  typeof value === 'object' ? JSON.stringify(value) : String(value);
 
 /** Where the language server's viewport socket listens. */
 export const VIEWPORT_HOST = '127.0.0.1';

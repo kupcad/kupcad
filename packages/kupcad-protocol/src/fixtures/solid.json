@@ -36,16 +36,19 @@
         {
           "name": "width",
           "type": "number",
-          "default_value": 20,
-          "validate": {
-            "min": 10,
-            "max": null,
-            "in": null
-          },
-          "step": null,
-          "unit": "mm",
-          "group": "Size",
+          "min": 10,
+          "max": null,
+          "in": null,
+          "items": null,
+          "tuple": null,
+          "fields": null,
+          "min_items": null,
+          "max_items": null,
           "title": "Width",
+          "unit": "mm",
+          "step": null,
+          "default_value": 20,
+          "group": "Size",
           "description": null
         }
       ]

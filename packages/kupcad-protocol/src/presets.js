@@ -46,7 +46,7 @@ export function readPresets(text) {
   for (const [name, values] of Object.entries(presets)) {
     if (!isParamValues(values)) {
       throw new PresetsError(
-        `its preset "${name}" isn't values by name (a number, text, a boolean or an array of them each)`,
+        `its preset "${name}" isn't values by name (a number, text, a boolean, or an array or an object of them, each)`,
       );
     }
   }

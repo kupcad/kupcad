@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHostMessage, isParamValues, isViewerMessage, MAX_ARRAY_DEPTH } from './index.js';
+import { isHostMessage, isParamValues, isViewerMessage, MAX_PARAM_DEPTH } from './index.js';
 
 describe('isHostMessage', () => {
   it('takes the messages a host sends, field for field', () => {
@@ -22,7 +22,7 @@ describe('isHostMessage', () => {
       { type: 'documents', document: null },
       { type: 'document' },
       { type: 'document', document: { uri: 'file:///w/a.kup' } },
-      { type: 'overrides', uri: 'file:///w/a.kup', values: { w: { a: 3 } } },
+      { type: 'overrides', uri: 'file:///w/a.kup', values: { w: [null] } },
       { type: 'overrides', values: {} },
       { type: 'presets', uri: 'file:///w/a.kup', names: ['Small', 2] },
       { type: 'log', text: 3 },
@@ -79,7 +79,7 @@ function nested(depth) {
   return { w: value };
 }
 
-it('reads parameter values as names to a number, a string, a boolean or an array of them', () => {
+it('reads parameter values as names to a scalar, or an array or an object of them, two deep', () => {
   expect(isParamValues({})).toBe(true);
   expect(isParamValues({ w: 1, s: 'm4', b: false })).toBe(true);
   expect(
@@ -92,11 +92,12 @@ it('reads parameter values as names to a number, a string, a boolean or an array
       none: [],
     }),
   ).toBe(true);
+  expect(isParamValues({ cuts: [{ type: 'slot', depth: 5 }], origin: { x: 0 }, w: {} })).toBe(true);
+  expect(isParamValues({ w: { a: [1] } })).toBe(true);
   expect(isParamValues({ w: null })).toBe(false);
-  expect(isParamValues({ w: {} })).toBe(false);
   expect(isParamValues({ w: [1, null] })).toBe(false);
-  expect(isParamValues({ w: [{ a: 1 }] })).toBe(false);
+  expect(isParamValues({ w: [{ a: [1] }] })).toBe(false);
   expect(isParamValues([1])).toBe(false);
-  expect(isParamValues(nested(MAX_ARRAY_DEPTH))).toBe(true);
-  expect(isParamValues(nested(MAX_ARRAY_DEPTH + 1))).toBe(false);
+  expect(isParamValues(nested(MAX_PARAM_DEPTH))).toBe(true);
+  expect(isParamValues(nested(MAX_PARAM_DEPTH + 1))).toBe(false);
 });

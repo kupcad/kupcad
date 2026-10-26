@@ -5,8 +5,8 @@
 
 /** @import { HostMessage, ParamValue, ParamValues, ViewerMessage } from './types.js' */
 
-/** Arrays nested deeper than this are no parameter's value (core/src/core/param_values.zig's). */
-export const MAX_ARRAY_DEPTH = 32;
+/** How deep a parameter's value nests (core/src/core/param_rules.zig's): a list of tuples or of objects. */
+export const MAX_PARAM_DEPTH = 2;
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -16,22 +16,24 @@ const isString = (value) => typeof value === 'string';
 const isPlace = (value) => Number.isInteger(value) && /** @type {number} */ (value) >= 1;
 
 /**
- * Whether `value` is parameter values: names to a number, a string, a boolean, or an array of
- * them.
+ * Whether `value` is parameter values: names to a number, a string, a boolean, or an array or
+ * an object of them, nested at most MAX_PARAM_DEPTH deep.
  * @param {unknown} value
  * @returns {value is ParamValues}
  */
 export function isParamValues(value) {
-  return isObject(value) && Object.values(value).every((v) => isParamValue(v, MAX_ARRAY_DEPTH));
+  return isObject(value) && Object.values(value).every((v) => isParamValue(v, MAX_PARAM_DEPTH));
 }
 
 /**
  * @param {unknown} value
- * @param {number} depth how much deeper its arrays may nest
+ * @param {number} depth how much deeper it may nest
  * @returns {value is ParamValue}
  */
 function isParamValue(value, depth) {
   if (Array.isArray(value)) return depth > 0 && value.every((v) => isParamValue(v, depth - 1));
+  if (isObject(value))
+    return depth > 0 && Object.values(value).every((v) => isParamValue(v, depth - 1));
   return ['number', 'string', 'boolean'].includes(typeof value);
 }
 

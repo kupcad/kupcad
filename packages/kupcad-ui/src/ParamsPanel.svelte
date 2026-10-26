@@ -15,7 +15,8 @@
    * @typedef {object} Props
    * @property {UiSchema} schema
    * @property {ParamValues} [values] the values the run took
-   * @property {Failure | null} [error] the frame's error: the parameter it refused is marked
+   * @property {Failure | null} [error] the frame's error: the parameter it refused is marked,
+   *   and the place in its value
    * @property {ParamValues} [overrides] the values the panel sets; bindable
    * @property {(overrides: ParamValues) => void} [onchange]
    */
@@ -42,6 +43,7 @@
         value={shownValue(spec, overrides, values)}
         overridden={isOverridden(overrides, spec.name)}
         refused={error?.param === spec.name ? error.message : null}
+        refusedAt={error?.param === spec.name ? error.path : []}
         onset={(value) => change(withOverride(overrides, spec.name, value))}
         onrevert={() => change(withoutOverride(overrides, spec.name))}
       />

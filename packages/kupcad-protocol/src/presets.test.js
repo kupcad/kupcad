@@ -21,7 +21,7 @@ describe('presets', () => {
     expect(() => readPresets('{')).toThrow(PresetsError);
     expect(() => readPresets('{"presets": []}')).toThrow('it has no "presets" object');
     expect(() => readPresets('{"Small": {}}')).toThrow('it has no "presets" object');
-    expect(() => readPresets('{"presets": {"Small": {"width": {"a": 1}}}}')).toThrow(
+    expect(() => readPresets('{"presets": {"Small": {"width": [null]}}}')).toThrow(
       'its preset "Small" isn\'t values by name',
     );
   });

@@ -58,9 +58,11 @@ export interface Warning {
   column: number | null;
 }
 
-/** Why a run failed, where, and the parameter whose value it refused. */
+/** Why a run failed, where, and the parameter whose value it refused, and where in it. */
 export interface Failure extends Warning {
   param: string | null;
+  /** The place in the refused value (`[1, "depth"]` for `:cutouts[1][:depth]`); empty for all of it. */
+  path: PathStep[];
 }
 
 /** What a frame shows: its body, typed by its kind. */
@@ -90,34 +92,58 @@ export interface Meta {
   author: string | null;
 }
 
-/** A parameter's value: an Array parameter's an array of them, nested at most `MAX_ARRAY_DEPTH`. */
-export type ParamValue = number | string | boolean | ParamValue[];
+/** A scalar: what a list, a tuple or a Map holds, as JSON gives it (a Symbol as its text). */
+export type ParamScalar = number | string | boolean;
 
-/** One `param(:name, ...)` of a script. */
-export interface ParamSpec {
+/**
+ * A parameter's value: a scalar, or an array or an object of values, nested at most
+ * `MAX_PARAM_DEPTH` deep (a list of tuples, or of objects whose fields are scalars).
+ */
+export type ParamValue = ParamScalar | ParamValue[] | { [field: string]: ParamValue };
+
+/**
+ * What a value, or a part of it, may be (core/src/core/param_rules.zig's `Rule`). Each rule says
+ * only what its kind takes: `min`/`max` a number's, `in` a scalar's, `items` (a list's element)
+ * or `tuple` (each place's) an array's, `fields` a Map's.
+ */
+export interface Rule {
+  /** A Symbol parameter is a 'string' with its choices in `in`. */
+  type: 'number' | 'string' | 'boolean' | 'array' | 'map';
+  min: number | null;
+  max: number | null;
+  /** The values it may be, when the script lists them as literals. */
+  in: ParamScalar[] | null;
+  /** A list's rule for each element: of any length, within `min_items` and `max_items`. */
+  items: Rule | null;
+  /** A tuple's rule for each place: as many elements as it has. */
+  tuple: Rule[] | null;
+  /** A Map's fields, in order. */
+  fields: FieldRule[] | null;
+  min_items: number | null;
+  max_items: number | null;
+  /** What its control is labelled; a host shows the parameter's name, or the field's. */
+  title: string | null;
+  unit: string | null;
+  step: number | null;
+}
+
+/** A Map's field: its name, and its value's rule. */
+export interface FieldRule extends Rule {
   name: string;
-  /**
-   * `type:`'s, else its default's, else its choices', else 'string'. A Symbol parameter is a
-   * 'string' with its choices in `validate.in`.
-   */
-  type: 'number' | 'string' | 'boolean' | 'array';
+}
+
+/** One `param(:name, ...)` of a script: its rules, its default, where its control goes. */
+export interface ParamSpec extends Rule {
+  name: string;
   /** Null when there is none (it is nil until given a value), or the default is computed. */
   default_value: ParamValue | null;
-  validate: {
-    /** For a number, and for every number in an array. */
-    min: number | null;
-    max: number | null;
-    /** The allowed values (each element's, for an array), when the script lists them as literals. */
-    in: (number | string | boolean)[] | null;
-  };
-  step: number | null;
-  unit: string | null;
   group: string | null;
-  /** What its control is labelled (`title:`); a host shows `name` where it is null. */
-  title: string | null;
   /** A line a host shows with its control (`description:`). */
   description: string | null;
 }
+
+/** A step into a value: an element's index, or a field's name. */
+export type PathStep = number | string;
 
 /** What a model is written as (`kupcad build -f`, `build_model_wasm`): core/src/exporters/format.zig. */
 export type ExportFormat = 'stl' | 'glb' | 'gltf' | 'step' | '3mf' | 'obj' | 'svg' | 'dxf';

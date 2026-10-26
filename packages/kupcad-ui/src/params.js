@@ -1,36 +1,59 @@
-// The parameter panel's logic, apart from its markup: which control a parameter gets, how the
-// parameters group, which value a control shows, and whether a value given in the panel is one
-// the script takes (its schema's `validate`), checked before it leaves the panel; the run is
-// the final check, and a frame names a value it refused.
+// The parameter panel's logic, apart from its markup: which control a parameter (or a part of its
+// value) gets, how the parameters group, which value a control shows, and whether a value given
+// in the panel is one the script takes (its schema's rules, core/src/core/param_rules.zig's),
+// checked before it leaves the panel; the run is the final check, and a frame names a value it
+// refused, and where in it.
 
-import { MAX_ARRAY_DEPTH } from '@kupcad/protocol';
-
-/** @import { ParamSpec, ParamValue, ParamValues } from '@kupcad/protocol/types' */
+/** @import { ParamSpec, ParamValue, ParamValues, PathStep, Rule } from '@kupcad/protocol/types' */
 
 /**
  * A slider (with a number beside it) for a number between a min and a max; a number field for
- * one without; a select for a choice of listed values; a toggle for a boolean; a list of
- * controls, one per element, for an array; a text field of its JSON for an array in an array;
- * a text field.
- * @typedef {'slider' | 'number' | 'select' | 'toggle' | 'list' | 'json' | 'text'} Control
+ * one without; a select for a choice of listed values; a toggle for a boolean; a text field; and
+ * for a value of parts: a list (an element's control or block each, added and removed), a tuple
+ * (a control per place) or a record (a control per field of a Map).
+ * @typedef {'slider' | 'number' | 'select' | 'toggle' | 'text' | 'list' | 'tuple' | 'record'} Control
  */
 
 /** @typedef {ParamValue} Value */
 
-/** What a nested array a text field gives must look like. */
-const AN_ARRAY = 'must be an array, as [10, 20]';
+/**
+ * A value the panel won't give, where in it (`[1, 'depth']`), and why, the place written first
+ * (`[1][:depth] must be at least 0.1`).
+ * @typedef {{ error: string, path: PathStep[] }} Refusal
+ */
 
 /**
- * @param {ParamSpec} spec
- * @param {boolean} [nested] an element of an array, whose own arrays are text
+ * @param {Rule} rule
  * @returns {Control}
  */
-export function controlOf(spec, nested = false) {
-  if (spec.type === 'array') return nested ? 'json' : 'list';
-  if (spec.validate.in) return 'select';
-  if (spec.type === 'boolean') return 'toggle';
-  if (spec.type === 'string') return 'text';
-  return spec.validate.min !== null && spec.validate.max !== null ? 'slider' : 'number';
+export function controlOf(rule) {
+  if (rule.type === 'array') return rule.tuple ? 'tuple' : 'list';
+  if (rule.type === 'map') return 'record';
+  if (rule.in) return 'select';
+  if (rule.type === 'boolean') return 'toggle';
+  if (rule.type === 'string') return 'text';
+  return rule.min !== null && rule.max !== null ? 'slider' : 'number';
+}
+
+/**
+ * The places of a value of parts, each with its rule and what labels its control: a tuple's
+ * places (their titles, else their indexes) or a Map's fields (their titles, else their names).
+ * @param {Rule} rule a tuple's or a Map's
+ * @returns {{ step: PathStep, rule: Rule, label: string }[]}
+ */
+export function partsOf(rule) {
+  if (rule.tuple) {
+    return rule.tuple.map((place, index) => ({
+      step: index,
+      rule: place,
+      label: place.title ?? String(index),
+    }));
+  }
+  return (rule.fields ?? []).map((field) => ({
+    step: field.name,
+    rule: field,
+    label: field.title ?? field.name,
+  }));
 }
 
 /**
@@ -38,12 +61,12 @@ export function controlOf(spec, nested = false) {
  * `max` (a slider moved by a hand lands on whole numbers, not on 27.41112), or, for a range
  * narrower than 1, which a step of 1 couldn't move in, the power of ten that gives it at least
  * ten positions; any value for a number with no range.
- * @param {ParamSpec} spec
+ * @param {Rule} rule
  * @returns {number | 'any'}
  */
-export function stepOf(spec) {
-  if (spec.step !== null) return spec.step;
-  const { min, max } = spec.validate;
+export function stepOf(rule) {
+  if (rule.step !== null) return rule.step;
+  const { min, max } = rule;
   if (min === null || max === null || !(max > min)) return 'any';
   const range = max - min;
   return range >= 1 ? 1 : 10 ** (Math.floor(Math.log10(range)) - 1);
@@ -70,7 +93,7 @@ export function groupsOf(parameters) {
 
 /**
  * The value a parameter's control shows: the one set in the panel, else the one the run took,
- * else its default (null when the script computes it and no run took one).
+ * else its default (null when it has none, or the script computes it and no run took one).
  * @param {ParamSpec} spec
  * @param {ParamValues} overrides
  * @param {ParamValues} values
@@ -98,134 +121,209 @@ export const isOverridden = (overrides, name) => Object.hasOwn(overrides, name);
 const ownValue = (values, name) => (Object.hasOwn(values, name) ? values[name] : undefined);
 
 /**
- * Each element of an Array parameter, as a parameter of its own: of the kind its default's
- * elements share (else its choices'; else text, as the script takes an untyped value), with the
- * parameter's range (for every number in it), choices, step and unit. An element that is an
- * array keeps the default's first, which says what its own elements are.
- * @param {ParamSpec} spec an 'array' one
- * @returns {ParamSpec}
+ * What a new part of `rule` starts as: its first choice, else what is blank for its kind (a
+ * number in its range, each of a tuple's places, each of a Map's fields).
+ * @param {Rule} rule
+ * @returns {Value}
  */
-export function elementSpec(spec) {
-  const elements = Array.isArray(spec.default_value) ? spec.default_value : [];
-  const type = sharedType(elements) ?? sharedType(spec.validate.in ?? []) ?? 'string';
-  return { ...spec, type, default_value: type === 'array' ? (elements[0] ?? null) : null };
-}
-
-/**
- * The type all of `values` have; null when there are none, or they differ.
- * @param {ParamValue[]} values
- * @returns {ParamSpec['type'] | null}
- */
-function sharedType(values) {
-  const types = new Set(values.map(typeOfValue));
-  return types.size === 1 ? /** @type {ParamSpec['type']} */ ([...types][0]) : null;
-}
-
-/** @param {ParamValue} value */
-const typeOfValue = (value) => (Array.isArray(value) ? 'array' : typeof value);
-
-/**
- * What a new element of `spec`'s array starts as: a copy of the last, else its first choice,
- * else what is blank for its kind (a number in its range).
- * @param {ParamSpec} spec an 'array' one
- * @param {readonly ParamValue[]} items
- * @returns {ParamValue}
- */
-export function newElement(spec, items) {
-  if (items.length > 0) return structuredClone(items[items.length - 1]);
-  const element = elementSpec(spec);
-  if (element.validate.in) return element.validate.in[0];
-  switch (element.type) {
+export function blankOf(rule) {
+  if (rule.in) return rule.in[0];
+  switch (rule.type) {
     case 'number': {
       // Zero, into its range
-      const { min, max } = element.validate;
-      return Math.min(Math.max(0, min ?? -Infinity), max ?? Infinity);
+      return Math.min(Math.max(0, rule.min ?? -Infinity), rule.max ?? Infinity);
     }
     case 'boolean':
       return false;
     case 'array':
-      return [];
+      return rule.tuple ? rule.tuple.map(blankOf) : [];
+    case 'map':
+      return Object.fromEntries((rule.fields ?? []).map((field) => [field.name, blankOf(field)]));
     default:
       return '';
   }
 }
 
 /**
- * Whether `a` and `b` are one value: arrays by their elements.
- * @param {Value | null} a
- * @param {Value | null} b
+ * What a new element of a list starts as: a copy of the last, else a blank one.
+ * @param {Rule} rule a list's
+ * @param {readonly Value[]} items
+ * @returns {Value}
+ */
+export function newElement(rule, items) {
+  if (items.length > 0) return structuredClone(items[items.length - 1]);
+  return blankOf(/** @type {Rule} */ (rule.items));
+}
+
+/**
+ * Whether a list may have an element added, or removed: its `max_items` and `min_items`.
+ * @param {Rule} rule a list's
+ * @param {number} count its elements now
+ */
+export const canAdd = (rule, count) => rule.max_items === null || count < rule.max_items;
+/** @param {Rule} rule @param {number} count */
+export const canRemove = (rule, count) => rule.min_items === null || count > rule.min_items;
+
+/**
+ * Whether `a` and `b` are one value: arrays and objects by what they hold.
+ * @param {Value | null | undefined} a
+ * @param {Value | null | undefined} b
  * @returns {boolean}
  */
 export function sameValue(a, b) {
-  if (!Array.isArray(a) || !Array.isArray(b)) return a === b;
-  return a.length === b.length && a.every((item, index) => sameValue(item, b[index]));
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, index) => sameValue(item, b[index]))
+    );
+  }
+  if (isRecord(a) || isRecord(b)) {
+    if (!isRecord(a) || !isRecord(b)) return false;
+    const keys = Object.keys(a);
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((key) => Object.hasOwn(b, key) && sameValue(a[key], b[key]))
+    );
+  }
+  return a === b;
 }
 
 /**
- * What a control gave, as the parameter's value, or why the script wouldn't take it.
- * @param {ParamSpec} spec
- * @param {Value} input
- * @returns {{ value: Value } | { error: string }}
+ * @param {unknown} value
+ * @returns {value is { [field: string]: Value }}
  */
-export function validate(spec, input) {
-  return validateAt(spec, input, MAX_ARRAY_DEPTH);
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * `value` (the whole of it) with the part at `path` given `part`.
+ * @param {Value | null} value
+ * @param {PathStep[]} path
+ * @param {Value} part
+ * @returns {Value}
+ */
+export function withPart(value, path, part) {
+  if (path.length === 0) return part;
+  const [step, ...rest] = path;
+  if (typeof step === 'number') {
+    const items = Array.isArray(value) ? [...value] : [];
+    items[step] = withPart(items[step] ?? null, rest, part);
+    return items;
+  }
+  const fields = isRecord(value) ? { ...value } : {};
+  fields[step] = withPart(Object.hasOwn(fields, step) ? fields[step] : null, rest, part);
+  return fields;
 }
 
 /**
- * @param {ParamSpec} spec
- * @param {Value} input
- * @param {number} depth how much deeper its arrays may nest
- * @returns {{ value: Value } | { error: string }}
+ * The part of `value` at `path`; null where it has none.
+ * @param {Value | null} value
+ * @param {PathStep[]} path
+ * @returns {Value | null}
  */
-function validateAt(spec, input, depth) {
-  if (spec.type === 'array') return validateArray(spec, input, depth);
-  const choices = spec.validate.in;
+export function partAt(value, path) {
+  let part = value;
+  for (const step of path) {
+    if (typeof step === 'number') part = Array.isArray(part) ? (part[step] ?? null) : null;
+    else part = isRecord(part) && Object.hasOwn(part, step) ? part[step] : null;
+  }
+  return part;
+}
+
+/**
+ * The place `path` names, as the core writes it: `[1][:depth]`.
+ * @param {PathStep[]} path
+ */
+export const placeOf = (path) =>
+  path.map((step) => (typeof step === 'number' ? `[${step}]` : `[:${step}]`)).join('');
+
+/**
+ * What a control gave, as the parameter's value (a part of it, for a part's rule), or why the
+ * script wouldn't take it and where.
+ * @param {Rule} rule
+ * @param {Value | null} input
+ * @returns {{ value: Value } | Refusal}
+ */
+export function validate(rule, input) {
+  const result = read(rule, input, []);
+  if ('value' in result) return result;
+  const place = placeOf(result.path);
+  return { error: place ? `${place} ${result.error}` : result.error, path: result.path };
+}
+
+/**
+ * @param {Rule} rule
+ * @param {Value | null} input
+ * @param {PathStep[]} path where `input` is in the value
+ * @returns {{ value: Value } | Refusal}
+ */
+function read(rule, input, path) {
+  if (rule.type === 'array') return readArray(rule, input, path);
+  if (rule.type === 'map') return readMap(rule, input, path);
+  const choices = rule.in;
   if (choices) {
     const choice = choices.find((listed) => String(listed) === String(input));
     return choice === undefined
-      ? { error: `must be one of ${choices.join(', ')}` }
+      ? { error: `must be one of ${choices.join(', ')}`, path }
       : { value: choice };
   }
-  if (spec.type === 'boolean') return { value: input === true || input === 'true' };
-  if (spec.type === 'string') return { value: String(input) };
-  const text = String(input).trim();
+  if (rule.type === 'boolean') return { value: input === true || input === 'true' };
+  if (rule.type === 'string') return { value: String(input ?? '') };
+  const text = String(input ?? '').trim();
   const number = Number(text);
-  if (text === '' || !Number.isFinite(number)) return { error: 'must be a number' };
-  const { min, max } = spec.validate;
-  if (min !== null && number < min) return { error: `must be at least ${min}` };
-  if (max !== null && number > max) return { error: `must be at most ${max}` };
+  if (text === '' || !Number.isFinite(number)) return { error: 'must be a number', path };
+  if (rule.min !== null && number < rule.min)
+    return { error: `must be at least ${rule.min}`, path };
+  if (rule.max !== null && number > rule.max) return { error: `must be at most ${rule.max}`, path };
   return { value: number };
 }
 
 /**
- * An array a list gave, or a text field of its JSON: each element as `elementSpec` takes it.
- * @param {ParamSpec} spec an 'array' one
- * @param {Value} input
- * @param {number} depth
- * @returns {{ value: Value } | { error: string }}
+ * @param {Rule} rule
+ * @param {Value | null} input
+ * @param {PathStep[]} path
+ * @returns {{ value: Value } | Refusal}
  */
-function validateArray(spec, input, depth) {
-  let items = input;
-  if (typeof items === 'string') {
-    try {
-      items = JSON.parse(items);
-    } catch {
-      return { error: AN_ARRAY };
-    }
+function readArray(rule, input, path) {
+  if (!Array.isArray(input)) return { error: 'must be a list', path };
+  if (rule.tuple && input.length !== rule.tuple.length) {
+    return { error: `must have ${rule.tuple.length} items`, path };
   }
-  if (!Array.isArray(items) || depth === 0) return { error: AN_ARRAY };
-  const element = elementSpec(spec);
-  /** @type {ParamValue[]} */
-  const read = [];
-  for (const [index, item] of items.entries()) {
-    const result =
-      element.type === 'array' && typeof item !== 'string' && !Array.isArray(item)
-        ? { error: AN_ARRAY }
-        : validateAt(element, item, depth - 1);
-    if ('error' in result) return { error: `[${index}] ${result.error}` };
-    read.push(result.value);
+  if (rule.min_items !== null && input.length < rule.min_items) {
+    return { error: `must have at least ${rule.min_items} items`, path };
   }
-  return { value: read };
+  if (rule.max_items !== null && input.length > rule.max_items) {
+    return { error: `must have at most ${rule.max_items} items`, path };
+  }
+  /** @type {Value[]} */
+  const items = [];
+  for (const [index, item] of input.entries()) {
+    const place = rule.tuple ? rule.tuple[index] : /** @type {Rule} */ (rule.items);
+    const result = read(place, item, [...path, index]);
+    if (!('value' in result)) return result;
+    items.push(result.value);
+  }
+  return { value: items };
+}
+
+/**
+ * @param {Rule} rule
+ * @param {Value | null} input
+ * @param {PathStep[]} path
+ * @returns {{ value: Value } | Refusal}
+ */
+function readMap(rule, input, path) {
+  if (!isRecord(input)) return { error: 'must be a record', path };
+  /** @type {{ [field: string]: Value }} */
+  const fields = {};
+  for (const field of rule.fields ?? []) {
+    const given = Object.hasOwn(input, field.name) ? input[field.name] : null;
+    const result = read(field, given, [...path, field.name]);
+    if (!('value' in result)) return result;
+    fields[field.name] = result.value;
+  }
+  return { value: fields };
 }
 
 /**

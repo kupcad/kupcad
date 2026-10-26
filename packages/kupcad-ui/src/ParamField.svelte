@@ -1,15 +1,28 @@
 <!--
   @component
   One parameter, in rows: its title (its name where it has none) with a revert while the panel
-  overrides it, its description, its control as its schema says (params.js's controlOf) with its
+  overrides it, its description, its control as its rules say (params.js's controlOf) with its
   unit, and why its value was refused: by the panel's own check, or by the run (`refused`, the
-  frame's error naming it). An array's control is a list of its elements' controls (each as
-  `elementSpec` says), each with a remove, and an add.
+  frame's error naming it, and `refusedAt`, where in its value), the control there marked. A
+  tuple's places and a Map's fields are controls side by side, each labelled on top; a list is
+  its elements, each a control (or a block of them) with a remove, and an add, as its
+  `min_items` and `max_items` allow.
 -->
 <script>
-  import { controlOf, elementSpec, newElement, sameValue, stepOf, validate } from './params.js';
+  import {
+    canAdd,
+    canRemove,
+    controlOf,
+    newElement,
+    partAt,
+    partsOf,
+    sameValue,
+    stepOf,
+    validate,
+    withPart,
+  } from './params.js';
 
-  /** @import { ParamSpec } from '@kupcad/protocol/types' */
+  /** @import { ParamSpec, PathStep, Rule } from '@kupcad/protocol/types' */
   /** @import { Value } from './params.js' */
 
   /**
@@ -18,44 +31,63 @@
    * @property {Value | null} value what the control shows
    * @property {boolean} overridden the panel sets it, in place of the script's value
    * @property {string | null} refused why the run refused its value
+   * @property {PathStep[]} [refusedAt] where in its value the run refused it (all of it: empty)
    * @property {(value: Value) => void} onset a value the script takes was given
    * @property {() => void} onrevert
    */
 
   /** @type {Props} */
-  let { spec, value, overridden, refused, onset, onrevert } = $props();
+  let { spec, value, overridden, refused, refusedAt = [], onset, onrevert } = $props();
 
   const id = $props.id();
   const errorId = `${id}-error`;
   const descriptionId = `${id}-description`;
   const labelId = `${id}-label`;
   const control = $derived(controlOf(spec));
-  /** An array's elements, as its list shows them (none while it has no value). */
+  /** A list's elements, as it shows them (none while it has no value). */
   const items = $derived(control === 'list' && Array.isArray(value) ? value : []);
-  const element = $derived(control === 'list' ? elementSpec(spec) : spec);
+  /** A list's element's rule. */
+  const element = $derived(/** @type {Rule} */ (spec.items ?? spec));
+  /** Whether a list's elements are blocks of controls: tuples, or Maps. */
+  const blocks = $derived(
+    control === 'list' && (element.type === 'array' || element.type === 'map'),
+  );
   /** What the control is labelled by: its title, else its name. */
   const label = $derived(spec.title || spec.name);
   /**
-   * Why the value last given isn't one the script takes, and the value shown then: another
-   * (a revert, the next run's) takes it away.
+   * Why the value last given isn't one the script takes, where in it, and the value shown then:
+   * another (a revert, the next run's) takes it away.
    */
-  let refusal = $state(/** @type {{ why: string, shown: Value | null } | null} */ (null));
+  let refusal = $state(
+    /** @type {{ why: string, path: PathStep[], shown: Value | null } | null} */ (null),
+  );
   // By what it holds: the array a state keeps is a copy, never the one shown
-  const invalid = $derived(refusal && sameValue(refusal.shown, value) ? refusal.why : null);
-  const message = $derived(invalid ?? refused);
-  /** What ties the control to its description and to its message, while there is one. */
-  const described = $derived({
-    'aria-invalid': message === null ? undefined : true,
-    'aria-describedby':
-      [spec.description && descriptionId, message !== null && errorId].filter(Boolean).join(' ') ||
-      undefined,
-  });
+  const invalid = $derived(refusal && sameValue(refusal.shown, value) ? refusal : null);
+  const message = $derived(invalid?.why ?? refused);
+  /** Where in the value the message is about: the panel's refusal's place, else the run's. */
+  const wrongAt = $derived(invalid ? invalid.path : refused !== null ? refusedAt : null);
 
-  /** @param {Value} input */
+  /**
+   * What ties the control at `path` to the description and the message, and marks it while the
+   * message is about it.
+   * @param {PathStep[]} path
+   */
+  function described(path) {
+    const wrong = wrongAt !== null && sameValue(wrongAt, path);
+    return {
+      'aria-invalid': wrong ? true : undefined,
+      'aria-describedby':
+        [spec.description && descriptionId, message !== null && errorId]
+          .filter(Boolean)
+          .join(' ') || undefined,
+    };
+  }
+
+  /** @param {Value} input the whole value */
   function commit(input) {
     const result = validate(spec, input);
     if ('error' in result) {
-      refusal = { why: result.error, shown: value };
+      refusal = { why: result.error, path: result.path, shown: value };
       return;
     }
     refusal = null;
@@ -67,43 +99,33 @@
     onrevert();
   }
 
-  /**
-   * The list with element `index` given `input` (the list checks it, each element as its kind).
-   * @param {number} index
-   * @param {Value} input
-   */
-  function commitElement(index, input) {
-    commit(items.map((item, at) => (at === index ? input : item)));
-  }
-
   /** @param {Event} event */
   const inputOf = (event) => /** @type {HTMLInputElement} */ (event.currentTarget).value;
 </script>
 
 <!--
-  The control of a value of `of` (the parameter, or an element of its list), showing `shown`,
-  giving `oncommit` what is put in it. `controlId` ties the parameter's label to it; an element's
-  control is labelled by `name` instead.
+  The control of a scalar of `rule` (the parameter, or a part of its value at `path`), showing
+  `shown`; `named` ties it to its label (an id) or names it (an aria-label).
 -->
-{#snippet editor(
-  /** @type {ParamSpec} */ of,
+{#snippet scalar(
+  /** @type {Rule} */ rule,
   /** @type {Value | null} */ shown,
-  /** @type {(input: Value) => void} */ oncommit,
+  /** @type {PathStep[]} */ path,
   /** @type {{ id?: string, 'aria-label'?: string }} */ named,
-  /** @type {boolean} */ nested,
 )}
-  {@const kind = controlOf(of, nested)}
-  {@const chosen = (of.validate.in ?? []).findIndex((choice) => String(choice) === String(shown))}
+  {@const kind = controlOf(rule)}
+  {@const chosen = (rule.in ?? []).findIndex((choice) => String(choice) === String(shown))}
+  {@const give = (/** @type {Value} */ input) => commit(withPart(value, path, input))}
   {#if kind === 'slider'}
     <input
       type="range"
-      min={of.validate.min}
-      max={of.validate.max}
-      step={stepOf(of)}
+      min={rule.min}
+      max={rule.max}
+      step={stepOf(rule)}
       value={shown ?? ''}
       aria-label="{named['aria-label'] ?? label} slider"
-      onchange={(event) => oncommit(inputOf(event))}
-      {...described}
+      onchange={(event) => give(inputOf(event))}
+      {...described(path)}
     />
   {/if}
   {#if kind === 'slider' || kind === 'number'}
@@ -111,26 +133,24 @@
       {...named}
       class="kc-control"
       type="number"
-      min={of.validate.min}
-      max={of.validate.max}
-      step={stepOf(of)}
+      min={rule.min}
+      max={rule.max}
+      step={stepOf(rule)}
       value={shown ?? ''}
-      onchange={(event) => oncommit(inputOf(event))}
-      {...described}
+      onchange={(event) => give(inputOf(event))}
+      {...described(path)}
     />
   {:else if kind === 'select'}
     <select
       {...named}
       class="kc-control"
-      onchange={(event) => {
-        const index = Number(event.currentTarget.value);
-        oncommit(/** @type {Value[]} */ (of.validate.in)[index]);
-      }}
-      {...described}
+      onchange={(event) =>
+        give(/** @type {Value[]} */ (rule.in)[Number(event.currentTarget.value)])}
+      {...described(path)}
     >
-      <!-- No choice yet (the script computes its default, and no run took one) -->
+      <!-- No choice yet (it has no default, or the script computes it, and no run took one) -->
       {#if chosen === -1}<option value="" selected disabled></option>{/if}
-      {#each of.validate.in ?? [] as choice, index (index)}
+      {#each rule.in ?? [] as choice, index (index)}
         <option value={index} selected={index === chosen}>{choice}</option>
       {/each}
     </select>
@@ -139,20 +159,41 @@
       {...named}
       type="checkbox"
       checked={shown === true}
-      onchange={(event) => oncommit(event.currentTarget.checked)}
-      {...described}
+      onchange={(event) => give(event.currentTarget.checked)}
+      {...described(path)}
     />
   {:else}
-    <!-- Text, or an array in an array as its JSON -->
     <input
       {...named}
       class="kc-control"
       type="text"
-      value={kind === 'json' ? JSON.stringify(shown ?? []) : (shown ?? '')}
-      onchange={(event) => oncommit(inputOf(event))}
-      {...described}
+      value={shown ?? ''}
+      onchange={(event) => give(inputOf(event))}
+      {...described(path)}
     />
   {/if}
+  {#if rule.unit}<span class="unit">{rule.unit}</span>{/if}
+{/snippet}
+
+<!-- A tuple's places, or a Map's fields, of the value at `path`: side by side, labelled on top -->
+{#snippet parts(
+  /** @type {Rule} */ rule,
+  /** @type {Value | null} */ shown,
+  /** @type {PathStep[]} */ path,
+)}
+  <div class="parts">
+    {#each partsOf(rule) as part (part.step)}
+      {@const at = [...path, part.step]}
+      <!-- Of a separator the field's own ids don't have: a field may be named `label` -->
+      {@const partId = `${id}/${at.join('/')}`}
+      <div class="part">
+        <label for={partId}>{part.label}</label>
+        <div class="control">
+          {@render scalar(part.rule, partAt(shown, [part.step]), at, { id: partId })}
+        </div>
+      </div>
+    {/each}
+  </div>
 {/snippet}
 
 <div class="field" class:overridden>
@@ -160,7 +201,7 @@
     <!-- The name the script reads it by, where the title hides it -->
     <label
       id={labelId}
-      for={control === 'list' ? undefined : id}
+      for={control === 'list' || control === 'tuple' || control === 'record' ? undefined : id}
       title={spec.title ? spec.name : undefined}>{label}</label
     >
     {#if overridden}
@@ -173,21 +214,19 @@
   {#if control === 'list'}
     <ol class="list" aria-labelledby={labelId}>
       {#each items as item, index (index)}
-        <li class="control">
-          {@render editor(
-            element,
-            item,
-            (input) => commitElement(index, input),
-            { 'aria-label': `${label} [${index}]` },
-            true,
-          )}
-          {#if spec.unit}<span class="unit">{spec.unit}</span>{/if}
-          <button
-            type="button"
-            class="remove"
-            aria-label="Remove {label} [{index}]"
-            onclick={() => commit(items.filter((_, at) => at !== index))}>−</button
-          >
+        <li class={blocks ? 'block' : 'control'}>
+          {#if blocks}
+            <div class="block-head">
+              <span class="index">[{index}]</span>
+              {@render remove(index)}
+            </div>
+            <div role="group" aria-label="{label} [{index}]">
+              {@render parts(element, item, [index])}
+            </div>
+          {:else}
+            {@render scalar(element, item, [index], { 'aria-label': `${label} [${index}]` })}
+            {@render remove(index)}
+          {/if}
         </li>
       {/each}
     </ol>
@@ -195,18 +234,32 @@
       type="button"
       class="add"
       aria-label="Add to {label}"
+      disabled={!canAdd(spec, items.length)}
       onclick={() => commit([...items, newElement(spec, items)])}>+ Add</button
     >
+  {:else if control === 'tuple' || control === 'record'}
+    <div role="group" aria-labelledby={labelId}>
+      {@render parts(spec, value, [])}
+    </div>
   {:else}
     <div class="control">
-      {@render editor(spec, value, commit, { id }, false)}
-      {#if spec.unit}<span class="unit">{spec.unit}</span>{/if}
+      {@render scalar(spec, value, [], { id })}
     </div>
   {/if}
   {#if message !== null}
     <p class="error" id={errorId} role="alert">{message}</p>
   {/if}
 </div>
+
+{#snippet remove(/** @type {number} */ index)}
+  <button
+    type="button"
+    class="remove"
+    aria-label="Remove {label} [{index}]"
+    disabled={!canRemove(spec, items.length)}
+    onclick={() => commit(items.filter((_, at) => at !== index))}>−</button
+  >
+{/snippet}
 
 <style>
   .field {
@@ -281,6 +334,40 @@
   }
   .add {
     align-self: flex-start;
+  }
+  .remove:disabled,
+  .add:disabled {
+    color: var(--kc-muted);
+    cursor: default;
+  }
+  /* A tuple's places, a Map's fields: side by side, wrapping where the panel is narrow */
+  .parts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+  .part {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  /* An element of a list of tuples or Maps */
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 6px;
+    border: 1px solid var(--kc-border);
+    border-radius: 3px;
+  }
+  .block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .index {
+    color: var(--kc-muted);
   }
   .error {
     margin: 0;

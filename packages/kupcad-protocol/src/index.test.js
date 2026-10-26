@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   isCompatible,
-  MAX_ARRAY_DEPTH,
+  MAX_PARAM_DEPTH,
   PREVIEW_COMMAND,
   PROTOCOL_VERSION,
   ProtocolError,
@@ -72,11 +72,13 @@ describe('readFrame', () => {
     const { header, model } = readFrame(frameOf(refused));
     expect(model).toEqual({ kind: 'none' });
     expect(header.error).toEqual({
-      message: 'ValueError: parameter :width value 5 is below its minimum 10',
+      message: 'ValueError: parameter :width expects a number at least 10, got 5',
       // The `param` call that refused it
       line: 1,
       column: 5,
       param: 'width',
+      // All of its value: no place in it
+      path: [],
     });
   });
 
@@ -118,8 +120,8 @@ describe('the protocol', () => {
     expect(coreSource('preview/frame.zig')).toContain(
       `pub const PROTOCOL_VERSION: u32 = ${PROTOCOL_VERSION};`,
     );
-    expect(coreSource('core/param_values.zig')).toContain(
-      `pub const MAX_ARRAY_DEPTH = ${MAX_ARRAY_DEPTH};`,
+    expect(coreSource('core/param_rules.zig')).toContain(
+      `pub const MAX_DEPTH = ${MAX_PARAM_DEPTH};`,
     );
     const lsp = coreSource('cli/lsp.zig');
     expect(lsp).toContain(

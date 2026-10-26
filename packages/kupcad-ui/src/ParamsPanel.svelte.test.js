@@ -124,7 +124,7 @@ describe('ParamsPanel', () => {
 
   it('shows why the run refused a value on its control', async () => {
     await panel({
-      error: { message: 'ValueError: too wide', line: 3, column: 5, param: 'width' },
+      error: { message: 'ValueError: too wide', line: 3, column: 5, param: 'width', path: [] },
     });
     const field = /** @type {HTMLElement} */ (numberField('width').closest('.field'));
     expect(within(field).getByRole('alert').textContent).toBe('ValueError: too wide');
@@ -144,15 +144,20 @@ describe('ParamsPanel', () => {
   });
 });
 
-/** A script with Array parameters, and one with no default. */
-const LISTS = `xs = param(:xs, default: [10, 20], unit: "mm")
-pts = param(:pts, default: [[0, 0], [10, 0]])
+/** A script with a list, a list of points, a tuple, a Map, and one with no default. */
+const LISTS = `xs = param(:xs, default: [10, 20], unit: "mm", validate: { items: :number, max_items: 3 })
+pts = param(:pts, default: [[0, 0], [10, 0]], validate: { min_items: 2, items: { tuple: [{ type: :number, title: "X" }, { type: :number, title: "Y" }] } })
+pos = param(:pos, default: [1, 2], validate: { tuple: [{ type: :number, title: "X" }, { type: :number, title: "Z", min: 0 }] }, unit: "mm")
+at = param(:at, default: { x: 3, label: "A" })
 key = param(:key, title: "Key")
 cube(1)
 `;
 
-/** The panel of LISTS, the values its run took, and every change it gives. */
-async function lists() {
+/**
+ * The panel of LISTS, the values its run took, and every change it gives.
+ * @param {object} [props]
+ */
+async function lists(props = {}) {
   /** @type {ParamValues[]} */
   const changes = [];
   render(ParamsPanel, {
@@ -164,43 +169,97 @@ async function lists() {
           [0, 0],
           [10, 0],
         ],
+        pos: [1, 2],
+        at: { x: 3, label: 'A' },
       },
       onchange: (/** @type {ParamValues} */ overrides) => changes.push(overrides),
+      ...props,
     },
   });
   return changes;
 }
 
-describe('ParamsPanel, of an Array parameter', () => {
-  it('shows a control per element, an array in it as its JSON, and one with no value empty', async () => {
+/**
+ * The control labelled `label` in the group named `group`.
+ * @param {string} group
+ * @param {string} label
+ */
+const partField = (group, label) =>
+  /** @type {HTMLInputElement} */ (
+    within(screen.getByRole('group', { name: group })).getByLabelText(label)
+  );
+
+describe('ParamsPanel, of a value of parts', () => {
+  it('shows a list as a control per element, a list of tuples as blocks, a tuple and a Map as labelled controls', async () => {
     await lists();
     const xs = screen.getByRole('list', { name: 'xs' });
     expect(within(xs).getAllByRole('listitem')).toHaveLength(2);
     expect(numberField('xs [0]').value).toBe('10');
     expect(numberField('xs [1]').value).toBe('20');
     expect(within(xs).getAllByText('mm')).toHaveLength(2);
-    expect(numberField('pts [1]').value).toBe('[10,0]');
+    // Each point a block, its places labelled on top
+    expect(partField('pts [1]', 'X').value).toBe('10');
+    expect(partField('pts [1]', 'Y').value).toBe('0');
+    expect(partField('pos', 'Z').value).toBe('2');
+    expect(partField('at', 'label').value).toBe('A');
     expect(numberField('Key').value).toBe('');
   });
 
-  it('gives the array with an element changed, removed or added', async () => {
+  it('gives the value with a part changed, an element removed or added', async () => {
     const changes = await lists();
     await fireEvent.change(numberField('xs [1]'), { target: { value: '25' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Remove xs [0]' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add to xs' }));
     expect(changes.map((overrides) => overrides.xs)).toEqual([[10, 25], [25], [25, 25]]);
-    await fireEvent.change(numberField('pts [1]'), { target: { value: '[5, 6]' } });
+    await fireEvent.change(partField('pts [1]', 'Y'), { target: { value: '5' } });
     expect(changes.at(-1)?.pts).toEqual([
       [0, 0],
-      [5, 6],
+      [10, 5],
     ]);
+    await fireEvent.change(partField('at', 'x'), { target: { value: '4' } });
+    expect(changes.at(-1)?.at).toEqual({ x: 4, label: 'A' });
   });
 
-  it("refuses an element it can't take, by its place, and gives nothing", async () => {
+  it('adds and removes only as its min_items and max_items allow', async () => {
+    await lists({
+      values: {
+        xs: [1, 2, 3],
+        pts: [
+          [0, 0],
+          [1, 1],
+        ],
+      },
+    });
+    const add = /** @type {HTMLButtonElement} */ (
+      screen.getByRole('button', { name: 'Add to xs' })
+    );
+    expect(add.disabled).toBe(true);
+    const remove = /** @type {HTMLButtonElement} */ (
+      screen.getByRole('button', { name: 'Remove pts [0]' })
+    );
+    expect(remove.disabled).toBe(true);
+  });
+
+  it("refuses a part it can't take, by its place, marking it, and gives nothing", async () => {
     const changes = await lists();
-    await fireEvent.change(numberField('pts [0]'), { target: { value: '[1' } });
-    expect(screen.getByRole('alert').textContent).toBe('[0] must be an array, as [10, 20]');
-    expect(numberField('pts [0]').getAttribute('aria-invalid')).toBe('true');
+    await fireEvent.change(partField('pos', 'Z'), { target: { value: '-1' } });
+    expect(screen.getByRole('alert').textContent).toBe('[1] must be at least 0');
+    expect(partField('pos', 'Z').getAttribute('aria-invalid')).toBe('true');
+    expect(partField('pos', 'X').hasAttribute('aria-invalid')).toBe(false);
     expect(changes).toEqual([]);
+  });
+
+  it('marks where in a value the run refused it', async () => {
+    await lists({
+      error: {
+        message: 'ValueError: parameter :pts[1][0] expects a number at most 5, got 10',
+        line: 2,
+        column: 7,
+        param: 'pts',
+        path: [1, 0],
+      },
+    });
+    expect(partField('pts [1]', 'X').getAttribute('aria-invalid')).toBe('true');
+    expect(partField('pts [0]', 'X').hasAttribute('aria-invalid')).toBe(false);
   });
 });
