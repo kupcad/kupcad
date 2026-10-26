@@ -17,7 +17,7 @@ export default defineConfig({
         test: { name: 'host', environment: 'node', include: ['src/extension/**/*.test.js'] },
       },
       {
-        plugins: [svelte(), svelteTesting()],
+        plugins: [svelte({ configFile: false }), svelteTesting()],
         test: {
           ...SVELTE_TESTS,
           name: 'webview',

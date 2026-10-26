@@ -10,7 +10,7 @@ import { SVELTE_TESTS } from '../../vitest.svelte.js';
 export const DEV_PORT = 1420;
 
 export default defineConfig({
-  plugins: [svelte(), svelteTesting()],
+  plugins: [svelte({ configFile: false }), svelteTesting()],
   // Rust's errors stay on the screen, and the Rust side's files aren't the page's
   clearScreen: false,
   server: {

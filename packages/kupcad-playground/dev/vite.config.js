@@ -12,7 +12,7 @@ const server = { host: '127.0.0.1', port: PORT, strictPort: true };
 
 export default defineConfig({
   root: import.meta.dirname,
-  plugins: [svelte()],
+  plugins: [svelte({ configFile: false })],
   server,
   preview: server,
   // Built beside the sources, not among them: dist/ of the package
