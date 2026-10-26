@@ -30,10 +30,10 @@ const REVEAL = 'Reveal';
  */
 export function registerExportCommands(options) {
   return [
-    vscode.commands.registerCommand(EXPORT_COMMAND, (given) =>
+    vscode.commands.registerCommand(EXPORT_COMMAND, (given, format) =>
       // What the export says for itself (a build that failed) it said; this is the rest: a
       // script gone before it was opened, a dialog that failed
-      exportScript(options, given).catch((error) => {
+      exportScript(options, given, format).catch((error) => {
         void vscode.window.showErrorMessage(`The export failed: ${errorText(error)}`);
       }),
     ),
@@ -41,19 +41,23 @@ export function registerExportCommands(options) {
 }
 
 /**
- * Exports the script in the format the user picks, where the user says.
+ * Exports the script in `format` (the viewer's menu chose it), else the one the user picks, where
+ * the user says.
  * @param {CommandOptions} options
  * @param {vscode.Uri | string | undefined} given
+ * @param {ExportFormat} [format]
  */
-async function exportScript(options, given) {
+async function exportScript(options, given, format) {
   const ready = await scriptToBuild(options, given);
   if (!ready) return;
   const { document, kupcad } = ready;
   const name = scriptName(document.uri);
-  const choice = await vscode.window.showQuickPick(
-    EXPORT_FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
-    { title: `Export ${name}`, placeHolder: 'The format' },
-  );
+  const choice =
+    EXPORT_FORMATS.find((f) => f.format === format) ??
+    (await vscode.window.showQuickPick(
+      EXPORT_FORMATS.map((f) => ({ label: f.label, detail: f.detail, format: f.format })),
+      { title: `Export ${name}`, placeHolder: 'The format' },
+    ));
   if (!choice) return;
   const target = await vscode.window.showSaveDialog({
     defaultUri: vscode.Uri.joinPath(document.uri, '..', `${name}.${choice.format}`),

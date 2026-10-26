@@ -47,7 +47,10 @@ describe('isViewerMessage', () => {
       true,
     );
     expect(isViewerMessage({ type: 'applyPreset', uri: 'file:///w/a.kup' })).toBe(false);
-    expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup' })).toBe(true);
+    expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup', format: 'svg' })).toBe(true);
+    // The format it is asked in, one the core writes
+    expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup' })).toBe(false);
+    expect(isViewerMessage({ type: 'export', uri: 'file:///w/a.kup', format: 'pdf' })).toBe(false);
     expect(isViewerMessage({ type: 'reveal', uri: 'file:///w/a.kup', line: 3, column: 1 })).toBe(
       true,
     );

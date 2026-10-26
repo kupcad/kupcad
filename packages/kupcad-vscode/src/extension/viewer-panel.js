@@ -171,7 +171,7 @@ export class ViewerPanel {
         void this.#savePreset(message.uri, message.values);
         return;
       case 'export':
-        void vscode.commands.executeCommand(EXPORT_COMMAND, message.uri);
+        void vscode.commands.executeCommand(EXPORT_COMMAND, message.uri, message.format);
         return;
       case 'screenshot':
         void this.#saveScreenshot(message.png);

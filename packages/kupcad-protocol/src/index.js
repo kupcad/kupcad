@@ -32,7 +32,7 @@ export { isHostMessage, isParamValues, isViewerMessage, MAX_PARAM_DEPTH } from '
 export { characterAt } from './places.js';
 export { errorText } from './error-text.js';
 export { whyBuildFailed } from './build-output.js';
-export { EXPORT_FORMATS } from './formats.js';
+export { EXPORT_FORMATS, exportFormatsFor } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
 export {
   anotherDocument,

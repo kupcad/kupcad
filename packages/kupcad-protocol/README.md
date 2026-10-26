@@ -57,7 +57,10 @@ client.sendRequest('workspace/executeCommand', {
   one) and `writePresets(presets)`; each host reads and writes the file with its own file
   system.
 * `EXPORT_FORMATS`: the formats the core writes a model in (`kupcad build`, `@kupcad/wasm`'s
-  `build`), each with its name and what it is for, in the order a host offers them.
+  `build`), each with its name, what it is for and whether it is a drawing, in the order a host
+  offers them; `exportFormatsFor(kind)`, those a model of that kind can be written in (a 2D
+  model's drawings alone: the core refuses it in a 3D format; a test reads the core's own
+  `dimension` of each).
 * What every host of the viewer does alike (`host.js`): `ScriptValues`, the values each
   script's parameters were given (what the server runs it with, what an export builds it
   with), and `paramOptions(values)`, those values as `kupcad build`'s `-p` options (`paramText`,

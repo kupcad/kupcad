@@ -77,7 +77,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   closes; `viewportUrl` changed, a server started again on another port, it follows it, what it
   shows and its console kept), the run's problems, and the parameters with the document's presets. It talks to the
   host as a `ViewerHost` (`@kupcad/protocol`'s `HostMessage` and `ViewerMessage`): the panel's
-  values, a preset, an export, a screenshot (base64) or a problem's place go to the host, which
+  values, a preset, an export (in the format its toolbar's `ExportMenu` chose, those the model's
+  kind can be written in), a screenshot (base64) or a problem's place go to the host, which
   gives them to the server or acts on them. Its console (`console`, by default shown) keeps each
   run of the document shown, a frame sent again once, and the lines the host's `log` messages
   give. A host that keeps no presets passes

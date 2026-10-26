@@ -30,7 +30,7 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
 * **Export** (`KupCAD: Export…`, a `.kup` editor's title bar, or the viewer's toolbar): the
   script is built by `kupcad build` with the values its parameters have in the viewer, so what is
   written is what the CLI builds, in the format you pick (STL, 3MF, STEP, GLB, glTF, OBJ, SVG,
-  DXF) and where you say: a 3MF, its parts and colours with it, is what a slicer opens. A script
+  DXF; the viewer's menu offers a 2D model its drawings, SVG and DXF, alone) and where you say: a 3MF, its parts and colours with it, is what a slicer opens. A script
   with changes not saved is saved first, when you say so; the notification's cancel stops the
   build, and a build that fails says why.
 

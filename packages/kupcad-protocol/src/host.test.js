@@ -37,11 +37,13 @@ describe('host', () => {
   it('takes a message about the document shown, or about none, and no other', () => {
     const shown = { uri: 'file:///w/part.kup', name: 'part.kup' };
     expect(anotherDocument({ type: 'ready' }, shown)).toBeNull();
-    expect(anotherDocument({ type: 'export', uri: shown.uri }, shown)).toBeNull();
-    expect(anotherDocument({ type: 'export', uri: 'file:///w/other.kup' }, shown)).toBe(
-      'file:///w/other.kup',
+    expect(anotherDocument({ type: 'export', uri: shown.uri, format: 'stl' }, shown)).toBeNull();
+    expect(
+      anotherDocument({ type: 'export', uri: 'file:///w/other.kup', format: 'stl' }, shown),
+    ).toBe('file:///w/other.kup');
+    expect(anotherDocument({ type: 'export', uri: shown.uri, format: 'stl' }, null)).toBe(
+      shown.uri,
     );
-    expect(anotherDocument({ type: 'export', uri: shown.uri }, null)).toBe(shown.uri);
   });
 
   it("keeps each script's values, none for one given none", () => {

@@ -83,6 +83,21 @@ describe('export', () => {
     expect(builds).toHaveLength(2);
   });
 
+  it("builds in the format the viewer's menu chose, asking only where", async () => {
+    documentAt('/work/cup.kup');
+    const { builds } = registered();
+    fake.saveAnswer = Uri.file('/out/cup.svg');
+    await commands.executeCommand(EXPORT_COMMAND, 'file:///work/cup.kup', 'svg');
+    expect(fake.picks).toEqual([]);
+    expect(builds[0].args.slice(1, 6)).toEqual([
+      '/work/cup.kup',
+      '-o',
+      '/out/cup.svg',
+      '-f',
+      'svg',
+    ]);
+  });
+
   it("builds the script the editor's title bar gives, as a Uri", async () => {
     documentAt('/work/lid.kup');
     const { builds } = registered();

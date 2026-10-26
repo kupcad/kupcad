@@ -71,7 +71,7 @@ describe('the host', () => {
     const { host, show, services } = hostOn();
     show(PART);
     host.post({ type: 'setParams', uri: LID.uri, values: { width: 1 } });
-    host.post({ type: 'export', uri: LID.uri });
+    host.post({ type: 'export', uri: LID.uri, format: '3mf' });
     expect(services.server.setParams).not.toHaveBeenCalled();
     expect(services.save).not.toHaveBeenCalled();
     expect(services.log).toHaveBeenCalledTimes(2);
@@ -92,19 +92,15 @@ describe('the host', () => {
         ],
       },
     });
-    host.post({ type: 'export', uri: PART.uri });
+    host.post({ type: 'export', uri: PART.uri, format: '3mf' });
     await settled();
+    // The page's menu chose the format: the dialog is of it alone (one of them all offered no
+    // choice on macOS, and named the file .stl)
     const asked = services.save.mock.calls[0][0];
-    expect(asked.defaultPath).toBe('part.stl');
+    expect(asked.title).toBe('Export part.kup as 3MF');
+    expect(asked.defaultPath).toBe('part.3mf');
     expect(asked.filters.map((/** @type {{ extensions: string[] }} */ f) => f.extensions)).toEqual([
-      ['stl'],
       ['3mf'],
-      ['step', 'stp'],
-      ['glb'],
-      ['gltf'],
-      ['obj'],
-      ['svg'],
-      ['dxf'],
     ]);
     expect(services.exportModel).toHaveBeenCalledWith('/w/part.kup', '/out/part.3mf', '3mf', [
       ['width', '40'],
@@ -114,10 +110,19 @@ describe('the host', () => {
     ]);
   });
 
+  it('offers a STEP file as .step or .stp', async () => {
+    const { host, show, services } = hostOn({ saveAs: '/out/part.stp' });
+    show(PART);
+    host.post({ type: 'export', uri: PART.uri, format: 'step' });
+    await settled();
+    expect(services.save.mock.calls[0][0].filters[0].extensions).toEqual(['step', 'stp']);
+    expect(services.exportModel.mock.calls[0][2]).toBe('step');
+  });
+
   it("says why an export wasn't made: a name of no format, kupcad's error", async () => {
     const odd = hostOn({ saveAs: '/out/part.exe' });
     odd.show(PART);
-    odd.host.post({ type: 'export', uri: PART.uri });
+    odd.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
     await settled();
     expect(odd.services.exportModel).not.toHaveBeenCalled();
     expect(odd.services.tell.mock.calls[0][0]).toMatch(/names no format kupcad writes: .*\.3mf/);
@@ -127,7 +132,7 @@ describe('the host', () => {
       'info(x): log\nerror(vm): RuntimeError: too thin\nBuild failed: error.RuntimeError\n',
     );
     failing.show(PART);
-    failing.host.post({ type: 'export', uri: PART.uri });
+    failing.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
     await settled();
     expect(failing.services.tell).toHaveBeenCalledWith(
       "part.kup wasn't exported: RuntimeError: too thin",
@@ -135,7 +140,7 @@ describe('the host', () => {
     // Cancelled, nothing is built
     const cancelled = hostOn({ saveAs: null });
     cancelled.show(PART);
-    cancelled.host.post({ type: 'export', uri: PART.uri });
+    cancelled.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
     await settled();
     expect(cancelled.services.exportModel).not.toHaveBeenCalled();
   });

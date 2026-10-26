@@ -14,6 +14,7 @@
   import { onMount, untrack } from 'svelte';
   import { errorText } from '@kupcad/protocol';
   import ConsolePanel from './ConsolePanel.svelte';
+  import ExportMenu from './ExportMenu.svelte';
   import { appendLines, linesOfLog, linesOfRun } from './console.js';
   import { plainValues } from './values.svelte.js';
   import ParamsPanel from './ParamsPanel.svelte';
@@ -24,7 +25,7 @@
   import { problemsOf, runStatusOf } from './run-status.js';
   import { connectViewport } from './viewport-socket.js';
 
-  /** @import { ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
+  /** @import { ExportFormat, ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
   /** @import { ViewerOptions } from '@kupcad/viewer/types' */
   /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
@@ -157,9 +158,12 @@
     if (shown) host.post({ type: 'savePreset', uri: shown.uri, values: plainValues(overrides) });
   }
 
-  /** Asks the host to export the shown document, with its values. */
-  function exportShown() {
-    if (shown) host.post({ type: 'export', uri: shown.uri });
+  /**
+   * Asks the host to export the shown document in `format`, with its values.
+   * @param {ExportFormat} format
+   */
+  function exportShown(format) {
+    if (shown) host.post({ type: 'export', uri: shown.uri, format });
   }
 
   /**
@@ -206,7 +210,7 @@
       >
         {#snippet actions()}
           {#if shown}
-            <button type="button" class="kc-control" onclick={exportShown}>Export…</button>
+            <ExportMenu kind={preview?.model.kind ?? 'none'} onexport={exportShown} />
           {/if}
         {/snippet}
       </ViewerPane>

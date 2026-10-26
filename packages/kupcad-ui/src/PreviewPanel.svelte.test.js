@@ -361,13 +361,22 @@ it("lays its panes out as the host's settings keep them, and keeps what the pers
   expect(screen.queryByRole('separator', { name: 'Resize the console' })).toBeNull();
 });
 
-it('asks the host to export the document shown', async () => {
+it('asks the host to export the document shown in the format its menu chose', async () => {
   const viewer = page();
-  expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'Export' })).toBeNull();
   await viewer.tell({ type: 'document', document: PART });
-  const exportButton = screen.getByRole('button', { name: 'Export…' });
+  const menu = /** @type {HTMLSelectElement} */ (screen.getByRole('combobox', { name: 'Export' }));
   // In the viewer's toolbar, it looks as its own controls do
-  expect(exportButton.classList.contains('kc-control')).toBe(true);
-  await fireEvent.click(exportButton);
-  expect(viewer.posted.at(-1)).toEqual({ type: 'export', uri: PART.uri });
+  expect(menu.classList.contains('kc-control')).toBe(true);
+  // With no run to go by, every format
+  const offered = () => [...menu.options].filter((o) => !o.disabled).map((o) => o.value);
+  expect(offered()).toHaveLength(8);
+  // A 2D model's drawings alone: the core refuses it in a 3D format
+  viewer.socket.on.state(true);
+  viewer.socket.on.frame(await previewOf('square(10)', PART.uri));
+  await vi.waitFor(() => expect(offered()).toEqual(['svg', 'dxf']));
+  await fireEvent.change(menu, { target: { value: 'svg' } });
+  expect(viewer.posted.at(-1)).toEqual({ type: 'export', uri: PART.uri, format: 'svg' });
+  // Its name again, so the same format can be chosen next time
+  expect(menu.value).toBe('');
 });

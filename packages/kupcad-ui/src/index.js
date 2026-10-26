@@ -3,6 +3,7 @@
 // `@kupcad/ui/tokens.css` (or `@kupcad/ui/vscode.css` in VS Code's webview), which a page loads.
 
 export { default as ConsolePanel } from './ConsolePanel.svelte';
+export { default as ExportMenu } from './ExportMenu.svelte';
 export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as Splitter } from './Splitter.svelte';

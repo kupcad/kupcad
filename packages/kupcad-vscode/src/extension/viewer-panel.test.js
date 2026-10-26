@@ -178,7 +178,7 @@ describe('ViewerPanel', () => {
     webview.receive({ type: 'setParams', uri: other, values: { w: 3 } });
     webview.receive({ type: 'applyPreset', uri: other, name: 'Small' });
     webview.receive({ type: 'savePreset', uri: other, values: { w: 3 } });
-    webview.receive({ type: 'export', uri: other });
+    webview.receive({ type: 'export', uri: other, format: 'svg' });
     webview.receive({ type: 'reveal', uri: other, line: 1, column: 1 });
     await new Promise((resolve) => setTimeout(resolve));
     expect(server.asked).toEqual([['preview', PART_URI]]);
@@ -379,11 +379,14 @@ describe('ViewerPanel export', () => {
   it('runs the export command on the script the page asks for', async () => {
     /** @type {unknown[]} */
     const exported = [];
-    commands.registerCommand('kupcad.export', (/** @type {unknown} */ uri) => exported.push(uri));
+    commands.registerCommand('kupcad.export', (/** @type {unknown[]} */ ...args) =>
+      exported.push(args),
+    );
     fake.activeDocument = PART;
     const { webview } = open();
-    webview.receive({ type: 'export', uri: PART_URI });
-    await vi.waitFor(() => expect(exported).toEqual([PART_URI]));
+    // In the format its menu chose
+    webview.receive({ type: 'export', uri: PART_URI, format: 'svg' });
+    await vi.waitFor(() => expect(exported).toEqual([[PART_URI, 'svg']]));
   });
 });
 

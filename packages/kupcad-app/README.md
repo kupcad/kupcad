@@ -65,8 +65,10 @@ Windows warn before they open one; signing needs the certificates as the reposit
   no other page; Vite's (under `tauri dev`) in a debug build alone, as a released app would
   admit any other project's dev server on that port.
 * **The preview's host** (`src/host.js`): what the panel asks, done in the page. The panel's
-  values go to the server (`kupcad.setParams`) and are kept for the script; an export asks where
-  to save (the format is the file's extension) and runs `kupcad build` with them; a screenshot
+  values go to the server (`kupcad.setParams`) and are kept for the script; an export, in the format
+  the panel's menu chose, asks where to save it (a dialog of that format alone: macOS's save
+  panel offers no choice among file types, so one of them all named the file `.stl` whatever
+  the model) and runs `kupcad build` with them; a screenshot
   is saved where the person says; a problem's place is shown in the editor. The server's log
   goes to the panel's console, under the model, with each run (what it printed, its warnings
   and its error). Presets aren't offered yet.

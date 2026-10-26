@@ -68,16 +68,27 @@ export function createHost(services) {
   const report = (asked, what) =>
     void asked.catch((error) => services.log(`${what} failed: ${errorText(error)}`));
 
-  /** @param {ShownScript} script */
-  async function exportScript(script) {
+  /**
+   * Exports `script` in the format the page's menu chose, where the person says. The dialog is
+   * of that format alone: one of every format offered no choice of them on macOS, whose save
+   * panel lists the file types as one.
+   * @param {ShownScript} script
+   * @param {ExportFormat} chosen
+   */
+  async function exportScript(script, chosen) {
     const stem = script.name.replace(/\.kup$/, '');
+    // The page's message was checked to name one
+    const choice = EXPORT_FORMATS.find(({ format }) => format === chosen);
+    if (!choice) return;
     const output = await services.save({
-      title: `Export ${script.name}`,
-      defaultPath: `${stem}.stl`,
-      filters: EXPORT_FORMATS.map(({ format, label, detail }) => ({
-        name: `${label}: ${detail}`,
-        extensions: /** @type {string[]} */ (EXTENSIONS.get(format)),
-      })),
+      title: `Export ${script.name} as ${choice.label}`,
+      defaultPath: `${stem}.${chosen}`,
+      filters: [
+        {
+          name: `${choice.label}: ${choice.detail}`,
+          extensions: /** @type {string[]} */ (EXTENSIONS.get(chosen)),
+        },
+      ],
     });
     if (!output) return;
     const format = formatOf(output);
@@ -132,7 +143,7 @@ export function createHost(services) {
         report(services.server.setParams(message.uri, message.values), 'Giving the values');
         return;
       case 'export':
-        if (shown) report(exportScript(shown), 'The export');
+        if (shown) report(exportScript(shown, message.format), 'The export');
         return;
       case 'screenshot':
         report(saveScreenshot(message.png), 'Saving the screenshot');

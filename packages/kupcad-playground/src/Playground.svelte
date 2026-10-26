@@ -13,10 +13,11 @@
 <script>
   import { onMount, untrack } from 'svelte';
   import { Editor } from '@kupcad/editor/svelte';
-  import { errorText, EXPORT_FORMATS } from '@kupcad/protocol';
+  import { errorText } from '@kupcad/protocol';
   import {
     appendLines,
     ConsolePanel,
+    ExportMenu,
     linesOfLog,
     linesOfRun,
     localSettings,
@@ -144,11 +145,9 @@
     if (place.line !== null) editor?.reveal(place.line, place.column ?? 1);
   }
 
-  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
-  async function exportChosen(event) {
-    const format = /** @type {ExportFormat} */ (event.currentTarget.value);
-    event.currentTarget.value = '';
-    if (!core || !format) return;
+  /** @param {ExportFormat} format */
+  async function exportChosen(format) {
+    if (!core) return;
     try {
       const bytes = await core.build(value, { format, params: plainValues(overrides) });
       download(bytes, `${name}.${format}`);
@@ -192,12 +191,7 @@
         onscreenshot={screenshot}
       >
         {#snippet actions()}
-          <select class="kc-control" aria-label="Export" onchange={exportChosen}>
-            <option value="" selected disabled>Export…</option>
-            {#each EXPORT_FORMATS as choice (choice.format)}
-              <option value={choice.format} title={choice.detail}>{choice.label}</option>
-            {/each}
-          </select>
+          <ExportMenu kind={ran?.preview.model.kind ?? 'none'} onexport={exportChosen} />
         {/snippet}
       </ViewerPane>
     </div>

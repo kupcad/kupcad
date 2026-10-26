@@ -3,6 +3,8 @@
 // what the viewer asks the host to do. Each side reads the other's messages with a guard, as
 // they arrive untyped (`postMessage`).
 
+import { isExportFormat } from './formats.js';
+
 /** @import { HostMessage, ParamValue, ParamValues, ViewerMessage } from './types.js' */
 
 /** How deep a parameter's value nests (core/src/core/param_rules.zig's): a list of tuples or of objects. */
@@ -61,7 +63,7 @@ const VIEWER_MESSAGES = {
   /** @param {Record<string, unknown>} m */
   savePreset: (m) => isString(m.uri) && isParamValues(m.values),
   /** @param {Record<string, unknown>} m */
-  export: (m) => isString(m.uri),
+  export: (m) => isString(m.uri) && isExportFormat(m.format),
   /** @param {Record<string, unknown>} m */
   screenshot: (m) => isString(m.png),
   /** @param {Record<string, unknown>} m */

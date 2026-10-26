@@ -28,8 +28,8 @@ the PWA) embeds; it keeps nothing of the page's.
   since aren't marked, nor a run's places in one.
 * **The pane** (`@kupcad/ui`'s `ViewerPane`): the model, the view's controls and the parts, how
   the run went and its problems, one clicked taking the editor to its line. Its toolbar exports
-  the model in any format the core writes (`@kupcad/protocol`'s `EXPORT_FORMATS`, built with the
-  panel's values) and saves a screenshot, as downloads named after `name`; a build that fails
+  the model in any format its kind can be written in (`@kupcad/ui`'s `ExportMenu`, built with
+  the panel's values) and saves a screenshot, as downloads named after `name`; a build that fails
   says why. The parameters (`ParamsPanel`) are beside it.
 * **The layout**: the bars between the script, the model, the parameters and the console
   resize them (`@kupcad/ui`'s `Splitter`), the sizes kept in `settings`, by default the page's
