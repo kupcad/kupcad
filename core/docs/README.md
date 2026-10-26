@@ -485,8 +485,11 @@ near = box.min_gap(other_part, 5)  # Looked for up to 5 mm only: a wider gap ans
 is_inside = box.contains?([x, y, z])        # Point-in-solid check
 on_plate = square(10).contains?([x, y])     # Sketches: [x, y] (or [x, y, 0]); holes excluded, outline included
 topology = box.genus            # Topological genus (holes)
+hits = box.ray_cast([x, y, 100], [x, y, -100])  # Where the segment meets the surface, nearest first
 
 ```
+
+Each of `ray_cast`'s hits is a Map: its `"distance"` from the origin, its `"position"`, the face's outward `"normal"` and its `"crossing"`, +1 where the ray goes into the solid and -1 where it comes out. A ray that only touches an edge or a corner meets it as a +1 and a -1 at the same distance, which cancel, so count the material along a ray by its crossings rather than its hits: from an origin outside, `hits.map { |h| -h["crossing"] * h["distance"] }.sum` is how much of it runs through the solid.
 
 
 A Solid also answers `center_of_mass`, the centroid of its volume ([x, y, z], where it balances at a uniform density), `intersects?(other)`, whether two overlap by more than the tolerance cubed (touching face to face is not overlapping), and `mass`, in grams: its volume times its material's `density:` (g/cm³), as the parts list counts it; an Assembly's `mass` is its parts' together. A Solid or a part with no density is a `ValueError` naming it, and a union has no material of its own, so assemble parts of different materials to weigh them.

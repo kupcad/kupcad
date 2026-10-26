@@ -87,6 +87,34 @@ test "Manifold Driver: rayCast finds intersections and distance correctly" {
     try testing.expectApproxEqAbs(@as(f64, 1.0), hits[0].normal[2], 1e-5);
 }
 
+test "Manifold Driver: rayCast tells where the ray goes into the solid from where it comes out" {
+    const c = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
+    defer driver.driver.destructFn(c);
+
+    // Down through the cube: in at the top, out at the bottom
+    const through = driver.driver.rayCastFn(testing.allocator, c, .{ 0.0, 0.0, 10.0 }, .{ 0.0, 0.0, -10.0 }) orelse return error.RayFailed;
+    defer testing.allocator.free(through);
+    try testing.expectEqual(2, through.len);
+    try testing.expectEqual(1, through[0].crossing);
+    try testing.expectEqual(-1, through[1].crossing);
+    try testing.expectApproxEqAbs(@as(f64, 15.0), through[1].distance, 1e-5);
+    try testing.expectApproxEqAbs(@as(f64, -1.0), through[1].normal[2], 1e-5);
+
+    // From inside, only the way out
+    const out = driver.driver.rayCastFn(testing.allocator, c, .{ 0.0, 0.0, 0.0 }, .{ 0.0, 0.0, 10.0 }) orelse return error.RayFailed;
+    defer testing.allocator.free(out);
+    try testing.expectEqual(1, out.len);
+    try testing.expectEqual(-1, out[0].crossing);
+
+    // Touching the corner at [5, 5, 5] from outside: a way in and a way out at the same
+    // distance, which cancel
+    const touch = driver.driver.rayCastFn(testing.allocator, c, .{ 0.0, 0.0, 10.0 }, .{ 10.0, 10.0, 0.0 }) orelse return error.RayFailed;
+    defer testing.allocator.free(touch);
+    try testing.expectEqual(2, touch.len);
+    try testing.expectApproxEqAbs(touch[0].distance, touch[1].distance, 1e-9);
+    try testing.expectEqual(0, touch[0].crossing + touch[1].crossing);
+}
+
 test "Manifold Driver: minGap accurately calculates shortest distance between solids" {
     const c1 = driver.driver.cubeFn(&.{}, 10.0, 10.0, 10.0, true) orelse return error.CubeFailed;
     defer driver.driver.destructFn(c1);

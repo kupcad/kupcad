@@ -98,7 +98,7 @@ pub fn meshCenterOfMass(vm: *VM, receiver: value.Value) !value.Value {
     }
     if (!(six_volume > 0)) return vm.fail(.ValueError, "center_of_mass: the Solid encloses no volume", .{});
     const centroid = vec3.add(ref, vec3.scale(moment, 1 / (4 * six_volume)));
-    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, &.{ value.Value.initNumber(centroid[0]), value.Value.initNumber(centroid[1]), value.Value.initNumber(centroid[2]) })).obj);
+    return vec3Value(vm, centroid);
 }
 
 fn vertexAt(mesh: geom.Mesh, i: usize) [3]f64 {
@@ -244,25 +244,25 @@ pub fn meshRayCast(vm: *VM, receiver: value.Value, args: []const value.Value) !v
         vm.push(value.Value.initObj(&map_obj.obj));
         defer _ = vm.pop();
 
-        const d_str = try vm.allocateString("distance");
-        vm.push(d_str);
-        try map_obj.table.put(vm.gc.trackingAllocator(), d_str, value.Value.initNumber(hit.distance));
-        _ = vm.pop();
-
-        const pos_str = try vm.allocateString("position");
-        vm.push(pos_str);
-        const pos_arr = try vm.gc.allocateArray(vm);
-        vm.push(value.Value.initObj(&pos_arr.obj));
-        try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[0]));
-        try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[1]));
-        try pos_arr.items.append(vm.gc.trackingAllocator(), value.Value.initNumber(hit.position[2]));
-        try map_obj.table.put(vm.gc.trackingAllocator(), pos_str, value.Value.initObj(&pos_arr.obj));
-        _ = vm.pop();
-        _ = vm.pop();
+        try putEntry(vm, map_obj, "distance", value.Value.initNumber(hit.distance));
+        try putEntry(vm, map_obj, "position", try vec3Value(vm, hit.position));
+        try putEntry(vm, map_obj, "normal", try vec3Value(vm, hit.normal));
+        try putEntry(vm, map_obj, "crossing", value.Value.initNumber(@floatFromInt(hit.crossing)));
 
         try hit_arr_obj.items.append(vm.gc.trackingAllocator(), value.Value.initObj(&map_obj.obj));
     }
     return value.Value.initObj(&hit_arr_obj.obj);
+}
+
+/// `map[key] = item`, `item` rooted while the key is allocated (which may collect).
+fn putEntry(vm: *VM, map: *value.ObjMap, key: []const u8, item: value.Value) !void {
+    vm.push(item);
+    defer _ = vm.pop();
+    try map.table.put(vm.gc.trackingAllocator(), try vm.allocateString(key), item);
+}
+
+fn vec3Value(vm: *VM, v: [3]f64) !value.Value {
+    return value.Value.initObj(&(try vm.gc.allocateArrayOf(vm, &.{ value.Value.initNumber(v[0]), value.Value.initNumber(v[1]), value.Value.initNumber(v[2]) })).obj);
 }
 
 pub fn meshGenus(vm: *VM, receiver: value.Value) !value.Value {

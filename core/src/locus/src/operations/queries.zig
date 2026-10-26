@@ -9,6 +9,8 @@ pub const RayHit = struct {
     distance: f64,
     position: math.Vec3,
     normal: math.Vec3,
+    /// +1 where the ray enters the solid, -1 where it leaves (`geom.RayHit.crossing`).
+    crossing: i32,
 };
 
 pub fn isPointInsideSolid(

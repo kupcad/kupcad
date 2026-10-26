@@ -102,6 +102,9 @@ benchmark("Total Generation Time") do
   # Raycast down the motor shaft hole
   hits = final_part.ray_cast([0.0, 0.0, 50.0], [0.0, 0.0, -50.0])
   inspect("Motor Shaft Ray Intersections:", hits.length)
+  # Each hit's crossing is +1 into the material and -1 out of it: the material along the ray
+  shaft_material = hits.map { |h| -h["crossing"] * h["distance"] }.sum
+  inspect("Material Along Motor Shaft:", shaft_material.round(2))
 
   # Check minimum clearance to a theoretical payload
   payload = cube(20.0, 20.0, 20.0, center: true).translate(20.0 + arm_len, 30.0, 0.0)

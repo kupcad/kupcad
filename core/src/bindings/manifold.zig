@@ -558,6 +558,7 @@ pub fn rayCast(allocator: std.mem.Allocator, m: ?*ManifoldObj, ox: f64, oy: f64,
             .distance = h.distance * ray_length,
             .position = .{ h.position.x, h.position.y, h.position.z },
             .normal = .{ h.normal.x, h.normal.y, h.normal.z },
+            .crossing = h.crossing,
         };
     }
     return hits;

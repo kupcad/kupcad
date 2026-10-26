@@ -1805,6 +1805,26 @@ test "Stdlib: min_gap finds a gap however wide, unless a search length caps it" 
     });
 }
 
+test "Stdlib: ray_cast gives each hit's distance, position, normal and crossing, nearest first" {
+    const through = "hits = cube(10, center: true).ray_cast([0, 0, 10], [0, 0, -10])\n";
+    try expectScripts(&.{
+        // In at the top, out at the bottom
+        .{ .src = through ++ "r = hits.map { |h| h[\"distance\"] }", .expected = .{ .nums = &.{ 5, 15 } } },
+        .{ .src = through ++ "r = hits.map { |h| h[\"position\"] }.flatten", .expected = .{ .nums = &.{ 0, 0, 5, 0, 0, -5 } }, .gc_stress = true },
+        .{ .src = through ++ "r = hits.map { |h| h[\"normal\"] }.flatten", .expected = .{ .nums = &.{ 0, 0, 1, 0, 0, -1 } }, .gc_stress = true },
+        .{ .src = through ++ "r = hits.map { |h| h[\"crossing\"] }", .expected = .{ .nums = &.{ 1, -1 } } },
+        // From inside, only the way out
+        .{ .src = "r = cube(10, center: true).ray_cast([0, 0, 0], [0, 0, 10]).map { |h| h[\"crossing\"] }", .expected = .{ .nums = &.{-1} } },
+        // Across a tube: into and out of each wall
+        .{ .src = "tube = cylinder(r: 10, h: 5) - cylinder(r: 8, h: 7).translate(z: -1)\nr = tube.ray_cast([-20, 0.3, 2.5], [20, 0.3, 2.5]).map { |h| h[\"crossing\"] }", .expected = .{ .nums = &.{ 1, -1, 1, -1 } } },
+        // The material along a ray from outside: each way out's distance less the way in's,
+        // 10 through each of two cubes
+        .{ .src = "hits = (cube(10) + cube(10).translate(z: 20)).ray_cast([5, 5, 40], [5, 5, -10])\nr = hits.map { |h| -h[\"crossing\"] * h[\"distance\"] }.sum", .expected = .{ .num = 20 } },
+        // Touching a corner from outside: two hits that cancel, through no material
+        .{ .src = "hits = cube(10).ray_cast([-5, -5, 5], [5, 5, 15])\nr = [hits.length, hits.map { |h| h[\"crossing\"] }.sum, hits.map { |h| -h[\"crossing\"] * h[\"distance\"] }.sum]", .expected = .{ .nums = &.{ 2, 0, 0 } } },
+    });
+}
+
 test "Stdlib: a shape is measured under the tolerance it was made under, not the one in force, closed within it" {
     // contains? read the tolerance in force where it was called, so a later CAD.config
     // changed how an earlier shape measured, and one made inside with_config measured

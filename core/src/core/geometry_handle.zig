@@ -86,4 +86,8 @@ pub const RayHit = struct {
     distance: f64,
     position: [3]f64,
     normal: [3]f64,
+    /// +1 where the ray enters the solid, -1 where it leaves: summed along the ray, how much
+    /// deeper inside its end is than its origin. A ray grazing a vertex or an edge can meet
+    /// a +1 and a -1 at the same distance, which cancel.
+    crossing: i32,
 };

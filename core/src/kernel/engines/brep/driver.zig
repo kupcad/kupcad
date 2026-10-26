@@ -598,7 +598,7 @@ fn rayCastImpl(alloc: std.mem.Allocator, a: geom.GeometryHandle, o: [3]f64, e: [
 
     if (locus_query.rayCast(alloc, &solid.t_arena, &solid.g_arena, solid.solid_id, o, e, env) catch null) |hits| {
         var mapped = alloc.alloc(geom.RayHit, hits.len) catch return null;
-        for (hits, 0..) |h, i| mapped[i] = .{ .distance = h.distance, .position = h.position, .normal = h.normal };
+        for (hits, 0..) |h, i| mapped[i] = .{ .distance = h.distance, .position = h.position, .normal = h.normal, .crossing = h.crossing };
         alloc.free(hits);
         return mapped;
     }
