@@ -4,6 +4,7 @@ const run_report = @import("run_report.zig");
 const RunReport = run_report.RunReport;
 const VM = @import("vm.zig").VM;
 const support = @import("../test_support.zig");
+const api = @import("../api.zig");
 const Document = @import("../frontend/document.zig").Document;
 const chunk = @import("chunk.zig");
 const Compiler = @import("../compiler/compiler.zig").Compiler;
@@ -31,12 +32,18 @@ test "run report: warnings past the most kept are freed, and a refusal replaces 
     }
     try testing.expectEqual(@as(usize, run_report.MAX_WARNINGS), report.warnings.items.len);
     try testing.expectEqualStrings("warning 0", report.warnings.items[0].message);
-    try report.refuse(testing.allocator, "width");
-    try report.refuse(testing.allocator, "depth");
-    try testing.expectEqualStrings("depth", report.refused_param.?);
+    try report.refuse(testing.allocator, "width", &.{});
+    // The place in its value, copied: `:cutouts[1][:depth]`
+    var field = "depth".*;
+    try report.refuse(testing.allocator, "cutouts", &.{ .{ .index = 1 }, .{ .field = &field } });
+    field[0] = 'x';
+    try testing.expectEqualStrings("cutouts", report.refused_param.?);
+    try testing.expectEqual(@as(usize, 1), report.refused_path[0].index);
+    try testing.expectEqualStrings("depth", report.refused_path[1].field);
     report.clear(testing.allocator);
     try testing.expectEqual(@as(usize, 0), report.warnings.items.len);
     try testing.expect(report.refused_param == null);
+    try testing.expectEqual(@as(usize, 0), report.refused_path.len);
 }
 
 test "run report: a warning is kept once a run, wherever it is given again" {
@@ -77,10 +84,16 @@ fn facet(comptime a: []const u8, comptime b: []const u8, comptime c: []const u8)
 test "run report: a refused parameter is named, and the error kept where it was raised" {
     var vm = try support.initVm();
     defer vm.deinit();
-    try testing.expectEqual(.runtime_error, try run(&vm, "a = 1\nw = param(:width, default: 5, validate: { min: 10 })\n"));
+    // As a host gives it (api.injectParams)
+    var values: api.ParamValues = .{};
+    defer values.deinit(testing.allocator);
+    try values.put(testing.allocator, "width", .{ .array = &.{ .{ .number = 20 }, .{ .number = 5 } } });
+    try api.injectParams(&vm, &values);
+    try testing.expectEqual(.runtime_error, try run(&vm, "a = 1\nw = param(:width, default: [20], validate: { items: { type: :number, min: 10 } })\n"));
     try testing.expectEqualStrings("width", vm.report.refused_param.?);
+    try testing.expectEqual(@as(usize, 1), vm.report.refused_path[0].index);
     try testing.expectEqual(@as(u32, 2), vm.last_error_position.?.line);
-    try testing.expect(std.mem.startsWith(u8, vm.last_error.?, "ValueError: parameter :width value 5"));
+    try testing.expectEqualStrings("ValueError: parameter :width[1] expects a number at least 10, got 5", vm.last_error.?);
 
     // An error the script raises itself, uncaught, is placed too; no parameter is named
     vm.resetRunOutput();

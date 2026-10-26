@@ -137,6 +137,7 @@ pub fn failureOf(vm: *const VM) frame.Failure {
         .line = lineOf(vm.last_error_position),
         .column = columnOf(vm.last_error_position),
         .param = vm.report.refused_param,
+        .path = vm.report.refused_path,
     };
 }
 
@@ -226,18 +227,28 @@ fn valuesOf(arena: std.mem.Allocator, vm: *const VM, schema: extractor.UiSchema)
     return values;
 }
 
-/// `v` as JSON gives a parameter's value (its text borrowed, its arrays in `arena`); null for
-/// nil and for what JSON can't hold.
+/// `v` as JSON gives a parameter's value (its text borrowed, its arrays and objects in
+/// `arena`); null for nil and for what JSON can't hold.
 fn paramValue(arena: std.mem.Allocator, v: value.Value) !?param_values.ParamValue {
     if (v.isNumber()) return if (std.math.isFinite(v.asNumber())) .{ .number = v.asNumber() } else null;
     if (v.isBool()) return .{ .boolean = v.asBool() };
     if (v.nameChars()) |text| return .{ .text = text };
-    if (!v.isArray()) return null;
     // param() read it, so it nests no deeper than a parameter's may
-    const items = v.asArray().items.items;
-    const elements = try arena.alloc(param_values.ParamValue, items.len);
-    for (items, elements) |item, *element| element.* = try paramValue(arena, item) orelse return null;
-    return .{ .array = elements };
+    if (v.isArray()) {
+        const items = v.asArray().items.items;
+        const elements = try arena.alloc(param_values.ParamValue, items.len);
+        for (items, elements) |item, *element| element.* = try paramValue(arena, item) orelse return null;
+        return .{ .array = elements };
+    }
+    if (!v.isMap()) return null;
+    const map = v.asMap();
+    const fields = try arena.alloc(param_values.ParamValue.Field, map.count());
+    var entries = map.entries();
+    var i: usize = 0;
+    while (entries.next()) |entry| : (i += 1) {
+        fields[i] = .{ .name = entry.key.nameChars() orelse return null, .value = try paramValue(arena, entry.value) orelse return null };
+    }
+    return .{ .object = fields };
 }
 
 /// A warning of the run as a frame places it, at its line and column (null for none).

@@ -355,7 +355,7 @@ test "build_cmd: -P reads a JSON object of values, and of two for one parameter 
 test "build_cmd: -P refuses a file it can't read, and one that isn't parameter values" {
     var fx = try Fixture.init("cube(1)\n");
     defer fx.deinit();
-    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "object.json", .data = "{\"gears\": {\"teeth\": 20}}" });
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "object.json", .data = "{\"gears\": {\"teeth\": [[20]]}}" });
     const object = try fx.path("object.json");
     defer testing.allocator.free(object);
     const missing = try fx.path("missing.json");
@@ -364,7 +364,7 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
     const number = try fx.path("number.json");
     defer testing.allocator.free(number);
     const cases = [_]struct { file: []const u8, message: []const u8 }{
-        .{ .file = object, .message = ": parameter 'gears' is an object; a parameter takes a number, a string, true or false, or an array of them\n" },
+        .{ .file = object, .message = ": parameter 'gears' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most\n" },
         .{ .file = missing, .message = "': FileNotFound\n" },
         .{ .file = number, .message = ": a parameter file holds one JSON object of names and values, as {\"width\": 40}\n" },
     };

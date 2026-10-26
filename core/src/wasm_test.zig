@@ -402,7 +402,7 @@ test "WASM Interop: build_model_wasm takes parameter values as a JSON object" {
     try testing.expectEqual(@as(usize, 84 + 12 * 50), try expectBuildLength(src));
     try testing.expectEqual(@as(usize, 84 + 3 * 12 * 50), try expectBuildLengthWith(src, "{\"n\": 3, \"label\": \"ok\"}"));
     // A refusal says it is about the parameters, not the script.
-    try testing.expectEqualStrings("parameters: parameter 'n' is an object; a parameter takes a number, a string, true or false, or an array of them", try expectBuildFailureWith(src, "{\"n\": {\"a\": 1}}"));
+    try testing.expectEqualStrings("parameters: parameter 'n' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most", try expectBuildFailureWith(src, "{\"n\": {\"a\": [[1]]}}"));
     // An Array parameter takes an array
     try testing.expectEqual(@as(usize, 84 + 2 * 12 * 50), try expectBuildLengthWith("xs = param(:xs, default: [0])\nunion(xs.map { |x| cube(1).translate(x: x) })", "{\"xs\": [0, 3]}"));
     try testing.expectEqualStrings("parameters: line 1, column 2: invalid JSON", try expectBuildFailureWith(src, "{n: 3}"));
@@ -597,12 +597,19 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
         parameters: []struct {
             name: []const u8,
             type: []const u8,
-            default_value: std.json.Value,
-            validate: struct { min: ?f64, max: ?f64, in: ?[]const std.json.Value },
-            step: ?f64,
-            unit: ?[]const u8,
-            group: ?[]const u8,
+            min: ?f64,
+            max: ?f64,
+            in: ?[]const std.json.Value,
+            items: ?std.json.Value,
+            tuple: ?std.json.Value,
+            fields: ?std.json.Value,
+            min_items: ?u32,
+            max_items: ?u32,
             title: ?[]const u8,
+            unit: ?[]const u8,
+            step: ?f64,
+            default_value: std.json.Value,
+            group: ?[]const u8,
             description: ?[]const u8,
         },
     };
@@ -612,8 +619,8 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
     try testing.expectEqualStrings("Plate", s.meta.title.?);
     try testing.expectEqual(@as(usize, 2), s.parameters.len);
     try testing.expectEqualStrings("width", s.parameters[0].name);
-    try testing.expectEqual(@as(?f64, 1), s.parameters[0].validate.min);
-    try testing.expectEqual(@as(?f64, 50), s.parameters[0].validate.max);
+    try testing.expectEqual(@as(?f64, 1), s.parameters[0].min);
+    try testing.expectEqual(@as(?f64, 50), s.parameters[0].max);
     try testing.expectEqual(@as(?f64, 0.5), s.parameters[0].step);
     try testing.expectEqualStrings("mm", s.parameters[0].unit.?);
     try testing.expectEqualStrings("Size", s.parameters[0].group.?);
@@ -623,7 +630,7 @@ test "WASM Interop: extract_params_wasm's JSON is the schema kupcad doc prints" 
     try testing.expectEqual(@as(?[]const u8, null), s.parameters[1].unit);
     try testing.expectEqualStrings("material", s.parameters[1].name);
     try testing.expectEqualStrings("PLA", s.parameters[1].default_value.string);
-    try testing.expectEqual(@as(usize, 2), s.parameters[1].validate.in.?.len);
+    try testing.expectEqual(@as(usize, 2), s.parameters[1].in.?.len);
 }
 
 test "WASM GC: scripts under GC stress run right with 32-bit pointers" {
@@ -674,10 +681,10 @@ test "WASM Interop: preview_wasm gives a frame: the model as GLB, or why it fail
     try testing.expect(cube.glb);
     try testing.expect(cube.message == null);
 
-    var refused = try previewOf("cube(2)", "{\"w\": {\"a\": 1}}");
+    var refused = try previewOf("cube(2)", "{\"w\": [null]}");
     defer refused.arena.deinit();
     try testing.expectEqualStrings("none", refused.kind);
-    try testing.expect(std.mem.startsWith(u8, refused.message.?, "parameters: parameter 'w' is an object"));
+    try testing.expect(std.mem.startsWith(u8, refused.message.?, "parameters: parameter 'w' holds null"));
 
     var failed = try previewOf("cube(1)\nraise \"boom\"", "");
     defer failed.arena.deinit();

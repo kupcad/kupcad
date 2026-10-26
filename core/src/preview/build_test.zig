@@ -105,7 +105,9 @@ test "preview: a refused parameter is named, with where the run failed" {
     const failure = h.@"error".?;
     try testing.expectEqualStrings("width", failure.param.?);
     try testing.expectEqual(@as(?u32, 2), failure.line);
-    try testing.expect(std.mem.startsWith(u8, failure.message, "ValueError: parameter :width value 5 is below its minimum 10"));
+    try testing.expect(std.mem.startsWith(u8, failure.message, "ValueError: parameter :width expects a number at least 10, got 5"));
+    // The whole value: no place in it
+    try testing.expectEqual(@as(usize, 0), failure.path.len);
     // The schema still comes: the panel keeps its controls
     try testing.expectEqual(@as(usize, 1), h.params.schema.object.get("parameters").?.array.items.len);
 }

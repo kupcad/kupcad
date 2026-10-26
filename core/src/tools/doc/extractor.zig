@@ -1,10 +1,12 @@
 //! `extractSchema`: reads a script's `@title`, `@description` and `@author` comments and
-//! its `param` calls into a `UiSchema` without running it (`kupcad doc`, through api.zig).
+//! its `param` calls into a `UiSchema` without running it (`kupcad doc`, through api.zig): each
+//! parameter's rules as param_rules.zig builds them from the literals the call is written with.
 
 const std = @import("std");
 const ast = @import("../../core/ast.zig");
 const Document = @import("../../frontend/document.zig").Document;
 const visitor = @import("../../core/visitor.zig");
+const param_rules = @import("../../core/param_rules.zig");
 
 pub const PresentationMeta = struct {
     title: ?[]const u8 = null,
@@ -12,35 +14,33 @@ pub const PresentationMeta = struct {
     author: ?[]const u8 = null,
 };
 
-/// What `param` accepts under `validate:` (stdlib/params.zig), and nothing else: the
-/// schema used to carry `ui` and `validate.step`, which param refuses as unknown keywords.
-pub const ParamValidate = struct {
-    min: ?f64 = null,
-    max: ?f64 = null,
-    /// The allowed values, when the script lists them as literals; null when there is no
-    /// list or it holds something only the run can compute (shown short, it would mislead).
-    in: ?[]const std.json.Value = null,
-};
-
+/// One `param(...)` as the schema gives it: its rules (param_rules.zig's, read from the
+/// script's literals as the run reads them), its default, and where a host's control goes.
 pub const ParamMetadata = struct {
     name: []const u8,
-    /// "number", "string" (a Symbol parameter's too), "boolean" or "array": `type:`'s, else
-    /// its literal default's, else its choices', else "string" (one with no default is text
-    /// until a host gives it some). A default only the run computes is taken for a number.
-    type: []const u8,
-    /// Null when there is none (or nil), or the run computes it.
-    default_value: ?std.json.Value,
-    validate: ParamValidate,
-    /// A number control's increment, `step:`, when written as a literal.
-    step: ?f64 = null,
-    /// What a number is measured in, `unit:` ("mm", "deg").
-    unit: ?[]const u8 = null,
+    rule: param_rules.Rule,
+    /// Its default as its rules read it; nil (null) when there is none, or the run computes it.
+    default_value: param_rules.Literal = .nil,
     /// The heading a control goes under, `group:`.
     group: ?[]const u8 = null,
-    /// What a control is labelled, `title:`; a host shows the name where there is none.
-    title: ?[]const u8 = null,
     /// What a host shows with the control, `description:`.
     description: ?[]const u8 = null,
+
+    /// As the protocol's `ParamSpec`: its name, its rule's fields, its default, its group and
+    /// description.
+    pub fn jsonStringify(self: ParamMetadata, jw: *std.json.Stringify) !void {
+        try jw.beginObject();
+        try jw.objectField("name");
+        try jw.write(self.name);
+        try self.rule.writeFields(jw);
+        try jw.objectField("default_value");
+        try self.default_value.jsonStringify(jw);
+        try jw.objectField("group");
+        try jw.write(self.group);
+        try jw.objectField("description");
+        try jw.write(self.description);
+        try jw.endObject();
+    }
 };
 
 pub const UiSchema = struct {
@@ -109,89 +109,102 @@ fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.Met
     const is_setter = args.len > 1 or (args.len > 0 and args[0].name != .none);
     if (!is_setter) return null;
 
-    const p_name = extractString(tree, args[0].value) orelse "unknown";
-
-    var def_val: ?std.json.Value = null;
-    var computed_default = false;
-    var named_type: ?[]const u8 = null;
-    var val = ParamValidate{};
-    var step: ?f64 = null;
-    var unit: ?[]const u8 = null;
+    var declaration: param_rules.Declaration = .{ .name = extractString(tree, args[0].value) orelse "unknown" };
     var group: ?[]const u8 = null;
-    var title: ?[]const u8 = null;
     var description: ?[]const u8 = null;
-
     for (args) |arg| {
         if (arg.name == .none) continue;
         const kw_name = tree.getString(arg.name);
-
         if (std.mem.eql(u8, kw_name, "default")) {
-            def_val = try extractJsonValue(allocator, tree, arg.value);
-            computed_default = def_val == null;
+            // One only the run computes is taken for a number's, as most are
+            if (try literalOf(allocator, tree, arg.value, .whole, param_rules.MAX_LITERAL_DEPTH)) |default| declaration.default = default else declaration.fallback = .number;
         } else if (std.mem.eql(u8, kw_name, "type")) {
-            named_type = schemaType(extractText(tree, arg.value) orelse "");
+            declaration.type = try literalOf(allocator, tree, arg.value, .whole, param_rules.MAX_LITERAL_DEPTH);
         } else if (std.mem.eql(u8, kw_name, "validate")) {
-            val = try extractValidate(allocator, tree, arg.value);
+            declaration.validate = try literalOf(allocator, tree, arg.value, .known, param_rules.MAX_LITERAL_DEPTH);
         } else if (std.mem.eql(u8, kw_name, "step")) {
-            step = extractNumber(tree, arg.value);
+            declaration.step = extractNumber(tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "unit")) {
-            unit = extractText(tree, arg.value);
+            declaration.unit = extractText(tree, arg.value);
+        } else if (std.mem.eql(u8, kw_name, "title")) {
+            declaration.title = extractText(tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "group")) {
             group = extractText(tree, arg.value);
-        } else if (std.mem.eql(u8, kw_name, "title")) {
-            title = extractText(tree, arg.value);
         } else if (std.mem.eql(u8, kw_name, "description")) {
             description = extractText(tree, arg.value);
         }
     }
-
-    const computed: ?[]const u8 = if (computed_default) "number" else null;
-    const p_type = named_type orelse
-        (if (def_val) |dv| jsonType(dv) else null) orelse
-        computed orelse
-        sharedJsonType(val.in orelse &.{}) orelse
-        "string";
-    return ParamMetadata{
-        .name = p_name,
-        .type = p_type,
-        .default_value = def_val,
-        .validate = val,
-        .step = step,
-        .unit = unit,
+    const built = try rulesOf(allocator, declaration);
+    return .{
+        .name = declaration.name,
+        .rule = built.rule,
+        .default_value = built.default,
         .group = group,
-        .title = title,
         .description = description,
     };
 }
 
-fn extractValidate(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !ParamValidate {
-    var val = ParamValidate{};
-    const node = tree.getNode(node_idx) orelse return val;
-    if (node.tag != .hash_literal) return val;
-
-    const entries = tree.getHashEntries(tree.nodeSpan(node));
-    for (entries) |entry| {
-        const key = extractString(tree, entry.key) orelse continue;
-        if (std.mem.eql(u8, key, "min")) {
-            val.min = extractNumber(tree, entry.value);
-        } else if (std.mem.eql(u8, key, "max")) {
-            val.max = extractNumber(tree, entry.value);
-        } else if (std.mem.eql(u8, key, "in")) {
-            val.in = try extractChoices(allocator, tree, entry.value);
+/// The rules `declaration` gives. Where the run would refuse them, those its type and default
+/// give without its `validate:`, else its type alone, else its fallback's: the schema lists the
+/// parameter either way.
+fn rulesOf(allocator: std.mem.Allocator, declaration: param_rules.Declaration) !param_rules.Built {
+    var why: []const u8 = undefined;
+    var tried = declaration;
+    for (0..3) |attempt| {
+        if (param_rules.build(allocator, tried, &why)) |built| return built else |err| switch (err) {
+            error.OutOfMemory => |e| return e,
+            error.InvalidRule => {},
         }
+        if (attempt == 0) tried.validate = null else tried.default = .nil;
     }
-    return val;
+    return .{ .rule = .{ .kind = declaration.fallback, .title = declaration.title }, .default = .nil };
 }
 
-/// The literal values of an `in:` list; null for anything else, or for a list with an
-/// element that isn't a literal.
-fn extractChoices(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !?[]const std.json.Value {
+/// How much of a literal the schema takes: all of it (a default, a `type:`), or (of
+/// `validate:`) the rules written as literals, one the run computes left out.
+const Reading = enum { whole, known };
+
+/// A literal's value: a number, a String's or a Symbol's text, true or false, nil, or an Array
+/// or a Map of them; null for what only the run computes.
+fn literalOf(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex, reading: Reading, depth: usize) !?param_rules.Literal {
     const node = tree.getNode(node_idx) orelse return null;
-    if (node.tag != .array_literal) return null;
-    const elements = tree.getNodes(tree.arrayLiteral(node).span);
-    const choices = try allocator.alloc(std.json.Value, elements.len);
-    for (elements, choices) |e, *c| c.* = try extractJsonValue(allocator, tree, e) orelse return null;
-    return choices;
+    switch (node.tag) {
+        .number => return .{ .number = tree.number(node) },
+        .boolean => return .{ .boolean = tree.boolean(node) },
+        .string => return .{ .string = tree.nodeString(node) },
+        .symbol => return .{ .symbol = tree.nodeString(node) },
+        .nil => return .nil,
+        .unary_op => {
+            const un = tree.unaryExpr(node);
+            if (un.op != .negate) return null;
+            const inner = tree.getNode(un.operand) orelse return null;
+            return if (inner.tag == .number) .{ .number = -tree.number(inner) } else null;
+        },
+        .array_literal => {
+            if (depth == 0) return null;
+            const elements = tree.getNodes(tree.arrayLiteral(node).span);
+            const items = try allocator.alloc(param_rules.Literal, elements.len);
+            // A list or a tuple with a part computed is all the run's: its places would shift
+            for (elements, items) |element, *item| item.* = try literalOf(allocator, tree, element, reading, depth - 1) orelse return null;
+            return .{ .array = items };
+        },
+        .hash_literal => {
+            if (depth == 0) return null;
+            const entries = tree.getHashEntries(tree.nodeSpan(node));
+            var read: std.ArrayList(param_rules.Literal.Entry) = .empty;
+            for (entries) |entry| {
+                const key = extractString(tree, entry.key);
+                const item = try literalOf(allocator, tree, entry.value, reading, depth - 1);
+                if (key == null or item == null) {
+                    if (reading == .whole) return null;
+                    continue;
+                }
+                try read.append(allocator, .{ .key = key.?, .value = item.? });
+            }
+            return .{ .map = try read.toOwnedSlice(allocator) };
+        },
+        else => return null,
+    }
 }
 
 fn extractString(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?[]const u8 {
@@ -223,62 +236,4 @@ fn extractNumber(tree: *const ast.Tree, node_idx: ast.NodeIndex) ?f64 {
         }
     }
     return null;
-}
-
-/// A literal's value as JSON: a number, a String's or a Symbol's text, true or false, nil, or
-/// an Array of them; null for what only the run can compute.
-fn extractJsonValue(allocator: std.mem.Allocator, tree: *const ast.Tree, node_idx: ast.NodeIndex) !?std.json.Value {
-    const node = tree.getNode(node_idx) orelse return null;
-    switch (node.tag) {
-        .number => return .{ .float = tree.number(node) },
-        .boolean => return .{ .bool = tree.boolean(node) },
-        .string, .symbol => return .{ .string = tree.nodeString(node) },
-        .nil => return .null,
-        .array_literal => {
-            const elements = tree.getNodes(tree.arrayLiteral(node).span);
-            var items: std.json.Array = try .initCapacity(allocator, elements.len);
-            for (elements) |e| items.appendAssumeCapacity(try extractJsonValue(allocator, tree, e) orelse return null);
-            return .{ .array = items };
-        },
-        .unary_op => {
-            const un = tree.unaryExpr(node);
-            if (un.op == .negate) {
-                const inner = tree.getNode(un.operand) orelse return null;
-                if (inner.tag == .number) return .{ .float = -tree.number(inner) };
-            }
-            return null;
-        },
-        else => return null,
-    }
-}
-
-/// The schema's type of a `type:` (`:symbol` is a "string" with choices); null for a name no
-/// parameter type has, which the run refuses.
-fn schemaType(name: []const u8) ?[]const u8 {
-    for ([_][]const u8{ "number", "string", "boolean", "array" }) |known| {
-        if (std.mem.eql(u8, name, known)) return known;
-    }
-    return if (std.mem.eql(u8, name, "symbol")) "string" else null;
-}
-
-/// The schema's type of a literal default; null for nil, which gives none.
-fn jsonType(v: std.json.Value) ?[]const u8 {
-    return switch (v) {
-        .float, .integer => "number",
-        .string => "string",
-        .bool => "boolean",
-        .array => "array",
-        else => null,
-    };
-}
-
-/// The type all of `values` share; null when there are none, or they differ.
-fn sharedJsonType(values: []const std.json.Value) ?[]const u8 {
-    if (values.len == 0) return null;
-    const first = jsonType(values[0]) orelse return null;
-    for (values[1..]) |v| {
-        const other = jsonType(v) orelse return null;
-        if (!std.mem.eql(u8, other, first)) return null;
-    }
-    return first;
 }

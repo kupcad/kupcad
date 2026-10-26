@@ -9,6 +9,7 @@
 //! `kupcad version --json` gives it, for a front end choosing a binary.
 
 const std = @import("std");
+const Step = @import("../core/param_rules.zig").Step;
 const UiSchema = @import("../tools/doc/extractor.zig").UiSchema;
 const ParamValues = @import("../core/param_values.zig").ParamValues;
 
@@ -79,12 +80,14 @@ pub const Params = struct {
 };
 
 /// Why the run failed: its message, where (as Warning's), and the parameter whose value it
-/// refused, for a front end's control to show.
+/// refused, and where in that value (`[1, "depth"]`; empty for the whole), for a front end's
+/// control to show.
 pub const Failure = struct {
     message: []const u8,
     line: ?u32 = null,
     column: ?u32 = null,
     param: ?[]const u8 = null,
+    path: []const Step = &.{},
 };
 
 /// Milliseconds spent running the script and making the body.

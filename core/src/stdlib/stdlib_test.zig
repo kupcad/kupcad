@@ -1483,8 +1483,8 @@ test "Stdlib: errors carry their real cause, never a generic message" {
         .{ .src = comptime rescued("(1..nil)"), .expected = .{ .str = "TypeError: a range needs numbers or single characters, got Number..nil" } },
         // param checks its keywords, and its failures are typed.
         .{ .src = comptime rescued("param(:w, defualt: 5)"), .expected = .{ .str = "ArgumentError: param does not take a keyword 'defualt' (it accepts: default, type, validate, step, unit, group, title, description)" } },
-        .{ .src = comptime rescued("param(:w, default: 5, validate: { minimum: 1 })"), .expected = .{ .str = "ArgumentError: param validate does not take a keyword 'minimum' (it accepts: min, max, in)" } },
-        .{ .src = comptime rescued("param(:w, default: 5, validate: { max: 3 })"), .expected = .{ .str = "ValueError: parameter :w value 5 is above its maximum 3" } },
+        .{ .src = comptime rescued("param(:w, default: 5, validate: { minimum: 1 })"), .expected = .{ .str = "ArgumentError: parameter :w's validate: takes no minimum: (it takes min:, max:, in:, items:, tuple:, fields:, min_items:, max_items:)" } },
+        .{ .src = comptime rescued("param(:w, default: 5, validate: { max: 3 })"), .expected = .{ .str = "ArgumentError: parameter :w's default doesn't meet its rules: :w expects a number at most 3, got 5" } },
         .{ .src = comptime rescued("param(:missing)"), .expected = .{ .str = "NameError: parameter :missing is used before it is defined" } },
         .{ .src = comptime rescued("assemble(name: 5, parts: [])"), .expected = .{ .str = "TypeError: assemble expects a String for name, got Number" } },
         // center works on a Sketch: it used to evaluate the Sketch as a Solid.
@@ -1752,7 +1752,7 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         .{ .src = comptime rescued("cube(1).offset(0)"), .expected = .{ .str = "ValueError: a Solid's offset grows it by delta, or shrinks it by a negative one: delta must be a finite number other than zero, got 0" } },
         .{ .src = comptime rescued("cube(1).offset(1, join: :miter)"), .expected = .{ .str = "ValueError: a Solid's offset rounds its edges (a Minkowski sum with a sphere), so it takes no join: :miter" } },
         .{ .src = comptime rescued("cube(1).material"), .expected = .{ .str = "ArgumentError: material requires keyword arguments (e.g. color: \"#FF0000\")" } },
-        .{ .src = comptime rescued("param(:x, default: 1, validate: 5)"), .expected = .{ .str = "TypeError: param expects a Map for validate, got Number" } },
+        .{ .src = comptime rescued("param(:x, default: 1, validate: 5)"), .expected = .{ .str = "ArgumentError: parameter :x's validate: is a Map of rules, as { min: 0 }, got 5" } },
         // Primitives
         .{ .src = comptime rescued("polygon(5)"), .expected = .{ .str = "TypeError: polygon expects an Array for points, got Number" } },
         .{ .src = comptime rescued("polygon()"), .expected = .{ .str = "ArgumentError: polygon expects an Array of [x, y] points" } },

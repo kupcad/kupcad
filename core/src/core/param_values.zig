@@ -7,12 +7,10 @@
 
 const std = @import("std");
 const json_input = @import("json_input.zig");
-
-/// Arrays nested deeper than this are no parameter's value: a point list is two deep.
-pub const MAX_ARRAY_DEPTH = 32;
+const MAX_DEPTH = @import("param_rules.zig").MAX_DEPTH;
 
 /// A value for one parameter. Text is what `-p name=text` gives, and what a JSON string is:
-/// `param()` reads it by the parameter's type, so "10.5" is a number for a number parameter,
+/// `param()` reads it by the parameter's rules, so "10.5" is a number for a number parameter,
 /// "true" a boolean for a boolean one, "m4" the symbol :m4 for a symbol one, and "[10, 20]"
 /// an Array for an Array one.
 pub const ParamValue = union(enum) {
@@ -21,12 +19,17 @@ pub const ParamValue = union(enum) {
     text: []const u8,
     /// An Array parameter's elements, as JSON gives them (a `-P` file, a host's values).
     array: []const ParamValue,
+    /// A Map parameter's fields, in order.
+    object: []const Field,
 
-    /// `json` as a parameter's value, its strings borrowed and its arrays in `arena`; null
-    /// for what no parameter takes (an object, a null in an array, arrays nested past
-    /// MAX_ARRAY_DEPTH, a number past 1.8e308), which `refused` then receives.
+    pub const Field = struct { name: []const u8, value: ParamValue };
+
+    /// `json` as a parameter's value, its strings borrowed and its arrays and objects in
+    /// `arena`; null for what no parameter takes (a null in an array or an object, values
+    /// nested past param_rules.MAX_DEPTH, a number past 1.8e308), which `refused` then
+    /// receives.
     pub fn ofJson(arena: std.mem.Allocator, json: std.json.Value, refused: *std.json.Value) !?ParamValue {
-        return ofJsonAt(arena, json, refused, MAX_ARRAY_DEPTH);
+        return ofJsonAt(arena, json, refused, MAX_DEPTH);
     }
 
     fn ofJsonAt(arena: std.mem.Allocator, json: std.json.Value, refused: *std.json.Value, depth: usize) !?ParamValue {
@@ -48,7 +51,15 @@ pub const ParamValue = union(enum) {
                 }
                 break :blk .{ .array = elements };
             },
-            .null, .object => null,
+            .object => |object| blk: {
+                if (depth == 0) break :blk null;
+                const fields = try arena.alloc(Field, object.count());
+                for (object.keys(), object.values(), fields) |name, item, *field| {
+                    field.* = .{ .name = name, .value = try ofJsonAt(arena, item, refused, depth - 1) orelse return null };
+                }
+                break :blk .{ .object = fields };
+            },
+            .null => null,
         };
         if (taken == null) refused.* = json;
         return taken;
@@ -111,8 +122,8 @@ pub const ParamValues = struct {
         return true;
     }
 
-    /// The values as the JSON object putJson reads: names to numbers, booleans, strings and
-    /// arrays of them, in their order.
+    /// The values as the JSON object putJson reads: names to numbers, booleans, strings, and
+    /// arrays and objects of them, in their order.
     pub fn jsonStringify(self: ParamValues, jw: *std.json.Stringify) !void {
         try jw.beginObject();
         for (self.map.keys(), self.map.values()) |name, v| {
@@ -124,8 +135,8 @@ pub const ParamValues = struct {
 
     /// Sets the parameters a JSON object of names and values gives (a `-P` file), over any
     /// they had; a null gives none, so the parameter takes its script's value. Text that
-    /// isn't JSON, JSON that isn't one object, or a value no parameter takes (an object:
-    /// that is data, not a parameter) is refused with error.InvalidParams, and `why`
+    /// isn't JSON, JSON that isn't one object, or a value no parameter takes (values nested
+    /// deeper than a list of objects) is refused with error.InvalidParams, and `why`
     /// receives the reason, worded for a person and owned by `allocator` (null when there
     /// was no room to word it). A refused file stops whatever reads it, so the values before
     /// the refusal may be set.
@@ -162,7 +173,7 @@ pub const ParamValues = struct {
             }
             var refused: std.json.Value = undefined;
             const param = try ParamValue.ofJson(arena.allocator(), v, &refused) orelse {
-                why.* = allocator.print("parameter '{s}' {s} {s}; a parameter takes a number, a string, true or false, or an array of them", .{ name, if (v == .array) "holds" else "is", kindOf(refused) }) catch null;
+                why.* = allocator.print("parameter '{s}' {s} {s}; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most", .{ name, if (v == .array or v == .object) "holds" else "is", kindOf(refused) }) catch null;
                 return error.InvalidParams;
             };
             try self.put(allocator, name, param);
@@ -177,6 +188,9 @@ fn valueEql(a: ParamValue, b: ParamValue) bool {
         .text => |t| b == .text and std.mem.eql(u8, b.text, t),
         .array => |items| b == .array and items.len == b.array.len and for (items, b.array) |x, y| {
             if (!valueEql(x, y)) break false;
+        } else true,
+        .object => |fields| b == .object and fields.len == b.object.len and for (fields, b.object) |x, y| {
+            if (!std.mem.eql(u8, x.name, y.name) or !valueEql(x.value, y.value)) break false;
         } else true,
     };
 }
@@ -198,8 +212,28 @@ fn copyValue(allocator: std.mem.Allocator, v: ParamValue) !ParamValue {
             }
             return .{ .array = copies };
         },
+        .object => |fields| {
+            const copies = try allocator.alloc(ParamValue.Field, fields.len);
+            var made: usize = 0;
+            errdefer {
+                for (copies[0..made]) |copy| freeField(allocator, copy);
+                allocator.free(copies);
+            }
+            for (fields, copies) |field, *copy| {
+                const name = try allocator.dupe(u8, field.name);
+                errdefer allocator.free(name);
+                copy.* = .{ .name = name, .value = try copyValue(allocator, field.value) };
+                made += 1;
+            }
+            return .{ .object = copies };
+        },
         else => return v,
     }
+}
+
+fn freeField(allocator: std.mem.Allocator, field: ParamValue.Field) void {
+    allocator.free(field.name);
+    freeValue(allocator, field.value);
 }
 
 fn freeValue(allocator: std.mem.Allocator, v: ParamValue) void {
@@ -208,6 +242,10 @@ fn freeValue(allocator: std.mem.Allocator, v: ParamValue) void {
         .array => |items| {
             for (items) |item| freeValue(allocator, item);
             allocator.free(items);
+        },
+        .object => |fields| {
+            for (fields) |field| freeField(allocator, field);
+            allocator.free(fields);
         },
         else => {},
     }
@@ -223,14 +261,21 @@ fn writeValue(jw: *std.json.Stringify, v: ParamValue) !void {
             for (items) |item| try writeValue(jw, item);
             try jw.endArray();
         },
+        .object => |fields| {
+            try jw.beginObject();
+            for (fields) |field| {
+                try jw.objectField(field.name);
+                try writeValue(jw, field.value);
+            }
+            try jw.endObject();
+        },
     }
 }
 
-/// What kind of JSON value `v`, which no parameter takes, is, for a refusal ("an object").
+/// What kind of JSON value `v`, which no parameter takes, is, for a refusal ("null").
 fn kindOf(v: std.json.Value) []const u8 {
     return switch (v) {
-        .array => "arrays nested too deep",
-        .object => "an object",
+        .array, .object => "values nested too deep",
         .null => "null",
         else => "a number past the largest (1.8e308)",
     };

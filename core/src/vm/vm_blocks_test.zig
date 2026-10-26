@@ -1866,10 +1866,9 @@ test "VM: Parameter registry uses O(1) lookup and respects validation limits" {
     try testing.expect(result.isNumber());
     try testing.expectEqual(@as(f64, 150.0), result.asNumber());
 
-    // Verify it was correctly recorded in the VM's native registry
+    // Recorded in the VM's registry, with the value it took
     try testing.expectEqual(@as(usize, 1), vm.param_registry.items(.name).len);
-    try testing.expectEqual(@as(f64, 1.0), vm.param_registry.items(.min_val)[0]);
-    try testing.expectEqual(@as(f64, 100.0), vm.param_registry.items(.max_val)[0]);
+    try testing.expectEqual(@as(f64, 15.0), vm.param_registry.items(.current_value)[0].asNumber());
 }
 
 test "VM: yield securely passes keyword arguments to blocks" {

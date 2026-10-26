@@ -3,7 +3,6 @@ const testing = std.testing;
 const param_values = @import("param_values.zig");
 const ParamValues = param_values.ParamValues;
 const ParamValue = param_values.ParamValue;
-const support = @import("../test_support.zig");
 
 fn expectValue(expected: ParamValue, values: *const ParamValues, name: []const u8) !void {
     errdefer std.debug.print("parameter: {s}\n", .{name});
@@ -18,6 +17,13 @@ fn expectParamValue(expected: ParamValue, got: ParamValue) !void {
         .array => |items| {
             try testing.expectEqual(items.len, got.array.len);
             for (items, got.array) |item, element| try expectParamValue(item, element);
+        },
+        .object => |fields| {
+            try testing.expectEqual(fields.len, got.object.len);
+            for (fields, got.object) |field, given| {
+                try testing.expectEqualStrings(field.name, given.name);
+                try expectParamValue(field.value, given.value);
+            }
         },
     }
 }
@@ -60,14 +66,12 @@ test "ParamValues: a JSON object gives numbers, strings and booleans, in its ord
 }
 
 test "ParamValues: a file that isn't one object of parameter values is refused, saying why" {
-    // An object is data, for import_json, not a parameter.
-    const deep = comptime support.repeat("[", param_values.MAX_ARRAY_DEPTH + 1) ++ support.repeat("]", param_values.MAX_ARRAY_DEPTH + 1);
+    // Values nested past a list of objects are data, for import_json, not a parameter's
     const cases = [_]struct { json: []const u8, why: []const u8 }{
-        .{ .json = "{\"frame\": {\"w\": 1}}", .why = "parameter 'frame' is an object; a parameter takes a number, a string, true or false, or an array of them" },
-        .{ .json = "{\"gears\": [1, {\"teeth\": 20}]}", .why = "parameter 'gears' holds an object; a parameter takes a number, a string, true or false, or an array of them" },
-        .{ .json = "{\"gears\": [1, null]}", .why = "parameter 'gears' holds null; a parameter takes a number, a string, true or false, or an array of them" },
-        .{ .json = "{\"gears\": " ++ deep ++ "}", .why = "parameter 'gears' holds arrays nested too deep; a parameter takes a number, a string, true or false, or an array of them" },
-        .{ .json = "{\"w\": 1e400}", .why = "parameter 'w' is a number past the largest (1.8e308); a parameter takes a number, a string, true or false, or an array of them" },
+        .{ .json = "{\"gears\": [1, null]}", .why = "parameter 'gears' holds null; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most" },
+        .{ .json = "{\"gears\": [[[20]]]}", .why = "parameter 'gears' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most" },
+        .{ .json = "{\"frame\": {\"w\": [[1]]}}", .why = "parameter 'frame' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most" },
+        .{ .json = "{\"w\": 1e400}", .why = "parameter 'w' is a number past the largest (1.8e308); a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most" },
         .{ .json = "[1, 2]", .why = "a parameter file holds one JSON object of names and values, as {\"width\": 40}" },
         .{ .json = "40", .why = "a parameter file holds one JSON object of names and values, as {\"width\": 40}" },
         .{ .json = "{\"w\": 1,\n \"h\" 2}", .why = "line 2, column 6: invalid JSON" },
@@ -92,7 +96,7 @@ test "ParamValues: refusing a file frees what it had set" {
     defer values.deinit(testing.allocator);
     var why: ?[]u8 = null;
     defer if (why) |w| testing.allocator.free(w);
-    try testing.expectError(error.InvalidParams, values.putJson(testing.allocator, "{\"a\": \"text\", \"b\": [\"set\", {}]}", &why));
+    try testing.expectError(error.InvalidParams, values.putJson(testing.allocator, "{\"a\": \"text\", \"b\": [\"set\", [[1]]]}", &why));
 }
 
 test "ParamValues: written as JSON, they read back the same, in their order" {
@@ -138,36 +142,38 @@ test "ParamValues: a copy is equal, and a value, a name or the order changed isn
 }
 
 test "ParamValues: a parsed JSON object gives its values, and refuses one no parameter takes" {
-    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, "{\"width\": 40, \"label\": \"A\", \"holes\": [{\"x\": 1}]}", .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, "{\"width\": 40, \"label\": \"A\", \"holes\": [[[1]]]}", .{});
     var values: ParamValues = .{};
     defer values.deinit(testing.allocator);
     var why: ?[]u8 = null;
     defer if (why) |w| testing.allocator.free(w);
     try testing.expectError(error.InvalidParams, values.putObject(testing.allocator, parsed.value.object, &why));
-    try testing.expectEqualStrings("parameter 'holes' holds an object; a parameter takes a number, a string, true or false, or an array of them", why.?);
+    try testing.expectEqualStrings("parameter 'holes' holds values nested too deep; a parameter takes numbers, strings, true or false, and arrays and objects of them, two deep at most", why.?);
     // Its strings are copies: the parse goes, the values stay
     parsed.deinit();
     try expectValue(.{ .text = "A" }, &values, "label");
     try expectValue(.{ .number = 40 }, &values, "width");
 }
 
-test "ParamValues: an array gives an Array parameter its value, nested arrays too" {
+test "ParamValues: arrays and objects give Array and Map parameters their values, two deep" {
     var values: ParamValues = .{};
     defer values.deinit(testing.allocator);
     var why: ?[]u8 = null;
     defer if (why) |w| testing.allocator.free(w);
-    try values.putJson(testing.allocator, "{\"size\": [10, 20.5], \"holes\": [[0, 0], [10, \"x\", true]], \"none\": []}", &why);
+    try values.putJson(testing.allocator, "{\"size\": [10, 20.5], \"holes\": [[0, 0], [10, \"x\", true]], \"none\": [], \"cuts\": [{\"type\": \"slot\", \"depth\": 5}], \"origin\": {\"x\": 1}}", &why);
     try expectValue(.{ .array = &.{ .{ .number = 10 }, .{ .number = 20.5 } } }, &values, "size");
     try expectValue(.{ .array = &.{
         .{ .array = &.{ .{ .number = 0 }, .{ .number = 0 } } },
         .{ .array = &.{ .{ .number = 10 }, .{ .text = "x" }, .{ .boolean = true } } },
     } }, &values, "holes");
     try expectValue(.{ .array = &.{} }, &values, "none");
+    try expectValue(.{ .array = &.{.{ .object = &.{ .{ .name = "type", .value = .{ .text = "slot" } }, .{ .name = "depth", .value = .{ .number = 5 } } } }} }, &values, "cuts");
+    try expectValue(.{ .object = &.{.{ .name = "x", .value = .{ .number = 1 } }} }, &values, "origin");
 
     // Written out and read back, copied: the same values
     const json = try std.json.Stringify.valueAlloc(testing.allocator, values, .{});
     defer testing.allocator.free(json);
-    try testing.expectEqualStrings("{\"size\":[10,20.5],\"holes\":[[0,0],[10,\"x\",true]],\"none\":[]}", json);
+    try testing.expectEqualStrings("{\"size\":[10,20.5],\"holes\":[[0,0],[10,\"x\",true]],\"none\":[],\"cuts\":[{\"type\":\"slot\",\"depth\":5}],\"origin\":{\"x\":1}}", json);
     var back: ParamValues = .{};
     defer back.deinit(testing.allocator);
     try back.putJson(testing.allocator, json, &why);

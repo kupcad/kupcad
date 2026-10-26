@@ -299,16 +299,16 @@ test "kupcad: run in a subfolder of the project keeps the memory limit of its .k
     try testing.expect(std.mem.find(u8, run.stdout, "200000") == null);
 }
 
-test "kupcad: -p gives an Array parameter JSON, -P arrays and null, and an unset one is nil" {
+test "kupcad: -p gives an Array or a Map parameter JSON, -P arrays, objects and null, and an unset one is nil" {
     var sb = try Sandbox.init();
     defer sb.deinit();
-    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "params.kup", .data = "xs = param(:xs, default: [1, 2])\nkey = param(:key, title: \"Key\")\nputs [xs, key].inspect\ncube(1)\n" });
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "params.kup", .data = "xs = param(:xs, default: [1, 2])\nkey = param(:key, title: \"Key\")\nat = param(:at, default: { x: 0, y: 0 })\nputs [xs, key, at].inspect\ncube(1)\n" });
     try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "values.json", .data = "{\"xs\": [[3]], \"key\": null}" });
     const cases = [_]struct { args: []const []const u8, printed: []const u8 }{
-        .{ .args = &.{ "run", "params.kup" }, .printed = "[[1, 2], nil]\n" },
-        .{ .args = &.{ "run", "params.kup", "-p", "xs=[10, 20, 30]", "-p", "key=5" }, .printed = "[[10, 20, 30], \"5\"]\n" },
+        .{ .args = &.{ "run", "params.kup" }, .printed = "[[1, 2], nil, {x: 0, y: 0}]\n" },
+        .{ .args = &.{ "run", "params.kup", "-p", "xs=[10, 20, 30]", "-p", "key=5", "-p", "at={\"y\": 2, \"x\": 1}" }, .printed = "[[10, 20, 30], \"5\", {x: 1, y: 2}]\n" },
         // The file's null drops the -p before it
-        .{ .args = &.{ "run", "params.kup", "-p", "key=5", "-P", "values.json", "-p", "xs=[]" }, .printed = "[[], nil]\n" },
+        .{ .args = &.{ "run", "params.kup", "-p", "key=5", "-P", "values.json", "-p", "xs=[]" }, .printed = "[[], nil, {x: 0, y: 0}]\n" },
     };
     for (cases) |case| {
         const run = try kupcad(sb.path, case.args);
@@ -321,7 +321,7 @@ test "kupcad: -p gives an Array parameter JSON, -P arrays and null, and an unset
     const refused = try kupcad(sb.path, &.{ "run", "params.kup", "-P", "values.json" });
     defer refused.deinit();
     try testing.expectEqual(@as(u8, 1), refused.code);
-    try testing.expect(std.mem.find(u8, refused.stderr, "parameter :xs[0] expects a number, got Array") != null);
+    try testing.expect(std.mem.find(u8, refused.stderr, "parameter :xs[0] expects a number, got an Array") != null);
 }
 
 test "kupcad: a script imports its neighbours however it is named, from wherever kupcad runs" {

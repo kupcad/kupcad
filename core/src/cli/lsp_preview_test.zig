@@ -276,24 +276,24 @@ test "LSP preview: a frame's values are its document's own parameters, the same 
     }
 }
 
-test "LSP preview: a frame gives an Array parameter's value as JSON, and leaves out one with none" {
+test "LSP preview: a frame gives a list's and a Map's values as JSON, and leaves out one with none" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     var preview: SessionPreview = undefined;
     try preview.init(testing.allocator, testing.io, false);
     defer preview.deinit();
-    try preview.update("part.kup", "xs = param(:xs, default: [1, [2, :a]])\nkey = param(:key, title: \"Key\")\ncube(1)\n");
+    try preview.update("part.kup", "xs = param(:xs, default: [[1, :a], [2, :b]])\ncut = param(:cut, default: { depth: 5 })\nkey = param(:key, title: \"Key\")\ncube(1)\n");
 
     var json: std.Io.Writer.Allocating = .init(arena.allocator());
     const taken = (try frameOf(arena.allocator(), &preview, "part.kup")).header.params.values;
     try json.writer.print("{f}", .{std.json.fmt(taken, .{})});
-    try testing.expectEqualStrings("{\"xs\":[1,[2,\"a\"]]}", json.written());
+    try testing.expectEqualStrings("{\"xs\":[[1,\"a\"],[2,\"b\"]],\"cut\":{\"depth\":5}}", json.written());
 
-    // A host's array, as the panel gives one
-    try setParams(&preview, "part.kup", "{\"xs\": [5, [6]], \"key\": \"k\"}");
+    // A host's, as the panel gives them
+    try setParams(&preview, "part.kup", "{\"xs\": [[5, \"c\"]], \"cut\": {\"depth\": 6}, \"key\": \"k\"}");
     json.clearRetainingCapacity();
     try json.writer.print("{f}", .{std.json.fmt((try frameOf(arena.allocator(), &preview, "part.kup")).header.params.values, .{})});
-    try testing.expectEqualStrings("{\"xs\":[5,[6]],\"key\":\"k\"}", json.written());
+    try testing.expectEqualStrings("{\"xs\":[[5,\"c\"]],\"cut\":{\"depth\":6},\"key\":\"k\"}", json.written());
 }
 
 test "LSP preview: the frame kept of a module is dropped when it runs again as another's import" {

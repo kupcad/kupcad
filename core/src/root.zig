@@ -77,6 +77,7 @@ test {
     _ = @import("frontend/workspace_test.zig");
     _ = @import("core/value_test.zig");
     _ = @import("core/param_values_test.zig");
+    _ = @import("core/param_rules_test.zig");
     _ = @import("stdlib/params_test.zig");
     _ = @import("stdlib/collections_test.zig");
     _ = @import("stdlib/format_test.zig");

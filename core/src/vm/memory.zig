@@ -588,7 +588,10 @@ pub const GC = struct {
         var modules_it = vm.modules.valueIterator();
         while (modules_it.next()) |cached| {
             self.markValue(cached.exports);
-            for (cached.params.items) |param| self.markParam(param.name, param.current_value, param.choices);
+            for (cached.params.items) |param| {
+                self.markValue(param.name);
+                self.markValue(param.current_value);
+            }
         }
 
         // --- Protect static interned strings ---
@@ -618,8 +621,9 @@ pub const GC = struct {
             if (ns.pinned) self.markNamespace(ns);
         }
 
-        for (vm.param_registry.items(.name), vm.param_registry.items(.current_value), vm.param_registry.items(.choices)) |name, val, choices| {
-            self.markParam(name, val, choices);
+        for (vm.param_registry.items(.name), vm.param_registry.items(.current_value)) |name, val| {
+            self.markValue(name);
+            self.markValue(val);
         }
 
         if (vm.string_class) |c| self.markObject(&c.obj);
@@ -632,12 +636,6 @@ pub const GC = struct {
     }
 
     /// A declared parameter's values: in the run's registry, or in an import cached with it.
-    fn markParam(self: *GC, name: value.Value, val: value.Value, choices: ?*value.ObjArray) void {
-        self.markValue(name);
-        self.markValue(val);
-        if (choices) |arr| self.markObject(&arr.obj);
-    }
-
     fn markNamespace(self: *GC, ns: *value.Namespace) void {
         if (ns.is_marked) return;
         ns.is_marked = true;

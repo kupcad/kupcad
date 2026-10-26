@@ -25,7 +25,7 @@ pub const FrameHeader = struct {
     output: []const u8,
     outputCut: bool,
     params: struct { schema: std.json.Value, values: std.json.Value },
-    @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8 },
+    @"error": ?struct { message: []const u8, line: ?u32, column: ?u32, param: ?[]const u8, path: []const std.json.Value },
     timing: struct { runMs: f64, renderMs: f64 },
 };
 

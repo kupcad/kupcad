@@ -5,6 +5,7 @@
 //! A fresh VM's is empty; `VM.resetRunOutput` empties it before a session runs a module.
 
 const std = @import("std");
+const Step = @import("../core/param_rules.zig").Step;
 
 /// How many warnings a run keeps: a warning that differs at every pass of a loop keeps the
 /// first ones, and the log has them all.
@@ -25,6 +26,8 @@ pub const RunReport = struct {
     warnings: std.ArrayList(Warning) = .empty,
     /// The name of the parameter whose value stopped the run, owned.
     refused_param: ?[]u8 = null,
+    /// Where in its value, owned: `[1, "depth"]` for `:cutouts[1][:depth]`; empty for the whole.
+    refused_path: []Step = &.{},
     /// What the run printed (`puts`, `print`, `inspect`), as it printed it, where its host keeps it
     /// (a preview's run: stdlib/registry.zig); up to MAX_OUTPUT_BYTES, `output_cut` past them.
     output: std.ArrayList(u8) = .empty,
@@ -60,6 +63,8 @@ pub const RunReport = struct {
     pub fn forgetRefusal(self: *RunReport, allocator: std.mem.Allocator) void {
         if (self.refused_param) |name| allocator.free(name);
         self.refused_param = null;
+        freePath(allocator, self.refused_path);
+        self.refused_path = &.{};
     }
 
     /// Keeps `message` (owned by `allocator`, which the report takes) at `position`; one kept
@@ -78,10 +83,30 @@ pub const RunReport = struct {
         return false;
     }
 
-    /// Notes that the value of the parameter `name` stopped the run.
-    pub fn refuse(self: *RunReport, allocator: std.mem.Allocator, name: []const u8) !void {
+    /// Notes that the value of the parameter `name`, at `path` in it, stopped the run.
+    pub fn refuse(self: *RunReport, allocator: std.mem.Allocator, name: []const u8, path: []const Step) !void {
         const owned = try allocator.dupe(u8, name);
-        if (self.refused_param) |old| allocator.free(old);
+        errdefer allocator.free(owned);
+        const owned_path = try allocator.alloc(Step, path.len);
+        var made: usize = 0;
+        errdefer freePath(allocator, owned_path[0..made]);
+        for (path, owned_path) |step, *copy| {
+            copy.* = switch (step) {
+                .index => step,
+                .field => |f| .{ .field = try allocator.dupe(u8, f) },
+            };
+            made += 1;
+        }
+        self.forgetRefusal(allocator);
         self.refused_param = owned;
+        self.refused_path = owned_path;
     }
 };
+
+fn freePath(allocator: std.mem.Allocator, path: []Step) void {
+    for (path) |step| switch (step) {
+        .field => |f| allocator.free(f),
+        .index => {},
+    };
+    allocator.free(path);
+}
