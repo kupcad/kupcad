@@ -37,6 +37,12 @@ test "Value: equality works across all types" {
 
     try testing.expect(!num1.isEqual(b1)); // different types
     try testing.expect(!b1.isEqual(b2)); // different values
+
+    // The falsy and the zero are three values, none equal to another
+    const nil = value.Value.initNil();
+    const zero = value.Value.initNumber(0);
+    try testing.expect(nil.isEqual(value.Value.initNil()));
+    try testing.expect(!nil.isEqual(b2) and !nil.isEqual(zero) and !b2.isEqual(zero));
 }
 
 test "Value: NaN-tagging handles edge-case floats seamlessly" {
@@ -176,7 +182,7 @@ test "Value: a Map's deleted entry keeps the rest in place, and goes once they o
     // However many are deleted, the table holds no more of them than live entries, past a few
     for (0..100) |i| {
         _ = map.delete(allocator, .initNumber(@floatFromInt(i)));
-        try testing.expect(map.deleted < 8 or map.deleted * 2 <= map.table.count());
+        try testing.expect(map.deleted < value.ObjMap.MIN_DELETED_DROPPED or map.deleted * 2 <= map.table.count());
     }
     try testing.expectEqual(0, map.count());
 }
@@ -187,4 +193,63 @@ test "Value: a deleted Map key is no script value" {
     try testing.expect(!key.isNumber() and !key.isObject() and !key.isNil() and !key.isBool());
     try testing.expect(!key.isEqual(.deletedKey(8)));
     for ([_]value.Value{ .initNil(), .initBool(true), .initBool(false), .initNumber(std.math.nan(f64)), .initNumber(1) }) |v| try testing.expect(!v.isDeleted());
+}
+
+const Kind = enum { number, nil, boolean, object, deleted };
+
+/// The one kind `v` reads as; an error when it reads as none or as several.
+fn kindOf(v: value.Value) !Kind {
+    const reads = [_]struct { Kind, bool }{
+        .{ .number, v.isNumber() },
+        .{ .nil, v.isNil() },
+        .{ .boolean, v.isBool() },
+        .{ .object, v.isObject() },
+        .{ .deleted, v.isDeleted() },
+    };
+    var found: ?Kind = null;
+    for (reads) |read| {
+        if (!read[1]) continue;
+        if (found != null) return error.KindsOverlap;
+        found = read[0];
+    }
+    return found orelse error.NoKind;
+}
+
+test "Value: every value reads as exactly one kind, and gives back what it was made of" {
+    // An object's prefix has the sign bit too: negative numbers, the extremes among them,
+    // must stay numbers
+    const numbers = [_]f64{
+        0,                      1,                          -1,
+        std.math.floatMax(f64), -std.math.floatMax(f64),    std.math.inf(f64),
+        -std.math.inf(f64),     std.math.floatTrueMin(f64), -std.math.floatTrueMin(f64),
+        std.math.floatMin(f64), -std.math.floatMin(f64),
+    };
+    for (numbers) |n| {
+        const v = value.Value.initNumber(n);
+        try testing.expectEqual(Kind.number, try kindOf(v));
+        try testing.expectEqual(n, v.asNumber());
+    }
+
+    try testing.expectEqual(Kind.nil, try kindOf(.initNil()));
+    try testing.expectEqual(Kind.boolean, try kindOf(.initBool(false)));
+    try testing.expectEqual(Kind.boolean, try kindOf(.initBool(true)));
+    try testing.expect(!value.Value.initBool(false).asBool());
+    try testing.expect(value.Value.initBool(true).asBool());
+
+    // A pointer on the stack and one on the heap, whose addresses lie in different ranges
+    var on_stack: value.Obj = .{ .obj_type = .string, .is_marked = false };
+    const on_heap = try testing.allocator.create(value.Obj);
+    defer testing.allocator.destroy(on_heap);
+    on_heap.* = .{ .obj_type = .array, .is_marked = false };
+    for ([_]*value.Obj{ &on_stack, on_heap }) |obj| {
+        const v = value.Value.initObj(obj);
+        try testing.expectEqual(Kind.object, try kindOf(v));
+        try testing.expectEqual(obj, v.asObj());
+    }
+
+    // Indices 1 to 3 share their low bits with nil, false and true; the last is the largest
+    // a deleted key holds
+    for ([_]usize{ 0, 1, 2, 3, std.math.maxInt(u48) }) |index| {
+        try testing.expectEqual(Kind.deleted, try kindOf(.deletedKey(index)));
+    }
 }

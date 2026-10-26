@@ -34,13 +34,12 @@ const TAG_TRUE: u64 = 3;
 /// With QNAN, the key of a Map entry `ObjMap.delete` deleted, its place in the table in the
 /// bits below: no script value has it (nil, false and true lack it, a number is never QNAN).
 const TAG_DELETED: u64 = 1 << 48;
-/// A Map's deleted entries are dropped once they are this many and outnumber its live ones.
-const MIN_DELETED_DROPPED = 8;
 
 const VAL_NIL: u64 = QNAN | TAG_NIL;
 const VAL_FALSE: u64 = QNAN | TAG_FALSE;
 const VAL_TRUE: u64 = QNAN | TAG_TRUE;
-const TAG_OBJ: u64 = SIGN_BIT | QNAN;
+/// The bits every object's Value has set, its pointer in the bits below them.
+const OBJ_PREFIX: u64 = SIGN_BIT | QNAN;
 /// The one NaN a number Value holds. Any other NaN may carry payload bits that QNAN
 /// tests for (bit 50 is one of them), which made it read as nil, a boolean or a pointer.
 const CANONICAL_NAN: u64 = 0x7FF8000000000000;
@@ -209,6 +208,9 @@ pub const ObjMap = struct {
     table: ValueMap,
     /// How many of `table`'s entries are deleted.
     deleted: usize = 0,
+
+    /// Its deleted entries are dropped once they are this many and outnumber the live ones.
+    pub const MIN_DELETED_DROPPED = 8;
 
     /// How many entries it holds.
     pub fn count(self: *const ObjMap) usize {
@@ -583,7 +585,7 @@ pub const Value = packed struct {
 
     pub inline fn initObj(obj: *Obj) Value {
         // Embed the pointer (32-bit in WASM, 48-bit on Desktop) into the 52-bit mantissa space
-        return .{ .val = TAG_OBJ | @as(u64, @intFromPtr(obj)) };
+        return .{ .val = OBJ_PREFIX | @as(u64, @intFromPtr(obj)) };
     }
 
     pub inline fn initGeometry(geom_obj: *ObjGeometry) Value {
@@ -615,7 +617,7 @@ pub const Value = packed struct {
 
     pub inline fn isObject(self: Value) bool {
         // Check if the Sign Bit and QNAN bits are set, indicating a Heap Pointer
-        return (self.val & TAG_OBJ) == TAG_OBJ;
+        return (self.val & OBJ_PREFIX) == OBJ_PREFIX;
     }
 
     pub inline fn isMap(self: Value) bool {
@@ -697,8 +699,8 @@ pub const Value = packed struct {
 
     pub inline fn asObj(self: Value) *Obj {
         std.debug.assert(self.isObject());
-        // Mask out the TAG_OBJ bits to reveal the raw memory pointer
-        const ptr_val = self.val & ~TAG_OBJ;
+        // Mask out the OBJ_PREFIX bits to reveal the raw memory pointer
+        const ptr_val = self.val & ~OBJ_PREFIX;
         // Explicitly cast to `usize` so WASM32 safely accepts it
         return @ptrFromInt(@as(usize, @intCast(ptr_val)));
     }
