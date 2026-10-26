@@ -1,6 +1,6 @@
-brep
-  part 1 brep vertices=16
-  exports step
+cup
+  sketch 1 manifold area=1457.6294655467268 min=-39.8,-1.8 max=56.8,97.8 vertices=2083
+  exports svg
 drone_motor_arm
   part 1 manifold volume=62428.903045161045 area=8770.253102898321 min=-20,-20,-22 max=20,20,28 genus=0 vertices=64 triangles=124
   part 2 manifold volume=17409.040823378193 area=8841.935294208057 min=-26,-26,-5 max=78,26,10 genus=6 vertices=2811 triangles=5642

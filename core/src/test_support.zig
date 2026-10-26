@@ -13,6 +13,8 @@ const value = @import("core/value.zig");
 const disassembler = @import("tools/dev/disassembler.zig");
 const MemoryVfs = @import("vfs/memory.zig").MemoryVfs;
 const preview_frame = @import("preview/frame.zig");
+const model_mod = @import("exporters/model.zig");
+const ExportFormat = @import("exporters/format.zig").ExportFormat;
 
 /// A preview frame's header as a front end's types read it (@kupcad/protocol's), strictly:
 /// a field renamed or added fails the test that reads it.
@@ -108,6 +110,21 @@ pub fn runWith(allocator: std.mem.Allocator, vm: *VM, source: []const u8) !Inter
     defer comp.deinit();
     try comp.compile(doc.tree.root);
     return vm.interpret(&out_chunk);
+}
+
+/// The format a test writes the model of the script run on `vm` in, by what the model is:
+/// a drawing (any Sketch or Path, which only a 2D format holds) SVG, as the preview shows
+/// one; Solids of the exact engine only STEP; other Solids (or ghosts) glb.
+pub fn modelFormat(allocator: std.mem.Allocator, vm: *VM) !ExportFormat {
+    var model = try model_mod.collectModel(allocator, vm);
+    defer model.deinit(allocator);
+    if (model.sketches.items.len + model.paths.items.len > 0) return .svg;
+    var parts = try model_mod.handlesOf(allocator, vm, model.solids.items, model.ghosts);
+    defer parts.deinit(allocator);
+    for (parts.items) |part| {
+        if (part.engine != .brep_native) return .glb;
+    }
+    return if (parts.items.len > 0) .step else .glb;
 }
 
 /// Wraps `src` so the global `r` holds the rescued error as "<Kind>: <message>", or

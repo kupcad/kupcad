@@ -1,15 +1,19 @@
-//! The example models (../examples) built end to end and fingerprinted: each part's engine,
-//! volume, surface area, bounds and genus, and its mesh's vertices and triangles, then the
-//! export `kupcad build` would write (STEP for exact models, glb for the rest). The
-//! fingerprints must match examples.snap, measures within a relative tolerance and mesh
-//! counts within 1% (the last bits of a sine differ between platforms' math libraries), so
-//! a change that alters a real model shows up. `zig build test -Dupdate-snapshots` rewrites
-//! the snapshot from the current output; review the diff before committing it.
+//! The example models (../examples) built end to end and fingerprinted by what each one
+//! leaves: a Solid part's engine, volume, surface area, bounds and genus, and its mesh's
+//! vertices and triangles; a drawing's Sketch's engine, area, bounds and vertices, and its
+//! Path's bounds and segments; then the model written in its format (test_support.modelFormat:
+//! STEP for exact Solids, glb for the rest, SVG for a drawing). The fingerprints must match
+//! examples.snap, measures within a relative tolerance and mesh counts within 1% (the last
+//! bits of a sine differ between platforms' math libraries), so a change that alters a real
+//! model shows up. `zig build test -Dupdate-snapshots` rewrites the snapshot from the
+//! current output; review the diff before committing it.
 
 const std = @import("std");
 const testing = std.testing;
 const api = @import("api.zig");
 const kernel = @import("kernel/kernel.zig");
+const model_mod = @import("exporters/model.zig");
+const path_mod = @import("core/path.zig");
 const test_support = @import("test_support.zig");
 const examples = @import("examples");
 
@@ -55,7 +59,8 @@ test "Examples: every example in the directory is listed in build.zig" {
     }
 }
 
-/// Runs `source` and writes one line per part, then the export it gives.
+/// Runs `source` and writes one line per part of its model (a Solid, or a drawing's Sketch
+/// or Path), then the export it gives.
 fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writer) !void {
     var vm = try test_support.initVm();
     defer vm.deinit();
@@ -65,11 +70,12 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         return error.ExampleFailed;
     }
 
-    var parts = try api.modelParts(allocator, &vm);
+    var model = try model_mod.collectModel(allocator, &vm);
+    defer model.deinit(allocator);
+    if (model.shapeCount() == 0 and model.ghosts.len == 0) return error.ExampleHasNoModel;
+    var parts = try model_mod.handlesOf(allocator, &vm, model.solids.items, model.ghosts);
     defer parts.deinit(allocator);
-    if (parts.items.len == 0) return error.ExampleHasNoModel;
 
-    var exact = true;
     for (parts.items, 1..) |h, n| {
         try w.print("  part {d} {s}", .{ n, h.engine.scriptName() });
         if (kernel.supports(h.engine, .volume)) try w.print(" volume={d}", .{kernel.volume(h)});
@@ -81,10 +87,20 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         try w.print(" vertices={d}", .{kernel.numVerts(h)});
         if (kernel.numTris(h)) |tris| try w.print(" triangles={d}", .{tris});
         try w.writeAll("\n");
-        if (h.engine != .brep_native) exact = false;
+    }
+    for (model.sketches.items, 1..) |sketch, n| {
+        const cs = try vm.ensureConcreteCrossSection(sketch);
+        try w.print("  sketch {d} {s} area={d}", .{ n, cs.engine.scriptName(), kernel.crossSectionArea(cs) });
+        if (kernel.crossSectionBounds(cs)) |b| try w.print(" min={d},{d} max={d},{d}", .{ b.min[0], b.min[1], b.max[0], b.max[1] });
+        try w.print(" vertices={d}\n", .{kernel.crossSectionNumVerts(cs)});
+    }
+    for (model.paths.items, 1..) |val, n| {
+        const p = val.asPath();
+        const b = path_mod.bounds(p.start, p.segments);
+        try w.print("  path {d} min={d},{d} max={d},{d} segments={d}\n", .{ n, b.min[0], b.min[1], b.max[0], b.max[1], p.segments.len });
     }
 
-    const format: api.ExportFormat = if (exact) .step else .glb;
+    const format = try test_support.modelFormat(allocator, &vm);
     const bytes = api.exportModelFromVm(allocator, &vm, format, .{}) catch |err| {
         std.debug.print("{t} export failed: {s} {s}\n", .{ format, @errorName(err), vm.last_error orelse "" });
         return err;

@@ -17,10 +17,19 @@ const HEAVY_MODEL =
     \\ribs = union((0...8).map { |i| cube(40, 1, 2, center: true).rotate(z: i * 22.5) })
     \\[body + ribs.material(color: "#FF0000"), body.translate(x: 50)]
 ;
+/// An exact model, for STEP's writer: the hull of a plate and a column (the B-Rep engine
+/// can't combine solids yet).
+const EXACT_MODEL =
+    \\CAD.config(engine: :brep)
+    \\batch_hull([cube(30, 30, 4, center: true), cube(10, 10, 20, center: true)])
+;
 
-/// A script and the formats it is exported to: one run, each format written from it (the
-/// run is what costs; each format used to run the script again).
-const Case = struct { source: []const u8, formats: []const api.ExportFormat };
+/// A script and the formats it is exported to, or null for the one its model is written
+/// in (test_support.modelFormat): one run, each format written from it (the run is what
+/// costs; each format used to run the script again).
+const Case = struct { source: []const u8, formats: ?[]const api.ExportFormat = null };
+/// A file a build wrote, and its format.
+const File = struct { format: api.ExportFormat, bytes: []const u8 };
 
 test "determinism: a build gives the same bytes every time, on one thread or many" {
     // The models are heavy and built thrice: an allocator that checks frees and counts
@@ -31,11 +40,9 @@ test "determinism: a build gives the same bytes every time, on one thread or man
     var cases: std.ArrayList(Case) = .empty;
     defer cases.deinit(testing.allocator);
     try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .formats = &.{ .glb, .obj, .svg, .dxf } });
+    try cases.append(testing.allocator, .{ .source = EXACT_MODEL, .formats = &.{.step} });
     inline for (examples.names) |name| {
-        const source = @embedFile("example/" ++ name);
-        // An exact model exports STEP, as `kupcad build` would; the rest glb.
-        const format: api.ExportFormat = if (std.mem.find(u8, source, "engine: :brep") != null) .step else .glb;
-        try cases.append(testing.allocator, .{ .source = source, .formats = &.{format} });
+        try cases.append(testing.allocator, .{ .source = @embedFile("example/" ++ name) });
     }
 
     for (cases.items) |case| {
@@ -48,10 +55,10 @@ test "determinism: a build gives the same bytes every time, on one thread or man
         defer manifold.setMaxThreads(null);
         const serial = try build(allocator, case);
         defer freeAll(allocator, serial);
-        for (case.formats, first, second, serial) |format, a, b, c| {
-            errdefer std.debug.print("format {s}\n", .{@tagName(format)});
-            try testing.expectEqualSlices(u8, a, b);
-            try testing.expectEqualSlices(u8, a, c);
+        for (first, second, serial) |a, b, c| {
+            errdefer std.debug.print("format {s}\n", .{@tagName(a.format)});
+            try testing.expectEqualSlices(u8, a.bytes, b.bytes);
+            try testing.expectEqualSlices(u8, a.bytes, c.bytes);
         }
     }
 }
@@ -59,24 +66,29 @@ test "determinism: a build gives the same bytes every time, on one thread or man
 /// Runs the script on a VM whose output is dropped (the examples print, and the test
 /// runner's stdout is its protocol) and exports its model in each of the case's formats, as
 /// `kupcad build` would.
-fn build(allocator: std.mem.Allocator, case: Case) ![]const []const u8 {
+fn build(allocator: std.mem.Allocator, case: Case) ![]const File {
     var vm = try support.initVmWith(allocator);
     defer vm.deinit();
     try testing.expectEqual(.ok, try support.runWith(allocator, &vm, case.source));
-    const files = try allocator.alloc([]const u8, case.formats.len);
+    var own: [1]api.ExportFormat = undefined;
+    const formats = case.formats orelse formats: {
+        own[0] = try support.modelFormat(allocator, &vm);
+        break :formats &own;
+    };
+    const files = try allocator.alloc(File, formats.len);
     var written: usize = 0;
     errdefer {
-        for (files[0..written]) |file| allocator.free(file);
+        for (files[0..written]) |file| allocator.free(file.bytes);
         allocator.free(files);
     }
-    for (case.formats, files) |format, *file| {
-        file.* = try api.exportModelFromVm(allocator, &vm, format, .{});
+    for (formats, files) |format, *file| {
+        file.* = .{ .format = format, .bytes = try api.exportModelFromVm(allocator, &vm, format, .{}) };
         written += 1;
     }
     return files;
 }
 
-fn freeAll(allocator: std.mem.Allocator, files: []const []const u8) void {
-    for (files) |file| allocator.free(file);
+fn freeAll(allocator: std.mem.Allocator, files: []const File) void {
+    for (files) |file| allocator.free(file.bytes);
     allocator.free(files);
 }
