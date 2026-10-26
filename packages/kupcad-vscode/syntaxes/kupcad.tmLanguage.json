@@ -188,35 +188,35 @@
       }
     },
     "keywords": {
-      "match": "(?<![\\\\w.])(and|as|begin|break|case|class|def|do|else|elsif|end|ensure|export|false|for|from|if|import|module|next|nil|not|or|private|public|rescue|return|self|super|then|true|unless|until|when|while|with|yield)(?![\\\\w?!])",
+      "match": "(?<![\\w.])(and|as|begin|break|case|class|def|do|else|elsif|end|ensure|export|false|for|from|if|import|module|next|nil|not|or|private|public|rescue|return|self|super|then|true|unless|until|when|while|with|yield)(?![\\w?!])",
       "name": "keyword.control.kupcad"
     },
     "builtins": {
-      "match": "(?<![\\\\w])(assert|benchmark|debugger|import_3mf|import_dxf|import_font|import_json|import_obj|import_step|import_stl|import_svg|inspect|param|print|puts|warn)(?![\\\\w?!])",
+      "match": "(?<![\\w])(assert|benchmark|debugger|import_3mf|import_dxf|import_font|import_json|import_obj|import_step|import_stl|import_svg|inspect|param|print|puts|warn)(?![\\w?!])",
       "name": "support.function.builtin.kupcad"
     },
     "core_methods": {
-      "match": "(?<![\\\\w])(abs|acos|acosd|all?|any?|asin|asind|atan|atan2|atan2d|atand|between?|bytes_allocated|cbrt|ceil|center|chars|clamp|class|clone|close?|cm|collect|compact|config|contains?|cos|cosd|count|cover?|current_config|deg2rad|delete|dig|downcase|downto|drop|dup|each|each_cons|each_slice|each_with_index|empty?|end_with?|ends_with?|even?|exclusive?|exp|fetch|filter|find|finite?|first|flat_map|flatten|floor|gcd|get|group_by|hypot|inch|include?|infinite?|inspect|integer?|into|invert|is_a?|join|key?|keys|last|lcm|length|lerp|ljust|log|log10|log2|m|map|max|max_by|merge|method|min|min_by|mm|name|nan?|negative?|nil?|none?|odd?|polar|pop|positive?|preview?|push|rad2deg|rand|reduce|reject|remap|replace|respond_to?|reverse|rjust|round|sample|seed|shift|shuffle|sign|sin|sind|size|slice|smoothstep|snap|sort|sort_by|split|sqrt|start_with?|starts_with?|step|stringify_keys|strip|sum|symbolize_keys|take|tan|tand|tap|times|to_a|to_f|to_h|to_i|to_s|to_sym|transform_values|trim|uniq|unshift|upcase|upto|values|with_config|x_max|x_min|x_size|y_max|y_min|y_size|z_max|z_min|z_size|zero?|zip)(?![\\\\w?!])",
+      "match": "(?<![\\w])(abs|acos|acosd|all\\?|any\\?|asin|asind|atan|atan2|atan2d|atand|between\\?|bytes_allocated|cbrt|ceil|center|chars|clamp|class|clone|close\\?|cm|collect|compact|config|contains\\?|cos|cosd|count|cover\\?|current_config|deg2rad|delete|dig|downcase|downto|drop|dup|each|each_cons|each_slice|each_with_index|empty\\?|end_with\\?|ends_with\\?|even\\?|exclusive\\?|exp|fetch|filter|find|finite\\?|first|flat_map|flatten|floor|gcd|get|group_by|hypot|inch|include\\?|infinite\\?|inspect|integer\\?|into|invert|is_a\\?|join|key\\?|keys|last|lcm|length|lerp|ljust|log|log10|log2|m|map|max|max_by|merge|method|min|min_by|mm|name|nan\\?|negative\\?|nil\\?|none\\?|odd\\?|polar|pop|positive\\?|preview\\?|push|rad2deg|rand|reduce|reject|remap|replace|respond_to\\?|reverse|rjust|round|sample|seed|shift|shuffle|sign|sin|sind|size|slice|smoothstep|snap|sort|sort_by|split|sqrt|start_with\\?|starts_with\\?|step|stringify_keys|strip|sum|symbolize_keys|take|tan|tand|tap|times|to_a|to_f|to_h|to_i|to_s|to_sym|transform_values|trim|uniq|unshift|upcase|upto|values|with_config|x_max|x_min|x_size|y_max|y_min|y_size|z_max|z_min|z_size|zero\\?|zip)(?![\\w?!])",
       "name": "support.function.core.kupcad"
     },
     "primitives_3d": {
-      "match": "(?<![\\\\w])(cube|cylinder|polyhedron|sphere|torus)(?![\\\\w?!])",
+      "match": "(?<![\\w])(cube|cylinder|polyhedron|sphere|torus)(?![\\w?!])",
       "name": "support.class.primitive.3d.kupcad"
     },
     "primitives_2d": {
-      "match": "(?<![\\\\w])(circle|polygon|regular_polygon|square|text)(?![\\\\w?!])",
+      "match": "(?<![\\w])(circle|polygon|regular_polygon|square|text)(?![\\w?!])",
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\\\w])(align|center|decompose|extrude|ghost|helix|highlight|hull|loft|material|minkowski|mirror|named|offset|project|repeat_linear|repeat_polar|resize|revolve|rotate|scale|shell|simplify|slice|split_by_plane|sweep|transform|translate|trim_by_plane)(?![\\\\w?!])",
+      "match": "(?<![\\w])(align|center|decompose|extrude|ghost|helix|highlight|hull|loft|material|minkowski|mirror|named|offset|project|repeat_linear|repeat_polar|resize|revolve|rotate|scale|shell|simplify|slice|split_by_plane|sweep|transform|translate|trim_by_plane)(?![\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {
-      "match": "(?<![\\\\w])(difference|intersection|union)(?![\\\\w?!])",
+      "match": "(?<![\\w])(difference|intersection|union)(?![\\w?!])",
       "name": "support.function.csg.kupcad"
     },
     "inspections": {
-      "match": "(?<![\\\\w])(area|bbox|bom|center_of_mass|contains?|genus|intersects?|mass|min_gap|ray_cast|surface_area|volume)(?![\\\\w?!])",
+      "match": "(?<![\\w])(area|bbox|bom|center_of_mass|contains\\?|genus|intersects\\?|mass|min_gap|ray_cast|surface_area|volume)(?![\\w?!])",
       "name": "support.function.inspection.kupcad"
     },
     "hash_keys": {

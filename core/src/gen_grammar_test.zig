@@ -65,6 +65,25 @@ test "gen_grammar: `in` is highlighted as a keyword after `for`, and only there"
     try testing.expect(!containsWord(rule_keywords(parsed.value), "in"));
 }
 
+test "gen_grammar: a word list matches its words whole, each as written" {
+    // `\w` written once: escaped twice, the class held a backslash and a `w`, so `for` was a
+    // keyword in `platform` and `do` in `standoff`. A name's `?` is the character: read as
+    // "optional", `empty?` matched only `empty`, which the lookahead then refused.
+    const allocator = testing.allocator;
+    const output = try gen_grammar.generateTextMateJson(allocator);
+    defer allocator.free(output);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, output, .{});
+    defer parsed.deinit();
+
+    const keywords = rule_keywords(parsed.value);
+    try testing.expect(std.mem.startsWith(u8, keywords, "(?<![\\w.])(and|"));
+    try testing.expect(std.mem.endsWith(u8, keywords, ")(?![\\w?!])"));
+    const methods = parsed.value.object.get("repository").?.object.get("core_methods").?.object.get("match").?.string;
+    try testing.expect(std.mem.startsWith(u8, methods, "(?<![\\w])("));
+    try testing.expect(std.mem.find(u8, methods, "|empty\\?|") != null);
+    try testing.expect(std.mem.find(u8, methods, "\\\\") == null);
+}
+
 fn rule_keywords(root: std.json.Value) []const u8 {
     return root.object.get("repository").?.object.get("keywords").?.object.get("match").?.string;
 }

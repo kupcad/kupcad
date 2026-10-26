@@ -26,6 +26,8 @@ const log_helpers = @import("log.zig");
 
 /// `for`, the loop variables (up to a comment), then the first standalone `in`.
 pub const FOR_IN_MATCH = "\\b(for)\\b([^#\\n]*?)\\b(in)\\b";
+/// The characters a regex reads as more than themselves: a name's `?` (`empty?`) among them.
+const REGEX_SPECIALS = "\\^$.|?*+()[]{}";
 
 /// The language's words, each kind highlighting tells apart: the lexer's keywords, the stdlib's
 /// global functions and methods by their category, and the methods of its classes. The lists
@@ -324,12 +326,24 @@ pub fn generateTextMateJson(allocator: std.mem.Allocator) ![]const u8 {
 
 /// A TextMate match for any of `list`'s words (sorted, each once), whole: no word character,
 /// `?` or `!` follows it, and none of `not_after`'s characters nor a word character comes
-/// before it. error.EmptyWordList for no words: an empty group would match everywhere.
+/// before it. Each word is matched as written: `empty?`'s `?` is the character, not "optional".
+/// error.EmptyWordList for no words: an empty group would match everywhere.
 fn wordsMatch(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), comptime not_after: []const u8) ![]const u8 {
     if (list.items.len == 0) return error.EmptyWordList;
-    const alternatives = try std.mem.join(allocator, "|", sortedOnce(list));
-    defer allocator.free(alternatives);
-    return allocator.print("(?<![\\\\w" ++ not_after ++ "])({s})(?![\\\\w?!])", .{alternatives});
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    // `\w` once: escaped again (`\\w`), the class was a backslash and a `w`, so `for` was
+    // matched in `platform` and `do` in `standoff`
+    try out.writer.writeAll("(?<![\\w" ++ not_after ++ "])(");
+    for (sortedOnce(list), 0..) |word, i| {
+        if (i > 0) try out.writer.writeByte('|');
+        for (word) |c| {
+            if (std.mem.findScalar(u8, REGEX_SPECIALS, c) != null) try out.writer.writeByte('\\');
+            try out.writer.writeByte(c);
+        }
+    }
+    try out.writer.writeAll(")(?![\\w?!])");
+    return out.toOwnedSlice();
 }
 
 /// Writes the TextMate grammar to the first path given, and the editor's vocabulary to the second.
