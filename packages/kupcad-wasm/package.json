@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "The KupCAD core compiled to WebAssembly: preview, build, check, format and read the parameters of a script in the browser or Node, directly or in a Web Worker.",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-wasm"
+  },
   "files": [
     "src",
     "!src/**/*.test.js",
@@ -22,6 +27,9 @@
       "types": "./src/types.d.ts"
     },
     "./testing": "./src/testing.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "node scripts/copy-wasm.js",

@@ -6,6 +6,13 @@
   "commit": false,
   "fixed": [],
   "linked": [],
-  "ignore": ["@kupcad/wasm"],
+  "ignore": [
+    "@kupcad/protocol",
+    "@kupcad/wasm",
+    "@kupcad/viewer",
+    "@kupcad/ui",
+    "@kupcad/editor",
+    "@kupcad/playground"
+  ],
   "updateInternalDependencies": "patch"
 }

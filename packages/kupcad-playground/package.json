@@ -1,15 +1,27 @@
 {
   "name": "@kupcad/playground",
   "version": "0.1.0",
-  "private": true,
   "description": "KupCAD in the browser: a script's editor, its model and its parameters, running on the core compiled to WebAssembly in a worker. One Svelte component a page embeds.",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-playground"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.js",
+    "!src/**/*.test-helper.*"
+  ],
   "type": "module",
   "exports": {
     ".": {
       "svelte": "./src/index.js",
       "default": "./src/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "vite --config dev/vite.config.js",

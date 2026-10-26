@@ -1,9 +1,18 @@
 {
   "name": "@kupcad/ui",
   "version": "0.1.0",
-  "private": true,
   "description": "The Svelte panels a KupCAD host shows beside its editor: the viewer with its toolbar and part list, and the parameter panel, styled by --kc-* tokens.",
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-ui"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.js",
+    "!src/**/*.test-helper.*"
+  ],
   "type": "module",
   "sideEffects": [
     "**/*.css"
@@ -16,6 +25,9 @@
     "./tokens.css": "./src/tokens.css",
     "./vscode.css": "./src/vscode.css",
     "./controls.css": "./src/controls.css"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",

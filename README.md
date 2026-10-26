@@ -90,14 +90,16 @@ and `kupcad --version` prints the version. Environment variables:
 # regenerate the sqlite translation
 cd core && zig translate-c vendor/sqlite/sqlite3.h > vendor/sqlite/sqlite_bindings.zig
 
-# shrink the wasm build
+# shrink the wasm build, as the release does (not --all-features: it writes what engines can't
+# read yet)
 brew install binaryen wabt wasmtime
-wasm-opt --all-features -Oz core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
+wasm-opt -Oz --enable-bulk-memory-opt --enable-nontrapping-float-to-int core/zig-out/bin/kupcad.wasm -o core/zig-out/bin/kupcad_min.wasm
 ```
 
-To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints), commit, and
-push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`. The Release workflow
-checks the tag matches, builds the CLI on a runner of each system and architecture it ships for
+To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints) and the
+`version` of the npm packages (`packages/kupcad-{protocol,wasm,viewer,ui,editor,playground}`) to
+the same, commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
+The Release workflow checks the tag matches all of them, builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example
 built), builds the desktop app around each (`kupcad-desktop_<version>_<os>_<arch>`: a `.dmg`
 on macOS, `.deb` and `.rpm` on Linux and an `.AppImage` for x86_64, a `_setup.exe` on Windows),
@@ -108,7 +110,11 @@ platform's goes next to its archive as `kupcad_<version>_<os>_<arch>_symbols` (L
 `kupcad.debug`, macOS's `kupcad.dSYM`, Windows's `kupcad.pdb`), to turn a crash report's addresses
 into files and lines. `core/scripts/package-release.sh` packages the binaries with their licenses
 and symbols: given a folder per platform (`linux_amd64/kupcad`, `linux_amd64/symbols/`, ...), it
-writes the same archives into a folder of your own.
+writes the same archives into a folder of your own. Once the GitHub release is out, the same
+workflow publishes the npm packages at that version, with provenance (npm's trusted publishing
+from `release.yml` in the `npm` environment): `@kupcad/wasm` carries the module built for the
+release and shrunk by `wasm-opt`, tested in Node and in the playground in headless Chromium
+first; a pre-release goes under npm's `next` tag.
 
 ## License
 
