@@ -5,6 +5,7 @@ import {
   documentAt,
   EventEmitter,
   fake,
+  memento,
   resetFake,
   Uri,
   window,
@@ -12,7 +13,7 @@ import {
 } from './testing/vscode.js';
 import { readPresets, writePresets } from '@kupcad/protocol';
 import { ScriptValues } from '@kupcad/protocol';
-import { ViewerPanel } from './viewer-panel.js';
+import { SETTINGS_KEY, ViewerPanel } from './viewer-panel.js';
 
 /** @import { ParamValues } from '@kupcad/protocol/types' */
 
@@ -66,8 +67,8 @@ function serverAt(port) {
   };
 }
 
-/** A panel over `server`, and what it drew and logged. */
-function open(server = serverAt(9001)) {
+/** A panel over `server`, keeping its settings in `state`, and what it drew and logged. */
+function open(server = serverAt(9001), state = memento()) {
   const log = window.createOutputChannel();
   const values = new ScriptValues();
   const panel = ViewerPanel.open({
@@ -77,9 +78,10 @@ function open(server = serverAt(9001)) {
     extensionUri: /** @type {any} */ (Uri.file('/ext')),
     page: () => PAGE,
     log: /** @type {any} */ (log),
+    state,
   });
   const shown = /** @type {(typeof fake.panels)[number]} */ (fake.panels.at(-1));
-  return { panel, server, values, shown, webview: shown.webview, log };
+  return { panel, server, values, shown, webview: shown.webview, log, state };
 }
 
 beforeEach(() => resetFake());
@@ -104,6 +106,35 @@ describe('ViewerPanel', () => {
     expect(webview.html).toMatch(
       /<script nonce="[^"]+" type="module" src="https:\/\/webview\/ext\/dist-webview\/main.js">/,
     );
+  });
+
+  it("keeps the page's settings between sessions, and writes them into each page it makes", () => {
+    const { webview, server, state } = open();
+    expect(webview.html).toContain('<meta name="kupcad-settings" content="{}">');
+    webview.receive({ type: 'setting', key: 'preview.paramsOpen', value: false });
+    webview.receive({ type: 'setting', key: 'preview.params', value: 320 });
+    webview.receive({ type: 'setting', key: 'preview.params', value: 336 });
+    expect(state.kept.get(SETTINGS_KEY)).toEqual({
+      'preview.paramsOpen': false,
+      'preview.params': 336,
+    });
+    // The page made again (a restarted server's) has them, and so does the next session's
+    server.restart(9002);
+    const kept = '{&quot;preview.paramsOpen&quot;:false,&quot;preview.params&quot;:336}';
+    expect(webview.html).toContain(`<meta name="kupcad-settings" content="${kept}">`);
+    expect(open(serverAt(9001), state).webview.html).toContain(kept);
+  });
+
+  it('keeps no more settings than a page has, and no value of another kind', () => {
+    const state = memento();
+    const full = Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`k${i}`, i]));
+    state.kept.set(SETTINGS_KEY, full);
+    const { webview, log } = open(serverAt(9001), state);
+    webview.receive({ type: 'setting', key: 'k0', value: 100 });
+    webview.receive({ type: 'setting', key: 'one.more', value: 1 });
+    webview.receive({ type: 'setting', key: 'k1', value: 'text' });
+    expect(state.kept.get(SETTINGS_KEY)).toEqual({ ...full, k0: 100 });
+    expect(log.lines.join('\n')).toContain("one.more isn't");
   });
 
   it('follows the editor to another script, and stays on it for anything the server runs not', () => {

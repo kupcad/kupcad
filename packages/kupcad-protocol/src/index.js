@@ -28,7 +28,13 @@ export const SET_PARAMS_COMMAND = 'kupcad.setParams';
  */
 export const PREVIEW_COMMAND = 'kupcad.preview';
 
-export { isHostMessage, isParamValues, isViewerMessage, MAX_PARAM_DEPTH } from './messages.js';
+export {
+  isHostMessage,
+  isParamValues,
+  isSettingValue,
+  isViewerMessage,
+  MAX_PARAM_DEPTH,
+} from './messages.js';
 export { characterAt } from './places.js';
 export { errorText } from './error-text.js';
 export { whyBuildFailed } from './build-output.js';

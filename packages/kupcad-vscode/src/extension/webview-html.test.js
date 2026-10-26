@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
@@ -87,5 +88,10 @@ describe('webview HTML', () => {
     );
     expect(out).toContain('<meta name="kupcad-viewport" content="">');
     expect(out).toContain('<body><p>missing</p></body>');
+  });
+
+  it('styles the page from its files alone, which the CSP takes: an inline style it drops', () => {
+    const page = readFileSync(new URL('../webview/index.html', import.meta.url), 'utf8');
+    expect(page).not.toMatch(/<style\b|\sstyle=/i);
   });
 });

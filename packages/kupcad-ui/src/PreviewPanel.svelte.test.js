@@ -361,6 +361,43 @@ it("lays its panes out as the host's settings keep them, and keeps what the pers
   expect(screen.queryByRole('separator', { name: 'Resize the console' })).toBeNull();
 });
 
+it("hides the parameters by the toolbar's toggle, for the model's width, and keeps that", async () => {
+  const settings = memorySettings();
+  const viewer = page({ settings });
+  await viewer.tell({ type: 'document', document: PART });
+  // No parameters yet: nothing to hide
+  expect(screen.queryByRole('button', { name: 'Parameters' })).toBeNull();
+  viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+  await tick();
+  const toggle = screen.getByRole('button', { name: 'Parameters' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  // At the toolbar's end, beside the column, as the view's toggles look
+  expect(toggle.previousElementSibling?.textContent?.trim()).toBe('Panel');
+  expect(toggle.classList.contains('kc-control')).toBe(true);
+
+  await fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('complementary', { name: 'Parameters' })).toBeNull();
+  expect(screen.queryByRole('separator', { name: 'Resize the parameters' })).toBeNull();
+  // Hidden, not gone: the column the toggle controls
+  const column = document.getElementById(
+    /** @type {string} */ (toggle.getAttribute('aria-controls')),
+  );
+  expect(column?.hidden).toBe(true);
+  expect(settings.get('preview.paramsOpen')).toBe(false);
+
+  // The next page the host makes with its settings hides them too
+  viewer.unmount();
+  const again = page({ settings });
+  await again.tell({ type: 'document', document: PART });
+  again.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+  await tick();
+  expect(screen.queryByRole('complementary', { name: 'Parameters' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Parameters' }));
+  expect(screen.getByRole('complementary', { name: 'Parameters' })).toBeTruthy();
+  expect(settings.get('preview.paramsOpen')).toBe(true);
+});
+
 it('asks the host to export the document shown in the format its menu chose', async () => {
   const viewer = page();
   expect(screen.queryByRole('combobox', { name: 'Export' })).toBeNull();

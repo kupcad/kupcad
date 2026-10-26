@@ -255,4 +255,9 @@ export type ViewerMessage =
   /** Something the viewer couldn't do, for the host's log. */
   | { type: 'problem'; message: string }
   /** The document is shown in its editor at a place its run named: a Warning's line and column. */
-  | { type: 'reveal'; uri: string; line: number; column: number };
+  | { type: 'reveal'; uri: string; line: number; column: number }
+  /** A setting of the viewer's changed (a pane's size, whether it shows): the host keeps it, for the page it makes next. */
+  | { type: 'setting'; key: string; value: SettingValue };
+
+/** What a viewer keeps as a setting (`isSettingValue`): a pane's size, or whether it shows. */
+export type SettingValue = number | boolean;

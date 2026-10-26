@@ -5,9 +5,10 @@
   button hides: the view's controls (the render mode; edges, axes, the floor; fit, perspective,
   the views) over the model's parts (a click on one selecting its copies, as a click in the
   viewer does), half of it each. A bar above: a section through the model, a screenshot and a
-  host's own actions (which take the controls' look by .kc-control). Below: how its run went,
-  and what it said went wrong, one with a line clicked given to the host (`onproblem`). Themed
-  by the --kc-viewer-* tokens unless given a `theme`.
+  host's own actions (which take the controls' look by .kc-control), the Panel button, and a
+  host's toggles of its own panes beside this one. Below: how its run went, and what it said
+  went wrong, one with a line clicked given to the host (`onproblem`). Themed by the
+  --kc-viewer-* tokens unless given a `theme`.
 -->
 <script>
   import { onMount } from 'svelte';
@@ -32,6 +33,8 @@
    * @property {ViewerOptions} [options] what the viewer is made with
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
    * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export)
+   * @property {Snippet} [toggles] a host's toggles of its panes beside this one (its
+   *   parameters'), after the Panel button: at the end nearest them
    * @property {RunStatus | null} [status] how the run shown went, or none to say
    * @property {Problem[]} [problems] what the run shown said went wrong (`problemsOf(header)`)
    * @property {(problem: Problem) => void} [onproblem] a problem with a line clicked: the host
@@ -48,6 +51,7 @@
     options = {},
     onscreenshot,
     actions,
+    toggles,
     status = null,
     problems = [],
     onproblem,
@@ -215,13 +219,14 @@
     {@render actions?.()}
     <button
       type="button"
-      class="kc-control panel-toggle"
+      class="kc-control"
       aria-controls="{id}-panel"
       aria-expanded={panel}
       onclick={() => (panel = !panel)}
     >
       Panel
     </button>
+    {@render toggles?.()}
   </div>
   <div class="body">
     <div class="canvas">
@@ -408,12 +413,6 @@
   }
   .spacer {
     flex: 1;
-  }
-  /* Pressed while the panel shows, as the view's toggles are while on */
-  .panel-toggle[aria-expanded='true'] {
-    color: var(--kc-accent-fg);
-    background: var(--kc-accent);
-    border-color: var(--kc-accent);
   }
   label {
     display: flex;

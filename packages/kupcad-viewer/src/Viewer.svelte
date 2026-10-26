@@ -155,7 +155,11 @@
     width: 100%;
     height: 100%;
   }
+  /* Laid over the box, not in it: the canvas's drawing, which `resize` sizes from the canvas,
+     never sizes the box (in a page of no definite height it did, and grew past the window) */
   .scene {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;

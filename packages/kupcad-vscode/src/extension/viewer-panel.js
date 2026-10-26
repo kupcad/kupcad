@@ -3,7 +3,9 @@
 // the panel tells it which document it shows and the values the document's parameters take,
 // and passes on what it asks: a frame (`ready`), new values, a screenshot to save, a place in the
 // script to show in its editor. It keeps the document's presets (presets-file.js): their names
-// for the page, again when their file changes, one applied, the panel's values saved as one.
+// for the page, again when their file changes, one applied, the panel's values saved as one;
+// and the page's settings (its panes' sizes, whether they show) between sessions, written into
+// each page it makes.
 
 import * as vscode from 'vscode';
 import { anotherDocument, characterAt, errorText, isViewerMessage } from '@kupcad/protocol';
@@ -12,7 +14,7 @@ import { PresetsFile } from './presets-file.js';
 import { fileName, isScriptFile, scriptName } from './scripts.js';
 import { buildCsp, createNonce, prepareWebviewHtml } from './webview-html.js';
 
-/** @import { HostMessage, ParamValues, Presets, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
+/** @import { HostMessage, ParamValues, Presets, SettingValue, ShownDocument, ViewerMessage } from '@kupcad/protocol/types' */
 /** @import { ServerLink } from '../types.js' */
 /** @import { ScriptValues } from '@kupcad/protocol' */
 
@@ -21,6 +23,10 @@ const TITLE = 'KupCAD Viewer';
 /** Where the built page is, under the extension. */
 export const PAGE_DIR = 'dist-webview';
 const REPLACE = 'Replace';
+/** Where the page's settings are kept, in the extension's state. */
+export const SETTINGS_KEY = 'kupcad.viewer.settings';
+/** The most settings a page keeps: its own are a handful, and a page may not fill the state. */
+const MAX_SETTINGS = 32;
 
 /** @param {string} uri a script's */
 const presetsFileOf = (uri) => new PresetsFile(vscode.Uri.parse(uri));
@@ -32,6 +38,8 @@ const presetsFileOf = (uri) => new PresetsFile(vscode.Uri.parse(uri));
  * @property {vscode.Uri} extensionUri
  * @property {() => string} page the built page's HTML
  * @property {vscode.LogOutputChannel} log
+ * @property {Pick<vscode.Memento, 'get' | 'update'>} state where the page's settings are kept
+ *   between sessions (the extension's globalState)
  */
 
 export class ViewerPanel {
@@ -129,6 +137,7 @@ export class ViewerPanel {
       csp: buildCsp({ cspSource: webview.cspSource, nonce, viewportPort }),
       nonce,
       viewportPort,
+      settings: this.#settings(),
       toWebviewUri: (path) =>
         webview.asWebviewUri(vscode.Uri.joinPath(pageRoot, ...path.split('/'))).toString(),
     });
@@ -182,7 +191,32 @@ export class ViewerPanel {
       case 'reveal':
         void this.#revealPlace(message.uri, message.line, message.column);
         return;
+      case 'setting':
+        this.#keepSetting(message.key, message.value);
+        return;
     }
+  }
+
+  /**
+   * The page's settings, as kept.
+   * @returns {Record<string, SettingValue>}
+   */
+  #settings() {
+    return this.#options.state.get(SETTINGS_KEY, {});
+  }
+
+  /**
+   * Keeps a setting of the page's, for the next page made (a reload, the next session).
+   * @param {string} key
+   * @param {SettingValue} value
+   */
+  #keepSetting(key, value) {
+    const settings = this.#settings();
+    if (!Object.hasOwn(settings, key) && Object.keys(settings).length >= MAX_SETTINGS) {
+      this.#options.log.warn(`The viewer has ${MAX_SETTINGS} settings kept: ${key} isn't`);
+      return;
+    }
+    void this.#options.state.update(SETTINGS_KEY, { ...settings, [key]: value });
   }
 
   /**

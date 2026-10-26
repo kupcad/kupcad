@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isHostMessage, isParamValues, isViewerMessage, MAX_PARAM_DEPTH } from './index.js';
+import {
+  isHostMessage,
+  isParamValues,
+  isSettingValue,
+  isViewerMessage,
+  MAX_PARAM_DEPTH,
+} from './index.js';
 
 describe('isHostMessage', () => {
   it('takes the messages a host sends, field for field', () => {
@@ -68,6 +74,20 @@ describe('isViewerMessage', () => {
     );
     expect(isViewerMessage({ type: 'screenshot', png: new Uint8Array() })).toBe(false);
     expect(isViewerMessage({ type: 'document', document: null })).toBe(false);
+  });
+
+  it('takes a setting of a size or a pane shown, under a key of a setting', () => {
+    expect(isViewerMessage({ type: 'setting', key: 'preview.params', value: 320 })).toBe(true);
+    expect(isViewerMessage({ type: 'setting', key: 'preview.paramsOpen', value: false })).toBe(
+      true,
+    );
+    expect(isViewerMessage({ type: 'setting', key: 'preview.params' })).toBe(false);
+    expect(isViewerMessage({ type: 'setting', key: 7, value: 1 })).toBe(false);
+    expect(isViewerMessage({ type: 'setting', key: 'k'.repeat(65), value: 1 })).toBe(false);
+    for (const value of [Infinity, NaN, '320', null, {}, [1]]) {
+      expect(isSettingValue(value)).toBe(false);
+      expect(isViewerMessage({ type: 'setting', key: 'preview.params', value })).toBe(false);
+    }
   });
 });
 

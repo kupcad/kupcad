@@ -5,10 +5,12 @@
 
 import { isExportFormat } from './formats.js';
 
-/** @import { HostMessage, ParamValue, ParamValues, ViewerMessage } from './types.js' */
+/** @import { HostMessage, ParamValue, ParamValues, SettingValue, ViewerMessage } from './types.js' */
 
 /** How deep a parameter's value nests (core/src/core/param_rules.zig's): a list of tuples or of objects. */
 export const MAX_PARAM_DEPTH = 2;
+/** The longest key a viewer keeps a setting under. */
+const MAX_SETTING_KEY = 64;
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -38,6 +40,14 @@ function isParamValue(value, depth) {
     return depth > 0 && Object.values(value).every((v) => isParamValue(v, depth - 1));
   return ['number', 'string', 'boolean'].includes(typeof value);
 }
+
+/**
+ * Whether `value` is one a viewer keeps as a setting: a pane's size (a finite number), or
+ * whether it shows.
+ * @param {unknown} value
+ * @returns {value is SettingValue}
+ */
+export const isSettingValue = (value) => typeof value === 'boolean' || Number.isFinite(value);
 
 /** Each host message's fields, checked: by its type. */
 const HOST_MESSAGES = {
@@ -70,6 +80,8 @@ const VIEWER_MESSAGES = {
   problem: (m) => isString(m.message),
   /** @param {Record<string, unknown>} m */
   reveal: (m) => isString(m.uri) && isPlace(m.line) && isPlace(m.column),
+  /** @param {Record<string, unknown>} m */
+  setting: (m) => isString(m.key) && m.key.length <= MAX_SETTING_KEY && isSettingValue(m.value),
 };
 
 /**

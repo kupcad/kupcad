@@ -17,7 +17,9 @@ select.kc-control {
   cursor: pointer;
 }
 
-.kc-control[aria-pressed='true'] {
+/* A toggle while on, and a pane's toggle while the pane shows */
+.kc-control[aria-pressed='true'],
+.kc-control[aria-expanded='true'] {
   color: var(--kc-accent-fg);
   background: var(--kc-accent);
   border-color: var(--kc-accent);

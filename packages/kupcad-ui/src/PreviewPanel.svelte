@@ -8,7 +8,9 @@
   document's presets are above its parameters: one applied, or the panel's values saved as one.
   The console under the model keeps each run (what it printed, its warnings and its error) and
   the host's log, as OpenSCAD's does. The parameters' column and the console are resized by the
-  bars beside them, their sizes (and the console folded or not) kept in the host's `settings`.
+  bars beside them, and the column hidden by the toolbar's Parameters button (for the model's
+  width); their sizes, the column hidden or not and the console folded or not are kept in the
+  host's `settings`.
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -53,13 +55,19 @@
     settings = memorySettings(),
   } = $props();
 
-  /** The settings' keys: the parameters' width, the console's height, whether it is open. */
+  /**
+   * The settings' keys: the parameters' width and whether they show, the console's height and
+   * whether it is open.
+   */
   const KEYS = {
     params: 'preview.params',
+    paramsOpen: 'preview.paramsOpen',
     console: 'preview.console',
     open: 'preview.consoleOpen',
   };
+  const id = $props.id();
   let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
+  let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
   let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
   let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
 
@@ -213,6 +221,19 @@
             <ExportMenu kind={preview?.model.kind ?? 'none'} onexport={exportShown} />
           {/if}
         {/snippet}
+        {#snippet toggles()}
+          {#if header && parameters.length > 0}
+            <button
+              type="button"
+              class="kc-control"
+              aria-controls="{id}-params"
+              aria-expanded={paramsOpen}
+              onclick={() => settings.set(KEYS.paramsOpen, (paramsOpen = !paramsOpen))}
+            >
+              Parameters
+            </button>
+          {/if}
+        {/snippet}
       </ViewerPane>
       {#if status}
         <p class="notice">{status}</p>
@@ -239,15 +260,24 @@
     {/if}
   </section>
   {#if header && parameters.length > 0}
-    <Splitter
-      pane="after"
-      bind:size={paramsWidth}
-      min={200}
-      max={640}
-      label="Resize the parameters"
-      onchange={(size) => settings.set(KEYS.params, size)}
-    />
-    <aside class="params" aria-label="Parameters" style:width="{paramsWidth}px">
+    {#if paramsOpen}
+      <Splitter
+        pane="after"
+        bind:size={paramsWidth}
+        min={200}
+        max={640}
+        label="Resize the parameters"
+        onchange={(size) => settings.set(KEYS.params, size)}
+      />
+    {/if}
+    <!-- Hidden, not gone: what its fields hold stays, and the toggle has it to control -->
+    <aside
+      class="params"
+      id="{id}-params"
+      aria-label="Parameters"
+      hidden={!paramsOpen}
+      style:width="{paramsWidth}px"
+    >
       {#if offersPresets}
         <div class="presets">
           <select

@@ -1,6 +1,7 @@
 // The viewer webview's HTML: the built page (dist-webview/index.html) with a strict Content
 // Security Policy, its scripts nonced, its assets' URLs the webview's, and the viewport socket's
-// URL in a meta tag. Free of the `vscode` import, so it is tested without VS Code.
+// URL and the page's kept settings in meta tags. Free of the `vscode` import, so it is tested
+// without VS Code.
 
 import * as crypto from 'node:crypto';
 import { viewportUrl } from '@kupcad/protocol';
@@ -32,13 +33,17 @@ const escapeAttr = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 
 /**
- * Injects the CSP + viewport port meta tags, adds the nonce to every <script>, and rewrites
- * relative asset URLs through `toWebviewUri` (webviews cannot load file paths directly).
+ * Injects the CSP, viewport port and settings meta tags, adds the nonce to every <script>, and
+ * rewrites relative asset URLs through `toWebviewUri` (webviews cannot load file paths
+ * directly).
  * @param {string} html
- * @param {{ csp: string, nonce: string, viewportPort: number | undefined, toWebviewUri?: (rel: string) => string }} options
+ * @param {{ csp: string, nonce: string, viewportPort: number | undefined, settings?: Record<string, unknown>, toWebviewUri?: (rel: string) => string }} options
  * @returns {string}
  */
-export const prepareWebviewHtml = (html, { csp, nonce, viewportPort, toWebviewUri }) => {
+export const prepareWebviewHtml = (
+  html,
+  { csp, nonce, viewportPort, settings = {}, toWebviewUri },
+) => {
   let out = html;
   if (toWebviewUri) {
     out = out.replace(
@@ -51,7 +56,8 @@ export const prepareWebviewHtml = (html, { csp, nonce, viewportPort, toWebviewUr
 
   const meta =
     `<meta http-equiv="Content-Security-Policy" content="${escapeAttr(csp)}">` +
-    `<meta name="kupcad-viewport" content="${escapeAttr(viewportUrl(viewportPort) ?? '')}">`;
+    `<meta name="kupcad-viewport" content="${escapeAttr(viewportUrl(viewportPort) ?? '')}">` +
+    `<meta name="kupcad-settings" content="${escapeAttr(JSON.stringify(settings))}">`;
   if (/<head[^>]*>/i.test(out)) return out.replace(/<head[^>]*>/i, (m) => `${m}${meta}`);
   return `<!DOCTYPE html><html><head>${meta}</head><body>${out}</body></html>`;
 };

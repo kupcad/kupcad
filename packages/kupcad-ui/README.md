@@ -29,8 +29,10 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   Edges, Axes, Grid and Plate toggles; Fit, Persp, and the Iso, Top, Front and Right views, the
   one looked from pressed, a turn by hand pressing none), the model's parts in its bottom half,
   each with its colour and copies (a click on one selects its copies, as a click in the viewer
-  does: `bind:selected`). A bar above: a section through the model along an axis, screenshot, and
-  an `actions` snippet (a host's own buttons, the VS Code extension's Export). Below, a status
+  does: `bind:selected`). A bar above: a section through the model along an axis, screenshot, an
+  `actions` snippet (a host's own buttons, the Export menu), the Panel button, and a `toggles`
+  snippet after it (a host's toggles of its own panes beside the pane, the Parameters button;
+  `.kc-control` with `aria-expanded` gives one the Panel button's look). Below, a status
   line from `status` (`runStatusOf(header)` makes it of a frame's header: Running…, then Ready or
   Failed, with the run's time and its warnings) over the run's problems from `problems`
   (`problemsOf(header)`: why it failed, then its warnings), a few lines high; one with a line,
@@ -75,7 +77,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   Code extension, the desktop app): the model of the document the host says it shows, as the
   server's viewport socket sends it (`connectViewport`, which opens the socket again when it
   closes; `viewportUrl` changed, a server started again on another port, it follows it, what it
-  shows and its console kept), the run's problems, and the parameters with the document's presets. It talks to the
+  shows and its console kept), the run's problems, and the parameters with the document's
+  presets, which the toolbar's Parameters button hides for the model's width. It talks to the
   host as a `ViewerHost` (`@kupcad/protocol`'s `HostMessage` and `ViewerMessage`): the panel's
   values, a preset, an export (in the format its toolbar's `ExportMenu` chose, those the model's
   kind can be written in), a screenshot (base64) or a problem's place go to the host, which
@@ -89,7 +92,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   room, the panes keep their borders. The sizes are kept in a host's `Settings` (`get`, `set`):
   `localSettings`, the page's localStorage as one JSON object, kept in memory where the page may
   not store; `memorySettings`, the page's life alone; `sizeSetting` reads a kept size or the
-  pane's own. `PreviewPanel` keeps its parameters' width and its console's height and state
+  pane's own. `PreviewPanel` keeps its parameters' width and whether they show, and its
+  console's height and state
   (`preview.*`) in the `settings` it is given.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.

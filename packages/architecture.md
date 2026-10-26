@@ -150,7 +150,7 @@ export interface ViewportReady { port: number; protocolVersion: number }
 export interface SetParamsArgument { uri: string; values: ParamValues }
 /** The one argument of the `kupcad.preview` command: the document the viewport shows. */
 export interface PreviewArgument { uri: string }
-/** A host and its viewer: the document shown and its values; ready, setParams, a screenshot, a problem, a place to reveal. */
+/** A host and its viewer: the document shown and its values; ready, setParams, a screenshot, a problem, a place to reveal, a setting to keep. */
 export type HostMessage = ...; export type ViewerMessage = ...;
 ```
 

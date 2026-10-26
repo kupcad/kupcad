@@ -95,6 +95,7 @@ export async function activate(context) {
         extensionUri: context.extensionUri,
         page: () => fs.readFileSync(pagePath, 'utf8'),
         log,
+        state: context.globalState,
       });
     }),
     // With none running (an install that failed offline, say), it tries again

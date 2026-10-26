@@ -6,9 +6,10 @@
   went and lists its problems, one clicked taking the editor there. A model is exported in any
   format the core writes, and the viewer's screenshot saved, as downloads. The console under the
   model keeps each run (what it printed, its warnings and its error) and the core's log. The
-  bars between the panes resize them, the sizes kept in `settings` (the page's localStorage by
-  default). It keeps nothing else of the page's: the page gives the script it starts with
-  (`source`).
+  bars between the panes resize them, and the toolbar's Parameters button hides theirs (for the
+  model's width); the sizes, and what is hidden or folded, are kept in `settings` (the page's
+  localStorage by default). It keeps nothing else of the page's: the page gives the script it
+  starts with (`source`).
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -63,17 +64,23 @@
     settings = localSettings(),
   } = $props();
 
-  /** The settings' keys: the editor's and the parameters' widths, the console's height and state. */
+  /**
+   * The settings' keys: the editor's and the parameters' widths, whether the parameters show,
+   * the console's height and state.
+   */
   const KEYS = {
     editor: 'playground.editor',
     params: 'playground.params',
+    paramsOpen: 'playground.paramsOpen',
     console: 'playground.console',
     open: 'playground.consoleOpen',
   };
   /** The least the model is given, however wide the editor is made. */
   const MIN_VIEW = 320;
+  const id = $props.id();
   let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 460)));
   let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
+  let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
   let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
   let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
   /** The playground's width, once laid out. */
@@ -102,6 +109,8 @@
   // Marked where they are in the script as it is: a run of another (older) script marks nothing
   const marks = $derived(marksOf(findings, ran?.source === value ? problems : []));
   const parameters = $derived(header?.params.schema.parameters ?? []);
+  /** The parameters' column is there, and not hidden: the model's width is the rest. */
+  const paramsShown = $derived(header !== null && parameters.length > 0 && paramsOpen);
 
   onMount(() => {
     const made = kupcad ? null : createKupcadWorker(wasm ? { wasm, log } : { log });
@@ -176,7 +185,7 @@
   <Splitter
     bind:size={editorWidth}
     min={240}
-    max={width > 0 ? width - paramsWidth - MIN_VIEW : undefined}
+    max={width > 0 ? width - (paramsShown ? paramsWidth : 0) - MIN_VIEW : undefined}
     label="Resize the script"
     onchange={(size) => settings.set(KEYS.editor, size)}
   />
@@ -192,6 +201,19 @@
       >
         {#snippet actions()}
           <ExportMenu kind={ran?.preview.model.kind ?? 'none'} onexport={exportChosen} />
+        {/snippet}
+        {#snippet toggles()}
+          {#if header && parameters.length > 0}
+            <button
+              type="button"
+              class="kc-control"
+              aria-controls="{id}-params"
+              aria-expanded={paramsOpen}
+              onclick={() => settings.set(KEYS.paramsOpen, (paramsOpen = !paramsOpen))}
+            >
+              Parameters
+            </button>
+          {/if}
         {/snippet}
       </ViewerPane>
     </div>
@@ -214,15 +236,18 @@
     />
   </section>
   {#if header && parameters.length > 0}
-    <Splitter
-      pane="after"
-      bind:size={paramsWidth}
-      min={200}
-      max={640}
-      label="Resize the parameters"
-      onchange={(size) => settings.set(KEYS.params, size)}
-    />
-    <aside class="params" aria-label="Parameters">
+    {#if paramsOpen}
+      <Splitter
+        pane="after"
+        bind:size={paramsWidth}
+        min={200}
+        max={640}
+        label="Resize the parameters"
+        onchange={(size) => settings.set(KEYS.params, size)}
+      />
+    {/if}
+    <!-- Hidden, not gone: what its fields hold stays, and the toggle has it to control -->
+    <aside class="params" id="{id}-params" aria-label="Parameters" hidden={!paramsOpen}>
       <ParamsPanel
         schema={header.params.schema}
         values={header.params.values}

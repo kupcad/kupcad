@@ -1,0 +1,10 @@
+/* The page the panel fills: a file the bundle links, as the webview's CSP (webview-html.js)
+   takes styles only from the extension's files, never inline. Inline, it was dropped, and the
+   page took its content's height: the viewer's canvas its own drawing's. */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}

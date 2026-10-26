@@ -107,6 +107,22 @@ describe('Playground', () => {
     expect(settings.get('playground.editor')).toBe(516);
   });
 
+  it("hides the parameters by the toolbar's toggle, and keeps that in its settings", async () => {
+    const settings = memorySettings({ 'playground.paramsOpen': false });
+    await playground('w = param(:w, default: 10)\ncube(w)\n', settings);
+    const toggle = await vi.waitFor(
+      () => screen.getByRole('button', { name: 'Parameters' }),
+      RUN_MS,
+    );
+    // Hidden as the settings keep it: no column, no bar to resize it
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('complementary', { name: 'Parameters' })).toBeNull();
+    expect(screen.queryByRole('separator', { name: 'Resize the parameters' })).toBeNull();
+    await fireEvent.click(toggle);
+    expect(screen.getByRole('complementary', { name: 'Parameters' })).toBeTruthy();
+    expect(settings.get('playground.paramsOpen')).toBe(true);
+  });
+
   it('runs the script again once an edit stays a moment', async () => {
     const { view } = await playground('cube(10).named("box")\n');
     await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);

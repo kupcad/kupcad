@@ -154,9 +154,11 @@ export function createHost(services) {
       case 'reveal':
         services.reveal(message.uri, message.line, message.column);
         return;
-      // Presets aren't offered (PreviewPanel's `presets`)
+      // Presets aren't offered (PreviewPanel's `presets`), and the panel keeps its settings in
+      // the app's settings file itself (App's `settings`)
       case 'applyPreset':
       case 'savePreset':
+      case 'setting':
         return;
     }
   }

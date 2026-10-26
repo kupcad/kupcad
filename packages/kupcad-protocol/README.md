@@ -44,8 +44,9 @@ client.sendRequest('workspace/executeCommand', {
   server's names.
 * `HostMessage` and `ViewerMessage`: what a host (the VS Code extension, the desktop app) and its
   viewer say to each other: the document shown, its panel's values, its presets' names and the
-  host's log (`log`, for the viewer's console) one way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem and a place
-  in the script to reveal (`reveal`: a warning's line and column) the other. `isHostMessage` and `isViewerMessage` read
+  host's log (`log`, for the viewer's console) one way; `ready`, `setParams`, a preset to apply or to save, a screenshot, a problem, a place
+  in the script to reveal (`reveal`: a warning's line and column) and a setting for the host to keep (`setting`: a pane's
+  size or whether it shows, `isSettingValue`) the other. `isHostMessage` and `isViewerMessage` read
   one as it arrives untyped (`postMessage`), and `isParamValues` the values in it (a
   `ParamValue` is a number, a string, a boolean, or an array or an object of them nested at
   most `MAX_PARAM_DEPTH`, the core's; a `ParamSpec` is a parameter's `Rule`, each part's rule
