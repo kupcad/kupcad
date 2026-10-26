@@ -155,13 +155,17 @@ test "HTTP client: a request whose body stops coming is abandoned" {
 }
 
 test "HTTP client: a request that keeps receiving isn't abandoned, however long it takes" {
-    // Its 10 pieces take 500 ms, past twice the stall: only a pause that long ends it
+    // Its 120 pieces take 1.2 s, past twice the stall: only a pause that long ends it. They
+    // come 10 ms apart, so a busy machine may hold either end for most of the stall (50 ms
+    // gaps under a 200 ms stall once failed on CI's macOS runner)
+    const pieces = 120;
     var server: SlowServer = undefined;
-    try server.start(.{ .pieces = 10, .gap = .fromMilliseconds(50), .length = 10 });
+    try server.start(.{ .pieces = pieces, .gap = .fromMilliseconds(10), .length = pieces });
     defer server.stop();
-    const body = try watchedBody(&server, .fromMilliseconds(200));
+    const body = try watchedBody(&server, .fromMilliseconds(500));
     defer testing.allocator.free(body);
-    try testing.expectEqualStrings("xxxxxxxxxx", body);
+    const expected: [pieces]u8 = @splat('x');
+    try testing.expectEqualStrings(&expected, body);
 }
 
 test "HTTP client: canceling a watched request's caller cancels the request" {
