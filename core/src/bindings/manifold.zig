@@ -45,6 +45,7 @@ pub const ManifoldRayHit = extern struct {
     distance: f64,
     position: ManifoldVec3,
     normal: ManifoldVec3,
+    crossing: c_int,
 };
 
 extern fn manifold_alloc_manifold() ?*ManifoldObj;
