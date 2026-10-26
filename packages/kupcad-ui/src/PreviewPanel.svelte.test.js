@@ -336,7 +336,11 @@ describe('PreviewPanel console', () => {
 });
 
 it("lays its panes out as the host's settings keep them, and keeps what the person changes", async () => {
-  const settings = memorySettings({ 'preview.params': 320, 'preview.console': 200 });
+  const settings = memorySettings({
+    'preview.params': 320,
+    'preview.console': 200,
+    'preview.panelOpen': false,
+  });
   const viewer = page({ settings });
   await viewer.tell({ type: 'document', document: PART });
   viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
@@ -346,6 +350,11 @@ it("lays its panes out as the host's settings keep them, and keeps what the pers
   );
   expect(params.style.width).toBe('320px');
   expect(screen.getByRole('log').style.height).toBe('200px');
+  // The view's panel hidden, as kept; shown again, it stays so
+  expect(screen.queryByRole('complementary', { name: 'View and parts' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Panel' }));
+  expect(screen.getByRole('complementary', { name: 'View and parts' })).toBeTruthy();
+  expect(settings.get('preview.panelOpen')).toBe(true);
   await fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize the parameters' }), {
     key: 'ArrowLeft',
   });

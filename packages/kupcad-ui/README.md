@@ -25,7 +25,7 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 ```
 
 * **`ViewerPane`**: @kupcad/viewer with its view cube in the corner, and a panel beside it that
-  the toolbar's Panel button hides: the view's controls in its top half (Solid, Wire, X-ray;
+  the toolbar's Panel button hides (`bind:panel`, for a host to keep): the view's controls in its top half (Solid, Wire, X-ray;
   Edges, Axes, Grid and Plate toggles; Fit, Persp, and the Iso, Top, Front and Right views, the
   one looked from pressed, a turn by hand pressing none), the model's parts in its bottom half,
   each with its colour and copies (a click on one selects its copies, as a click in the viewer
@@ -92,8 +92,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   room, the panes keep their borders. The sizes are kept in a host's `Settings` (`get`, `set`):
   `localSettings`, the page's localStorage as one JSON object, kept in memory where the page may
   not store; `memorySettings`, the page's life alone; `sizeSetting` reads a kept size or the
-  pane's own. `PreviewPanel` keeps its parameters' width and whether they show, and its
-  console's height and state
+  pane's own. `PreviewPanel` keeps its parameters' width and whether they show, whether the
+  view's panel shows, and its console's height and state
   (`preview.*`) in the `settings` it is given.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.

@@ -20,8 +20,8 @@ Language support for [KupCAD](https://github.com/kupcad/kupcad) (`.kup`) files, 
   selects a part) in a panel beside it, which the Panel button hides; a screenshot. The script's
   parameters are a panel beside it, which the Parameters button hides for the model's width: a
   value set there runs the script again with it, checked against the parameter's range first;
-  one the run refuses is marked. The panes' sizes, and the parameters hidden or not, are kept
-  between sessions (the extension's state). Under the model, how the
+  one the run refuses is marked. The panes' sizes, and which are hidden, are kept between
+  sessions (the extension's state). Under the model, how the
   run went, why it failed and what it warned of: one with a line, clicked, is shown in the
   script's editor.
 * **Presets:** named sets of a script's values, kept beside it in `<name>.presets.json`

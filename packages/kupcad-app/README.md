@@ -51,7 +51,7 @@ Windows warn before they open one; signing needs the certificates as the reposit
   it is saved (⌘S, Ctrl+S), marked in the tree and the bar until then; the window asks before it
   closes, or opens another folder, on unsaved changes. The bars between the tree, the editor,
   the model, the parameters and the console resize them, and the Parameters button hides the
-  parameters; the sizes, and the parameters hidden or not, are kept in the app's settings
+  parameters; the sizes, and which panes are hidden, are kept in the app's settings
   file (`settings.json` in its config folder, macOS's `~/Library/Application Support/
   dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out. It
   takes its services as a prop

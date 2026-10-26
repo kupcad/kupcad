@@ -107,7 +107,7 @@ describe('Playground', () => {
     expect(settings.get('playground.editor')).toBe(516);
   });
 
-  it("hides the parameters by the toolbar's toggle, and keeps that in its settings", async () => {
+  it("hides the parameters and the view's panel by the toolbar's toggles, and keeps that", async () => {
     const settings = memorySettings({ 'playground.paramsOpen': false });
     await playground('w = param(:w, default: 10)\ncube(w)\n', settings);
     const toggle = await vi.waitFor(
@@ -121,6 +121,9 @@ describe('Playground', () => {
     await fireEvent.click(toggle);
     expect(screen.getByRole('complementary', { name: 'Parameters' })).toBeTruthy();
     expect(settings.get('playground.paramsOpen')).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Panel' }));
+    expect(screen.queryByRole('complementary', { name: 'View and parts' })).toBeNull();
+    expect(settings.get('playground.panelOpen')).toBe(false);
   });
 
   it('runs the script again once an edit stays a moment', async () => {

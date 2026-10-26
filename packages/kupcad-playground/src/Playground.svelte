@@ -65,13 +65,14 @@
   } = $props();
 
   /**
-   * The settings' keys: the editor's and the parameters' widths, whether the parameters show,
-   * the console's height and state.
+   * The settings' keys: the editor's and the parameters' widths, whether the parameters and the
+   * view's panel show, the console's height and state.
    */
   const KEYS = {
     editor: 'playground.editor',
     params: 'playground.params',
     paramsOpen: 'playground.paramsOpen',
+    panelOpen: 'playground.panelOpen',
     console: 'playground.console',
     open: 'playground.consoleOpen',
   };
@@ -81,6 +82,7 @@
   let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 460)));
   let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
   let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
+  let panelOpen = $state(untrack(() => settings.get(KEYS.panelOpen) !== false));
   let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
   let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
   /** The playground's width, once laid out. */
@@ -194,6 +196,7 @@
       <ViewerPane
         model={ran?.preview.model ?? null}
         options={viewerOptions}
+        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, (panelOpen = open))}
         {status}
         {problems}
         onproblem={reveal}

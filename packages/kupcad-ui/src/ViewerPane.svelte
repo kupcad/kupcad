@@ -30,6 +30,8 @@
    * @property {Theme} [theme] by default the --kc-viewer-* tokens', followed as they change
    * @property {string | null} [selected] the part selected; bindable
    * @property {ViewerClass | null} [viewer] the viewer, once mounted; bindable
+   * @property {boolean} [panel] whether the panel beside the viewer shows (the Panel button's);
+   *   bindable, for a host to keep
    * @property {ViewerOptions} [options] what the viewer is made with
    * @property {(image: Blob) => void} [onscreenshot] a screenshot taken; without it, no button
    * @property {Snippet} [actions] a host's own buttons, at the toolbar's end (export)
@@ -48,6 +50,7 @@
     theme,
     selected = $bindable(null),
     viewer = $bindable(null),
+    panel = $bindable(true),
     options = {},
     onscreenshot,
     actions,
@@ -91,8 +94,6 @@
 
   /** @type {HTMLDivElement} */
   let root;
-  /** The panel beside the viewer is shown. */
-  let panel = $state(true);
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
   let renderMode = $state(/** @type {RenderMode} */ ('solid'));
   let edges = $state(true);

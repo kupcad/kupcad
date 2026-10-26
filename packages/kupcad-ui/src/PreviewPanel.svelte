@@ -9,8 +9,8 @@
   The console under the model keeps each run (what it printed, its warnings and its error) and
   the host's log, as OpenSCAD's does. The parameters' column and the console are resized by the
   bars beside them, and the column hidden by the toolbar's Parameters button (for the model's
-  width); their sizes, the column hidden or not and the console folded or not are kept in the
-  host's `settings`.
+  width); their sizes, the column and the view's panel (the Panel button's) hidden or not, and
+  the console folded or not are kept in the host's `settings`.
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -56,18 +56,20 @@
   } = $props();
 
   /**
-   * The settings' keys: the parameters' width and whether they show, the console's height and
-   * whether it is open.
+   * The settings' keys: the parameters' width and whether they show, whether the view's panel
+   * shows, the console's height and whether it is open.
    */
   const KEYS = {
     params: 'preview.params',
     paramsOpen: 'preview.paramsOpen',
+    panelOpen: 'preview.panelOpen',
     console: 'preview.console',
     open: 'preview.consoleOpen',
   };
   const id = $props.id();
   let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
   let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
+  let panelOpen = $state(untrack(() => settings.get(KEYS.panelOpen) !== false));
   let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
   let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
 
@@ -210,6 +212,7 @@
       <ViewerPane
         model={preview?.model ?? null}
         options={viewerOptions}
+        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, (panelOpen = open))}
         status={run}
         {problems}
         onproblem={revealProblem}
