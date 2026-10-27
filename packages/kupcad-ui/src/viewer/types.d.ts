@@ -30,6 +30,19 @@ export type Environment = 'grid' | 'plate' | 'none';
 export type Axis = 'x' | 'y' | 'z';
 
 /** A plane across `axis` at `offset` (mm): what is past it is cut away, the far side when `flip`. */
+/**
+ * Where the camera stands, as plain numbers (`cameraState()`, `restoreCamera()`): what it looks
+ * at, the way from there to the camera, how far, and how high the view is at what it looks at,
+ * which either projection sees the same; and its named view, if it is in one.
+ */
+export interface CameraState {
+  target: [number, number, number];
+  direction: [number, number, number];
+  distance: number;
+  halfHeight: number;
+  view: View | null;
+}
+
 export interface Section {
   axis: Axis;
   offset: number;

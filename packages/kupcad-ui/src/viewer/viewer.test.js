@@ -437,6 +437,57 @@ describe('Viewer', () => {
     expect(camera.position.distanceTo(framed)).toBeCloseTo(0, 6);
   });
 
+  it('gives where its camera stands, and stands it there again, through either camera', async () => {
+    const { viewer, drawn } = viewerOn();
+    await viewer.setModel(await modelOf(BLOCK));
+    viewer.lookFrom([1, -1, 1]);
+    viewer.zoom(2);
+    await nextFrame();
+    const camera = () => /** @type {Camera} */ (drawn.camera);
+    const left = /** @type {import('./types.js').CameraState} */ (
+      JSON.parse(JSON.stringify(viewer.cameraState()))
+    );
+    const position = camera().position.clone();
+    expect(left.view).toBe('iso');
+    viewer.setCamera({ view: 'top' });
+    viewer.restoreCamera(left);
+    await nextFrame();
+    expect(camera().position.distanceTo(position)).toBeCloseTo(0, 6);
+    expect(viewer.view).toBe('iso');
+    // Through the orthographic camera, as much seen at what it looks at
+    viewer.setCamera({ projection: 'orthographic' });
+    viewer.restoreCamera(left);
+    await nextFrame();
+    const orthographic = /** @type {OrthographicCamera} */ (drawn.camera);
+    expect(orthographic.top / orthographic.zoom).toBeCloseTo(left.halfHeight, 6);
+    // And its state through the perspective camera again: where it stood at first
+    const fromOrthographic = viewer.cameraState();
+    viewer.setCamera({ projection: 'perspective' });
+    viewer.restoreCamera(fromOrthographic);
+    await nextFrame();
+    expect(camera().position.distanceTo(position)).toBeCloseTo(0, 6);
+    // A named view it no longer looks from is none
+    viewer.restoreCamera({ ...left, view: 'top' });
+    expect(viewer.view).toBeNull();
+  });
+
+  it('fits at once when asked to, a move over a moment otherwise', async () => {
+    const { viewer, drawn } = viewerOn({ motionMs: 1000 });
+    await viewer.setModel(await modelOf(BLOCK));
+    await nextFrame();
+    const camera = /** @type {Camera} */ (drawn.camera);
+    const framed = camera.position.length();
+    viewer.zoom(2);
+    viewer.fit();
+    await nextFrame();
+    // A moment in, the move has far to go
+    expect(camera.position.length()).toBeLessThan(framed * 0.9);
+    viewer.zoom(2);
+    viewer.fit({ instant: true });
+    await nextFrame();
+    expect(camera.position.length()).toBeCloseTo(framed, 6);
+  });
+
   it("takes Orca Slicer's keys once it has the focus: views, fit, zoom", async () => {
     const { viewer, canvas, drawn } = viewerOn();
     await viewer.setModel(await modelOf(BLOCK));

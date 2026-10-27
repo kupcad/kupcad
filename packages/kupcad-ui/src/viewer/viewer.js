@@ -53,7 +53,7 @@ import { wheelGesture } from './wheel.js';
 /** @import { Pose } from './motion.js' */
 
 /** @import { Model } from '@kupcad/protocol/types' */
-/** @import { Bounds, Environment, Hover, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
+/** @import { Bounds, CameraState, Environment, Hover, Plate, Projection, RendererLike, RenderMode, SceneModel, Section, Shape, Theme, View, ViewerOptions } from './types.js' */
 
 /** The perspective camera's vertical field of view, in degrees. */
 const FOV_DEG = 35;
@@ -455,9 +455,56 @@ export class Viewer extends EventTarget {
     this.#invalidate();
   }
 
-  /** Frames the whole model from where the camera looks now (its angle kept), moving there. */
-  fit() {
-    this.#frameFrom(this.#direction(), true);
+  /**
+   * Frames the whole model from where the camera looks now (its angle kept), moving there; at
+   * once where `instant`.
+   * @param {{ instant?: boolean }} [options]
+   */
+  fit({ instant = false } = {}) {
+    this.#frameFrom(this.#direction(), !instant);
+  }
+
+  /**
+   * Where the camera stands, a move under way ended where it was going: for `restoreCamera`, as
+   * a host that shows another script keeps this one's camera.
+   * @returns {CameraState}
+   */
+  cameraState() {
+    this.#settleMove();
+    const pose = this.#pose();
+    const halfHeight =
+      this.#camera === this.#orthographic
+        ? pose.halfHeight
+        : pose.distance * halfFovTangent(FOV_DEG);
+    return {
+      target: /** @type {[number, number, number]} */ (pose.target.toArray()),
+      direction: /** @type {[number, number, number]} */ (pose.direction.toArray()),
+      distance: pose.distance,
+      halfHeight,
+      view: this.#view,
+    };
+  }
+
+  /**
+   * Stands the camera where `state` says, at once, through the camera it looks with now: as
+   * much seen at what it looks at, whichever it was taken with. Its named view is the state's
+   * where it still looks from it.
+   * @param {CameraState} state
+   */
+  restoreCamera(state) {
+    this.#move = null;
+    const direction = new Vector3(...state.direction).normalize();
+    const distance =
+      this.#camera === this.#perspective
+        ? state.halfHeight / halfFovTangent(FOV_DEG)
+        : state.distance;
+    this.#standAt(
+      { target: new Vector3(...state.target), direction, distance, halfHeight: state.halfHeight },
+      true,
+    );
+    const view = state.view && sameDirection(VIEWS[state.view], direction) ? state.view : null;
+    this.#setView(view);
+    this.#invalidate();
   }
 
   /**

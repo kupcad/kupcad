@@ -33,6 +33,9 @@ viewer.setCamera({ projection: 'orthographic', view: 'front' }); // moves there,
 viewer.lookFrom([1, 1, 1]); // from any direction (Z up), as the view cube's corner does
 new ViewCube(cubeCanvas, viewer, { theme: DARK }); // the cube, on a canvas of its own
 viewer.fit(); viewer.zoom(1.25); // fits the model from where it looks; zooms in (out, below 1)
+viewer.fit({ instant: true }); // the same at once, no move
+const left = viewer.cameraState(); // plain numbers: what it looks at, from where, how much it sees
+viewer.restoreCamera(left); // there again at once, through either projection, as much seen
 viewer.setSection({ axis: 'z', offset: 5 }); // cut away what is above z = 5, the cut capped
 viewer.addEventListener('section', (event) => event.detail.section); // the wheel with Option moved it
 viewer.addEventListener('select', (event) => console.log(event.detail.part)); // a click (the main
@@ -164,7 +167,11 @@ webview and the desktop app to the language server.
   `bind:viewer` gives the viewer itself. The controls show how the viewer looks (a drawing
   switches it to the top view, orthographic; a turn of the wheel with Option moves the section,
   and its slider), and a section stays where it was put through an edit of the script, while the
-  model still reaches it.
+  model still reaches it. A model of another `subject` (another script: the preview gives the
+  document's URI) is framed: as its camera was left when it was shown last, else whole from
+  where the camera looks; the same subject's next model (an edit, a parameter) keeps the camera.
+  The cameras are the pane's own, in memory while it is there, the least recently shown let go
+  past 32 (`recent.js`); without a subject, every model keeps the camera.
   How the view looks, as the person chose it (the render mode, edges, axes, the floor, the
   projection), is kept in the host's `settings` under the view.* keys (`VIEW_KEYS`), and followed
   as they are set wherever from: a host's settings page shows and sets the same keys

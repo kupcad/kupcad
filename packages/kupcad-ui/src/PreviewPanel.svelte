@@ -220,6 +220,7 @@
     <div class="model">
       <ViewerPane
         model={preview?.model ?? null}
+        subject={shown?.uri ?? null}
         options={viewerOptions}
         bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
         {settings}

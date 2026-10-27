@@ -55,12 +55,13 @@ function page({
       opened.closed = true;
     };
   };
+  const { renderer, drawn } = stubRenderer();
   const { unmount, rerender } = render(PreviewPanel, {
     props: {
       host,
       viewportUrl,
       connect,
-      viewerOptions: { renderer: stubRenderer().renderer },
+      viewerOptions: { renderer },
       presets,
       settings,
       shortcuts,
@@ -74,6 +75,7 @@ function page({
   });
   return {
     posted,
+    drawn,
     unmount,
     shortcutsOpen,
     /** The server's socket is at `url` now (null: there is none). @param {string | null} url */
@@ -520,6 +522,33 @@ it("opens the shortcuts when its host says (a menu's item), the host's own liste
   // Closed in the dialog, the host is told
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
   expect(viewer.shortcutsOpen.value).toBe(false);
+});
+
+it('frames each document it is told to show, and gives one shown before its camera back', async () => {
+  const viewer = page();
+  /** Where the camera stands now, once the viewer drew the frame. */
+  const cameraAt = async () => {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    return /** @type {import('three').Camera} */ (viewer.drawn.camera).position.clone();
+  };
+  /** Shows `document`, its frame of `source`. @param {{ uri: string, name: string }} document */
+  const showing = async (document, /** @type {string} */ source) => {
+    await viewer.tell({ type: 'document', document });
+    viewer.socket.on.frame(await previewOf(source, document.uri));
+    await vi.waitFor(() => expect(viewer.drawn.renders).toBeGreaterThan(0));
+    await tick();
+  };
+  await showing(PART, SCRIPT);
+  // Zoomed by hand, with the wheel
+  const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
+  await fireEvent.wheel(canvas, { deltaY: -600 });
+  const part = await cameraAt();
+  // Another document, far off: framed, not seen from where the part's was
+  await showing(LID, 'cube(10).translate(x: 400)');
+  await vi.waitFor(async () => expect((await cameraAt()).x).toBeGreaterThan(300));
+  // Back to the part: as it was left
+  await showing(PART, SCRIPT);
+  await vi.waitFor(async () => expect((await cameraAt()).distanceTo(part)).toBeLessThan(1e-3));
 });
 
 it('asks the host to export the document shown in the format its menu chose', async () => {

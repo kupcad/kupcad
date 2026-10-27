@@ -16,7 +16,7 @@ import ViewerPane from './ViewerPane.svelte';
  * The pane showing `source`'s model (the parts', by default), once the viewer shows it: the
  * viewer, what it drew, and what the pane's bindings and its screenshot callback were given.
  * @param {string} [source]
- * @param {{ settings?: Settings, shortcuts?: ShortcutGroup[] }} [props] what else the pane is
+ * @param {{ settings?: Settings, shortcuts?: ShortcutGroup[], subject?: string }} [props] what else the pane is
  *   given
  */
 async function pane(source = PARTS, props = {}) {
@@ -56,7 +56,32 @@ async function pane(source = PARTS, props = {}) {
     await rerender({ model: await modelOf(next) });
     await vi.waitFor(() => expect(shown.bounds).not.toEqual(before));
   };
-  return { selected, images, drawn, show, viewer: /** @type {Viewer} */ (viewer.value) };
+  /**
+   * Shows `next`'s model as the model of `subject` (another script, or the same edited), once
+   * the viewer shows it (its bounds differ).
+   * @param {string} subject
+   * @param {string} next
+   */
+  const showAs = async (subject, next) => {
+    const shown = /** @type {Viewer} */ (viewer.value);
+    const before = shown.bounds;
+    await rerender({ subject, model: await modelOf(next) });
+    await vi.waitFor(() => expect(shown.bounds).not.toEqual(before));
+  };
+  return { selected, images, drawn, show, showAs, viewer: /** @type {Viewer} */ (viewer.value) };
+}
+
+/**
+ * Expects two camera states to stand the camera alike, to a hundredth.
+ * @param {import('./viewer/types.js').CameraState} actual
+ * @param {import('./viewer/types.js').CameraState} expected
+ */
+function expectSameCamera(actual, expected) {
+  for (const key of /** @type {const} */ (['target', 'direction'])) {
+    actual[key].forEach((value, at) => expect(value).toBeCloseTo(expected[key][at], 2));
+  }
+  expect(actual.distance).toBeCloseTo(expected.distance, 2);
+  expect(actual.halfHeight).toBeCloseTo(expected.halfHeight, 2);
 }
 
 /**
@@ -306,6 +331,41 @@ describe('ViewerPane', () => {
     const { viewer } = await pane('square(10)');
     expect(viewer.projection).toBe('orthographic');
     expect([pressed('Perspective'), pressed('Top')]).toEqual(['false', 'true']);
+  });
+
+  it("frames another script's model whole, and gives one shown before its camera back", async () => {
+    const { viewer, showAs } = await pane(PARTS, { subject: 'file:///w/a.kup' });
+    // Turned and zoomed by hand
+    viewer.lookFrom([1, 1, 2]);
+    viewer.zoom(3);
+    const a = viewer.cameraState();
+    // Another script's model, far off: framed whole, from where the camera looked
+    await showAs('file:///w/b.kup', 'cube(10).translate(x: 300)');
+    const b = viewer.cameraState();
+    expect(b.target[0]).toBeCloseTo(305, 1);
+    b.direction.forEach((value, at) => expect(value).toBeCloseTo(a.direction[at], 6));
+    // Back: as it was left, the view's buttons following
+    await showAs('file:///w/a.kup', PARTS);
+    expectSameCamera(viewer.cameraState(), a);
+    expect(pressed('Iso')).toBe('false');
+    // Through a drawing too, which turns the camera to the top
+    await showAs('file:///w/c.kup', 'square(10)');
+    expect(viewer.view).toBe('top');
+    await showAs('file:///w/a.kup', PARTS);
+    expectSameCamera(viewer.cameraState(), a);
+    // B again: as it was framed
+    await showAs('file:///w/b.kup', 'cube(10).translate(x: 300)');
+    expectSameCamera(viewer.cameraState(), b);
+  });
+
+  it("keeps the camera through the same script's next model: an edit, a parameter", async () => {
+    const { viewer, showAs } = await pane(PARTS, { subject: 'file:///w/a.kup' });
+    viewer.zoom(2);
+    const zoomed = viewer.cameraState();
+    await showAs('file:///w/a.kup', PARTS.replace('cube([20, 10, 2])', 'cube([30, 10, 2])'));
+    // Not framed again: the model's bounds changed, the camera stayed where it was zoomed to
+    expect(viewer.bounds?.max[0]).toBeCloseTo(30, 3);
+    expectSameCamera(viewer.cameraState(), zoomed);
   });
 
   it('offers no section through a drawing, which the viewer cuts not, and lists no parts', async () => {

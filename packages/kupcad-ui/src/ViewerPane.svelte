@@ -10,11 +10,15 @@
   went wrong, one with a line clicked given to the host (`onproblem`), and a button that lists
   the keyboard shortcuts (the host's own, then the viewer's). How the view looks (the render mode,
   edges, axes, floor, projection) is the host's `settings`' view.* keys (`viewChoice`), written
-  as the person chooses, and followed as they are set wherever from. Themed by the
-  --kc-viewer-* tokens unless given a `theme`.
+  as the person chooses, and followed as they are set wherever from. A model of another
+  `subject` (another script) is framed: as its camera was left when it was last shown, else
+  whole, from where the camera looks; the same subject's next model (an edit, a parameter)
+  keeps the camera. The cameras are kept while the pane is there, the least recently shown
+  let go past CAMERAS_KEPT. Themed by the --kc-viewer-* tokens unless given a `theme`.
 -->
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { Recent } from './recent.js';
   import { RENDER_MODES } from './viewer/index.js';
   import Viewer from './Viewer.svelte';
   import { faceLine, partMeasures, partTitle } from './measures.js';
@@ -27,7 +31,7 @@
   import { VIEW_KEYS, viewChoice } from './view-settings.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
-  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from './viewer/types.js' */
+  /** @import { Axis, Bounds, CameraState, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from './viewer/types.js' */
   /** @import { Viewer as ViewerClass } from './viewer/index.js' */
   /** @import { Snippet } from 'svelte' */
   /** @import { Problem, RunStatus } from './run-status.js' */
@@ -57,6 +61,8 @@
    * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
    * @property {boolean} [shortcutsOpen] whether the shortcuts' dialog shows; bindable, for a
    *   host to open it (a menu's item)
+   * @property {string | null} [subject] what the model is of (a script's URI): another's is
+   *   framed, as its camera was left or whole; none, and every model keeps the camera
    */
 
   /** @type {Props} */
@@ -77,7 +83,29 @@
     settings = memorySettings(),
     shortcuts = [],
     shortcutsOpen = $bindable(false),
+    subject = null,
   } = $props();
+
+  /** How many subjects' cameras the pane keeps, the least recently shown let go past them. */
+  const CAMERAS_KEPT = 32;
+  /** Each subject's camera as it was left, while the pane is there. */
+  const cameras = /** @type {Recent<CameraState>} */ (new Recent(CAMERAS_KEPT));
+  /** The subject whose model the viewer shows, framed; none while another's is awaited. */
+  let showing = /** @type {string | null} */ (null);
+  /** The subject last given (none yet, at first): one that changes keeps the last one's camera. */
+  let given = /** @type {string | null | undefined} */ (undefined);
+
+  // Another subject: the camera of the one shown kept before the next model moves it (a
+  // drawing's turns it to the top)
+  $effect.pre(() => {
+    const next = subject;
+    untrack(() => {
+      if (next === given) return;
+      given = next;
+      if (showing !== null && viewer?.kind) cameras.keep(showing, viewer.cameraState());
+      showing = null;
+    });
+  });
 
   /**
    * Each render mode's button: its text, and its name when the text is short of it.
@@ -198,6 +226,13 @@
       drawingOrthographic = null;
     } else {
       drawingOrthographic = shown.projection === 'orthographic';
+    }
+    // The first model of another subject: as its camera was left, else whole
+    if (shown.kind !== null && subject !== null && subject !== showing) {
+      const kept = cameras.get(subject);
+      if (kept) shown.restoreCamera(kept);
+      else shown.fit({ instant: true });
+      showing = subject;
     }
     view = shown.view;
     bounds = shown.bounds;
