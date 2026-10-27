@@ -1,3 +1,4 @@
+import { flushSync } from 'svelte';
 import { describe, expect, it } from 'vitest';
 import { localSettings, memorySettings, sizeSetting } from './settings.js';
 
@@ -47,6 +48,43 @@ describe('settings', () => {
     const none = localSettings('kc', undefined);
     none.set('x', 1);
     expect(none.get('x')).toBe(1);
+  });
+
+  it('are read again where they are read in a reaction as they are set: that key alone', () => {
+    const settings = memorySettings({ 'a.size': 300 });
+    /** @type {unknown[]} */
+    const read = [];
+    const stop = $effect.root(() => {
+      $effect(() => {
+        read.push(settings.get('a.size'));
+      });
+    });
+    flushSync();
+    settings.set('a.size', 320);
+    flushSync();
+    // Another key, new or not, and the same value again, aren't this one's change
+    settings.set('b.open', false);
+    settings.set('a.size', 320);
+    flushSync();
+    expect(read).toEqual([300, 320]);
+    stop();
+  });
+
+  it('in localStorage are reactive too, a key kept only later as well', () => {
+    const settings = localSettings('kc', storageOf());
+    const size = $derived(sizeSetting(settings, 'playground.editor', 460));
+    /** @type {number[]} */
+    const read = [];
+    const stop = $effect.root(() => {
+      $effect(() => {
+        read.push(size);
+      });
+    });
+    flushSync();
+    settings.set('playground.editor', 500);
+    flushSync();
+    expect(read).toEqual([460, 500]);
+    stop();
   });
 
   it("read a size as a positive finite number, else the pane's own", () => {

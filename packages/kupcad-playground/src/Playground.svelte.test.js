@@ -3,6 +3,7 @@ import { EditorView } from '@codemirror/view';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { stubRenderer } from '@kupcad/viewer/testing';
 import { testCore } from '@kupcad/wasm/testing';
+import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/panels';
 import Playground from './Playground.svelte';
@@ -105,6 +106,31 @@ describe('Playground', () => {
       key: 'ArrowRight',
     });
     expect(settings.get('playground.editor')).toBe(516);
+  });
+
+  it('follows its settings set elsewhere, and keeps a size dragged once the drag is done', async () => {
+    const settings = memorySettings();
+    await playground('cube(10)\n', settings);
+    const script = /** @type {HTMLElement} */ (document.querySelector('.kc-playground'));
+    settings.set('playground.editor', 420);
+    await tick();
+    expect(script.style.getPropertyValue('--editor-width')).toBe('420px');
+
+    // jsdom captures no pointer: the bar takes the drag as a browser gives it
+    const capture = HTMLElement.prototype.setPointerCapture;
+    HTMLElement.prototype.setPointerCapture = () => {};
+    try {
+      const set = vi.spyOn(settings, 'set');
+      const bar = screen.getByRole('separator', { name: 'Resize the script' });
+      await fireEvent.pointerDown(bar, { button: 0, clientX: 500, pointerId: 1 });
+      for (const clientX of [520, 540]) await fireEvent.pointerMove(bar, { clientX, pointerId: 1 });
+      expect(script.style.getPropertyValue('--editor-width')).toBe('460px');
+      expect(set).not.toHaveBeenCalled();
+      await fireEvent.pointerUp(bar, { pointerId: 1 });
+      expect(set).toHaveBeenCalledExactlyOnceWith('playground.editor', 460);
+    } finally {
+      HTMLElement.prototype.setPointerCapture = capture;
+    }
   });
 
   it("hides the parameters and the view's panel by the toolbar's toggles, and keeps that", async () => {

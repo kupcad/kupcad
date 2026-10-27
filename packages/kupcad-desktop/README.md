@@ -60,7 +60,9 @@ Windows warn before they open one; signing needs the certificates as the reposit
   the model, the parameters and the console resize them, and the Parameters button hides the
   parameters; the sizes, and which panes are hidden, are kept in the app's settings
   file (`settings.json` in its config folder, macOS's `~/Library/Application Support/
-  dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out. It
+  dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out,
+  each change written to it, and followed as they are set (`@kupcad/panels`' reactive
+  `memorySettings` under them). It
   takes its services as a prop
   (`platform.js`, Tauri's), so its tests give it stand-ins.
 * **The strip and the settings** (`src/App.svelte`, `SettingsPane.svelte`, `theme.js`): a
@@ -68,8 +70,8 @@ Windows warn before they open one; signing needs the certificates as the reposit
   gear (⌘, or Ctrl+,) opens the settings: a page over the bar and the panes, which stay as they
   were under it (the editor with its edits and its undo, the model, the console), inert until
   it closes (Escape, its close button, the gear or the files again), the focus given back
-  where it was. The settings apply as they are chosen and are kept in the settings file: the
-  theme (`app.theme`: the system's, the default, or light or dark), which sets the window's
+  where it was. The settings apply as they are set, from the page or not, and are kept in the
+  settings file: the theme (`app.theme`: the system's, the default, or light or dark), which sets the window's
   appearance (Tauri's `setTheme`, app-wide on macOS) and so the page's `prefers-color-scheme`,
   which the tokens, the editor and the viewer follow; and whether the console shows under the
   model (`app.console`). The icons are inline SVG: the page fetches nothing, an icon set's
@@ -119,7 +121,8 @@ another is opened; the files hidden and shown, the settings over the workspace, 
 inert under them and the same once they close, over the welcome too, opened with ⌘, and
 closed with Escape, the gear or the files, the focus given back; a theme chosen, kept and set
 again at the start, one the settings don't know, one the window refuses; the console hidden
-and kept so), the settings pane, and the themes the settings may keep. `test:integration`
+and kept so; the theme and the console followed as the settings are set elsewhere, and the
+files' width dragged kept once the drag is done), the settings pane, and the themes the settings may keep. `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
 model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
 their real paths (no `..`, no symlink, which the file system's scope matched as written), and

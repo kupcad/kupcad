@@ -34,8 +34,8 @@ the PWA) embeds; it keeps nothing of the page's.
 * **The layout**: the bars between the script, the model, the parameters and the console
   resize them (`@kupcad/panels`'s `Splitter`), and the toolbar's Parameters button hides the
   parameters for the model's width; the sizes, and what is hidden or folded, are kept in
-  `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys); a
-  narrow page stacks the panes.
+  `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys),
+  and follow them as they are set; a narrow page stacks the panes.
 * **The console** (`@kupcad/panels`'s `ConsolePanel`, under the model): each run, what it printed
   (`puts`, `print`, `inspect`), its warnings and its error, a line naming a place taking the
   editor there, and the core's log (the worker module's stdout and stderr).

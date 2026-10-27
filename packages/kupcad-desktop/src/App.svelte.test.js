@@ -211,6 +211,27 @@ describe('the window', () => {
     expect(screen.getByRole('separator', { name: 'Resize the console' })).toBeTruthy();
   });
 
+  it("keeps the files' width dragged once the drag is done, not at each move of it", async () => {
+    const settings = memorySettings();
+    windowOn({ settings });
+    await openFolder();
+    const set = vi.spyOn(settings, 'set');
+    // jsdom captures no pointer: the bar takes the drag as a browser gives it
+    const capture = HTMLElement.prototype.setPointerCapture;
+    HTMLElement.prototype.setPointerCapture = () => {};
+    try {
+      const bar = screen.getByRole('separator', { name: 'Resize the files' });
+      await fireEvent.pointerDown(bar, { button: 0, clientX: 300, pointerId: 1 });
+      for (const clientX of [320, 340]) await fireEvent.pointerMove(bar, { clientX, pointerId: 1 });
+      expect(filesShown()?.style.width).toBe('264px');
+      expect(set).not.toHaveBeenCalled();
+      await fireEvent.pointerUp(bar, { pointerId: 1 });
+      expect(set).toHaveBeenCalledExactlyOnceWith('app.files', 264);
+    } finally {
+      HTMLElement.prototype.setPointerCapture = capture;
+    }
+  });
+
   it("closes and opens the tree's folders, keeping none of it beyond the folder open", async () => {
     const settings = memorySettings();
     const set = vi.spyOn(settings, 'set');
@@ -403,6 +424,22 @@ describe('the settings', () => {
     await fireEvent.click(radio('System'));
     expect(again.platform.setTheme).toHaveBeenLastCalledWith('system');
     expect(settings.get('app.theme')).toBe('system');
+  });
+
+  it('are followed as they are set elsewhere: the window given the theme, the console hidden', async () => {
+    const settings = memorySettings();
+    const window = windowOn({ settings });
+    await openFolder();
+    settings.set('app.theme', 'dark');
+    settings.set('app.console', false);
+    await tick();
+    expect(window.platform.setTheme).toHaveBeenCalledExactlyOnceWith('dark');
+    expect(consoleShown()).toBeNull();
+    await fireEvent.click(viewButton('Settings'));
+    expect(radio('Dark').checked).toBe(true);
+    expect(
+      screen.getByRole('checkbox', { name: 'Show the console under the model' }),
+    ).toHaveProperty('checked', false);
   });
 
   it("take a kept theme they don't know as the system's", async () => {

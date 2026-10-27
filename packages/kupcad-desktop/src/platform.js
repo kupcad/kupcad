@@ -7,6 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { load } from '@tauri-apps/plugin-store';
+import { memorySettings } from '@kupcad/panels';
 import { files, listFolder, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
@@ -34,8 +35,8 @@ import { LanguageServer } from './server.js';
  *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
  * @property {(canClose: () => Promise<boolean>) => Promise<() => void>} onClose calls `canClose`
  *   when the window is asked to close, and keeps it open when it says no
- * @property {() => Promise<Settings>} settings the app's settings, read once before the window
- *   is laid out
+ * @property {() => Promise<Settings>} settings the app's settings, read before the window is
+ *   laid out and reactive after (`memorySettings`), each change written to the file
  */
 
 /** The app's settings file, in its config folder (macOS: ~/Library/Application Support/<id>/). */
@@ -64,11 +65,12 @@ export const tauri = {
     }),
   async settings() {
     const store = await load(SETTINGS_FILE, { defaults: {}, autoSave: SETTINGS_SAVE_MS });
-    const values = new Map(await store.entries());
+    // Reactive as memorySettings are, each change written to the file too
+    const settings = memorySettings(Object.fromEntries(await store.entries()));
     return {
-      get: (key) => values.get(key),
+      get: settings.get,
       set(key, value) {
-        values.set(key, value);
+        settings.set(key, value);
         void store.set(key, value);
       },
     };

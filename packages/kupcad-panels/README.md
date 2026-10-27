@@ -89,12 +89,16 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 * **Layout** (`Splitter`, `settings.js`): the bar between two panes that resizes one of them,
   dragged or with the keys (the arrows, Shift for longer steps, Home and End), double-clicked
   back, a separator a screen reader knows (`role="separator"`, its value its size); it takes no
-  room, the panes keep their borders. The sizes are kept in a host's `Settings` (`get`, `set`):
-  `localSettings`, the page's localStorage as one JSON object, kept in memory where the page may
-  not store; `memorySettings`, the page's life alone; `sizeSetting` reads a kept size or the
-  pane's own. `PreviewPanel` keeps its parameters' width and whether they show, whether the
-  view's panel shows, and its console's height and state
-  (`preview.*`) in the `settings` it is given.
+  room, the panes keep their borders. The sizes are kept in a host's `Settings` (`get`, `set`),
+  which are reactive: a pane reads its size or state in a `$derived` and follows it as it is
+  set, wherever from (another pane on the same settings, the host), with no copy of its own; a
+  size dragged is the pane's own until the drag is done, and set then, once. Each host's are
+  built on `memorySettings` (a `SvelteMap`), the page's life alone: `localSettings` writes each
+  change to the page's localStorage too, as one JSON object, kept in memory where the page may
+  not store. `sizeSetting` reads a kept size or the pane's own. `PreviewPanel` keeps its
+  parameters' width and whether they show, whether the view's panel shows, and its console's
+  height and state (`preview.*`) in the `settings` it is given, and follows other settings the
+  host gives it.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
   scheme is (`tokens.css`): the KupCAD brand, its orangered accent on white or the brand black,
   gainsboro for the surfaces. The accent is a fill, the brand black the text on it

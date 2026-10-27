@@ -14,7 +14,7 @@
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText } from '@kupcad/protocol';
   import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/panels';
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import FileTree from './FileTree.svelte';
   import { fileUri, foldersAbove } from './folder.js';
@@ -26,7 +26,6 @@
   /** @import { Entry } from './folder.js' */
   /** @import { Settings } from '@kupcad/panels' */
   /** @import { Platform } from './platform.js' */
-  /** @import { Theme } from './theme.js' */
 
   /**
    * @typedef {object} Props
@@ -49,10 +48,11 @@
     theme: 'app.theme',
     console: 'app.console',
   };
-  let filesWidth = $state(untrack(() => sizeSetting(settings, KEYS.files, 224)));
-  let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 520)));
-  let theme = $state(untrack(() => themeOf(settings.get(KEYS.theme))));
-  let showsConsole = $state(untrack(() => settings.get(KEYS.console) !== false));
+  // As the settings have them; a size dragged is the pane's own until the drag is done
+  let filesWidth = $derived(sizeSetting(settings, KEYS.files, 224));
+  let editorWidth = $derived(sizeSetting(settings, KEYS.editor, 520));
+  const theme = $derived(themeOf(settings.get(KEYS.theme)));
+  const showsConsole = $derived(settings.get(KEYS.console) !== false);
   /** The tree's closed folders, by their paths: none in a folder just opened. */
   const collapsed = new SvelteSet();
 
@@ -274,24 +274,17 @@
     back?.focus();
   }
 
-  /** @param {Theme} chosen */
-  function chooseTheme(chosen) {
-    theme = chosen;
-    settings.set(KEYS.theme, chosen);
-    applyTheme();
-  }
-
-  function applyTheme() {
+  /** Whether the window was given a theme: until it is, the system's is its own. */
+  let themed = false;
+  // The window's theme as the settings have it, set again whenever they change it
+  $effect(() => {
+    const wanted = theme;
+    if (wanted === 'system' && !themed) return;
+    themed = true;
     platform
-      .setTheme(theme)
+      .setTheme(wanted)
       .catch((error) => (problem = `The theme wasn't set: ${errorText(error)}`));
-  }
-
-  /** @param {boolean} shows */
-  function chooseConsole(shows) {
-    showsConsole = shows;
-    settings.set(KEYS.console, shows);
-  }
+  });
 
   /** @param {KeyboardEvent} event */
   function keydown(event) {
@@ -309,8 +302,6 @@
   }
 
   onMount(() => {
-    // The system's is the window's own until told otherwise
-    if (theme !== 'system') applyTheme();
     const closing = platform.onClose(async () =>
       unsaved.size === 0 ? true : platform.confirm('Close without saving your changes?'),
     );
@@ -452,8 +443,8 @@
         <SettingsPane
           {theme}
           console={showsConsole}
-          ontheme={chooseTheme}
-          onconsole={chooseConsole}
+          ontheme={(chosen) => settings.set(KEYS.theme, chosen)}
+          onconsole={(shows) => settings.set(KEYS.console, shows)}
           onclose={closeSettings}
         />
       </div>

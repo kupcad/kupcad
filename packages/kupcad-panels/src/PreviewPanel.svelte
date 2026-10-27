@@ -10,7 +10,7 @@
   the host's log, as OpenSCAD's does. The parameters' column and the console are resized by the
   bars beside them, and the column hidden by the toolbar's Parameters button (for the model's
   width); their sizes, the column and the view's panel (the Panel button's) hidden or not, and
-  the console folded or not are kept in the host's `settings`.
+  the console folded or not are kept in the host's `settings`, and follow them as they are set.
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -67,11 +67,12 @@
     open: 'preview.consoleOpen',
   };
   const id = $props.id();
-  let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
-  let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
-  let panelOpen = $state(untrack(() => settings.get(KEYS.panelOpen) !== false));
-  let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
-  let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
+  // As the settings have them; a size dragged is the pane's own until the drag is done
+  let paramsWidth = $derived(sizeSetting(settings, KEYS.params, 288));
+  const paramsOpen = $derived(settings.get(KEYS.paramsOpen) !== false);
+  const panelOpen = $derived(settings.get(KEYS.panelOpen) !== false);
+  let consoleHeight = $derived(sizeSetting(settings, KEYS.console, 144));
+  const consoleOpen = $derived(settings.get(KEYS.open) !== false);
 
   let shown = $state(/** @type {ShownDocument | null} */ (null));
   let preview = $state(/** @type {Preview | null} */ (null));
@@ -212,7 +213,7 @@
       <ViewerPane
         model={preview?.model ?? null}
         options={viewerOptions}
-        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, (panelOpen = open))}
+        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
         status={run}
         {problems}
         onproblem={revealProblem}
@@ -231,7 +232,7 @@
               class="kc-control"
               aria-controls="{id}-params"
               aria-expanded={paramsOpen}
-              onclick={() => settings.set(KEYS.paramsOpen, (paramsOpen = !paramsOpen))}
+              onclick={() => settings.set(KEYS.paramsOpen, !paramsOpen)}
             >
               Parameters
             </button>
@@ -256,7 +257,7 @@
       <ConsolePanel
         lines={consoleLines}
         height={consoleHeight}
-        bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, (consoleOpen = open))}
+        bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, open)}
         onreveal={revealLine}
         onclear={() => (consoleLines = [])}
       />

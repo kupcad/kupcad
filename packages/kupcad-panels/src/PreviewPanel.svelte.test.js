@@ -2,12 +2,13 @@ import { stubRenderer } from '@kupcad/viewer/testing';
 import { testCore } from '@kupcad/wasm/testing';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import PreviewPanel from './PreviewPanel.svelte';
 import { memorySettings } from './settings.js';
 
 /** @import { HostMessage, Preview } from '@kupcad/protocol/types' */
 /** @import { ViewportEvents } from './viewport-socket.js' */
+/** @import { Settings } from './settings.js' */
 
 const PART = { uri: 'file:///work/part.kup', name: 'part.kup' };
 const LID = { uri: 'file:///work/lid.kup', name: 'lid.kup' };
@@ -65,6 +66,8 @@ function page({
     unmount,
     /** The server's socket is at `url` now (null: there is none). @param {string | null} url */
     viewport: (url) => rerender({ viewportUrl: url }),
+    /** The host gives the page other settings. @param {Settings} next */
+    settings: (next) => rerender({ settings: next }),
     get socket() {
       return /** @type {{ url: string, on: ViewportEvents, closed: boolean }} */ (socket);
     },
@@ -405,6 +408,77 @@ it("hides the parameters by the toolbar's toggle, for the model's width, and kee
   await fireEvent.click(screen.getByRole('button', { name: 'Parameters' }));
   expect(screen.getByRole('complementary', { name: 'Parameters' })).toBeTruthy();
   expect(settings.get('preview.paramsOpen')).toBe(true);
+});
+
+/** The page of PART's frame on `settings`. @param {Settings} settings */
+async function shownOn(settings) {
+  const viewer = page({ settings });
+  await viewer.tell({ type: 'document', document: PART });
+  viewer.socket.on.frame(await previewOf(SCRIPT, PART.uri));
+  await tick();
+  return viewer;
+}
+const column = () =>
+  /** @type {HTMLElement} */ (screen.queryByRole('complementary', { name: 'Parameters' }));
+
+describe('PreviewPanel settings', () => {
+  // jsdom captures no pointer: the bar takes the drag as a browser gives it, the moves its own
+  const capture = HTMLElement.prototype.setPointerCapture;
+  beforeEach(() => {
+    HTMLElement.prototype.setPointerCapture = () => {};
+  });
+  afterEach(() => {
+    HTMLElement.prototype.setPointerCapture = capture;
+  });
+
+  it('follows them as they are set elsewhere, with no click of its own', async () => {
+    const settings = memorySettings();
+    await shownOn(settings);
+    // Another panel on the same settings, or the host
+    settings.set('preview.paramsOpen', false);
+    settings.set('preview.panelOpen', false);
+    settings.set('preview.consoleOpen', false);
+    await tick();
+    expect(screen.getByRole('button', { name: 'Parameters' }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+    expect(column()).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'View and parts' })).toBeNull();
+    expect(screen.queryByRole('separator', { name: 'Resize the console' })).toBeNull();
+
+    settings.set('preview.paramsOpen', true);
+    settings.set('preview.params', 400);
+    settings.set('preview.consoleOpen', true);
+    settings.set('preview.console', 240);
+    await tick();
+    expect(column().style.width).toBe('400px');
+    expect(screen.getByRole('log').style.height).toBe('240px');
+  });
+
+  it('follows the other settings the host gives it', async () => {
+    const viewer = await shownOn(memorySettings({ 'preview.params': 320 }));
+    expect(column().style.width).toBe('320px');
+    await viewer.settings(memorySettings({ 'preview.params': 260, 'preview.paramsOpen': false }));
+    expect(column()).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Parameters' }));
+    expect(column().style.width).toBe('260px');
+  });
+
+  it('keeps a size dragged once the drag is done, not at each move of it', async () => {
+    const settings = memorySettings();
+    const set = vi.spyOn(settings, 'set');
+    await shownOn(settings);
+    const bar = screen.getByRole('separator', { name: 'Resize the parameters' });
+    await fireEvent.pointerDown(bar, { button: 0, clientX: 500, pointerId: 1 });
+    for (const clientX of [490, 470, 450])
+      await fireEvent.pointerMove(bar, { clientX, pointerId: 1 });
+    // The column follows the drag (its bar before it: leftward widens it); the settings, not yet
+    expect(column().style.width).toBe('338px');
+    expect(set).not.toHaveBeenCalled();
+    await fireEvent.pointerUp(bar, { pointerId: 1 });
+    expect(set).toHaveBeenCalledExactlyOnceWith('preview.params', 338);
+    expect(column().style.width).toBe('338px');
+  });
 });
 
 it('asks the host to export the document shown in the format its menu chose', async () => {

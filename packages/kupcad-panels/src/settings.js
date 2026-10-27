@@ -1,10 +1,16 @@
-// What a person set in a host's panels (the panes' sizes), kept where the host keeps such
-// things: read when the panels mount, written as it changes. The playground keeps it in the
-// page's localStorage (localSettings), the desktop app in its settings file; a host that keeps
-// nothing gives memorySettings.
+// What a person set in a host's panels (the panes' sizes, whether they show), kept where the
+// host keeps such things. The playground keeps it in the page's localStorage (localSettings),
+// the VS Code extension and the desktop app their own way, each on memorySettings; a host that
+// keeps nothing gives memorySettings alone.
+//
+// Settings are reactive: a pane reads its value in a $derived, and follows it as it is set,
+// wherever from. A size dragged is the pane's own until the drag is done, and set then, once.
+
+import { SvelteMap } from 'svelte/reactivity';
 
 /**
- * A host's settings, by key.
+ * A host's settings, by key: what `get` reads in a reaction (a $derived, an effect, the markup)
+ * it reads again when `set` changes it. A host's own are built on `memorySettings`.
  * @typedef {object} Settings
  * @property {(key: string) => unknown} get the value kept for `key`; undefined for none
  * @property {(key: string, value: unknown) => void} set keeps `value` for `key`
@@ -16,7 +22,7 @@
  * @returns {Settings}
  */
 export function memorySettings(values = {}) {
-  const kept = new Map(Object.entries(values));
+  const kept = new SvelteMap(Object.entries(values));
   return { get: (key) => kept.get(key), set: (key, value) => void kept.set(key, value) };
 }
 

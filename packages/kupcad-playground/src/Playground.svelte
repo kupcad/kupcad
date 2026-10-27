@@ -8,7 +8,7 @@
   model keeps each run (what it printed, its warnings and its error) and the core's log. The
   bars between the panes resize them, and the toolbar's Parameters button hides theirs (for the
   model's width); the sizes, and what is hidden or folded, are kept in `settings` (the page's
-  localStorage by default). It keeps nothing else of the page's: the page gives the script it
+  localStorage by default), and follow them as they are set. It keeps nothing else of the page's: the page gives the script it
   starts with (`source`).
 -->
 <script>
@@ -79,12 +79,13 @@
   /** The least the model is given, however wide the editor is made. */
   const MIN_VIEW = 320;
   const id = $props.id();
-  let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 460)));
-  let paramsWidth = $state(untrack(() => sizeSetting(settings, KEYS.params, 288)));
-  let paramsOpen = $state(untrack(() => settings.get(KEYS.paramsOpen) !== false));
-  let panelOpen = $state(untrack(() => settings.get(KEYS.panelOpen) !== false));
-  let consoleHeight = $state(untrack(() => sizeSetting(settings, KEYS.console, 144)));
-  let consoleOpen = $state(untrack(() => settings.get(KEYS.open) !== false));
+  // As the settings have them; a size dragged is the pane's own until the drag is done
+  let editorWidth = $derived(sizeSetting(settings, KEYS.editor, 460));
+  let paramsWidth = $derived(sizeSetting(settings, KEYS.params, 288));
+  const paramsOpen = $derived(settings.get(KEYS.paramsOpen) !== false);
+  const panelOpen = $derived(settings.get(KEYS.panelOpen) !== false);
+  let consoleHeight = $derived(sizeSetting(settings, KEYS.console, 144));
+  const consoleOpen = $derived(settings.get(KEYS.open) !== false);
   /** The playground's width, once laid out. */
   let width = $state(0);
 
@@ -196,7 +197,7 @@
       <ViewerPane
         model={ran?.preview.model ?? null}
         options={viewerOptions}
-        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, (panelOpen = open))}
+        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
         {status}
         {problems}
         onproblem={reveal}
@@ -212,7 +213,7 @@
               class="kc-control"
               aria-controls="{id}-params"
               aria-expanded={paramsOpen}
-              onclick={() => settings.set(KEYS.paramsOpen, (paramsOpen = !paramsOpen))}
+              onclick={() => settings.set(KEYS.paramsOpen, !paramsOpen)}
             >
               Parameters
             </button>
@@ -233,7 +234,7 @@
     <ConsolePanel
       lines={consoleLines}
       height={consoleHeight}
-      bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, (consoleOpen = open))}
+      bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, open)}
       onreveal={reveal}
       onclear={() => (consoleLines = [])}
     />
