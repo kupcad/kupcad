@@ -138,21 +138,24 @@
     margin: 0 0 4px;
     color: var(--kc-muted);
   }
+  /* The group's keys in a column as wide as its widest, what each does beside it: a row is
+     its two cells, a line under each */
   dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
     margin: 0;
   }
-  /* A key and what it does, a line between each */
   .row {
-    display: grid;
-    grid-template-columns: 11em 1fr;
-    gap: 12px;
-    align-items: baseline;
-    padding: 3px 0;
-    border-bottom: 1px solid var(--kc-border);
+    display: contents;
   }
   dt,
   dd {
     margin: 0;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--kc-border);
+  }
+  dt {
+    padding-right: 16px;
   }
   kbd {
     font-family: var(--kc-code-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
