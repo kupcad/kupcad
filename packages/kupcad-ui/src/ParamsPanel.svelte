@@ -7,12 +7,21 @@
   there as the panel scrolls, says how many values are set; while any is, its Reset all reverts
   them all at once, the panel's refusals with them. The button keeps its place when there is
   nothing to reset, so nothing under the bar moves as a first value is set or the last reverted.
+  A value set back to the parameter's own (the one it showed before the panel set it: the run's,
+  the script's or a host's preset's) is a revert, not a value set.
 -->
 <script>
   import ParamField from './ParamField.svelte';
-  import { groupsOf, isOverridden, shownValue, withOverride, withoutOverride } from './params.js';
+  import {
+    groupsOf,
+    isOverridden,
+    sameValue,
+    shownValue,
+    withOverride,
+    withoutOverride,
+  } from './params.js';
 
-  /** @import { Failure, ParamValues, UiSchema } from '@kupcad/protocol/types' */
+  /** @import { Failure, ParamSpec, ParamValue, ParamValues, UiSchema } from '@kupcad/protocol/types' */
 
   /**
    * @typedef {object} Props
@@ -32,13 +41,44 @@
   /** How many times all were reset: the fields are made again, and their refusals go. */
   let resets = $state(0);
 
+  /**
+   * Each parameter's own value, which setting it to again reverts it: the one it showed before
+   * the panel first set it. Taken again from a later run, not from `stale`, the run of the
+   * panel's value just reverted, until the next comes.
+   * @type {Map<string, { value: ParamValue | null, stale: ParamValues | null }>}
+   */
+  const own = new Map();
+
   /** @param {ParamValues} next */
   function change(next) {
     overrides = next;
     onchange?.(next);
   }
 
+  /**
+   * The panel sets `spec` to `value`; to its own value, it sets it no more.
+   * @param {ParamSpec} spec
+   * @param {ParamValue} value
+   */
+  function setParam(spec, value) {
+    if (!isOverridden(overrides, spec.name) && own.get(spec.name)?.stale !== values) {
+      own.set(spec.name, { value: shownValue(spec, overrides, values), stale: null });
+    }
+    if (sameValue(value, own.get(spec.name)?.value)) revert(spec.name);
+    else change(withOverride(overrides, spec.name, value));
+  }
+
+  /** @param {string} name */
+  function revert(name) {
+    const kept = own.get(name);
+    if (kept) own.set(name, { ...kept, stale: values });
+    change(withoutOverride(overrides, name));
+  }
+
   function resetAll() {
+    for (const [name, kept] of own) {
+      if (isOverridden(overrides, name)) own.set(name, { ...kept, stale: values });
+    }
     resets += 1;
     change({});
   }
@@ -70,8 +110,8 @@
           overridden={isOverridden(overrides, spec.name)}
           refused={error?.param === spec.name ? error.message : null}
           refusedAt={error?.param === spec.name ? error.path : []}
-          onset={(value) => change(withOverride(overrides, spec.name, value))}
-          onrevert={() => change(withoutOverride(overrides, spec.name))}
+          onset={(value) => setParam(spec, value)}
+          onrevert={() => revert(spec.name)}
         />
       {/each}
     {/key}

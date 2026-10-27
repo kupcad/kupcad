@@ -151,7 +151,7 @@ webview and the desktop app to the language server.
   Edges, Axes, Grid and Plate toggles; Fit, Persp, and the Iso, Top, Front and Right views, the
   one looked from pressed, a turn by hand pressing none), the model's parts in its bottom half,
   each with its colour and copies (a click on one selects its copies, as a click in the viewer
-  does: `bind:selected`). A bar above: a section through the model along an axis, screenshot, an
+  does: `bind:selected`). A bar above: a section through the model along an axis (a solid's: a drawing, which isn't cut, or no model offers none), screenshot, an
   `actions` snippet (a host's own buttons, the Export menu), the Panel button, and a `toggles`
   snippet after it (a host's toggles of its own panes beside the pane, the Parameters button;
   `.kc-control` with `aria-expanded` gives one the Panel button's look). Below, a status
@@ -193,7 +193,9 @@ webview and the desktop app to the language server.
   panel's whole width. Each shows the value set in the panel, else
   the one the run took. A value outside the schema's range is refused in the panel, saying why,
   and never leaves it; one the run refused (the frame's `error.param`) is shown on its control.
-  A value set is marked and can be reverted, which takes its refusal away too (all at once:
+  A value set is marked and can be reverted, which takes its refusal away too, as setting it
+  back to its own value does (the one it showed before the panel set it: the run's, so a
+  host's preset's too, else the script's default; all at once:
   Reset all, in a bar at the panel's top, held there as it scrolls, which says how many are
   set; the button keeps its room while none is, so nothing under the bar moves as the first is
   set or the last reverted, and a host's column leaves the bar its top); a refusal is the

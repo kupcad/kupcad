@@ -77,6 +77,9 @@ const pressed = (name) => screen.getByRole('button', { name }).getAttribute('ari
 
 afterEach(() => document.documentElement.removeAttribute('style'));
 
+/** The section's checkbox, where there is one. */
+const section = () => screen.queryByRole('checkbox', { name: 'Section' });
+
 describe('ViewerPane', () => {
   it("lists the model's parts, a click selecting every copy, another taking it back", async () => {
     const { selected, viewer } = await pane();
@@ -307,16 +310,20 @@ describe('ViewerPane', () => {
 
   it('offers no section through a drawing, which the viewer cuts not, and lists no parts', async () => {
     const { show } = await pane();
-    const sectioned = /** @type {HTMLInputElement} */ (
-      screen.getByRole('checkbox', { name: 'Section' })
-    );
-    expect(sectioned.disabled).toBe(false);
+    await fireEvent.click(/** @type {HTMLElement} */ (section()));
+    expect(screen.getByRole('slider', { name: 'Section offset' })).toBeTruthy();
     await show('square(10)');
-    expect(sectioned.disabled).toBe(true);
+    // Not there to be pressed for nothing, nor its axis and offset
+    expect(section()).toBeNull();
+    expect(screen.queryByRole('slider', { name: 'Section offset' })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Parts' })).toBeNull();
     expect(document.querySelector('.parts')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
       'Parts None',
     );
+    // A solid again: the section as it was
+    await show(PARTS);
+    expect(/** @type {HTMLInputElement} */ (section()).checked).toBe(true);
+    expect(screen.getByRole('slider', { name: 'Section offset' })).toBeTruthy();
   });
 
   it('keeps a section where it was through an edit, and puts it across a model it misses', async () => {

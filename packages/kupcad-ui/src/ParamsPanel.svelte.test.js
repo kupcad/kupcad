@@ -140,6 +140,59 @@ describe('ParamsPanel', () => {
     ]);
   });
 
+  it("takes a value set back to the parameter's own for a revert: nothing set, nothing counted", async () => {
+    const changes = await panel();
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    expect(screen.getByRole('button', { name: 'Revert width' })).toBeTruthy();
+    // Back to what it showed: the run's 25 (the script's 20 is no more its own here)
+    await fireEvent.change(numberField('width'), { target: { value: '25' } });
+    expect(changes.at(-1)).toEqual({});
+    expect(screen.queryByRole('button', { name: 'Revert width' })).toBeNull();
+    expect([resetAll(), document.querySelector('.kc-params .set')?.textContent]).toEqual([
+      null,
+      "The script's values",
+    ]);
+    await fireEvent.change(numberField('width'), { target: { value: '20' } });
+    expect(changes.at(-1)).toEqual({ width: 20 });
+    // A choice, as any other
+    // By their places: m5, then back to m4
+    await fireEvent.change(screen.getByRole('combobox', { name: 'size' }), {
+      target: { value: '2' },
+    });
+    await fireEvent.change(screen.getByRole('combobox', { name: 'size' }), {
+      target: { value: '1' },
+    });
+    expect(changes.at(-1)).toEqual({ width: 20 });
+  });
+
+  it("keeps a parameter's own value through a revert until the next run, then takes the run's", async () => {
+    /** @type {ParamValues[]} */
+    const changes = [];
+    const { rerender } = render(ParamsPanel, {
+      props: {
+        schema: await schemaOf(BRACKET),
+        values: { width: 25, height: 5 },
+        onchange: (/** @type {ParamValues} */ overrides) => changes.push(overrides),
+      },
+    });
+    // A run's values, the panel's own given back as a host that binds them does
+    const ran = (/** @type {ParamValues} */ values) =>
+      rerender({ values, overrides: changes.at(-1) ?? {} });
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    // The run of 40, then the revert: its run hasn't come, the shown 40 isn't the own value
+    await ran({ width: 40, height: 5 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Revert width' }));
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    expect(changes.at(-1)).toEqual({ width: 40 });
+    await fireEvent.change(numberField('width'), { target: { value: '25' } });
+    expect(changes.at(-1)).toEqual({});
+    // A later run gives another (the script computes it from what changed): that one, now
+    await ran({ width: 30, height: 5 });
+    await fireEvent.change(numberField('width'), { target: { value: '35' } });
+    await fireEvent.change(numberField('width'), { target: { value: '30' } });
+    expect(changes.at(-1)).toEqual({});
+  });
+
   it("takes the panel's refusals away with them, its folded groups left folded", async () => {
     await panel();
     await fireEvent.change(numberField('width'), { target: { value: '40' } });
