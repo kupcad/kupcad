@@ -1,6 +1,6 @@
 import { EditorView } from '@codemirror/view';
 import { stubRenderer } from '@kupcad/ui/testing';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/ui';
@@ -9,6 +9,7 @@ import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';
 
 /** @import { Entry } from './folder.js' */
+/** @import { MenuEntry } from './menu.js' */
 /** @import { Theme } from './theme.js' */
 
 const FOLDER = '/w';
@@ -27,7 +28,10 @@ afterEach(() => {
   for (const close of opened.splice(0)) close();
 });
 
-/** The window on stand-ins for Tauri's services, with the server and the files they kept. */
+/**
+ * The window on stand-ins for Tauri's services, with the server, the disk (which a test changes
+ * as another program would) and the menus they kept.
+ */
 function windowOn({
   launched = /** @type {string | null} */ (null),
   settings = memorySettings(),
@@ -36,28 +40,65 @@ function windowOn({
   /** @type {(() => Promise<boolean>) | null} */
   let canClose = null;
   /** Each folder watched: what it is told when it changes, and what stopping it was asked. */
-  const watched = /** @type {{ root: string, changed: () => void, stop: () => void }[]} */ ([]);
+  const watched =
+    /** @type {{ root: string, changed: (change: { tree: boolean }) => void, stop: () => void }[]} */ ([]);
+  /** The files' texts, and the folders. */
+  const disk = new Map(Object.entries(TEXTS));
+  const folders = new Set(['/w', '/w/parts']);
+  /** The menu bar set last, and each row's menu shown. */
+  const menus = /** @type {{ bar: MenuEntry[], popups: MenuEntry[][] }} */ ({
+    bar: [],
+    popups: [],
+  });
   const platform = {
     pickFolder: vi.fn(async () => FOLDER),
     launchFolder: vi.fn(async () => launched),
     listFolder: vi.fn(async (/** @type {string} */ _root) => ENTRIES),
-    watchFolder: vi.fn(async (/** @type {string} */ root, /** @type {() => void} */ changed) => {
-      const stop = vi.fn();
-      watched.push({ root, changed, stop });
-      return stop;
-    }),
+    watchFolder: vi.fn(
+      async (
+        /** @type {string} */ root,
+        /** @type {(change: { tree: boolean }) => void} */ changed,
+      ) => {
+        const stop = vi.fn();
+        watched.push({ root, changed, stop });
+        return stop;
+      },
+    ),
     files: {
-      read: vi.fn(async (/** @type {string} */ path) => TEXTS[/** @type {keyof TEXTS} */ (path)]),
-      write: vi.fn(async (/** @type {string} */ _path, /** @type {string} */ _text) => {}),
+      read: vi.fn(async (/** @type {string} */ path) => {
+        const text = disk.get(path);
+        if (text === undefined) throw new Error(`${path}: no such file`);
+        return text;
+      }),
+      write: vi.fn(async (/** @type {string} */ path, /** @type {string} */ text) => {
+        disk.set(path, text);
+      }),
+      exists: vi.fn(async (/** @type {string} */ path) => disk.has(path) || folders.has(path)),
+      mkdir: vi.fn(async (/** @type {string} */ path) => void folders.add(path)),
+      rename: vi.fn(async (/** @type {string} */ from, /** @type {string} */ to) => {
+        // A copy: renaming adds to what is iterated
+        for (const [path, text] of Array.from(disk)) {
+          if (path !== from && !path.startsWith(`${from}/`)) continue;
+          disk.delete(path);
+          disk.set(to + path.slice(from.length), text);
+        }
+        if (folders.delete(from)) folders.add(to);
+      }),
     },
+    trash: vi.fn(async (/** @type {string} */ path) => {
+      for (const kept of disk.keys()) if (kept.startsWith(path)) disk.delete(kept);
+    }),
     save: vi.fn(async () => null),
     tell: vi.fn(async () => {}),
-    confirm: vi.fn(async () => false),
+    confirm: vi.fn(async (/** @type {string} */ _question) => false),
     writeFile: vi.fn(async () => {}),
     exportModel: vi.fn(async () => {}),
     server: (/** @type {string} */ rootUri, /** @type {any} */ on) =>
       new LanguageServer({ rootUri, origin: 'tauri://localhost', on, spawn: fake.spawn }),
     setTheme: vi.fn(async (/** @type {Theme} */ _theme) => {}),
+    setZoom: vi.fn(async (/** @type {number} */ _zoom) => {}),
+    setMenu: vi.fn(async (/** @type {MenuEntry[]} */ bar) => void (menus.bar = bar)),
+    popupMenu: vi.fn(async (/** @type {MenuEntry[]} */ entries) => void menus.popups.push(entries)),
     onClose: async (/** @type {() => Promise<boolean>} */ ask) => {
       canClose = ask;
       return () => {};
@@ -76,6 +117,8 @@ function windowOn({
     platform,
     fake,
     watched,
+    disk,
+    menus,
     /** Closes the window before the test ends. */
     unmount() {
       opened.splice(opened.indexOf(unmount), 1);
@@ -85,6 +128,35 @@ function windowOn({
     sent: (method) => fake.processes.flatMap((p) => p.received).filter((m) => m.method === method),
     canClose: () => /** @type {() => Promise<boolean>} */ (canClose)(),
   };
+}
+
+/**
+ * The item `text` of a menu, at any depth: the menu bar's, or a row's.
+ * @param {MenuEntry[]} entries
+ * @param {string} text
+ * @returns {import('./menu.js').MenuAction | undefined}
+ */
+function menuItem(entries, text) {
+  for (const entry of entries) {
+    if (typeof entry !== 'object' || 'predefined' in entry) continue;
+    const found =
+      'items' in entry ? menuItem(entry.items, text) : entry.text === text ? entry : undefined;
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Chooses the item `text` of a menu: the menu bar's or a row's.
+ * @param {MenuEntry[]} entries
+ * @param {string} text
+ */
+function choose(entries, text) {
+  const item = menuItem(entries, text);
+  if (!item) throw new Error(`no ${text} in the menu`);
+  expect([text, item.enabled ?? true]).toEqual([text, true]);
+  item.action();
+  return tick();
 }
 
 /** The editor's CodeMirror view, once it shows a script. */
@@ -232,7 +304,7 @@ describe('the window', () => {
     }
   });
 
-  it("closes and opens the tree's folders, keeping none of it beyond the folder open", async () => {
+  it("closes and opens the tree's folders, keeping none of it beyond the folder opened", async () => {
     const settings = memorySettings();
     const set = vi.spyOn(settings, 'set');
     const window = windowOn({ settings });
@@ -256,7 +328,9 @@ describe('the window', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
     await vi.waitFor(() => expect(screen.getByText('lid.stl')).toBeTruthy());
     expect(parts().getAttribute('aria-expanded')).toBe('true');
-    expect(set).not.toHaveBeenCalled();
+    // Only which folder was opened is kept
+    const kept = set.mock.calls.map(([key]) => key);
+    expect(kept.filter((key) => key !== 'app.folder' && key !== 'app.recent')).toEqual([]);
   });
 
   it('lists the folder again when what is in it changes, until another is opened', async () => {
@@ -267,7 +341,7 @@ describe('the window', () => {
     /** @type {Entry} */
     const added = { kind: 'script', name: 'new.kup', path: '/w/new.kup', depth: 0 };
     window.platform.listFolder.mockResolvedValueOnce([...ENTRIES, added]);
-    window.watched[0].changed();
+    window.watched[0].changed({ tree: true });
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'new.kup' })).toBeTruthy());
     // A script added is opened as any other
     await fireEvent.click(screen.getByRole('button', { name: 'new.kup' }));
@@ -283,7 +357,7 @@ describe('the window', () => {
     /** @type {Entry} */
     const stale = { kind: 'script', name: 'stale.kup', path: '/w/stale.kup', depth: 0 };
     window.platform.listFolder.mockResolvedValueOnce([stale]);
-    window.watched[0].changed();
+    window.watched[0].changed({ tree: true });
     await tick();
     await tick();
     expect(screen.queryByRole('button', { name: 'stale.kup' })).toBeNull();
@@ -484,4 +558,342 @@ describe('the settings', () => {
     expect(consoleShown()).toBeTruthy();
     expect(settings.get('app.console')).toBe(true);
   });
+});
+
+/** The alert above the editor: what the disk did under the script's unsaved changes. */
+const alertText = () => screen.queryByRole('alert')?.textContent?.replace(/\s+/g, ' ').trim();
+/**
+ * Changes the script in the editor as the person would, the window shown as it follows.
+ * @param {EditorView} view
+ * @param {string} text
+ */
+async function type(view, text) {
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  await tick();
+}
+const LID = '/w/parts/lid.kup';
+/** The field a name is given in, in the tree (the editor is a textbox too). */
+const files = () => screen.getByRole('navigation', { name: 'Files' });
+const field = () => /** @type {HTMLInputElement} */ (within(files()).getByRole('textbox'));
+/** Gives the field `name`, then Enter. */
+async function give(/** @type {string} */ name) {
+  await fireEvent.input(field(), { target: { value: name } });
+  await fireEvent.keyDown(field(), { key: 'Enter' });
+}
+/** The tree's row of lid.kup, with unsaved changes. */
+const unsavedLid = () => screen.getByRole('button', { name: 'lid.kup, unsaved' });
+
+describe('a script the disk changed', () => {
+  it('follows the disk where nothing is unsaved: a file written, the window back', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await vi.waitFor(() => expect(window.watched).toHaveLength(1));
+    window.disk.set(LID, 'cube(5)\n');
+    window.watched[0].changed({ tree: false });
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe('cube(5)\n'));
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+    // A change the watcher missed, read when the window has the focus again
+    window.disk.set(LID, 'cube(6)\n');
+    await fireEvent.focus(globalThis.window);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe('cube(6)\n'));
+    expect(alertText()).toBeUndefined();
+  });
+
+  it("keeps the person's unsaved changes, saying the disk's, for them to choose", async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await vi.waitFor(() => expect(window.watched).toHaveLength(1));
+    await type(view, 'mine\n');
+    window.disk.set(LID, 'theirs\n');
+    window.watched[0].changed({ tree: false });
+    await vi.waitFor(() => expect(alertText()).toContain('lid.kup changed on disk.'));
+    expect(view.state.doc.toString()).toBe('mine\n');
+    await fireEvent.click(screen.getByRole('button', { name: 'Load from disk' }));
+    expect(view.state.doc.toString()).toBe('theirs\n');
+    expect(alertText()).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
+
+    // Kept, the next save writes it over the disk's, unasked
+    await type(view, 'mine again\n');
+    window.disk.set(LID, 'theirs again\n');
+    window.watched[0].changed({ tree: false });
+    await vi.waitFor(() => expect(alertText()).toContain('changed on disk'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
+    expect(alertText()).toBeUndefined();
+    await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
+    await vi.waitFor(() => expect(window.disk.get(LID)).toBe('mine again\n'));
+    expect(window.platform.confirm).not.toHaveBeenCalled();
+  });
+
+  it('asks before a save writes over what the disk changed since, unseen', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await type(view, 'mine\n');
+    window.disk.set(LID, 'theirs\n');
+    await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
+    await vi.waitFor(() =>
+      expect(window.platform.confirm).toHaveBeenCalledWith(
+        'lid.kup changed on disk since it was opened. Save yours over it?',
+      ),
+    );
+    // Declined: nothing written, the disk's said above the editor
+    expect(window.disk.get(LID)).toBe('theirs\n');
+    await vi.waitFor(() => expect(alertText()).toContain('changed on disk'));
+    window.platform.confirm.mockResolvedValueOnce(true);
+    await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
+    await vi.waitFor(() => expect(window.disk.get(LID)).toBe('mine\n'));
+    expect(alertText()).toBeUndefined();
+  });
+
+  it('closes a script removed from the disk, and keeps one with changes, a save putting it back', async () => {
+    const window = windowOn();
+    await openFolder();
+    await vi.waitFor(() => expect(window.watched).toHaveLength(1));
+    window.disk.delete(LID);
+    window.watched[0].changed({ tree: true });
+    await vi.waitFor(() => expect(screen.getByText('Open a script from the folder.')).toBeTruthy());
+    expect(screen.getByRole('status').textContent).toContain('lid.kup was removed from the disk.');
+
+    await fireEvent.click(partRow());
+    const view = await vi.waitFor(async () => {
+      const shown = await editorView();
+      expect(shown.state.doc.toString()).toBe('cube(1)\n');
+      return shown;
+    });
+    await type(view, 'kept\n');
+    window.disk.delete('/w/part.kup');
+    window.watched[0].changed({ tree: true });
+    await vi.waitFor(() => expect(alertText()).toContain('part.kup was removed from the disk.'));
+    await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
+    await vi.waitFor(() => expect(window.disk.get('/w/part.kup')).toBe('kept\n'));
+  });
+});
+
+it('keeps each script’s undo history while another is shown', async () => {
+  windowOn();
+  const first = await openFolder();
+  await type(first, 'cube(9)\n');
+  await fireEvent.click(partRow());
+  await vi.waitFor(async () => expect((await editorView()).state.doc.toString()).toBe('cube(1)\n'));
+  await fireEvent.click(screen.getByRole('button', { name: 'lid.kup, unsaved' }));
+  const back = await vi.waitFor(async () => {
+    const shown = await editorView();
+    expect(shown.state.doc.toString()).toBe('cube(9)\n');
+    return shown;
+  });
+  // Its undo key, as the person presses it (jsdom is no Mac: Ctrl)
+  await fireEvent.keyDown(back.contentDOM, { key: 'z', ctrlKey: true });
+  expect(back.state.doc.toString()).toBe('cube(2)\n');
+});
+
+describe('the files', () => {
+  it("makes a script in the open script's folder, named in the tree, and opens it", async () => {
+    const window = windowOn();
+    await openFolder();
+    await fireEvent.click(screen.getByRole('button', { name: 'New script' }));
+    expect(field().getAttribute('aria-label')).toBe('New script name');
+    /** @type {Entry} */
+    const cover = { kind: 'script', name: 'cover.kup', path: '/w/parts/cover.kup', depth: 1 };
+    window.platform.listFolder.mockResolvedValue([...ENTRIES, cover]);
+    await give('cover');
+    await vi.waitFor(() => expect(window.disk.get('/w/parts/cover.kup')).toBe(''));
+    await vi.waitFor(() =>
+      expect(screen.getByRole('button', { name: 'cover.kup' }).getAttribute('aria-current')).toBe(
+        'true',
+      ),
+    );
+    expect(within(files()).queryByRole('textbox')).toBeNull();
+  });
+
+  it('refuses a name that is there already, or one no system takes, the field kept', async () => {
+    const window = windowOn();
+    await openFolder();
+    await fireEvent.click(screen.getByRole('button', { name: 'New script' }));
+    await give('lid');
+    await vi.waitFor(() => expect(screen.getByText('lid.kup is there already.')).toBeTruthy());
+    await give('a/b');
+    expect(screen.getByText(/A name may not have any of/)).toBeTruthy();
+    expect(field().getAttribute('aria-invalid')).toBe('true');
+    await fireEvent.keyDown(field(), { key: 'Escape' });
+    expect(within(files()).queryByRole('textbox')).toBeNull();
+    expect(window.platform.files.write).not.toHaveBeenCalled();
+  });
+
+  it('makes a folder from the menu bar', async () => {
+    const window = windowOn();
+    await openFolder();
+    await choose(window.menus.bar, 'New Folder');
+    expect(field().getAttribute('aria-label')).toBe('New folder name');
+    await give('covers');
+    await vi.waitFor(() =>
+      expect(window.platform.files.mkdir).toHaveBeenCalledWith('/w/parts/covers'),
+    );
+  });
+
+  it("renames a script from its row's menu, the editor following it, its changes kept", async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await type(view, 'cube(7)\n');
+    await fireEvent.contextMenu(screen.getByRole('button', { name: 'lid.kup, unsaved' }));
+    expect(window.platform.popupMenu).toHaveBeenCalledOnce();
+    await choose(window.menus.popups[0], 'Rename…');
+    expect(field().getAttribute('aria-label')).toBe('Rename lid.kup');
+    window.platform.listFolder.mockResolvedValue([
+      ENTRIES[0],
+      { kind: 'script', name: 'cover.kup', path: '/w/parts/cover.kup', depth: 1 },
+      ...ENTRIES.slice(2),
+    ]);
+    await give('cover');
+    await vi.waitFor(() =>
+      expect(window.platform.files.rename).toHaveBeenCalledWith(LID, '/w/parts/cover.kup'),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByRole('button', { name: 'cover.kup, unsaved' })).toBeTruthy(),
+    );
+    expect((await editorView()).state.doc.toString()).toBe('cube(7)\n');
+    await vi.waitFor(() =>
+      expect(window.sent('textDocument/didOpen').map((m) => m.params.textDocument.uri)).toContain(
+        'file:///w/parts/cover.kup',
+      ),
+    );
+  });
+
+  it('renames a folder with F2, the script open in it following', async () => {
+    const window = windowOn();
+    await openFolder();
+    parts().focus();
+    await fireEvent.keyDown(parts(), { key: 'F2' });
+    window.platform.listFolder.mockResolvedValue([
+      { kind: 'folder', name: 'pieces', path: '/w/pieces', depth: 0 },
+      { kind: 'script', name: 'lid.kup', path: '/w/pieces/lid.kup', depth: 1 },
+      ...ENTRIES.slice(2),
+    ]);
+    await give('pieces');
+    await vi.waitFor(() =>
+      expect(screen.getByRole('button', { name: 'lid.kup' }).getAttribute('title')).toBe(
+        '/w/pieces/lid.kup',
+      ),
+    );
+    expect(screen.getByRole('button', { name: 'lid.kup' }).getAttribute('aria-current')).toBe(
+      'true',
+    );
+    expect(window.disk.get('/w/pieces/lid.kup')).toBe('cube(2)\n');
+  });
+
+  it('moves a script to the trash once asked, its unsaved changes said, the editor closed', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await type(view, 'cube(8)\n');
+    unsavedLid().focus();
+    await fireEvent.keyDown(unsavedLid(), { key: 'Delete' });
+    await vi.waitFor(() =>
+      expect(window.platform.confirm).toHaveBeenCalledWith(
+        'Move “lid.kup” to the Trash? Its unsaved changes are lost.',
+      ),
+    );
+    expect(window.platform.trash).not.toHaveBeenCalled();
+    window.platform.confirm.mockResolvedValueOnce(true);
+    await fireEvent.keyDown(unsavedLid(), { key: 'Delete' });
+    await vi.waitFor(() => expect(window.platform.trash).toHaveBeenCalledWith(LID));
+    await vi.waitFor(() => expect(screen.getByText('Open a script from the folder.')).toBeTruthy());
+    // Nothing unsaved is left to ask about
+    expect(await window.canClose()).toBe(true);
+  });
+});
+
+describe('the folders opened last', () => {
+  it('opens the last at the start, unless the settings say not to', async () => {
+    const window = windowOn({ settings: memorySettings({ 'app.folder': '/w' }) });
+    await editorView();
+    expect(window.platform.listFolder).toHaveBeenCalledWith('/w');
+    window.unmount();
+    const not = windowOn({ settings: memorySettings({ 'app.folder': '/w', 'app.reopen': false }) });
+    await tick();
+    await tick();
+    expect(not.platform.listFolder).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'KupCAD' })).toBeTruthy();
+  });
+
+  it('keeps the folders opened, the newest first, and lists them on the welcome', async () => {
+    const settings = memorySettings({ 'app.recent': ['/v', '/w'], 'app.reopen': false });
+    const window = windowOn({ settings });
+    expect(screen.getByRole('heading', { name: 'Recent' })).toBeTruthy();
+    window.platform.listFolder.mockRejectedValueOnce(new Error('no such folder'));
+    await fireEvent.click(screen.getByTitle('/v'));
+    await vi.waitFor(() =>
+      expect(screen.getByText(/v wasn't opened: no such folder/)).toBeTruthy(),
+    );
+    expect(screen.getByRole('heading', { name: 'KupCAD' })).toBeTruthy();
+    await fireEvent.click(screen.getByTitle('/w'));
+    await editorView();
+    expect(settings.get('app.recent')).toEqual(['/w', '/v']);
+    expect(settings.get('app.folder')).toBe('/w');
+  });
+});
+
+describe('the menu bar', () => {
+  it('follows the window: Save once there is something to save, the files shown or not', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await vi.waitFor(() => expect(menuItem(window.menus.bar, 'Save')?.enabled).toBe(false));
+    await type(view, 'cube(3)\n');
+    await vi.waitFor(() => expect(menuItem(window.menus.bar, 'Save')?.enabled).toBe(true));
+    await choose(window.menus.bar, 'Save');
+    await vi.waitFor(() => expect(window.disk.get(LID)).toBe('cube(3)\n'));
+    await choose(window.menus.bar, 'Hide Files');
+    expect(filesShown()).toBeNull();
+    await vi.waitFor(() => expect(menuItem(window.menus.bar, 'Show Files')).toBeTruthy());
+  });
+
+  it('opens the keyboard shortcuts from Help, before a folder is opened too', async () => {
+    const window = windowOn();
+    await vi.waitFor(() => expect(window.menus.bar.length).toBeGreaterThan(0));
+    await choose(window.menus.bar, 'Keyboard Shortcuts');
+    const dialog = await vi.waitFor(() =>
+      screen.getByRole('dialog', { name: 'Keyboard shortcuts' }),
+    );
+    expect(dialog.textContent).toContain('Save the script');
+    expect(dialog.textContent).toContain('Rename');
+  });
+
+  it('zooms the window in and out, kept for the next start', async () => {
+    const settings = memorySettings();
+    const window = windowOn({ settings });
+    await vi.waitFor(() => expect(window.menus.bar.length).toBeGreaterThan(0));
+    expect(window.platform.setZoom).not.toHaveBeenCalled();
+    await choose(window.menus.bar, 'Zoom In');
+    await choose(window.menus.bar, 'Zoom In');
+    expect(settings.get('app.zoom')).toBe(1.25);
+    expect(window.platform.setZoom).toHaveBeenLastCalledWith(1.25);
+    await choose(window.menus.bar, 'Zoom Out');
+    expect(window.platform.setZoom).toHaveBeenLastCalledWith(1.1);
+    window.unmount();
+    const again = windowOn({ settings });
+    await vi.waitFor(() => expect(again.platform.setZoom).toHaveBeenCalledExactlyOnceWith(1.1));
+    await choose(again.menus.bar, 'Actual Size');
+    expect(again.platform.setZoom).toHaveBeenLastCalledWith(1);
+  });
+});
+
+it("sizes the editor's font as the settings say", async () => {
+  const settings = memorySettings({ 'app.fontSize': 16 });
+  windowOn({ settings });
+  const desktop = /** @type {HTMLElement} */ (document.querySelector('.kc-desktop'));
+  expect(desktop.style.getPropertyValue('--kc-code-font-size')).toBe('16px');
+  settings.set('app.fontSize', 18);
+  await tick();
+  expect(desktop.style.getPropertyValue('--kc-code-font-size')).toBe('18px');
+});
+
+it('saves a script a moment after each change where the settings say, never over the disk’s', async () => {
+  const window = windowOn({ settings: memorySettings({ 'app.autosave': true }) });
+  const view = await openFolder();
+  await type(view, 'cube(4)\n');
+  expect(window.disk.get(LID)).toBe('cube(2)\n');
+  await vi.waitFor(() => expect(window.disk.get(LID)).toBe('cube(4)\n'), { timeout: 3000 });
+  await type(view, 'mine\n');
+  window.disk.set(LID, 'theirs\n');
+  await vi.waitFor(() => expect(alertText()).toContain('changed on disk'), { timeout: 3000 });
+  expect(window.disk.get(LID)).toBe('theirs\n');
+  expect(window.platform.confirm).not.toHaveBeenCalled();
 });

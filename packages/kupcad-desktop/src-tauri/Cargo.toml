@@ -19,8 +19,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
+tauri-plugin-persisted-scope = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"
+tauri-plugin-window-state = "2"
+trash = "5"
 serde = { version = "1", features = ["derive"] }
 
 # A small app: https://tauri.app/concept/size/

@@ -7,9 +7,11 @@
   format the core writes, and the viewer's screenshot saved, as downloads. The console under the
   model keeps each run (what it printed, its warnings and its error) and the core's log. The
   bars between the panes resize them, and the toolbar's Parameters button hides theirs (for the
-  model's width); the sizes, and what is hidden or folded, are kept in `settings` (the page's
-  localStorage by default), and follow them as they are set. It keeps nothing else of the page's: the page gives the script it
-  starts with (`source`).
+  model's width); the sizes, what is hidden or folded, and how the view looks are kept in
+  `settings` (the page's localStorage by default), and follow them as they are set. It keeps
+  nothing else of the page's: the page gives the script it starts with (`source`), and is told
+  of each edit of it (`onsource`), for its own buttons in the toolbar (`actions`) to share or
+  save it.
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -37,7 +39,8 @@
 
   /** @import { Editor as EditorClass } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-  /** @import { ConsoleLine, Problem, Settings } from '@kupcad/ui' */
+  /** @import { ConsoleLine, Problem, Settings, ShortcutGroup } from '@kupcad/ui' */
+  /** @import { Snippet } from 'svelte' */
   /** @import { ViewerOptions } from '@kupcad/ui/viewer/types' */
   /** @import { KupcadApi, WorkerWasmSource } from '@kupcad/wasm/types' */
 
@@ -50,8 +53,14 @@
    * @property {WorkerWasmSource} [wasm] that worker's module, when not the one the wasm package
    *   ships
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
-   * @property {Settings} [settings] where the panes' sizes are kept; by default the page's
-   *   localStorage
+   * @property {Settings} [settings] where the panes' sizes, and how the view looks, are kept;
+   *   by default the page's localStorage
+   * @property {(source: string) => void} [onsource] the person's edit changed the script: it now
+   *   is `source` (for a host to share it, or save it)
+   * @property {Snippet} [actions] a host's own buttons in the model's toolbar, after Export
+   *   (`.kc-control` gives them its look)
+   * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
+   * @property {boolean} [shortcutsOpen] whether the shortcuts' dialog shows; bindable
    */
 
   /** @type {Props} */
@@ -62,6 +71,10 @@
     wasm,
     viewerOptions = {},
     settings = localSettings(),
+    onsource,
+    actions: hostActions,
+    shortcuts = [],
+    shortcutsOpen = $bindable(false),
   } = $props();
 
   /**
@@ -145,6 +158,7 @@
   function edited(next) {
     findings = [];
     runner?.run(next, plainValues(overrides));
+    onsource?.(next);
   }
 
   /** @param {ParamValues} values the panel's */
@@ -202,9 +216,13 @@
         {problems}
         onproblem={reveal}
         onscreenshot={screenshot}
+        {settings}
+        {shortcuts}
+        bind:shortcutsOpen
       >
         {#snippet actions()}
           <ExportMenu kind={ran?.preview.model.kind ?? 'none'} onexport={exportChosen} />
+          {@render hostActions?.()}
         {/snippet}
         {#snippet toggles()}
           {#if header && parameters.length > 0}

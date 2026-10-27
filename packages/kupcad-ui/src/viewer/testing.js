@@ -1,8 +1,9 @@
-// For a host's tests of the viewer. Imported (a Vitest `setupFiles` entry, say), it gives jsdom
-// what a browser has and the viewer uses: the component watches its canvas's size, the camera's
-// controls capture the pointer while it drags, and a screenshot reads the canvas as an image,
-// which jsdom draws none of: here an empty PNG. A canvas has no context, as jsdom's has none, but
-// quietly (jsdom says "not implemented" when asked). `stubRenderer` draws in place of WebGL.
+// For a host's tests of the viewer and the components. Imported (a Vitest `setupFiles` entry,
+// say), it gives jsdom what a browser has and they use: the component watches its canvas's size,
+// the camera's controls capture the pointer while it drags, and a screenshot reads the canvas as
+// an image, which jsdom draws none of: here an empty PNG. A canvas has no context, as jsdom's has
+// none, but quietly (jsdom says "not implemented" when asked). A dialog (the shortcuts') opens and
+// closes, which jsdom's element can't. `stubRenderer` draws in place of WebGL.
 
 /** @import { Camera, Object3D } from 'three' */
 /** @import { RendererLike } from './types.js' */
@@ -20,6 +21,16 @@ Element.prototype.hasPointerCapture ??= () => false;
 HTMLCanvasElement.prototype.getContext = /** @type {HTMLCanvasElement['getContext']} */ (
   () => null
 );
+
+// Shown, a dialog is open; closed, it says so, as a browser's does
+HTMLDialogElement.prototype.showModal ??= /** @this {HTMLDialogElement} */ function showModal() {
+  this.open = true;
+};
+HTMLDialogElement.prototype.close ??= /** @this {HTMLDialogElement} */ function close() {
+  if (!this.open) return;
+  this.open = false;
+  this.dispatchEvent(new Event('close'));
+};
 
 /** @type {HTMLCanvasElement['toBlob']} */
 HTMLCanvasElement.prototype.toBlob = function toBlob(callback, type = 'image/png') {

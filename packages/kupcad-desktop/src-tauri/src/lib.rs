@@ -1,9 +1,11 @@
 //! The desktop app's native side: the bundled kupcad's language server, which it runs for the
 //! page (server.rs); the plugins the page uses (dialogs, the files of the folder the user opens,
-//! its settings file);
-//! `launch_folder`, the folder named on the command line; and `export_model`, which builds a
-//! script with the bundled kupcad (`kupcad build`). The page runs the binary through these
-//! alone, its arguments checked here, and reads and writes only what the user chose.
+//! its settings file) and the app's own (the folders opened kept in the file system's scope
+//! across launches, the window's size and place); `launch_folder`, the folder named on the
+//! command line; `move_to_trash`, a file or folder of the one opened, to the system's trash; and
+//! `export_model`, which builds a script with the bundled kupcad (`kupcad build`). The page runs
+//! the binary through these alone, its arguments checked here, and reads and writes only what
+//! the user chose.
 
 mod server;
 
@@ -86,6 +88,32 @@ fn launch_folder(app: AppHandle) -> Result<Option<String>, String> {
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
+/// Moves the file or folder at `path`, in the folder the user opened, to the system's trash,
+/// from where they may take it back. A symlink goes itself, not where it leads.
+#[tauri::command]
+fn move_to_trash(app: AppHandle, path: String) -> Result<(), String> {
+    // The entry's own real path: its folder's, then its name
+    let path = to_write(&path)?;
+    if std::fs::symlink_metadata(&path).is_err() {
+        return Err(format!("{} isn't there", path.display()));
+    }
+    if !app.fs_scope().is_allowed(&path) {
+        return Err(format!("{} isn't in the folder opened", path.display()));
+    }
+    #[allow(unused_mut)]
+    let mut trash = trash::TrashContext::default();
+    // Not by asking the Finder, the crate's default on macOS: that asks the person to let the
+    // app control it, and needs an entitlement the app has no other use for
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        trash.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    trash
+        .delete(&path)
+        .map_err(|e| format!("{} wasn't moved to the trash: {e}", path.display()))
+}
+
 /// The real path of the file at `path`, which is there: no `..`, no symlink.
 fn existing(path: &str) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|e| format!("{path} can't be read: {e}"))
@@ -135,11 +163,15 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // The folders the user opened stay theirs to open again, the last on the next launch
+        .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(server::Server::default())
         .invoke_handler(tauri::generate_handler![
             export_model,
             launch_folder,
+            move_to_trash,
             server::start_server,
             server::write_server,
             server::stop_server,
@@ -161,7 +193,8 @@ mod tests {
 
     /// A folder of the test's own, made afresh.
     fn folder(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kupcad-desktop-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kupcad-desktop-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("picked/sub")).unwrap();
         std::fs::canonicalize(dir).unwrap()

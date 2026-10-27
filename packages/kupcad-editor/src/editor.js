@@ -4,7 +4,8 @@
 // underlined and in the gutter, its fix an action. With a language server
 // (language-server.js), the server completes, marks and answers instead: hovers, signatures,
 // formatting, renaming, definitions. It tells its host of each change the user makes to the
-// script; one the host makes (setValue) it doesn't.
+// script; one the host makes (setValue) it doesn't. A host that shows another script in its
+// place keeps this one's snapshot(), its undo history with it, and restores it (`restore`).
 
 import {
   autocompletion,
@@ -12,7 +13,13 @@ import {
   closeBracketsKeymap,
   completionKeymap,
 } from '@codemirror/autocomplete';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import {
+  defaultKeymap,
+  history,
+  historyField,
+  historyKeymap,
+  indentWithTab,
+} from '@codemirror/commands';
 import {
   bracketMatching,
   indentOnInput,
@@ -39,6 +46,19 @@ import { editorTheme, highlightStyle } from './theme.js';
 
 /** A change the host made (setValue): not the user's, so not told back. */
 const fromHost = Annotation.define();
+/**
+ * The state a `snapshot()` was of, on `extensions`; null for none, or one it can't read.
+ * @param {unknown} snapshot
+ * @param {import('@codemirror/state').Extension[]} extensions
+ */
+function restoredState(snapshot, extensions) {
+  if (snapshot === undefined || snapshot === null) return null;
+  try {
+    return EditorState.fromJSON(snapshot, { extensions }, { history: historyField });
+  } catch {
+    return null;
+  }
+}
 /** Two spaces a level, as `kupcad fmt` indents. */
 const INDENT = '  ';
 /** The language, as a language server is told a document's (and VS Code names it). */
@@ -51,6 +71,9 @@ export const LANGUAGE_ID = 'kupcad';
  * @property {string} [label] what the script is, for a screen reader
  * @property {{ client: LSPClient, uri: string }} [languageServer] the server the script is known
  *   to, by its URI: it completes and marks the script then, and the host gives no findings
+ * @property {unknown} [restore] a `snapshot()` of an editor of this script: it starts as that one
+ *   was (its undo history, its selection), `value` put in place of its text where they differ;
+ *   one it can't read is passed over
  */
 
 export class Editor {
@@ -61,48 +84,55 @@ export class Editor {
    * @param {HTMLElement} parent where it goes
    * @param {EditorOptions} [options]
    */
-  constructor(parent, { value = '', onchange, label = 'The script', languageServer } = {}) {
+  constructor(
+    parent,
+    { value = '', onchange, label = 'The script', languageServer, restore } = {},
+  ) {
+    const extensions = [
+      lineNumbers(),
+      highlightActiveLineGutter(),
+      history(),
+      drawSelection(),
+      indentOnInput(),
+      indentUnit.of(INDENT),
+      EditorState.tabSize.of(INDENT.length),
+      bracketMatching(),
+      closeBrackets(),
+      autocompletion(),
+      highlightActiveLine(),
+      highlightSelectionMatches(),
+      lintGutter(),
+      kupcad({ complete: !languageServer }),
+      syntaxHighlighting(highlightStyle),
+      editorTheme,
+      keymap.of([
+        ...closeBracketsKeymap,
+        ...defaultKeymap,
+        ...searchKeymap,
+        ...historyKeymap,
+        ...completionKeymap,
+        ...lintKeymap,
+        indentWithTab,
+      ]),
+      languageServer ? languageServer.client.plugin(languageServer.uri, LANGUAGE_ID) : [],
+      EditorView.contentAttributes.of({ 'aria-label': label }),
+      EditorView.updateListener.of((update) => {
+        const user = !update.transactions.some((tr) => tr.annotation(fromHost));
+        if (update.docChanged && user) onchange?.(update.state.doc.toString());
+      }),
+    ];
     this.#view = new EditorView({
       parent,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          lineNumbers(),
-          highlightActiveLineGutter(),
-          history(),
-          drawSelection(),
-          indentOnInput(),
-          indentUnit.of(INDENT),
-          EditorState.tabSize.of(INDENT.length),
-          bracketMatching(),
-          closeBrackets(),
-          autocompletion(),
-          highlightActiveLine(),
-          highlightSelectionMatches(),
-          lintGutter(),
-          kupcad({ complete: !languageServer }),
-          syntaxHighlighting(highlightStyle),
-          editorTheme,
-          keymap.of([
-            ...closeBracketsKeymap,
-            ...defaultKeymap,
-            ...searchKeymap,
-            ...historyKeymap,
-            ...completionKeymap,
-            ...lintKeymap,
-            indentWithTab,
-          ]),
-          languageServer ? languageServer.client.plugin(languageServer.uri, LANGUAGE_ID) : [],
-          EditorView.contentAttributes.of({ 'aria-label': label }),
-          EditorView.updateListener.of((update) => {
-            const user = !update.transactions.some((tr) => tr.annotation(fromHost));
-            if (update.docChanged && user) onchange?.(update.state.doc.toString());
-          }),
-        ],
-      }),
+      state: restoredState(restore, extensions) ?? EditorState.create({ doc: value, extensions }),
     });
+    // The text the host gives now, where the snapshot's is another (the file changed since)
+    this.setValue(value);
   }
 
+  /** The editor as it is now, its undo history with it, for `restore`: plain JSON. */
+  snapshot() {
+    return this.#view.state.toJSON({ history: historyField });
+  }
   /** The script as it is now. */
   get value() {
     return this.#view.state.doc.toString();

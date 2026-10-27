@@ -11,6 +11,10 @@ import {
   shownEntries,
   WATCH_DELAY_MS,
   watchFolder,
+  nameProblem,
+  parentOf,
+  scriptName,
+  within,
 } from './folder.js';
 
 /** @import { Entry } from './folder.js' */
@@ -199,7 +203,7 @@ describe('a change the watcher reports', () => {
   });
 });
 
-it('watches everything under the folder, telling only of what may change its tree', async () => {
+it('watches everything under the folder, telling of a file written, and whether the tree changed', async () => {
   const stop = vi.fn();
   const watch = vi.fn(
     /** @type {typeof import('@tauri-apps/plugin-fs').watch} */ (async () => stop),
@@ -211,12 +215,47 @@ it('watches everything under the folder, telling only of what may change its tre
     delayMs: WATCH_DELAY_MS,
   });
   const report = watch.mock.calls[0][1];
-  report(event({ modify: { kind: 'data', mode: 'content' } }, ['/w/b.kup']));
+  // Read, or only in a folder the tree leaves out: nothing of the user's
+  report(event({ access: { kind: 'open', mode: 'read' } }, ['/w/b.kup']));
+  report(event({ modify: { kind: 'data', mode: 'content' } }, ['/w/.git/index']));
   expect(onchange).not.toHaveBeenCalled();
+  // Written in place, as another editor saves: a file to read again, the tree as it was
+  report(event({ modify: { kind: 'data', mode: 'content' } }, ['/w/b.kup']));
+  expect(onchange).toHaveBeenLastCalledWith({ tree: false });
   report(event({ create: { kind: 'file' } }, ['/w/c.kup']));
-  expect(onchange).toHaveBeenCalledOnce();
+  expect(onchange).toHaveBeenLastCalledWith({ tree: true });
   unwatch();
   expect(stop).toHaveBeenCalledOnce();
+});
+
+describe('a new entry', () => {
+  it('is named as any system takes, and not hidden', () => {
+    expect(nameProblem('part 2.kup')).toBeNull();
+    expect(nameProblem('ünit')).toBeNull();
+    for (const name of ['', '  ', ' a', 'a ', 'a/b', 'a\\b', 'a:b', 'a?', '.hidden', 'a\u0007']) {
+      expect([name, nameProblem(name)]).not.toEqual([name, null]);
+    }
+  });
+
+  it('is a script by its extension, given it where it has none', () => {
+    expect([scriptName('part'), scriptName('part.kup'), scriptName('part.KUP')]).toEqual([
+      'part.kup',
+      'part.kup',
+      'part.KUP',
+    ]);
+    expect(scriptName('notes.txt')).toBe('notes.txt.kup');
+  });
+
+  it("is in a folder, which a path under it is within and a sibling's isn't", () => {
+    expect([parentOf('/w/parts/a.kup'), parentOf('/w'), parentOf('C:\\w\\a.kup')]).toEqual([
+      '/w/parts',
+      '/',
+      'C:\\w',
+    ]);
+    expect([within('/w/p', '/w/p'), within('/w/p/a.kup', '/w/p'), within('/w/pq', '/w/p')]).toEqual(
+      [true, true, false],
+    );
+  });
 });
 
 describe('a file', () => {

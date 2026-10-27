@@ -3,7 +3,7 @@ import { EditorView } from '@codemirror/view';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { stubRenderer } from '@kupcad/ui/testing';
 import { testCore } from '@kupcad/wasm/testing';
-import { tick } from 'svelte';
+import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/ui';
 import Playground from './Playground.svelte';
@@ -17,8 +17,9 @@ afterEach(() => vi.restoreAllMocks());
  * The playground on `source`, run by the real core in this thread, and its editor's view.
  * @param {string} source
  * @param {import('@kupcad/ui').Settings} [settings] where its panes' sizes are kept
+ * @param {Record<string, unknown>} [props] what else it is given
  */
-async function playground(source, settings = memorySettings()) {
+async function playground(source, settings = memorySettings(), props = {}) {
   const kupcad = await testCore();
   render(Playground, {
     props: {
@@ -27,6 +28,7 @@ async function playground(source, settings = memorySettings()) {
       name: 'bracket',
       viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 },
       settings,
+      ...props,
     },
   });
   const view = /** @type {EditorView} */ (
@@ -131,6 +133,42 @@ describe('Playground', () => {
     } finally {
       HTMLElement.prototype.setPointerCapture = capture;
     }
+  });
+
+  it("tells its host each edit of the script, the host's buttons after Export, for sharing it", async () => {
+    /** @type {string[]} */
+    const sources = [];
+    const actions = createRawSnippet(() => ({
+      render: () => '<button type="button" class="kc-control">Share</button>',
+    }));
+    const { view } = await playground('cube(10)\n', memorySettings(), {
+      onsource: (/** @type {string} */ source) => sources.push(source),
+      actions,
+    });
+    // The script it was given is no edit
+    expect(sources).toEqual([]);
+    view.dispatch({ changes: { from: 5, to: 7, insert: '12' } });
+    expect(sources).toEqual(['cube(12)\n']);
+    const share = screen.getByRole('button', { name: 'Share' });
+    const exportMenu = screen.getByRole('combobox', { name: 'Export' });
+    expect(exportMenu.compareDocumentPosition(share) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("keeps how the view looks in its settings, and lists its host's shortcuts first", async () => {
+    const settings = memorySettings();
+    await playground('cube(10)\n', settings, {
+      shortcuts: [{ title: 'Page', keys: [['⌘K', 'Search the docs']] }],
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
+    expect(settings.get('view.renderMode')).toBe('xray');
+    await fireEvent.click(screen.getByRole('button', { name: 'Keyboard shortcuts' }));
+    const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    expect([...dialog.querySelectorAll('h3')].map((heading) => heading.textContent)).toEqual([
+      'Page',
+      'Viewer',
+    ]);
   });
 
   it("hides the parameters and the view's panel by the toolbar's toggles, and keeps that", async () => {

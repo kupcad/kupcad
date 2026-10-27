@@ -14,18 +14,32 @@ const ENTRIES = [
   { kind: 'script', name: 'b.kup', path: '/w/b.kup', depth: 0 },
 ];
 
-/** The tree of ENTRIES with the folders `closed` closed, and what it was told. */
-function treeOf(/** @type {string[]} */ closed = []) {
+/**
+ * The tree of ENTRIES with the folders `closed` closed, and what it was told.
+ * @param {string[]} [closed]
+ * @param {Partial<import('svelte').ComponentProps<typeof FileTree>>} [more]
+ */
+function treeOf(closed = [], more = {}) {
+  const told = {
+    onopen: vi.fn(),
+    ontoggle: vi.fn(),
+    oncommit: vi.fn(),
+    oncancel: vi.fn(),
+    onmenu: vi.fn(),
+    onrename: vi.fn(),
+    ontrash: vi.fn(),
+  };
   const props = {
     entries: ENTRIES,
     collapsed: new Set(closed),
     selected: null,
     unsaved: new Set(),
-    onopen: vi.fn(),
-    ontoggle: vi.fn(),
+    root: '/w',
+    ...told,
+    ...more,
   };
-  render(FileTree, { props });
-  return props;
+  const { rerender } = render(FileTree, { props });
+  return { ...told, rerender };
 }
 
 const shown = () => screen.getAllByRole('listitem').map((row) => row.textContent?.trim());
@@ -104,5 +118,93 @@ describe("the tree's keys", () => {
     const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
     row('b.kup').dispatchEvent(enter);
     expect(enter.defaultPrevented).toBe(false);
+  });
+});
+
+describe("the tree's own menus and keys", () => {
+  it("gives a row's menu, and the tree's, in place of the page's", async () => {
+    const tree = treeOf();
+    const right = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row('lid.kup').dispatchEvent(right);
+    expect(right.defaultPrevented).toBe(true);
+    expect(tree.onmenu).toHaveBeenCalledExactlyOnceWith(ENTRIES[4]);
+    // A data file has no button, its row a menu all the same
+    await fireEvent.contextMenu(screen.getByText('l.stl'));
+    expect(tree.onmenu).toHaveBeenLastCalledWith(ENTRIES[3]);
+    await fireEvent.contextMenu(screen.getByRole('list'));
+    expect(tree.onmenu).toHaveBeenLastCalledWith(null);
+    expect(tree.onmenu).toHaveBeenCalledTimes(3);
+  });
+
+  it('renames a row with F2, moves it to the trash with Delete or ⌘⌫, and gives its menu by the keys', async () => {
+    const tree = treeOf();
+    row('b.kup').focus();
+    await fireEvent.keyDown(row('b.kup'), { key: 'F2' });
+    expect(tree.onrename).toHaveBeenCalledWith(ENTRIES[5]);
+    await fireEvent.keyDown(row('b.kup'), { key: 'Delete' });
+    row('parts').focus();
+    await fireEvent.keyDown(row('parts'), { key: 'Backspace', metaKey: true });
+    row('b.kup').focus();
+    expect(tree.ontrash.mock.calls).toEqual([[ENTRIES[5]], [ENTRIES[0]]]);
+    // Backspace alone is nothing to it
+    await fireEvent.keyDown(row('b.kup'), { key: 'Backspace' });
+    expect(tree.ontrash).toHaveBeenCalledTimes(2);
+    await fireEvent.keyDown(row('b.kup'), { key: 'F10', shiftKey: true });
+    await fireEvent.keyDown(row('b.kup'), { key: 'ContextMenu' });
+    expect(tree.onmenu.mock.calls).toEqual([[ENTRIES[5]], [ENTRIES[5]]]);
+  });
+});
+
+/** The field a name is given in. */
+const field = () => /** @type {HTMLInputElement} */ (screen.getByRole('textbox'));
+
+describe('a name given in the tree', () => {
+  it('renames a row in its place, its name without its extension chosen: Enter gives it', async () => {
+    const tree = treeOf([], { editing: { path: '/w/parts/lid.kup' } });
+    expect(screen.queryByRole('button', { name: 'lid.kup' })).toBeNull();
+    expect(field().getAttribute('aria-label')).toBe('Rename lid.kup');
+    expect(document.activeElement).toBe(field());
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 3]);
+    await fireEvent.input(field(), { target: { value: 'cover.kup' } });
+    await fireEvent.keyDown(field(), { key: 'Enter' });
+    expect(tree.oncommit).toHaveBeenCalledExactlyOnceWith('cover.kup');
+  });
+
+  it('is left with Escape, and nothing given as the field goes', async () => {
+    const tree = treeOf([], { editing: { path: '/w/b.kup' } });
+    await fireEvent.input(field(), { target: { value: 'c.kup' } });
+    await fireEvent.keyDown(field(), { key: 'Escape' });
+    await fireEvent.blur(field());
+    expect(tree.oncancel).toHaveBeenCalledOnce();
+    expect(tree.oncommit).not.toHaveBeenCalled();
+  });
+
+  it('is given as the field is left, and none where it is empty or the same', async () => {
+    const tree = treeOf([], { editing: { path: '/w/b.kup' } });
+    await fireEvent.blur(field());
+    expect(tree.oncancel).toHaveBeenCalledOnce();
+    await tree.rerender({ editing: { in: '/w/parts', kind: 'folder' } });
+    await fireEvent.input(field(), { target: { value: 'covers' } });
+    await fireEvent.blur(field());
+    expect(tree.oncommit).toHaveBeenCalledExactlyOnceWith('covers');
+  });
+
+  it("makes a new entry's field in its folder, under the folder's row, or at the tree's top", async () => {
+    const tree = treeOf([], { editing: { in: '/w/parts/brackets', kind: 'script' } });
+    expect(shown()).toEqual(['▾parts', '▾brackets', '', 'l.kup', 'l.stl', 'lid.kup', 'b.kup']);
+    expect(field().getAttribute('aria-label')).toBe('New script name');
+    expect(field().closest('li')?.style.paddingLeft).toBe('32px');
+    await tree.rerender({ editing: { in: '/w', kind: 'folder' } });
+    expect(shown()[0]).toBe('');
+    expect(field().getAttribute('aria-label')).toBe('New folder name');
+  });
+
+  it('says what is wrong with a name refused, the field kept to put it right', async () => {
+    treeOf([], { editing: { in: '/w', kind: 'script' }, problem: 'b.kup is there already.' });
+    expect(field().getAttribute('aria-invalid')).toBe('true');
+    const said = document.getElementById(
+      /** @type {string} */ (field().getAttribute('aria-describedby')),
+    );
+    expect(said?.textContent).toBe('b.kup is there already.');
   });
 });

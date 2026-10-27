@@ -20,6 +20,8 @@
    * @property {(value: string) => void} [onchange] the user changed the script
    * @property {import('./editor.js').EditorOptions['languageServer']} [languageServer] the
    *   server the script is known to, by its URI
+   * @property {unknown} [restore] an earlier editor's `snapshot()` of the script, its undo
+   *   history with it (read when it mounts)
    */
 
   /** @type {Props} */
@@ -30,6 +32,7 @@
     label = 'The script',
     onchange,
     languageServer,
+    restore,
   } = $props();
 
   /** @type {HTMLDivElement} */
@@ -40,6 +43,7 @@
       value,
       label,
       languageServer,
+      restore,
       onchange: (next) => {
         value = next;
         onchange?.(next);

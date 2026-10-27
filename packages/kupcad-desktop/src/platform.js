@@ -1,8 +1,13 @@
-// What the app's window does its work with, on Tauri: the folder dialog and its files, the save
-// and message dialogs, the native side's export, the bundled kupcad's language server, the
-// window's theme and its close. App.svelte takes it as a prop, so its tests give it stand-ins.
+// What the app's window does its work with, on Tauri: the folder dialog and its files (moved to
+// the trash by the native side), the save and message dialogs, the native side's export, the
+// bundled kupcad's language server, the window's theme, zoom, menus and its close. App.svelte
+// takes it as a prop, so its tests give it stand-ins.
 
 import { invoke } from '@tauri-apps/api/core';
+// From its own module: the package's index of the menus re-exports them in a way nodenext
+// resolution can't follow
+import { Menu } from '@tauri-apps/api/menu/menu';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
@@ -14,6 +19,7 @@ import { LanguageServer } from './server.js';
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
 /** @import { Entry } from './folder.js' */
+/** @import { MenuEntry } from './menu.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */
 
@@ -22,9 +28,12 @@ import { LanguageServer } from './server.js';
  * @property {() => Promise<string | null>} pickFolder
  * @property {() => Promise<string | null>} launchFolder the folder named on the command line
  * @property {(root: string) => Promise<Entry[]>} listFolder
- * @property {(root: string, onchange: () => void) => Promise<() => void>} watchFolder calls
- *   `onchange` when what is in `root` may have changed its tree; resolves to what stops it
- * @property {{ read(path: string): Promise<string>, write(path: string, text: string): Promise<void> }} files
+ * @property {(root: string, onchange: (change: { tree: boolean }) => void) => Promise<() => void>} watchFolder
+ *   calls `onchange` when a file in `root` may have been written, its tree changed too or not;
+ *   resolves to what stops it
+ * @property {PlatformFiles} files
+ * @property {(path: string) => Promise<void>} trash moves a file or folder of the folder opened
+ *   to the system's trash
  * @property {(options: { defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }) => Promise<string | null>} save
  * @property {(text: string) => Promise<void>} tell
  * @property {(text: string) => Promise<boolean>} confirm
@@ -33,11 +42,60 @@ import { LanguageServer } from './server.js';
  * @property {(rootUri: string, on: ServerEvents) => Pick<LanguageServer, 'client' | 'start' | 'stop' | 'preview' | 'setParams'>} server
  * @property {(theme: Theme) => Promise<void>} setTheme the window's appearance, which the page's
  *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
+ * @property {(zoom: number) => Promise<void>} setZoom how large the page is drawn, 1 its own size
+ * @property {(menus: MenuEntry[]) => Promise<void>} setMenu the app's menu bar, in place of the last
+ * @property {(entries: MenuEntry[]) => Promise<void>} popupMenu a menu where the pointer is, its
+ *   items doing what they do once chosen
  * @property {(canClose: () => Promise<boolean>) => Promise<() => void>} onClose calls `canClose`
  *   when the window is asked to close, and keeps it open when it says no
  * @property {() => Promise<Settings>} settings the app's settings, read before the window is
  *   laid out and reactive after (`memorySettings`), each change written to the file
  */
+
+/**
+ * What the folder's files are read, written, made and renamed with.
+ * @typedef {object} PlatformFiles
+ * @property {(path: string) => Promise<string>} read
+ * @property {(path: string, text: string) => Promise<void>} write
+ * @property {(path: string) => Promise<boolean>} exists
+ * @property {(path: string) => Promise<void>} mkdir
+ * @property {(from: string, to: string) => Promise<void>} rename
+ */
+
+/**
+ * Tauri's options for the menu entries `entries`.
+ * @param {MenuEntry[]} entries
+ * @returns {import('@tauri-apps/api/menu/menu').MenuOptions['items']}
+ */
+function nativeItems(entries) {
+  return entries.map((entry) => {
+    if (entry === '-') return { item: 'Separator' };
+    if ('predefined' in entry) {
+      return entry.predefined === 'About'
+        ? { item: { About: { name: 'KupCAD' } } }
+        : { item: entry.predefined };
+    }
+    if ('items' in entry) return { text: entry.text, items: nativeItems(entry.items) };
+    return {
+      text: entry.text,
+      accelerator: entry.accelerator,
+      enabled: entry.enabled ?? true,
+      action: () => entry.action(),
+    };
+  });
+}
+
+/** Which call to setMenu is the latest: an earlier one done after it is passed over. */
+let menus = 0;
+
+/**
+ * Lets a menu go, a native resource until then (its `close`, a Resource's, which the package's
+ * types reach by an import nodenext doesn't follow).
+ * @param {Menu | null} menu
+ */
+async function release(menu) {
+  await /** @type {{ close(): Promise<void> } | null} */ (/** @type {unknown} */ (menu))?.close();
+}
 
 /** The app's settings file, in its config folder (macOS: ~/Library/Application Support/<id>/). */
 const SETTINGS_FILE = 'settings.json';
@@ -51,6 +109,7 @@ export const tauri = {
   listFolder: (root) => listFolder(root),
   watchFolder: (root, onchange) => watchFolder(root, onchange),
   files,
+  trash: (path) => invoke('move_to_trash', { path }),
   save: (options) => save(options),
   tell: async (text) => void (await message(text, { title: 'KupCAD', kind: 'warning' })),
   confirm: (text) => confirm(text, { title: 'KupCAD', kind: 'warning' }),
@@ -59,6 +118,21 @@ export const tauri = {
     invoke('export_model', { script, output, format, params }),
   server: (rootUri, on) => new LanguageServer({ rootUri, origin: location.origin, on }),
   setTheme: (theme) => getCurrentWindow().setTheme(theme === 'system' ? null : theme),
+  setZoom: (zoom) => getCurrentWebview().setZoom(zoom),
+  async setMenu(entries) {
+    const mine = ++menus;
+    const menu = await Menu.new({ items: nativeItems(entries) });
+    if (mine !== menus) {
+      await release(menu);
+      return;
+    }
+    await release(await menu.setAsAppMenu());
+  },
+  async popupMenu(entries) {
+    // Kept until the page goes: an item chosen is told through it after the menu is gone
+    const menu = await Menu.new({ items: nativeItems(entries) });
+    await menu.popup();
+  },
   onClose: (canClose) =>
     getCurrentWindow().onCloseRequested(async (event) => {
       if (!(await canClose())) event.preventDefault();

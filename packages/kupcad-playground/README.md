@@ -16,7 +16,12 @@ the PWA) embeds; it keeps nothing of the page's.
 * **Props:** `source` (the script it starts with), `name` (what the downloads are named after),
   `kupcad` (a core to run it with; by default one it starts with `createKupcadWorker` and ends
   with itself), `wasm` (that worker's module, when not the one `@kupcad/wasm` ships),
-  `viewerOptions`.
+  `viewerOptions`, `settings`, `shortcuts` (a page's own, listed before the viewer's in the
+  pane's shortcuts dialog) and `shortcutsOpen` (bindable).
+* **For a host that shares or saves the script** (a PWA later; nothing of it here): `onsource`
+  is called with the script at each of the person's edits (not with the `source` it was given),
+  and an `actions` snippet puts the host's own buttons in the model's toolbar, after Export
+  (`.kc-control` gives them its look). It keeps no draft: a page loaded again shows `source`.
 * **When it runs** (`runner.js`, `Runner`): once the script stays as it is for a moment after an
   edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts. A run under
   way when the next starts is stopped (the worker drops or ends its call), so what is shown is
@@ -34,8 +39,9 @@ the PWA) embeds; it keeps nothing of the page's.
 * **The layout**: the bars between the script, the model, the parameters and the console
   resize them (`@kupcad/ui`'s `Splitter`), and the toolbar's Parameters button hides the
   parameters for the model's width; the sizes, and what is hidden or folded, are kept in
-  `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys),
-  and follow them as they are set; a narrow page stacks the panes.
+  `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys), and
+  how the view looks too (the pane's `view.*` keys), all followed as they are set; a narrow page
+  stacks the panes.
 * **The console** (`@kupcad/ui`'s `ConsolePanel`, under the model): each run, what it printed
   (`puts`, `print`, `inspect`), its warnings and its error, a line naming a place taking the
   editor there, and the core's log (the worker module's stdout and stderr).

@@ -1,19 +1,25 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { stubRenderer } from './viewer/testing.js';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bound } from './bound.test-helper.svelte.js';
 import { modelOf, PARTS } from './fixtures.test-helper.js';
+import { memorySettings } from './settings.js';
 import ViewerPane from './ViewerPane.svelte';
 
 /** @import { Viewer } from './viewer/index.js' */
 /** @import { Problem } from './run-status.js' */
+/** @import { Settings } from './settings.js' */
+/** @import { ShortcutGroup } from './shortcuts.js' */
 
 /**
  * The pane showing `source`'s model (the parts', by default), once the viewer shows it: the
  * viewer, what it drew, and what the pane's bindings and its screenshot callback were given.
+ * @param {string} [source]
+ * @param {{ settings?: Settings, shortcuts?: ShortcutGroup[] }} [props] what else the pane is
+ *   given
  */
-async function pane(source = PARTS) {
+async function pane(source = PARTS, props = {}) {
   const { renderer, drawn } = stubRenderer();
   const viewer = bound(/** @type {Viewer | null} */ (null));
   const selected = bound(/** @type {string | null} */ (null));
@@ -23,6 +29,7 @@ async function pane(source = PARTS) {
     props: {
       model: await modelOf(source),
       options: { renderer },
+      ...props,
       onscreenshot: (/** @type {Blob} */ image) => images.push(image),
       get viewer() {
         return viewer.value;
@@ -114,6 +121,103 @@ describe('ViewerPane', () => {
     const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('canvas'));
     await fireEvent.keyDown(canvas, { key: '1', ctrlKey: true });
     expect([pressed('Top'), pressed('Front')]).toEqual(['true', 'false']);
+  });
+
+  it('keeps the view chosen in its settings, and starts as they keep it', async () => {
+    const settings = memorySettings({
+      'view.renderMode': 'wireframe',
+      'view.edges': false,
+      'view.environment': 'plate',
+      'view.projection': 'orthographic',
+    });
+    const { viewer } = await pane(PARTS, { settings });
+    expect([viewer.renderMode, viewer.edges, viewer.axes]).toEqual(['wireframe', false, true]);
+    expect([viewer.environment, viewer.projection]).toEqual(['plate', 'orthographic']);
+    expect([pressed('Wireframe'), pressed('Edges'), pressed('Plate')]).toEqual([
+      'true',
+      'false',
+      'true',
+    ]);
+    expect(pressed('Perspective')).toBe('false');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'X-ray' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Axes' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Perspective' }));
+    expect(viewer.projection).toBe('perspective');
+    expect(
+      ['renderMode', 'edges', 'axes', 'environment', 'projection'].map((key) =>
+        settings.get(`view.${key}`),
+      ),
+    ).toEqual(['xray', false, false, 'grid', 'perspective']);
+  });
+
+  it('follows its view as its settings are set elsewhere: a settings page, another pane', async () => {
+    const settings = memorySettings();
+    const { viewer } = await pane(PARTS, { settings });
+    settings.set('view.renderMode', 'xray');
+    settings.set('view.edges', false);
+    settings.set('view.environment', 'none');
+    settings.set('view.projection', 'orthographic');
+    await tick();
+    expect([pressed('X-ray'), pressed('Solid'), pressed('Edges')]).toEqual([
+      'true',
+      'false',
+      'false',
+    ]);
+    expect([pressed('Grid'), pressed('Plate'), pressed('Perspective')]).toEqual([
+      'false',
+      'false',
+      'false',
+    ]);
+    expect([viewer.renderMode, viewer.edges, viewer.environment, viewer.projection]).toEqual([
+      'xray',
+      false,
+      'none',
+      'orthographic',
+    ]);
+  });
+
+  it("takes a drawing's top orthographic view for no choice: a solid after it is seen as chosen", async () => {
+    const settings = memorySettings();
+    const { viewer, show } = await pane(PARTS, { settings });
+    await show('square(10)');
+    expect([viewer.projection, pressed('Perspective')]).toEqual(['orthographic', 'false']);
+    // Another choice while it shows changes the drawing's projection not
+    await fireEvent.click(screen.getByRole('button', { name: 'Edges' }));
+    expect(viewer.projection).toBe('orthographic');
+    expect(settings.get('view.projection')).toBeUndefined();
+    await show(PARTS);
+    expect([viewer.projection, pressed('Perspective')]).toEqual(['perspective', 'true']);
+
+    // Chosen while a drawing shows, the choice is the next solid's, not how the last was seen
+    await fireEvent.click(screen.getByRole('button', { name: 'Perspective' }));
+    expect(viewer.projection).toBe('orthographic');
+    await show('square(12)');
+    await fireEvent.click(screen.getByRole('button', { name: 'Perspective' }));
+    expect(settings.get('view.projection')).toBe('perspective');
+    await show(PARTS);
+    expect([viewer.projection, pressed('Perspective')]).toEqual(['perspective', 'true']);
+  });
+
+  it("lists the keyboard shortcuts from its bottom bar, the host's before the viewer's", async () => {
+    await pane(PARTS, { shortcuts: [{ title: 'App', keys: [['⌘S', 'Save the script']] }] });
+    const button = screen.getByRole('button', { name: 'Keyboard shortcuts' });
+    // At the end of the bar with the run's status, there before any run
+    expect(button.closest('.run')).toBeTruthy();
+    expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    button.focus();
+    await fireEvent.click(button);
+    const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+    const titles = within(dialog)
+      .getAllByRole('heading', { level: 3 })
+      .map((heading) => heading.textContent);
+    expect(titles).toEqual(['App', 'Viewer']);
+    expect(within(dialog).getByText('Move the section')).toBeTruthy();
+    await fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(button);
   });
 
   it('shows what the pointer is over by it: the part, its copies and measures, the face', async () => {

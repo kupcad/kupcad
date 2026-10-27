@@ -1,10 +1,18 @@
 // The folder the app shows: the one the user picked (the dialog puts it in the file system's
 // scope, with what is under it), its scripts and the files they read, listed as a tree and
-// watched for what is made, removed or renamed in it, and their file URIs, which the language
-// server knows them by.
+// watched for what is made, removed, renamed or written in it, the names a new entry may take,
+// and their file URIs, which the language server knows them by.
 
 import { open } from '@tauri-apps/plugin-dialog';
-import { readDir, readTextFile, watch, writeTextFile } from '@tauri-apps/plugin-fs';
+import {
+  exists,
+  mkdir,
+  readDir,
+  readTextFile,
+  rename,
+  watch,
+  writeTextFile,
+} from '@tauri-apps/plugin-fs';
 
 /** @import { WatchEvent } from '@tauri-apps/plugin-fs' */
 
@@ -136,6 +144,17 @@ export function foldersAbove(entries, path) {
 }
 
 /**
+ * Whether a change the watcher reports under `root` may be to the user's files: anything but a
+ * file read, in a folder the tree shows (not .git, node_modules).
+ * @param {WatchEvent} event
+ * @param {string} root
+ */
+export function changesFiles(event, root) {
+  if (typeof event.type === 'object' && 'access' in event.type) return false;
+  return event.paths.length === 0 || event.paths.some((path) => !leftOut(root, path));
+}
+
+/**
  * Whether a change the watcher reports under `root` may change its tree: an entry made,
  * removed or renamed, or one the system can't say what of; not a file read, or one written in
  * place (a save), nor anything in the folders the tree leaves out (.git, node_modules).
@@ -144,13 +163,14 @@ export function foldersAbove(entries, path) {
  */
 export function changesTree(event, root) {
   const { type } = event;
-  if (typeof type === 'object') {
-    if ('access' in type) return false;
-    if ('modify' in type && (type.modify.kind === 'data' || type.modify.kind === 'metadata')) {
-      return false;
-    }
+  if (
+    typeof type === 'object' &&
+    'modify' in type &&
+    (type.modify.kind === 'data' || type.modify.kind === 'metadata')
+  ) {
+    return false;
   }
-  return event.paths.length === 0 || event.paths.some((path) => !leftOut(root, path));
+  return changesFiles(event, root);
 }
 
 /**
@@ -169,10 +189,11 @@ function leftOut(root, path) {
 }
 
 /**
- * Watches everything under `root`, calling `onchange` once a moment's changes may have changed
- * its tree (`changesTree`); resolves to what stops it.
+ * Watches everything under `root`, calling `onchange` once a moment's changes may be to the
+ * user's files (`changesFiles`): a file written, its tree changed too or not (`changesTree`).
+ * Resolves to what stops it.
  * @param {string} root
- * @param {() => void} onchange
+ * @param {(change: { tree: boolean }) => void} onchange
  * @param {Pick<typeof import('@tauri-apps/plugin-fs'), 'watch'>} [fs]
  * @returns {Promise<() => void>}
  */
@@ -180,7 +201,7 @@ export function watchFolder(root, onchange, fs = { watch }) {
   return fs.watch(
     root,
     (event) => {
-      if (changesTree(event, root)) onchange();
+      if (changesFiles(event, root)) onchange({ tree: changesTree(event, root) });
     },
     { recursive: true, delayMs: WATCH_DELAY_MS },
   );
@@ -197,6 +218,49 @@ export function kindOf(name) {
   const extension = name.slice(dot + 1).toLowerCase();
   if (extension === SCRIPT_EXTENSION) return 'script';
   return DATA_EXTENSIONS.has(extension) ? 'data' : null;
+}
+
+/**
+ * What is wrong with `name` as a new entry's, or null: one the system takes in any folder, not
+ * one the tree leaves out (a hidden one).
+ * @param {string} name
+ * @returns {string | null}
+ */
+export function nameProblem(name) {
+  if (name.trim() === '') return 'A name is needed.';
+  if (name !== name.trim()) return 'A name may not start or end with a space.';
+  if (/[\\/:*?"<>|]/.test(name) || /\p{Cc}/u.test(name)) {
+    return 'A name may not have any of \\ / : * ? " < > |.';
+  }
+  if (name.startsWith('.'))
+    return "A name starting with a dot is hidden: the tree wouldn't show it.";
+  return null;
+}
+
+/**
+ * The name a new script takes for `name`: with its extension, which the tree knows it by.
+ * @param {string} name
+ */
+export function scriptName(name) {
+  return kindOf(name) === 'script' ? name : `${name}.${SCRIPT_EXTENSION}`;
+}
+
+/**
+ * The folder `path` is in.
+ * @param {string} path
+ */
+export function parentOf(path) {
+  const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return at <= 0 ? path.slice(0, at + 1) : path.slice(0, at);
+}
+
+/**
+ * Whether `path` is `under`, or in it, however deep.
+ * @param {string} path
+ * @param {string} under
+ */
+export function within(path, under) {
+  return path === under || path.startsWith(`${under}/`) || path.startsWith(`${under}\\`);
 }
 
 /**
@@ -220,5 +284,14 @@ export function fileUri(path) {
   return `file://${absolute.split('/').map(encodeURIComponent).join('/')}`;
 }
 
-/** What the app reads and writes a script's text with. */
-export const files = { read: readTextFile, write: writeTextFile };
+/** What the app reads, writes, makes and renames the folder's files with. */
+export const files = {
+  read: readTextFile,
+  write: writeTextFile,
+  /** @param {string} path */
+  exists: (path) => exists(path),
+  /** @param {string} path */
+  mkdir: (path) => mkdir(path),
+  /** @param {string} from @param {string} to */
+  rename: (from, to) => rename(from, to),
+};

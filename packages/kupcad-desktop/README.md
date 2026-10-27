@@ -47,34 +47,56 @@ Windows warn before they open one; signing needs the certificates as the reposit
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its
   scripts and the files they read, in its folders however deep, hidden folders such as `.git`
   and `.kupcad` left out), the script open in `@kupcad/editor` with the language server's
-  features, and `@kupcad/ui`'s
-  `PreviewPanel` (the model, the run's problems, the parameters). A script's edits are kept until
-  it is saved (⌘S, Ctrl+S), marked in the tree and the bar until then; the window asks before it
-  closes, or opens another folder, on unsaved changes. A folder in the tree opens and closes
-  when clicked, or with the arrow keys (up and down, right into a folder, left out of it), and a
-  script opened opens the folders it is in; which are closed isn't kept, so a folder opens with
-  all of them open. The tree follows the folder: watched (the file
-  system plugin's `watch`, its changes gathered for 300 ms), it is listed again when something
-  in it is made, removed or renamed; a file only read or saved in place, or anything in a folder
-  the tree leaves out, doesn't list it again. The bars between the tree, the editor,
-  the model, the parameters and the console resize them, and the Parameters button hides the
-  parameters; the sizes, and which panes are hidden, are kept in the app's settings
-  file (`settings.json` in its config folder, macOS's `~/Library/Application Support/
-  dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out,
-  each change written to it, and followed as they are set (`@kupcad/ui`'s reactive
-  `memorySettings` under them). It
-  takes its services as a prop
-  (`platform.js`, Tauri's), so its tests give it stand-ins.
-* **The strip and the settings** (`src/App.svelte`, `SettingsPane.svelte`, `theme.js`): a
-  strip at the window's left edge, as VS Code's activity bar, shows or hides the files, and its
-  gear (⌘, or Ctrl+,) opens the settings: a page over the bar and the panes, which stay as they
-  were under it (the editor with its edits and its undo, the model, the console), inert until
-  it closes (Escape, its close button, the gear or the files again), the focus given back
-  where it was. The settings apply as they are set, from the page or not, and are kept in the
-  settings file: the theme (`app.theme`: the system's, the default, or light or dark), which sets the window's
-  appearance (Tauri's `setTheme`, app-wide on macOS) and so the page's `prefers-color-scheme`,
-  which the tokens, the editor and the viewer follow; and whether the console shows under the
-  model (`app.console`). The icons are inline SVG: the page fetches nothing, an icon set's
+  features, and `@kupcad/ui`'s `PreviewPanel` (the model, the run's problems, the parameters).
+  A folder in the tree opens and closes when clicked, or with the arrow keys (up and down,
+  right into a folder, left out of it), and a script opened opens the folders it is in; which
+  are closed isn't kept, so a folder opens with all of them open. Its bars resize the tree, the
+  editor, the model, the parameters and the console, and the Parameters button hides the
+  parameters. It takes its services as a prop (`platform.js`, Tauri's), so its tests give it
+  stand-ins.
+* **The files** (`FileTree.svelte`, `folder.js`, `menu.js`): a script or a folder is made in the
+  tree (its bar's buttons, the File menu, ⌘N and ⇧⌘N: in the open script's folder, or a row's
+  menu: in that row's), renamed (a row's menu, F2) and moved to the system's trash (a row's
+  menu, Delete or ⌘⌫, once the person says so, the unsaved changes it takes said), each name
+  given in a field in the tree (Enter, Escape), one that is there already or that a system
+  doesn't take refused under it. A script made is opened; a script renamed, or a folder with
+  one in it, stays open by its new path, its unsaved changes and undo history with it. The tree
+  follows the folder: watched (the file system plugin's `watch`, its changes gathered for
+  300 ms), it is listed again when something in it is made, removed or renamed, and not for a
+  file only read or written in place, nor for anything in a folder the tree leaves out.
+* **The scripts read** (`scripts.svelte.js`): each one's text, as it is now and as the disk had
+  it last, for what is unsaved (marked in the tree and the bar; ⌘S saves it, or a moment after
+  each change where the settings say). A file written in the folder, or the window coming back
+  to the front, has them read again: one with nothing unsaved takes the disk's text; one with
+  unsaved changes keeps them, a bar above the editor saying the disk changed (Load from disk,
+  Keep mine); one removed from the disk is closed, or kept, unsaved, where it has changes (a
+  save puts it back). A save finding the disk changed since asks before it writes over it, and
+  an autosave never does. Each script keeps its editor's undo history while another is shown
+  (the editor's `snapshot()`). The window asks before it closes, or opens another folder, on
+  unsaved changes.
+* **The strip, the menus and the settings** (`src/App.svelte`, `menu.js`, `SettingsPane.svelte`,
+  `prefs.js`, `theme.js`): a strip at the window's left edge, as VS Code's activity bar, shows
+  or hides the files, and its gear (⌘, or Ctrl+,) opens the settings: a page over the bar and
+  the panes, which stay as they were under it (the editor with its edits and its undo, the
+  model, the console), inert until it closes (Escape, its close button, the gear or the files
+  again), the focus given back where it was. The app's menu bar (macOS's app menu first; File,
+  Edit, View, Window, Help) is set from the page as the window changes (Save enabled once there
+  is something to save, Open Recent's folders, Show or Hide Files); a tree's row has its own
+  menu. Help's Keyboard Shortcuts, as the button at the end of the preview's bottom bar, lists
+  the app's, the tree's, the editor's and the viewer's keys. The settings apply as they are
+  set, from the page or not, and are kept in the app's settings file (`settings.json` in its
+  config folder, macOS's `~/Library/Application Support/dev.kupcad.desktop/`, through Tauri's
+  store plugin), read before the window is laid out, each change written to it, and followed
+  as they are set (`@kupcad/ui`'s reactive `memorySettings` under them): the panes' sizes and
+  which are hidden; the theme (`app.theme`: the system's, the default, or light or dark), which
+  sets the window's appearance (Tauri's `setTheme`, app-wide on macOS) and so the page's
+  `prefers-color-scheme`, which the tokens, the editor and the viewer follow; the zoom (View's
+  Zoom In and Out, ⌘= and ⌘-, Actual Size: the webview's `setZoom`); the editor's font size; the
+  view a model is shown in (`view.*`, which the preview's toolbar sets too); whether a script is
+  saved a moment after each change (off by default); whether the console shows under the model;
+  and the folders opened last (Open Recent, and the welcome's list), the last opened again at
+  the start unless the settings say not to. The window's own size and place are kept by the
+  window-state plugin. The icons are inline SVG: the page fetches nothing, an icon set's
   neither.
 * **The language server** (`src/server.js`, `src-tauri/src/server.rs`): the native side starts
   `kupcad lsp --stdio --viewport-origin <the page's origin>` for the page and holds it, at most
@@ -93,9 +115,13 @@ Windows warn before they open one; signing needs the certificates as the reposit
   is saved where the person says; a problem's place is shown in the editor. The server's log
   goes to the panel's console, under the model, with each run (what it printed, its warnings
   and its error). Presets aren't offered yet.
-* **The native side** (`src-tauri/src/lib.rs`): the plugins (dialogs, the file system) and the
-  app's commands: `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder
-  named on the command line, put in the file system's scope as a picked one is) and
+* **The native side** (`src-tauri/src/lib.rs`): the plugins (dialogs, the file system, the
+  settings' store; the folders opened kept in the file system's scope across launches,
+  persisted-scope, so the last one opens again; the window's size and place, window-state) and
+  the app's commands: `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder
+  named on the command line, put in the file system's scope as a picked one is),
+  `move_to_trash` (a file or folder in the scope, by its own real path: a symlink goes, not what
+  it leads to; on macOS by NSFileManager, which asks the person nothing, not by the Finder) and
   `export_model`, which builds with the bundled `kupcad` only a script in the folder opened into
   a file the person saved, in a format `kupcad` writes, its parameters' names checked.
 
@@ -104,25 +130,41 @@ Windows warn before they open one; signing needs the certificates as the reposit
 The page runs no program itself: it has no shell permission, and the bundled `kupcad` runs
 through the app's commands above, with the arguments they make. It reads and writes only what
 the person chose (`capabilities/default.json`: the dialogs, and the file system within the
-folder opened, which it watches too, and the files saved), sets the window's theme, and its Content Security Policy (`tauri.conf.json`) lets it
-connect to the app's IPC and the server's viewport socket on 127.0.0.1 alone.
+folder opened, which it watches, makes files and folders in and renames them in, and the files
+saved), moves to the trash only what is in that folder, sets the window's theme, zoom and
+menus, and its Content Security Policy (`tauri.conf.json`) lets it connect to the app's IPC and
+the server's viewport socket on 127.0.0.1 alone. The folders the person opened stay in the
+file system's scope across launches (persisted-scope), as the last one opens again.
 
 ## Tests
 
 The folder's tree (folders in folders, what a closed folder hides, the folders a script is in,
-which of the watcher's changes list it again) and its files' URIs, the tree's rows (a folder
-opened and closed by a click or the arrow keys), the preview's host (what the panel is told, an export
-with its values and its formats, a screenshot, a refused message), the language server's
-lifecycle on a stand-in server (its handshake through the framing, the viewport's URL, the
-commands, restarts, a server that ends before it is up or doesn't start again), and the window on stand-ins (a folder
-opened, a script opened, an edit saved with ⌘S, the question on closing, the tree's folders
-closed and opened, none of it kept, the folder listed again as it changes and no longer once
-another is opened; the files hidden and shown, the settings over the workspace, which is
-inert under them and the same once they close, over the welcome too, opened with ⌘, and
-closed with Escape, the gear or the files, the focus given back; a theme chosen, kept and set
-again at the start, one the settings don't know, one the window refuses; the console hidden
-and kept so; the theme and the console followed as the settings are set elsewhere, and the
-files' width dragged kept once the drag is done), the settings pane, and the themes the settings may keep. `test:integration`
+which of the watcher's changes list it again or are a file written, the names a new entry may
+take) and its files' URIs; the tree's rows (a folder opened and closed by a click or the arrow
+keys, a row's menu by a right click or the keys, F2, Delete and ⌘⌫, a name given in a field in
+it, left with Escape, refused with what is wrong); the scripts read (unsaved, saved, a save
+that finds the disk changed, the disk's change taken or held for the person, a script removed,
+a save's own write not taken for another's, renamed and dropped with what they hold); the menus
+(the bar's items, what they do and when they are enabled; a row's); the zoom, font size and
+recent folders as the settings keep them; the preview's host (what the panel is told, an
+export with its values and its formats, a screenshot, a refused message); the language
+server's lifecycle on a stand-in server (its handshake through the framing, the viewport's URL,
+the commands, restarts, a server that ends before it is up or doesn't start again); the
+settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
+and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
+question on closing, the tree's folders closed and opened, none of it kept, the folder listed
+again as it changes and no longer once another is opened; a script the disk changed followed,
+or held with the person's changes for them to choose, a save asking before it writes over the
+disk's, a script removed closed or saved back; each script's undo history kept; scripts and
+folders made, renamed (the open one following) and moved to the trash once asked; the last
+folder opened at the start or not, the recent ones listed and kept; the menu bar following the
+window, the shortcuts from Help, the zoom kept; the editor's font size; autosave, never over the
+disk's; the files hidden and shown, the settings over the workspace, which is inert under them
+and the same once they close, over the welcome too, opened with ⌘, and closed with Escape, the
+gear or the files, the focus given back; a theme chosen, kept and set again at the start, one
+the settings don't know, one the window refuses; the console hidden and kept so; the theme and
+the console followed as the settings are set elsewhere, and the files' width dragged kept once
+the drag is done. `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
 model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
 their real paths (no `..`, no symlink, which the file system's scope matched as written), and

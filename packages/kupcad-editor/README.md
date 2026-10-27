@@ -18,7 +18,11 @@ editor.setFindings(await kupcad.check(editor.value)); // underlined, in the gutt
 editor.setFindings([{ severity: 'error', message, line, column }]); // a place a run named: a point
 editor.reveal(line, column); // the cursor there, in view, the focus in the editor
 editor.setValue(other);
+const kept = editor.snapshot(); // plain JSON: the script, its selection and its undo history
 editor.dispose();
+// Another script shown meanwhile, this one back as it was left, undo and all; `value` put in
+// place of the snapshot's text where the file changed since (itself undoable)
+const again = new Editor(element, { value: source, restore: kept });
 ```
 
 ```svelte
@@ -67,6 +71,7 @@ editor.dispose();
   `--kc-code-font` and `--kc-code-font-size`.
 
 Tests: the highlighting, indentation and completion on the parsed text, the findings placed (the
-real core's `check`, through `@kupcad/wasm`) and their fixes made, the editor and its Svelte
+real core's `check`, through `@kupcad/wasm`) and their fixes made, a snapshot restored (its undo
+history, its selection, a text changed since, one it can't read), the editor and its Svelte
 component under jsdom, the LSP frames cut at every byte, and an editor opening its script on a
 stand-in server whose diagnostics it marks.

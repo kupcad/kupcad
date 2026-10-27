@@ -5,6 +5,10 @@
 //
 // Settings are reactive: a pane reads its value in a $derived, and follows it as it is set,
 // wherever from. A size dragged is the pane's own until the drag is done, and set then, once.
+// A key not kept yet is followed as the map is (a SvelteMap's reader of a key it doesn't hold
+// reads again as any key is added): a size never kept, mid-drag as another key is kept for the
+// first time, goes back to its own. Svelte doesn't let a reaction follow state it made itself,
+// so a cell of a key's own, made as the key is first read, would never be followed.
 
 import { SvelteMap } from 'svelte/reactivity';
 

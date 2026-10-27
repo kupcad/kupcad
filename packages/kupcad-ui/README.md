@@ -7,7 +7,7 @@ host shows around it, styled by the `--kc-*` tokens.
 |---|---|---|
 | `@kupcad/ui/viewer` | the viewer, a class over three.js (`Viewer`, `ViewCube`, `LIGHT`, `DARK`) | no |
 | `@kupcad/ui/viewer/types` | its types, for JSDoc or TypeScript | no |
-| `@kupcad/ui` | the components (`Viewer`, `ViewerPane`, `ParamsPanel`, `ConsolePanel`, `PreviewPanel`, `Splitter`, `ExportMenu`) and what they keep (settings) | yes |
+| `@kupcad/ui` | the components (`Viewer`, `ViewerPane`, `ParamsPanel`, `ConsolePanel`, `PreviewPanel`, `Splitter`, `ExportMenu`, `ShortcutsDialog`) and what they keep (settings, the view's choices) | yes |
 | `@kupcad/ui/tokens.css`, `vscode.css`, `controls.css` | the tokens, VS Code's theme over them, the controls' look | no |
 | `@kupcad/ui/testing` | what jsdom lacks for the viewer, and `stubRenderer` | no |
 
@@ -165,6 +165,16 @@ webview and the desktop app to the language server.
   switches it to the top view, orthographic; a turn of the wheel with Option moves the section,
   and its slider), and a section stays where it was put through an edit of the script, while the
   model still reaches it.
+  How the view looks, as the person chose it (the render mode, edges, axes, the floor, the
+  projection), is kept in the host's `settings` under the view.* keys (`VIEW_KEYS`), and followed
+  as they are set wherever from: a host's settings page shows and sets the same keys
+  (`viewChoices(settings)`, `viewChoice(settings, name)`, each a valid value else its default,
+  `VIEW_DEFAULTS`, and the values offered: `RENDER_MODES`, `ENVIRONMENTS`, `PROJECTIONS`). A
+  drawing's top orthographic view is no choice: it isn't kept, and the next solid is seen as
+  chosen. At the end of the bar below, a button lists the keyboard shortcuts (`ShortcutsDialog`):
+  a host's own groups (`shortcuts`) before the viewer's (`VIEWER_SHORTCUTS`: its keys, its
+  pointer and wheel, named as the system names them); `bind:shortcutsOpen` opens it from a host's
+  menu too.
 * **`ParamsPanel`**: a control per parameter of the schema, each `group:` a section under its
   title that folds away (a header bar of its own, `--kc-section-bg` and `--kc-section-fg`, VS
   Code's side bar section headers in its webview), the parameters of no group first: a slider with a
@@ -183,7 +193,8 @@ webview and the desktop app to the language server.
   panel's whole width. Each shows the value set in the panel, else
   the one the run took. A value outside the schema's range is refused in the panel, saying why,
   and never leaves it; one the run refused (the frame's `error.param`) is shown on its control.
-  A value set is marked and can be reverted, which takes its refusal away too; a refusal is the
+  A value set is marked and can be reverted, which takes its refusal away too (all at once,
+  Reset all, while any is set); a refusal is the
   control's description for a screen reader too, after the parameter's (`aria-describedby`,
   `aria-invalid`). A choice
   with no value yet (the script computes its default, and no run took one) shows none.
@@ -208,6 +219,11 @@ webview and the desktop app to the language server.
   run of the document shown, a frame sent again once, and the lines the host's `log` messages
   give. A host that keeps no presets passes
   `presets={false}`, and none are offered.
+* **`ShortcutsDialog`** (`shortcuts.js`): the keys and the pointer's moves a person can't see on
+  the screen, by group (`{ title, keys: [keys, what][], note? }`), in a modal dialog while
+  `open` (bindable); Escape or its close button closes it, the focus back where it was.
+  `ViewerPane` opens it from its bottom bar; `PreviewPanel` and the playground pass a host's
+  `shortcuts` and `shortcutsOpen` through.
 * **Layout** (`Splitter`, `settings.js`): the bar between two panes that resizes one of them,
   dragged or with the keys (the arrows, Shift for longer steps, Home and End), double-clicked
   back, a separator a screen reader knows (`role="separator"`, its value its size); it takes no

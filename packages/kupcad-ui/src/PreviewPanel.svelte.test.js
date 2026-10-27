@@ -1,14 +1,16 @@
 import { stubRenderer } from './viewer/testing.js';
 import { testCore } from '@kupcad/wasm/testing';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bound } from './bound.test-helper.svelte.js';
 import PreviewPanel from './PreviewPanel.svelte';
 import { memorySettings } from './settings.js';
 
 /** @import { HostMessage, Preview } from '@kupcad/protocol/types' */
 /** @import { ViewportEvents } from './viewport-socket.js' */
 /** @import { Settings } from './settings.js' */
+/** @import { ShortcutGroup } from './shortcuts.js' */
 
 const PART = { uri: 'file:///work/part.kup', name: 'part.kup' };
 const LID = { uri: 'file:///work/lid.kup', name: 'lid.kup' };
@@ -30,7 +32,9 @@ function page({
   viewportUrl = /** @type {string | null} */ ('ws://127.0.0.1:9001'),
   presets = true,
   settings = memorySettings(),
+  shortcuts = /** @type {ShortcutGroup[]} */ ([]),
 } = {}) {
+  const shortcutsOpen = bound(false);
   /** @type {unknown[]} */
   const posted = [];
   /** @type {((message: HostMessage) => void)[]} */
@@ -59,11 +63,19 @@ function page({
       viewerOptions: { renderer: stubRenderer().renderer },
       presets,
       settings,
+      shortcuts,
+      get shortcutsOpen() {
+        return shortcutsOpen.value;
+      },
+      set shortcutsOpen(open) {
+        shortcutsOpen.value = open;
+      },
     },
   });
   return {
     posted,
     unmount,
+    shortcutsOpen,
     /** The server's socket is at `url` now (null: there is none). @param {string | null} url */
     viewport: (url) => rerender({ viewportUrl: url }),
     /** The host gives the page other settings. @param {Settings} next */
@@ -418,6 +430,8 @@ async function shownOn(settings) {
   await tick();
   return viewer;
 }
+/** Whether the button named `name` is pressed. @param {string} name */
+const pressed = (name) => screen.getByRole('button', { name }).getAttribute('aria-pressed');
 const column = () =>
   /** @type {HTMLElement} */ (screen.queryByRole('complementary', { name: 'Parameters' }));
 
@@ -464,6 +478,17 @@ describe('PreviewPanel settings', () => {
     expect(column().style.width).toBe('260px');
   });
 
+  it('keeps how the view looks in them too, and follows it as it is set', async () => {
+    const settings = memorySettings({ 'view.renderMode': 'wireframe' });
+    await shownOn(settings);
+    expect(pressed('Wireframe')).toBe('true');
+    await fireEvent.click(screen.getByRole('button', { name: 'Axes' }));
+    expect(settings.get('view.axes')).toBe(false);
+    settings.set('view.renderMode', 'xray');
+    await tick();
+    expect([pressed('X-ray'), pressed('Wireframe')]).toEqual(['true', 'false']);
+  });
+
   it('keeps a size dragged once the drag is done, not at each move of it', async () => {
     const settings = memorySettings();
     const set = vi.spyOn(settings, 'set');
@@ -479,6 +504,22 @@ describe('PreviewPanel settings', () => {
     expect(set).toHaveBeenCalledExactlyOnceWith('preview.params', 338);
     expect(column().style.width).toBe('338px');
   });
+});
+
+it("opens the shortcuts when its host says (a menu's item), the host's own listed first", async () => {
+  const viewer = page({ shortcuts: [{ title: 'App', keys: [['⌘,', 'Settings']] }] });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  viewer.shortcutsOpen.value = true;
+  await tick();
+  const dialog = screen.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  expect(
+    within(dialog)
+      .getAllByRole('heading', { level: 3 })
+      .map((heading) => heading.textContent),
+  ).toEqual(['App', 'Viewer']);
+  // Closed in the dialog, the host is told
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(viewer.shortcutsOpen.value).toBe(false);
 });
 
 it('asks the host to export the document shown in the format its menu chose', async () => {

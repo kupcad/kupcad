@@ -7,7 +7,10 @@
   viewer does), half of it each. A bar above: a section through the model, a screenshot and a
   host's own actions (which take the controls' look by .kc-control), the Panel button, and a
   host's toggles of its own panes beside this one. Below: how its run went, and what it said
-  went wrong, one with a line clicked given to the host (`onproblem`). Themed by the
+  went wrong, one with a line clicked given to the host (`onproblem`), and a button that lists
+  the keyboard shortcuts (the host's own, then the viewer's). How the view looks (the render mode,
+  edges, axes, floor, projection) is the host's `settings`' view.* keys (`viewChoice`), written
+  as the person chooses, and followed as they are set wherever from. Themed by the
   --kc-viewer-* tokens unless given a `theme`.
 -->
 <script>
@@ -17,13 +20,19 @@
   import { faceLine, partMeasures, partTitle } from './measures.js';
   import { fillOf } from './range.js';
   import { describeRun } from './run-status.js';
+  import { memorySettings } from './settings.js';
+  import { VIEWER_SHORTCUTS } from './shortcuts.js';
+  import ShortcutsDialog from './ShortcutsDialog.svelte';
   import { watchTokens } from './theme.js';
+  import { VIEW_KEYS, viewChoice } from './view-settings.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
   /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from './viewer/types.js' */
   /** @import { Viewer as ViewerClass } from './viewer/index.js' */
   /** @import { Snippet } from 'svelte' */
   /** @import { Problem, RunStatus } from './run-status.js' */
+  /** @import { Settings } from './settings.js' */
+  /** @import { ShortcutGroup } from './shortcuts.js' */
 
   /**
    * @typedef {object} Props
@@ -43,6 +52,11 @@
    * @property {(problem: Problem) => void} [onproblem] a problem with a line clicked: the host
    *   shows the script there; without it, none can be clicked
    * @property {(error: unknown) => void} [onerror] a model the viewer couldn't show
+   * @property {Settings} [settings] where how the view looks is kept (`VIEW_KEYS`); by default
+   *   the page's memory
+   * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
+   * @property {boolean} [shortcutsOpen] whether the shortcuts' dialog shows; bindable, for a
+   *   host to open it (a menu's item)
    */
 
   /** @type {Props} */
@@ -60,6 +74,9 @@
     problems = [],
     onproblem,
     onerror,
+    settings = memorySettings(),
+    shortcuts = [],
+    shortcutsOpen = $bindable(false),
   } = $props();
 
   /**
@@ -96,13 +113,21 @@
   /** @type {HTMLDivElement} */
   let root;
   let tokenTheme = $state(/** @type {Theme | undefined} */ (undefined));
-  let renderMode = $state(/** @type {RenderMode} */ ('solid'));
-  let edges = $state(true);
-  let axes = $state(true);
-  let orthographic = $state(false);
+  // As the settings have them, each read by its own key, and set as the person chooses
+  const renderMode = $derived(viewChoice(settings, 'renderMode'));
+  const edges = $derived(viewChoice(settings, 'edges'));
+  const axes = $derived(viewChoice(settings, 'axes'));
+  const environment = $derived(viewChoice(settings, 'environment'));
+  /**
+   * How a drawing shown is seen (from the top, orthographic) until the person chooses: no choice
+   * of theirs, so kept apart from the settings; null while the view is as chosen.
+   */
+  let drawingOrthographic = $state(/** @type {boolean | null} */ (null));
+  const orthographic = $derived(
+    drawingOrthographic ?? viewChoice(settings, 'projection') === 'orthographic',
+  );
   /** The named view the viewer looks from: none once it was turned by hand. */
   let view = $state(/** @type {View | null} */ ('iso'));
-  let environment = $state(/** @type {Environment} */ ('grid'));
   let sectioned = $state(false);
   let axis = $state(/** @type {Axis} */ ('z'));
   let offset = $state(0);
@@ -121,6 +146,7 @@
   const statusText = $derived(status ? describeRun(status) : '');
   const hoveredPart = $derived(parts.find((part) => part.name === hovered?.part) ?? null);
   const hoveredMeasures = $derived(hoveredPart ? partMeasures(hoveredPart) : null);
+  const shortcutGroups = $derived([...shortcuts, VIEWER_SHORTCUTS]);
 
   onMount(() => watchTokens(root, (next) => (tokenTheme = next)));
 
@@ -158,13 +184,21 @@
   }
 
   /**
-   * A model is shown: the toolbar says how the viewer looks at it (a drawing is seen from the
-   * top, orthographic), and the section is put across its middle, unless one is on where the
-   * model still reaches (an edit of the script keeps the cut where the user put it).
+   * A model is shown: the toolbar says how the viewer looks at it, and the section is put across
+   * its middle, unless one is on where the model still reaches (an edit of the script keeps the
+   * cut where the user put it). A drawing is seen from the top, orthographic, the choice kept for
+   * the next solid; a solid as chosen, though the viewer, after a drawing, brings back how it saw
+   * the last one (the choice may have changed since).
    * @param {ViewerClass} shown
    */
   function modelShown(shown) {
-    orthographic = shown.projection === 'orthographic';
+    if (shown.kind === '3d') {
+      const chosen = viewChoice(settings, 'projection');
+      if (shown.projection !== chosen) shown.setCamera({ projection: chosen });
+      drawingOrthographic = null;
+    } else {
+      drawingOrthographic = shown.projection === 'orthographic';
+    }
     view = shown.view;
     bounds = shown.bounds;
     solid = shown.kind === '3d';
@@ -187,7 +221,17 @@
    * @param {Environment} floor
    */
   function toggleFloor(floor) {
-    environment = environment === floor ? 'none' : floor;
+    settings.set(VIEW_KEYS.environment, environment === floor ? 'none' : floor);
+  }
+
+  /**
+   * Orthographic or not, as the person chose: what the settings keep, and the view, a drawing's
+   * too, shows.
+   * @param {boolean} chosen
+   */
+  function chooseOrthographic(chosen) {
+    drawingOrthographic = null;
+    settings.set(VIEW_KEYS.projection, chosen ? 'orthographic' : 'perspective');
   }
 </script>
 
@@ -276,7 +320,7 @@
               class="kc-control"
               aria-label={MODES[mode].name}
               aria-pressed={renderMode === mode}
-              onclick={() => (renderMode = mode)}
+              onclick={() => settings.set(VIEW_KEYS.renderMode, mode)}
             >
               {MODES[mode].text}
             </button>
@@ -288,7 +332,7 @@
             type="button"
             class="kc-control"
             aria-pressed={edges}
-            onclick={() => (edges = !edges)}
+            onclick={() => settings.set(VIEW_KEYS.edges, !edges)}
           >
             Edges
           </button>
@@ -296,7 +340,7 @@
             type="button"
             class="kc-control"
             aria-pressed={axes}
-            onclick={() => (axes = !axes)}
+            onclick={() => settings.set(VIEW_KEYS.axes, !axes)}
           >
             Axes
           </button>
@@ -325,7 +369,7 @@
             class="kc-control"
             aria-label="Perspective"
             aria-pressed={!orthographic}
-            onclick={() => (orthographic = !orthographic)}
+            onclick={() => chooseOrthographic(!orthographic)}
           >
             Persp
           </button>
@@ -365,31 +409,45 @@
       </div>
     </aside>
   </div>
-  {#if status || problems.length > 0}
-    <div class="run">
+  <div class="run">
+    <div class="line">
       {#if status}
         <div class="status" role="status">
           <span class="dot {status.state}"></span>
           {statusText}
         </div>
       {/if}
-      {#if problems.length > 0}
-        <ul class="problems" aria-label="Problems">
-          {#each problems as problem, index (index)}
-            <li class={problem.severity}>
-              {#if onproblem && problem.line !== null}
-                <button type="button" onclick={() => onproblem(problem)}>
-                  {@render said(problem)}
-                </button>
-              {:else}
-                {@render said(problem)}
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      {/if}
+      <button
+        type="button"
+        class="shortcuts"
+        aria-label="Keyboard shortcuts"
+        aria-haspopup="dialog"
+        title="Keyboard shortcuts"
+        onclick={() => (shortcutsOpen = true)}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="2.5" y="6" width="19" height="12" rx="2" />
+          <path d="M6.5 10h1M10.5 10h1M14.5 10h1M17.5 10h.5M7.5 14h9" />
+        </svg>
+      </button>
     </div>
-  {/if}
+    {#if problems.length > 0}
+      <ul class="problems" aria-label="Problems">
+        {#each problems as problem, index (index)}
+          <li class={problem.severity}>
+            {#if onproblem && problem.line !== null}
+              <button type="button" onclick={() => onproblem(problem)}>
+                {@render said(problem)}
+              </button>
+            {:else}
+              {@render said(problem)}
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+  <ShortcutsDialog groups={shortcutGroups} bind:open={shortcutsOpen} />
 </div>
 
 {#snippet said(/** @type {Problem} */ problem)}
@@ -541,12 +599,49 @@
   .run {
     border-top: 1px solid var(--kc-border);
   }
+  /* The run's status, the shortcuts' button at its end */
+  .line {
+    display: flex;
+    align-items: center;
+    gap: var(--kc-gap);
+    min-height: 22px;
+    padding: 1px var(--kc-gap);
+  }
   .status {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px var(--kc-gap);
     color: var(--kc-muted);
+  }
+  .shortcuts {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 20px;
+    margin-left: auto;
+    padding: 0;
+    color: var(--kc-muted);
+    background: none;
+    border: none;
+    border-radius: var(--kc-radius);
+    cursor: pointer;
+  }
+  .shortcuts:hover {
+    color: var(--kc-fg);
+    background: var(--kc-hover);
+  }
+  .shortcuts:focus-visible {
+    outline: 2px solid var(--kc-focus);
+    outline-offset: -2px;
+  }
+  .shortcuts svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   .dot {
     width: 8px;

@@ -25,6 +25,7 @@ async function panel(props = {}) {
 
 /** @param {string} name */
 const numberField = (name) => /** @type {HTMLInputElement} */ (screen.getByLabelText(name));
+const resetAll = () => screen.queryByRole('button', { name: 'Reset all' });
 
 describe('ParamsPanel', () => {
   it("shows the script's title, and each group's controls with the values the run took", async () => {
@@ -97,6 +98,37 @@ describe('ParamsPanel', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Revert width' }));
     expect(screen.queryByRole('alert')).toBeNull();
     expect(numberField('width').hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  it('resets every value set at once, as one change, while any is set', async () => {
+    const changes = await panel();
+    expect(resetAll()).toBeNull();
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    await fireEvent.change(numberField('Height'), { target: { value: '8' } });
+    expect(changes.at(-1)).toEqual({ width: 40, height: 8 });
+    await fireEvent.click(/** @type {HTMLElement} */ (resetAll()));
+    expect(changes).toEqual([{ width: 40 }, { width: 40, height: 8 }, {}]);
+    expect([numberField('width').value, numberField('Height').value]).toEqual(['25', '5']);
+    expect(screen.queryByRole('button', { name: 'Revert width' })).toBeNull();
+    expect(resetAll()).toBeNull();
+  });
+
+  it("takes the panel's refusals away with them, its folded groups left folded", async () => {
+    await panel();
+    await fireEvent.change(numberField('width'), { target: { value: '40' } });
+    // Refused while it shows the run's value: only a reset of the field takes it away
+    await fireEvent.change(numberField('Height'), { target: { value: '0' } });
+    expect(screen.getByRole('alert')).toBeTruthy();
+    const holes = /** @type {HTMLDetailsElement} */ (
+      [...document.querySelectorAll('details')].find(
+        (group) => group.querySelector('summary')?.textContent === 'Holes',
+      )
+    );
+    holes.open = false;
+    await fireEvent.click(screen.getByRole('button', { name: 'Reset all' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(numberField('Height').hasAttribute('aria-invalid')).toBe(false);
+    expect(holes.open).toBe(false);
   });
 
   it('shows no choice for a parameter without one yet, until one is chosen', async () => {

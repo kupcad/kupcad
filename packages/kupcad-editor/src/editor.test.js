@@ -1,3 +1,4 @@
+import { undo } from '@codemirror/commands';
 import { forEachDiagnostic } from '@codemirror/lint';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -54,6 +55,37 @@ describe('Editor', () => {
     expect(marked).toEqual(['boom 11-12']);
     editor.reveal(2, 6);
     expect(view.state.selection.main.head).toBe(11);
+  });
+
+  it('starts as a snapshot of another left it: its undo history, its selection', () => {
+    const first = editorOn({ value: 'cube(1)\n' });
+    first.view.dispatch({ changes: { from: 5, to: 6, insert: '2' }, selection: { anchor: 6 } });
+    const snapshot = JSON.parse(JSON.stringify(first.editor.snapshot()));
+    first.editor.dispose();
+    made.splice(made.indexOf(first.editor), 1);
+
+    const onchange = vi.fn();
+    const again = editorOn({ value: 'cube(2)\n', restore: snapshot, onchange });
+    expect(again.view.state.selection.main.head).toBe(6);
+    expect(undo(again.view)).toBe(true);
+    expect(again.editor.value).toBe('cube(1)\n');
+    expect(onchange).toHaveBeenCalledExactlyOnceWith('cube(1)\n');
+  });
+
+  it("puts the host's text in place of a snapshot's where they differ, undoably", () => {
+    const first = editorOn({ value: 'cube(1)\n' });
+    const snapshot = first.editor.snapshot();
+    // The file changed on disk since the snapshot
+    const { editor, view } = editorOn({ value: 'sphere(2)\n', restore: snapshot });
+    expect(editor.value).toBe('sphere(2)\n');
+    expect(undo(view)).toBe(true);
+    expect(editor.value).toBe('cube(1)\n');
+  });
+
+  it("passes over a snapshot it can't read", () => {
+    const { editor, view } = editorOn({ value: 'cube(1)\n', restore: { doc: 7, history: 'no' } });
+    expect(editor.value).toBe('cube(1)\n');
+    expect(undo(view)).toBe(false);
   });
 
   it('is gone from its box once disposed', () => {

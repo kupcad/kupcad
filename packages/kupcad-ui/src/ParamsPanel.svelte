@@ -3,7 +3,8 @@
   The parameters' controls, from the schema a frame (or `kupcad doc`) gives: grouped by their
   `group:`, each showing the value set in the panel, else the one the run took. `overrides` is
   what the panel sets (bindable), each change (and revert) given to `onchange`, which a host
-  sends to the core; a value refused by the run is shown on its control.
+  sends to the core; a value refused by the run is shown on its control. While any value is set,
+  Reset all reverts them all at once, the panel's refusals with them.
 -->
 <script>
   import ParamField from './ParamField.svelte';
@@ -25,29 +26,52 @@
   let { schema, values = {}, error = null, overrides = $bindable({}), onchange } = $props();
 
   const groups = $derived(groupsOf(schema.parameters));
+  const anySet = $derived(Object.keys(overrides).length > 0);
+  /** How many times all were reset: the fields are made again, and their refusals go. */
+  let resets = $state(0);
 
   /** @param {ParamValues} next */
   function change(next) {
     overrides = next;
     onchange?.(next);
   }
+
+  function resetAll() {
+    resets += 1;
+    change({});
+  }
 </script>
 
 <form class="kc-params" onsubmit={(event) => event.preventDefault()}>
   {#if schema.meta.title}<h2>{schema.meta.title}</h2>{/if}
   {#if schema.meta.description}<p class="description">{schema.meta.description}</p>{/if}
+  {#if anySet}
+    <div class="reset">
+      <button
+        type="button"
+        class="kc-control"
+        title="Every parameter back to the script's value"
+        onclick={resetAll}
+      >
+        Reset all
+      </button>
+    </div>
+  {/if}
   {#snippet fields(/** @type {import('@kupcad/protocol/types').ParamSpec[]} */ parameters)}
-    {#each parameters as spec (spec.name)}
-      <ParamField
-        {spec}
-        value={shownValue(spec, overrides, values)}
-        overridden={isOverridden(overrides, spec.name)}
-        refused={error?.param === spec.name ? error.message : null}
-        refusedAt={error?.param === spec.name ? error.path : []}
-        onset={(value) => change(withOverride(overrides, spec.name, value))}
-        onrevert={() => change(withoutOverride(overrides, spec.name))}
-      />
-    {/each}
+    <!-- Made again on a reset, not the groups around them: a folded one stays so -->
+    {#key resets}
+      {#each parameters as spec (spec.name)}
+        <ParamField
+          {spec}
+          value={shownValue(spec, overrides, values)}
+          overridden={isOverridden(overrides, spec.name)}
+          refused={error?.param === spec.name ? error.message : null}
+          refusedAt={error?.param === spec.name ? error.path : []}
+          onset={(value) => change(withOverride(overrides, spec.name, value))}
+          onrevert={() => change(withoutOverride(overrides, spec.name))}
+        />
+      {/each}
+    {/key}
   {/snippet}
   {#each groups as { group, parameters } (group)}
     {#if group}
@@ -82,6 +106,10 @@
   .empty {
     margin: 0;
     color: var(--kc-muted);
+  }
+  .reset {
+    display: flex;
+    justify-content: flex-end;
   }
   /* Parameters, a line between each (ParamField) */
   .fields {

@@ -10,7 +10,9 @@
   the host's log, as OpenSCAD's does. The parameters' column and the console are resized by the
   bars beside them, and the column hidden by the toolbar's Parameters button (for the model's
   width); their sizes, the column and the view's panel (the Panel button's) hidden or not, and
-  the console folded or not are kept in the host's `settings`, and follow them as they are set.
+  the console folded or not are kept in the host's `settings`, and follow them as they are set;
+  how the view looks too (the pane's view.* keys). A host's own shortcuts (`shortcuts`) are
+  listed before the viewer's in the dialog the pane's bottom bar opens (`shortcutsOpen`).
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -32,6 +34,7 @@
   /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
   /** @import { Settings } from './settings.js' */
+  /** @import { ShortcutGroup } from './shortcuts.js' */
 
   /**
    * @typedef {object} Props
@@ -41,7 +44,10 @@
    * @property {ViewerOptions} [viewerOptions] what the viewer is made with
    * @property {boolean} [presets] whether the host keeps presets, which the panel then offers
    * @property {boolean} [console] whether the console shows under the model
-   * @property {Settings} [settings] where the panes' sizes are kept; by default the page's memory
+   * @property {Settings} [settings] where the panes' sizes, and how the view looks, are kept; by
+   *   default the page's memory
+   * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
+   * @property {boolean} [shortcutsOpen] whether the shortcuts' dialog shows; bindable
    */
 
   /** @type {Props} */
@@ -53,6 +59,8 @@
     presets: offersPresets = true,
     console: showsConsole = true,
     settings = memorySettings(),
+    shortcuts = [],
+    shortcutsOpen = $bindable(false),
   } = $props();
 
   /**
@@ -214,6 +222,9 @@
         model={preview?.model ?? null}
         options={viewerOptions}
         bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
+        {settings}
+        {shortcuts}
+        bind:shortcutsOpen
         status={run}
         {problems}
         onproblem={revealProblem}

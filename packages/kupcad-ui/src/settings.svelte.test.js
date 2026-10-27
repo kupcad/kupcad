@@ -70,6 +70,13 @@ describe('settings', () => {
     stop();
   });
 
+  it('keep a value as it is set, not a proxy of it', () => {
+    const settings = memorySettings();
+    const recent = ['/a', '/b'];
+    settings.set('app.recent', recent);
+    expect(settings.get('app.recent')).toBe(recent);
+  });
+
   it('in localStorage are reactive too, a key kept only later as well', () => {
     const settings = localSettings('kc', storageOf());
     const size = $derived(sizeSetting(settings, 'playground.editor', 460));
