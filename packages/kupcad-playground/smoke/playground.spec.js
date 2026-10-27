@@ -61,3 +61,23 @@ for (const [scheme, background] of /** @type {const} */ ([
     await expect(page.locator('.kc-console')).toHaveCSS('background-color', background);
   });
 }
+
+test("keeps the parameters where they are as a value is set and all reset: Reset all's room is kept", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/');
+  await expect(page.getByRole('status')).toHaveText(/Ready · \d+ ms/, { timeout: 60_000 });
+  const field = page.getByRole('spinbutton', { name: 'Standoff spacing' });
+  const top = async () => (await field.boundingBox())?.y;
+  const before = await top();
+  await expect(page.getByRole('button', { name: 'Reset all' })).toBeHidden();
+  await field.fill('30');
+  await field.press('Enter');
+  await expect(page.getByRole('button', { name: 'Reset all' })).toBeVisible();
+  await expect(page.locator('.kc-params .set')).toHaveText('1 changed');
+  expect(await top()).toBe(before);
+  await page.getByRole('button', { name: 'Reset all' }).click();
+  await expect(page.getByRole('button', { name: 'Reset all' })).toBeHidden();
+  expect(await top()).toBe(before);
+});

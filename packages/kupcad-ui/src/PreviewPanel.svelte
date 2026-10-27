@@ -342,15 +342,18 @@
     flex: 1;
     min-height: 0;
   }
+  /* No space at its top: the parameters' bar, held there as they scroll, has its own */
   .params {
     flex: none;
     overflow: auto;
-    padding: var(--kc-gap);
+    padding: 0 var(--kc-gap) var(--kc-gap);
     border-left: 1px solid var(--kc-border);
   }
   .presets {
     display: flex;
     gap: 4px;
+    /* The column gives no space at its top */
+    padding-top: var(--kc-gap);
     margin-bottom: var(--kc-gap);
   }
   .presets select {

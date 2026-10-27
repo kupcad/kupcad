@@ -309,11 +309,12 @@
     flex: 1;
     min-height: 0;
   }
+  /* No space at its top: the parameters' bar, held there as they scroll, has its own */
   .params {
     flex: none;
     width: var(--params-width);
     overflow: auto;
-    padding: var(--kc-gap);
+    padding: 0 var(--kc-gap) var(--kc-gap);
     border-left: 1px solid var(--kc-border);
   }
   .notice {

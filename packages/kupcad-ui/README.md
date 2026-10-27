@@ -193,8 +193,10 @@ webview and the desktop app to the language server.
   panel's whole width. Each shows the value set in the panel, else
   the one the run took. A value outside the schema's range is refused in the panel, saying why,
   and never leaves it; one the run refused (the frame's `error.param`) is shown on its control.
-  A value set is marked and can be reverted, which takes its refusal away too (all at once,
-  Reset all, while any is set); a refusal is the
+  A value set is marked and can be reverted, which takes its refusal away too (all at once:
+  Reset all, in a bar at the panel's top, held there as it scrolls, which says how many are
+  set; the button keeps its room while none is, so nothing under the bar moves as the first is
+  set or the last reverted, and a host's column leaves the bar its top); a refusal is the
   control's description for a screen reader too, after the parameter's (`aria-describedby`,
   `aria-invalid`). A choice
   with no value yet (the script computes its default, and no run took one) shows none.

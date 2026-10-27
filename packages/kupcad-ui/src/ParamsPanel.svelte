@@ -3,8 +3,10 @@
   The parameters' controls, from the schema a frame (or `kupcad doc`) gives: grouped by their
   `group:`, each showing the value set in the panel, else the one the run took. `overrides` is
   what the panel sets (bindable), each change (and revert) given to `onchange`, which a host
-  sends to the core; a value refused by the run is shown on its control. While any value is set,
-  Reset all reverts them all at once, the panel's refusals with them.
+  sends to the core; a value refused by the run is shown on its control. A bar at the top, held
+  there as the panel scrolls, says how many values are set; while any is, its Reset all reverts
+  them all at once, the panel's refusals with them. The button keeps its place when there is
+  nothing to reset, so nothing under the bar moves as a first value is set or the last reverted.
 -->
 <script>
   import ParamField from './ParamField.svelte';
@@ -26,7 +28,7 @@
   let { schema, values = {}, error = null, overrides = $bindable({}), onchange } = $props();
 
   const groups = $derived(groupsOf(schema.parameters));
-  const anySet = $derived(Object.keys(overrides).length > 0);
+  const set = $derived(Object.keys(overrides).length);
   /** How many times all were reset: the fields are made again, and their refusals go. */
   let resets = $state(0);
 
@@ -43,20 +45,21 @@
 </script>
 
 <form class="kc-params" onsubmit={(event) => event.preventDefault()}>
+  <div class="bar">
+    <span class="set">{set === 0 ? "The script's values" : `${set} changed`}</span>
+    <!-- Unseen, not gone, while nothing is set: its room kept, out of reach of the keys -->
+    <button
+      type="button"
+      class="kc-control reset"
+      title="Every parameter back to the script's value"
+      style:visibility={set > 0 ? null : 'hidden'}
+      onclick={resetAll}
+    >
+      Reset all
+    </button>
+  </div>
   {#if schema.meta.title}<h2>{schema.meta.title}</h2>{/if}
   {#if schema.meta.description}<p class="description">{schema.meta.description}</p>{/if}
-  {#if anySet}
-    <div class="reset">
-      <button
-        type="button"
-        class="kc-control"
-        title="Every parameter back to the script's value"
-        onclick={resetAll}
-      >
-        Reset all
-      </button>
-    </div>
-  {/if}
   {#snippet fields(/** @type {import('@kupcad/protocol/types').ParamSpec[]} */ parameters)}
     <!-- Made again on a reset, not the groups around them: a folded one stays so -->
     {#key resets}
@@ -107,9 +110,29 @@
     margin: 0;
     color: var(--kc-muted);
   }
-  .reset {
+  /* Always there, a line under it, held at the top of the column as it scrolls: its own space
+     above it, so what scrolls under it shows nowhere above it (a host's column gives none) */
+  .bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--kc-gap);
+    padding: var(--kc-gap) 0 6px;
+    background: var(--kc-bg);
+    border-bottom: 1px solid var(--kc-border);
+  }
+  .set {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--kc-muted);
+  }
+  .reset {
+    flex: none;
   }
   /* Parameters, a line between each (ParamField) */
   .fields {

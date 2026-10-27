@@ -113,6 +113,33 @@ describe('ParamsPanel', () => {
     expect(resetAll()).toBeNull();
   });
 
+  it('keeps Reset all in its bar, unseen until a value is set: its room is always there', async () => {
+    await panel();
+    const bar = document.querySelector('.kc-params')?.firstElementChild;
+    const button = /** @type {HTMLButtonElement} */ (bar?.querySelector('button'));
+    const set = () => bar?.querySelector('.set')?.textContent;
+    // The bar comes first, before the script's title; with nothing set, the button is there,
+    // unseen and out of the keys' reach
+    expect(bar?.classList.contains('bar')).toBe(true);
+    expect([set(), button.style.visibility, resetAll()]).toEqual([
+      "The script's values",
+      'hidden',
+      null,
+    ]);
+    await fireEvent.change(numberField('width'), { target: { value: '30' } });
+    await fireEvent.change(numberField('Height'), { target: { value: '6' } });
+    expect(set()).toBe('2 changed');
+    // The same button, shown where it was
+    expect(resetAll()).toBe(button);
+    expect(button.style.visibility).toBe('');
+    await fireEvent.click(button);
+    expect([set(), button.isConnected, button.style.visibility]).toEqual([
+      "The script's values",
+      true,
+      'hidden',
+    ]);
+  });
+
   it("takes the panel's refusals away with them, its folded groups left folded", async () => {
     await panel();
     await fireEvent.change(numberField('width'), { target: { value: '40' } });
