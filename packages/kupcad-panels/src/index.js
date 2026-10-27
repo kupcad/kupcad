@@ -9,6 +9,7 @@ export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as Splitter } from './Splitter.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
 export { appendLines, linesOfLog, linesOfRun } from './console.js';
+export { fillOf } from './range.js';
 export { problemsOf, runStatusOf } from './run-status.js';
 export { localSettings, memorySettings, sizeSetting } from './settings.js';
 export { watchTokens } from './theme.js';

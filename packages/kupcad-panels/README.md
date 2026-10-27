@@ -96,7 +96,15 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
   view's panel shows, and its console's height and state
   (`preview.*`) in the `settings` it is given.
 * **Tokens**: the panels are styled by `--kc-*` variables, light and dark as the page's colour
-  scheme is (`tokens.css`); a host sets its own, as `vscode.css` maps VS Code's theme over them.
+  scheme is (`tokens.css`): the KupCAD brand, its orangered accent on white or the brand black,
+  gainsboro for the surfaces. The accent is a fill, the brand black the text on it
+  (`--kc-accent-fg`: white on the orange is too faint), and orange as text on the background is
+  `--kc-accent-text`, a darker orange in light; `--kc-control-border` is a field's edge,
+  `--kc-focus` its focus ring, `--kc-accent-subtle` what is chosen in a list. `tokens.test.js`
+  holds every pair to WCAG's 4.5:1 for text and 3:1 for a control's edge, in both schemes, and
+  every colour token to a mapping in `vscode.css`.
+  A host sets its own, as `vscode.css` maps VS Code's theme over them: the webview follows the
+  editor's theme, never the brand.
   `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads each as the page draws it,
   opaque: any CSS colour, a `color-mix()` or an `oklch()` too, which three.js can't read); left
   unset, or set to no colour, it uses its own colours. The pane follows them as the page changes them
@@ -105,7 +113,11 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 * **Controls**: a button, select or field the panels draw is a `.kc-control` (`controls.css`,
   which `tokens.css` brings): a host's own take the class to look alike, the `actions` it puts
   in the pane's toolbar among them, which the pane's own styles, scoped to its markup, never
-  reached.
+  reached. A toggle while on (`aria-pressed`, `aria-expanded`) is tinted and edged in the
+  accent; `.kc-primary` makes one the bar's leading action, the accent's fill.
+  A range input is a `.kc-range` and a checkbox a `.kc-check`, drawn the same in each browser
+  and webview: a range's track is filled to its thumb by its `--kc-range-fill`, which a host
+  sets from its value with `fillOf(value, min, max)` (WebKit and Blink fill none themselves).
 
 Tests mount the panels under jsdom (@kupcad/viewer's `testing` setup and its `stubRenderer`),
 with the schemas and models the real core gives through @kupcad/wasm.

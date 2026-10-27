@@ -1,13 +1,16 @@
 /*
   A control as the panels draw theirs (a button, a select, a field), by the --kc-* tokens: what a
   host gives its own beside them to look alike, a toolbar's actions say. A panel's own styles are
-  scoped to its markup, so a host's buttons in a panel's toolbar got none of them.
+  scoped to its markup, so a host's buttons in a panel's toolbar got none of them. A range input
+  and a checkbox are drawn here too (.kc-range, .kc-check), the same in each browser and webview:
+  left to the browser, a slider is its own blue, and `accent-color` puts a white tick on the
+  orange. Classes, not elements: a host's page keeps its own inputs as they are.
 */
 .kc-control {
   font: inherit;
   color: var(--kc-fg);
   background: var(--kc-input-bg);
-  border: 1px solid var(--kc-border);
+  border: 1px solid var(--kc-control-border);
   border-radius: var(--kc-radius);
   padding: 2px 8px;
 }
@@ -17,10 +20,164 @@ select.kc-control {
   cursor: pointer;
 }
 
-/* A toggle while on, and a pane's toggle while the pane shows */
+button.kc-control:hover:not(:disabled) {
+  background: var(--kc-hover);
+}
+
+/*
+  A toggle while on, and a pane's toggle while the pane shows: tinted, its edge in the accent.
+  Several are on at once (a view's edges, axes and grid, the panes shown), and filled they made
+  a bar of solid orange; the fill is kept for what there is one of: the bar's leading action.
+*/
 .kc-control[aria-pressed='true'],
 .kc-control[aria-expanded='true'] {
+  color: var(--kc-fg);
+  background: var(--kc-accent-subtle);
+  border-color: var(--kc-accent);
+}
+
+button.kc-control[aria-pressed='true']:hover:not(:disabled),
+button.kc-control[aria-expanded='true']:hover:not(:disabled) {
+  background: var(--kc-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--kc-accent);
+}
+
+/* The one action a bar leads with (Save): the accent's fill */
+.kc-control.kc-primary {
+  font-weight: 600;
   color: var(--kc-accent-fg);
   background: var(--kc-accent);
   border-color: var(--kc-accent);
+}
+
+button.kc-control.kc-primary:hover:not(:disabled) {
+  background: var(--kc-accent-hover);
+  border-color: var(--kc-accent-hover);
+}
+
+/* With nothing to do, as any control with nothing to do: faded orange read as a colour of its own */
+.kc-control.kc-primary:disabled {
+  color: var(--kc-fg);
+  background: var(--kc-input-bg);
+  border-color: var(--kc-control-border);
+}
+
+.kc-control:disabled,
+.kc-range:disabled,
+.kc-check:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.kc-control:focus-visible,
+.kc-check:focus-visible {
+  outline: 2px solid var(--kc-focus);
+  outline-offset: 1px;
+}
+
+/*
+  A range input: the track filled to the thumb in the accent. WebKit and Blink draw no fill of
+  their own, so the panel sets --kc-range-fill (how far along the thumb is, `fillOf`) as it
+  moves; Firefox draws it as the range's progress.
+*/
+.kc-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.kc-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--kc-accent) 0 var(--kc-range-fill, 0%),
+    var(--kc-track) var(--kc-range-fill, 0%) 100%
+  );
+}
+.kc-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--kc-accent);
+  border: 2px solid var(--kc-bg);
+  box-shadow: 0 0 0 1px var(--kc-accent);
+}
+.kc-range::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--kc-track);
+}
+.kc-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--kc-accent);
+}
+.kc-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--kc-accent);
+  border: 2px solid var(--kc-bg);
+  box-shadow: 0 0 0 1px var(--kc-accent);
+}
+.kc-range:hover:not(:disabled)::-webkit-slider-thumb {
+  background: var(--kc-accent-hover);
+}
+.kc-range:hover:not(:disabled)::-moz-range-thumb {
+  background: var(--kc-accent-hover);
+}
+/* Its focus is the thumb's ring: an outline round the whole track says less of where it is */
+.kc-range:focus-visible {
+  outline: none;
+}
+.kc-range:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 1px var(--kc-accent),
+    0 0 0 4px var(--kc-focus);
+}
+.kc-range:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 1px var(--kc-accent),
+    0 0 0 4px var(--kc-focus);
+}
+
+/* A checkbox: the brand black tick on the accent once checked */
+.kc-check {
+  -webkit-appearance: none;
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  background: var(--kc-input-bg);
+  border: 1px solid var(--kc-control-border);
+  border-radius: var(--kc-radius);
+  cursor: pointer;
+}
+.kc-check::before {
+  content: '';
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid var(--kc-accent-fg);
+  border-bottom: 2px solid var(--kc-accent-fg);
+  transform: translateY(-1px) rotate(-45deg);
+  visibility: hidden;
+}
+.kc-check:checked {
+  background: var(--kc-accent);
+  border-color: var(--kc-accent);
+}
+.kc-check:checked::before {
+  visibility: visible;
 }

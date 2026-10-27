@@ -15,6 +15,7 @@
   import { RENDER_MODES } from '@kupcad/viewer';
   import { Viewer } from '@kupcad/viewer/svelte';
   import { faceLine, partMeasures, partTitle } from './measures.js';
+  import { fillOf } from './range.js';
   import { describeRun } from './run-status.js';
   import { watchTokens } from './theme.js';
 
@@ -192,7 +193,9 @@
 
 <div class="kc-viewer-pane" bind:this={root}>
   <div class="toolbar">
-    <label><input type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label>
+    <label
+      ><input class="kc-check" type="checkbox" bind:checked={sectioned} disabled={!span} /> Section</label
+    >
     {#if sectioned && span}
       <select
         class="kc-control"
@@ -205,11 +208,13 @@
         {/each}
       </select>
       <input
+        class="kc-range"
         type="range"
         aria-label="Section offset"
         min={span.min}
         max={span.max}
         step={(span.max - span.min) / SECTION_STEPS || 'any'}
+        style:--kc-range-fill={fillOf(offset, span.min, span.max)}
         bind:value={offset}
       />
     {/if}
@@ -511,9 +516,9 @@
     text-align: left;
     cursor: pointer;
   }
+  /* Tinted as a list's choice is (the desktop app's tree too), its edge in the accent */
   .parts button[aria-pressed='true'] {
-    color: var(--kc-accent-fg);
-    background: var(--kc-accent);
+    background: var(--kc-accent-subtle);
     border-color: var(--kc-accent);
   }
   .none {
@@ -531,9 +536,6 @@
   }
   .count {
     color: var(--kc-muted);
-  }
-  [aria-pressed='true'] .count {
-    color: inherit;
   }
   /* How the run went, and what it said went wrong: a few lines, scrolled past them */
   .run {

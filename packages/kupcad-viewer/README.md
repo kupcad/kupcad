@@ -84,7 +84,9 @@ const png = await viewer.screenshot();
 * **Draco:** a model built with `--draco` needs `dracoDecoderPath`, where three.js's decoder files
   are; the decoder is loaded only when a model needs it.
 * **Themes** are colours (`LIGHT`, `DARK`, or a host's own, as the VS Code webview maps its
-  `--vscode-*` variables). A line takes the colour for what it is drawn on: `edges` over a
+  `--vscode-*` variables). `LIGHT` and `DARK` are the KupCAD brand's: a selection in its
+  orangered on the neutrals of `@kupcad/panels`'s tokens, a section's cap in dodgerblue so no
+  other warm colour reads as the selection. A line takes the colour for what it is drawn on: `edges` over a
   solid's faces, `wire` on the background (a wireframe's edges, a drawing's outlines), so a dark
   theme's dark edges don't vanish in a wireframe.
 

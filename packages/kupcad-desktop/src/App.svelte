@@ -249,7 +249,7 @@
         <span class="script">{open.name}{unsaved.has(open.path) ? ' ●' : ''}</span>
         <button
           type="button"
-          class="kc-control"
+          class="kc-control kc-primary"
           disabled={!unsaved.has(open.path)}
           onclick={saveScript}
         >
@@ -313,7 +313,9 @@
     <div class="welcome">
       <h1>KupCAD</h1>
       <p>Open a folder of scripts: they are edited here, and their models shown beside them.</p>
-      <button type="button" class="kc-control" onclick={() => openFolder()}>Open folder…</button>
+      <button type="button" class="kc-control kc-primary" onclick={() => openFolder()}>
+        Open folder…
+      </button>
     </div>
   {/if}
 </div>

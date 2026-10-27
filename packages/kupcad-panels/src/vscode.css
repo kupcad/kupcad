@@ -1,7 +1,9 @@
 /*
   The --kc-* tokens as VS Code's theme sets its own, for the extension's webview: the panels and
-  the viewer follow the editor's theme. The defaults underneath give what VS Code has no token
-  for (the radius, the gap). The accent is a button's colours, a pair VS Code keeps legible.
+  the viewer follow the editor's theme, not KupCAD's brand, which would fight the editor around
+  them. The defaults underneath give what VS Code has no token for (the radius, the gap). The
+  accent is a button's colours, a pair VS Code keeps legible; orange as text becomes a link's
+  colour, a focus ring VS Code's own.
 */
 @import './tokens.css';
 
@@ -12,9 +14,19 @@
   --kc-fg: var(--vscode-foreground);
   --kc-muted: var(--vscode-descriptionForeground);
   --kc-border: var(--vscode-panel-border, var(--vscode-widget-border));
+  --kc-control-border: var(
+    --vscode-input-border,
+    var(--vscode-checkbox-border, var(--vscode-widget-border))
+  );
   --kc-input-bg: var(--vscode-input-background);
+  --kc-hover: var(--vscode-list-hoverBackground);
   --kc-accent: var(--vscode-button-background);
   --kc-accent-fg: var(--vscode-button-foreground);
+  --kc-accent-hover: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+  --kc-accent-text: var(--vscode-textLink-foreground);
+  --kc-accent-subtle: var(--vscode-list-inactiveSelectionBackground);
+  --kc-focus: var(--vscode-focusBorder);
+  --kc-track: var(--vscode-scrollbarSlider-background, var(--vscode-panel-border));
   --kc-error: var(--vscode-errorForeground);
   --kc-warning: var(--vscode-editorWarning-foreground);
   --kc-section-bg: var(

@@ -34,3 +34,30 @@ test('runs the example in the browser: its model, its parts and parameters; an e
   await expect(page.getByRole('list', { name: 'Problems' })).toContainText('boom');
   expect(errors).toEqual([]);
 });
+
+// @kupcad/panels's tokens as the page's colour scheme is: the brand's orange accent on white or
+// on the brand black, and a slider's track filled to its thumb (WebKit and Blink fill none)
+for (const [scheme, background] of /** @type {const} */ ([
+  ['light', 'rgb(255, 255, 255)'],
+  ['dark', 'rgb(26, 27, 28)'],
+])) {
+  test(`wears the KupCAD tokens in a ${scheme} colour scheme, its sliders filled to their thumbs`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto('/');
+    const slider = page.getByRole('slider', { name: 'Standoff spacing slider' });
+    await expect(slider).toBeVisible({ timeout: 60_000 });
+    const look = await slider.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        accent: style.getPropertyValue('--kc-accent').trim(),
+        fill: style.getPropertyValue('--kc-range-fill').trim(),
+      };
+    });
+    // 20 of 15 to 35: a quarter along
+    expect(look).toEqual({ accent: '#ff5f14', fill: '25%' });
+    await expect(page.locator('.kc-console')).toHaveCSS('background-color', background);
+  });
+}

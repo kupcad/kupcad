@@ -148,11 +148,11 @@
     margin-right: 4px;
   }
   button:hover {
-    background: var(--kc-hover, rgba(127, 127, 127, 0.12));
+    background: var(--kc-hover);
   }
+  /* Tinted, its text as any row's: a full accent row outshouts the editor beside it */
   button.selected {
-    color: var(--kc-accent-fg);
-    background: var(--kc-accent);
+    background: var(--kc-accent-subtle);
   }
   .unsaved {
     margin-left: 4px;

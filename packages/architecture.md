@@ -320,9 +320,10 @@ The panels a host places around an editor, as Svelte 5 components:
 
 They talk only in protocol types and Svelte props and callbacks (`onchange={(values) => ...}`),
 hold no engine and fetch nothing. A host wires them: the playground to its worker, the extension's
-webview to its message bridge. Tokens (`--kc-*` CSS variables, `tokens.css`) give them one look;
-a `vscode.css` maps VS Code's variables onto them so the webview follows the editor's theme, and
-`--kc-viewer-*` theme the viewer. They are tested mounted under jsdom with the viewer's `testing`
+webview to its message bridge. Tokens (`--kc-*` CSS variables, `tokens.css`) give them one look,
+the KupCAD brand (orangered, black, gainsboro) in the playground and the desktop app, each pair
+held to WCAG's contrast by a test; a `vscode.css` maps VS Code's variables onto them so the
+webview follows the editor's theme instead, and `--kc-viewer-*` theme the viewer. They are tested mounted under jsdom with the viewer's `testing`
 setup and the real core's schemas and models; the binding a host makes (`bind:selected`) is
 tested through reactive state, as a parent's `$state` is.
 

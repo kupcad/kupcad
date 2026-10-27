@@ -21,6 +21,7 @@
     validate,
     withPart,
   } from './params.js';
+  import { fillOf } from './range.js';
 
   /** @import { ParamSpec, PathStep, Rule } from '@kupcad/protocol/types' */
   /** @import { Value } from './params.js' */
@@ -101,6 +102,15 @@
 
   /** @param {Event} event */
   const inputOf = (event) => /** @type {HTMLInputElement} */ (event.currentTarget).value;
+
+  /**
+   * Fills a slider's track to its thumb as it is dragged: its value is given only once let go.
+   * @param {Event} event
+   */
+  function dragged(event) {
+    const slider = /** @type {HTMLInputElement} */ (event.currentTarget);
+    slider.style.setProperty('--kc-range-fill', fillOf(slider.value, slider.min, slider.max));
+  }
 </script>
 
 <!--
@@ -118,12 +128,15 @@
   {@const give = (/** @type {Value} */ input) => commit(withPart(value, path, input))}
   {#if kind === 'slider'}
     <input
+      class="kc-range"
       type="range"
       min={rule.min}
       max={rule.max}
       step={stepOf(rule)}
       value={shown ?? ''}
+      style:--kc-range-fill={fillOf(shown, rule.min, rule.max)}
       aria-label="{named['aria-label'] ?? label} slider"
+      oninput={dragged}
       onchange={(event) => give(inputOf(event))}
       {...described(path)}
     />
@@ -157,6 +170,7 @@
   {:else if kind === 'toggle'}
     <input
       {...named}
+      class="kc-check"
       type="checkbox"
       checked={shown === true}
       onchange={(event) => give(event.currentTarget.checked)}
@@ -318,7 +332,7 @@
   .remove,
   .add {
     font: inherit;
-    color: var(--kc-accent);
+    color: var(--kc-accent-text);
     background: none;
     border: none;
     cursor: pointer;

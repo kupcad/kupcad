@@ -132,7 +132,8 @@
   .place:hover .at {
     text-decoration: underline;
   }
+  /* Where the line points, a link to it in the editor */
   .at {
-    color: var(--kc-muted);
+    color: var(--kc-accent-text);
   }
 </style>
