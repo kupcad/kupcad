@@ -12,16 +12,16 @@
 -->
 <script>
   import { onMount } from 'svelte';
-  import { RENDER_MODES } from '@kupcad/viewer';
-  import { Viewer } from '@kupcad/viewer/svelte';
+  import { RENDER_MODES } from './viewer/index.js';
+  import Viewer from './Viewer.svelte';
   import { faceLine, partMeasures, partTitle } from './measures.js';
   import { fillOf } from './range.js';
   import { describeRun } from './run-status.js';
   import { watchTokens } from './theme.js';
 
   /** @import { Model, Part } from '@kupcad/protocol/types' */
-  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from '@kupcad/viewer/types' */
-  /** @import { Viewer as ViewerClass } from '@kupcad/viewer' */
+  /** @import { Axis, Bounds, Environment, HoverDetail, RenderMode, Section, Theme, View, ViewerOptions } from './viewer/types.js' */
+  /** @import { Viewer as ViewerClass } from './viewer/index.js' */
   /** @import { Snippet } from 'svelte' */
   /** @import { Problem, RunStatus } from './run-status.js' */
 

@@ -7,12 +7,12 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { load } from '@tauri-apps/plugin-store';
-import { memorySettings } from '@kupcad/panels';
+import { memorySettings } from '@kupcad/ui';
 import { files, listFolder, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
-/** @import { Settings } from '@kupcad/panels' */
+/** @import { Settings } from '@kupcad/ui' */
 /** @import { Entry } from './folder.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */

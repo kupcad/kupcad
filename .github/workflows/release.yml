@@ -17,7 +17,7 @@ permissions:
 
 env:
   # The packages published to npm as @kupcad/<name>, each after those it depends on
-  NPM_PACKAGES: protocol wasm viewer editor panels playground
+  NPM_PACKAGES: protocol wasm ui editor playground
 
 jobs:
   version:
@@ -337,13 +337,13 @@ jobs:
       - name: Copy it into @kupcad/wasm
         run: pnpm --filter @kupcad/wasm build
 
-      # The packages that run the module, on the shrunk one: in Node, and the playground in
-      # headless Chromium as a site embeds it
+      # The packages that run the module, on the shrunk one: in Node, and the viewer and the
+      # playground in headless Chromium as a site embeds them
       - name: Test them on it
         run: |
-          pnpm --filter @kupcad/wasm --filter @kupcad/playground test
+          pnpm --filter @kupcad/wasm --filter @kupcad/ui --filter @kupcad/playground test
           pnpm --filter @kupcad/playground exec playwright install --with-deps chromium
-          pnpm --filter @kupcad/playground test:browser
+          pnpm --filter @kupcad/ui --filter @kupcad/playground test:browser
 
       # pnpm pack turns workspace:* into the version each is published at
       - name: Pack them

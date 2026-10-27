@@ -29,7 +29,7 @@
     sizeSetting,
     Splitter,
     ViewerPane,
-  } from '@kupcad/panels';
+  } from '@kupcad/ui';
   import { createKupcadWorker } from '@kupcad/wasm';
   import { download } from './download.js';
   import { marksOf } from './marks.js';
@@ -37,8 +37,8 @@
 
   /** @import { Editor as EditorClass } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-  /** @import { ConsoleLine, Problem, Settings } from '@kupcad/panels' */
-  /** @import { ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { ConsoleLine, Problem, Settings } from '@kupcad/ui' */
+  /** @import { ViewerOptions } from '@kupcad/ui/viewer/types' */
   /** @import { KupcadApi, WorkerWasmSource } from '@kupcad/wasm/types' */
 
   /**

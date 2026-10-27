@@ -22,7 +22,7 @@ export default defineConfig({
           ...SVELTE_TESTS,
           name: 'webview',
           include: ['src/webview/**/*.test.js'],
-          setupFiles: ['@kupcad/viewer/testing'],
+          setupFiles: ['@kupcad/ui/testing'],
         },
       },
     ],

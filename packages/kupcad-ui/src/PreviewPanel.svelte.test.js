@@ -1,4 +1,4 @@
-import { stubRenderer } from '@kupcad/viewer/testing';
+import { stubRenderer } from './viewer/testing.js';
 import { testCore } from '@kupcad/wasm/testing';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';

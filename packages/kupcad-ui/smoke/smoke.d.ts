@@ -1,6 +1,6 @@
 // The hooks the smoke page gives the test.
 
-import type { Section, View, Projection } from '../src/types.js';
+import type { Section, View, Projection } from '../src/viewer/types.js';
 
 declare global {
   interface Window {

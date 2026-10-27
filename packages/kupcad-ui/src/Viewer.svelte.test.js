@@ -1,12 +1,12 @@
 import { render } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
-import { dracoModelOf, modelOf } from './models.test-helper.js';
-import { stubRenderer } from './testing.js';
-import { DARK, LIGHT } from './theme.js';
+import { dracoModelOf, modelOf } from './viewer/models.test-helper.js';
+import { stubRenderer } from './viewer/testing.js';
+import { DARK, LIGHT } from './viewer/theme.js';
 import ViewerComponent from './Viewer.svelte';
-import { ViewerError } from './viewer.js';
+import { ViewerError } from './viewer/viewer.js';
 
-/** @import { Viewer } from './viewer.js' */
+/** @import { Viewer } from './viewer/viewer.js' */
 
 it('makes a Viewer on its canvas, in the state its props give, binds the part clicked, and frees it unmounted', async () => {
   const { renderer, drawn } = stubRenderer();

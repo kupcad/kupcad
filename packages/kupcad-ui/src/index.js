@@ -1,12 +1,15 @@
-// @kupcad/panels: the panels a KupCAD host shows beside its editor, and a language server's preview
-// (PreviewPanel, over its viewport socket, connectViewport). Styled by the --kc-* tokens of
-// `@kupcad/panels/tokens.css` (or `@kupcad/panels/vscode.css` in VS Code's webview), which a page loads.
+// @kupcad/ui, for Svelte: the viewer (Viewer), the panels a KupCAD host shows beside its editor,
+// and a language server's preview (PreviewPanel, over its viewport socket, connectViewport).
+// Styled by the --kc-* tokens of `@kupcad/ui/tokens.css` (or `@kupcad/ui/vscode.css` in VS
+// Code's webview), which a page loads. The viewer for any host, Svelte or not, is
+// `@kupcad/ui/viewer`.
 
 export { default as ConsolePanel } from './ConsolePanel.svelte';
 export { default as ExportMenu } from './ExportMenu.svelte';
 export { default as ParamsPanel } from './ParamsPanel.svelte';
 export { default as PreviewPanel } from './PreviewPanel.svelte';
 export { default as Splitter } from './Splitter.svelte';
+export { default as Viewer } from './Viewer.svelte';
 export { default as ViewerPane } from './ViewerPane.svelte';
 export { appendLines, linesOfLog, linesOfRun } from './console.js';
 export { fillOf } from './range.js';

@@ -1,8 +1,8 @@
-// The app's page in Tauri's webview: @kupcad/panels's tokens (light or dark as the system is) and the
+// The app's page in Tauri's webview: @kupcad/ui's tokens (light or dark as the system is) and the
 // window, on Tauri's services, laid out as the app's settings keep it.
 
-import '@kupcad/panels/tokens.css';
-import { memorySettings } from '@kupcad/panels';
+import '@kupcad/ui/tokens.css';
+import { memorySettings } from '@kupcad/ui';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { tauri } from './platform.js';

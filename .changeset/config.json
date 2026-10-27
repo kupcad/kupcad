@@ -9,8 +9,7 @@
   "ignore": [
     "@kupcad/protocol",
     "@kupcad/wasm",
-    "@kupcad/viewer",
-    "@kupcad/panels",
+    "@kupcad/ui",
     "@kupcad/editor",
     "@kupcad/playground"
   ],

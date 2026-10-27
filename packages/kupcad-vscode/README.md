@@ -122,7 +122,7 @@ Two programs, built separately by Vite:
   each script was given, which the server runs it with and an export builds it with, and
   `webview-html.js` writes its page's Content Security Policy. Built into `dist/extension.cjs`,
   the language client in it.
-* **The page** (`src/webview/`, in the panel): `@kupcad/panels`'s `PreviewPanel`, which reads the
+* **The page** (`src/webview/`, in the panel): `@kupcad/ui`'s `PreviewPanel`, which reads the
   server's frames from its socket itself (each run in its console too: what the script printed,
   its warnings and its error), themed by VS Code's colours (`vscode.css`);
   `bridge.js` is its host, over the webview's messages. Built into `dist-webview/`.
@@ -160,8 +160,8 @@ pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/, o
 ```
 
 With `watch` running, a change to the host needs the window reloaded (`Developer: Reload
-Window`), one to the page (`src/webview/`, or `@kupcad/panels` and `@kupcad/viewer`, which it
-bundles) `Developer: Reload Webviews`. A change to the core needs `pnpm build:core:native`, then
+Window`), one to the page (`src/webview/`, or `@kupcad/ui`, which it bundles) `Developer: Reload
+Webviews`. A change to the core needs `pnpm build:core:native`, then
 the window reloaded, which starts the language server again. The webview's own developer tools
 are `Developer: Open Webview Developer Tools`; the host logs to the `KupCAD` output.
 

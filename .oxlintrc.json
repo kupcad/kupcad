@@ -14,5 +14,24 @@
   "env": {
     "es2024": true
   },
-  "ignorePatterns": ["**/dist/**", "**/dist-webview/**"]
+  "ignorePatterns": ["**/dist/**", "**/dist-webview/**"],
+  "overrides": [
+    {
+      // @kupcad/ui/viewer is for any host: none of the package's Svelte, nor the rest of it
+      "files": ["packages/kupcad-ui/src/viewer/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["svelte", "svelte/*", "*.svelte", "../*", "@kupcad/ui", "@kupcad/ui/*"],
+                "message": "@kupcad/ui/viewer is for any host: it imports neither Svelte nor the rest of @kupcad/ui"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
 }

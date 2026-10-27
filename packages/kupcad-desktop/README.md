@@ -47,7 +47,7 @@ Windows warn before they open one; signing needs the certificates as the reposit
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its
   scripts and the files they read, in its folders however deep, hidden folders such as `.git`
   and `.kupcad` left out), the script open in `@kupcad/editor` with the language server's
-  features, and `@kupcad/panels`'s
+  features, and `@kupcad/ui`'s
   `PreviewPanel` (the model, the run's problems, the parameters). A script's edits are kept until
   it is saved (⌘S, Ctrl+S), marked in the tree and the bar until then; the window asks before it
   closes, or opens another folder, on unsaved changes. A folder in the tree opens and closes
@@ -61,7 +61,7 @@ Windows warn before they open one; signing needs the certificates as the reposit
   parameters; the sizes, and which panes are hidden, are kept in the app's settings
   file (`settings.json` in its config folder, macOS's `~/Library/Application Support/
   dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out,
-  each change written to it, and followed as they are set (`@kupcad/panels`' reactive
+  each change written to it, and followed as they are set (`@kupcad/ui`'s reactive
   `memorySettings` under them). It
   takes its services as a prop
   (`platform.js`, Tauri's), so its tests give it stand-ins.

@@ -1,9 +1,9 @@
 import { EditorView } from '@codemirror/view';
-import { stubRenderer } from '@kupcad/viewer/testing';
+import { stubRenderer } from '@kupcad/ui/testing';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { memorySettings } from '@kupcad/panels';
+import { memorySettings } from '@kupcad/ui';
 import App from './App.svelte';
 import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';

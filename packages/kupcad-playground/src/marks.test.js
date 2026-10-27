@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 import { marksOf } from './marks.js';
 
 /** @import { Finding } from '@kupcad/protocol/types' */
-/** @import { Problem } from '@kupcad/panels' */
+/** @import { Problem } from '@kupcad/ui' */
 
 /** @param {Partial<Finding>} finding */
 const findingOf = (finding) =>

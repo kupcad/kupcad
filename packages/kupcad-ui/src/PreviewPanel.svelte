@@ -28,7 +28,7 @@
   import { connectViewport } from './viewport-socket.js';
 
   /** @import { ExportFormat, ParamValues, Preview, ShownDocument, ViewerHost } from '@kupcad/protocol/types' */
-  /** @import { ViewerOptions } from '@kupcad/viewer/types' */
+  /** @import { ViewerOptions } from './viewer/types.js' */
   /** @import { ConsoleLine } from './console.js' */
   /** @import { Problem } from './run-status.js' */
   /** @import { Settings } from './settings.js' */

@@ -3,9 +3,9 @@
 // token left unset, or set to no colour the page reads, takes the viewer's own colour, LIGHT or
 // DARK as the page's colour scheme is.
 
-import { DARK, LIGHT } from '@kupcad/viewer';
+import { DARK, LIGHT } from './viewer/index.js';
 
-/** @import { Theme } from '@kupcad/viewer/types' */
+/** @import { Theme } from './viewer/types.js' */
 
 /** Each colour of a viewer's theme, by the token that sets it. */
 const TOKENS = /** @type {const} */ ({

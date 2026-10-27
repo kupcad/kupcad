@@ -1,4 +1,4 @@
-// The shapes of @kupcad/viewer's API. The model it shows is @kupcad/protocol's.
+// The shapes of @kupcad/ui/viewer's API. The model it shows is @kupcad/protocol's.
 
 import type { Camera, Color, Group, LineBasicMaterial, LineSegments, Mesh, Object3D } from 'three';
 

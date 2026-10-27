@@ -16,8 +16,8 @@
   },
   "dependencies": {
     "@kupcad/editor": "workspace:*",
-    "@kupcad/panels": "workspace:*",
     "@kupcad/protocol": "workspace:*",
+    "@kupcad/ui": "workspace:*",
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2.8.3",
     "@tauri-apps/plugin-fs": "^2.7.1",
@@ -25,7 +25,6 @@
   },
   "devDependencies": {
     "@codemirror/view": "^6.43.15",
-    "@kupcad/viewer": "workspace:*",
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@tauri-apps/cli": "^2.12.4",
     "@testing-library/svelte": "catalog:",

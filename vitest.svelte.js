@@ -1,4 +1,4 @@
-// The test settings of a package of Svelte components (@kupcad/viewer, @kupcad/panels), which its
+// The test settings of a package of Svelte components (@kupcad/ui, and each that mounts it), which its
 // Vitest config spreads, adding what jsdom needs set up first (`setupFiles`): the tests mount
 // the components under jsdom, on models the real core makes. Typed where they are spread: the
 // root has no Vitest of its own to type them by.

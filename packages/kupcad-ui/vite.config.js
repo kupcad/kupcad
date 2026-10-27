@@ -5,5 +5,6 @@ import { SVELTE_TESTS } from '../../vitest.svelte.js';
 
 export default defineConfig({
   plugins: [svelte({ configFile: false }), svelteTesting()],
-  test: { ...SVELTE_TESTS, setupFiles: ['src/testing.js'] },
+  // The components' tests mount the viewer; what jsdom lacks for it, set up first
+  test: { ...SVELTE_TESTS, setupFiles: ['src/viewer/testing.js'] },
 });

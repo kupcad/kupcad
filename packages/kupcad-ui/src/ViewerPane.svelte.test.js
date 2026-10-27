@@ -1,12 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { stubRenderer } from '@kupcad/viewer/testing';
+import { stubRenderer } from './viewer/testing.js';
 import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bound } from './bound.test-helper.svelte.js';
 import { modelOf, PARTS } from './fixtures.test-helper.js';
 import ViewerPane from './ViewerPane.svelte';
 
-/** @import { Viewer } from '@kupcad/viewer' */
+/** @import { Viewer } from './viewer/index.js' */
 /** @import { Problem } from './run-status.js' */
 
 /**
@@ -118,7 +118,7 @@ describe('ViewerPane', () => {
 
   it('shows what the pointer is over by it: the part, its copies and measures, the face', async () => {
     const { viewer } = await pane();
-    /** @param {import('@kupcad/viewer/types').HoverDetail} detail */
+    /** @param {import('./viewer/types.js').HoverDetail} detail */
     const hover = async (detail) => {
       viewer.dispatchEvent(new CustomEvent('hover', { detail }));
       await tick();

@@ -61,7 +61,7 @@ editor.dispose();
   client.connect(streamTransport({ write, read }, (error) => log(error.message)));
   new Editor(element, { value, languageServer: { client, uri: 'file:///work/part.kup' } });
   ```
-* **The look** (`theme.js`): the `--kc-*` tokens of `@kupcad/panels` (the page's own colours where
+* **The look** (`theme.js`): the `--kc-*` tokens of `@kupcad/ui` (the page's own colours where
   they are unset), and the code's colours by `--kc-code-keyword`, `-string`, `-comment`,
   `-constant`, `-function` and `-definition` (GitHub's, light or dark, where unset);
   `--kc-code-font` and `--kc-code-font-size`.

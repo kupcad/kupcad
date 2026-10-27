@@ -14,12 +14,11 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 |---|---|---|---|
 | `kupcad-protocol` | `@kupcad/protocol` | The types every package agrees on: a built model, a parameter schema, a finding, the messages between a host and a viewer. No dependencies, no runtime code to speak of. | — |
 | `kupcad-wasm` | `@kupcad/wasm` | The core compiled to WebAssembly (`kupcad.wasm`, built by `core/build.zig`) with a typed JavaScript API around its exports, and a Web Worker wrapper so a build never blocks the page. | protocol |
-| `kupcad-viewer` | `@kupcad/viewer` | The 3D viewer: a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking; and a thin Svelte component around it. | protocol, three |
-| `kupcad-panels` | `@kupcad/panels` | The Svelte components a KupCAD host shows beside its editor: the viewer pane with its toolbar, the parameter panel, presets, the log, and the theme tokens they share. | protocol, viewer |
+| `kupcad-ui` | `@kupcad/ui` | The UI: the 3D viewer, a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking (`@kupcad/ui/viewer`, for any host); and the Svelte components a KupCAD host shows beside its editor: the viewer, its pane with its toolbar, the parameter panel, presets, the console, a language server's preview, and the theme tokens they share. | protocol, three |
 | `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting by the core's vocabulary, indentation, completion, the findings of `check` marked with their fixes, or a client of `kupcad lsp` (`@codemirror/lsp-client`). For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
-| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, panels |
-| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/panels`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, panels |
-| `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/panels`'s preview. | editor, panels, protocol |
+| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, ui |
+| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, ui |
+| `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol |
 | `kupcad-pwa` (later) | private | The web app: the playground with files, projects and exports, installable. | playground |
 
 The site (Astro: the playground's page, the documentation) is in a repository of its own, and
@@ -27,7 +26,7 @@ embeds `@kupcad/playground` as its page here (`kupcad-playground/dev/`) does.
 
 Libraries are published to npm under `@kupcad`; apps are `"private": true`. A package is published
 only when another repository would use it: the docs site uses the playground, a third-party tool
-may use the wasm or the viewer.
+may use the wasm or the viewer (`@kupcad/ui/viewer`).
 
 ## Working on them
 

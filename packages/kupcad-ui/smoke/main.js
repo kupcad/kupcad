@@ -3,7 +3,7 @@
 // The camera moves at once, so what the test reads is where it went.
 
 import { createKupcad } from '@kupcad/wasm';
-import { LIGHT, ViewCube, Viewer } from '../src/index.js';
+import { LIGHT, ViewCube, Viewer } from '../src/viewer/index.js';
 import { BACKGROUND, CAP } from './colors.js';
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.querySelector('#viewer'));

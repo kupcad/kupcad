@@ -55,7 +55,7 @@ jobs:
       # Chromium for the browser tests, kept between runs while Playwright's version is the same
       - name: Read Playwright's version
         id: playwright
-        run: echo "version=$(pnpm --filter @kupcad/viewer exec playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter @kupcad/ui exec playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright's browsers
         id: playwright-cache
@@ -71,9 +71,9 @@ jobs:
           CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
           if [ "$CACHED" = true ]; then
-            pnpm --filter @kupcad/viewer exec playwright install-deps chromium
+            pnpm --filter @kupcad/ui exec playwright install-deps chromium
           else
-            pnpm --filter @kupcad/viewer exec playwright install --with-deps chromium
+            pnpm --filter @kupcad/ui exec playwright install --with-deps chromium
           fi
           pnpm test:browser
 

@@ -7,11 +7,11 @@
 -->
 <script>
   import { onMount, untrack } from 'svelte';
-  import { ViewCube } from './view-cube.js';
-  import { Viewer } from './viewer.js';
+  import { ViewCube } from './viewer/view-cube.js';
+  import { Viewer } from './viewer/viewer.js';
 
   /** @import { Model } from '@kupcad/protocol/types' */
-  /** @import { Environment, Projection, RenderMode, Section, Theme, ViewerOptions } from './types.js' */
+  /** @import { Environment, Projection, RenderMode, Section, Theme, ViewerOptions } from './viewer/types.js' */
 
   /**
    * @typedef {object} Props

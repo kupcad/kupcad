@@ -1,4 +1,4 @@
-import { DARK, LIGHT } from '@kupcad/viewer';
+import { DARK, LIGHT } from './viewer/index.js';
 import { expect, it, vi } from 'vitest';
 import { themeFromTokens, viewerColor, watchTokens } from './theme.js';
 

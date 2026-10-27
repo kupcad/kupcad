@@ -1,6 +1,6 @@
 // The viewer's colours: what a host maps its own tokens into (the VS Code webview its
 // --vscode-* variables, the playground its page's). Any CSS colour. By default the KupCAD brand:
-// a picked part in its orangered, on the neutrals of @kupcad/panels's tokens; a section's cut
+// a picked part in its orangered, on the neutrals of @kupcad/ui's tokens; a section's cut
 // faces in dodgerblue, so no other warm colour reads as the selection.
 
 /** @import { Theme } from './types.js' */

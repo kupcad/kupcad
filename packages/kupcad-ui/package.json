@@ -1,12 +1,12 @@
 {
-  "name": "@kupcad/panels",
+  "name": "@kupcad/ui",
   "version": "0.1.0",
-  "description": "The Svelte panels a KupCAD host shows beside its editor: the viewer with its toolbar and part list, and the parameter panel, styled by --kc-* tokens.",
+  "description": "KupCAD's UI: a three.js viewer of a model the core made, for any host (@kupcad/ui/viewer), and the Svelte panels around it (the viewer's pane, parameters, console, a language server's preview), styled by --kc-* tokens.",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kupcad/kupcad.git",
-    "directory": "packages/kupcad-panels"
+    "directory": "packages/kupcad-ui"
   },
   "files": [
     "src",
@@ -15,13 +15,19 @@
   ],
   "type": "module",
   "sideEffects": [
-    "**/*.css"
+    "**/*.css",
+    "./src/viewer/testing.js"
   ],
   "exports": {
     ".": {
       "svelte": "./src/index.js",
       "default": "./src/index.js"
     },
+    "./viewer": "./src/viewer/index.js",
+    "./viewer/types": {
+      "types": "./src/viewer/types.d.ts"
+    },
+    "./testing": "./src/viewer/testing.js",
     "./tokens.css": "./src/tokens.css",
     "./vscode.css": "./src/vscode.css",
     "./controls.css": "./src/controls.css"
@@ -31,17 +37,20 @@
   },
   "scripts": {
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@kupcad/protocol": "workspace:*",
-    "@kupcad/viewer": "workspace:*"
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@kupcad/wasm": "workspace:*",
+    "@playwright/test": "^1.64.1",
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@testing-library/svelte": "catalog:",
     "@types/node": "catalog:",
+    "@types/three": "~0.186.0",
     "jsdom": "catalog:",
     "svelte": "catalog:",
     "svelte-check": "catalog:",
@@ -50,5 +59,10 @@
   },
   "peerDependencies": {
     "svelte": "^5.57.2"
+  },
+  "peerDependenciesMeta": {
+    "svelte": {
+      "optional": true
+    }
   }
 }

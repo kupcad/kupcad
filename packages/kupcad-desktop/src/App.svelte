@@ -13,7 +13,7 @@
 <script>
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText } from '@kupcad/protocol';
-  import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/panels';
+  import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/ui';
   import { onMount, tick } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import FileTree from './FileTree.svelte';
@@ -24,13 +24,13 @@
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
   /** @import { Entry } from './folder.js' */
-  /** @import { Settings } from '@kupcad/panels' */
+  /** @import { Settings } from '@kupcad/ui' */
   /** @import { Platform } from './platform.js' */
 
   /**
    * @typedef {object} Props
    * @property {Platform} platform what the window does its work with
-   * @property {import('@kupcad/viewer/types').ViewerOptions} [viewerOptions] what the
+   * @property {import('@kupcad/ui/viewer/types').ViewerOptions} [viewerOptions] what the
    *   preview's viewer is made with
    * @property {Settings} [settings] where the panes' sizes are kept (the app's settings file)
    */

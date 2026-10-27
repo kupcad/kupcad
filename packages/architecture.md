@@ -14,33 +14,28 @@ flowchart BT
 
     subgraph components ["Components"]
         wasm["@kupcad/wasm<br/>the core in the browser"]
-        viewer["@kupcad/viewer<br/>three.js scene"]
-        panels["@kupcad/panels<br/>viewer pane, parameters, console"]
+        ui["@kupcad/ui<br/>viewer: three.js scene, any host<br/>Svelte: viewer pane, parameters, console"]
         editor["@kupcad/editor<br/>CodeMirror 6"]
     end
 
     subgraph hosts ["Hosts"]
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
-        vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: panels + viewer"]
+        vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: @kupcad/ui"]
         desktop["@kupcad/desktop (Tauri)<br/>bundled kupcad + LSP"]
         docs["the site (own repository)<br/>Astro: the playground,<br/>the docs later"]
         pwa["kupcad-pwa"]
     end
 
     wasm --> protocol
-    viewer --> protocol
-    panels --> protocol
-    panels --> viewer
+    ui --> protocol
     editor --> protocol
     playground --> wasm
     playground --> editor
-    playground --> panels
+    playground --> ui
     vscode --> protocol
-    vscode --> viewer
-    vscode --> panels
+    vscode --> ui
     desktop --> editor
-    desktop --> viewer
-    desktop --> panels
+    desktop --> ui
     docs --> playground
     pwa --> playground
 ```
@@ -244,7 +239,15 @@ grow over repeated calls (the core's own wasm test checks the same from the insi
 the module from the same commit before the packages' tests (`pnpm build:core:wasm`, then
 `pnpm -r build`, which copies it into the package).
 
-## 4. `@kupcad/viewer`
+## 4. `@kupcad/ui`: the viewer
+
+`@kupcad/ui` is two layers in one package: the viewer (`@kupcad/ui/viewer`, this section), and
+the Svelte components around it (`@kupcad/ui`, the next). They were two packages
+(`@kupcad/viewer`, `@kupcad/panels`) until it was plain that every host takes both; one package
+is one version and one install, its name says what it holds, and the line between the layers
+stays: the viewer imports neither Svelte nor the components, which `.oxlintrc.json` holds it to
+(`no-restricted-imports` over `src/viewer/`), so a host that isn't Svelte's imports it alone and
+bundles none of them.
 
 A class, not a component, so any framework (or none: the webview of an editor that isn't VS Code)
 can own it:
@@ -276,7 +279,7 @@ Decisions in it:
   paths, with the camera dropped to a top orthographic view. That is how a Sketch or a Path
   (laser parts, DXF/SVG imports) gets a preview at all: a `2d` frame's body is that SVG.
 * **Keeps its own state out of the DOM:** render mode, camera, section and selection are
-  properties; the toolbar that sets them is `@kupcad/panels`'s. The Svelte wrapper,
+  properties; the toolbar that sets them is the components'. The Svelte wrapper, `Viewer`,
   `<Viewer model={...} renderMode bind:selected bind:viewer ...>`, is a few lines.
 * **The script's coordinates:** the core writes the GLB in metres and Y up under one root node;
   the viewer undoes its transform, so the scene is in millimetres and Z up, and a view, a section
@@ -292,13 +295,13 @@ Decisions in it:
 
 Tested two ways: the scene logic (what nodes a model becomes, picking, section plane, camera
 framing, render modes and selection) under Vitest with a stubbed renderer
-(`@kupcad/viewer/testing`'s `stubRenderer`, which the hosts' tests use too), on models the real
+(`@kupcad/ui/testing`'s `stubRenderer`, which the hosts' tests use too), on models the real
 core makes through `@kupcad/wasm`; and a Playwright smoke test that draws what the core makes in
 the page with headless Chromium's WebGL and reads the pixels back (a part's colour, the
 background, a section, its cap), so a three.js upgrade that breaks rendering is caught. Reading
 pixels, rather than comparing a screenshot, holds on any machine's GPU.
 
-## 5. `@kupcad/panels`
+## 5. `@kupcad/ui`: the components
 
 The panels a host places around an editor, as Svelte 5 components:
 
@@ -360,7 +363,7 @@ a second grammar of the language to keep in step. Monaco stays an option for the
 if it must feel exactly like VS Code; that would be a second small package, not a change to this
 one.
 
-The editor, like the viewer, is a component the host owns; `@kupcad/panels` doesn't depend on it, so
+The editor, like the viewer, is a component the host owns; `@kupcad/ui` doesn't depend on it, so
 a host may bring another.
 
 ## 7. The hosts
@@ -371,7 +374,7 @@ One component: `<Playground source={...} name="bracket" />` (and `kupcad` for a 
 host's, `wasm` for another module). It runs the script in `createKupcadWorker()`'s worker
 (`Runner`): once an edit stays a moment (300 ms), at once when a parameter's value changes, the
 run under way stopped by the next. A run is `check`, whose findings the editor marks at once,
-then `preview`: the model and how the run went in `@kupcad/panels`'s `ViewerPane`, the parameters in
+then `preview`: the model and how the run went in `@kupcad/ui`'s `ViewerPane`, the parameters in
 its `ParamsPanel`, and the run's error and warnings marked in the editor too (not the error where
 `check` found errors: a script that doesn't parse fails for that). A problem clicked takes the
 editor to its line. Exports (`build` in a format of `EXPORT_FORMATS`, with the panel's values)
@@ -404,7 +407,7 @@ src/
                           a preset put in it, and watched (a RelativePattern)
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
   webview/                runs in the panel (browser)
-    main.js               @kupcad/panels's PreviewPanel (the viewport socket, ViewerPane, ParamsPanel,
+    main.js               @kupcad/ui's PreviewPanel (the viewport socket, ViewerPane, ParamsPanel,
                           problems, presets), themed by vscode.css
     bridge.js             its ViewerHost: postMessage in and out, as HostMessage and ViewerMessage
 ```
@@ -495,7 +498,7 @@ the Zig extension and others do.
 ### The desktop app (`@kupcad/desktop`)
 
 Tauri 2 around a folder of scripts: the folder's tree, the script open in `@kupcad/editor` with its
-language-server client (`streamTransport` over the server's stdio), and `@kupcad/panels`'s
+language-server client (`streamTransport` over the server's stdio), and `@kupcad/ui`'s
 `PreviewPanel`, its host the page itself. It bundles its `kupcad` (`bundle.externalBin`: the app
 and the core always match, and it works offline) rather than downloading one as the extension
 does. The native side runs the language server for the page, at most one (a reloaded page
@@ -540,8 +543,8 @@ the truth.
    **foundations:** root tooling (jsconfig with `checkJs`, oxlint, oxfmt, Vitest, Changesets),
    `@kupcad/protocol`,
    `@kupcad/wasm` with its worker and tests, the wasm publish job.
-2. **Viewer and panels:** `@kupcad/viewer` (GLB, modes, camera, section, picking; SVG once the core
-   sends it), `@kupcad/panels`'s `ViewerPane` and `ParamsPanel`.
+2. **Viewer and panels:** `@kupcad/ui`'s viewer (GLB, modes, camera, section, picking; SVG once
+   the core sends it), its `ViewerPane` and `ParamsPanel`.
 3. **The extension** (done): the binary manager, the viewer panel on the new components,
    parameters and presets, export, the core's `kupcad.preview` and the run's warnings
    as diagnostics. This is the first thing a user installs, so it comes before the web hosts.

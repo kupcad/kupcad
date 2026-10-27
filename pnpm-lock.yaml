@@ -65,12 +65,12 @@ importers:
       '@kupcad/editor':
         specifier: workspace:*
         version: link:../kupcad-editor
-      '@kupcad/panels':
-        specifier: workspace:*
-        version: link:../kupcad-panels
       '@kupcad/protocol':
         specifier: workspace:*
         version: link:../kupcad-protocol
+      '@kupcad/ui':
+        specifier: workspace:*
+        version: link:../kupcad-ui
       '@tauri-apps/api':
         specifier: ^2.12.4
         version: 2.12.4
@@ -87,9 +87,6 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.15
         version: 6.43.15
-      '@kupcad/viewer':
-        specifier: workspace:*
-        version: link:../kupcad-viewer
       '@sveltejs/vite-plugin-svelte':
         specifier: 'catalog:'
         version: 7.3.1(svelte@5.57.2)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
@@ -182,57 +179,17 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@26.6.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
 
-  packages/kupcad-panels:
-    dependencies:
-      '@kupcad/protocol':
-        specifier: workspace:*
-        version: link:../kupcad-protocol
-      '@kupcad/viewer':
-        specifier: workspace:*
-        version: link:../kupcad-viewer
-    devDependencies:
-      '@kupcad/wasm':
-        specifier: workspace:*
-        version: link:../kupcad-wasm
-      '@sveltejs/vite-plugin-svelte':
-        specifier: 'catalog:'
-        version: 7.3.1(svelte@5.57.2)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
-      '@testing-library/svelte':
-        specifier: 'catalog:'
-        version: 5.4.2(svelte@5.57.2)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))(vitest@5.0.5(@types/node@26.6.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1)))
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.6.5
-      jsdom:
-        specifier: 'catalog:'
-        version: 30.1.3
-      svelte:
-        specifier: 'catalog:'
-        version: 5.57.2
-      svelte-check:
-        specifier: 'catalog:'
-        version: 4.7.7(picomatch@4.0.7)(svelte@5.57.2)(typescript@6.0.3)
-      vite:
-        specifier: 'catalog:'
-        version: 8.3.5(@types/node@26.6.5)(yaml@2.9.1)
-      vitest:
-        specifier: 'catalog:'
-        version: 5.0.5(@types/node@26.6.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
-
   packages/kupcad-playground:
     dependencies:
       '@kupcad/editor':
         specifier: workspace:*
         version: link:../kupcad-editor
-      '@kupcad/panels':
-        specifier: workspace:*
-        version: link:../kupcad-panels
       '@kupcad/protocol':
         specifier: workspace:*
         version: link:../kupcad-protocol
-      '@kupcad/viewer':
+      '@kupcad/ui':
         specifier: workspace:*
-        version: link:../kupcad-viewer
+        version: link:../kupcad-ui
       '@kupcad/wasm':
         specifier: workspace:*
         version: link:../kupcad-wasm
@@ -280,7 +237,7 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@types/node@26.6.5)(jsdom@30.1.3)(vite@8.3.5(@types/node@26.6.5)(yaml@2.9.1))
 
-  packages/kupcad-viewer:
+  packages/kupcad-ui:
     dependencies:
       '@kupcad/protocol':
         specifier: workspace:*
@@ -325,15 +282,12 @@ importers:
 
   packages/kupcad-vscode:
     devDependencies:
-      '@kupcad/panels':
-        specifier: workspace:*
-        version: link:../kupcad-panels
       '@kupcad/protocol':
         specifier: workspace:*
         version: link:../kupcad-protocol
-      '@kupcad/viewer':
+      '@kupcad/ui':
         specifier: workspace:*
-        version: link:../kupcad-viewer
+        version: link:../kupcad-ui
       '@kupcad/wasm':
         specifier: workspace:*
         version: link:../kupcad-wasm

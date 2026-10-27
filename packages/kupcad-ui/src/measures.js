@@ -2,7 +2,7 @@
 // size, a face's area and the way it faces, in the model's millimetres.
 
 /** @import { Part } from '@kupcad/protocol/types' */
-/** @import { Face } from '@kupcad/viewer/types' */
+/** @import { Face } from './viewer/types.js' */
 
 /** From this many mm³ a volume is said in cm³, as a slicer says it. */
 const MM3_PER_CM3 = 1000;

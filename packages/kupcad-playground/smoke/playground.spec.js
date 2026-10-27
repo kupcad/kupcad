@@ -35,7 +35,7 @@ test('runs the example in the browser: its model, its parts and parameters; an e
   expect(errors).toEqual([]);
 });
 
-// @kupcad/panels's tokens as the page's colour scheme is: the brand's orange accent on white or
+// @kupcad/ui's tokens as the page's colour scheme is: the brand's orange accent on white or
 // on the brand black, and a slider's track filled to its thumb (WebKit and Blink fill none)
 for (const [scheme, background] of /** @type {const} */ ([
   ['light', 'rgb(255, 255, 255)'],

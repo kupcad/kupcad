@@ -1,4 +1,4 @@
-// The preview's host, in the page itself (@kupcad/panels's PreviewPanel talks to it as a ViewerHost):
+// The preview's host, in the page itself (@kupcad/ui's PreviewPanel talks to it as a ViewerHost):
 // what the panel asks is done with the language server, the dialogs and the native side's
 // export, and the panel is told the script shown, the values its parameters were given, and the
 // server's log, for its console.
