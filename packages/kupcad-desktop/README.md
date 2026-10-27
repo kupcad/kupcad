@@ -63,6 +63,17 @@ Windows warn before they open one; signing needs the certificates as the reposit
   dev.kupcad.desktop/`, through Tauri's store plugin), read before the window is laid out. It
   takes its services as a prop
   (`platform.js`, Tauri's), so its tests give it stand-ins.
+* **The strip and the settings** (`src/App.svelte`, `SettingsPane.svelte`, `theme.js`): a
+  strip at the window's left edge, as VS Code's activity bar, shows or hides the files, and its
+  gear (⌘, or Ctrl+,) opens the settings: a page over the bar and the panes, which stay as they
+  were under it (the editor with its edits and its undo, the model, the console), inert until
+  it closes (Escape, its close button, the gear or the files again), the focus given back
+  where it was. The settings apply as they are chosen and are kept in the settings file: the
+  theme (`app.theme`: the system's, the default, or light or dark), which sets the window's
+  appearance (Tauri's `setTheme`, app-wide on macOS) and so the page's `prefers-color-scheme`,
+  which the tokens, the editor and the viewer follow; and whether the console shows under the
+  model (`app.console`). The icons are inline SVG: the page fetches nothing, an icon set's
+  neither.
 * **The language server** (`src/server.js`, `src-tauri/src/server.rs`): the native side starts
   `kupcad lsp --stdio --viewport-origin <the page's origin>` for the page and holds it, at most
   one: a page that loads again replaces the one it left, and the app stops it when it exits. Its
@@ -91,7 +102,7 @@ Windows warn before they open one; signing needs the certificates as the reposit
 The page runs no program itself: it has no shell permission, and the bundled `kupcad` runs
 through the app's commands above, with the arguments they make. It reads and writes only what
 the person chose (`capabilities/default.json`: the dialogs, and the file system within the
-folder opened, which it watches too, and the files saved), and its Content Security Policy (`tauri.conf.json`) lets it
+folder opened, which it watches too, and the files saved), sets the window's theme, and its Content Security Policy (`tauri.conf.json`) lets it
 connect to the app's IPC and the server's viewport socket on 127.0.0.1 alone.
 
 ## Tests
@@ -104,7 +115,11 @@ lifecycle on a stand-in server (its handshake through the framing, the viewport'
 commands, restarts, a server that ends before it is up or doesn't start again), and the window on stand-ins (a folder
 opened, a script opened, an edit saved with ⌘S, the question on closing, the tree's folders
 closed and opened, none of it kept, the folder listed again as it changes and no longer once
-another is opened). `test:integration`
+another is opened; the files hidden and shown, the settings over the workspace, which is
+inert under them and the same once they close, over the welcome too, opened with ⌘, and
+closed with Escape, the gear or the files, the focus given back; a theme chosen, kept and set
+again at the start, one the settings don't know, one the window refuses; the console hidden
+and kept so), the settings pane, and the themes the settings may keep. `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
 model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
 their real paths (no `..`, no symlink, which the file system's scope matched as written), and

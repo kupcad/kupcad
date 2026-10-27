@@ -9,6 +9,7 @@ import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';
 
 /** @import { Entry } from './folder.js' */
+/** @import { Theme } from './theme.js' */
 
 const FOLDER = '/w';
 /** @type {Entry[]} */
@@ -56,6 +57,7 @@ function windowOn({
     exportModel: vi.fn(async () => {}),
     server: (/** @type {string} */ rootUri, /** @type {any} */ on) =>
       new LanguageServer({ rootUri, origin: 'tauri://localhost', on, spawn: fake.spawn }),
+    setTheme: vi.fn(async (/** @type {Theme} */ _theme) => {}),
     onClose: async (/** @type {() => Promise<boolean>} */ ask) => {
       canClose = ask;
       return () => {};
@@ -96,6 +98,28 @@ async function editorView() {
 
 /** The tree's row of the folder parts. */
 const parts = () => screen.getByRole('button', { name: 'parts' });
+/** The tree's row of the script part.kup. */
+const partRow = () => screen.getByRole('button', { name: 'part.kup' });
+
+/** The strip's buttons: Files, Settings. */
+const viewButton = (/** @type {string} */ name) => screen.getByRole('button', { name });
+const pressed = (/** @type {string} */ name) => viewButton(name).getAttribute('aria-pressed');
+const filesShown = () => screen.queryByRole('navigation', { name: 'Files' });
+const settingsShown = () => screen.queryByRole('dialog', { name: 'Settings' });
+const radio = (/** @type {string} */ name) =>
+  /** @type {HTMLInputElement} */ (screen.getByRole('radio', { name }));
+const consoleShown = () => screen.queryByRole('region', { name: 'Console' });
+/**
+ * Whether an element is out of reach, in an inert one: jsdom has no `inert` of its own, so Svelte
+ * sets it as a property, where a browser reflects it as the attribute.
+ * @param {Element | null | undefined} element
+ */
+function inert(element) {
+  for (let at = element; at; at = at.parentElement) {
+    if (/** @type {HTMLElement} */ (at).inert || at.hasAttribute('inert')) return true;
+  }
+  return false;
+}
 
 /** Opens the folder, its first script in the editor. */
 async function openFolder() {
@@ -256,5 +280,171 @@ describe('the window', () => {
     await tick();
     expect(await window.canClose()).toBe(false);
     expect(window.platform.confirm).toHaveBeenCalledWith('Close without saving your changes?');
+  });
+});
+
+describe('the strip', () => {
+  it('shows or hides the files, the script kept, and shows them for a folder opened', async () => {
+    windowOn();
+    await openFolder();
+    expect(filesShown()).toBeTruthy();
+    expect([pressed('Files'), pressed('Settings')]).toEqual(['true', 'false']);
+    await fireEvent.click(viewButton('Files'));
+    expect(filesShown()).toBeNull();
+    expect(screen.queryByRole('separator', { name: 'Resize the files' })).toBeNull();
+    expect(pressed('Files')).toBe('false');
+    expect((await editorView()).state.doc.toString()).toBe('cube(2)\n');
+    await fireEvent.click(viewButton('Files'));
+    expect(filesShown()).toBeTruthy();
+
+    await fireEvent.click(viewButton('Files'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+    await vi.waitFor(() => expect(filesShown()).toBeTruthy());
+  });
+
+  it('opens the settings over the workspace, which stays as it was under them', async () => {
+    const window = windowOn();
+    const view = await openFolder();
+    await vi.waitFor(() => expect(window.sent('textDocument/didOpen')).toHaveLength(1));
+    view.dispatch({ changes: { from: 5, to: 6, insert: '3' } });
+    await tick();
+    const console = consoleShown();
+    await fireEvent.click(viewButton('Settings'));
+    expect(settingsShown()).toBeTruthy();
+    expect([pressed('Files'), pressed('Settings')]).toEqual(['false', 'true']);
+    // Under them, out of reach: the bar and the panes, not the strip
+    expect(inert(screen.getByRole('button', { name: 'Open folder…' }))).toBe(true);
+    expect(inert(filesShown())).toBe(true);
+    expect(inert(screen.getByRole('region', { name: 'Script' }))).toBe(true);
+    expect(inert(screen.getByRole('region', { name: 'Preview' }))).toBe(true);
+    expect(inert(viewButton('Settings'))).toBe(false);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    expect(settingsShown()).toBeNull();
+    expect(inert(screen.getByRole('region', { name: 'Script' }))).toBe(false);
+    expect(inert(filesShown())).toBe(false);
+    // The same editor with its edit, the script never opened again, the same console
+    expect(await editorView()).toBe(view);
+    expect(view.state.doc.toString()).toBe('cube(3)\n');
+    expect(screen.getByRole('button', { name: 'lid.kup, unsaved' })).toBeTruthy();
+    expect(window.sent('textDocument/didOpen')).toHaveLength(1);
+    expect(window.sent('textDocument/didClose')).toEqual([]);
+    expect(consoleShown()).toBe(console);
+  });
+
+  it('offers the settings over the welcome, before a folder is opened', async () => {
+    windowOn();
+    expect(viewButton('Files')).toHaveProperty('disabled', true);
+    expect(pressed('Files')).toBe('false');
+    await fireEvent.click(viewButton('Settings'));
+    expect(settingsShown()).toBeTruthy();
+    expect(inert(screen.getByRole('heading', { name: 'KupCAD' }))).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close settings' }));
+    await openFolder();
+    expect(filesShown()).toBeTruthy();
+  });
+
+  it('opens the settings with ⌘, or Ctrl+, and gives the focus back as they close', async () => {
+    windowOn();
+    await openFolder();
+    partRow().focus();
+    await fireEvent.keyDown(partRow(), { key: ',', metaKey: true });
+    expect(settingsShown()).toBeTruthy();
+    await vi.waitFor(() => expect(document.activeElement).toBe(radio('System')));
+    await fireEvent.keyDown(radio('System'), { key: 'Escape' });
+    expect(settingsShown()).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(partRow()));
+
+    // The shortcut again never closes them; Escape from the strip does
+    await fireEvent.keyDown(globalThis.window, { key: ',', ctrlKey: true });
+    await fireEvent.keyDown(globalThis.window, { key: ',', ctrlKey: true });
+    expect(settingsShown()).toBeTruthy();
+    await fireEvent.keyDown(viewButton('Settings'), { key: 'Escape' });
+    expect(settingsShown()).toBeNull();
+
+    // Opened with nothing focused, the gear clicked again: the focus on the gear
+    /** @type {HTMLElement} */ (document.activeElement).blur();
+    await fireEvent.click(viewButton('Settings'));
+    await fireEvent.click(viewButton('Settings'));
+    expect(settingsShown()).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(viewButton('Settings')));
+  });
+
+  it('closes the settings for the files, shown again if they were hidden', async () => {
+    windowOn();
+    await openFolder();
+    await fireEvent.click(viewButton('Files'));
+    await fireEvent.click(viewButton('Settings'));
+    await fireEvent.click(viewButton('Files'));
+    expect(settingsShown()).toBeNull();
+    expect(filesShown()).toBeTruthy();
+    expect([pressed('Files'), pressed('Settings')]).toEqual(['true', 'false']);
+  });
+});
+
+describe('the settings', () => {
+  it('set the theme chosen and keep it, for the window to take when the app starts', async () => {
+    const settings = memorySettings();
+    const first = windowOn({ settings });
+    await tick();
+    // The system's is the window's own: nothing to set
+    expect(first.platform.setTheme).not.toHaveBeenCalled();
+    await fireEvent.click(viewButton('Settings'));
+    expect(radio('System').checked).toBe(true);
+    await fireEvent.click(radio('Dark'));
+    expect(first.platform.setTheme).toHaveBeenCalledExactlyOnceWith('dark');
+    expect(settings.get('app.theme')).toBe('dark');
+    first.unmount();
+
+    const again = windowOn({ settings });
+    await vi.waitFor(() => expect(again.platform.setTheme).toHaveBeenCalledExactlyOnceWith('dark'));
+    await fireEvent.click(viewButton('Settings'));
+    expect(radio('Dark').checked).toBe(true);
+    await fireEvent.click(radio('System'));
+    expect(again.platform.setTheme).toHaveBeenLastCalledWith('system');
+    expect(settings.get('app.theme')).toBe('system');
+  });
+
+  it("take a kept theme they don't know as the system's", async () => {
+    const window = windowOn({ settings: memorySettings({ 'app.theme': 'sepia' }) });
+    await tick();
+    expect(window.platform.setTheme).not.toHaveBeenCalled();
+    await fireEvent.click(viewButton('Settings'));
+    expect(radio('System').checked).toBe(true);
+  });
+
+  it("say when the theme wasn't set", async () => {
+    const window = windowOn();
+    window.platform.setTheme.mockRejectedValueOnce(new Error('not allowed'));
+    await openFolder();
+    await fireEvent.click(viewButton('Settings'));
+    await fireEvent.click(radio('Light'));
+    await vi.waitFor(() => expect(screen.getByText(/The theme wasn't set/)).toBeTruthy());
+    expect(radio('Light').checked).toBe(true);
+  });
+
+  it('hide the console under the model, and keep it hidden', async () => {
+    const settings = memorySettings();
+    const first = windowOn({ settings });
+    await openFolder();
+    expect(consoleShown()).toBeTruthy();
+    await fireEvent.click(viewButton('Settings'));
+    const shows = screen.getByRole('checkbox', { name: 'Show the console under the model' });
+    expect(shows).toHaveProperty('checked', true);
+    await fireEvent.click(shows);
+    expect(consoleShown()).toBeNull();
+    expect(screen.queryByRole('separator', { name: 'Resize the console' })).toBeNull();
+    expect(settings.get('app.console')).toBe(false);
+    first.unmount();
+
+    windowOn({ settings });
+    await openFolder();
+    expect(consoleShown()).toBeNull();
+    await fireEvent.click(viewButton('Settings'));
+    await fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Show the console under the model' }),
+    );
+    expect(consoleShown()).toBeTruthy();
+    expect(settings.get('app.console')).toBe(true);
   });
 });

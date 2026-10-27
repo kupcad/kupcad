@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: closing itself once its unsaved changes are settled, dialogs, the files of what the user chose in them (the folder opened watched too, for its tree), and the app's settings file. The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
+  "description": "The main window: closing itself once its unsaved changes are settled, its theme (the one the settings keep), dialogs, the files of what the user chose in them (the folder opened watched too, for its tree), and the app's settings file. The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "core:window:allow-set-theme",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

@@ -1,6 +1,6 @@
 // What the app's window does its work with, on Tauri: the folder dialog and its files, the save
-// and message dialogs, the native side's export, the bundled kupcad's language server, and the
-// window's close. App.svelte takes it as a prop, so its tests give it stand-ins.
+// and message dialogs, the native side's export, the bundled kupcad's language server, the
+// window's theme and its close. App.svelte takes it as a prop, so its tests give it stand-ins.
 
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -14,6 +14,7 @@ import { LanguageServer } from './server.js';
 /** @import { Settings } from '@kupcad/panels' */
 /** @import { Entry } from './folder.js' */
 /** @import { ServerEvents } from './server.js' */
+/** @import { Theme } from './theme.js' */
 
 /**
  * @typedef {object} Platform
@@ -29,6 +30,8 @@ import { LanguageServer } from './server.js';
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
  * @property {(script: string, output: string, format: ExportFormat, params: [string, string][]) => Promise<void>} exportModel
  * @property {(rootUri: string, on: ServerEvents) => Pick<LanguageServer, 'client' | 'start' | 'stop' | 'preview' | 'setParams'>} server
+ * @property {(theme: Theme) => Promise<void>} setTheme the window's appearance, which the page's
+ *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
  * @property {(canClose: () => Promise<boolean>) => Promise<() => void>} onClose calls `canClose`
  *   when the window is asked to close, and keeps it open when it says no
  * @property {() => Promise<Settings>} settings the app's settings, read once before the window
@@ -54,6 +57,7 @@ export const tauri = {
   exportModel: (script, output, format, params) =>
     invoke('export_model', { script, output, format, params }),
   server: (rootUri, on) => new LanguageServer({ rootUri, origin: location.origin, on }),
+  setTheme: (theme) => getCurrentWindow().setTheme(theme === 'system' ? null : theme),
   onClose: (canClose) =>
     getCurrentWindow().onCloseRequested(async (event) => {
       if (!(await canClose())) event.preventDefault();

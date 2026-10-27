@@ -6,6 +6,9 @@
   removed or renamed in it, and its closed folders stay closed until a script in one is opened.
   A script is saved with ⌘S (Ctrl+S); the window asks before it closes on unsaved changes. The
   bars between the panes resize them, the sizes kept in the app's settings (`settings`).
+  The strip at the window's left edge shows or hides the files, and opens the app's settings
+  (the theme, the console; ⌘, or Ctrl+, too): a page over the workspace, which stays as it was
+  under it, out of reach until Escape, the page's close button or the strip gives it back.
 -->
 <script>
   import { Editor } from '@kupcad/editor/svelte';
@@ -16,11 +19,14 @@
   import FileTree from './FileTree.svelte';
   import { fileUri, foldersAbove } from './folder.js';
   import { createHost } from './host.js';
+  import SettingsPane from './SettingsPane.svelte';
+  import { themeOf } from './theme.js';
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
   /** @import { Entry } from './folder.js' */
   /** @import { Settings } from '@kupcad/panels' */
   /** @import { Platform } from './platform.js' */
+  /** @import { Theme } from './theme.js' */
 
   /**
    * @typedef {object} Props
@@ -33,10 +39,20 @@
   /** @type {Props} */
   let { platform, viewerOptions = {}, settings = memorySettings() } = $props();
 
-  /** The settings' keys: the folder's tree's width and the editor's. */
-  const KEYS = { files: 'app.files', editor: 'app.editor' };
+  /**
+   * The settings' keys: the files' width and the editor's, the theme, and whether the
+   * console shows.
+   */
+  const KEYS = {
+    files: 'app.files',
+    editor: 'app.editor',
+    theme: 'app.theme',
+    console: 'app.console',
+  };
   let filesWidth = $state(untrack(() => sizeSetting(settings, KEYS.files, 224)));
   let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 520)));
+  let theme = $state(untrack(() => themeOf(settings.get(KEYS.theme))));
+  let showsConsole = $state(untrack(() => settings.get(KEYS.console) !== false));
   /** The tree's closed folders, by their paths: none in a folder just opened. */
   const collapsed = new SvelteSet();
 
@@ -59,6 +75,18 @@
   let editor = $state(/** @type {ScriptEditor | null} */ (null));
   /** What went wrong last, shown in the bar until something else does. */
   let problem = $state('');
+
+  /** Whether the files show beside the editor: none before a folder is opened. */
+  let showsFiles = $state(true);
+  const filesShown = $derived(showsFiles && folder !== null);
+  /** Whether the settings show, over the workspace. */
+  let settingsOpen = $state(false);
+  /** What had the focus before the settings opened, given it back when they close. */
+  let focusBefore = /** @type {HTMLElement | null} */ (null);
+  let page = $state(/** @type {HTMLElement | null} */ (null));
+  let settingsButton = $state(/** @type {HTMLButtonElement | null} */ (null));
+  /** The shortcuts' key as this system names it, in the strip's tooltips. */
+  const MOD = globalThis.navigator?.userAgent.includes('Mac') ? '⌘' : 'Ctrl+';
 
   const preview = createHost({
     server: {
@@ -90,6 +118,7 @@
     open = null;
     preview.show(null);
     folder = picked;
+    showsFiles = true;
     entries = await platform.listFolder(picked);
     platform
       .watchFolder(picked, listAgain(picked, mine))
@@ -211,15 +240,77 @@
     editor?.reveal(line, column);
   }
 
+  /** Shows the files or hides them; over the settings, shows them as it closes the settings. */
+  function toggleFiles() {
+    if (settingsOpen) {
+      showsFiles = true;
+      void closeSettings();
+    } else showsFiles = !showsFiles;
+  }
+
+  function toggleSettings() {
+    void (settingsOpen ? closeSettings() : openSettings());
+  }
+
+  /** Opens the settings over the workspace, the theme chosen focused. */
+  async function openSettings() {
+    if (!settingsOpen) {
+      const active = document.activeElement;
+      focusBefore = active instanceof HTMLElement && active !== document.body ? active : null;
+      settingsOpen = true;
+    }
+    await tick();
+    /** @type {HTMLInputElement | null | undefined} */ (
+      page?.querySelector('input:checked')
+    )?.focus();
+  }
+
+  /** Gives the workspace back, the focus where it was (else on the button that opens them). */
+  async function closeSettings() {
+    settingsOpen = false;
+    await tick();
+    const back = focusBefore?.isConnected ? focusBefore : settingsButton;
+    focusBefore = null;
+    back?.focus();
+  }
+
+  /** @param {Theme} chosen */
+  function chooseTheme(chosen) {
+    theme = chosen;
+    settings.set(KEYS.theme, chosen);
+    applyTheme();
+  }
+
+  function applyTheme() {
+    platform
+      .setTheme(theme)
+      .catch((error) => (problem = `The theme wasn't set: ${errorText(error)}`));
+  }
+
+  /** @param {boolean} shows */
+  function chooseConsole(shows) {
+    showsConsole = shows;
+    settings.set(KEYS.console, shows);
+  }
+
   /** @param {KeyboardEvent} event */
   function keydown(event) {
-    if ((event.metaKey || event.ctrlKey) && event.key === 's') {
+    const command = event.metaKey || event.ctrlKey;
+    if (command && event.key === 's') {
       event.preventDefault();
       void saveScript();
+    } else if (command && event.key === ',') {
+      event.preventDefault();
+      void openSettings();
+    } else if (event.key === 'Escape' && settingsOpen) {
+      // Wherever the focus is: the workspace under them, the editor too, is out of its reach
+      void closeSettings();
     }
   }
 
   onMount(() => {
+    // The system's is the window's own until told otherwise
+    if (theme !== 'system') applyTheme();
     const closing = platform.onClose(async () =>
       unsaved.size === 0 ? true : platform.confirm('Close without saving your changes?'),
     );
@@ -241,91 +332,218 @@
 <svelte:window onkeydown={keydown} />
 
 <div class="kc-desktop">
-  {#if folder}
-    <header class="bar">
-      <button type="button" class="kc-control" onclick={() => openFolder()}>Open folder…</button>
-      <span class="folder" title={folder}>{name(folder)}</span>
-      {#if open}
-        <span class="script">{open.name}{unsaved.has(open.path) ? ' ●' : ''}</span>
-        <button
-          type="button"
-          class="kc-control kc-primary"
-          disabled={!unsaved.has(open.path)}
-          onclick={saveScript}
-        >
-          Save
-        </button>
-      {/if}
-      <span class="status" role="status">
-        {#if problem}{problem}{:else if !running}Starting kupcad…{/if}
-      </span>
-    </header>
-    <div class="body">
-      <nav class="files" aria-label="Files" style:width="{filesWidth}px">
-        <FileTree
-          {entries}
-          {collapsed}
-          selected={open?.path ?? null}
-          {unsaved}
-          onopen={openScript}
-          ontoggle={(entry, opening) => toggle(entry.path, opening)}
+  <nav class="rail" aria-label="Views">
+    <button
+      type="button"
+      aria-label="Files"
+      title="Files"
+      aria-pressed={filesShown && !settingsOpen}
+      disabled={!folder}
+      onclick={toggleFiles}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M5 17V4.5A1.5 1.5 0 0 1 6.5 3H14" />
+        <path d="M9 7h6l4 4v8.5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 9 19.5z" />
+        <path d="M15 7v4h4" />
+      </svg>
+    </button>
+    <button
+      type="button"
+      class="settings"
+      aria-label="Settings"
+      title="Settings ({MOD},)"
+      aria-pressed={settingsOpen}
+      onclick={toggleSettings}
+      bind:this={settingsButton}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M13.06 4.88L14.22 2.76L16.96 3.9L16.28 6.21L17.79 7.72L20.1 7.04L21.24 9.78L19.12 10.94L19.12 13.06L21.24 14.22L20.1 16.96L17.79 16.28L16.28 17.79L16.96 20.1L14.22 21.24L13.06 19.12L10.94 19.12L9.78 21.24L7.04 20.1L7.72 17.79L6.21 16.28L3.9 16.96L2.76 14.22L4.88 13.06L4.88 10.94L2.76 9.78L3.9 7.04L6.21 7.72L7.72 6.21L7.04 3.9L9.78 2.76L10.94 4.88Z"
         />
-      </nav>
-      <Splitter
-        bind:size={filesWidth}
-        min={140}
-        max={480}
-        label="Resize the files"
-        onchange={(size) => settings.set(KEYS.files, size)}
-      />
-      <section class="code" aria-label="Script" style:width="{editorWidth}px">
-        {#if open && server}
-          {#key open.path}
-            <Editor
-              value={texts.get(open.path)?.text ?? ''}
-              label={open.name}
-              languageServer={{ client: server.client, uri: open.uri }}
-              onchange={edited}
-              bind:editor
-            />
-          {/key}
-        {:else}
-          <p class="empty">Open a script from the folder.</p>
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    </button>
+  </nav>
+  <div class="main">
+    {#if folder}
+      <header class="bar" inert={settingsOpen}>
+        <button type="button" class="kc-control" onclick={() => openFolder()}>Open folder…</button>
+        <span class="folder" title={folder}>{name(folder)}</span>
+        {#if open}
+          <span class="script">{open.name}{unsaved.has(open.path) ? ' ●' : ''}</span>
+          <button
+            type="button"
+            class="kc-control kc-primary"
+            disabled={!unsaved.has(open.path)}
+            onclick={saveScript}
+          >
+            Save
+          </button>
         {/if}
-      </section>
-      <Splitter
-        bind:size={editorWidth}
-        min={280}
-        label="Resize the script"
-        onchange={(size) => settings.set(KEYS.editor, size)}
-      />
-      <section class="preview" aria-label="Preview">
-        <PreviewPanel
-          host={preview.host}
-          {viewportUrl}
-          {viewerOptions}
-          {settings}
-          presets={false}
+        <span class="status" role="status">
+          {#if problem}{problem}{:else if !running}Starting kupcad…{/if}
+        </span>
+      </header>
+    {/if}
+    <div class="body" inert={settingsOpen}>
+      {#if filesShown}
+        <nav class="side" aria-label="Files" style:width="{filesWidth}px">
+          <FileTree
+            {entries}
+            {collapsed}
+            selected={open?.path ?? null}
+            {unsaved}
+            onopen={openScript}
+            ontoggle={(entry, opening) => toggle(entry.path, opening)}
+          />
+        </nav>
+        <Splitter
+          bind:size={filesWidth}
+          min={140}
+          max={480}
+          label="Resize the files"
+          onchange={(size) => settings.set(KEYS.files, size)}
         />
-      </section>
+      {/if}
+      {#if folder}
+        <section class="code" aria-label="Script" style:width="{editorWidth}px">
+          {#if open && server}
+            {#key open.path}
+              <Editor
+                value={texts.get(open.path)?.text ?? ''}
+                label={open.name}
+                languageServer={{ client: server.client, uri: open.uri }}
+                onchange={edited}
+                bind:editor
+              />
+            {/key}
+          {:else}
+            <p class="empty">Open a script from the folder.</p>
+          {/if}
+        </section>
+        <Splitter
+          bind:size={editorWidth}
+          min={280}
+          label="Resize the script"
+          onchange={(size) => settings.set(KEYS.editor, size)}
+        />
+        <section class="preview" aria-label="Preview">
+          <PreviewPanel
+            host={preview.host}
+            {viewportUrl}
+            {viewerOptions}
+            {settings}
+            presets={false}
+            console={showsConsole}
+          />
+        </section>
+      {:else}
+        <div class="welcome">
+          <h1>KupCAD</h1>
+          <p>Open a folder of scripts: they are edited here, and their models shown beside them.</p>
+          <button type="button" class="kc-control kc-primary" onclick={() => openFolder()}>
+            Open folder…
+          </button>
+        </div>
+      {/if}
     </div>
-  {:else}
-    <div class="welcome">
-      <h1>KupCAD</h1>
-      <p>Open a folder of scripts: they are edited here, and their models shown beside them.</p>
-      <button type="button" class="kc-control kc-primary" onclick={() => openFolder()}>
-        Open folder…
-      </button>
-    </div>
-  {/if}
+    {#if settingsOpen}
+      <div class="settings-page" role="dialog" aria-label="Settings" bind:this={page}>
+        <SettingsPane
+          {theme}
+          console={showsConsole}
+          ontheme={chooseTheme}
+          onconsole={chooseConsole}
+          onclose={closeSettings}
+        />
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
   .kc-desktop {
     display: flex;
-    flex-direction: column;
     height: 100%;
     color: var(--kc-fg);
+    background: var(--kc-bg);
+  }
+  /* The strip: the files' toggle, and the settings at its foot */
+  .rail {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 44px;
+    padding: 6px 0;
+    background: var(--kc-section-bg);
+    border-right: 1px solid var(--kc-border);
+  }
+  .rail button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    color: var(--kc-muted);
+    background: none;
+    border: none;
+    border-radius: var(--kc-radius);
+    cursor: pointer;
+  }
+  .rail button:hover:not(:disabled) {
+    color: var(--kc-fg);
+    background: var(--kc-hover);
+  }
+  .rail button:focus-visible {
+    outline: 2px solid var(--kc-focus);
+    outline-offset: -2px;
+  }
+  .rail button:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  /* What shows: its icon in the text's colour, the accent a bar at the strip's edge */
+  .rail button[aria-pressed='true'] {
+    color: var(--kc-fg);
+  }
+  .rail button[aria-pressed='true']::before {
+    content: '';
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    left: -4px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--kc-accent);
+  }
+  .rail .settings {
+    margin-top: auto;
+  }
+  .rail svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .main {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  /* Over the workspace, which stays as it is under it: above its splitters' handles too */
+  .settings-page {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    overflow: auto;
     background: var(--kc-bg);
   }
   .bar {
@@ -353,7 +571,7 @@
     flex: 1;
     min-height: 0;
   }
-  .files {
+  .side {
     flex: none;
     overflow: auto;
     border-right: 1px solid var(--kc-border);
