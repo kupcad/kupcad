@@ -1,6 +1,6 @@
-// @kupcad/ui: the panels a KupCAD host shows beside its editor, and a language server's preview
+// @kupcad/panels: the panels a KupCAD host shows beside its editor, and a language server's preview
 // (PreviewPanel, over its viewport socket, connectViewport). Styled by the --kc-* tokens of
-// `@kupcad/ui/tokens.css` (or `@kupcad/ui/vscode.css` in VS Code's webview), which a page loads.
+// `@kupcad/panels/tokens.css` (or `@kupcad/panels/vscode.css` in VS Code's webview), which a page loads.
 
 export { default as ConsolePanel } from './ConsolePanel.svelte';
 export { default as ExportMenu } from './ExportMenu.svelte';

@@ -6,7 +6,6 @@
     "**/dist/**",
     "**/dist-webview/**",
     "**/*.md",
-    "packages/kupcad-tree-sitter/**",
     "packages/kupcad-vscode/syntaxes/kupcad.tmLanguage.json"
   ]
 }

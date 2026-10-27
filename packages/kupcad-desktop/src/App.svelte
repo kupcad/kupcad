@@ -9,7 +9,7 @@
 <script>
   import { Editor } from '@kupcad/editor/svelte';
   import { errorText } from '@kupcad/protocol';
-  import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/ui';
+  import { memorySettings, PreviewPanel, sizeSetting, Splitter } from '@kupcad/panels';
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import FileTree from './FileTree.svelte';
@@ -18,7 +18,7 @@
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
   /** @import { Entry } from './folder.js' */
-  /** @import { Settings } from '@kupcad/ui' */
+  /** @import { Settings } from '@kupcad/panels' */
   /** @import { Platform } from './platform.js' */
 
   /**

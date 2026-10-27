@@ -17,7 +17,7 @@ permissions:
 
 env:
   # The packages published to npm as @kupcad/<name>, each after those it depends on
-  NPM_PACKAGES: protocol wasm viewer editor ui playground
+  NPM_PACKAGES: protocol wasm viewer editor panels playground
 
 jobs:
   version:
@@ -238,21 +238,21 @@ jobs:
       - name: Bundle it as the app's kupcad
         run: |
           chmod +x "cli/${{ matrix.binary }}"
-          pnpm install --frozen-lockfile --filter '@kupcad/app...'
-          pnpm --filter @kupcad/app sidecar "$GITHUB_WORKSPACE/cli/${{ matrix.binary }}"
+          pnpm install --frozen-lockfile --filter '@kupcad/desktop...'
+          pnpm --filter @kupcad/desktop sidecar "$GITHUB_WORKSPACE/cli/${{ matrix.binary }}"
 
       - name: Build the installers
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          pnpm --filter @kupcad/app tauri build --bundles ${{ matrix.bundles }} --config "{\"version\": \"$VERSION\"}"
+          pnpm --filter @kupcad/desktop tauri build --bundles ${{ matrix.bundles }} --config "{\"version\": \"$VERSION\"}"
 
       # The kupcad the app runs is the release's: it reports the tag's version
       - name: Check the bundled kupcad
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          kupcad=packages/kupcad-app/src-tauri/target/release/${{ matrix.binary }}
+          kupcad=packages/kupcad-desktop/src-tauri/target/release/${{ matrix.binary }}
           test "$("$kupcad" --version)" = "kupcad $VERSION"
 
       # Named as the release names its files: kupcad-desktop_<version>_<os>_<arch>
@@ -261,7 +261,7 @@ jobs:
           NAME: kupcad-desktop_${{ needs.version.outputs.version }}_${{ matrix.platform }}
         run: |
           shopt -s nullglob
-          bundle=packages/kupcad-app/src-tauri/target/release/bundle
+          bundle=packages/kupcad-desktop/src-tauri/target/release/bundle
           mkdir desktop
           for f in "$bundle"/dmg/*.dmg; do cp "$f" "desktop/$NAME.dmg"; done
           for f in "$bundle"/deb/*.deb; do cp "$f" "desktop/$NAME.deb"; done

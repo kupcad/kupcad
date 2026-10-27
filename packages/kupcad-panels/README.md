@@ -1,4 +1,4 @@
-# @kupcad/ui
+# @kupcad/panels
 
 The Svelte panels a KupCAD host shows beside its editor: the viewer with its toolbar and part
 list, and the parameter panel. They take @kupcad/protocol's shapes and give back values; they
@@ -7,8 +7,8 @@ hold no engine and fetch nothing, so a host wires them to its own: the playgroun
 
 ```svelte
 <script>
-  import '@kupcad/ui/tokens.css'; // or '@kupcad/ui/vscode.css' in VS Code's webview
-  import { ParamsPanel, ViewerPane } from '@kupcad/ui';
+  import '@kupcad/panels/tokens.css'; // or '@kupcad/panels/vscode.css' in VS Code's webview
+  import { ParamsPanel, ViewerPane } from '@kupcad/panels';
 
   let { preview } = $props(); // a protocol Preview: a frame read
   let overrides = $state({});

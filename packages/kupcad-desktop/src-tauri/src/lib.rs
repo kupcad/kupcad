@@ -64,7 +64,7 @@ async fn export_model(
     }
 }
 
-/// The folder the app was started with (`kupcad-app ~/parts`; `pnpm dev:app` gives it the
+/// The folder the app was started with (`kupcad-desktop ~/parts`; `pnpm dev:desktop` gives it the
 /// examples), by its real path, in the file system's scope with what is under it, as a folder
 /// picked in the dialog is; none without one. Options (`-…`) aren't folders.
 #[tauri::command]
@@ -161,7 +161,7 @@ mod tests {
 
     /// A folder of the test's own, made afresh.
     fn folder(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kupcad-app-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kupcad-desktop-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("picked/sub")).unwrap();
         std::fs::canonicalize(dir).unwrap()

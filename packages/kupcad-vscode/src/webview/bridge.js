@@ -4,10 +4,10 @@
 // extension kept them, and each change goes out for it to keep.
 
 import { isHostMessage, isSettingValue } from '@kupcad/protocol';
-import { memorySettings } from '@kupcad/ui';
+import { memorySettings } from '@kupcad/panels';
 
 /** @import { ViewerHost } from '@kupcad/protocol/types' */
-/** @import { Settings } from '@kupcad/ui' */
+/** @import { Settings } from '@kupcad/panels' */
 /** @import { WebviewApi } from '../types.js' */
 
 /**

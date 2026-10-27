@@ -7,7 +7,7 @@ the PWA) embeds; it keeps nothing of the page's.
 ```svelte
 <script>
   import { Playground } from '@kupcad/playground';
-  import '@kupcad/ui/tokens.css';
+  import '@kupcad/panels/tokens.css';
 </script>
 
 <Playground source={'cube(10)\n'} name="bracket" />
@@ -26,17 +26,17 @@ the PWA) embeds; it keeps nothing of the page's.
   it failed, a warning on a line); not the run's error where `check` found errors already (a
   script that doesn't parse fails the run for the same reason). Findings of a script changed
   since aren't marked, nor a run's places in one.
-* **The pane** (`@kupcad/ui`'s `ViewerPane`): the model, the view's controls and the parts, how
+* **The pane** (`@kupcad/panels`'s `ViewerPane`): the model, the view's controls and the parts, how
   the run went and its problems, one clicked taking the editor to its line. Its toolbar exports
-  the model in any format its kind can be written in (`@kupcad/ui`'s `ExportMenu`, built with
+  the model in any format its kind can be written in (`@kupcad/panels`'s `ExportMenu`, built with
   the panel's values) and saves a screenshot, as downloads named after `name`; a build that fails
   says why. The parameters (`ParamsPanel`) are beside it.
 * **The layout**: the bars between the script, the model, the parameters and the console
-  resize them (`@kupcad/ui`'s `Splitter`), and the toolbar's Parameters button hides the
+  resize them (`@kupcad/panels`'s `Splitter`), and the toolbar's Parameters button hides the
   parameters for the model's width; the sizes, and what is hidden or folded, are kept in
   `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys); a
   narrow page stacks the panes.
-* **The console** (`@kupcad/ui`'s `ConsolePanel`, under the model): each run, what it printed
+* **The console** (`@kupcad/panels`'s `ConsolePanel`, under the model): each run, what it printed
   (`puts`, `print`, `inspect`), its warnings and its error, a line naming a place taking the
   editor there, and the core's log (the worker module's stdout and stderr).
 

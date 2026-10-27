@@ -4,7 +4,7 @@
 
 /** @import { Mark } from '@kupcad/editor' */
 /** @import { Finding } from '@kupcad/protocol/types' */
-/** @import { Problem } from '@kupcad/ui' */
+/** @import { Problem } from '@kupcad/panels' */
 
 /**
  * @param {readonly Finding[]} findings `check`'s

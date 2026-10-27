@@ -10,7 +10,7 @@
     "@kupcad/protocol",
     "@kupcad/wasm",
     "@kupcad/viewer",
-    "@kupcad/ui",
+    "@kupcad/panels",
     "@kupcad/editor",
     "@kupcad/playground"
   ],

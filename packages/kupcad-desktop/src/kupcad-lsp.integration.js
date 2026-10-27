@@ -55,7 +55,7 @@ it(
   async () => {
     expect(existsSync(KUPCAD), `no kupcad at ${KUPCAD}: build it with \`zig build\``).toBe(true);
     // A folder on disk, as the app opens one, by its real path (the server confines by it)
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'kupcad-app-')));
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'kupcad-desktop-')));
     cleanups.push(async () => rmSync(folder, { recursive: true, force: true }));
     writeFileSync(join(folder, 'part.kup'), SCRIPT);
     const uri = fileUri(join(folder, 'part.kup'));

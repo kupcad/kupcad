@@ -1,4 +1,4 @@
-// How the editor looks: by the --kc-* tokens a host sets (@kupcad/ui's tokens.css), else the
+// How the editor looks: by the --kc-* tokens a host sets (@kupcad/panels's tokens.css), else the
 // page's own colours (CSS system colours, light or dark as the page is); the code's colours by
 // the --kc-code-* tokens (keyword, string, comment, constant, function, definition), else
 // GitHub's, light or dark.

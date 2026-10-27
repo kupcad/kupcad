@@ -1,5 +1,5 @@
 [package]
-name = "kupcad-app"
+name = "kupcad-desktop"
 version = "0.1.0"
 description = "KupCAD's desktop app"
 license = "AGPL-3.0-only"
@@ -9,7 +9,7 @@ publish = false
 
 [lib]
 # The library's name differs from the binary's (cargo#8519 on Windows)
-name = "kupcad_app_lib"
+name = "kupcad_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -15,12 +15,11 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 | `kupcad-protocol` | `@kupcad/protocol` | The types every package agrees on: a built model, a parameter schema, a finding, the messages between a host and a viewer. No dependencies, no runtime code to speak of. | — |
 | `kupcad-wasm` | `@kupcad/wasm` | The core compiled to WebAssembly (`kupcad.wasm`, built by `core/build.zig`) with a typed JavaScript API around its exports, and a Web Worker wrapper so a build never blocks the page. | protocol |
 | `kupcad-viewer` | `@kupcad/viewer` | The 3D viewer: a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking; and a thin Svelte component around it. | protocol, three |
-| `kupcad-ui` | `@kupcad/ui` | The Svelte components a KupCAD host shows beside its editor: the viewer pane with its toolbar, the parameter panel, presets, the log, and the theme tokens they share. | protocol, viewer |
+| `kupcad-panels` | `@kupcad/panels` | The Svelte components a KupCAD host shows beside its editor: the viewer pane with its toolbar, the parameter panel, presets, the log, and the theme tokens they share. | protocol, viewer |
 | `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting by the core's vocabulary, indentation, completion, the findings of `check` marked with their fixes, or a client of `kupcad lsp` (`@codemirror/lsp-client`). For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
-| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, ui |
-| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, ui |
-| `kupcad-tree-sitter` | — | The tree-sitter grammar, for editors that highlight with it. | — |
-| `kupcad-app` | `@kupcad/app` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol |
+| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, panels |
+| `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/panels`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, viewer, panels |
+| `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/panels`'s preview. | editor, panels, protocol |
 | `kupcad-pwa` (later) | private | The web app: the playground with files, projects and exports, installable. | playground |
 
 The site (Astro: the playground's page, the documentation) is in a repository of its own, and
@@ -44,7 +43,7 @@ pnpm changeset                     # describe a change to a published package
 pnpm --filter @kupcad/vscode watch # the extension and its webview, rebuilt as they change
 pnpm dev:vscode                    # kupcad and the extension built, a VS Code window to try it in
 pnpm dev:playground                # the core built to WebAssembly, the playground at 127.0.0.1:4321
-pnpm dev:app                       # kupcad built and bundled, the desktop app on examples/ (Rust needed)
+pnpm dev:desktop                  # kupcad built and bundled, the desktop app on examples/ (Rust needed)
 ```
 
 Trying the extension from a checkout (F5, or `pnpm dev:vscode`) is in its README,
@@ -91,7 +90,7 @@ Conventions, held by the root config and CI:
   columns, single quotes) and leaves Markdown and the generated grammar alone. It doesn't
   format `.svelte` files: Prettier with `prettier-plugin-svelte` does, in the same style, and
   `svelte-check` type-checks a Svelte package (its `check`) where `tsc` would miss them.
-* **Styling:** the published components (`ui`, `viewer`, `editor`, `playground`) use scoped
+* **Styling:** the published components (`panels`, `viewer`, `editor`, `playground`) use scoped
   Svelte CSS over the shared `--kc-*` tokens and nothing else, so they drop into any host, the
   VS Code webview included, without a CSS build. An app (the playground page, the PWA, the
   desktop shell) may add Tailwind for its own layout.

@@ -170,8 +170,8 @@ jobs:
       - name: Run the desktop app on the real kupcad lsp
         if: matrix.name == 'linux debug'
         run: |
-          pnpm install --frozen-lockfile --filter '@kupcad/app...'
-          pnpm --filter @kupcad/app test:integration
+          pnpm install --frozen-lockfile --filter '@kupcad/desktop...'
+          pnpm --filter @kupcad/desktop test:integration
 
       # The desktop app's native side, on the kupcad check:examples built as its sidecar: macOS
       # needs no WebKit packages to build it
@@ -180,10 +180,10 @@ jobs:
         run: |
           rustup toolchain install "$(awk '$1 == "rust" { print $2 }' .tool-versions)" --profile minimal --component clippy
           rustup default "$(awk '$1 == "rust" { print $2 }' .tool-versions)"
-          pnpm install --frozen-lockfile --filter '@kupcad/app...'
-          pnpm --filter @kupcad/app build
-          pnpm --filter @kupcad/app sidecar
-          cd packages/kupcad-app/src-tauri
+          pnpm install --frozen-lockfile --filter '@kupcad/desktop...'
+          pnpm --filter @kupcad/desktop build
+          pnpm --filter @kupcad/desktop sidecar
+          cd packages/kupcad-desktop/src-tauri
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
 

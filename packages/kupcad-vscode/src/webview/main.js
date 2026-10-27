@@ -2,9 +2,9 @@
 // extension through the webview's API, and to the language server's socket, whose URL the
 // extension wrote in the page with the settings it kept.
 
-import '@kupcad/ui/vscode.css';
+import '@kupcad/panels/vscode.css';
 import './page.css';
-import { PreviewPanel } from '@kupcad/ui';
+import { PreviewPanel } from '@kupcad/panels';
 import { mount } from 'svelte';
 import { connectHost, hostSettings } from './bridge.js';
 

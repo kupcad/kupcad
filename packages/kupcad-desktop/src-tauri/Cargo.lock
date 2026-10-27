@@ -1680,7 +1680,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kupcad-app"
+name = "kupcad-desktop"
 version = "0.1.0"
 dependencies = [
  "serde",

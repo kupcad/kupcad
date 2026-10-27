@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { stubRenderer } from '@kupcad/viewer/testing';
 import { testCore } from '@kupcad/wasm/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { memorySettings } from '@kupcad/ui';
+import { memorySettings } from '@kupcad/panels';
 import Playground from './Playground.svelte';
 
 /** How long a run may take here: the pause after an edit, then the real core's. */
@@ -15,7 +15,7 @@ afterEach(() => vi.restoreAllMocks());
 /**
  * The playground on `source`, run by the real core in this thread, and its editor's view.
  * @param {string} source
- * @param {import('@kupcad/ui').Settings} [settings] where its panes' sizes are kept
+ * @param {import('@kupcad/panels').Settings} [settings] where its panes' sizes are kept
  */
 async function playground(source, settings = memorySettings()) {
   const kupcad = await testCore();

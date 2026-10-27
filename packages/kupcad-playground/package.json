@@ -31,8 +31,8 @@
   },
   "dependencies": {
     "@kupcad/editor": "workspace:*",
+    "@kupcad/panels": "workspace:*",
     "@kupcad/protocol": "workspace:*",
-    "@kupcad/ui": "workspace:*",
     "@kupcad/viewer": "workspace:*",
     "@kupcad/wasm": "workspace:*"
   },

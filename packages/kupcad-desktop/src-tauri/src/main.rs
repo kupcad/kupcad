@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    kupcad_app_lib::run()
+    kupcad_desktop_lib::run()
 }

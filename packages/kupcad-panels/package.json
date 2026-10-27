@@ -1,12 +1,12 @@
 {
-  "name": "@kupcad/ui",
+  "name": "@kupcad/panels",
   "version": "0.1.0",
   "description": "The Svelte panels a KupCAD host shows beside its editor: the viewer with its toolbar and part list, and the parameter panel, styled by --kc-* tokens.",
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kupcad/kupcad.git",
-    "directory": "packages/kupcad-ui"
+    "directory": "packages/kupcad-panels"
   },
   "files": [
     "src",

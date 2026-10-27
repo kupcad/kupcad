@@ -20,8 +20,8 @@
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings"
   },
   "devDependencies": {
+    "@kupcad/panels": "workspace:*",
     "@kupcad/protocol": "workspace:*",
-    "@kupcad/ui": "workspace:*",
     "@kupcad/viewer": "workspace:*",
     "@kupcad/wasm": "workspace:*",
     "@sigstore/bundle": "5.0.0",

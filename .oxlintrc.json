@@ -14,5 +14,5 @@
   "env": {
     "es2024": true
   },
-  "ignorePatterns": ["**/dist/**", "**/dist-webview/**", "packages/kupcad-tree-sitter/**"]
+  "ignorePatterns": ["**/dist/**", "**/dist-webview/**"]
 }

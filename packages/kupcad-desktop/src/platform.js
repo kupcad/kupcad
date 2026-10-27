@@ -11,7 +11,7 @@ import { files, listFolder, pickFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
-/** @import { Settings } from '@kupcad/ui' */
+/** @import { Settings } from '@kupcad/panels' */
 /** @import { Entry } from './folder.js' */
 /** @import { ServerEvents } from './server.js' */
 

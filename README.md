@@ -48,12 +48,12 @@ To try the front ends from a checkout:
 ```sh
 pnpm dev:vscode       # kupcad and the VS Code extension built, a VS Code window with it on examples/
 pnpm dev:playground   # the core built to WebAssembly, the playground at http://127.0.0.1:4321/
-pnpm dev:app          # kupcad built and bundled, the desktop app (Tauri, needs Rust) on examples/
+pnpm dev:desktop     # kupcad built and bundled, the desktop app (Tauri, needs Rust) on examples/
 ```
 
 The [extension's README](packages/kupcad-vscode/README.md#development), the
 [playground's](packages/kupcad-playground/README.md#running-it) and the
-[desktop app's](packages/kupcad-app/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
+[desktop app's](packages/kupcad-desktop/README.md#running-it) say more; [packages/](packages/README.md) has the rest.
 
 ## Usage
 
@@ -97,7 +97,7 @@ wasm-opt -Oz --enable-bulk-memory-opt --enable-nontrapping-float-to-int core/zig
 ```
 
 To release, set `.version` in `core/build.zig.zon` (what `kupcad --version` prints) and the
-`version` of the npm packages (`packages/kupcad-{protocol,wasm,viewer,ui,editor,playground}`) to
+`version` of the npm packages (`packages/kupcad-{protocol,wasm,viewer,panels,editor,playground}`) to
 the same, commit, and push a tag of that version: `git tag v0.2.0 && git push origin v0.2.0`.
 The Release workflow checks the tag matches all of them, builds the CLI on a runner of each system and architecture it ships for
 (Linux, macOS and Windows, x86_64 and arm64), checks each binary there (its version, an example

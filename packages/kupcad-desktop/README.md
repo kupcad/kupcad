@@ -1,4 +1,4 @@
-# @kupcad/app
+# @kupcad/desktop
 
 KupCAD's desktop app ([Tauri 2](https://v2.tauri.app)): a folder of scripts, the script open in
 an editor with the language's every feature, and its model and parameters beside it. It runs the
@@ -11,15 +11,15 @@ From the repository's root, with Rust installed (`.tool-versions`):
 
 ```sh
 pnpm install
-pnpm dev:app
+pnpm dev:desktop
 ```
 
 It builds the core (`pnpm build:core:native`), copies `kupcad` to where the app bundles it
-(`pnpm --filter @kupcad/app sidecar`: `src-tauri/binaries/kupcad-<target triple>`), and starts
+(`pnpm --filter @kupcad/desktop sidecar`: `src-tauri/binaries/kupcad-<target triple>`), and starts
 the app on `examples/` (`tauri dev`, the page served by Vite as it changes, the Rust side rebuilt
-when it does). A change to the core needs `pnpm dev:app` again.
+when it does). A change to the core needs `pnpm dev:desktop` again.
 
-`kupcad-app <folder>` opens that folder; with none, the app asks for one.
+`kupcad-desktop <folder>` opens that folder; with none, the app asks for one.
 
 In this package:
 
@@ -46,7 +46,7 @@ Windows warn before they open one; signing needs the certificates as the reposit
 
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its
   scripts and the files they read, hidden folders such as `.git` and `.kupcad` left out), the
-  script open in `@kupcad/editor` with the language server's features, and `@kupcad/ui`'s
+  script open in `@kupcad/editor` with the language server's features, and `@kupcad/panels`'s
   `PreviewPanel` (the model, the run's problems, the parameters). A script's edits are kept until
   it is saved (⌘S, Ctrl+S), marked in the tree and the bar until then; the window asks before it
   closes, or opens another folder, on unsaved changes. The bars between the tree, the editor,
