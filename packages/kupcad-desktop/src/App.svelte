@@ -2,9 +2,10 @@
   @component
   The app's window: the folder opened, its files beside the script open in the editor, and the
   script's preview, its parameters with it. The editor and the preview run on the bundled
-  kupcad's language server, started for the folder. A script is saved with ⌘S (Ctrl+S); the
-  window asks before it closes on unsaved changes. The bars between the panes resize them, the
-  sizes kept in the app's settings (`settings`).
+  kupcad's language server, started for the folder. The folder's tree follows what is made,
+  removed or renamed in it, and its closed folders stay closed until a script in one is opened.
+  A script is saved with ⌘S (Ctrl+S); the window asks before it closes on unsaved changes. The
+  bars between the panes resize them, the sizes kept in the app's settings (`settings`).
 -->
 <script>
   import { Editor } from '@kupcad/editor/svelte';
@@ -13,7 +14,7 @@
   import { onMount, tick, untrack } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import FileTree from './FileTree.svelte';
-  import { fileUri } from './folder.js';
+  import { fileUri, foldersAbove } from './folder.js';
   import { createHost } from './host.js';
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
@@ -36,9 +37,15 @@
   const KEYS = { files: 'app.files', editor: 'app.editor' };
   let filesWidth = $state(untrack(() => sizeSetting(settings, KEYS.files, 224)));
   let editorWidth = $state(untrack(() => sizeSetting(settings, KEYS.editor, 520)));
+  /** The tree's closed folders, by their paths: none in a folder just opened. */
+  const collapsed = new SvelteSet();
 
   /** The folder open, by its path. */
   let folder = $state(/** @type {string | null} */ (null));
+  /** How many folders were opened: what a listing or a watcher of an earlier one checks. */
+  let opened = 0;
+  /** Stops watching the folder open. */
+  let unwatch = /** @type {(() => void) | null} */ (null);
   let entries = $state(/** @type {Entry[]} */ ([]));
   /** The script open in the editor. */
   let open = $state(/** @type {{ path: string, name: string, uri: string } | null} */ (null));
@@ -73,13 +80,24 @@
     const picked = named ?? (await platform.pickFolder());
     if (!picked) return;
     if (unsaved.size > 0 && !(await platform.confirm('Leave this folder without saving?'))) return;
+    const mine = ++opened;
+    unwatch?.();
+    unwatch = null;
     await server?.stop();
     texts.clear();
     unsaved.clear();
+    collapsed.clear();
     open = null;
     preview.show(null);
     folder = picked;
     entries = await platform.listFolder(picked);
+    platform
+      .watchFolder(picked, listAgain(picked, mine))
+      .then((stop) => {
+        if (mine === opened) unwatch = stop;
+        else stop();
+      })
+      .catch((error) => (problem = `${name(picked)} isn't watched: ${errorText(error)}`));
     const started = platform.server(fileUri(picked), {
       viewport: (url) => (viewportUrl = url),
       state: (up) => (running = up),
@@ -95,6 +113,46 @@
     if (first) await openScript(first);
   }
 
+  /**
+   * What lists the folder `root` again when the watcher says it changed: one listing at a time,
+   * another after it for what changed meanwhile, none once another folder is opened.
+   * @param {string} root
+   * @param {number} mine which folder opened it was
+   */
+  function listAgain(root, mine) {
+    let listing = false;
+    let again = false;
+    return async () => {
+      if (listing) {
+        again = true;
+        return;
+      }
+      listing = true;
+      try {
+        do {
+          again = false;
+          const listed = await platform.listFolder(root);
+          if (mine !== opened) return;
+          entries = listed;
+        } while (again);
+      } catch (error) {
+        if (mine === opened) problem = `${name(root)} wasn't listed again: ${errorText(error)}`;
+      } finally {
+        listing = false;
+      }
+    };
+  }
+
+  /**
+   * Opens or closes the tree's folder at `path`.
+   * @param {string} path
+   * @param {boolean} opening
+   */
+  function toggle(path, opening) {
+    if (opening) collapsed.delete(path);
+    else collapsed.add(path);
+  }
+
   /** @param {Entry} entry */
   async function openScript(entry) {
     if (!texts.has(entry.path)) {
@@ -107,6 +165,8 @@
       }
     }
     open = { path: entry.path, name: entry.name, uri: fileUri(entry.path) };
+    // Shown in the tree: the folders it is in open
+    for (const path of foldersAbove(entries, entry.path)) collapsed.delete(path);
     preview.show(open);
   }
 
@@ -170,6 +230,8 @@
       })
       .catch((error) => (problem = errorText(error)));
     return () => {
+      opened++;
+      unwatch?.();
       void closing.then((stop) => stop());
       void server?.stop();
     };
@@ -200,7 +262,14 @@
     </header>
     <div class="body">
       <nav class="files" aria-label="Files" style:width="{filesWidth}px">
-        <FileTree {entries} selected={open?.path ?? null} {unsaved} onopen={openScript} />
+        <FileTree
+          {entries}
+          {collapsed}
+          selected={open?.path ?? null}
+          {unsaved}
+          onopen={openScript}
+          ontoggle={(entry, opening) => toggle(entry.path, opening)}
+        />
       </nav>
       <Splitter
         bind:size={filesWidth}

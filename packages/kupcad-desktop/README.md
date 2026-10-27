@@ -45,11 +45,18 @@ Windows warn before they open one; signing needs the certificates as the reposit
 ## How it is put together
 
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its
-  scripts and the files they read, hidden folders such as `.git` and `.kupcad` left out), the
-  script open in `@kupcad/editor` with the language server's features, and `@kupcad/panels`'s
+  scripts and the files they read, in its folders however deep, hidden folders such as `.git`
+  and `.kupcad` left out), the script open in `@kupcad/editor` with the language server's
+  features, and `@kupcad/panels`'s
   `PreviewPanel` (the model, the run's problems, the parameters). A script's edits are kept until
   it is saved (⌘S, Ctrl+S), marked in the tree and the bar until then; the window asks before it
-  closes, or opens another folder, on unsaved changes. The bars between the tree, the editor,
+  closes, or opens another folder, on unsaved changes. A folder in the tree opens and closes
+  when clicked, or with the arrow keys (up and down, right into a folder, left out of it), and a
+  script opened opens the folders it is in; which are closed isn't kept, so a folder opens with
+  all of them open. The tree follows the folder: watched (the file
+  system plugin's `watch`, its changes gathered for 300 ms), it is listed again when something
+  in it is made, removed or renamed; a file only read or saved in place, or anything in a folder
+  the tree leaves out, doesn't list it again. The bars between the tree, the editor,
   the model, the parameters and the console resize them, and the Parameters button hides the
   parameters; the sizes, and which panes are hidden, are kept in the app's settings
   file (`settings.json` in its config folder, macOS's `~/Library/Application Support/
@@ -84,16 +91,20 @@ Windows warn before they open one; signing needs the certificates as the reposit
 The page runs no program itself: it has no shell permission, and the bundled `kupcad` runs
 through the app's commands above, with the arguments they make. It reads and writes only what
 the person chose (`capabilities/default.json`: the dialogs, and the file system within the
-folder opened and the files saved), and its Content Security Policy (`tauri.conf.json`) lets it
+folder opened, which it watches too, and the files saved), and its Content Security Policy (`tauri.conf.json`) lets it
 connect to the app's IPC and the server's viewport socket on 127.0.0.1 alone.
 
 ## Tests
 
-The folder's tree and its files' URIs, the preview's host (what the panel is told, an export
+The folder's tree (folders in folders, what a closed folder hides, the folders a script is in,
+which of the watcher's changes list it again) and its files' URIs, the tree's rows (a folder
+opened and closed by a click or the arrow keys), the preview's host (what the panel is told, an export
 with its values and its formats, a screenshot, a refused message), the language server's
 lifecycle on a stand-in server (its handshake through the framing, the viewport's URL, the
 commands, restarts, a server that ends before it is up or doesn't start again), and the window on stand-ins (a folder
-opened, a script opened, an edit saved with ⌘S, the question on closing). `test:integration`
+opened, a script opened, an edit saved with ⌘S, the question on closing, the tree's folders
+closed and opened, none of it kept, the folder listed again as it changes and no longer once
+another is opened). `test:integration`
 runs the page's server on the real `kupcad lsp`: the handshake, a script's diagnostics, and its
 model from the viewport socket. The Rust side tests its commands' arguments, that an export's paths are checked and passed by
 their real paths (no `..`, no symlink, which the file system's scope matched as written), and

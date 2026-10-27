@@ -34,10 +34,17 @@ function windowOn({
   const fake = fakeServer({ port: null });
   /** @type {(() => Promise<boolean>) | null} */
   let canClose = null;
+  /** Each folder watched: what it is told when it changes, and what stopping it was asked. */
+  const watched = /** @type {{ root: string, changed: () => void, stop: () => void }[]} */ ([]);
   const platform = {
     pickFolder: vi.fn(async () => FOLDER),
     launchFolder: vi.fn(async () => launched),
-    listFolder: vi.fn(async () => ENTRIES),
+    listFolder: vi.fn(async (/** @type {string} */ _root) => ENTRIES),
+    watchFolder: vi.fn(async (/** @type {string} */ root, /** @type {() => void} */ changed) => {
+      const stop = vi.fn();
+      watched.push({ root, changed, stop });
+      return stop;
+    }),
     files: {
       read: vi.fn(async (/** @type {string} */ path) => TEXTS[/** @type {keyof TEXTS} */ (path)]),
       write: vi.fn(async (/** @type {string} */ _path, /** @type {string} */ _text) => {}),
@@ -66,6 +73,12 @@ function windowOn({
   return {
     platform,
     fake,
+    watched,
+    /** Closes the window before the test ends. */
+    unmount() {
+      opened.splice(opened.indexOf(unmount), 1);
+      unmount();
+    },
     /** What the server was sent, by method. @param {string} method */
     sent: (method) => fake.processes.flatMap((p) => p.received).filter((m) => m.method === method),
     canClose: () => /** @type {() => Promise<boolean>} */ (canClose)(),
@@ -80,6 +93,9 @@ async function editorView() {
     return /** @type {EditorView} */ (EditorView.findFromDOM(/** @type {HTMLElement} */ (content)));
   });
 }
+
+/** The tree's row of the folder parts. */
+const parts = () => screen.getByRole('button', { name: 'parts' });
 
 /** Opens the folder, its first script in the editor. */
 async function openFolder() {
@@ -169,6 +185,67 @@ describe('the window', () => {
     expect(settings.get('app.files')).toBe(276);
     // The preview's panes are kept in the same settings
     expect(screen.getByRole('separator', { name: 'Resize the console' })).toBeTruthy();
+  });
+
+  it("closes and opens the tree's folders, keeping none of it beyond the folder open", async () => {
+    const settings = memorySettings();
+    const set = vi.spyOn(settings, 'set');
+    const window = windowOn({ settings });
+    await openFolder();
+    expect(parts().getAttribute('aria-expanded')).toBe('true');
+    await fireEvent.click(parts());
+    expect(parts().getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'lid.kup' })).toBeNull();
+    // The editor keeps the script, hidden in the tree or not
+    expect((await editorView()).state.doc.toString()).toBe('cube(2)\n');
+    await fireEvent.click(parts());
+    expect(screen.getByRole('button', { name: 'lid.kup' })).toBeTruthy();
+
+    // Opened again, every folder is open: here the first script, opened with it, is in none
+    window.platform.listFolder.mockResolvedValue([
+      { kind: 'folder', name: 'parts', path: '/w/parts', depth: 0 },
+      { kind: 'data', name: 'lid.stl', path: '/w/parts/lid.stl', depth: 1 },
+      { kind: 'script', name: 'part.kup', path: '/w/part.kup', depth: 0 },
+    ]);
+    await fireEvent.click(parts());
+    await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+    await vi.waitFor(() => expect(screen.getByText('lid.stl')).toBeTruthy());
+    expect(parts().getAttribute('aria-expanded')).toBe('true');
+    expect(set).not.toHaveBeenCalled();
+  });
+
+  it('lists the folder again when what is in it changes, until another is opened', async () => {
+    const window = windowOn();
+    await openFolder();
+    await vi.waitFor(() => expect(window.watched).toHaveLength(1));
+    expect(window.watched[0].root).toBe(FOLDER);
+    /** @type {Entry} */
+    const added = { kind: 'script', name: 'new.kup', path: '/w/new.kup', depth: 0 };
+    window.platform.listFolder.mockResolvedValueOnce([...ENTRIES, added]);
+    window.watched[0].changed();
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'new.kup' })).toBeTruthy());
+    // A script added is opened as any other
+    await fireEvent.click(screen.getByRole('button', { name: 'new.kup' }));
+    await vi.waitFor(() => expect(window.platform.files.read).toHaveBeenCalledWith('/w/new.kup'));
+
+    // Another folder: the first isn't watched any more, and what its watcher still says is
+    // passed over
+    window.platform.pickFolder.mockResolvedValueOnce('/v');
+    await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+    await vi.waitFor(() => expect(window.watched).toHaveLength(2));
+    expect(window.watched[0].stop).toHaveBeenCalledOnce();
+    expect(window.watched[1].root).toBe('/v');
+    /** @type {Entry} */
+    const stale = { kind: 'script', name: 'stale.kup', path: '/w/stale.kup', depth: 0 };
+    window.platform.listFolder.mockResolvedValueOnce([stale]);
+    window.watched[0].changed();
+    await tick();
+    await tick();
+    expect(screen.queryByRole('button', { name: 'stale.kup' })).toBeNull();
+
+    // Closed, it watches nothing
+    window.unmount();
+    expect(window.watched[1].stop).toHaveBeenCalledOnce();
   });
 
   it('asks before it closes on unsaved changes, and not without', async () => {

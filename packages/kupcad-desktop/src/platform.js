@@ -7,7 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { load } from '@tauri-apps/plugin-store';
-import { files, listFolder, pickFolder } from './folder.js';
+import { files, listFolder, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
@@ -20,6 +20,8 @@ import { LanguageServer } from './server.js';
  * @property {() => Promise<string | null>} pickFolder
  * @property {() => Promise<string | null>} launchFolder the folder named on the command line
  * @property {(root: string) => Promise<Entry[]>} listFolder
+ * @property {(root: string, onchange: () => void) => Promise<() => void>} watchFolder calls
+ *   `onchange` when what is in `root` may have changed its tree; resolves to what stops it
  * @property {{ read(path: string): Promise<string>, write(path: string, text: string): Promise<void> }} files
  * @property {(options: { defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }) => Promise<string | null>} save
  * @property {(text: string) => Promise<void>} tell
@@ -43,6 +45,7 @@ export const tauri = {
   pickFolder: () => pickFolder(),
   launchFolder: () => invoke('launch_folder'),
   listFolder: (root) => listFolder(root),
+  watchFolder: (root, onchange) => watchFolder(root, onchange),
   files,
   save: (options) => save(options),
   tell: async (text) => void (await message(text, { title: 'KupCAD', kind: 'warning' })),
