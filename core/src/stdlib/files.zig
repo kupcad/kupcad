@@ -9,6 +9,7 @@ const std = @import("std");
 const value = @import("../core/value.zig");
 const VM = @import("../vm/vm.zig").VM;
 const arguments = @import("arguments.zig");
+const sig = @import("method_signatures.zig");
 const assembly_mod = @import("assembly.zig");
 const stl = @import("../exporters/3d/stl.zig");
 const export_mod = @import("../exporters/export.zig");
@@ -94,11 +95,18 @@ pub fn meshExport3mf(vm: *VM, receiver: value.Value, filepath: []const u8) !valu
     return receiver;
 }
 
-/// `solid.export_obj(path, mtl)` and `assembly.export_obj(path, mtl)`: Wavefront OBJ, an
-/// object per Solid; with `mtl` true, the materials go in a library beside it (part.mtl),
-/// as `--mtl` writes them.
-pub fn meshExportObj(vm: *VM, receiver: value.Value, filepath: []const u8, mtl_opt: ?bool) !value.Value {
-    const mtl_path: ?[]u8 = if (mtl_opt orelse false) try export_mod.materialLibraryPath(vm.allocator, filepath) else null;
+/// `solid.export_obj(path, mtl: false)` and `assembly.export_obj(path, mtl: false)`:
+/// Wavefront OBJ, an object per Solid; with `mtl: true`, the materials go in a library beside
+/// it (part.mtl), as `--mtl` writes them.
+pub fn meshExportObj(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const Opts = struct { mtl: bool = false };
+    // The keywords first, as every method checks them: one it doesn't take is named so
+    const parsed = try arguments.parseKwargsOver(Opts, .{}, sig.EXPORT_OBJ.keywords, vm, args, "export_obj");
+    const opts = parsed.opts;
+    if (parsed.positional.len == 0) return vm.fail(.ArgumentError, "export_obj needs a path: export_obj(path)", .{});
+    if (!parsed.positional[0].isString()) return vm.fail(.TypeError, "export_obj expects a String for argument 1, got {s}", .{arguments.typeName(vm, parsed.positional[0])});
+    const filepath = parsed.positional[0].asString().chars;
+    const mtl_path: ?[]u8 = if (opts.mtl) try export_mod.materialLibraryPath(vm.allocator, filepath) else null;
     defer if (mtl_path) |p| vm.allocator.free(p);
     try exportTo(vm, receiver, filepath, .obj, .{ .mtl_name = if (mtl_path) |p| std.fs.path.basename(p) else null }, "export_obj");
     if (mtl_path) |p| {

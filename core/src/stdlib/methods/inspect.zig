@@ -18,7 +18,8 @@ const FIRST_GAP_SEARCH_FRACTION: f64 = 1.0 / 64.0;
 
 pub fn meshBBox(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isAssembly()) {
-        const box = try arguments.boundsOf(vm, receiver, "bbox");
+        // nil when its parts are all empty, as an empty Solid's
+        const box = try arguments.boundsOf(vm, receiver, "bbox") orelse return value.Value.initNil();
         const bbox_inst = try vm.gc.allocateBBox(vm, box.min[0], box.min[1], box.min[2], box.max[0], box.max[1], box.max[2]);
         return value.Value.initObj(&bbox_inst.obj);
     }
@@ -150,6 +151,8 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     try vm.requireFeature(handle.engine, .min_gap);
     if (search_length) |length| return value.Value.initNumber(kernel.minGap(handle, other_handle, length));
     try vm.requireFeature(handle.engine, .bounding_box);
+    // Infinity to an empty one: there is nothing in it to be near (its box has none)
+    if (kernel.numVerts(handle) == 0 or kernel.numVerts(other_handle) == 0) return value.Value.initNumber(std.math.inf(f64));
     const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     return value.Value.initNumber(fullGap(handle, other_handle, box_a, box_b));
@@ -157,10 +160,8 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
 
 /// The gap between two solids, however far apart (`min_gap` without a search length):
 /// searched from just past the gap between their boxes, doubling up to the diagonal of
-/// the box around both, which no gap between them is longer than. Infinity when either is
-/// empty: there is nothing in it to be near.
+/// the box around both, which no gap between them is longer than. Neither is empty.
 fn fullGap(a: geom.GeometryHandle, b: geom.GeometryHandle, box_a: geom.BoundingBox, box_b: geom.BoundingBox) f64 {
-    if (isEmpty(box_a) or isEmpty(box_b)) return std.math.inf(f64);
     var box_gap_sq: f64 = 0;
     var diagonal_sq: f64 = 0;
     for (0..3) |axis| {
@@ -179,10 +180,6 @@ fn fullGap(a: geom.GeometryHandle, b: geom.GeometryHandle, box_a: geom.BoundingB
 }
 
 /// Whether the box is an empty solid's (its min above its max).
-fn isEmpty(box: geom.BoundingBox) bool {
-    return box.min[0] > box.max[0];
-}
-
 pub fn meshContains(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
     if (receiver.isCrossSection()) return sketchContains(vm, receiver, args);
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "contains?", receiver);

@@ -90,9 +90,10 @@ pub fn arraySlice(vm: *VM, arr: *value.ObjArray, start_num: f64, len_num: f64) !
     return value.Value.initObj(&new_arr.obj);
 }
 
-/// Array#join(delim)
-pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: *value.ObjString) !value.Value {
-    const delim = delim_obj.chars;
+/// Array#join(delim = ""): the items as `puts` shows them, `delim` between each two (with
+/// none given, nothing: as in Ruby, where `join` alone was an ArgumentError).
+pub fn arrayJoin(vm: *VM, arr: *value.ObjArray, delim_obj: ?*value.ObjString) !value.Value {
+    const delim = if (delim_obj) |d| d.chars else "";
 
     var out: std.Io.Writer.Allocating = .init(vm.gc.trackingAllocator());
     errdefer out.deinit();

@@ -120,6 +120,9 @@ test "Language: inspect prints a container that holds itself as [...], and escap
 test "Language: split and replace on an empty String and clamp with reversed bounds don't trip asserts" {
     try expectScripts(&.{
         .{ .src = "r = \"abc\".split(\"\").join(\"|\")", .expected = .{ .str = "a|b|c" } },
+        // With no separator, nothing between, as in Ruby (it was an ArgumentError)
+        .{ .src = "r = [:a, :b].join", .expected = .{ .str = "ab" } },
+        .{ .src = "r = [].join", .expected = .{ .str = "" } },
         // An empty String is found before each character and at the end, as in Ruby (it
         // was std.mem's assertion that a needle isn't empty: the VM stopped)
         .{ .src = "r = \"abc\".replace(\"\", \"x\")", .expected = .{ .str = "xaxbxcx" } },

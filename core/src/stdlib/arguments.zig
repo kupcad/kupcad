@@ -41,30 +41,32 @@ pub fn notDefinedFor(vm: *VM, method: []const u8, receiver: value.Value) error{R
 }
 
 /// The bounding box of a Solid, of a Sketch (flat, at z = 0), or of an Assembly (the box
-/// around all its parts).
-pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !geom.BoundingBox {
+/// around those of its parts that have one); null for an empty shape, which has none (a
+/// Solid's was ±infinity, and a move by it NaN).
+pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !?geom.BoundingBox {
     if (receiver.isAssembly()) {
-        const parts = receiver.asAssembly().parts.items.items;
-        if (parts.len == 0) return vm.fail(.ValueError, "{s}: an empty assembly has no bounds", .{method});
-        var box = try boundsOf(vm, parts[0], method);
-        for (parts[1..]) |part| {
-            const b = try boundsOf(vm, part, method);
-            for (0..3) |axis| {
-                box.min[axis] = @min(box.min[axis], b.min[axis]);
-                box.max[axis] = @max(box.max[axis], b.max[axis]);
-            }
+        var box: ?geom.BoundingBox = null;
+        for (receiver.asAssembly().parts.items.items) |part| {
+            const b = try boundsOf(vm, part, method) orelse continue;
+            if (box) |*around| {
+                for (0..3) |axis| {
+                    around.min[axis] = @min(around.min[axis], b.min[axis]);
+                    around.max[axis] = @max(around.max[axis], b.max[axis]);
+                }
+            } else box = b;
         }
         return box;
     }
     if (receiver.isCrossSection()) {
         const sketch = try vm.ensureConcreteCrossSection(receiver);
         try vm.requireFeature(sketch.engine, .sketch_measure);
-        const rect = kernel.crossSectionBounds(sketch) orelse return vm.fail(.ValueError, "{s}: an empty sketch has no bounds", .{method});
+        const rect = kernel.crossSectionBounds(sketch) orelse return null;
         return .{ .min = .{ rect.min[0], rect.min[1], 0.0 }, .max = .{ rect.max[0], rect.max[1], 0.0 } };
     }
     if (!receiver.isGeometry()) return notDefinedFor(vm, method, receiver);
     const solid = try vm.ensureConcrete(receiver);
     try vm.requireFeature(solid.engine, .bounding_box);
+    if (kernel.numVerts(solid) == 0) return null;
     return kernel.boundingBox(solid) orelse {
         return vm.fail(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
     };

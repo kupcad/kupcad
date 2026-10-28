@@ -348,6 +348,8 @@ pub inline fn genus(handle: geom.GeometryHandle) i32 {
     return dispatch("genusFn", handle, .{});
 }
 
+/// The box around a solid; null for an empty one (numVerts 0) or one the engine can't
+/// bound.
 pub inline fn boundingBox(handle: geom.GeometryHandle) ?geom.BoundingBox {
     return dispatch("boundingBoxFn", handle, .{});
 }

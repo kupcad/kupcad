@@ -1,8 +1,8 @@
 //! `kupcad run`: runs a script with its parameter values (`-p`, `-P`) and the project's
 //! memory limit, as `kupcad build` does, and writes no model: what it prints, and the
 //! errors it raises, are the result (a script may still export with `export_stl` and the
-//! rest). The model is built but not evaluated by the kernel, so a kernel error waits for
-//! `kupcad build`.
+//! rest). A model that is one Solid is evaluated by the kernel (the session fingerprints its
+//! output), so a kernel error shows here too; an Array or an Assembly waits for `kupcad build`.
 
 const std = @import("std");
 const build_cmd = @import("build_cmd.zig");

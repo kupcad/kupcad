@@ -912,7 +912,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 17), checked);
+    try std.testing.expectEqual(@as(usize, 18), checked); // export_obj counts since its mtl: became a keyword
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
@@ -1384,7 +1384,8 @@ test "Stdlib: a sketch is empty? when it has no area, and an empty one has no bb
         .{ .src = "r = square(1).empty?", .expected = .{ .boolean = false } },
         .{ .src = empty ++ "r = e.bbox", .expected = .nil },
         .{ .src = "r = square(2).bbox.max", .expected = .{ .nums = &.{ 2, 2, 0 } } },
-        .{ .src = comptime rescued(empty ++ "e.center"), .expected = .{ .str = "ValueError: center: an empty sketch has no bounds" } },
+        // Moved, it stays as it is, as an empty Solid does: there is nothing to move
+        .{ .src = empty ++ "r = e.center.empty?", .expected = .{ .boolean = true } },
         .{ .src = comptime rescued(empty ++ "e.revolve(360)"), .expected = .{ .str = "ValueError: revolve: an empty sketch has no profile" } },
     });
 }
@@ -2612,7 +2613,9 @@ test "Stdlib: a VM its host gave no file system reads no file and writes none" {
     try test_support.expectScripts(&.{
         .{ .src = comptime rescued("import_stl(\"build.zig\")"), .expected = .{ .str = "ImportError: could not read STL file 'build.zig': FileNotFound" } },
         .{ .src = comptime rescued("cube(1).export_stl(\"vm_no_files.stl\")"), .expected = .{ .str = "RuntimeError: export_stl: could not write 'vm_no_files.stl': AccessDenied" } },
-        .{ .src = comptime rescued("cube(1).export_obj(\"vm_no_files.obj\", true)"), .expected = .{ .str = "RuntimeError: export_obj: could not write 'vm_no_files.obj': AccessDenied" } },
+        // `mtl:` by keyword alone: `export_obj(path, true)` didn't say what it turned on
+        .{ .src = comptime rescued("cube(1).export_obj(\"x.obj\", true)"), .expected = .{ .str = "ArgumentError: export_obj takes at most 1 positional argument (path), got 2" } },
+        .{ .src = comptime rescued("cube(1).export_obj(\"vm_no_files.obj\", mtl: true)"), .expected = .{ .str = "RuntimeError: export_obj: could not write 'vm_no_files.obj': AccessDenied" } },
     });
     try testing.expectError(error.FileNotFound, std.Io.Dir.cwd().access(testing.io, "vm_no_files.stl", .{}));
 }
@@ -2999,7 +3002,9 @@ test "Stdlib: an Assembly is placed as a whole: bbox, center, translate" {
         .{ .src = kit ++ "r = a.center(:x).bbox.min", .expected = .{ .nums = &.{ -6, 0, 0 } } },
         // A new assembly of the same name; the original stays where it was.
         .{ .src = kit ++ "b = a.translate(1, 0, 0)\nr = \"#{b.name} #{b.parts.length} #{a.bbox.min[0]}\"", .expected = .{ .str = "kit 2 0" } },
-        .{ .src = comptime rescued("assemble(name: \"e\", parts: []).bbox"), .expected = .{ .str = "ValueError: bbox: an empty assembly has no bounds" } },
+        // No parts, no box: nil, as an empty Solid's (it was a ValueError), and centred, as it is
+        .{ .src = "r = assemble(name: \"e\", parts: []).bbox", .expected = .nil },
+        .{ .src = "r = assemble(name: \"e\", parts: []).center.parts.length", .expected = .{ .num = 0 } },
     });
 }
 
@@ -3051,7 +3056,7 @@ test "Stdlib: an Assembly exports its parts to STL, glTF, STEP, 3MF and OBJ, and
         .{ .src = kit ++ "r = \"#{a.export_stl(\"kit.stl\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_gltf(\"kit.glb\").class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = kit ++ "r = \"#{a.export_3mf(\"kit.3mf\").class}\"", .expected = .{ .str = "Assembly" } },
-        .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", true).class}\"", .expected = .{ .str = "Assembly" } },
+        .{ .src = kit ++ "r = \"#{a.export_obj(\"kit.obj\", mtl: true).class}\"", .expected = .{ .str = "Assembly" } },
         .{ .src = "r = \"#{cube(1).export_obj(\"cube.obj\").class}\"", .expected = .{ .str = "Solid" } },
         .{ .src = kit ++ "r = \"#{a.export_svg(\"kit.svg\").class} #{a.export_dxf(\"kit.dxf\").class}\"", .expected = .{ .str = "Assembly Assembly" } },
         .{ .src = "r = \"#{square(2).named(\"g\").export_svg(\"g.svg\").class} #{cube(1).export_dxf(\"c.dxf\").class}\"", .expected = .{ .str = "Sketch Solid" } },
@@ -3171,5 +3176,21 @@ test "Stdlib: union([]) is the empty Solid, a valid part that renders nothing" {
         .{ .src = "parts = [nil, nil].compact\nr = union(parts).empty?", .expected = .{ .boolean = true } },
         .{ .src = comptime rescued("batch_hull([])"), .expected = .{ .str = "ArgumentError: batch_hull needs at least one Solid, got an empty Array" } },
         .{ .src = comptime rescued("CAD.with_config(engine: :brep) do\n  union([]).volume\nend"), .expected = .{ .str = brepLacks(.empty) } },
+    });
+}
+
+test "Stdlib: an empty Solid has no bbox, and what moves by one leaves it as it is" {
+    // Its bbox was ±infinity: printed so, `center` and `align` stopped the VM on a NaN
+    // translate, and a parts list wrote `-inf`, which isn't JSON.
+    try expectScripts(&.{
+        .{ .src = "r = union([]).bbox", .expected = .nil },
+        .{ .src = "r = (cube(1) - cube(2)).bbox", .expected = .nil },
+        .{ .src = "r = [union([]).center.empty?, union([]).align(cube(1), \"x\", \"min\").empty?, union([]).resize([2, 2, 2]).empty?].inspect", .expected = .{ .str = "[true, true, true]" } },
+        .{ .src = comptime rescued("cube(1).align(union([]), \"x\", \"min\")"), .expected = .{ .str = "ValueError: align: the target is empty, with no side to align to" } },
+        // An assembly's box is around the parts that have one: nil when none has
+        .{ .src = "r = assemble(name: \"a\", parts: [union([])]).bbox", .expected = .nil },
+        .{ .src = "r = assemble(name: \"a\", parts: [union([]), cube(2)]).bbox.size", .expected = .{ .nums = &.{ 2, 2, 2 } } },
+        .{ .src = "r = cube(1).min_gap(union([])).infinite?", .expected = .{ .boolean = true } },
+        .{ .src = "r = assemble(name: \"a\", parts: [cube(1), union([]).named(\"void\")]).bom[1][:size]", .expected = .{ .nums = &.{ 0, 0, 0 } } },
     });
 }

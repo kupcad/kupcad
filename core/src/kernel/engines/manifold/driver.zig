@@ -596,9 +596,12 @@ const Mesh64 = struct {
     }
 };
 
+/// The box around a solid, or null for an empty one, as a sketch's: Manifold's was
+/// ±infinity, which a box printed, `center` moved by (NaN) and a parts list wrote as JSON.
 fn boundingBoxImpl(handle: geom.GeometryHandle) ?geom.BoundingBox {
     std.debug.assert(handle.engine == .manifold);
     const obj: *manifold.ManifoldObj = @ptrCast(@alignCast(handle.ptr));
+    if (manifold.numVert(obj) == 0) return null;
     const box = manifold.boundingBox(obj);
     return geom.BoundingBox{ .min = box.min, .max = box.max };
 }

@@ -185,7 +185,9 @@ pub fn meshCenter(vm: *VM, receiver: value.Value, axes_arg: ?value.Value) !value
         return vm.fail(.ValueError, "a Sketch lies in the XY plane: center it on x and y, got \"{s}\"", .{axes_str});
     }
 
-    const shift = centerShift(try arguments.boundsOf(vm, receiver, "center"), axes_str);
+    // An empty shape, which has no bounds, stays as it is: moved by its ±infinite box, the
+    // VM stopped on a NaN translate
+    const shift = centerShift(try arguments.boundsOf(vm, receiver, "center") orelse return receiver, axes_str);
     const tx, const ty, const tz = shift;
 
     if (receiver.isAssembly()) return assembly.translated(vm, receiver, shift);
@@ -261,8 +263,9 @@ pub fn meshAlign(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     if (!target.isGeometry() and !target.isCrossSection()) {
         return vm.fail(.TypeError, "align expects a Solid or Sketch to align to, got {s}", .{arguments.typeName(vm, target)});
     }
-    const my_bbox = try arguments.boundsOf(vm, receiver, "align");
-    const target_bbox = try arguments.boundsOf(vm, target, "align");
+    // An empty shape stays as it is (as `center`'s); an empty target has no side to meet
+    const my_bbox = try arguments.boundsOf(vm, receiver, "align") orelse return receiver;
+    const target_bbox = try arguments.boundsOf(vm, target, "align") orelse return vm.fail(.ValueError, "align: the target is empty, with no side to align to", .{});
     var move = [3]f64{ 0, 0, 0 };
     for (axes, &move, 0..) |on_axis, *delta, axis| {
         if (on_axis) delta.* = target_align.on(target_bbox, axis) - my_align.on(my_bbox, axis) + offset;
@@ -365,7 +368,8 @@ pub fn meshResize(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     const target_y = target[1];
     const target_z = target[2];
 
-    const bbox = try arguments.boundsOf(vm, receiver, "resize");
+    // An empty shape stays as it is: there is nothing to scale
+    const bbox = try arguments.boundsOf(vm, receiver, "resize") orelse return receiver;
     const cur_x = bbox.max[0] - bbox.min[0];
     const cur_y = bbox.max[1] - bbox.min[1];
     const cur_z = bbox.max[2] - bbox.min[2];
