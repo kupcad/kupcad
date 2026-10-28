@@ -937,6 +937,7 @@ pub const VM = struct {
                 .op_is_instance => if (ended(self.executeIsInstance())) |res| return res,
                 .op_defined, .op_defined_wide => if (ended(self.executeDefined(frame, exec_chunk, op == .op_defined_wide))) |res| return res,
                 .op_extract_kwarg, .op_extract_kwarg_wide => self.executeExtractKwarg(frame, exec_chunk, op == .op_extract_kwarg_wide),
+                .op_keyword_rest => if (ended(self.executeKeywordRest(frame, exec_chunk))) |res| return res,
             }
         }
 
@@ -1385,6 +1386,29 @@ pub const VM = struct {
             }
         }
         self.push(extracted);
+    }
+
+    /// `**opts`: the call's keyword map, in the local slot the operand names, replaced by a new
+    /// Map of the keywords the function declares no parameter for (theirs are extracted by
+    /// then): empty for a call with none.
+    fn executeKeywordRest(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk) InterpretResult {
+        const slot = frame.base_slot + exec_chunk.code.items[frame.ip];
+        frame.ip += 1;
+        const rest = self.gc.allocateMap(self) catch |err| return self.allocationFailed(err);
+        // Rooted while it grows
+        self.push(value.Value.initObj(&rest.obj));
+        const given = self.stack[slot];
+        if (given.isMap()) {
+            var entries = given.asMap().entries();
+            next_key: while (entries.next()) |entry| {
+                for (exec_chunk.keywords.items) |keyword| {
+                    if (exec_chunk.constants.items[keyword.name].isEqual(entry.key)) continue :next_key;
+                }
+                self.mapSet(rest, entry.key, entry.value) catch return self.raiseOutOfMemory("collecting **opts", .{});
+            }
+        }
+        self.stack[slot] = self.pop();
+        return .ok;
     }
 
     // --- Allocators ---

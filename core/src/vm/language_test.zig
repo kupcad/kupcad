@@ -117,9 +117,15 @@ test "Language: inspect prints a container that holds itself as [...], and escap
     });
 }
 
-test "Language: split on an empty String and clamp with reversed bounds don't trip asserts" {
+test "Language: split and replace on an empty String and clamp with reversed bounds don't trip asserts" {
     try expectScripts(&.{
         .{ .src = "r = \"abc\".split(\"\").join(\"|\")", .expected = .{ .str = "a|b|c" } },
+        // An empty String is found before each character and at the end, as in Ruby (it
+        // was std.mem's assertion that a needle isn't empty: the VM stopped)
+        .{ .src = "r = \"abc\".replace(\"\", \"x\")", .expected = .{ .str = "xaxbxcx" } },
+        .{ .src = "r = \"hé\".replace(\"\", \"-\")", .expected = .{ .str = "-h-é-" } },
+        .{ .src = "r = \"\".replace(\"\", \"x\")", .expected = .{ .str = "x" } },
+        .{ .src = "r = \"abcb\".replace(\"b\", \"\")", .expected = .{ .str = "ac" } },
         .{ .src = "r = \"héllo\".split(\"\").length", .expected = .{ .num = 5 } },
         .{ .src = "r = \"\".split(\"\").length", .expected = .{ .num = 0 } },
         .{ .src = "r = Math.clamp(5, 0, 10) + Math.clamp(-1, 0, 10) + Math.clamp(99, 0, 10)", .expected = .{ .num = 15 } },
@@ -301,6 +307,11 @@ test "Language: a def takes the arguments it declares" {
         // Given nil, it is given; **opts takes the rest
         .{ .src = "def kw(a, k:)\n  [a, k]\nend\nr = kw(1, k: nil).inspect", .expected = .{ .str = "[1, nil]" } },
         .{ .src = "def o(a, k: 1, **opts)\n  opts.length\nend\nr = o(1, x: 1, y: 2)", .expected = .{ .num = 2 } },
+        // Without the keywords named (it was the call's whole map), and empty for none (nil);
+        // a Map of its own, the spread one left as it was
+        .{ .src = "def o(a, size: 1, **opts)\n  [size, opts]\nend\nr = o(1, size: 5, color: :red).inspect", .expected = .{ .str = "[5, {color: :red}]" } },
+        .{ .src = "def o(**opts)\n  opts\nend\nr = o().inspect", .expected = .{ .str = "{}" } },
+        .{ .src = "def o(k:, **opts)\n  opts[:extra] = 1\n  [k, opts]\nend\nh = {k: 2, b: 3}\nr = [o(**h), h].inspect", .expected = .{ .str = "[[2, {b: 3, extra: 1}], {k: 2, b: 3}]" } },
         .{ .src = "def q(m, n = 0)\n  m\nend\nr = q({ x: 1 })[:x]", .expected = .{ .num = 1 } },
         .{ .src = "class P\n  def initialize(x)\n    @x = x\n  end\nend\n" ++ "r = begin\n  P.new\nrescue ArgumentError => e\n  e.message\nend", .expected = .{ .str = "initialize takes 1 argument, got 0" } },
         // super forwards the keyword Map as keywords

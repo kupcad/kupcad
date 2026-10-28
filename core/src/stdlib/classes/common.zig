@@ -86,7 +86,8 @@ fn expectedName(comptime T: type) []const u8 {
 /// receiver) its parameters take the call's arguments in order: an optional one may be
 /// omitted, and a `[]const value.Value` takes all the rest. A last parameter of type
 /// `?*value.ObjClosure` takes the call's block, or `*value.ObjClosure` a block it requires;
-/// a native without one ignores a block, like Ruby.
+/// a block given a native without one is an ArgumentError, as a built-in never ignores what
+/// it is given (it was dropped, as in Ruby: `xs.max { |a, b| b <=> a }` was the plain max).
 /// A wrong number of arguments is an ArgumentError and a wrong type a TypeError, each
 /// naming the native and the argument: they used to be a generic "Native Execution Error",
 /// and extra arguments were dropped silently.
@@ -125,6 +126,7 @@ fn wrap(comptime func: anytype, comptime has_receiver: bool, comptime sig: ?Sign
                 };
             }
 
+            if (!has_block_param and args.block() != null) return vm.fail(.ArgumentError, "{s} doesn't take a block", .{args.name});
             const given = args.positional();
             if (sig) |s| try checkArguments(vm, args.name, s, given);
             if (given.len < arity.required or (arity.max != null and given.len > arity.max.?)) {

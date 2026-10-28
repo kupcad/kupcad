@@ -188,10 +188,8 @@ fn typeNamed(doc: *const Document, name: []const u8) ?Target {
     for (tree.nodes.items, 0..) |node, i| {
         const idx: ast.NodeIndex = @fromBackingInt(@as(u32, @intCast(i)));
         const named = switch (node.tag) {
-            .class_stmt => blk: {
-                const name_node = tree.getNode(tree.classStmt(&node).name) orelse continue;
-                break :blk std.mem.eql(u8, tree.nodeString(name_node), name);
-            },
+            // `Nut` in `class Fasteners::Nut` too, whose path is no identifier's string
+            .class_stmt => std.mem.eql(u8, tree.getString(tree.className(tree.classStmt(&node))), name),
             .module_stmt => std.mem.eql(u8, tree.getString(tree.moduleStmt(&node).name), name),
             else => false,
         };

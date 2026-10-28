@@ -59,6 +59,22 @@ pub fn each(vm: *VM, span: Span, receiver: value.Value, block: *value.ObjClosure
     return receiver;
 }
 
+/// How many values of `span` make `block` truthy, or the value of a `break` inside it.
+pub fn countWhere(vm: *VM, span: Span, block: *value.ObjClosure, method: []const u8) !value.Value {
+    const n = try iterationCount(vm, span, method);
+    var count: u64 = 0;
+    var i: u64 = 0;
+    while (i < n) : (i += 1) {
+        switch (try callBlock(vm, block, &.{value.Value.initNumber(span.at(i))})) {
+            .broke => |v| return v,
+            .value => |v| if (!v.isFalsey()) {
+                count += 1;
+            },
+        }
+    }
+    return value.Value.initNumber(@floatFromInt(count));
+}
+
 /// Collects `span` into a new array, passing each value through `block` when given.
 pub fn collect(vm: *VM, span: Span, block: ?*value.ObjClosure, method: []const u8) !value.Value {
     const n = try materializeCount(vm, span, method);

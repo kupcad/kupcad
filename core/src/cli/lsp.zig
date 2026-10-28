@@ -140,13 +140,7 @@ inline fn findEnclosingScope(doc: *const api.Document, start_node: ast.NodeIndex
             },
             .class_stmt => {
                 if (ctx.class_name == null) {
-                    const cs = doc.tree.classStmt(p_node);
-                    const name_node = doc.tree.getNode(cs.name);
-                    if (name_node) |nn| {
-                        if (nn.tag == .identifier) {
-                            ctx.class_name = doc.tree.nodeString(nn);
-                        }
-                    }
+                    ctx.class_name = doc.tree.getString(doc.tree.className(doc.tree.classStmt(p_node)));
                 }
             },
             else => {},
@@ -1033,11 +1027,7 @@ pub const Handler = struct {
                     sym_kind = .Function;
                 },
                 .class_stmt => {
-                    const cs = doc.tree.classStmt(node);
-                    const name_node = doc.tree.getNode(cs.name);
-                    if (name_node != null and name_node.?.tag == .identifier) {
-                        sym_name = doc.tree.nodeString(name_node.?);
-                    }
+                    sym_name = doc.tree.getString(doc.tree.className(doc.tree.classStmt(node)));
                     sym_kind = .Class;
                 },
                 .module_stmt => {

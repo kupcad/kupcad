@@ -83,6 +83,9 @@ pub const OpCode = enum(u8) {
     op_defined_wide,
     op_extract_kwarg,
     op_extract_kwarg_wide,
+    /// `**opts`: the keyword map in a local slot made a new Map of the keywords the function
+    /// declares no parameter for.
+    op_keyword_rest,
     op_is_instance,
     op_is_nil,
 
@@ -213,7 +216,7 @@ pub fn operandsOf(op: OpCode) Operands {
         .op_nil, .op_true, .op_false, .op_pop, .op_return, .op_add, .op_subtract, .op_multiply, .op_divide, .op_modulo, .op_exponent, .op_bitwise_and, .op_bitwise_or, .op_bitwise_xor, .op_shift_left, .op_shift_right, .op_equal, .op_case_equal, .op_less, .op_greater, .op_less_equal, .op_greater_equal, .op_cmp, .op_not, .op_negate, .op_positive, .op_bitwise_not, .op_dup, .op_dup_two, .op_array_push, .op_array_spread, .op_map_insert, .op_map_spread, .op_get_index, .op_set_index, .op_pop_rescue, .op_throw, .op_block_given, .op_is_nil, .op_is_instance, .op_close_upvalue, .op_inherit, .op_mixin, .op_break_block, .op_to_symbol => .none,
         .op_constant, .op_class, .op_module, .op_set_member, .op_method, .op_class_method, .op_defined, .op_get_class_var, .op_set_class_var, .op_import => .constant,
         .op_constant_wide, .op_class_wide, .op_module_wide, .op_set_member_wide, .op_method_wide, .op_class_method_wide, .op_defined_wide, .op_get_class_var_wide, .op_set_class_var_wide, .op_import_wide => .constant_wide,
-        .op_get_local, .op_set_local => .local,
+        .op_get_local, .op_set_local, .op_keyword_rest => .local,
         .op_get_local_wide, .op_set_local_wide => .local_wide,
         .op_get_upvalue, .op_set_upvalue => .upvalue,
         .op_build_array, .op_build_map, .op_build_range, .op_interpolate, .op_unpack => .count,

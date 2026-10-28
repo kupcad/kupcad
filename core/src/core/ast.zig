@@ -685,6 +685,24 @@ pub const Tree = struct {
         };
     }
 
+    /// The name a class statement gives its class: `Nut`, in `class Nut` and in
+    /// `class Fasteners::Nut` (whose name node is a path, no identifier's string).
+    pub fn className(self: *const Tree, cs: ClassStmt) StringId {
+        const name_node = self.getNode(cs.name).?;
+        if (name_node.tag != .namespace_access) return self.stringId(name_node);
+        const path = self.getStringLists(self.nodeSpan(name_node));
+        return path[path.len - 1];
+    }
+
+    /// The namespace a class statement's path puts its class in, outermost first:
+    /// `Fasteners` in `class Fasteners::Nut`; none for a plain name.
+    pub fn classNamespace(self: *const Tree, cs: ClassStmt) []const StringId {
+        const name_node = self.getNode(cs.name).?;
+        if (name_node.tag != .namespace_access) return &.{};
+        const path = self.getStringLists(self.nodeSpan(name_node));
+        return path[0 .. path.len - 1];
+    }
+
     pub fn moduleStmt(self: *const Tree, node: *const Node) ModuleStmt {
         const base = node.data;
         return .{

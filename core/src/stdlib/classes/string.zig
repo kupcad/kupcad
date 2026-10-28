@@ -141,13 +141,30 @@ fn justify(vm: *VM, str: *value.ObjString, width_num: f64, pad_obj: ?*value.ObjS
     return vm.allocateStringTakeOwnership(try out.toOwnedSlice(vm.gc.trackingAllocator()));
 }
 
-/// String#replace(target, replacement)
+/// String#replace(target, replacement): every `target` replaced. An empty one is found before
+/// each character and at the end, as in Ruby (`"abc".replace("", "-")` is "-a-b-c-"): it
+/// tripped std.mem's assertion that a needle isn't empty.
 pub fn stringReplace(vm: *VM, str: *value.ObjString, target_obj: *value.ObjString, replace_obj: *value.ObjString) !value.Value {
     const t_str = target_obj.chars;
     const r_str = replace_obj.chars;
+    if (t_str.len == 0) return replaceEmpty(vm, str, r_str);
 
     const replaced = try std.mem.replaceOwned(u8, vm.gc.trackingAllocator(), str.chars, t_str, r_str);
     return try vm.allocateStringTakeOwnership(replaced);
+}
+
+/// `str` with `replacement` before each of its characters and after the last.
+fn replaceEmpty(vm: *VM, str: *value.ObjString, replacement: []const u8) !value.Value {
+    const allocator = vm.gc.trackingAllocator();
+    var chars = (try utf8View(vm, str, "replace")).iterator();
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.appendSlice(allocator, replacement);
+    while (chars.nextCodepointSlice()) |ch| {
+        try out.appendSlice(allocator, ch);
+        try out.appendSlice(allocator, replacement);
+    }
+    return vm.allocateStringTakeOwnership(try out.toOwnedSlice(allocator));
 }
 
 /// String#to_f

@@ -785,7 +785,12 @@ pub const Compiler = struct {
             try self.emitOp(.op_nil);
             return;
         }
+        try self.emitNamespacePath(path);
+    }
 
+    /// Pushes what `path` (`Fasteners::Nut`, not empty) names: its first name's global, then
+    /// each next name the member of the one before.
+    fn emitNamespacePath(self: *Compiler, path: []const ast.StringId) CompileError!void {
         // Get the root of the namespace
         const root_idx = try self.makeStringConstant(self.tree.getString(path[0]));
         try self.emitGetGlobal(root_idx);
@@ -1811,19 +1816,39 @@ pub const Compiler = struct {
         defer self.active_namespaces -= 1;
 
         const cs = self.tree.classStmt(node);
-        const name_node = self.tree.getNode(cs.name).?;
-        const name_id = self.tree.stringId(name_node);
-        const name_idx = try self.makeStringConstant(self.tree.getString(name_id));
+        const name_id = self.tree.className(cs);
         const name_str = self.tree.getString(name_id);
+        const name_idx = try self.makeStringConstant(name_str);
 
         if (manifest.compiler_intrinsics.has(name_str)) {
             return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be redefined", .{name_str});
         }
 
+        // `class Fasteners::Nut`: a class of a namespace there is, found from the top level as
+        // `Fasteners::Nut` reads it, the namespaces its body is in the path's. The namespace is
+        // pushed under the class, which becomes its member once built (its path was read as
+        // a plain name: a string id out of range)
+        const namespace = self.tree.classNamespace(cs);
+        const enclosing = self.namespace_stack;
+        if (namespace.len > 0) self.namespace_stack = .empty;
+        defer if (namespace.len > 0) {
+            self.namespace_stack.deinit(self.allocator);
+            self.namespace_stack = enclosing;
+        };
+        if (namespace.len > 0) {
+            try self.emitNamespacePath(namespace);
+            _ = try self.hiddenLocalSlots(1);
+            try self.namespace_stack.appendSlice(self.allocator, namespace);
+        }
+
         try self.namespace_stack.append(self.allocator, name_id);
         defer _ = self.namespace_stack.pop();
 
-        try self.emitOpWithOperand(.op_class, .op_class_wide, name_idx);
+        // Made, or reopened, by its full name (`Fasteners::Nut`): by its own, a nested class
+        // reopened a top-level class of that name, and a nested one reopened was a new class
+        const full_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
+        defer self.allocator.free(full_name);
+        try self.emitOpWithOperand(.op_class, .op_class_wide, try self.makeStringConstant(full_name));
 
         if (cs.super_class != .none) {
             try self.compileNode(cs.super_class);
@@ -1842,6 +1867,14 @@ pub const Compiler = struct {
         // Export Fully Qualified Name
         try self.defineFullyQualifiedNamespace(name_str);
 
+        if (namespace.len > 0) {
+            // A member of the namespace under it; the statement is nil, as a top-level class is
+            try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
+            try self.emitOp(.op_pop);
+            try self.emitOp(.op_pop);
+            try self.emitOp(.op_nil);
+            return;
+        }
         const sym = self.symbols[@backingInt(node_idx)];
         if (self.active_namespaces > 1) {
             try self.emitOpWithOperand(.op_set_member, .op_set_member_wide, name_idx);
@@ -2899,6 +2932,13 @@ pub const Compiler = struct {
             const local_slot = self.resolveLocal(param.name).?;
             try self.emitOpWithOperand(.op_set_local, .op_set_local_wide, local_slot);
             try self.emitOp(.op_pop);
+        }
+        // `**opts`, which shares the map's slot, keeps the keywords no parameter names: it was
+        // the call's map, the named ones in it too, and nil for a call with none
+        for (params) |param| {
+            if (param.modifier != .double_splat) continue;
+            try self.emitOp(.op_keyword_rest);
+            try self.emitByte(map_slot);
         }
     }
 

@@ -77,3 +77,24 @@ test "definition: an import's path is its module, and a built-in or a number is 
     try testing.expectEqual(@as(?definition.Target, null), definition.definitionAt(&doc, at("3", 1)));
     try testing.expectEqual(@as(?definition.Target, null), definition.definitionAt(&doc, at("new", 1)));
 }
+
+test "definition: a class declared by its path is found by its name, and doesn't hide the others" {
+    // `class Fasteners::Nut`'s path was read as an identifier's string: an id out of range.
+    // (A name inside a path, `Fasteners::Nut.new`'s, isn't looked up: no definition.)
+    const source =
+        \\module Fasteners
+        \\end
+        \\class Fasteners::Nut
+        \\end
+        \\class Bracket
+        \\end
+        \\Bracket.new
+        \\Nut
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    const bracket = std.mem.find(u8, source, "Bracket").?;
+    try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(bracket), .length = 7 } }, definition.definitionAt(&doc, std.mem.findLast(u8, source, "Bracket").?).?);
+    const nut = std.mem.find(u8, source, "Nut").?;
+    try testing.expectEqual(definition.Target{ .here = .{ .offset = @intCast(nut), .length = 3 } }, definition.definitionAt(&doc, std.mem.findLast(u8, source, "Nut").?).?);
+}

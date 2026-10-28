@@ -1036,6 +1036,27 @@ test "VM Syntax: Module nested class declaration and scope resolution lookup" {
     try testing.expectEqual(@as(f64, 32.0), result.asNumber());
 }
 
+test "VM Syntax: a class declared by its path joins the namespace it names, and a nested class is its own" {
+    try support.expectScripts(&.{
+        // `class Fasteners::Nut` read its path as a plain name: a string out of range
+        .{ .src = "module Fasteners\nend\nclass Fasteners::Nut\n  def size\n    3\n  end\nend\nr = Fasteners::Nut.new.size", .expected = .{ .num = 3 } },
+        .{ .src = "module Fasteners\nend\nclass Fasteners::Nut\nend\nr = Fasteners::Nut.inspect", .expected = .{ .str = "Fasteners::Nut" } },
+        // Reopened by either form, with a superclass, a class nested in it, locals around it
+        .{
+            .src = "a = 1\nmodule Fasteners\n  class Base\n    def kind\n      :fastener\n    end\n  end\nend\n" ++
+                "class Fasteners::Nut < Fasteners::Base\n  def size\n    3\n  end\n  class Thread\n  end\nend\nb = 2\n" ++
+                "module Fasteners\n  class Nut\n    def pitch\n      0.5\n    end\n  end\nend\n" ++
+                "n = Fasteners::Nut.new\nr = [n.kind, n.size, n.pitch, Fasteners::Nut::Thread.inspect, a + b].inspect",
+            .expected = .{ .str = "[:fastener, 3, 0.5, \"Fasteners::Nut::Thread\", 3]" },
+        },
+        // A nested class reopened a top-level class of its name, and was new when reopened
+        .{ .src = "class Nut\nend\nmodule Fasteners\n  class Nut\n    def size\n      3\n    end\n  end\nend\nr = Nut.new.respond_to?(:size)", .expected = .{ .boolean = false } },
+        .{ .src = "module F\n  class Nut\n    def a\n      1\n    end\n  end\nend\nmodule F\n  class Nut\n    def b\n      2\n    end\n  end\nend\nr = F::Nut.new.a + F::Nut.new.b", .expected = .{ .num = 3 } },
+        // A namespace that isn't there, or isn't one
+        .{ .src = support.rescued("class Missing::Nut\nend"), .expected = .{ .str = "NameError: Undefined variable 'Missing'" } },
+    });
+}
+
 test "VM Syntax: Subclasses inherit, share, and mutate parent class variables (@@var)" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

@@ -29,10 +29,17 @@ pub fn rangeToA(vm: *VM, r: *value.ObjRange) !value.Value {
     return iteration.collect(vm, spanOf(r), null, "Range#to_a");
 }
 
-/// Range#size / #length / #count
+/// Range#size / #length
 pub fn rangeSize(vm: *VM, r: *value.ObjRange) !value.Value {
     // Pure arithmetic: no iteration, so no cap.
     return value.Value.initNumber(try iteration.validatedCount(vm, spanOf(r), "Range#size"));
+}
+
+/// Range#count / count { |i| ... }: its size, or how many of its values make the block
+/// truthy (the block was ignored: the size).
+pub fn rangeCount(vm: *VM, r: *value.ObjRange, block: ?*value.ObjClosure) !value.Value {
+    const b = block orelse return rangeSize(vm, r);
+    return iteration.countWhere(vm, spanOf(r), b, "Range#count");
 }
 
 /// Range#include?(x) / #cover?(x): same rule as `case`/`when` matching in the VM; x
@@ -85,7 +92,7 @@ pub const methods = [_]common.MethodDef{
     .{ .name = "to_a", .func = common.wrapMethod(rangeToA) },
     .{ .name = "size", .func = common.wrapMethod(rangeSize) },
     .{ .name = "length", .func = common.wrapMethod(rangeSize) },
-    .{ .name = "count", .func = common.wrapMethod(rangeSize) },
+    .{ .name = "count", .func = common.wrapMethod(rangeCount) },
     .{ .name = "include?", .func = common.wrapMethod(rangeInclude) },
     .{ .name = "cover?", .func = common.wrapMethod(rangeInclude) },
     .{ .name = "first", .func = common.wrapMethod(rangeFirst) },

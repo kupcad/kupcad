@@ -1433,6 +1433,20 @@ test "Stdlib: an implicit super spreads the method's *rest back into arguments" 
     });
 }
 
+test "Stdlib: sum, Range#count and to_h take a block, as in Ruby (it was ignored)" {
+    try expectScripts(&.{
+        .{ .src = "r = [1, 2, 3].sum { |x| x * 10 }", .expected = .{ .num = 60 } },
+        .{ .src = "r = [1, 2, 3].sum", .expected = .{ .num = 6 } },
+        .{ .src = "r = (1..5).count { |x| x > 2 }", .expected = .{ .num = 3 } },
+        .{ .src = "r = (1...5).count", .expected = .{ .num = 4 } },
+        .{ .src = "r = [[1, 2]].to_h { |pair| [pair[1], pair[0]] }.inspect", .expected = .{ .str = "{2 => 1}" } },
+        .{ .src = "r = [1, 2].to_h { |x| [x, x * x] }.inspect", .expected = .{ .str = "{1 => 1, 2 => 4}" } },
+        // A `break` gives its value, as in each
+        .{ .src = "r = [1, 2, 3].sum { |x| break 99 }", .expected = .{ .num = 99 } },
+        .{ .src = "r = (1..5).count { |x| break 7 if x == 2 }", .expected = .{ .num = 7 } },
+    });
+}
+
 test "Stdlib: built-in methods check their argument count, types and block" {
     try expectScripts(&.{
         // Extra arguments used to be dropped silently and missing ones were a generic error.
@@ -1762,8 +1776,16 @@ test "Stdlib: a method's or primitive's argument error says what it needs" {
         // Collections and settings
         .{ .src = comptime rescued("[1, 2, 3].slice(Number::NAN, 1)"), .expected = .{ .str = "ValueError: Array#slice arguments must be numbers, got NaN." } },
         .{ .src = comptime rescued("[1, 2].reduce"), .expected = .{ .str = "ArgumentError: reduce requires a block" } },
-        .{ .src = comptime rescued("[[]].to_h"), .expected = .{ .str = "ArgumentError: empty array cannot be converted to key-value pair." } },
-        .{ .src = comptime rescued("[1].to_h"), .expected = .{ .str = "ArgumentError: wrong element type (expected array)." } },
+        .{ .src = comptime rescued("[[]].to_h"), .expected = .{ .str = "ArgumentError: to_h needs [key, value] pairs; got an Array of 0 for index 0" } },
+        .{ .src = comptime rescued("[1].to_h"), .expected = .{ .str = "ArgumentError: to_h needs [key, value] pairs; got Number for index 0" } },
+        // A pair's third item was dropped, and one item was a key of nil
+        .{ .src = comptime rescued("[[1, 2, 3]].to_h"), .expected = .{ .str = "ArgumentError: to_h needs [key, value] pairs; got an Array of 3 for index 0" } },
+        .{ .src = comptime rescued("[1].to_h { |x| x }"), .expected = .{ .str = "ArgumentError: to_h needs [key, value] pairs; its block gave Number for index 0" } },
+        .{ .src = comptime rescued("[\"a\"].sum { |x| x }"), .expected = .{ .str = "TypeError: sum's block must give Numbers, gave String for index 0" } },
+        // A built-in never ignores what it is given: a block it takes none for is refused (it
+        // was dropped, so `max` with a comparator was the plain max)
+        .{ .src = comptime rescued("[1, 2].length { |x| x }"), .expected = .{ .str = "ArgumentError: Array#length doesn't take a block" } },
+        .{ .src = comptime rescued("[1, 2, 3].max { |a, b| b <=> a }"), .expected = .{ .str = "ArgumentError: Array#max doesn't take a block" } },
         .{ .src = comptime rescued("\"abc\".upcase(1)"), .expected = .{ .str = "ArgumentError: String#upcase expects 0 arguments, got 1" } },
         .{ .src = comptime rescued("(1..5).step(0)"), .expected = .{ .str = "ValueError: Range#step requires a finite, non-zero step, got 0" } },
         .{ .src = comptime rescued("CAD.with_config(tolerance: 0.1)"), .expected = .{ .str = "ArgumentError: CAD.with_config requires a block" } },

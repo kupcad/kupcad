@@ -304,7 +304,7 @@ pub fn getStaticStackEffect(op: chunk.OpCode) ?i32 {
 
         // --- Doesn't pop or push (Net: 0) ---
         // Pure side-effects or control flow jumps that leave the stack exactly as they found it.
-        .op_set_local, .op_set_local_wide, .op_jump_if_not_nil, .op_jump_if_false, .op_jump_if_nil, .op_jump, .op_loop, .op_setup_rescue, .op_pop_rescue, .op_get_class_var, .op_get_class_var_wide, .op_set_upvalue => 0,
+        .op_set_local, .op_set_local_wide, .op_keyword_rest, .op_jump_if_not_nil, .op_jump_if_false, .op_jump_if_nil, .op_jump, .op_loop, .op_setup_rescue, .op_pop_rescue, .op_get_class_var, .op_get_class_var_wide, .op_set_upvalue => 0,
 
         // --- Dynamic Ops (Requires manual tracking) ---
         // These operations consume a variable number of arguments based on bytecode operands.

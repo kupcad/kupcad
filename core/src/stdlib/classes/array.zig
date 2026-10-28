@@ -335,15 +335,26 @@ fn orderOf(a: value.Value, b: value.Value) std.math.Order {
     return std.mem.order(u8, a.asString().chars, b.asString().chars);
 }
 
-/// Array#sum: the Numbers added up (0 for an empty Array). Anything else is a TypeError
-/// (it used to be skipped), and a total beyond the Number range a RangeError.
-pub fn arraySum(vm: *VM, arr: *value.ObjArray) !value.Value {
+/// Array#sum / sum { |item| ... }: the Numbers added up, the items or what the block gives
+/// for each (0 for an empty Array). Anything else is a TypeError (it used to be skipped), and
+/// a total beyond the Number range a RangeError.
+pub fn arraySum(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
     var sum: f64 = 0.0;
     var all_finite = true;
-    for (arr.items.items, 0..) |item, i| {
-        if (!item.isNumber()) return vm.fail(.TypeError, "sum needs Numbers, got {s} at index {d}", .{ vm.typeName(item), i });
-        if (!std.math.isFinite(item.asNumber())) all_finite = false;
-        sum += item.asNumber();
+    // By index: the block may change the Array
+    var i: usize = 0;
+    while (i < arr.items.items.len) : (i += 1) {
+        const item = arr.items.items[i];
+        const term = if (block) |closure| switch (try callBlock(vm, closure, &.{item})) {
+            .broke => |v| return v,
+            .value => |v| v,
+        } else item;
+        if (!term.isNumber()) {
+            if (block != null) return vm.fail(.TypeError, "sum's block must give Numbers, gave {s} for index {d}", .{ vm.typeName(term), i });
+            return vm.fail(.TypeError, "sum needs Numbers, got {s} at index {d}", .{ vm.typeName(term), i });
+        }
+        if (!std.math.isFinite(term.asNumber())) all_finite = false;
+        sum += term.asNumber();
     }
     if (all_finite and !std.math.isFinite(sum)) {
         return vm.fail(.RangeError, "sum overflowed the Number range", .{});
@@ -406,9 +417,10 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     return value.Value.initObj(&new_arr.obj);
 }
 
-/// Array#to_h
-/// Converts an array of pair arrays [[k, v], [k, v]] into a Map
-pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
+/// Array#to_h / to_h { |item| [key, value] }: a Map of the pairs, the items or what the
+/// block makes of each. A pair is an Array of two: anything else is an ArgumentError, as in
+/// Ruby (one item was a key of nil, and a third was dropped).
+pub fn arrayToH(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !value.Value {
     var scope = HandleScope.init(vm);
     defer scope.deinit();
 
@@ -416,20 +428,20 @@ pub fn arrayToH(vm: *VM, arr: *value.ObjArray) !value.Value {
 
     try new_map.table.ensureTotalCapacity(vm.gc.trackingAllocator(), arr.items.items.len);
 
-    for (arr.items.items) |item| {
-        if (item.isArray()) {
-            const inner_arr = item.asArray();
-            const inner_items = inner_arr.items.items;
-            if (inner_items.len >= 2) {
-                try new_map.table.put(vm.gc.trackingAllocator(), inner_items[0], inner_items[1]);
-            } else if (inner_items.len == 1) {
-                try new_map.table.put(vm.gc.trackingAllocator(), inner_items[0], value.Value.initNil());
-            } else {
-                return vm.fail(.ArgumentError, "empty array cannot be converted to key-value pair.", .{});
-            }
-        } else {
-            return vm.fail(.ArgumentError, "wrong element type (expected array).", .{});
-        }
+    // By index: the block may change the Array
+    var i: usize = 0;
+    while (i < arr.items.items.len) : (i += 1) {
+        const item = arr.items.items[i];
+        const pair = if (block) |closure| switch (try callBlock(vm, closure, &.{item})) {
+            .broke => |v| return v,
+            .value => |v| v,
+        } else item;
+        const got = if (block != null) "its block gave" else "got";
+        if (!pair.isArray()) return vm.fail(.ArgumentError, "to_h needs [key, value] pairs; {s} {s} for index {d}", .{ got, vm.typeName(pair), i });
+        const kv = pair.asArray().items.items;
+        if (kv.len != 2) return vm.fail(.ArgumentError, "to_h needs [key, value] pairs; {s} an Array of {d} for index {d}", .{ got, kv.len, i });
+        // A put allocates no object, so nothing collects the block's pair before it is in
+        try vm.mapSet(new_map, kv[0], kv[1]);
     }
 
     return value.Value.initObj(&new_map.obj);
