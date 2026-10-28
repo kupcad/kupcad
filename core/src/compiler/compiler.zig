@@ -1897,10 +1897,20 @@ pub const Compiler = struct {
         const name_str = self.tree.getString(name_id);
         const name_idx = try self.makeStringConstant(name_str);
 
+        // As a class named so is: `module Math` replaced the built-in (`Math.sqrt` was gone),
+        // and reopened, it would add to it
+        if (manifest.compiler_intrinsics.has(name_str)) {
+            return self.fail(error.ProtectedSymbol, "'{s}' is a built-in and can't be redefined", .{name_str});
+        }
+
         try self.namespace_stack.append(self.allocator, name_id);
         defer _ = self.namespace_stack.pop();
 
-        try self.emitOpWithOperand(.op_module, .op_module_wide, name_idx);
+        // Made, or reopened, by its full name, as a class is: a second `module A` was a new
+        // module, the first one's members lost
+        const full_name = try self.buildFullyQualifiedPath(name_str, self.namespace_stack.items.len - 1);
+        defer self.allocator.free(full_name);
+        try self.emitOpWithOperand(.op_module, .op_module_wide, try self.makeStringConstant(full_name));
 
         const body_node = self.tree.getNode(ms.body).?;
         const block_payload = self.tree.block(body_node);

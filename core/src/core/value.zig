@@ -865,6 +865,8 @@ pub const Value = packed struct {
                     const cls: *ObjClass = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.writeAll(cls.name.chars); // `puts 5.class` prints Number, as in Ruby
                 },
+                // By its name, as a class (`Fasteners`, `Hw::Std`): it was <Object>
+                .module => try writer.writeAll(obj.as(ObjModule).name.chars),
                 .instance => {
                     const inst: *ObjInstance = @alignCast(@fieldParentPtr("obj", obj));
                     try writer.print("#<{s}>", .{inst.class.name.chars});

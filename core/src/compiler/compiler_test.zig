@@ -2161,6 +2161,9 @@ test "Compiler: a failed compile reports where and why" {
     // Inside a def (a child compiler), the error still reaches the caller's compiler.
     try expectCompileError("def f\n  x = 1\n  sphere = 2\nend", error.ProtectedSymbol, 3, 3, "'sphere' is a built-in and can't be assigned");
     try expectCompileError("class Math\nend", error.ProtectedSymbol, 1, 1, "'Math' is a built-in and can't be redefined");
+    // A module too: `module Math` replaced the built-in, `Math.sqrt` gone with it
+    try expectCompileError("module Math\nend", error.ProtectedSymbol, 1, 1, "'Math' is a built-in and can't be redefined");
+    try expectCompileError("module Parts\n  module CAD\n  end\nend", error.ProtectedSymbol, 2, 3, "'CAD' is a built-in and can't be redefined");
 
     const many_args = comptime blk: {
         var src: []const u8 = "f(";

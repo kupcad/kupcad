@@ -884,14 +884,7 @@ pub const VM = struct {
                 .op_unpack => self.executeUnpack(frame, exec_chunk),
                 .op_unpack_splat => if (ended(self.executeUnpackSplat(frame, exec_chunk))) |res| return res,
                 .op_pack_splat => if (ended(self.executePackSplat(frame, exec_chunk))) |res| return res,
-                .op_module, .op_module_wide => {
-                    const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, op == .op_module_wide);
-                    const mod_obj = self.gc.allocateModule(self, name_str_obj) catch |err| {
-                        if (ended(self.allocationFailed(err))) |res| return res;
-                        continue;
-                    };
-                    self.push(value.Value.initObj(&mod_obj.obj));
-                },
+                .op_module, .op_module_wide => if (ended(self.executeModule(frame, exec_chunk, op == .op_module_wide))) |res| return res,
                 .op_class, .op_class_wide => if (ended(self.executeClass(frame, exec_chunk, op == .op_class_wide))) |res| return res,
                 .op_inherit => if (ended(self.executeInherit())) |res| return res,
                 .op_mixin => if (ended(self.executeMixin())) |res| return res,
@@ -1190,16 +1183,33 @@ pub const VM = struct {
 
     /// `class Name`: reopens the class visible by that name here (a module can reopen its own
     /// classes and builtins, not the importer's), or makes one under Object.
+    /// `class C`: the class named so (its full name, `A::C` inside `module A`), reopened when
+    /// there is one, else made. Anything else of that name is a TypeError, as in Ruby: a
+    /// module or a value was replaced by a new class.
     fn executeClass(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
         const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, is_wide);
         if (self.lookupGlobal(frame, name_str_obj.chars)) |existing| {
-            if (existing.isClass()) {
-                self.push(existing);
-                return .ok;
-            }
+            if (!existing.isClass()) return self.raiseError(.TypeError, "{s} is not a class", .{name_str_obj.chars});
+            self.push(existing);
+            return .ok;
         }
         const class_obj = self.gc.allocateClass(self, name_str_obj, self.object_class) catch |err| return self.allocationFailed(err);
         self.push(value.Value.initObj(&class_obj.obj));
+        return .ok;
+    }
+
+    /// `module M`: the module named so (its full name, as a class's), reopened when there is
+    /// one, else made; anything else of that name is a TypeError. Each `module M` made a new
+    /// module, so the first one's members were lost.
+    fn executeModule(self: *VM, frame: *CallFrame, exec_chunk: *chunk.Chunk, is_wide: bool) InterpretResult {
+        const name_str_obj = self.readStringObjectOperand(exec_chunk, frame, is_wide);
+        if (self.lookupGlobal(frame, name_str_obj.chars)) |existing| {
+            if (!existing.isModule()) return self.raiseError(.TypeError, "{s} is not a module", .{name_str_obj.chars});
+            self.push(existing);
+            return .ok;
+        }
+        const mod_obj = self.gc.allocateModule(self, name_str_obj) catch |err| return self.allocationFailed(err);
+        self.push(value.Value.initObj(&mod_obj.obj));
         return .ok;
     }
 

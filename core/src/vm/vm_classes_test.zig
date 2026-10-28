@@ -1011,14 +1011,14 @@ test "VM Syntax: Module nested class declaration and scope resolution lookup" {
     defer vm.deinit();
 
     const source =
-        \\module CAD
+        \\module Drive
         \\  class Gear
         \\    def self.teeth()
         \\      32
         \\    end
         \\  end
         \\end
-        \\CAD::Gear.teeth()
+        \\Drive::Gear.teeth()
     ;
 
     var doc = try Document.parse(testing.allocator, source);
@@ -1054,6 +1054,27 @@ test "VM Syntax: a class declared by its path joins the namespace it names, and 
         .{ .src = "module F\n  class Nut\n    def a\n      1\n    end\n  end\nend\nmodule F\n  class Nut\n    def b\n      2\n    end\n  end\nend\nr = F::Nut.new.a + F::Nut.new.b", .expected = .{ .num = 3 } },
         // A namespace that isn't there, or isn't one
         .{ .src = support.rescued("class Missing::Nut\nend"), .expected = .{ .str = "NameError: Undefined variable 'Missing'" } },
+    });
+}
+
+test "VM Syntax: a module declared again adds to itself, and is its own beside a top-level one" {
+    try support.expectScripts(&.{
+        // Each `module A` made a new module: the first one's members were lost
+        .{ .src = "module A\n  def self.x\n    1\n  end\nend\nmodule A\n  def self.y\n    2\n  end\nend\nr = A.x + A.y", .expected = .{ .num = 3 } },
+        // A class declared by its path stays when its namespace is declared again
+        .{ .src = "module F\nend\nclass F::Nut\n  def size\n    3\n  end\nend\nmodule F\nend\nr = F::Nut.new.size", .expected = .{ .num = 3 } },
+        // Nested: reopened by its full name, apart from a top-level module of its name
+        .{
+            .src = "module Std\nend\nmodule Hw\n  module Std\n    def self.x\n      1\n    end\n  end\nend\n" ++
+                "module Hw\n  module Std\n    def self.y\n      2\n    end\n  end\nend\nr = [Hw::Std.x + Hw::Std.y, Std.respond_to?(:x)].inspect",
+            .expected = .{ .str = "[3, false]" },
+        },
+        // It prints by its name, as a class (it was <Object>)
+        .{ .src = "module Hw\n  module Std\n  end\nend\nr = \"#{Hw} #{Hw::Std}\"", .expected = .{ .str = "Hw Hw::Std" } },
+        // A name something else has is a TypeError, as in Ruby: each replaced the other
+        .{ .src = support.rescued("class K\nend\nmodule K\nend"), .expected = .{ .str = "TypeError: K is not a module" } },
+        .{ .src = support.rescued("module M\nend\nclass M\nend"), .expected = .{ .str = "TypeError: M is not a class" } },
+        .{ .src = support.rescued("Parts = [1]\nmodule Parts\nend"), .expected = .{ .str = "TypeError: Parts is not a module" } },
     });
 }
 
