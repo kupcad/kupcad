@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/protocol",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The shapes the KupCAD core sends its front ends (preview frames, parameter schemas, findings) and the functions that read them.",
   "license": "AGPL-3.0-only",
   "repository": {

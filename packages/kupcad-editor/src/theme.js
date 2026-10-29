@@ -1,7 +1,8 @@
 // How the editor looks: by the --kc-* tokens a host sets (@kupcad/ui's tokens.css), else the
 // page's own colours (CSS system colours, light or dark as the page is); the code's colours by
 // the --kc-code-* tokens (keyword, string, comment, constant, function, definition), else
-// GitHub's, light or dark.
+// GitHub's, light or dark. Light or dark as the page's colour scheme is, which the editor takes
+// from it: tokens.css's, the system's until the page chooses one (data-theme).
 
 import { HighlightStyle } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
@@ -26,8 +27,6 @@ export const editorTheme = EditorView.theme({
     color: FG,
     backgroundColor: BG,
     fontSize: 'var(--kc-code-font-size, var(--kc-font-size, 13px))',
-    // What light-dark() picks by, where the page says nothing of its scheme
-    colorScheme: 'light dark',
   },
   '.cm-scroller': {
     fontFamily: 'var(--kc-code-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',

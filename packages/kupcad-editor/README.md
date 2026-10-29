@@ -68,7 +68,9 @@ const again = new Editor(element, { value: source, restore: kept });
 * **The look** (`theme.js`): the `--kc-*` tokens of `@kupcad/ui` (the page's own colours where
   they are unset), and the code's colours by `--kc-code-keyword`, `-string`, `-comment`,
   `-constant`, `-function` and `-definition` (GitHub's, light or dark, where unset);
-  `--kc-code-font` and `--kc-code-font-size`.
+  `--kc-code-font` and `--kc-code-font-size`. Light or dark as the page's colour scheme is: the
+  system's with `@kupcad/ui`'s tokens, until the page chooses one (`data-theme="light"` or
+  `"dark"` on its root).
 
 Tests: the highlighting, indentation and completion on the parsed text, the findings placed (the
 real core's `check`, through `@kupcad/wasm`) and their fixes made, a snapshot restored (its undo

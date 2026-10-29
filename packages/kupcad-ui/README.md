@@ -256,6 +256,10 @@ webview and the desktop app to the language server.
   `--kc-focus` its focus ring, `--kc-accent-subtle` what is chosen in a list. `tokens.test.js`
   holds every pair to WCAG's 4.5:1 for text and 3:1 for a control's edge, in both schemes, and
   every colour token to a mapping in `vscode.css`.
+  Each colour is `light-dark()` of its two values, so the scheme decides: the system's
+  (`color-scheme: light dark`), until the page chooses one with `data-theme="light"` or
+  `"dark"` on its root (Starlight's convention, so a site's switch and the docs' agree) or a
+  `color-scheme` of its own. The viewer's own colours and the editor's follow the same scheme.
   A host sets its own, as `vscode.css` maps VS Code's theme over them: the webview follows the
   editor's theme, never the brand.
   `--kc-viewer-*` theme the viewer (`themeFromTokens`, which reads each as the page draws it,

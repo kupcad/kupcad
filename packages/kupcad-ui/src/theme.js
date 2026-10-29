@@ -1,7 +1,8 @@
 // The viewer's theme from the --kc-viewer-* tokens of the page around it: a host themes the
 // viewer as it themes the panels, and changes it while it shows (VS Code's theme switch). A
 // token left unset, or set to no colour the page reads, takes the viewer's own colour, LIGHT or
-// DARK as the page's colour scheme is.
+// DARK as the page's colour scheme is: the one it chose (tokens.css's data-theme, a color-scheme
+// of its own), else the system's.
 
 import { DARK, LIGHT } from './viewer/index.js';
 
@@ -25,8 +26,9 @@ const HEX_WITH_ALPHA = /^(#[\da-f]{3})[\da-f]$|^(#[\da-f]{6})[\da-f]{2}$/i;
 const RGBA = /^rgba\((\d+),\s*(\d+),\s*(\d+),\s*[\d.]+\)$/;
 /** Two fills a colour the browser can't read leaves as they were: it reads as neither. */
 const UNREAD = /** @type {const} */ (['#000000', '#ffffff']);
-/** The attributes of the page's root and body a host themes it by (VS Code: a class, a style). */
-const THEMED_BY = ['class', 'style'];
+/** The attributes of the page's root and body a host themes it by (VS Code: a class, a style; a
+ * site's switch: data-theme). */
+const THEMED_BY = ['class', 'style', 'data-theme'];
 
 /** colorReader's, once made (null where the page has no 2D context). @type {ColorReader | null | undefined} */
 let reader;
@@ -43,8 +45,7 @@ let reader;
  */
 export function themeFromTokens(element) {
   const style = getComputedStyle(element);
-  const dark = globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
-  const fallback = dark ? DARK : LIGHT;
+  const fallback = isDark(style) ? DARK : LIGHT;
   /** @type {Theme} */
   const theme = { ...fallback };
   const context = colorReader();
@@ -52,6 +53,18 @@ export function themeFromTokens(element) {
     theme[key] = viewerColor(style.getPropertyValue(token).trim(), context) || fallback[key];
   }
   return theme;
+}
+
+/**
+ * Whether an element is drawn dark: its colour scheme where the page chose one alone (`dark`,
+ * `only light`), else the system's (`light dark`, or none said).
+ * @param {CSSStyleDeclaration} style its computed style
+ */
+export function isDark(style) {
+  const scheme = (style.colorScheme ?? '').split(/\s+/);
+  const light = scheme.includes('light');
+  if (scheme.includes('dark') !== light) return !light;
+  return globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
 }
 
 /**
@@ -92,7 +105,7 @@ function colorReader() {
 
 /**
  * Gives `changed` the theme of `element`'s tokens now, and again whenever it changes: with the
- * page's colour scheme, or a class or style of its root or body.
+ * system's colour scheme, or a class, style or data-theme of the page's root or body.
  * @param {Element} element
  * @param {(theme: Theme) => void} changed
  * @returns {() => void} stops watching

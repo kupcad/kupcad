@@ -6,6 +6,11 @@
   brand's too. A control of a host's own takes the panels' look by the class .kc-control
   (controls.css); a range input by .kc-range, a checkbox by .kc-check.
 
+  Each colour is light-dark() of its light and its dark value, picked by the colour scheme, which
+  is the system's (`color-scheme: light dark`) until the page chooses: data-theme="light" or
+  "dark" on its root (the docs' convention, Starlight's), or a color-scheme of its own. The
+  viewer and the editor follow the same scheme.
+
   The accent is a fill where there is one of a kind (the primary button, a slider, a checked
   box); a toggle while on, or what is chosen in a list, is --kc-accent-subtle edged in it, as
   several are on at once. The text on the fill is --kc-accent-fg, the brand black: white on the
@@ -16,55 +21,41 @@
 @import './controls.css';
 
 :root {
+  color-scheme: light dark;
   --kc-font: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --kc-font-size: 13px;
-  --kc-bg: #ffffff;
-  --kc-fg: #1a1b1c;
-  --kc-muted: #5a5d65;
+  --kc-bg: light-dark(#ffffff, #1a1b1c);
+  --kc-fg: light-dark(#1a1b1c, #e3e7eb);
+  --kc-muted: light-dark(#5a5d65, #9a9da3);
   /* A divider between panes and rows */
-  --kc-border: #d5dae0;
+  --kc-border: light-dark(#d5dae0, #333436);
   /* The edge of a field, a select or a checkbox, which tells it from the background */
-  --kc-control-border: #8a9099;
-  --kc-input-bg: #ffffff;
+  --kc-control-border: light-dark(#8a9099, #73767c);
+  --kc-input-bg: light-dark(#ffffff, #282829);
   /* A row or a button under the pointer */
-  --kc-hover: rgba(26, 27, 28, 0.06);
+  --kc-hover: light-dark(rgba(26, 27, 28, 0.06), rgba(227, 231, 235, 0.07));
   --kc-accent: #ff5f14;
   --kc-accent-fg: #1a1b1c;
-  --kc-accent-hover: #f0540c;
-  --kc-accent-text: #c5480d;
+  --kc-accent-hover: light-dark(#f0540c, #ff7a3d);
+  --kc-accent-text: light-dark(#c5480d, #ff6a24);
   /* What is chosen in a list (the tree's open script), its text --kc-fg */
-  --kc-accent-subtle: #ffe9de;
-  --kc-focus: #c5480d;
+  --kc-accent-subtle: light-dark(#ffe9de, #43271b);
+  --kc-focus: light-dark(#c5480d, #ff6a24);
   /* A slider's track beyond its thumb */
-  --kc-track: #d5dae0;
-  --kc-error: #c8102e;
-  --kc-warning: #8a5a00;
+  --kc-track: light-dark(#d5dae0, #3a3b3e);
+  --kc-error: light-dark(#c8102e, #ff6b81);
+  --kc-warning: light-dark(#8a5a00, #e3b341);
   /* A section's header: a group of parameters' */
-  --kc-section-bg: #e3e7eb;
-  --kc-section-fg: #1a1b1c;
+  --kc-section-bg: light-dark(#e3e7eb, #282829);
+  --kc-section-fg: light-dark(#1a1b1c, #e3e7eb);
   --kc-radius: 4px;
   --kc-gap: 8px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --kc-bg: #1a1b1c;
-    --kc-fg: #e3e7eb;
-    --kc-muted: #9a9da3;
-    --kc-border: #333436;
-    --kc-control-border: #73767c;
-    --kc-input-bg: #282829;
-    --kc-hover: rgba(227, 231, 235, 0.07);
-    --kc-accent: #ff5f14;
-    --kc-accent-fg: #1a1b1c;
-    --kc-accent-hover: #ff7a3d;
-    --kc-accent-text: #ff6a24;
-    --kc-accent-subtle: #43271b;
-    --kc-focus: #ff6a24;
-    --kc-track: #3a3b3e;
-    --kc-error: #ff6b81;
-    --kc-warning: #e3b341;
-    --kc-section-bg: #282829;
-    --kc-section-fg: #e3e7eb;
-  }
+/* The scheme the page chose: the system's no longer decides */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
 }

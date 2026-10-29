@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "KupCAD's desktop app (Tauri): a folder of scripts, an editor on the bundled kupcad's language server, and its preview.",
   "license": "AGPL-3.0-only",

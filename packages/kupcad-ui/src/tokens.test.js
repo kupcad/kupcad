@@ -12,13 +12,29 @@ const TOKENS = read('tokens.css');
 const declarations = (block) =>
   Object.fromEntries([...block.matchAll(/(--kc-[\w-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2]]));
 
-const light = declarations(/^:root \{([^}]*)\}/m.exec(TOKENS)?.[1] ?? '');
-const dark = {
-  ...light,
-  ...declarations(
-    /@media \(prefers-color-scheme: dark\) \{\s*:root \{([^}]*)\}/.exec(TOKENS)?.[1] ?? '',
-  ),
-};
+/**
+ * A token's value in a scheme: of light-dark(light, dark), the one for it (its arguments split
+ * at their own commas, not an rgba()'s); any other value is both's.
+ * @param {string} value
+ * @param {0 | 1} scheme 0 light, 1 dark
+ */
+function inScheme(value, scheme) {
+  const args = /^light-dark\((.*)\)$/.exec(value)?.[1];
+  if (args === undefined) return value;
+  let depth = 0;
+  const comma = [...args].findIndex((char) => {
+    depth += char === '(' ? 1 : char === ')' ? -1 : 0;
+    return char === ',' && depth === 0;
+  });
+  return (scheme === 0 ? args.slice(0, comma) : args.slice(comma + 1)).trim();
+}
+
+const root = declarations(/^:root \{([^}]*)\}/m.exec(TOKENS)?.[1] ?? '');
+/** @param {0 | 1} scheme */
+const tokensIn = (scheme) =>
+  Object.fromEntries(Object.entries(root).map(([name, value]) => [name, inScheme(value, scheme)]));
+const light = tokensIn(0);
+const dark = tokensIn(1);
 
 /** The relative luminance of a #rrggbb colour (WCAG 2). @param {string} hex */
 function luminance(hex) {
@@ -77,6 +93,22 @@ describe.each([
   it.each(EDGES)('keep %s apart from %s, 3:1', (fg, bg) => {
     expect(contrast(colour(fg), colour(bg))).toBeGreaterThanOrEqual(3);
   });
+});
+
+it("reads light-dark()'s two values, an rgba()'s commas left whole", () => {
+  expect(inScheme('light-dark(#ffffff, #1a1b1c)', 1)).toBe('#1a1b1c');
+  expect(inScheme('light-dark(rgba(26, 27, 28, 0.06), rgba(227, 231, 235, 0.07))', 0)).toBe(
+    'rgba(26, 27, 28, 0.06)',
+  );
+  expect(inScheme('#ff5f14', 1)).toBe('#ff5f14');
+});
+
+it("follows the system's scheme until the page's root chooses one with data-theme", () => {
+  expect(TOKENS).toMatch(/^:root \{\s*color-scheme: light dark;/m);
+  expect(TOKENS).toMatch(/:root\[data-theme='light'\] \{\s*color-scheme: light;\s*\}/);
+  expect(TOKENS).toMatch(/:root\[data-theme='dark'\] \{\s*color-scheme: dark;\s*\}/);
+  // A colour given for one scheme alone would keep it in the other
+  expect(TOKENS).not.toMatch(/prefers-color-scheme/);
 });
 
 it('measures contrast as WCAG does', () => {

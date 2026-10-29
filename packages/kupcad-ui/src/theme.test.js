@@ -59,6 +59,50 @@ it("takes the viewer's dark colours for the tokens unset, in a dark colour schem
   }
 });
 
+/** The system's colour scheme, as matchMedia answers it. @param {boolean} dark */
+const system = (dark) =>
+  vi.stubGlobal('matchMedia', (/** @type {string} */ query) => ({
+    matches: dark && query === '(prefers-color-scheme: dark)',
+  }));
+
+it("takes the colour scheme the page chose over the system's, and the system's where it chose both", () => {
+  const root = document.documentElement;
+  try {
+    system(true);
+    root.style.colorScheme = 'light';
+    expect(themeFromTokens(document.body)).toEqual(LIGHT);
+    system(false);
+    root.style.colorScheme = 'only dark';
+    expect(themeFromTokens(document.body)).toEqual(DARK);
+    root.style.colorScheme = 'light dark';
+    expect(themeFromTokens(document.body)).toEqual(LIGHT);
+  } finally {
+    vi.unstubAllGlobals();
+    root.removeAttribute('style');
+  }
+});
+
+it("themes the viewer again as the page's root changes its data-theme (tokens.css's)", async () => {
+  const sheet = document.createElement('style');
+  sheet.textContent = ":root[data-theme='dark'] { color-scheme: dark; }";
+  document.head.append(sheet);
+  const root = document.documentElement;
+  /** @type {string[]} */
+  const backgrounds = [];
+  const stop = watchTokens(document.body, (theme) => backgrounds.push(theme.background));
+  try {
+    root.dataset.theme = 'dark';
+    await new Promise((resolve) => setTimeout(resolve));
+    root.dataset.theme = 'light';
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(backgrounds).toEqual([LIGHT.background, DARK.background, LIGHT.background]);
+  } finally {
+    stop();
+    sheet.remove();
+    delete root.dataset.theme;
+  }
+});
+
 /**
  * A 2D context as a browser's reads a colour: the colours `drawn` knows (their pixel's sRGB)
  * taken as the fill, and any other leaving the fill as it was.
