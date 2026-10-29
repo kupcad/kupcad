@@ -1,7 +1,7 @@
 // What the app's window does its work with, on Tauri: the folder dialog and its files (moved to
 // the trash by the native side), the save and message dialogs, the native side's export, the
-// bundled kupcad's language server, the window's theme, zoom, menus and its close. App.svelte
-// takes it as a prop, so its tests give it stand-ins.
+// bundled kupcad's language server, the window's theme, zoom, menus and its close, and the app's
+// updates. App.svelte takes it as a prop, so its tests give it stand-ins.
 
 import { invoke } from '@tauri-apps/api/core';
 // From its own module: the package's index of the menus re-exports them in a way nodenext
@@ -11,7 +11,9 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { load } from '@tauri-apps/plugin-store';
+import { check } from '@tauri-apps/plugin-updater';
 import { memorySettings } from '@kupcad/ui';
 import { files, listFolder, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
@@ -50,6 +52,18 @@ import { LanguageServer } from './server.js';
  *   when the window is asked to close, and keeps it open when it says no
  * @property {() => Promise<Settings>} settings the app's settings, read before the window is
  *   laid out and reactive after (`memorySettings`), each change written to the file
+ * @property {() => Promise<AppUpdate | null>} checkUpdate the newer version the releases have
+ *   (their latest.json, tauri.conf.json's updater), null when this one is the newest
+ */
+
+/**
+ * A newer version of the app than the one running.
+ * @typedef {object} AppUpdate
+ * @property {string} version
+ * @property {string} current the version running
+ * @property {() => Promise<void>} install downloads it, checks the release signed it, installs it
+ *   and restarts the app on it (on Windows its installer closes the app itself)
+ * @property {() => Promise<void>} dismiss lets it go, not installed
  */
 
 /**
@@ -147,6 +161,20 @@ export const tauri = {
         settings.set(key, value);
         void store.set(key, value);
       },
+    };
+  },
+  async checkUpdate() {
+    const update = await check();
+    if (!update) return null;
+    return {
+      version: update.version,
+      current: update.currentVersion,
+      async install() {
+        await update.downloadAndInstall();
+        await relaunch();
+      },
+      // A native resource until then, as a menu is
+      dismiss: () => update.close(),
     };
   },
 };

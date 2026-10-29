@@ -1,7 +1,7 @@
 // The window's menus, as data the platform makes native ones of (platform.js): the app's menu
 // bar, its items enabled as the window's state allows, and a row's menu in the folder's tree.
-// macOS has the app's own menu first (About, Settings…, Quit); elsewhere Settings and Quit are
-// the File menu's. An item's shortcut is its accelerator, which the menu takes before the page
+// macOS has the app's own menu first (About, Check for Updates…, Settings…, Quit); elsewhere
+// Settings and Quit are the File menu's, and Check for Updates… the Help menu's. An item's shortcut is its accelerator, which the menu takes before the page
 // sees the key.
 
 /**
@@ -40,6 +40,7 @@
  * @property {() => void} zoomOut
  * @property {() => void} zoomReset
  * @property {() => void} shortcuts
+ * @property {() => void} checkUpdates
  */
 
 /**
@@ -67,6 +68,7 @@ const name = (path) => path.split(/[\\/]/).at(-1) || path;
  */
 export function menuBar(state, actions) {
   const settings = item('Settings…', actions.settings, { accelerator: 'CmdOrCtrl+,' });
+  const updates = item('Check for Updates…', actions.checkUpdates);
   /** @type {MenuEntry[]} */
   const recent =
     state.recent.length === 0
@@ -85,6 +87,7 @@ export function menuBar(state, actions) {
             text: 'KupCAD',
             items: /** @type {MenuEntry[]} */ ([
               system('About'),
+              updates,
               '-',
               settings,
               '-',
@@ -150,7 +153,13 @@ export function menuBar(state, actions) {
       text: 'Window',
       items: [system('Minimize'), system('Maximize'), '-', system('CloseWindow')],
     },
-    { text: 'Help', items: [item('Keyboard Shortcuts', actions.shortcuts)] },
+    {
+      text: 'Help',
+      items: [
+        item('Keyboard Shortcuts', actions.shortcuts),
+        ...(state.mac ? [] : /** @type {MenuEntry[]} */ (['-', updates])),
+      ],
+    },
   ];
 }
 

@@ -30,11 +30,15 @@ afterEach(() => {
 
 /**
  * The window on stand-ins for Tauri's services, with the server, the disk (which a test changes
- * as another program would) and the menus they kept.
+ * as another program would) and the menus they kept. `update` is the newer version the releases
+ * have (none by default), or an error the check ends with; `checkUpdates` looks for it at the
+ * start, as a release build does.
  */
 function windowOn({
   launched = /** @type {string | null} */ (null),
   settings = memorySettings(),
+  update = /** @type {string | Error | null} */ (null),
+  checkUpdates = false,
 } = {}) {
   const fake = fakeServer({ port: null });
   /** @type {(() => Promise<boolean>) | null} */
@@ -50,6 +54,8 @@ function windowOn({
     bar: [],
     popups: [],
   });
+  /** The newer version found, its install and dismissal watched. */
+  const found = { install: vi.fn(async () => {}), dismiss: vi.fn(async () => {}) };
   const platform = {
     pickFolder: vi.fn(async () => FOLDER),
     launchFolder: vi.fn(async () => launched),
@@ -104,12 +110,17 @@ function windowOn({
       return () => {};
     },
     settings: async () => settings,
+    checkUpdate: vi.fn(async () => {
+      if (update instanceof Error) throw update;
+      return update === null ? null : { version: update, current: '0.1.1', ...found };
+    }),
   };
   const { unmount } = render(App, {
     props: {
       platform,
       settings,
       viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 },
+      checkUpdates,
     },
   });
   opened.push(unmount);
@@ -119,6 +130,7 @@ function windowOn({
     watched,
     disk,
     menus,
+    found,
     /** Closes the window before the test ends. */
     unmount() {
       opened.splice(opened.indexOf(unmount), 1);
@@ -872,6 +884,77 @@ describe('the menu bar', () => {
     await vi.waitFor(() => expect(again.platform.setZoom).toHaveBeenCalledExactlyOnceWith(1.1));
     await choose(again.menus.bar, 'Actual Size');
     expect(again.platform.setZoom).toHaveBeenLastCalledWith(1);
+  });
+});
+
+describe('updates', () => {
+  it('offers a newer version as the window opens, and installs it when told to', async () => {
+    const window = windowOn({ update: '0.2.0', checkUpdates: true });
+    window.platform.confirm.mockResolvedValueOnce(true);
+    await vi.waitFor(() => expect(window.found.install).toHaveBeenCalledOnce());
+    expect(window.platform.confirm).toHaveBeenCalledExactlyOnceWith(
+      'KupCAD 0.2.0 is out (this is 0.1.1). Install it and restart?',
+    );
+  });
+
+  it('says nothing as the window opens when there is none, or the check fails offline', async () => {
+    const none = windowOn({ checkUpdates: true });
+    await vi.waitFor(() => expect(none.platform.checkUpdate).toHaveBeenCalledOnce());
+    none.unmount();
+    const offline = windowOn({ update: new Error('offline'), checkUpdates: true });
+    await vi.waitFor(() => expect(offline.platform.checkUpdate).toHaveBeenCalledOnce());
+    await tick();
+    expect(offline.platform.tell).not.toHaveBeenCalled();
+    expect(screen.queryByRole('status')?.textContent ?? '').not.toContain('Updates');
+  });
+
+  it("doesn't look as the window opens unless told to (pnpm dev)", async () => {
+    const window = windowOn({ update: '0.2.0' });
+    await vi.waitFor(() => expect(window.menus.bar.length).toBeGreaterThan(0));
+    expect(window.platform.checkUpdate).not.toHaveBeenCalled();
+  });
+
+  it('says from the menu that it is up to date, or why it could not tell', async () => {
+    const window = windowOn();
+    await vi.waitFor(() => expect(window.menus.bar.length).toBeGreaterThan(0));
+    await choose(window.menus.bar, 'Check for Updates…');
+    await vi.waitFor(() =>
+      expect(window.platform.tell).toHaveBeenCalledExactlyOnceWith('KupCAD is up to date.'),
+    );
+    window.unmount();
+    const offline = windowOn({ update: new Error('offline') });
+    await vi.waitFor(() => expect(offline.menus.bar.length).toBeGreaterThan(0));
+    await choose(offline.menus.bar, 'Check for Updates…');
+    await vi.waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain("Updates weren't checked: offline"),
+    );
+  });
+
+  it('says why an update failed to install', async () => {
+    const window = windowOn({ update: '0.2.0' });
+    window.found.install.mockRejectedValueOnce(new Error('the signature is wrong'));
+    window.platform.confirm.mockResolvedValueOnce(true);
+    await vi.waitFor(() => expect(window.menus.bar.length).toBeGreaterThan(0));
+    await choose(window.menus.bar, 'Check for Updates…');
+    await vi.waitFor(() =>
+      expect(screen.getByRole('status').textContent).toContain(
+        "KupCAD 0.2.0 wasn't installed: the signature is wrong",
+      ),
+    );
+  });
+
+  it('asks before restarting on unsaved changes, and lets the update go when told no', async () => {
+    const window = windowOn({ update: '0.2.0' });
+    const view = await openFolder();
+    await type(view, 'cube(3)\n');
+    // Install it: yes; restart without saving: no
+    window.platform.confirm.mockResolvedValueOnce(true);
+    await choose(window.menus.bar, 'Check for Updates…');
+    await vi.waitFor(() => expect(window.found.dismiss).toHaveBeenCalledOnce());
+    expect(window.platform.confirm).toHaveBeenLastCalledWith(
+      'Restart without saving your changes?',
+    );
+    expect(window.found.install).not.toHaveBeenCalled();
   });
 });
 

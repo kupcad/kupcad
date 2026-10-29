@@ -1,7 +1,7 @@
 //! The desktop app's native side: the bundled kupcad's language server, which it runs for the
 //! page (server.rs); the plugins the page uses (dialogs, the files of the folder the user opens,
-//! its settings file) and the app's own (the folders opened kept in the file system's scope
-//! across launches, the window's size and place); `launch_folder`, the folder named on the
+//! its settings file, the app's updates and its restart) and the app's own (the folders opened
+//! kept in the file system's scope across launches, the window's size and place); `launch_folder`, the folder named on the
 //! command line; `move_to_trash`, a file or folder of the one opened, to the system's trash; and
 //! `export_model`, which builds a script with the bundled kupcad (`kupcad build`). The page runs
 //! the binary through these alone, its arguments checked here, and reads and writes only what
@@ -167,6 +167,10 @@ pub fn run() {
         .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // Newer versions from the releases' latest.json (tauri.conf.json), signed by the release,
+        // installed in this one's place and restarted on (the process plugin's relaunch)
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(server::Server::default())
         .invoke_handler(tauri::generate_handler![
             export_model,

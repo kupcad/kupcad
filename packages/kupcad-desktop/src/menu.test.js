@@ -17,6 +17,7 @@ const actions = () => ({
   zoomOut: vi.fn(),
   zoomReset: vi.fn(),
   shortcuts: vi.fn(),
+  checkUpdates: vi.fn(),
 });
 
 /** @type {MenuState} */
@@ -72,6 +73,9 @@ describe('the menu bar', () => {
     const elsewhere = menuBar({ ...STATE, mac: false }, actions());
     expect(titles(elsewhere)).toEqual(['File', 'Edit', 'View', 'Window', 'Help']);
     expect(itemOf(elsewhere, 'File', 'Settings…')?.accelerator).toBe('CmdOrCtrl+,');
+    // Checking for updates is the app menu's on a Mac, Help's elsewhere
+    expect(itemOf(elsewhere, 'Help', 'Check for Updates…')).toBeTruthy();
+    expect(itemOf(menuBar(STATE, actions()), 'Help', 'Check for Updates…')).toBeUndefined();
   });
 
   it("does what each item says, its shortcut the page's", () => {
@@ -88,6 +92,7 @@ describe('the menu bar', () => {
       ['View', 'Zoom Out', 'zoomOut', 'CmdOrCtrl+-'],
       ['View', 'Actual Size', 'zoomReset', undefined],
       ['Help', 'Keyboard Shortcuts', 'shortcuts', undefined],
+      ['KupCAD', 'Check for Updates…', 'checkUpdates', undefined],
     ])) {
       const found = itemOf(bar, menu, text);
       expect([text, found?.accelerator]).toEqual([text, accelerator]);

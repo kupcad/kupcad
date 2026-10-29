@@ -42,6 +42,35 @@ release carries the installers beside the CLI's archives, in its `checksums.txt`
 an `.AppImage` for x86_64) or a `_setup.exe` (Windows). They aren't signed yet, so macOS and
 Windows warn before they open one; signing needs the certificates as the repository's secrets.
 
+## Updates
+
+An installed app updates itself from the releases ([Tauri's updater](https://v2.tauri.app/plugin/updater/)):
+it looks once its window opens (a release build; `pnpm dev`'s doesn't) and from the menu
+(Check for Updates…, the app menu on macOS, Help elsewhere), and offers what it finds; told to,
+it downloads the new version, checks its signature, installs it and restarts on it. It reads
+`latest.json` from the latest release (`plugins.updater.endpoints` in `tauri.conf.json`), so a
+pre-release updates no one.
+
+A release makes it: each installer the updater installs is signed as it is built (the
+`.app.tar.gz` beside the `.dmg` on macOS, the `.AppImage`, `.deb` and `.rpm` on Linux, the
+`_setup.exe` on Windows), and `scripts/updater-manifest.js` writes their signatures into the
+release's `latest.json`. A Linux app finds the package it was installed from there
+(`linux-x86_64-deb`, …), so a `.deb` install updates to the `.deb`. The signing key is set up
+once:
+
+```sh
+pnpm --filter @kupcad/desktop tauri signer generate -w ~/.tauri/kupcad-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/kupcad-updater.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD     # the password given to generate
+```
+
+The public key it prints (also in `kupcad-updater.key.pub`) is `plugins.updater.pubkey` in
+`tauri.conf.json`: the apps check every update against it, so it is the one key whose updates
+they install. Keep the private key safe: a lost one means a new pair, and apps that have the old
+public key can't update to a release signed with the new one. A tag without the secret or the
+public key fails at once (the `version` job), and a build whose key doesn't match the public key
+fails as it signs. `pnpm tauri build` on a machine makes the installers alone, unsigned.
+
 ## Icons
 
 `src-tauri/icons` is made from `icon.svg` by `tauri icon` ([Tauri's guide](https://v2.tauri.app/develop/icons/)).

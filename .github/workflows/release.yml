@@ -3,8 +3,9 @@ name: Release
 # A version tag (v0.2.0, or v0.2.0-rc.1 for a pre-release) builds the kupcad CLI on a runner
 # of each system and architecture it ships for, checks each binary runs there, builds the
 # desktop app around it on each, and publishes them, the CLI packaged with its licenses
-# (core/scripts/package-release.sh) and the app's installers beside it, as the tag's GitHub
-# release, each file attested (actions/attest-build-provenance). Once the release is out, the
+# (core/scripts/package-release.sh) and the app's installers beside it, with the updater's
+# latest.json the installed apps update from, as the tag's GitHub release, each file attested
+# (actions/attest-build-provenance). Once the release is out, the
 # npm packages a site or a tool installs (@kupcad/playground and what it runs on, the core's
 # module shrunk by wasm-opt among them) go to npm at the same version, with provenance.
 on:
@@ -57,6 +58,25 @@ jobs:
               status=1
             fi
           done
+          exit $status
+
+      # The apps installed update from the release's latest.json, its installers signed with the
+      # TAURI_SIGNING_PRIVATE_KEY secret; an app checks them with the public key its
+      # tauri.conf.json has, which must be that key's. Checked here, not once the builds are done
+      - name: The updater can sign and be checked
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          status=0
+          if [ "$HAS_KEY" != true ]; then
+            echo "::error::No TAURI_SIGNING_PRIVATE_KEY secret: the private key \`pnpm tauri signer generate\` wrote, as the repository's secret"
+            status=1
+          fi
+          pubkey=$(jq -r '.plugins.updater.pubkey // ""' packages/kupcad-desktop/src-tauri/tauri.conf.json)
+          if [ -z "$pubkey" ] || [[ $pubkey == SET-ME* ]]; then
+            echo "::error::packages/kupcad-desktop/src-tauri/tauri.conf.json has no updater public key: the one \`pnpm tauri signer generate\` printed"
+            status=1
+          fi
           exit $status
 
   build:
@@ -180,14 +200,15 @@ jobs:
             os: ubuntu-22.04-arm
             binary: kupcad
             bundles: deb,rpm
+          # The .app too: the updater's .app.tar.gz is made from it
           - platform: darwin_arm64
             os: macos-latest
             binary: kupcad
-            bundles: dmg
+            bundles: app,dmg
           - platform: darwin_amd64
             os: macos-15-intel
             binary: kupcad
-            bundles: dmg
+            bundles: app,dmg
           - platform: windows_amd64
             os: windows-latest
             binary: kupcad.exe
@@ -241,11 +262,17 @@ jobs:
           pnpm install --frozen-lockfile --filter '@kupcad/desktop...'
           pnpm --filter @kupcad/desktop sidecar "$GITHUB_WORKSPACE/cli/${{ matrix.binary }}"
 
+      # With what the updater installs, each signed with the release's key (a .sig beside it):
+      # the .app.tar.gz, the AppImage, the .deb and .rpm, the NSIS installer. A build without the
+      # key, `pnpm tauri build` on a machine, makes the installers alone
       - name: Build the installers
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          pnpm --filter @kupcad/desktop tauri build --bundles ${{ matrix.bundles }} --config "{\"version\": \"$VERSION\"}"
+          config="{\"version\": \"$VERSION\", \"bundle\": {\"createUpdaterArtifacts\": true}}"
+          pnpm --filter @kupcad/desktop tauri build --bundles ${{ matrix.bundles }} --config "$config"
 
       # The kupcad the app runs is the release's: it reports the tag's version
       - name: Check the bundled kupcad
@@ -255,7 +282,8 @@ jobs:
           kupcad=packages/kupcad-desktop/src-tauri/target/release/${{ matrix.binary }}
           test "$("$kupcad" --version)" = "kupcad $VERSION"
 
-      # Named as the release names its files: kupcad-desktop_<version>_<os>_<arch>
+      # Named as the release names its files: kupcad-desktop_<version>_<os>_<arch>, each
+      # signature as its file (the release job writes them into latest.json)
       - name: Name the installers
         env:
           NAME: kupcad-desktop_${{ needs.version.outputs.version }}_${{ matrix.platform }}
@@ -263,12 +291,23 @@ jobs:
           shopt -s nullglob
           bundle=packages/kupcad-desktop/src-tauri/target/release/bundle
           mkdir desktop
-          for f in "$bundle"/dmg/*.dmg; do cp "$f" "desktop/$NAME.dmg"; done
-          for f in "$bundle"/deb/*.deb; do cp "$f" "desktop/$NAME.deb"; done
-          for f in "$bundle"/rpm/*.rpm; do cp "$f" "desktop/$NAME.rpm"; done
-          for f in "$bundle"/appimage/*.AppImage; do cp "$f" "desktop/$NAME.AppImage"; done
-          for f in "$bundle"/nsis/*-setup.exe; do cp "$f" "desktop/${NAME}_setup.exe"; done
+          # `kept <file> <name>`: the file and its signature, if it has one
+          kept() {
+            cp "$1" "desktop/$2"
+            if [ -f "$1.sig" ]; then cp "$1.sig" "desktop/$2.sig"; fi
+          }
+          for f in "$bundle"/dmg/*.dmg; do kept "$f" "$NAME.dmg"; done
+          for f in "$bundle"/macos/*.app.tar.gz; do kept "$f" "$NAME.app.tar.gz"; done
+          for f in "$bundle"/deb/*.deb; do kept "$f" "$NAME.deb"; done
+          for f in "$bundle"/rpm/*.rpm; do kept "$f" "$NAME.rpm"; done
+          for f in "$bundle"/appimage/*.AppImage; do kept "$f" "$NAME.AppImage"; done
+          for f in "$bundle"/nsis/*-setup.exe; do kept "$f" "${NAME}_setup.exe"; done
           ls desktop
+          # Every installer but a .dmg updates the app: each needs its signature
+          for f in desktop/*; do
+            case "$f" in *.sig | *.dmg) continue ;; esac
+            test -f "$f.sig" || { echo "::error::$f has no signature"; exit 1; }
+          done
           test -n "$(ls desktop)"
 
       - name: Keep the installers
@@ -395,11 +434,18 @@ jobs:
           for dir in artifacts/symbols-*; do mv "$dir" "binaries/${dir#artifacts/symbols-}/symbols"; done
           core/scripts/package-release.sh "$VERSION" binaries dist
 
-      # The desktop app's installers beside the CLI, their SHA-256 in the same checksums.txt
+      # The desktop app's installers beside the CLI, their SHA-256 in the same checksums.txt, and
+      # the updater's latest.json, which holds their signatures (so the .sig files aren't shipped):
+      # the apps installed read it as the latest release's (tauri.conf.json's endpoint), so a
+      # pre-release updates none
       - name: Add the desktop installers
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mv artifacts/desktop-*/* dist/
-          (cd dist && sha256sum kupcad-desktop_* >> checksums.txt)
+          node packages/kupcad-desktop/scripts/updater-manifest.js "$VERSION" "$GITHUB_REPOSITORY" dist > dist/latest.json
+          rm dist/*.sig
+          (cd dist && sha256sum kupcad-desktop_* latest.json >> checksums.txt)
 
       # Each file the release ships attested as built by this workflow from the tag (a Sigstore
       # signature, kept with the repository): `gh attestation verify <file> --repo
@@ -411,6 +457,7 @@ jobs:
           subject-path: |
             dist/kupcad_*
             dist/kupcad-desktop_*
+            dist/latest.json
             dist/checksums.txt
 
       # A tag with a suffix (v0.2.0-rc.1) is a pre-release
@@ -421,7 +468,7 @@ jobs:
         run: |
           prerelease=()
           if [[ $TAG == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" dist/kupcad_* dist/kupcad-desktop_* dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
+          gh release create "$TAG" dist/kupcad_* dist/kupcad-desktop_* dist/latest.json dist/checksums.txt --title "$TAG" --generate-notes --verify-tag "${prerelease[@]}"
 
   # npm's trusted publishing: the job's OIDC token is the credential, which npm takes from this
   # workflow (release.yml) in the npm environment only, and signs each package's provenance.

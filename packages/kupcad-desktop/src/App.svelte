@@ -16,6 +16,8 @@
   files, and opens the app's settings (⌘, or Ctrl+, too): a page over the workspace, which stays
   as it was under it, out of reach until Escape, the page's close button or the strip gives it
   back. The app's menu bar is the window's (menu.js), its shortcuts listed in a dialog (Help).
+  A newer version of the app is looked for once the window opens and from the menu (Check for
+  Updates…), and installed, the app restarting on it, when the person says so.
 -->
 <script>
   import { Editor } from '@kupcad/editor/svelte';
@@ -58,10 +60,17 @@
    * @property {import('@kupcad/ui/viewer/types').ViewerOptions} [viewerOptions] what the
    *   preview's viewer is made with
    * @property {Settings} [settings] where the panes' sizes are kept (the app's settings file)
+   * @property {boolean} [checkUpdates] whether to look for a newer version once the window
+   *   opens (a release build's, not `pnpm dev`'s)
    */
 
   /** @type {Props} */
-  let { platform, viewerOptions = {}, settings = memorySettings() } = $props();
+  let {
+    platform,
+    viewerOptions = {},
+    settings = memorySettings(),
+    checkUpdates: checkAtStart = false,
+  } = $props();
 
   /** How long a script changed waits to be saved, where the settings say it is, in milliseconds. */
   const AUTOSAVE_MS = 1000;
@@ -585,6 +594,50 @@
     back?.focus();
   }
 
+  /** A look for a newer version is under way: another waits for it to end. */
+  let checkingUpdates = false;
+
+  /**
+   * Looks for a newer version of the app and offers to install it, the app restarting on it
+   * (asking first when there are unsaved changes). At the start (`quiet`) it says nothing unless
+   * there is one: an offline start isn't a problem; from the menu it says what it found.
+   * @param {boolean} quiet
+   */
+  async function checkUpdates(quiet) {
+    if (checkingUpdates) return;
+    checkingUpdates = true;
+    try {
+      let update;
+      try {
+        update = await platform.checkUpdate();
+      } catch (error) {
+        if (!quiet) problem = `Updates weren't checked: ${errorText(error)}`;
+        return;
+      }
+      if (!update) {
+        if (!quiet) await platform.tell('KupCAD is up to date.');
+        return;
+      }
+      const install =
+        (await platform.confirm(
+          `KupCAD ${update.version} is out (this is ${update.current}). Install it and restart?`,
+        )) &&
+        (scripts.unsaved.size === 0 ||
+          (await platform.confirm('Restart without saving your changes?')));
+      if (!install) {
+        await update.dismiss();
+        return;
+      }
+      await update
+        .install()
+        .catch(
+          (error) => (problem = `KupCAD ${update.version} wasn't installed: ${errorText(error)}`),
+        );
+    } finally {
+      checkingUpdates = false;
+    }
+  }
+
   /** Whether the window was given a theme: until it is, the system's is its own. */
   let themed = false;
   // The window's theme as the settings have it, set again whenever they change it
@@ -623,6 +676,7 @@
     zoomOut: () => settings.set(KEYS.zoom, zoomStep(zoom, -1)),
     zoomReset: () => settings.set(KEYS.zoom, 1),
     shortcuts: () => (shortcutsOpen = true),
+    checkUpdates: () => void checkUpdates(false),
   };
   // The menu bar as the window is: what it may do now, the folders opened last
   $effect(() => {
@@ -669,6 +723,7 @@
         if (chosen) await openFolder(chosen);
       })
       .catch((error) => (problem = errorText(error)));
+    if (checkAtStart) void checkUpdates(true);
     return () => {
       opened++;
       unwatch?.();

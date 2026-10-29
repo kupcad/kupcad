@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The main window: closing itself once its unsaved changes are settled, its theme and zoom (those the settings keep), its menus, dialogs, the files of what the user chose in them (the folder opened watched too, for its tree; files and folders made and renamed in it), and the app's settings file. The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
+  "description": "The main window: closing itself once its unsaved changes are settled, its theme and zoom (those the settings keep), its menus, dialogs, the files of what the user chose in them (the folder opened watched too, for its tree; files and folders made and renamed in it), and the app's settings file, and its updates (checked, downloaded and installed, the app restarted on one). The bundled kupcad runs through the app's own commands (start_server, export_model), not the shell's",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -20,6 +20,8 @@
     "fs:allow-rename",
     "fs:allow-watch",
     "fs:allow-unwatch",
-    "store:default"
+    "store:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
