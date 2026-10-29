@@ -458,7 +458,8 @@ jobs:
           path: npm
 
       # Each after those it depends on. A pre-release (0.2.0-rc.1) goes under the next tag, not
-      # latest. One already on npm is skipped, so a run stopped halfway can be re-run
+      # latest. One already on npm is skipped, so a run stopped halfway can be re-run. The path
+      # starts with ./: npm reads `npm/<file>.tgz` as the GitHub repository npm/<file>.tgz
       - name: Publish them
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -471,5 +472,5 @@ jobs:
               echo "@kupcad/$name@$VERSION is on npm already"
               continue
             fi
-            npm publish "npm/kupcad-$name-$VERSION.tgz" --provenance --access public --tag "$tag"
+            npm publish "./npm/kupcad-$name-$VERSION.tgz" --provenance --access public --tag "$tag"
           done
