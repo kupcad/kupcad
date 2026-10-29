@@ -4,8 +4,11 @@
   copies, volume and size, the face and its area). Beside it a panel, which the toolbar's Panel
   button hides: the view's controls (the render mode; edges, axes, the floor; fit, perspective,
   the views) over the model's parts (a click on one selecting its copies, as a click in the
-  viewer does), half of it each. A bar above: a section through the model, a screenshot and a
-  host's own actions (which take the controls' look by .kc-control), the Panel button, and a
+  viewer does), half of it each; in a pane narrower than 36em (a phone's), under the model, at
+  most half the pane. The model fills what the rest leave, and no less than
+  `--kc-model-min-height` (none by default): a host whose pane is as tall as its content sets it,
+  the model having no height of its own. A bar above: a section through the model, a screenshot
+  and a host's own actions (which take the controls' look by .kc-control), the Panel button, and a
   host's toggles of its own panes beside this one. Below: how its run went, and what it said
   went wrong, one with a line clicked given to the host (`onproblem`), and a button that lists
   the keyboard shortcuts (the host's own, then the viewer's). How the view looks (the render mode,
@@ -496,6 +499,7 @@
 
 <style>
   .kc-viewer-pane {
+    container-type: inline-size;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -530,6 +534,7 @@
     position: relative;
     flex: 1;
     min-width: 0;
+    min-height: var(--kc-model-min-height, 0);
   }
   .tooltip {
     position: absolute;
@@ -572,6 +577,26 @@
   }
   .parts {
     border-top: 1px solid var(--kc-border);
+  }
+  /* A narrow pane: the panel under the model, as wide, the controls then the parts at their own
+     heights; scrolled past half the pane */
+  @container (max-width: 36em) {
+    .body {
+      flex-direction: column;
+    }
+    .panel {
+      flex: none;
+      width: auto;
+      max-height: 50%;
+      overflow: auto;
+      border-left: none;
+      border-top: 1px solid var(--kc-border);
+    }
+    .controls,
+    .parts {
+      flex: none;
+      overflow: visible;
+    }
   }
   .caption {
     margin: 0 0 2px;

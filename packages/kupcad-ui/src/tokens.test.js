@@ -118,8 +118,8 @@ it('measures contrast as WCAG does', () => {
   expect(contrast('#1a1b1c', '#ff5f14')).toBeCloseTo(5.67, 2);
 });
 
-/** What tokens.css gives no value: the viewer's (its own colours stand in), the code's (the editor's), a slider's fill (set by the panel). */
-const SET_ELSEWHERE = /^--kc-(viewer-|code-|range-fill$)/;
+/** What tokens.css gives no value: the viewer's (its own colours stand in), the code's (the editor's), a slider's fill (set by the panel), the model's least height (a host's). */
+const SET_ELSEWHERE = /^--kc-(viewer-|code-|range-fill$|model-min-height$)/;
 
 it('defines every token the panels use', () => {
   const sources = readdirSync(HERE).filter(

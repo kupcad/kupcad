@@ -44,8 +44,10 @@ the PWA) embeds; it keeps nothing of the page's.
   resize them (`@kupcad/ui`'s `Splitter`), and the toolbar's Parameters button hides the
   parameters for the model's width; the sizes, and what is hidden or folded, are kept in
   `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys), and
-  how the view looks too (the pane's `view.*` keys), all followed as they are set; a narrow page
-  stacks the panes.
+  how the view looks too (the pane's `view.*` keys), all followed as they are set. A page 800px
+  wide or less stacks the panes, each at a height of its own (the script a few lines, the model
+  4:3 of its width, at most 32em, the console and the parameters as tall as their lines), and
+  the playground scrolls; on a phone the view's panel is under the model (`ViewerPane`'s).
 * **The console** (`@kupcad/ui`'s `ConsolePanel`, under the model): each run, what it printed
   (`puts`, `print`, `inspect`), its warnings and its error, a line naming a place taking the
   editor there, and the core's log (the worker module's stdout and stderr).

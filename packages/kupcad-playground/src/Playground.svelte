@@ -348,26 +348,35 @@
     background: var(--kc-bg);
   }
   /* A narrow page: the script over the model, the parameters under it */
+  /* Narrow, the panes stacked, each at a height of its own, and the playground scrolled: the
+     script a few lines, the model 4:3 of its width (at most 32em), the console and the
+     parameters as tall as their lines */
   @media (max-width: 800px) {
     .kc-playground {
       flex-direction: column;
+      overflow-y: auto;
     }
     /* Stacked, each the page's width: the columns' bars have nothing to resize */
     .kc-playground > :global(.kc-splitter.columns) {
       display: none;
     }
     .code {
-      flex-basis: 40%;
+      flex: none;
       width: auto;
+      height: 20em;
       border-right: none;
       border-bottom: 1px solid var(--kc-border);
     }
-    .view {
-      flex-basis: 60%;
-      min-height: 20em;
+    .view,
+    .model {
+      flex: none;
+    }
+    .model {
+      --kc-model-min-height: min(75cqw, 32em);
     }
     .params {
       width: auto;
+      overflow: visible;
       border-left: none;
       border-top: 1px solid var(--kc-border);
     }
