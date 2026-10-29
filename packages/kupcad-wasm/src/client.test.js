@@ -231,7 +231,8 @@ describe('createKupcadWorker', () => {
     const load = (file) => {
       if (loaded.has(file)) return;
       loaded.add(file);
-      for (const [, next] of read(file).matchAll(/^import .* from '\.\/([\w.-]+\.js)';$/gm)) load(next);
+      for (const [, next] of read(file).matchAll(/^import .* from '\.\/([\w.-]+\.js)';$/gm))
+        load(next);
     };
     load('worker.js');
     expect([...loaded]).toContain('kupcad.js');
