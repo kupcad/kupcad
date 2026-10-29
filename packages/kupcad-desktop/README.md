@@ -42,6 +42,29 @@ release carries the installers beside the CLI's archives, in its `checksums.txt`
 an `.AppImage` for x86_64) or a `_setup.exe` (Windows). They aren't signed yet, so macOS and
 Windows warn before they open one; signing needs the certificates as the repository's secrets.
 
+## Icons
+
+`src-tauri/icons` is made from `icon.svg` by `tauri icon` ([Tauri's guide](https://v2.tauri.app/develop/icons/)).
+KupCAD's icon takes its colours from CSS variables (`--kc-icon-bg`, `--kc-icon-fg`, which the
+docs site sets per theme), and `tauri icon` draws an SVG without them (all black), so `icon.svg`
+is the icon with its own colours written in. macOS's `icon.icns` is made from `icon-macos.svg`
+instead: `icon.svg` as a rounded tile with a transparent margin, on Apple's icon grid, so it sits
+in the Dock as the other apps do. The app has no mobile build, so only the desktop files are
+kept, not the `android` and `ios` folders `tauri icon` makes beside them:
+
+```sh
+cd packages/kupcad-desktop
+out=$(mktemp -d) mac=$(mktemp -d)
+pnpm tauri icon icon.svg -o "$out"
+pnpm tauri icon icon-macos.svg -o "$mac"
+cp "$out"/*.png "$out"/icon.ico "$mac"/icon.icns src-tauri/icons/
+```
+
+`tauri icon` writes the `.icns` file's images in no fixed order, so a run changes `icon.icns`
+even when the icon hasn't: leave it out of the copy unless the icon changed. The PNGs must stay
+RGBA: an image optimiser that turns them into palette PNGs breaks the build
+(`generate_context!` panics: `icon ... is not RGBA`).
+
 ## How it is put together
 
 * **The window** (`src/App.svelte`): the folder's tree (`FileTree.svelte`, `folder.js`: its

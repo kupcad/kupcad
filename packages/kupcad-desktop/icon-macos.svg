@@ -1,0 +1,11 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <!-- The macOS app icon (src-tauri/icons/icon.icns): icon.svg on Apple's icon grid, a rounded
+       tile 824 wide on a 1024 canvas, the margin around it transparent, as the Dock's other
+       icons are. -->
+  <defs>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="185.4" />
+    </clipPath>
+  </defs>
+  <image href="icon.svg" xlink:href="icon.svg" x="100" y="100" width="824" height="824" clip-path="url(#tile)" />
+</svg>
