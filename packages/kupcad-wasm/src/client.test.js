@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProtocolError } from '@kupcad/protocol';
+import { DEFAULT_WASM } from './create.js';
 import { createKupcad, createKupcadWorker, KupcadCrashError, KupcadError } from './index.js';
 import { serve } from './serve.js';
 
 /** @import { CreateOptions, KupcadApi, PortLike, WorkerLike } from './types.js' */
+
+/** A file of src/, as text. @param {string} file */
+const read = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
 
 /**
  * Stand-ins for Web Workers running src/worker.js: the core served by `create` on one end of a
@@ -209,6 +214,29 @@ describe('createKupcadWorker', () => {
     const unread = other.version();
     garbled.listeners.messageerror({});
     await expect(unread).rejects.toBeInstanceOf(KupcadCrashError);
+  });
+
+  it('gives the worker the module this package ships, where the host gives none', () => {
+    const { worker, posted } = silentWorker();
+    const kupcad = createKupcadWorker({ worker: () => worker, log: silent });
+    void kupcad.version().catch(() => {});
+    expect(posted[0]).toMatchObject({ type: 'init', wasm: DEFAULT_WASM.href });
+    kupcad.terminate();
+  });
+
+  it("names the shipped module nowhere the worker loads: a site's bundler copies it once", () => {
+    // Each file the worker's script loads, through its relative imports
+    const loaded = new Set();
+    /** @param {string} file */
+    const load = (file) => {
+      if (loaded.has(file)) return;
+      loaded.add(file);
+      for (const [, next] of read(file).matchAll(/^import .* from '\.\/([\w.-]+\.js)';$/gm)) load(next);
+    };
+    load('worker.js');
+    expect([...loaded]).toContain('kupcad.js');
+    const naming = [...loaded].filter((file) => /new URL\([^)]*kupcad\.wasm/.test(read(file)));
+    expect(naming).toEqual([]);
   });
 
   it("gives the worker a relative module URL as the page's, not its own script's", () => {

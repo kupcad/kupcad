@@ -115,8 +115,8 @@ export interface SentError {
 export type ToWorker =
   | {
       type: 'init';
-      /** A URL as its href. */
-      wasm: Exclude<WorkerWasmSource, URL> | undefined;
+      /** The module (a URL as its href): the host's, else the one the package ships. */
+      wasm: Exclude<WorkerWasmSource, URL>;
     }
   | { type: 'call'; id: number; method: Method; args: unknown[] };
 

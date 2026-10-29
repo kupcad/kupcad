@@ -1,7 +1,7 @@
 // For the tests of a package that shows what the core makes: the real module, made once a test
 // process and silent, and what it gives of a script. A script that fails fails the test.
 
-import { createKupcad } from './kupcad.js';
+import { createKupcad } from './create.js';
 
 /** @import { Model, UiSchema } from '@kupcad/protocol/types' */
 /** @import { Kupcad } from './kupcad.js' */

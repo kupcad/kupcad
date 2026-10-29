@@ -10,10 +10,8 @@ import { loadModule } from './load.js';
 import { createWasi, WasiExit } from './wasi.js';
 
 /** @import { Finding, Preview, UiSchema, VersionInfo } from '@kupcad/protocol/types' */
-/** @import { BuildOptions, CallOptions, CreateOptions, KupcadApi, KupcadExports, PreviewOptions } from './types.js' */
+/** @import { BuildOptions, CallOptions, CreateOptions, KupcadApi, KupcadExports, PreviewOptions, WasmSource } from './types.js' */
 
-/** The module this package ships, built by core/build.zig and copied in by `pnpm build`. */
-const DEFAULT_WASM = new URL('../dist/kupcad.wasm', import.meta.url);
 /** A `usize` of wasm32: the slot an export writes its result's length to. */
 const USIZE_BYTES = 4;
 /** The longest message get_last_error holds (core/src/wasm.zig's MAX_ERROR_MSG_LEN). */
@@ -33,14 +31,15 @@ const decoder = new TextDecoder();
 const address = (ptr) => ptr >>> 0;
 
 /**
- * The core, instantiated in this thread. A long build blocks it: a page runs the core in a
- * worker (`createKupcadWorker`).
- * @param {CreateOptions} [options]
+ * The core, instantiated in this thread from the module `wasm`: createKupcad's, which names the
+ * module this package ships, and the worker's, which is given its module. Naming none here keeps
+ * the shipped module's URL out of the worker's bundle (create.js).
+ * @param {CreateOptions & { wasm: WasmSource }} options
  * @returns {Promise<Kupcad>}
  * @throws {ProtocolError} when the module speaks a protocol version this package doesn't read
  */
-export async function createKupcad(options = {}) {
-  const module = await loadModule(options.wasm ?? DEFAULT_WASM);
+export async function instantiateKupcad(options) {
+  const module = await loadModule(options.wasm);
   const wasi = createWasi(options.log ?? ((line) => console.debug(line)));
   const instance = await WebAssembly.instantiate(module, {
     wasi_snapshot_preview1: wasi.imports(module),

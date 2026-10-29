@@ -1,11 +1,12 @@
-// The worker's side: the core instantiated in the worker, answering the client's calls on
-// `port` in the order they come. A result's buffer is transferred, not copied.
+// The worker's side: the core instantiated in the worker on the module the client gives it,
+// answering the client's calls on `port` in the order they come. A result's buffer is
+// transferred, not copied.
 
-import { createKupcad } from './kupcad.js';
+import { instantiateKupcad } from './kupcad.js';
 import { KupcadCrashError } from './errors.js';
 
 /** @import { Preview } from '@kupcad/protocol/types' */
-/** @import { CreateOptions, FromWorker, KupcadApi, Method, PortLike, SentError, ToWorker } from './types.js' */
+/** @import { CreateOptions, FromWorker, KupcadApi, Method, PortLike, SentError, ToWorker, WasmSource } from './types.js' */
 
 /** @type {Record<Method, (kupcad: KupcadApi, args: any[]) => Promise<unknown>>} */
 const CALLS = {
@@ -21,9 +22,9 @@ const CALLS = {
  * Serves the core on `port`: an `init` message makes it (`create`, the module given), and each
  * `call` is answered with a `reply`. The core's log goes as `log` messages.
  * @param {PortLike} port
- * @param {(options: CreateOptions) => Promise<KupcadApi>} [create]
+ * @param {(options: CreateOptions & { wasm: WasmSource }) => Promise<KupcadApi>} [create]
  */
-export function serve(port, create = createKupcad) {
+export function serve(port, create = instantiateKupcad) {
   /** @type {Promise<KupcadApi> | null} */
   let kupcad = null;
   /** @param {FromWorker} message @param {Transferable[]} [transfer] */

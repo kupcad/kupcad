@@ -38,7 +38,9 @@ Both take `wasm` (the module: a URL, its bytes or a compiled `WebAssembly.Module
 `createKupcad` a fetch `Response` too, which can't be posted to a worker; by default the
 `kupcad.wasm` this package ships) and `log` (where the module's log goes, a line at a time; by
 default `console.debug`). A worker is given a relative URL resolved against the page, as the
-page means it.
+page means it. The worker is always handed its module, this package's by default: only the
+page's side names the shipped `kupcad.wasm` (`src/create.js`), so a site's bundler, which copies
+the file for each bundle that names it, ships it once rather than once more for the worker.
 
 ## What a call can fail with
 

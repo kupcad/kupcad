@@ -1,9 +1,11 @@
 // The core in a Web Worker, with createKupcad's API: a long build runs there and the page goes
 // on. Calls run one at a time, the next waiting its turn. A call's AbortSignal drops it while
 // it waits, and stops the worker while it runs: the worker is replaced on the next call, as
-// one that crashed is.
+// one that crashed is. The worker is given its module, this package's unless the host's: the
+// page's side alone names it (create.js), so a site's bundler copies it once.
 
 import { ProtocolError } from '@kupcad/protocol';
+import { DEFAULT_WASM } from './create.js';
 import { KupcadCrashError, KupcadError } from './errors.js';
 
 /** @import { Finding, Preview, UiSchema, VersionInfo } from '@kupcad/protocol/types' */
@@ -55,7 +57,7 @@ export class KupcadWorker {
   /** @param {WorkerOptions} options */
   constructor(options) {
     this.#spawn = options.worker ?? moduleWorker;
-    this.#wasm = postable(options.wasm);
+    this.#wasm = postable(options.wasm ?? DEFAULT_WASM);
     this.#log = options.log ?? ((line) => console.debug(line));
   }
 
@@ -267,7 +269,7 @@ export class KupcadWorker {
 /**
  * The module as the worker is given it: a URL as its href, a relative one resolved against the
  * page (the worker would resolve it against its own script's).
- * @param {WorkerWasmSource | undefined} wasm
+ * @param {WorkerWasmSource} wasm
  * @returns {Extract<ToWorker, { type: 'init' }>['wasm']}
  */
 function postable(wasm) {
