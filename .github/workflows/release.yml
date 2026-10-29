@@ -410,6 +410,8 @@ jobs:
       # The attestations: the job's OIDC token signs them, and they are stored with the repository
       id-token: write
       attestations: write
+    environment:
+      name: npm
     steps:
       # The submodules hold the vendored libraries' license files the archives carry
       - name: Checkout
