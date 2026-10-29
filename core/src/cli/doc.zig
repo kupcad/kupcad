@@ -47,7 +47,7 @@ pub fn run(allocator: std.mem.Allocator, file_path: []const u8, reporter: Report
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    const schema = try api.extractSchema(arena.allocator(), &doc, source);
+    const schema = try api.extractSchema(arena.allocator(), &doc);
     reporter.out("{f}\n", .{std.json.fmt(schema, .{ .whitespace = .indent_2 })});
     return .success;
 }

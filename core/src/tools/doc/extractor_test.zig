@@ -19,7 +19,7 @@ test "Extractor: Parses Presentation Data and Param Config into Schema" {
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
     // Verify Presentation Meta
     try testing.expectEqualStrings("Heavy Duty Bracket", schema.meta.title.?);
@@ -42,6 +42,37 @@ test "Extractor: Parses Presentation Data and Param Config into Schema" {
     try testing.expectEqual(true, p2.default_value.boolean);
 }
 
+test "Extractor: the header is the parser's docstrings, continued, at the top level, by exact tag" {
+    // The source was read again line by line: a continuation was dropped, a `# @title`
+    // anywhere counted (the last one), and `# @titles` was a title.
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const source =
+        \\# @title Mounting plate
+        \\#   for M3 bolts
+        \\# @description Four holes,
+        \\#   one in each corner.
+        \\# @titles Not a title
+        \\def helper
+        \\  # @author Not the script's author
+        \\  1
+        \\end
+        \\notes = "
+        \\# @author Not an author either
+        \\"
+        \\# @title A second title
+        \\cube(1)
+    ;
+    var doc = try Document.parse(testing.allocator, source);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 0), doc.diagnostics.len);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
+    // Joined by newlines, as YARD keeps them: the panel shows a space
+    try testing.expectEqualStrings("Mounting plate\nfor M3 bolts", schema.meta.title.?);
+    try testing.expectEqualStrings("Four holes,\none in each corner.", schema.meta.description.?);
+    try testing.expectEqual(@as(?[]const u8, null), schema.meta.author);
+}
+
 test "Extractor: Parses Param within Assignments" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -54,7 +85,7 @@ test "Extractor: Parses Param within Assignments" {
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
 
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
     try testing.expectEqual(@as(usize, 2), schema.parameters.len);
     try testing.expectEqualStrings("standoff_dist", schema.parameters[0].name);
@@ -76,7 +107,7 @@ test "Extractor: the schema is what param accepts, choices included, as JSON" {
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
@@ -109,7 +140,7 @@ test "Extractor: step, unit, group, title and description, for a host's controls
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
     const width = schema.parameters[0];
     try testing.expectEqual(@as(f64, 0.5), width.rule.step.?);
     try testing.expectEqualStrings("mm", width.rule.unit.?);
@@ -143,7 +174,7 @@ test "Extractor: a parameter's type is type:'s, else its default's, else its cho
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
     var out: std.Io.Writer.Allocating = .init(testing.allocator);
     defer out.deinit();
@@ -179,7 +210,7 @@ test "Extractor: a declaration the run refuses is listed with what its type and 
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
     try testing.expectEqual(.number, schema.parameters[0].rule.kind);
     try testing.expect(schema.parameters[0].rule.min == null);
     try testing.expectEqual(.array, schema.parameters[1].rule.kind);
@@ -196,7 +227,7 @@ test "Extractor: lists, tuples and Maps, as their rules and their defaults say" 
     ;
     var doc = try Document.parse(testing.allocator, source);
     defer doc.deinit();
-    const schema = try extractor.extractSchema(arena.allocator(), &doc, source);
+    const schema = try extractor.extractSchema(arena.allocator(), &doc);
 
     const pts = schema.parameters[0].rule;
     try testing.expectEqual(@as(usize, 8), pts.max_items.?);

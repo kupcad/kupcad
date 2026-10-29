@@ -105,7 +105,7 @@ fn inner_extract_params(source: []const u8) ![]const u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    const schema = try api.extractSchema(arena.allocator(), &doc, source);
+    const schema = try api.extractSchema(arena.allocator(), &doc);
 
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();

@@ -254,8 +254,8 @@ pub fn checkCode(allocator: std.mem.Allocator, io: std.Io, source: []const u8, c
 
 /// The parameters a parsed document declares (`param(:name, default:, validate:)`) and its
 /// `# @title`, `# @description` and `# @author` comments, as `kupcad doc` prints them.
-pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source: []const u8) !UiSchema {
-    return extractor.extractSchema(allocator, doc, source);
+pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSchema {
+    return extractor.extractSchema(allocator, doc);
 }
 
 /// Puts `values` in the VM's `params` Map (which registering the standard library makes),

@@ -102,7 +102,7 @@ fn headerOf(arena: std.mem.Allocator, script: Script) !frame.Header {
     return .{
         .document = script.name,
         .kind = .none,
-        .params = .{ .schema = try extractor.extractSchema(arena, script.doc, script.source), .values = .{} },
+        .params = .{ .schema = try extractor.extractSchema(arena, script.doc), .values = .{} },
         .timing = .{ .runMs = 0, .renderMs = 0 },
     };
 }

@@ -48,27 +48,12 @@ pub const UiSchema = struct {
     parameters: []ParamMetadata,
 };
 
-pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source: []const u8) !UiSchema {
+/// The schema of `doc`'s script; its strings are the Document's.
+pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document) !UiSchema {
     var schema = UiSchema{
-        .meta = .{},
+        .meta = headerOf(&doc.tree),
         .parameters = &.{},
     };
-
-    // Extract Presentation Metadata from Source Comments
-    var lines = std.mem.splitScalar(u8, source, '\n');
-    while (lines.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \r\t");
-        if (!std.mem.startsWith(u8, trimmed, "#")) continue;
-        const content = std.mem.trim(u8, trimmed[1..], " \r\t");
-
-        if (std.mem.startsWith(u8, content, "@title")) {
-            schema.meta.title = std.mem.trim(u8, content[6..], " \t");
-        } else if (std.mem.startsWith(u8, content, "@description")) {
-            schema.meta.description = std.mem.trim(u8, content[12..], " \t");
-        } else if (std.mem.startsWith(u8, content, "@author")) {
-            schema.meta.author = std.mem.trim(u8, content[7..], " \t");
-        }
-    }
 
     const ParamVisitor = struct {
         allocator: std.mem.Allocator,
@@ -100,6 +85,32 @@ pub fn extractSchema(allocator: std.mem.Allocator, doc: *const Document, source:
 
     schema.parameters = try params.toOwnedSlice(allocator);
     return schema;
+}
+
+/// The script's `@title`, `@description` and `@author`: the parser's docstrings at its top
+/// level, the first of each tag, with the indented lines that continue one joined by
+/// newlines, as YARD keeps them (a renderer folds them: the panel shows a space). The
+/// source was read again line by line, which dropped a continuation, took a `# @title`
+/// anywhere (the last one), and `# @titles` for a title.
+fn headerOf(tree: *const ast.Tree) PresentationMeta {
+    var meta: PresentationMeta = .{};
+    const root = tree.getNode(tree.root) orelse return meta;
+    for (tree.getNodes(tree.block(root).stmts)) |stmt| {
+        const node = tree.getNode(stmt) orelse continue;
+        if (node.tag != .docstring) continue;
+        const doc_string = tree.docString(node);
+        const tag = tree.getString(doc_string.tag_name);
+        const field: *?[]const u8 = if (std.mem.eql(u8, tag, "title"))
+            &meta.title
+        else if (std.mem.eql(u8, tag, "description"))
+            &meta.description
+        else if (std.mem.eql(u8, tag, "author"))
+            &meta.author
+        else
+            continue;
+        if (field.* == null) field.* = tree.getString(doc_string.content);
+    }
+    return meta;
 }
 
 fn extractParam(allocator: std.mem.Allocator, tree: *const ast.Tree, mc: ast.MethodCall) !?ParamMetadata {
