@@ -466,8 +466,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    environment:
-      name: npm
     steps:
       # The Node (and so the npm, 11.5.1 or later for trusted publishing) the repository names
       - name: Checkout .tool-versions
