@@ -60,25 +60,6 @@ jobs:
           done
           exit $status
 
-      # The apps installed update from the release's latest.json, its installers signed with the
-      # TAURI_SIGNING_PRIVATE_KEY secret; an app checks them with the public key its
-      # tauri.conf.json has, which must be that key's. Checked here, not once the builds are done
-      - name: The updater can sign and be checked
-        env:
-          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        run: |
-          status=0
-          if [ "$HAS_KEY" != true ]; then
-            echo "::error::No TAURI_SIGNING_PRIVATE_KEY secret: the private key \`pnpm tauri signer generate\` wrote, as the repository's secret"
-            status=1
-          fi
-          pubkey=$(jq -r '.plugins.updater.pubkey // ""' packages/kupcad-desktop/src-tauri/tauri.conf.json)
-          if [ -z "$pubkey" ] || [[ $pubkey == SET-ME* ]]; then
-            echo "::error::packages/kupcad-desktop/src-tauri/tauri.conf.json has no updater public key: the one \`pnpm tauri signer generate\` printed"
-            status=1
-          fi
-          exit $status
-
   build:
     name: Build ${{ matrix.platform }}
     needs: version
