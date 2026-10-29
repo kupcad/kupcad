@@ -9,9 +9,9 @@
   bars between the panes resize them, and the toolbar's Parameters button hides theirs (for the
   model's width); the sizes, what is hidden or folded, and how the view looks are kept in
   `settings` (the page's localStorage by default), and follow them as they are set. It keeps
-  nothing else of the page's: the page gives the script it starts with (`source`), and is told
-  of each edit of it (`onsource`), for its own buttons in the toolbar (`actions`) to share or
-  save it.
+  nothing else of the page's: the page gives the script it starts with (`source`) and another
+  in its place (`load`), and is told of each edit of it (`onsource`), for its own buttons in the
+  toolbar (`actions`) to share or save it.
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -102,8 +102,10 @@
   /** The playground's width, once laid out. */
   let width = $state(0);
 
-  /** The script as the editor has it: the user's, from the one the page gave at first. */
+  /** The script as the editor has it: the user's, from the one the page gave last. */
   let value = $state(untrack(() => source));
+  /** How many scripts the page loaded: the parameters' fields are made again for each. */
+  let loads = $state(0);
   let editor = $state(/** @type {EditorClass | null} */ (null));
   /** `check`'s findings of the script as it is, none while it changed since. */
   let findings = $state(/** @type {Finding[]} */ ([]));
@@ -148,6 +150,19 @@
       made?.terminate();
     };
   });
+
+  /**
+   * Puts `script` in the editor in place of the one there (the editor's undo takes that back),
+   * and runs it at once on its own values: none the panel set for the last.
+   * @param {string} script another the page gives: an example, a script it opened
+   */
+  export function load(script) {
+    value = script;
+    findings = [];
+    overrides = {};
+    loads += 1;
+    runner?.run(script, {}, { now: true });
+  }
 
   /** @param {string} line of the core's log, which goes to the console */
   function log(line) {
@@ -270,13 +285,16 @@
     {/if}
     <!-- Hidden, not gone: what its fields hold stays, and the toggle has it to control -->
     <aside class="params" id="{id}-params" aria-label="Parameters" hidden={!paramsOpen}>
-      <ParamsPanel
-        schema={header.params.schema}
-        values={header.params.values}
-        error={header.error}
-        bind:overrides
-        onchange={valuesChanged}
-      />
+      <!-- Made again for each script loaded: no field keeps what was typed in the last's -->
+      {#key loads}
+        <ParamsPanel
+          schema={header.params.schema}
+          values={header.params.values}
+          error={header.error}
+          bind:overrides
+          onchange={valuesChanged}
+        />
+      {/key}
     </aside>
   {/if}
 </div>

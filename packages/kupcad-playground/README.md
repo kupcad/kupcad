@@ -22,6 +22,10 @@ the PWA) embeds; it keeps nothing of the page's.
   is called with the script at each of the person's edits (not with the `source` it was given),
   and an `actions` snippet puts the host's own buttons in the model's toolbar, after Export
   (`.kc-control` gives them its look). It keeps no draft: a page loaded again shows `source`.
+* **For a host that gives it other scripts** (examples to choose from): `load(script)` (the
+  component's, by `bind:this`) puts one in the editor in place of the person's, which the
+  editor's undo takes back, and runs it at once on its own values; the core, the console and the
+  layout stay as they are.
 * **When it runs** (`runner.js`, `Runner`): once the script stays as it is for a moment after an
   edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts. A run under
   way when the next starts is stopped (the worker drops or ends its call), so what is shown is
@@ -74,8 +78,8 @@ pnpm test:browser   # the smoke test: the page built, in headless Chromium
 
 The runner's timing against a stand-in for the core, the marks, the downloads, and the component
 on the real core (`@kupcad/wasm`'s `testCore`) under jsdom: the model shown, the findings and the
-run's error marked, a problem clicked revealing its line, an edit and a value running again, an
-export downloaded and one refused. In a browser, with the real worker, the smoke test
+run's error marked, a problem clicked revealing its line, an edit and a value running again, a
+script loaded in place of the one shown, an export downloaded and one refused. In a browser, with the real worker, the smoke test
 (`smoke/playground.spec.js`): the page built (`vite build`, the worker an ES module as a site's
 build makes it) and served, the example run to Ready, its parts and parameters shown, `param`
 highlighted as a function, and a script that raises saying so.

@@ -21,7 +21,7 @@ afterEach(() => vi.restoreAllMocks());
  */
 async function playground(source, settings = memorySettings(), props = {}) {
   const kupcad = await testCore();
-  render(Playground, {
+  const { component } = render(Playground, {
     props: {
       source,
       kupcad,
@@ -34,7 +34,7 @@ async function playground(source, settings = memorySettings(), props = {}) {
   const view = /** @type {EditorView} */ (
     EditorView.findFromDOM(/** @type {HTMLElement} */ (document.querySelector('.cm-editor')))
   );
-  return { kupcad, view };
+  return { kupcad, view, component };
 }
 
 /** The status line's words. */
@@ -197,6 +197,39 @@ describe('Playground', () => {
       changes: { from: 0, to: view.state.doc.length, insert: 'cube(4).named("lid")\n' },
     });
     await vi.waitFor(() => expect(partsListed()).toBe('lid'), RUN_MS);
+  });
+
+  it('loads a script the page gives in place of the one shown, and runs it on its own values', async () => {
+    const { kupcad, view, component } = await playground(
+      'w = param(:w, default: 10)\ncube(w).named("box")\n',
+    );
+    const field = await vi.waitFor(() => screen.getByLabelText('w'), RUN_MS);
+    await fireEvent.change(field, { target: { value: '20' } });
+    await vi.waitFor(() => expect(screen.getByText('1 changed')).toBeTruthy(), RUN_MS);
+    const preview = vi.spyOn(kupcad, 'preview');
+    component.load('w = param(:w, default: 4)\ncube(w).named("lid")\n');
+    await tick();
+    expect(view.state.doc.toString()).toBe('w = param(:w, default: 4)\ncube(w).named("lid")\n');
+    await vi.waitFor(() => expect(partsListed()).toBe('lid'), RUN_MS);
+    expect(preview).toHaveBeenCalledWith(
+      expect.stringContaining('lid'),
+      expect.objectContaining({ params: {} }),
+    );
+    expect(screen.getByText("The script's values")).toBeTruthy();
+    expect(/** @type {HTMLInputElement} */ (screen.getByLabelText('w')).value).toBe('4');
+  });
+
+  it('loads the script it started with over the edits made since, which is no edit', async () => {
+    /** @type {string[]} */
+    const sources = [];
+    const { view, component } = await playground('cube(10).named("box")\n', memorySettings(), {
+      onsource: (/** @type {string} */ source) => sources.push(source),
+    });
+    view.dispatch({ changes: { from: 5, to: 7, insert: '12' } });
+    component.load('cube(10).named("box")\n');
+    await tick();
+    expect(view.state.doc.toString()).toBe('cube(10).named("box")\n');
+    expect(sources).toEqual(['cube(12).named("box")\n']);
   });
 
   it('runs again at once with the value the parameter panel gives', async () => {
