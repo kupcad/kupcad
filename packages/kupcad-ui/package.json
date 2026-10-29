@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/ui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "KupCAD's UI: a three.js viewer of a model the core made, for any host (@kupcad/ui/viewer), and the Svelte panels around it (the viewer's pane, parameters, console, a language server's preview), styled by --kc-* tokens.",
   "license": "AGPL-3.0-only",
   "repository": {

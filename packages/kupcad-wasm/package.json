@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/wasm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The KupCAD core compiled to WebAssembly: preview, build, check, format and read the parameters of a script in the browser or Node, directly or in a Web Worker.",
   "license": "AGPL-3.0-only",
   "repository": {
