@@ -39,8 +39,14 @@ A version tag builds the app on each system and architecture the CLI ships for, 
 platform's release `kupcad` (`.github/workflows/release.yml`, the `desktop` job), and the
 release carries the installers beside the CLI's archives, in its `checksums.txt` too:
 `kupcad-desktop_<version>_<os>_<arch>` as a `.dmg` (macOS), a `.deb` and an `.rpm` (Linux, and
-an `.AppImage` for x86_64) or a `_setup.exe` (Windows). They aren't signed yet, so macOS and
-Windows warn before they open one; signing needs the certificates as the repository's secrets.
+an `.AppImage` for x86_64) or a `_setup.exe` (Windows). They aren't signed with a certificate
+yet, so macOS and Windows warn before they open one; signing needs the certificates as the
+repository's secrets. The macOS app is signed ad-hoc (`bundle.macOS.signingIdentity: "-"`), the
+bundle and the kupcad in it sealed: a downloaded one is then from an unverified developer, which
+System Settings → Privacy & Security → Open Anyway opens. Without it only the binaries carried
+the linker's signature, the bundle none, and macOS called a downloaded app damaged, with no
+way to open it (0.1.0 and 0.1.1; `xattr -dr com.apple.quarantine /Applications/KupCAD.app`
+opens one). `syspolicy_check distribution KupCAD.app` shows what macOS makes of a build.
 
 ## Updates
 
