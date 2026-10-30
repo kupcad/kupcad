@@ -81,3 +81,23 @@ test("keeps the parameters where they are as a value is set and all reset: Reset
   await expect(page.getByRole('button', { name: 'Reset all' })).toBeHidden();
   expect(await top()).toBe(before);
 });
+
+// A page's reset (Tailwind's takes every element's margin away, a dialog's `auto` with it)
+// doesn't move the shortcuts' dialog: it centres itself
+test('opens the keyboard shortcuts in the middle of the window, whatever reset the page has', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await page.goto('/');
+  await page.addStyleTag({ content: '*, ::backdrop { margin: 0; padding: 0; }' });
+  await expect(page.getByRole('status')).toHaveText(/Ready · \d+ ms/, { timeout: 60_000 });
+  await page.getByRole('button', { name: 'Keyboard shortcuts' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  const window = page.viewportSize();
+  expect(box && window).toBeTruthy();
+  if (!box || !window) return;
+  expect(Math.abs(box.x + box.width / 2 - window.width / 2)).toBeLessThan(2);
+  expect(Math.abs(box.y + box.height / 2 - window.height / 2)).toBeLessThan(2);
+});

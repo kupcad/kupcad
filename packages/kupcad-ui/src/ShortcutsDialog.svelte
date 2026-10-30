@@ -78,9 +78,12 @@
 </dialog>
 
 <style>
+  /* In the middle of the window by its own margin, not the browser's default one, which a page's
+     reset (Tailwind's) takes away */
   .kc-shortcuts {
     width: min(32em, calc(100vw - 32px));
     max-height: calc(100vh - 64px);
+    margin: auto;
     padding: 16px 20px;
     font-family: var(--kc-font);
     font-size: var(--kc-font-size);
