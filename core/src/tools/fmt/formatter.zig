@@ -1439,11 +1439,25 @@ pub const Formatter = struct {
         const params = tree.getNodes(b.params);
         if (params.len == 0) return;
         try self.out.appendSlice(self.allocator, " |");
+        try self.formatBlockParamList(tree, params);
+        try self.out.append(self.allocator, '|');
+    }
+
+    /// Block parameters, a comma between them. A destructured one, which the parser keeps as
+    /// an Array literal, is in parentheses as written: printed as an Array, `|[x, y]|`, it
+    /// didn't parse, and the formatter refused the file.
+    fn formatBlockParamList(self: *Formatter, tree: *const ast.Tree, params: []const ast.NodeIndex) Error!void {
         for (params, 0..) |p_idx, idx| {
             if (idx > 0) try self.out.appendSlice(self.allocator, ", ");
-            try self.formatNode(tree, p_idx);
+            const param = tree.getNode(p_idx).?;
+            if (param.tag == .array_literal) {
+                try self.out.append(self.allocator, '(');
+                try self.formatBlockParamList(tree, tree.getNodes(tree.nodeSpan(param)));
+                try self.out.append(self.allocator, ')');
+            } else {
+                try self.formatNode(tree, p_idx);
+            }
         }
-        try self.out.append(self.allocator, '|');
     }
 
     fn formatSuperCall(self: *Formatter, tree: *const ast.Tree, sc: ast.SuperCall, start_line: u32) Error!void {

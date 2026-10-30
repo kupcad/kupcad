@@ -1007,6 +1007,16 @@ test "Formatter: lambda parameters, bracketed returns, super(), aliases and mult
     try expectStableFormat("*m, = [1, 2]\n", "*m, = [1, 2]\n");
 }
 
+test "Formatter: a destructured block parameter keeps its parentheses" {
+    // It was printed as an Array, `|[x, y]|`, which doesn't parse: the formatter refused the
+    // whole file
+    try expectStableFormat("[[1, 2]].map { |(x, y)| x + y }\n", "[[1, 2]].map { |(x, y)| x + y }\n");
+    try expectStableFormat(
+        "[[1, [2, 3]]].each_with_index do |(a, (b, *rest)), i|\n  a + b + i\nend\n",
+        "[[1, [2, 3]]].each_with_index do |(a, (b, *rest)), i|\n  a + b + i\nend\n",
+    );
+}
+
 test "Formatter: comments on case, when, else, begin, rescue and ensure lines stay there" {
     // `case x # c` and `begin # c` gained a blank line below; a comment on a `when`,
     // `else`, `rescue` or `ensure` line moved into the body.
