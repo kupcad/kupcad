@@ -332,6 +332,21 @@ describe('ParamsPanel, of a value of parts', () => {
     expect(changes.at(-1)?.at).toEqual({ x: 4, label: 'A' });
   });
 
+  it('gives plain values, which a host can post to a worker or a webview as they are', async () => {
+    const changes = await lists();
+    await fireEvent.change(numberField('xs [1]'), { target: { value: '25' } });
+    await fireEvent.change(partField('pts [1]', 'Y'), { target: { value: '5' } });
+    // A list the panel kept was a reactive proxy, which posting a message can't copy
+    for (const overrides of changes) expect(() => structuredClone(overrides)).not.toThrow();
+    expect(structuredClone(changes.at(-1))).toEqual({
+      xs: [10, 25],
+      pts: [
+        [0, 0],
+        [10, 5],
+      ],
+    });
+  });
+
   it('adds and removes only as its min_items and max_items allow', async () => {
     await lists({
       values: {

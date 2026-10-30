@@ -2,11 +2,13 @@
   @component
   The parameters' controls, from the schema a frame (or `kupcad doc`) gives: grouped by their
   `group:`, each showing the value set in the panel, else the one the run took. `overrides` is
-  what the panel sets (bindable), each change (and revert) given to `onchange`, which a host
-  sends to the core; a value refused by the run is shown on its control. A bar at the top, held
-  there as the panel scrolls, says how many values are set; while any is, its Reset all reverts
-  them all at once, the panel's refusals with them. The button keeps its place when there is
-  nothing to reset, so nothing under the bar moves as a first value is set or the last reverted.
+  what the panel sets (bindable), each change (and revert) given to `onchange` as plain values,
+  which a host sends to the core (to a worker, a webview's host: a list kept in state is a proxy
+  that a message can't copy); a value refused by the run is shown on its control. A bar at the
+  top, held there as the panel scrolls, says how many values are set; while any is, its Reset
+  all reverts them all at once, the panel's refusals with them. The button keeps its place when
+  there is nothing to reset, so nothing under the bar moves as a first value is set or the last
+  reverted.
   A value set back to the parameter's own (the one it showed before the panel set it: the run's,
   the script's or a host's preset's) is a revert, not a value set.
 -->
@@ -20,6 +22,7 @@
     withOverride,
     withoutOverride,
   } from './params.js';
+  import { plainValues } from './values.svelte.js';
 
   /** @import { Failure, ParamSpec, ParamValue, ParamValues, UiSchema } from '@kupcad/protocol/types' */
 
@@ -52,7 +55,7 @@
   /** @param {ParamValues} next */
   function change(next) {
     overrides = next;
-    onchange?.(next);
+    onchange?.(plainValues(next));
   }
 
   /**
