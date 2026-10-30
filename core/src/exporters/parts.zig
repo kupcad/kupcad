@@ -211,7 +211,14 @@ fn copyOf(vm: *const VM, solid: value.Value) struct { part: Part, placement: Pla
     return .{ .part = part, .placement = placement };
 }
 
-/// What makes two Solids copies of one part: the shape's content, the name and the material.
+/// The material `solid` is made of: its outermost, as its part has it; null for a Solid
+/// without one (a union's, whose own parts have theirs).
+pub fn materialOf(vm: *const VM, solid: value.Value) ?MaterialDef {
+    return copyOf(vm, solid).part.material;
+}
+
+/// What makes two Solids copies of one part: the shape's content, the name and the material,
+/// whatever role the viewer shows it in (a highlighted copy is still the part).
 fn identity(vm: *const VM, part: Part) u64 {
     var hasher = std.hash.Wyhash.init(0);
     if (part.shape == dag.CONCRETE_NODE_SENTINEL) {
@@ -225,7 +232,9 @@ fn identity(vm: *const VM, part: Part) u64 {
     } else hasher.update(&.{0});
     if (part.material) |mat| {
         hasher.update(&.{1});
-        mat.hashInto(&hasher);
+        var made_of = mat;
+        made_of.role = .standard;
+        made_of.hashInto(&hasher);
     } else hasher.update(&.{0});
     return hasher.final();
 }

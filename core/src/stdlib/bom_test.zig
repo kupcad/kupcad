@@ -81,6 +81,25 @@ test "bom: a part's volume and size are its shape's, its mass the volume times i
     });
 }
 
+test "bom: a highlighted part is still its part: its copies, its density and its mass" {
+    // The highlight's material took the part's place: its mass was an error, and a
+    // highlighted copy was a part of its own
+    try support.expectScripts(&.{
+        .{ .src = listing("bolt = cylinder(r: 1, h: 5).named(\"bolt\").material(density: 7.85)\nmodel = assemble(name: \"m\", parts: [bolt, bolt.translate(x: 5).highlight])"), .expected = .{ .str = "bolt x2" } },
+        .{ .src = "r = cube(10).material(density: 7.85).highlight.mass", .expected = .{ .num = 7.85 } },
+    });
+}
+
+test "bom: a highlight keeps the part's material, its colour for an export, with the role" {
+    var vm = try support.initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try support.runOn(&vm, "lit = cube(1).material(color: \"#FF0000\").highlight"));
+    const parts = @import("../exporters/parts.zig");
+    const made_of = parts.materialOf(&vm, vm.globals.get("lit").?).?;
+    try testing.expectEqual([3]u8{ 0xFF, 0, 0 }, made_of.rgb);
+    try testing.expectEqual(.highlight, made_of.role);
+}
+
 test "bom: every value it makes stays rooted while the parts are measured" {
     try support.expectScripts(&.{.{ .src = listing(MOUNT), .expected = .{ .str = "plate x1; M3 bolt x5" }, .gc_stress = true }});
 }

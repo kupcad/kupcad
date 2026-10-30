@@ -5,6 +5,7 @@
 const value = @import("../../core/value.zig");
 const VM = @import("../../vm/vm.zig").VM;
 const material = @import("../../core/material.zig");
+const parts = @import("../../exporters/parts.zig");
 const MaterialDef = material.MaterialDef;
 const kernel = @import("../../kernel/kernel.zig");
 const arguments = @import("../arguments.zig");
@@ -64,11 +65,15 @@ fn solidWithMaterial(vm: *VM, solid: value.Value, material_id: u32) !value.Value
     return vm.allocateGeometry(.{ .symbolic = new_idx });
 }
 
-/// The Solid `solid` tagged for the viewer to show as `role` (a highlight, a ghost): the
-/// viewer gives it its look.
+/// The Solid `solid` tagged for the viewer to show as `role` (a highlight, a ghost): its own
+/// material with the role, the viewer giving it the role's look. A material of the role alone
+/// took the part's place, so a highlighted part lost its colour in exports, its density (its
+/// mass was an error) and its place among its copies in the parts list.
 fn solidWithRole(vm: *VM, solid: value.Value, role: material.MaterialRole) !value.Value {
+    var def = parts.materialOf(vm, solid) orelse material.MaterialDef{};
+    def.role = role;
     const material_id: u32 = @intCast(vm.materials.items.len);
-    try vm.materials.append(vm.allocator, .{ .role = role });
+    try vm.materials.append(vm.allocator, def);
     return solidWithMaterial(vm, solid, material_id);
 }
 

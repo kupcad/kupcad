@@ -131,6 +131,11 @@ export interface SceneModel {
   kind: '3d' | '2d';
   root: Group;
   shapes: Shape[];
-  /** The edges' material, shared by every shape but the selected ones. */
+  /** The edges' material, shared by every shape but the selected and the highlighted ones. */
   edgeMaterial: LineBasicMaterial;
+  /**
+   * A highlighted solid's edges' material: the highlight's colour in a wireframe, which has no
+   * faces to show it by, the edges' elsewhere; null for a drawing, which has no highlights.
+   */
+  highlightEdges: LineBasicMaterial | null;
 }

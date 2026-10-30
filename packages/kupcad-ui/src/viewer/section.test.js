@@ -20,6 +20,7 @@ const SOLIDS = /** @type {SceneModel} */ ({
   root: new Group(),
   shapes: [],
   edgeMaterial: new LineBasicMaterial(),
+  highlightEdges: null,
 });
 
 it('caps the cut where the plane crosses the model, wherever the model is', () => {
@@ -78,6 +79,7 @@ it("moves the plane alone over the same model: its counters stay, and its materi
       },
     ],
     edgeMaterial: new LineBasicMaterial(),
+    highlightEdges: null,
   });
   const bounds = new Sphere(new Vector3(), 10);
   const options = { capped: true, also: [] };

@@ -5,7 +5,7 @@
 import { Color } from 'three';
 
 /** @import { LineBasicMaterial, MeshBasicMaterial, MeshStandardMaterial } from 'three' */
-/** @import { RenderMode, SceneModel, Theme } from './types.js' */
+/** @import { RenderMode, SceneModel, Shape, Theme } from './types.js' */
 
 /** How see-through a solid is in x-ray. */
 export const XRAY_OPACITY = 0.25;
@@ -16,8 +16,9 @@ export const SELECTION_TINT = 0.45;
  * Draws the model's shapes as `mode` says: as they are, see-through, or not at all but for their
  * edges (the mesh stays, for picking, and its edges with it); their edges with them when
  * `edges`, and always in a wireframe, which is nothing else. A highlight is seen through what
- * hides it only as they are: in x-ray everything is, and a wireframe has no faces. The edges take
- * `theme`'s colour for where they are drawn (edgeColorOf).
+ * hides it only as they are: in x-ray everything is, and a wireframe has no faces, its edges
+ * drawn in the highlight's colour instead. The edges take `theme`'s colour for where they are
+ * drawn (edgeColorOf).
  * @param {SceneModel | null} model
  * @param {RenderMode} mode
  * @param {boolean} edges
@@ -26,6 +27,9 @@ export const SELECTION_TINT = 0.45;
 export function applyRenderMode(model, mode, edges, theme) {
   if (!model) return;
   model.edgeMaterial.color.set(edgeColorOf(model.kind, mode, theme));
+  model.highlightEdges?.color.set(
+    mode === 'wireframe' ? theme.highlight : edgeColorOf(model.kind, mode, theme),
+  );
   for (const shape of model.shapes) {
     if (shape.edges) shape.edges.visible = edges || mode === 'wireframe';
     if (shape.seenThrough) shape.seenThrough.visible = mode === 'solid';
@@ -68,8 +72,19 @@ export function applySelection(model, part, selection, selectionEdges) {
     const chosen = part !== null && shape.part === part;
     material.color.copy(shape.color);
     if (chosen) material.color.lerp(tint, SELECTION_TINT);
-    if (shape.edges) shape.edges.material = chosen ? selectionEdges : model.edgeMaterial;
+    if (shape.edges) shape.edges.material = chosen ? selectionEdges : edgesOf(model, shape);
   }
+}
+
+/**
+ * The material a shape's edges are drawn with unless it is selected: a highlight's own, else
+ * the model's.
+ * @param {SceneModel} model
+ * @param {Shape} shape
+ * @returns {LineBasicMaterial}
+ */
+function edgesOf(model, shape) {
+  return shape.seenThrough && model.highlightEdges ? model.highlightEdges : model.edgeMaterial;
 }
 
 /**

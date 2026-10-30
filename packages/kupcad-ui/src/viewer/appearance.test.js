@@ -81,6 +81,29 @@ describe('applyRenderMode', () => {
     expect(seen).toEqual([true, false, false]);
   });
 
+  it("draws a highlight's edges in its colour in a wireframe, which has no faces to show it by", async () => {
+    const scene = await partsScene(HIGHLIGHTED_PIN);
+    const { pin } = pinOf(scene);
+    const box = scene.shapes.find((shape) => shape.part === 'box');
+    if (!box) throw new Error('no box');
+    const selection = new LineBasicMaterial();
+    const edgeColorIn = (/** @type {RenderMode} */ mode, /** @type {Shape} */ shape) => {
+      applyRenderMode(scene, mode, true, LIGHT);
+      applySelection(scene, null, LIGHT.selection, selection);
+      const edges = /** @type {LineBasicMaterial | undefined} */ (shape.edges?.material);
+      return `#${edges?.color.getHexString()}`;
+    };
+    expect(edgeColorIn('wireframe', pin)).toBe(LIGHT.highlight);
+    expect(edgeColorIn('wireframe', box)).toBe(LIGHT.wire);
+    // Over its faces, its edges are any solid's
+    expect(edgeColorIn('solid', pin)).toBe(LIGHT.edges);
+    // Selected, its edges are the selection's; let go, the highlight's again
+    applySelection(scene, 'pin', LIGHT.selection, selection);
+    expect(pin.edges?.material).toBe(selection);
+    applySelection(scene, null, LIGHT.selection, selection);
+    expect(pin.edges?.material).toBe(scene.highlightEdges);
+  });
+
   it("draws the edges or not, as asked, but always a wireframe's, which is nothing else", async () => {
     const scene = await partsScene();
     const plate = scene.shapes.find((shape) => shape.part === 'plate');

@@ -96,30 +96,32 @@ async function solids(glb, parts, loader, theme) {
     return index === undefined ? undefined : nodes[index]?.name;
   };
   const edgeMaterial = new LineBasicMaterial({ color: theme.edges });
+  const highlightEdges = new LineBasicMaterial({ color: theme.edges });
   /** @type {Shape[]} */
   const shapes = [];
   scene.traverse((object) => {
     if (object instanceof Mesh) {
-      shapes.push(solidShape(object, partOf, nodeName, edgeMaterial, theme));
+      shapes.push(solidShape(object, partOf, nodeName, { edgeMaterial, highlightEdges }, theme));
     }
   });
   const root = new Group();
   root.add(scene);
-  return { kind: '3d', root, shapes, edgeMaterial };
+  return { kind: '3d', root, shapes, edgeMaterial, highlightEdges };
 }
 
 /**
  * A solid's mesh as a shape: its own material (so tinting one part tints no other), its part,
  * and its edges; a ghost seen through, in the theme's colour; a highlighted one (the core tags
- * its material) in the highlight's, seen through what hides it.
+ * its material) in the highlight's, seen through what hides it, its edges its own.
  * @param {Mesh} mesh
  * @param {Map<string, string>} partOf
  * @param {(object: Object3D) => string | undefined} nodeName
- * @param {LineBasicMaterial} edgeMaterial
+ * @param {{ edgeMaterial: LineBasicMaterial, highlightEdges: LineBasicMaterial }} edges the
+ *   model's edges' materials
  * @param {Theme} theme
  * @returns {Shape}
  */
-function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
+function solidShape(mesh, partOf, nodeName, { edgeMaterial, highlightEdges }, theme) {
   const material = /** @type {import('three').MeshStandardMaterial} */ (
     /** @type {Material} */ (mesh.material).clone()
   );
@@ -144,7 +146,10 @@ function solidShape(mesh, partOf, nodeName, edgeMaterial, theme) {
   const highlighted = role === 'highlight';
   if (highlighted) material.color.set(theme.highlight);
   Object.assign(material, FACES_BEHIND_EDGES);
-  const edges = new LineSegments(new EdgesGeometry(mesh.geometry, EDGE_ANGLE_DEG), edgeMaterial);
+  const edges = new LineSegments(
+    new EdgesGeometry(mesh.geometry, EDGE_ANGLE_DEG),
+    highlighted ? highlightEdges : edgeMaterial,
+  );
   mesh.add(edges);
   return {
     mesh,
@@ -242,7 +247,7 @@ function drawing(svg, theme) {
       opacity,
     });
   }
-  return { kind: '2d', root, shapes, edgeMaterial };
+  return { kind: '2d', root, shapes, edgeMaterial, highlightEdges: null };
 }
 
 /**
@@ -267,14 +272,16 @@ function outlineOf(path, closed) {
 }
 
 /**
- * The materials the model's scene owns: each shape's, a highlight's copy's, and its edges'. A
- * selected shape's edges are drawn with the viewer's material, which isn't the model's to free.
+ * The materials the model's scene owns: each shape's, a highlight's copy's, and its edges' (a
+ * highlight's of their own). A selected shape's edges are drawn with the viewer's material,
+ * which isn't the model's to free.
  * @param {SceneModel} model
  * @returns {Set<Material>}
  */
 export function ownMaterials(model) {
   return new Set([
     model.edgeMaterial,
+    ...(model.highlightEdges ? [model.highlightEdges] : []),
     ...model.shapes.flatMap((shape) =>
       [shape.mesh, shape.seenThrough].flatMap((mesh) =>
         mesh ? [/** @type {Material} */ (mesh.material)] : [],
