@@ -60,8 +60,10 @@ export function partsOf(rule) {
  * A number control's increment: the script's `step:`, else 1 for one between a `min` and a
  * `max` (a slider moved by a hand lands on whole numbers, not on 27.41112), or, for a range
  * narrower than 1, which a step of 1 couldn't move in, the power of ten that gives it at least
- * ten positions; any value for a number with no range.
- * @param {Rule} rule
+ * ten positions; any value for a number with no range. Finer still where the range's ends or
+ * the parameter's default have more decimals: a control's steps count from its `min`, so 1.2 to
+ * 4 by 1 reached neither 4 nor a default of 2, which the slider showed as 2.2.
+ * @param {Rule | ParamSpec} rule
  * @returns {number | 'any'}
  */
 export function stepOf(rule) {
@@ -69,7 +71,32 @@ export function stepOf(rule) {
   const { min, max } = rule;
   if (min === null || max === null || !(max > min)) return 'any';
   const range = max - min;
-  return range >= 1 ? 1 : 10 ** (Math.floor(Math.log10(range)) - 1);
+  const coarsest = range >= 1 ? 1 : 10 ** (Math.floor(Math.log10(range)) - 1);
+  const marks = [min, max];
+  if ('default_value' in rule && typeof rule.default_value === 'number') {
+    marks.push(rule.default_value);
+  }
+  const steps = marks.map(decimalStepOf);
+  return steps.includes(null) ? 'any' : Math.min(coarsest, .../** @type {number[]} */ (steps));
+}
+
+/** The decimal places a step may have: past them, a number is taken as having no grid. */
+const MAX_PLACES = 9;
+
+/**
+ * The coarsest power of ten, 1 at most, that `n` is a whole multiple of (0.1 for 1.2, 1 for 40),
+ * or null for a number of more than MAX_PLACES decimals.
+ * @param {number} n
+ * @returns {number | null}
+ */
+function decimalStepOf(n) {
+  for (let places = 0; places <= MAX_PLACES; places += 1) {
+    const scaled = n * 10 ** places;
+    if (Math.abs(scaled - Math.round(scaled)) < 1e-9 * Math.max(1, Math.abs(scaled))) {
+      return 10 ** -places;
+    }
+  }
+  return null;
 }
 
 /**

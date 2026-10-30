@@ -58,6 +58,16 @@ cube(a + b + c + d + e)
     expect(parameters.map(stepOf)).toEqual([1, 0.25, 0.01, 0.001, 'any']);
   });
 
+  it('step finely enough that the range reaches its max, and its default, from its min', async () => {
+    const { parameters } =
+      await schemaOf(`wall = param(:wall, default: 2, validate: { min: 1.2, max: 4 })
+fit = param(:fit, default: 0.25, validate: { min: 0, max: 10 })
+cube(wall + fit)
+`);
+    // Counted from 1.2, steps of 1 reached 2.2 and 3.2: neither 4 nor the default
+    expect(parameters.map(stepOf)).toEqual([0.1, 0.01]);
+  });
+
   it('group as the script names the groups, those without one first', async () => {
     const groups = groupsOf((await schemaOf(BRACKET)).parameters);
     expect(groups.map(({ group, parameters }) => [group, parameters.map((p) => p.name)])).toEqual([
