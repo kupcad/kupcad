@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// The example models in ../examples, built and fingerprinted by src/examples_test.zig
 /// (which also checks that every example there is listed here).
-const EXAMPLES = [_][]const u8{ "cup", "planetary_gearbox", "project_box", "screw_top_jar", "standoff", "text" };
+const EXAMPLES = [_][]const u8{ "coffee_mug", "cup", "grid_organizer", "planetary_gearbox", "project_box", "screw_top_jar", "standoff", "text" };
 
 /// Variation tuples tatfi's gvar keeps on the stack before it takes the heap (its default).
 const TATFI_GVAR_STACK_TUPLES = 32;

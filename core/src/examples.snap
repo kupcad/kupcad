@@ -1,6 +1,12 @@
+coffee_mug
+  part 1 manifold volume=114164.58043441118 area=56434.157641676255 min=-40,-40,0 max=66.4,40,95 genus=1 vertices=15024 triangles=30048
+  exports glb
 cup
   sketch 1 manifold area=1457.6294655467268 min=-39.8,-1.8 max=56.8,97.8 vertices=2083
   exports svg
+grid_organizer
+  part 1 manifold volume=35896.55693508814 area=36275.84624952826 min=-41.75,-41.75,0 max=41.75,41.75,25 genus=0 vertices=296 triangles=588
+  exports glb
 planetary_gearbox
   part 1 manifold volume=15678.17590585747 area=9094.493630496563 min=-37.5,-37.5,0 max=37.5,37.5,10 genus=1 vertices=1752 triangles=3504
   part 2 manifold volume=2779.752787425908 area=1977.7141089525203 min=-11.66258730263456,-11.66258730263456,0 max=11.66258730263456,11.66258730263456,10 genus=1 vertices=792 triangles=1584
