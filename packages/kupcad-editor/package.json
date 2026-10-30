@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/editor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "KupCAD's code editor for the web: CodeMirror 6 with the language's highlighting and the core's findings marked, and a Svelte component around it.",
   "license": "AGPL-3.0-only",
   "repository": {
