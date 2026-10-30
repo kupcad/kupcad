@@ -24,8 +24,8 @@ the PWA) embeds; it keeps nothing of the page's.
   (`.kc-control` gives them its look). It keeps no draft: a page loaded again shows `source`.
 * **For a host that gives it other scripts** (examples to choose from): `load(script)` (the
   component's, by `bind:this`) puts one in the editor in place of the person's, which the
-  editor's undo takes back, and runs it at once on its own values; the core, the console and the
-  layout stay as they are.
+  editor's undo takes back, and runs it at once on its own values, its model framed whole (an
+  edit's keeps the camera); the core, the console and the layout stay as they are.
 * **When it runs** (`runner.js`, `Runner`): once the script stays as it is for a moment after an
   edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts. A run under
   way when the next starts is stopped (the worker drops or ends its call), so what is shown is

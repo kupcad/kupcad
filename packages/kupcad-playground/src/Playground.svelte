@@ -104,7 +104,10 @@
 
   /** The script as the editor has it: the user's, from the one the page gave last. */
   let value = $state(untrack(() => source));
-  /** How many scripts the page loaded: the parameters' fields are made again for each. */
+  /**
+   * How many scripts the page loaded: the parameters' fields are made again for each, and the
+   * view frames each one's model whole (another subject), where an edit's keeps the camera.
+   */
   let loads = $state(0);
   let editor = $state(/** @type {EditorClass | null} */ (null));
   /** `check`'s findings of the script as it is, none while it changed since. */
@@ -153,7 +156,8 @@
 
   /**
    * Puts `script` in the editor in place of the one there (the editor's undo takes that back),
-   * and runs it at once on its own values: none the panel set for the last.
+   * and runs it at once on its own values (none the panel set for the last), its model framed
+   * whole.
    * @param {string} script another the page gives: an example, a script it opened
    */
   export function load(script) {
@@ -225,6 +229,7 @@
     <div class="model">
       <ViewerPane
         model={ran?.preview.model ?? null}
+        subject="script {loads}"
         options={viewerOptions}
         bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
         {status}

@@ -21,12 +21,13 @@ afterEach(() => vi.restoreAllMocks());
  */
 async function playground(source, settings = memorySettings(), props = {}) {
   const kupcad = await testCore();
+  const { renderer, drawn } = stubRenderer();
   const { component } = render(Playground, {
     props: {
       source,
       kupcad,
       name: 'bracket',
-      viewerOptions: { renderer: stubRenderer().renderer, motionMs: 0 },
+      viewerOptions: { renderer, motionMs: 0 },
       settings,
       ...props,
     },
@@ -34,7 +35,7 @@ async function playground(source, settings = memorySettings(), props = {}) {
   const view = /** @type {EditorView} */ (
     EditorView.findFromDOM(/** @type {HTMLElement} */ (document.querySelector('.cm-editor')))
   );
-  return { kupcad, view, component };
+  return { kupcad, view, component, drawn };
 }
 
 /** The status line's words. */
@@ -217,6 +218,24 @@ describe('Playground', () => {
     );
     expect(screen.getByText("The script's values")).toBeTruthy();
     expect(/** @type {HTMLInputElement} */ (screen.getByLabelText('w')).value).toBe('4');
+  });
+
+  it("frames a loaded script's model whole, where an edit's keeps the camera", async () => {
+    const { view, component, drawn } = await playground('cube(10).named("box")\n');
+    await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
+    view.dispatch({
+      changes: {
+        from: 0,
+        to: view.state.doc.length,
+        insert: 'cube(10).translate(x: 300).named("far")\n',
+      },
+    });
+    await vi.waitFor(() => expect(partsListed()).toBe('far'), RUN_MS);
+    // An edit keeps the camera where it was, on the box
+    expect(drawn.camera?.position.x).toBeLessThan(100);
+    component.load('cube(10).translate(x: 300).named("loaded")\n');
+    await vi.waitFor(() => expect(partsListed()).toBe('loaded'), RUN_MS);
+    await vi.waitFor(() => expect(drawn.camera?.position.x).toBeGreaterThan(200), RUN_MS);
   });
 
   it('loads the script it started with over the edits made since, which is no edit', async () => {
