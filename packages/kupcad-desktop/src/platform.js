@@ -14,14 +14,14 @@ import { readDir, writeFile } from '@tauri-apps/plugin-fs';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { load } from '@tauri-apps/plugin-store';
 import { check } from '@tauri-apps/plugin-updater';
-import { listFolder } from '@kupcad/files';
+import { listFolder } from '@kupcad/files/tree';
 import { memorySettings } from '@kupcad/ui';
 import { files, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
-/** @import { Entry } from '@kupcad/files' */
+/** @import { Entry } from '@kupcad/files/tree' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */

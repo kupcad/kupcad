@@ -37,11 +37,12 @@ host brings the file system.
   and a file's Download where the host gives them (a browser's). A desktop app draws it as a
   native menu; a page draws it with `ContextMenu`, a popover at the pointer that the arrow keys
   move through and Escape, a click elsewhere or the focus leaving close.
-* **The folder** (`listFolder(root, { readDir })`): the tree of `root`, each folder's folders
-  first, hidden folders, `node_modules` and `target` left out, and a folder holding files but
-  no script or file a script reads (`kindOf`), at most `MAX_ENTRIES`. The names a new entry may
-  take (`nameProblem`, `scriptName`), and paths in it (`childPath`, `parentOf`, `within`) with
-  the host's separator, `/` or `\`.
+* **The folder** (`listFolder(root, { readDir })`; alone, without Svelte, from
+  `@kupcad/files/tree`, for Node or a module no Svelte compiler sees): the tree of `root`, each
+  folder's folders first, hidden folders, `node_modules` and `target` left out, and a folder
+  holding files but no script or file a script reads (`kindOf`), at most `MAX_ENTRIES`. The
+  names a new entry may take (`nameProblem`, `scriptName`), and paths in it (`childPath`,
+  `parentOf`, `within`) with the host's separator, `/` or `\`.
 * **The scripts read** (`Scripts`, over the host's `read`, `write` and `exists`): each one's text
   now and as the disk had it, for what is unsaved; a save that finds the disk changed since
   holds the disk's text as a conflict for the person to choose; each script's editor snapshot,

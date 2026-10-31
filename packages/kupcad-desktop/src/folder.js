@@ -3,7 +3,7 @@
 // in it, its files read and written, and their file URIs, which the language server knows them
 // by. Its tree, and the names a new entry may take, are @kupcad/files'.
 
-import { SKIPPED_FOLDER } from '@kupcad/files';
+import { SKIPPED_FOLDER } from '@kupcad/files/tree';
 import { open } from '@tauri-apps/plugin-dialog';
 import { exists, mkdir, readTextFile, rename, watch, writeTextFile } from '@tauri-apps/plugin-fs';
 

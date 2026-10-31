@@ -18,7 +18,8 @@
     ".": {
       "svelte": "./src/index.js",
       "default": "./src/index.js"
-    }
+    },
+    "./tree": "./src/tree.js"
   },
   "publishConfig": {
     "access": "public"

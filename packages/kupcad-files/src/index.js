@@ -2,7 +2,8 @@
 // disk, the browser IDE's in its private file system): the tree (FileTree), its rows' menu
 // (rowMenu, drawn by a host's native menu or by ContextMenu), the folder listed through the
 // host's `readDir` and the paths and names in it (tree.js), and the scripts read, their unsaved
-// changes and undo histories (Scripts).
+// changes and undo histories (Scripts). The folder alone, for a module that loads no Svelte
+// (Node, a plain script), is `@kupcad/files/tree`.
 
 export { default as ContextMenu } from './ContextMenu.svelte';
 export { default as FileTree } from './FileTree.svelte';
