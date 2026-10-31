@@ -84,7 +84,10 @@ profile = polygon(
 
 # Text Generation with alignment and typography controls
 label = text("KupCAD", size: 12.0, font: "sans", halign: "center", valign: "baseline")
-# One line, kerned as the font says ("AV" and "To" sit closer than their advances put them).
+# One line, shaped as the font says: kerned ("AV" and "To" sit closer than their advances put
+# them), with its ligatures, Arabic's joining forms and the Indic scripts' reordering; a
+# right-to-left script (Arabic, Hebrew) runs right to left, and a line mixing directions is
+# ordered as Unicode's bidirectional algorithm says.
 # A symbol the font lacks ("⌀", "⌴", "⏚", "✓", "→"...) comes from the embedded symbol font, at
 # the same size and on the same baseline; a character neither has is a ValueError naming it
 # ("中", an emoji, a line break).
@@ -628,9 +631,9 @@ plate - text("KupCAD", size: 8, font: label, halign: "center", valign: "center")
 ```
 
 * **Name:** `label.name`, `puts label` and `"#{label}"` give the font's full name from its own name table (`Inter Bold`), or the file's name for a font that gives none; `inspect` gives `#<Font Inter Bold>`. A Font can be a module's export, so a project can keep its label font in one place.
-* **Drawing:** its glyphs are kerned as the font says, by its GPOS table or, for a font without GPOS kerning, its `kern` table. A variable font draws its default style. A symbol the font lacks comes from the embedded symbol font, as with the embedded fonts; a character neither has is a `ValueError` naming it.
+* **Drawing:** its glyphs are shaped as the font says (HarfBuzz): kerned by its GPOS table or, for a font without GPOS kerning, its `kern` table, with its ligatures, joining forms and marks. A variable font draws its default style. A symbol the font lacks comes from the embedded symbol font, as with the embedded fonts; a character neither has is a `ValueError` naming it.
 * **Refused:** a file that isn't a font, one with no outlines text draws (TrueType's or CFF's; a CFF2 variable font's and a bitmap font's aren't read), one that maps no characters, and one past 32 MiB are each an `ImportError` naming the file. The font file is fuzzed nightly (`-Dfuzz-target=fonts`), as it comes from whoever wrote the script.
-* **Not yet:** right-to-left scripts and those whose letters change shape with their neighbours (Arabic, Hebrew, the Indic scripts) need text shaping, which `text()` doesn't do; CJK fonts draw, glyph by glyph.
+* **Scripts:** right-to-left scripts and those whose letters change shape with their neighbours (Arabic, Hebrew, the Indic scripts) draw in a font that has them, which a script imports: none of the embedded fonts does. CJK fonts draw too.
 
 ### Drawings (`import_dxf`, `import_svg`)
 

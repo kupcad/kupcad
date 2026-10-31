@@ -87,5 +87,5 @@ AGPLv3 ensures that anyone extending or hosting the core engine must give back t
 
 KupCAD bundles open-source libraries and fonts, listed with their licenses in [core/THIRD_PARTY_NOTICES.md](core/THIRD_PARTY_NOTICES.md). A Commercial License covers KupCAD's own code; each bundled component stays under its own license, in commercial builds as in AGPL ones. All of them allow commercial and closed-source use:
 
-* **Permissive** (Apache-2.0, MIT, BSD, public domain): Manifold, Draco, oneTBB, lsp-kit, the Zig standard library, SQLite and the fonts. Their notices ship with KupCAD, and nothing more is asked.
+* **Permissive** (Apache-2.0, MIT, BSD, public domain): Manifold, Draco, oneTBB, HarfBuzz, SheenBidi, lsp-kit, the Zig standard library, SQLite and the fonts. Their notices ship with KupCAD, and nothing more is asked.
 * **MPL-2.0** (Eigen, and the font parser tatfi): its copyleft covers only those libraries' own files, not KupCAD's or yours. Those files, and any changes made to them, stay MPL-2.0 with their source available, which KupCAD's repository provides.

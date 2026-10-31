@@ -23,6 +23,9 @@ licenses=(
   "core/vendor/draco/LICENSE:draco"
   "core/vendor/eigen/LICENSE:eigen"
   "core/vendor/tatfi/LICENSE:tatfi"
+  "core/vendor/harfbuzz/COPYING:harfbuzz"
+  "core/vendor/harfbuzz/src/ms-use/COPYING:harfbuzz/ms-use"
+  "core/vendor/sheenbidi/LICENSE:sheenbidi"
 )
 
 mkdir -p "$out"

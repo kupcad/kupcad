@@ -12,6 +12,8 @@ release archive at the path given (in the repository: under `core/vendor/` and `
 | [Eigen](https://gitlab.com/libeigen/eigen) | linear algebra in the B-Rep engine | MPL-2.0 (a few files under the licenses listed) | Eigen's authors | `licenses/eigen/LICENSE`, `licenses/eigen/LICENSES/` |
 | [SQLite](https://sqlite.org) | the package cache | public domain | none | none needed |
 | [tatfi](https://git.sr.ht/~asibahi/tatfi) | reading the fonts | MPL-2.0 | tatfi's authors | `licenses/tatfi/LICENSE` |
+| [HarfBuzz](https://github.com/harfbuzz/harfbuzz) | shaping text: kerning, ligatures, joining forms and marks | MIT ("Old MIT"); its Universal Shaping Engine tables from Microsoft's data, MIT | HarfBuzz's authors; Microsoft Corporation | `licenses/harfbuzz/COPYING`, `licenses/harfbuzz/ms-use/COPYING` |
+| [SheenBidi](https://github.com/Tehreer/SheenBidi) | the direction of text: right-to-left and mixed lines | Apache-2.0 | Muhammad Tayyab Akram | `licenses/sheenbidi/LICENSE` |
 | [lsp-kit](https://github.com/zigtools/lsp-kit) | the language server's protocol types | MIT | zig-lsp-codegen contributors | `licenses/lsp-kit-MIT.txt` |
 | [Zig standard library](https://ziglang.org) | compiled into the binary | MIT | Zig contributors | `licenses/zig-MIT.txt` |
 | Roboto (Regular and Bold), Roboto Mono | the `sans`, `sans-bold` and `mono` text fonts | Apache-2.0 | Google Inc. | `licenses/draco/LICENSE` (the same Apache License 2.0) |

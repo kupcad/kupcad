@@ -1,14 +1,17 @@
-//! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
-//! fonts (`FontKey`, `getFace`) or an imported one, each pair kerned as the font says
-//! (kerning.zig), a character the font lacks drawn from the embedded symbol font
-//! (`symbolFace`), flattens their curves into closed contours scaled to the given size in mm,
-//! keeping each curve with the points it became (bezier.zig's `Flattened`, so a drawing writes
-//! it exactly), and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
+//! Turns a string into 2D outlines. `layout` places a line's glyphs: in one of the embedded
+//! fonts (`FontKey`, `getFace`) or an imported one, a character the font lacks in the embedded
+//! symbol font (`symbolFace`); split by SheenBidi into runs of one direction, drawn in their
+//! order, and of one script, each shaped by HarfBuzz (kerning, ligatures, joining forms, marks).
+//! `extractText` draws the glyphs' outlines with tatfi, flattening their curves into closed
+//! contours scaled to the given size in mm, keeping each curve with the points it became
+//! (bezier.zig's `Flattened`, so a drawing writes it exactly), and aligns the result (`HAlign`,
+//! `VAlign`) into `TextPolygons`.
 
 const std = @import("std");
 const tatfi = @import("tatfi");
+const hb = @import("harfbuzz");
+const bidi = @import("sheenbidi");
 const bezier = @import("bezier.zig");
-const Kerning = @import("kerning.zig").Kerning;
 
 /// A parsed font (tatfi's), which the functions here draw with; their callers name it so.
 pub const Face = tatfi.Face;
@@ -209,15 +212,23 @@ fn closePath(ptr: *anyopaque) void {
     ctx.record(ctx.flushContour());
 }
 
+/// Which font a glyph is drawn from: the text's own, or the symbol font standing in for it.
+pub const Source = enum { text, symbols };
+
+/// The font that draws `cp`: the text's, else the symbol font; null when neither has it.
+fn sourceOf(face: *const tatfi.Face, symbols: *const tatfi.Face, cp: u21) ?Source {
+    if (face.glyph_index(cp) != null) return .text;
+    if (symbols.glyph_index(cp) != null) return .symbols;
+    return null;
+}
+
 /// The first character of `text_str` (valid UTF-8) that neither `face` nor the symbol font has
 /// a glyph for.
 pub fn firstMissingGlyph(face: *const tatfi.Face, text_str: []const u8) ?u21 {
-    const symbols = symbolFace() catch null;
+    const symbols = symbolFace() catch return null;
     var iter = (std.unicode.Utf8View.init(text_str) catch return null).iterator();
     while (iter.nextCodepoint()) |cp| {
-        if (face.glyph_index(cp) != null) continue;
-        if (symbols) |s| if (s.glyph_index(cp) != null) continue;
-        return cp;
+        if (sourceOf(face, &symbols, cp) == null) return cp;
     }
     return null;
 }
@@ -273,6 +284,138 @@ fn nameRecord(allocator: std.mem.Allocator, names: tatfi.tables.name.Names, id: 
     return null;
 }
 
+/// A glyph laid out: its font, its id there, and where its origin is, in mm.
+pub const Placed = struct { source: Source, glyph: tatfi.GlyphId, x: f64, y: f64 };
+
+/// The glyphs of `text_str`, one line `size_mm` high (an em), from left to right as they are
+/// drawn: each character in `face`, or in `symbols` when `face` lacks it, a character neither
+/// has an error (firstMissingGlyph names it). The caller owns the slice.
+pub fn layout(allocator: std.mem.Allocator, face: *const tatfi.Face, symbols: *const tatfi.Face, text_str: []const u8, size_mm: f64) ![]Placed {
+    // Checked, not assumed: the iterator asserts on a malformed sequence
+    const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
+    // Each byte's font, its character's: a character the font lacked was left out without a
+    // word (`text("中")` made an empty sketch)
+    const sources = try allocator.alloc(Source, text_str.len);
+    defer allocator.free(sources);
+    var iter = view.iterator();
+    var at: usize = 0;
+    while (iter.nextCodepointSlice()) |slice| : (at += slice.len) {
+        const cp = std.unicode.utf8Decode(slice) catch unreachable;
+        @memset(sources[at..][0..slice.len], sourceOf(face, symbols, cp) orelse return error.MissingGlyph);
+    }
+
+    var placed: std.ArrayList(Placed) = .empty;
+    errdefer placed.deinit(allocator);
+    if (text_str.len == 0) return placed.toOwnedSlice(allocator);
+
+    var shapers = [_]Shaper{ .init(face, size_mm), .init(symbols, size_mm) };
+    defer for (&shapers) |*shaper| shaper.deinit();
+    const sequence = bidi.CodepointSequence{ .string_encoding = bidi.encoding_utf8, .string_buffer = text_str.ptr, .string_length = text_str.len };
+    const script_ends = try scriptEnds(allocator, &sequence);
+    defer allocator.free(script_ends);
+
+    const algorithm = bidi.SBAlgorithmCreate(&sequence) orelse return error.OutOfMemory;
+    defer bidi.SBAlgorithmRelease(algorithm);
+    var cursor: f64 = 0;
+    var paragraph_start: usize = 0;
+    // A paragraph ends at a separator the font has a glyph for: the next goes on along the line
+    while (paragraph_start < text_str.len) {
+        const paragraph = bidi.SBAlgorithmCreateParagraph(algorithm, paragraph_start, text_str.len - paragraph_start, bidi.level_default_ltr) orelse return error.OutOfMemory;
+        defer bidi.SBParagraphRelease(paragraph);
+        const paragraph_length = bidi.SBParagraphGetLength(paragraph);
+        const line = bidi.SBParagraphCreateLine(paragraph, paragraph_start, paragraph_length) orelse return error.OutOfMemory;
+        defer bidi.SBLineRelease(line);
+        for (bidi.SBLineGetRunsPtr(line)[0..bidi.SBLineGetRunCount(line)]) |run| {
+            try placeRun(allocator, &placed, &shapers, text_str, sources, script_ends, run, &cursor);
+        }
+        paragraph_start += paragraph_length;
+    }
+    return placed.toOwnedSlice(allocator);
+}
+
+/// A font as HarfBuzz shapes with it, made from the bytes tatfi read the face from, and the
+/// scale from its units to mm.
+const Shaper = struct {
+    blob: *hb.Blob,
+    face: *hb.Face,
+    font: *hb.Font,
+    scale: f64,
+
+    fn init(face: *const tatfi.Face, size_mm: f64) Shaper {
+        const data = face.raw_face.data;
+        const blob = hb.hb_blob_create(data.ptr, @intCast(data.len), .readonly, null, null);
+        const hb_face = hb.hb_face_create(blob, 0);
+        return .{ .blob = blob, .face = hb_face, .font = hb.hb_font_create(hb_face), .scale = scaleOf(face, size_mm) };
+    }
+
+    fn deinit(self: *Shaper) void {
+        hb.hb_font_destroy(self.font);
+        hb.hb_face_destroy(self.face);
+        hb.hb_blob_destroy(self.blob);
+    }
+};
+
+/// Where each of the text's runs of one script ends, a byte offset, in order.
+fn scriptEnds(allocator: std.mem.Allocator, sequence: *const bidi.CodepointSequence) ![]usize {
+    const locator = bidi.SBScriptLocatorCreate() orelse return error.OutOfMemory;
+    defer bidi.SBScriptLocatorRelease(locator);
+    bidi.SBScriptLocatorLoadCodepoints(locator, sequence);
+    var ends: std.ArrayList(usize) = .empty;
+    errdefer ends.deinit(allocator);
+    while (bidi.SBScriptLocatorMoveNext(locator) != 0) {
+        const agent = bidi.SBScriptLocatorGetAgent(locator);
+        try ends.append(allocator, agent.offset + agent.length);
+    }
+    return ends.toOwnedSlice(allocator);
+}
+
+/// Places `run`, a run of one direction, after `cursor`: shaped in pieces of one script and
+/// one font, a right-to-left run's from its end, so its first character is drawn rightmost.
+fn placeRun(allocator: std.mem.Allocator, placed: *std.ArrayList(Placed), shapers: *[2]Shaper, text_str: []const u8, sources: []const Source, script_ends: []const usize, run: bidi.Run, cursor: *f64) !void {
+    const rtl = run.level % 2 == 1;
+    var pieces: std.ArrayList([2]usize) = .empty;
+    defer pieces.deinit(allocator);
+    const end = run.offset + run.length;
+    var start = run.offset;
+    for (run.offset + 1..end + 1) |at| {
+        const boundary = at == end or sources[at] != sources[at - 1] or std.mem.indexOfScalar(usize, script_ends, at) != null;
+        if (!boundary) continue;
+        try pieces.append(allocator, .{ start, at });
+        start = at;
+    }
+    if (rtl) std.mem.reverse([2]usize, pieces.items);
+    for (pieces.items) |piece| {
+        const source = sources[piece[0]];
+        try shape(allocator, placed, &shapers[@backingInt(source)], source, text_str, piece, if (rtl) .rtl else .ltr, cursor);
+    }
+}
+
+/// Shapes `piece` of `text_str` (the whole line its context) with `shaper`, placing its
+/// glyphs after `cursor` and moving it past them.
+fn shape(allocator: std.mem.Allocator, placed: *std.ArrayList(Placed), shaper: *const Shaper, source: Source, text_str: []const u8, piece: [2]usize, direction: hb.Direction, cursor: *f64) !void {
+    const buffer = hb.hb_buffer_create();
+    defer hb.hb_buffer_destroy(buffer);
+    hb.hb_buffer_add_utf8(buffer, text_str.ptr, @intCast(text_str.len), @intCast(piece[0]), @intCast(piece[1] - piece[0]));
+    hb.hb_buffer_set_direction(buffer, direction);
+    // The piece is one script: HarfBuzz reads which from its characters
+    hb.hb_buffer_guess_segment_properties(buffer);
+    hb.hb_shape(shaper.font, buffer, null, 0);
+    if (hb.hb_buffer_allocation_successful(buffer) == 0) return error.OutOfMemory;
+    var count: c_uint = 0;
+    const infos = hb.hb_buffer_get_glyph_infos(buffer, &count)[0..count];
+    const positions = hb.hb_buffer_get_glyph_positions(buffer, &count)[0..count];
+    for (infos, positions) |info, position| {
+        const glyph = std.math.cast(u16, info.codepoint) orelse return error.InvalidFont;
+        try placed.append(allocator, .{
+            .source = source,
+            .glyph = .{glyph},
+            .x = cursor.* + @as(f64, @floatFromInt(position.x_offset)) * shaper.scale,
+            .y = @as(f64, @floatFromInt(position.y_offset)) * shaper.scale,
+        });
+        cursor.* += @as(f64, @floatFromInt(position.x_advance)) * shaper.scale;
+    }
+}
+
 pub fn extractText(
     allocator: std.mem.Allocator,
     face: *const tatfi.Face,
@@ -282,21 +425,21 @@ pub fn extractText(
     halign: HAlign,
     valign: VAlign,
 ) !TextPolygons {
+    const symbols = try symbolFace();
+    const glyphs = try layout(allocator, face, &symbols, text_str, size_mm);
+    defer allocator.free(glyphs);
+
     var polygons = TextPolygons{ .contours = .empty, .curves = .empty };
     errdefer polygons.deinit(allocator);
-
-    const tol_sq = tolerance * tolerance;
-
     var ctx = BuilderContext{
         .allocator = allocator,
         .polygons = &polygons,
         .cursor_x = 0.0,
         .cursor_y = 0.0,
-        .scale = scaleOf(face, size_mm),
-        .tolerance_sq = tol_sq,
+        .scale = 0.0,
+        .tolerance_sq = tolerance * tolerance,
     };
     errdefer if (ctx.current_contour) |*c| c.deinit(allocator);
-
     const builder = tatfi.OutlineBuilder{
         .ptr = &ctx,
         .vtable = .{
@@ -308,39 +451,16 @@ pub fn extractText(
         },
     };
 
-    var kerning = try Kerning.init(allocator, face);
-    defer kerning.deinit(allocator);
-    // The glyph before, when it is the text's font's: kerning is between two of its own
-    var previous: ?tatfi.GlyphId = null;
-    // Parsed when a character first needs it
-    var symbols: ?tatfi.Face = null;
-
-    // Checked, not assumed: the iterator asserts on a malformed sequence.
-    const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
-    var iter = view.iterator();
-    while (iter.nextCodepoint()) |cp| {
-        // A character the font lacks comes from the symbol font, at the same size and on
-        // the same baseline; one neither has was left out without a word (`text("中")` made
-        // an empty sketch): firstMissingGlyph names it.
-        const drawn: struct { face: *const tatfi.Face, glyph: tatfi.GlyphId } = if (face.glyph_index(cp)) |glyph| .{ .face = face, .glyph = glyph } else blk: {
-            if (symbols == null) symbols = try symbolFace();
-            const glyph = symbols.?.glyph_index(cp) orelse return error.MissingGlyph;
-            break :blk .{ .face = &symbols.?, .glyph = glyph };
-        };
-        ctx.scale = scaleOf(drawn.face, size_mm);
-        if (drawn.face == face) {
-            // The font's kerning moves a glyph closer to the one before it ("AV", "To"), or
-            // further from it
-            if (previous) |left| ctx.cursor_x += @as(f64, @floatFromInt(kerning.between(left, drawn.glyph))) * ctx.scale;
-            previous = drawn.glyph;
-        } else previous = null;
-        _ = drawn.face.outline_glyph({}, drawn.glyph, builder);
+    // By Source
+    const faces = [_]*const tatfi.Face{ face, &symbols };
+    for (glyphs) |glyph| {
+        const glyph_face = faces[@backingInt(glyph.source)];
+        ctx.scale = scaleOf(glyph_face, size_mm);
+        ctx.cursor_x = glyph.x;
+        ctx.cursor_y = glyph.y;
+        _ = glyph_face.outline_glyph({}, glyph.glyph, builder);
         if (ctx.failed) return error.OutOfMemory;
         try ctx.flushContour();
-
-        if (drawn.face.glyph_hor_advance({}, drawn.glyph)) |adv| {
-            ctx.cursor_x += @as(f64, @floatFromInt(adv)) * ctx.scale;
-        }
     }
 
     alignContours(&polygons, halign, valign);

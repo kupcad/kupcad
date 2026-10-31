@@ -3,7 +3,6 @@ const testing = std.testing;
 const tatfi = @import("tatfi");
 const text = @import("text.zig");
 const bezier = @import("bezier.zig");
-const Kerning = @import("kerning.zig").Kerning;
 
 test "Text Engine: Successfully parses all embedded font families allocation-free" {
     inline for (std.enums.values(text.FontKey)) |key| {
@@ -188,11 +187,18 @@ test "Text: the symbol font has the symbols of each of its groups" {
     }
 }
 
-/// The kerning `face` gives the pair `left` `right`, in font units./// The kerning `face` gives the pair `left` `right`, in font units.
+/// The kerning `face` gives the pair `left` `right`, in font units./// The kerning `face` gives the pair `left` `right`, in font units: how much nearer (or
+/// further) the second glyph is set than the first's advance puts it.
 fn kerningOf(face: *const tatfi.Face, left: u21, right: u21) !i32 {
-    var kerning = try Kerning.init(testing.allocator, face);
-    defer kerning.deinit(testing.allocator);
-    return kerning.between(face.glyph_index(left).?, face.glyph_index(right).?);
+    var pair: [8]u8 = undefined;
+    const left_len = try std.unicode.utf8Encode(left, &pair);
+    const len = left_len + try std.unicode.utf8Encode(right, pair[left_len..]);
+    const symbols = try text.symbolFace();
+    // An em the font's units: its mm are font units
+    const glyphs = try text.layout(testing.allocator, face, &symbols, pair[0..len], @floatFromInt(face.units_per_em()));
+    defer testing.allocator.free(glyphs);
+    const advance: f64 = @floatFromInt(face.glyph_hor_advance({}, glyphs[0].glyph).?);
+    return @intFromFloat(glyphs[1].x - glyphs[0].x - advance);
 }
 
 test "Text Engine: a font's kerning, from class and glyph pairs and extension lookups" {
@@ -279,4 +285,76 @@ test "Text Engine: a CFF font draws its outlines and is kerned by glyph and clas
     try testing.expectEqual(@as(i32, -70), try kerningOf(&face, 'V', 'A'));
     try testing.expectEqual(@as(i32, -70), try kerningOf(&face, 'T', 'o'));
     try testing.expectEqual(@as(i32, 0), try kerningOf(&face, 'o', 'A'));
+}
+
+/// Fonts made by scripts/make-shaping-test-fonts.py: Noto's, holding the characters below.
+const ARABIC_FONT = @embedFile("test_fonts/arabic.ttf");
+const HEBREW_FONT = @embedFile("test_fonts/hebrew.ttf");
+const DEVANAGARI_FONT = @embedFile("test_fonts/devanagari.ttf");
+
+/// The glyphs `str` is laid out as in `face`, from left to right as drawn. The caller frees them.
+fn glyphsOf(face: *const tatfi.Face, str: []const u8) ![]text.Placed {
+    const symbols = try text.symbolFace();
+    return text.layout(testing.allocator, face, &symbols, str, 10.0);
+}
+
+/// `str` is drawn as `drawn` reads, each character its own glyph, from left to right.
+fn expectDrawnAs(face: *const tatfi.Face, str: []const u8, drawn: []const u8) !void {
+    const glyphs = try glyphsOf(face, str);
+    defer testing.allocator.free(glyphs);
+    var iter = (try std.unicode.Utf8View.init(drawn)).iterator();
+    var i: usize = 0;
+    while (iter.nextCodepoint()) |cp| : (i += 1) {
+        try testing.expect(i < glyphs.len);
+        try testing.expectEqual(face.glyph_index(cp).?, glyphs[i].glyph);
+        if (i > 0) try testing.expect(glyphs[i].x > glyphs[i - 1].x);
+    }
+    try testing.expectEqual(i, glyphs.len);
+}
+
+test "Text: a right-to-left line is drawn from its end, a run of the other direction as written" {
+    const face = try tatfi.Face.parse(HEBREW_FONT, 0);
+    try expectDrawnAs(&face, "שלום", "םולש");
+    // A right-to-left line, its first strong character Hebrew: the Latin in it as written
+    try expectDrawnAs(&face, "שלום AB", "AB םולש");
+    // A left-to-right line: the Hebrew in it from its end
+    try expectDrawnAs(&face, "A שלום B", "A םולש B");
+}
+
+test "Text: a symbol from the symbol font in right-to-left text keeps its place in the run" {
+    // The run is shaped in pieces of one font: drawn from its end, the pieces' order turns too
+    const face = try tatfi.Face.parse(HEBREW_FONT, 0);
+    const glyphs = try glyphsOf(&face, "ש⌀ל");
+    defer testing.allocator.free(glyphs);
+    try testing.expectEqual(@as(usize, 3), glyphs.len);
+    try testing.expectEqual(face.glyph_index('ל').?, glyphs[0].glyph);
+    try testing.expectEqual(text.Source.symbols, glyphs[1].source);
+    try testing.expectEqual(face.glyph_index('ש').?, glyphs[2].glyph);
+}
+
+test "Text: Arabic letters take their joined forms, lam and alef their pair's, right to left" {
+    const face = try tatfi.Face.parse(ARABIC_FONT, 0);
+    const glyphs = try glyphsOf(&face, "سلام");
+    defer testing.allocator.free(glyphs);
+    try testing.expectEqual(@as(usize, 4), glyphs.len);
+    // Meem drawn first, leftmost: alone, as alef before it never joins forward
+    try testing.expectEqual(face.glyph_index('م').?, glyphs[0].glyph);
+    // Alef and lam as the pair they make, seen as a word's first letter: none as it is alone
+    try testing.expect(!std.meta.eql(face.glyph_index('ا').?, glyphs[1].glyph));
+    try testing.expect(!std.meta.eql(face.glyph_index('ل').?, glyphs[2].glyph));
+    try testing.expect(!std.meta.eql(face.glyph_index('س').?, glyphs[3].glyph));
+}
+
+test "Text: a Devanagari vowel sign written after its consonant is drawn before it, after Latin too" {
+    const face = try tatfi.Face.parse(DEVANAGARI_FONT, 0);
+    const alone = try glyphsOf(&face, "कि");
+    defer testing.allocator.free(alone);
+    try testing.expectEqual(@as(usize, 2), alone.len);
+    try testing.expect(!std.meta.eql(face.glyph_index('क').?, alone[0].glyph));
+    try testing.expectEqual(face.glyph_index('क').?, alone[1].glyph);
+    // Shaped as Devanagari after Latin letters in the same run, not as Latin
+    const mixed = try glyphsOf(&face, "ab कि");
+    defer testing.allocator.free(mixed);
+    try testing.expectEqual(alone[0].glyph, mixed[mixed.len - 2].glyph);
+    try testing.expectEqual(alone[1].glyph, mixed[mixed.len - 1].glyph);
 }

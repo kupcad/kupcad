@@ -47,6 +47,11 @@ const FUZZ_DRAWING_BYTES = 256 * 1024;
 /// font may map them with is read.
 const FONT_PROBES = [_]u21{ 0xE9, 0x416, 0x2300, 0x4E2D, 0x1F600, 0x10FFFF };
 
+/// Text a font is drawn with after its printable ASCII, the characters of it the font or the
+/// symbol font has: right-to-left and joining scripts, which its layout tables shape, and a
+/// symbol the symbol font draws where the font lacks it.
+const SHAPED_PROBE = "سلام שלום कि ⌀";
+
 const ASCII_STL =
     \\solid part
     \\  facet normal 0 0 1
@@ -145,10 +150,14 @@ fn check3mf(data: []const u8) !void {
 
 test "fuzz: a font file a script imports" {
     // A TrueType font with a kern table, a CFF one with GPOS kerning (scripts/make-test-fonts.py),
-    // and the start of each: their table directories alone
+    // and the start of each: their table directories alone; and fonts whose layout tables shape
+    // Arabic, Hebrew and Devanagari (scripts/make-shaping-test-fonts.py)
     const kern_table = @embedFile("core/test_fonts/kern-table.ttf");
     const gpos = @embedFile("core/test_fonts/gpos-kerning.otf");
-    try fuzzParser(checkFont, &.{ kern_table, gpos, kern_table[0..200], gpos[0..200] });
+    const arabic = @embedFile("core/test_fonts/arabic.ttf");
+    const hebrew = @embedFile("core/test_fonts/hebrew.ttf");
+    const devanagari = @embedFile("core/test_fonts/devanagari.ttf");
+    try fuzzParser(checkFont, &.{ kern_table, gpos, kern_table[0..200], gpos[0..200], arabic, hebrew, devanagari });
 }
 
 fn checkFont(data: []const u8) !void {
@@ -160,15 +169,18 @@ fn checkFont(data: []const u8) !void {
         try testing.expect(std.unicode.utf8ValidateSlice(name));
         try testing.expect(name.len <= text_mod.MAX_FONT_NAME_BYTES);
     }
-    // What text() does with it: the printable ASCII it has, kerned, outlined and centred
-    var sample: [0x7F - 0x20]u8 = undefined;
-    var len: usize = 0;
+    // What text() does with it: the printable ASCII it has and what it draws of SHAPED_PROBE,
+    // laid out in runs of one direction and script, shaped, outlined and centred
+    var sample: std.ArrayList(u8) = .empty;
+    defer sample.deinit(testing.allocator);
     for (0x20..0x7F) |c| {
-        if (face.glyph_index(@intCast(c)) == null) continue;
-        sample[len] = @intCast(c);
-        len += 1;
+        if (face.glyph_index(@intCast(c)) != null) try sample.append(testing.allocator, @intCast(c));
     }
-    var polygons = try text_mod.extractText(testing.allocator, &face, sample[0..len], 10, 0.1, .center, .center);
+    var probes = (try std.unicode.Utf8View.init(SHAPED_PROBE)).iterator();
+    while (probes.nextCodepointSlice()) |character| {
+        if (text_mod.firstMissingGlyph(&face, character) == null) try sample.appendSlice(testing.allocator, character);
+    }
+    var polygons = try text_mod.extractText(testing.allocator, &face, sample.items, 10, 0.1, .center, .center);
     defer polygons.deinit(testing.allocator);
     // The outlines go to the kernel as polygons, which computes on them
     for (polygons.contours.items) |contour| for (contour.items) |point| for (point) |coordinate| {

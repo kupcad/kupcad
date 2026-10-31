@@ -218,12 +218,18 @@ fn tatfiModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.la
     return module;
 }
 
-/// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C++ libraries' asserts
+/// A root's `own` imports and the core module's: a root in src/ (the CLI, the Wasm module, the
+/// library) compiles the core's files itself, so it needs the modules they import.
+fn withCoreImports(b: *std.Build, own: []const std.Build.Module.Import, core: []const std.Build.Module.Import) []const std.Build.Module.Import {
+    return std.mem.concat(b.allocator, std.Build.Module.Import, &.{ own, core }) catch @panic("OOM");
+}
+
+/// `base` plus, outside Debug builds, -DNDEBUG, so the vendored C and C++ libraries' asserts
 /// (Manifold has many, some costly) are compiled out of release binaries, as their own
 /// release builds do, and -fno-sanitize=undefined: Zig compiles C and C++ with UBSan in
 /// Debug and, trapping, in ReleaseSafe, so a ReleaseSafe kernel ran every arithmetic
 /// check of UBSan and aborted the process on a finding. Debug builds keep both.
-fn cxxFlags(b: *std.Build, optimize: std.lang.Optimize, base: []const []const u8) []const []const u8 {
+fn vendoredFlags(b: *std.Build, optimize: std.lang.Optimize, base: []const []const u8) []const []const u8 {
     if (optimize == .debug) return base;
     return std.mem.concat(b.allocator, []const u8, &.{ base, &.{ "-DNDEBUG", "-fno-sanitize=undefined" } }) catch @panic("out of memory");
 }
@@ -264,13 +270,19 @@ pub fn build(b: *std.Build) void {
         "Enable multi-threaded parallel backend via Intel TBB",
     ) orelse !is_wasm;
 
-    // The font parser (vendor/tatfi), for text: the embedded fonts' outlines, advances and
-    // kerning, which is in their GPOS tables. None of them is variable or has Apple tables.
-    const tatfi_mod = tatfiModule(b, active_target, optimize, .{ .variable_fonts = false, .apple_layout = false });
+    // The font parser (vendor/tatfi), for text: its fonts' characters, outlines and names.
+    // HarfBuzz reads the layout tables (GSUB, GPOS) itself, and none of the embedded fonts is
+    // variable or has Apple tables.
+    const tatfi_mod = tatfiModule(b, active_target, optimize, .{ .variable_fonts = false, .opentype_layout = false, .apple_layout = false });
+    // Text shaping's bindings: HarfBuzz and SheenBidi, compiled into the native library below
+    const harfbuzz_mod = b.createModule(.{ .root_source_file = b.path("src/bindings/harfbuzz.zig"), .target = active_target, .optimize = optimize });
+    const sheenbidi_mod = b.createModule(.{ .root_source_file = b.path("src/bindings/sheenbidi.zig"), .target = active_target, .optimize = optimize });
 
     // --- list all deps ---
     const module_imports: []const std.Build.Module.Import = &.{
         .{ .name = "tatfi", .module = tatfi_mod },
+        .{ .name = "harfbuzz", .module = harfbuzz_mod },
+        .{ .name = "sheenbidi", .module = sheenbidi_mod },
     };
 
     // ====================================================================
@@ -292,9 +304,9 @@ pub fn build(b: *std.Build) void {
                 "-fvisibility=hidden", "-include",               wasm_stub_header,
             }
     else if (enable_parallel)
-        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" })
+        vendoredFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=1" })
     else
-        cxxFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" });
+        vendoredFlags(b, optimize, &.{ "-std=c++17", "-fno-exceptions", "-DMANIFOLD_PAR=-1" });
 
     // ====================================================================
     // KupCAD Core Module
@@ -318,7 +330,7 @@ pub fn build(b: *std.Build) void {
     build_info.addOption(bool, "tbb", enable_parallel and !is_wasm);
     mod.addOptions("build_info", build_info);
 
-    // The C and C++ libraries (Manifold, oneTBB, SQLite, Draco) and KupCAD's
+    // The C and C++ libraries (Manifold, oneTBB, SQLite, Draco, HarfBuzz, SheenBidi) and KupCAD's
     // bindings to them, as one static library the module links. Outside the Zig module, a
     // fuzzing build (`zig build test --fuzz`), which instruments what the test compiles,
     // leaves them alone: clang's coverage hooks for C and C++ aren't in Zig's fuzzer.
@@ -383,7 +395,7 @@ pub fn build(b: *std.Build) void {
         .flags = sqlite_flags,
     });
 
-    const drako_flags: []const []const u8 = cxxFlags(b, optimize, if (is_wasm)
+    const drako_flags: []const []const u8 = vendoredFlags(b, optimize, if (is_wasm)
         &.{ "-std=c++17", "-fno-exceptions", "-fvisibility=hidden" }
     else
         &.{ "-std=c++17", "-fno-exceptions" });
@@ -393,9 +405,25 @@ pub fn build(b: *std.Build) void {
         .flags = drako_flags,
     });
 
+    // HarfBuzz, lean: without what text doesn't use (variable fonts, outlines, names, vertical
+    // text, Apple's AAT shaping), harfbuzz_config.h adjusting the preset; a Wasm build without
+    // threads has no mutexes. SheenBidi, its sources as one file.
+    const harfbuzz_base: []const []const u8 = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti", "-DHB_LEAN", "-DHB_NO_AAT", "-DHB_CONFIG_OVERRIDE_H=\"harfbuzz_config.h\"" };
+    const harfbuzz_threads: []const []const u8 = if (is_wasm and !wasm_threads) &.{"-DHB_NO_MT"} else &.{};
+    native_mod.addCSourceFile(.{
+        .file = b.path("vendor/harfbuzz/src/harfbuzz.cc"),
+        .flags = vendoredFlags(b, optimize, std.mem.concat(b.allocator, []const u8, &.{ harfbuzz_base, harfbuzz_threads }) catch @panic("OOM")),
+    });
+    native_mod.addIncludePath(b.path("vendor/sheenbidi/Headers"));
+    native_mod.addIncludePath(b.path("vendor/sheenbidi/Source"));
+    native_mod.addCSourceFile(.{
+        .file = b.path("vendor/sheenbidi/Source/SheenBidi.c"),
+        .flags = vendoredFlags(b, optimize, &.{"-DSB_CONFIG_UNITY"}),
+    });
+
     // oneTBB is built in: KUPCAD_TBB lets kupcad_set_max_threads cap its threads, and
     // LOCUS_TBB runs Locus's parallel_for on them.
-    const kupcad_flags: []const []const u8 = cxxFlags(b, optimize, if (enable_parallel and !is_wasm)
+    const kupcad_flags: []const []const u8 = vendoredFlags(b, optimize, if (enable_parallel and !is_wasm)
         &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions", "-DKUPCAD_TBB=1", "-DLOCUS_TBB=1" }
     else
         &.{ "-std=c++17", "-Wno-nullability-completeness", "-fno-exceptions" });
@@ -431,10 +459,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .link_libc = true,
                 .link_libcpp = true,
-                .imports = &.{
-                    .{ .name = "kupcad", .module = mod },
-                    .{ .name = "tatfi", .module = tatfi_mod },
-                },
+                .imports = withCoreImports(b, &.{.{ .name = "kupcad", .module = mod }}, module_imports),
             }),
         });
         wasm.root_module.addOptions("build_info", build_info);
@@ -464,10 +489,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .link_libc = true,
                 .link_libcpp = true,
-                .imports = &.{
-                    .{ .name = "kupcad", .module = mod },
-                    .{ .name = "tatfi", .module = tatfi_mod },
-                },
+                .imports = withCoreImports(b, &.{.{ .name = "kupcad", .module = mod }}, module_imports),
             }),
         });
         wasm_test.root_module.addOptions("build_info", build_info);
@@ -506,12 +528,11 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("src/main.zig"),
                 .target = target,
                 .optimize = optimize,
-                .imports = &.{
+                .imports = withCoreImports(b, &.{
                     .{ .name = "kupcad", .module = mod },
                     .{ .name = "lsp", .module = lsp_kit.module("lsp") },
-                    .{ .name = "tatfi", .module = tatfi_mod },
                     .{ .name = "sqlite", .module = sqlite_mod },
-                },
+                }, module_imports),
             }),
         });
         exe.root_module.addOptions("build_info", build_info);
@@ -524,11 +545,10 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("src/api.zig"),
                 .target = target,
                 .optimize = optimize,
-                .imports = &.{
+                .imports = withCoreImports(b, &.{
                     .{ .name = "kupcad", .module = mod },
-                    .{ .name = "tatfi", .module = tatfi_mod },
                     .{ .name = "sqlite", .module = sqlite_mod },
-                },
+                }, module_imports),
             }),
         });
         lib.root_module.addOptions("build_info", build_info);
@@ -637,11 +657,10 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("src/gen_grammar.zig"),
                 .target = target,
                 .optimize = optimize,
-                .imports = &.{
+                .imports = withCoreImports(b, &.{
                     .{ .name = "kupcad", .module = mod },
-                    .{ .name = "tatfi", .module = tatfi_mod },
                     .{ .name = "sqlite", .module = sqlite_mod },
-                },
+                }, module_imports),
             }),
         });
         // It reaches the VM through relative imports, which read the build's options.

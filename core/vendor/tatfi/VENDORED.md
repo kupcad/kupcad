@@ -6,8 +6,8 @@ embedded fonts with (`src/core/text.zig`), taken at v0.1.4 (upstream commit `910
 license, README and changelog), without upstream's editor and release tooling.
 
 KupCAD's `build.zig` makes the module itself (`tatfiModule`), with the tables `text()` needs:
-OpenType layout for kerning, no variable fonts and no Apple tables, which none of the embedded
-fonts has. tatfi's tests run in `zig build test` with every table on. tatfi's own `build.zig`
+the characters, the outlines and the names, without OpenType layout (HarfBuzz reads GSUB and GPOS
+to shape text), variable fonts or Apple tables, which none of the embedded fonts has. tatfi's tests run in `zig build test` with every table on. tatfi's own `build.zig`
 is kept as upstream has it but isn't used: as a dependency its module has no target, so its
 tests couldn't run in KupCAD's target and mode.
 

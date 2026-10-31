@@ -10,3 +10,10 @@
 [submodule "core/vendor/eigen"]
 	path = core/vendor/eigen
 	url = https://github.com/eigen-mirror/eigen
+[submodule "core/vendor/harfbuzz"]
+	path = core/vendor/harfbuzz
+	url = https://github.com/harfbuzz/harfbuzz
+	shallow = true
+[submodule "core/vendor/sheenbidi"]
+	path = core/vendor/sheenbidi
+	url = https://github.com/Tehreer/SheenBidi
