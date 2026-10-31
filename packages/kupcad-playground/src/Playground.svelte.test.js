@@ -285,6 +285,18 @@ describe('Playground', () => {
     expect(back.hasFocus).toBe(true);
   });
 
+  it('runs nothing and says nothing of a run while it starts empty, until something is typed', async () => {
+    const { kupcad, view } = await playground('');
+    const calls = [vi.spyOn(kupcad, 'check'), vi.spyOn(kupcad, 'preview')];
+    await new Promise((settle) => setTimeout(settle, DELAY_MS * 2));
+    expect(calls.map((call) => call.mock.calls.length)).toEqual([0, 0]);
+    expect(statusText()).toBeUndefined();
+    expect(consoleLines()).toEqual([]);
+    view.dispatch({ changes: { from: 0, insert: 'cube(3).named("box")\n' } });
+    await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
+    expect(statusText()).toMatch(/^Ready/);
+  });
+
   it('edits a JSON file opened as a document, running nothing and showing no model', async () => {
     /** @type {string[]} */
     const sources = [];

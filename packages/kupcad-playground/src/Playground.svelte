@@ -139,7 +139,8 @@
   let runner = null;
 
   const header = $derived(ran?.preview.header ?? null);
-  const status = $derived(runs ? runStatusOf(header) : null);
+  // None to say with nothing to run yet: a page that starts empty (a host with no file open)
+  const status = $derived(runs && (ran || value !== '') ? runStatusOf(header) : null);
   const problems = $derived(problemsOf(header));
   // Marked where they are in the script as it is: a run of another (older) script marks nothing
   const marks = $derived(marksOf(findings, ran?.source === value ? problems : []));
@@ -162,7 +163,7 @@
       },
       onerror: (error) => (notice = errorText(error)),
     });
-    runner.run(value, {}, { now: true, files });
+    if (value !== '') runner.run(value, {}, { now: true, files });
     return () => {
       runner?.stop();
       made?.terminate();

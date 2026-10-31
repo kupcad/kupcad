@@ -37,10 +37,11 @@ browser IDE embed; it keeps nothing of the page's.
   (`import { } from "./lib.kup"` reads `lib.kup`), given with each run and export as the core's
   calls take them. `download` (exported) saves bytes or a Blob as a file, as the exports are saved.
 * **When it runs** (`runner.js`, `Runner`): once the script stays as it is for a moment after an
-  edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts. A run under
-  way when the next starts is stopped (the worker drops or ends its call), so what is shown is
-  the last script's. A run is `check` first, whose findings the editor marks at once, then the
-  preview: the model, how the run went, its parameters.
+  edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts (with a script: one
+  that starts empty runs nothing, and says nothing of a run, until something is typed). A run under
+  way when the next starts is stopped (the worker drops or ends its call), so what is shown is the
+  last script's. A run is `check` first, whose findings the editor marks at once, then the preview:
+  the model, how the run went, its parameters.
 * **What the editor marks** (`marks.js`): `check`'s findings, and the places the run named (why
   it failed, a warning on a line); not the run's error where `check` found errors already (a
   script that doesn't parse fails the run for the same reason). Findings of a script changed
