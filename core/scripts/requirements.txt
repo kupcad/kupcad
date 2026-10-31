@@ -6,5 +6,6 @@ lib3mf==2.5.0
 # with, its auditor finding what a reader would have to fix.
 ezdxf==1.4.2
 
-# fontTools, which scripts/make-test-fonts.py makes the test fonts in src/core/test_fonts with.
+# fontTools, which scripts/make-test-fonts.py makes the test fonts in src/core/test_fonts with, and
+# scripts/make-symbol-font.py the symbol font in src/core/fonts.
 fonttools==4.67.0

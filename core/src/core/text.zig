@@ -1,8 +1,9 @@
 //! Turns a string into 2D outlines: `extractText` lays out glyphs from one of the embedded
-//! fonts (`FontKey`, `getFace`), each pair kerned as the font says (kerning.zig), flattens
-//! their curves into closed contours scaled to the given size in mm, keeping each curve
-//! with the points it became (bezier.zig's `Flattened`, so a drawing writes it exactly),
-//! and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
+//! fonts (`FontKey`, `getFace`) or an imported one, each pair kerned as the font says
+//! (kerning.zig), a character the font lacks drawn from the embedded symbol font
+//! (`symbolFace`), flattens their curves into closed contours scaled to the given size in mm,
+//! keeping each curve with the points it became (bezier.zig's `Flattened`, so a drawing writes
+//! it exactly), and aligns the result (`HAlign`, `VAlign`) into `TextPolygons`.
 
 const std = @import("std");
 const tatfi = @import("tatfi");
@@ -27,12 +28,6 @@ const FONT_NAMES = [_]struct { name: []const u8, key: FontKey }{
 
 /// The longest font name a Font takes from its font file: longer, it is named after the file.
 pub const MAX_FONT_NAME_BYTES = 256;
-
-/// Characters fonts often lack, and the one people write instead: no embedded font has the
-/// diameter sign, and drawings use the letter Ø for it.
-const STAND_INS = [_]struct { missing: u21, instead: u21 }{
-    .{ .missing = 0x2300, .instead = 0x00D8 }, // ⌀ -> Ø
-};
 
 /// The embedded fonts' own names, for an error that lists them: `"sans", "mono", ...`.
 pub const FONT_LIST = blk: {
@@ -93,7 +88,15 @@ pub const fonts = struct {
     pub const mono = @embedFile("fonts/RobotoMono-Regular.ttf");
     pub const serif = @embedFile("fonts/RobotoSerif-Regular.ttf");
     pub const stencil = @embedFile("fonts/AllertaStencil-Regular.ttf");
+    /// KupCAD Symbols: the symbols of drawings, tolerances, panels and labels, which a text's
+    /// font lacks (scripts/make-symbol-font.py makes it from three Noto fonts)
+    pub const symbols = @embedFile("fonts/KupCADSymbols-Regular.ttf");
 };
+
+/// The symbol font, which draws a character the text's font has no glyph for.
+pub fn symbolFace() !tatfi.Face {
+    return tatfi.Face.parse(fonts.symbols, 0) catch return error.InvalidFont;
+}
 
 pub fn getFontBytes(key: FontKey) []const u8 {
     return switch (key) {
@@ -206,12 +209,15 @@ fn closePath(ptr: *anyopaque) void {
     ctx.record(ctx.flushContour());
 }
 
-/// The Main Extraction Engine
-/// The first character of `text_str` (valid UTF-8) that `face` has no glyph for.
+/// The first character of `text_str` (valid UTF-8) that neither `face` nor the symbol font has
+/// a glyph for.
 pub fn firstMissingGlyph(face: *const tatfi.Face, text_str: []const u8) ?u21 {
+    const symbols = symbolFace() catch null;
     var iter = (std.unicode.Utf8View.init(text_str) catch return null).iterator();
     while (iter.nextCodepoint()) |cp| {
-        if (face.glyph_index(cp) == null) return cp;
+        if (face.glyph_index(cp) != null) continue;
+        if (symbols) |s| if (s.glyph_index(cp) != null) continue;
+        return cp;
     }
     return null;
 }
@@ -267,14 +273,6 @@ fn nameRecord(allocator: std.mem.Allocator, names: tatfi.tables.name.Names, id: 
     return null;
 }
 
-/// What to write for `missing` when `face` lacks it, if `face` has that.
-pub fn standIn(face: *const tatfi.Face, missing: u21) ?u21 {
-    for (STAND_INS) |entry| {
-        if (entry.missing == missing and face.glyph_index(entry.instead) != null) return entry.instead;
-    }
-    return null;
-}
-
 pub fn extractText(
     allocator: std.mem.Allocator,
     face: *const tatfi.Face,
@@ -287,9 +285,6 @@ pub fn extractText(
     var polygons = TextPolygons{ .contours = .empty, .curves = .empty };
     errdefer polygons.deinit(allocator);
 
-    // Calculate scaling factor from font design units to physical CAD units (mm)
-    const units_per_em: f64 = @floatFromInt(face.units_per_em());
-    const scale = size_mm / units_per_em;
     const tol_sq = tolerance * tolerance;
 
     var ctx = BuilderContext{
@@ -297,7 +292,7 @@ pub fn extractText(
         .polygons = &polygons,
         .cursor_x = 0.0,
         .cursor_y = 0.0,
-        .scale = scale,
+        .scale = scaleOf(face, size_mm),
         .tolerance_sq = tol_sq,
     };
     errdefer if (ctx.current_contour) |*c| c.deinit(allocator);
@@ -315,32 +310,46 @@ pub fn extractText(
 
     var kerning = try Kerning.init(allocator, face);
     defer kerning.deinit(allocator);
+    // The glyph before, when it is the text's font's: kerning is between two of its own
     var previous: ?tatfi.GlyphId = null;
+    // Parsed when a character first needs it
+    var symbols: ?tatfi.Face = null;
 
     // Checked, not assumed: the iterator asserts on a malformed sequence.
     const view = std.unicode.Utf8View.init(text_str) catch return error.InvalidUtf8;
     var iter = view.iterator();
     while (iter.nextCodepoint()) |cp| {
-        // A character the font lacks was left out without a word: `text("中")` made an
-        // empty sketch. firstMissingGlyph names it.
-        const glyph_id = face.glyph_index(cp) orelse return error.MissingGlyph;
-        // The font's kerning moves a glyph closer to the one before it ("AV", "To"), or
-        // further from it
-        if (previous) |left| ctx.cursor_x += @as(f64, @floatFromInt(kerning.between(left, glyph_id))) * scale;
-        previous = glyph_id;
-        // Extract outlines and route to flattener
-        _ = face.outline_glyph({}, glyph_id, builder);
+        // A character the font lacks comes from the symbol font, at the same size and on
+        // the same baseline; one neither has was left out without a word (`text("中")` made
+        // an empty sketch): firstMissingGlyph names it.
+        const drawn: struct { face: *const tatfi.Face, glyph: tatfi.GlyphId } = if (face.glyph_index(cp)) |glyph| .{ .face = face, .glyph = glyph } else blk: {
+            if (symbols == null) symbols = try symbolFace();
+            const glyph = symbols.?.glyph_index(cp) orelse return error.MissingGlyph;
+            break :blk .{ .face = &symbols.?, .glyph = glyph };
+        };
+        ctx.scale = scaleOf(drawn.face, size_mm);
+        if (drawn.face == face) {
+            // The font's kerning moves a glyph closer to the one before it ("AV", "To"), or
+            // further from it
+            if (previous) |left| ctx.cursor_x += @as(f64, @floatFromInt(kerning.between(left, drawn.glyph))) * ctx.scale;
+            previous = drawn.glyph;
+        } else previous = null;
+        _ = drawn.face.outline_glyph({}, drawn.glyph, builder);
         if (ctx.failed) return error.OutOfMemory;
         try ctx.flushContour();
 
-        // Advance cursor for next letter
-        if (face.glyph_hor_advance({}, glyph_id)) |adv| {
-            ctx.cursor_x += @as(f64, @floatFromInt(adv)) * scale;
+        if (drawn.face.glyph_hor_advance({}, drawn.glyph)) |adv| {
+            ctx.cursor_x += @as(f64, @floatFromInt(adv)) * ctx.scale;
         }
     }
 
     alignContours(&polygons, halign, valign);
     return polygons;
+}
+
+/// The scale from `face`'s design units to mm, for text `size_mm` high (an em).
+fn scaleOf(face: *const tatfi.Face, size_mm: f64) f64 {
+    return size_mm / @as(f64, @floatFromInt(face.units_per_em()));
 }
 
 /// Moves `polygons` so their bounding box sits as `halign` and `valign` say against the

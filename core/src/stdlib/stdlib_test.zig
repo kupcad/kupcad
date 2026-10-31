@@ -1687,15 +1687,15 @@ test "Stdlib: CAD.with_config blocks nest, each restoring the settings it found"
     });
 }
 
-test "Stdlib: text draws accented and Cyrillic letters, and refuses a character or a font it lacks" {
+test "Stdlib: text draws accented and Cyrillic letters and symbols, and refuses a character no font has or a font it lacks" {
     try expectScripts(&.{
         .{ .src = "r = text(\"Привет é\", size: 10).extrude(1).volume > text(\"Привет\", size: 10).extrude(1).volume", .expected = .{ .boolean = true } },
         // serif had no Cyrillic until Roboto Serif 1.008
         .{ .src = "r = text(\"Привіт\", font: \"serif\").extrude(1).volume > 0", .expected = .{ .boolean = true } },
-        .{ .src = rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '中' (U+4E2D)" } },
-        // No embedded font has the diameter sign; drawings write Ø, which all but stencil have
-        .{ .src = rescued("text(\"⌀ 5\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for '⌀' (U+2300); 'Ø' (U+00D8), which it has, is the usual stand-in" } },
-        .{ .src = rescued("text(\"⌀ 5\", font: :stencil)"), .expected = .{ .str = "ValueError: text: the font 'stencil' has no glyph for '⌀' (U+2300)" } },
+        .{ .src = rescued("text(\"a中b\")"), .expected = .{ .str = "ValueError: text: neither the font 'sans' nor the symbol font has a glyph for '中' (U+4E2D)" } },
+        // No text font has the diameter sign: the symbol font draws it, in any font
+        .{ .src = "r = text(\"⌀ 5\").extrude(1).volume > text(\" 5\").extrude(1).volume", .expected = .{ .boolean = true } },
+        .{ .src = "r = text(\"⌀ 5\", font: :stencil).extrude(1).volume > text(\" 5\", font: :stencil).extrude(1).volume", .expected = .{ .boolean = true } },
         .{ .src = rescued("text(\"a\\nb\")"), .expected = .{ .str = "ValueError: text: the font 'sans' has no glyph for U+000A (text is one line, without control characters)" } },
         .{ .src = rescued("text(\"a\", font: \"bold\")"), .expected = .{ .str = "ArgumentError: text: there is no font 'bold'; the fonts are \"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\", or a Font imported from a font file" } },
         .{ .src = "r = text(\"a\", font: :monospace).extrude(1).volume == text(\"a\", font: \"mono\").extrude(1).volume", .expected = .{ .boolean = true } },

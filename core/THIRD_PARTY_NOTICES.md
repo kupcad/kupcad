@@ -17,6 +17,7 @@ release archive at the path given (in the repository: under `core/vendor/` and `
 | Roboto (Regular and Bold), Roboto Mono | the `sans`, `sans-bold` and `mono` text fonts | Apache-2.0 | Google Inc. | `licenses/draco/LICENSE` (the same Apache License 2.0) |
 | Roboto Serif | the `serif` text font | OFL-1.1 | The Roboto Serif Project Authors | `licenses/RobotoSerif-OFL.txt` |
 | Allerta Stencil | the `stencil` text font | OFL-1.1, Reserved Font Name Allerta | Matt McInerney | `licenses/AllertaStencil-OFL.txt` |
+| KupCAD Symbols, a subset of Noto Sans Math, Noto Sans Symbols and Noto Sans Symbols 2 | the symbols `text()` draws when a text's font lacks them | OFL-1.1 | The Noto Project Authors | `licenses/NotoSymbols-OFL.txt` |
 
 KupCAD's copy of tatfi differs from upstream in the files `core/vendor/tatfi/VENDORED.md`
 lists; as MPL-2.0 asks, their source is in the KupCAD repository, under `core/vendor/tatfi`.

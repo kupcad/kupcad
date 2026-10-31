@@ -47,6 +47,12 @@ test "Font: text draws with an imported font, kerned by GPOS or by its kern tabl
     });
 }
 
+test "Font: a symbol an imported font lacks comes from the symbol font" {
+    try support.expectScripts(&.{
+        withFiles("import f from \"./fonts/Test.otf\"\nr = text(\"A⌀\", font: f).extrude(1).volume > text(\"A\", font: f).extrude(1).volume", .{ .boolean = true }),
+    });
+}
+
 test "Font: a file text can't draw with, a missing glyph and a wrong font are errors naming them" {
     try support.expectScripts(&.{
         withFiles(rescued("import f from \"./fonts/broken.ttf\""), .{ .str = "ImportError: 'fonts/broken.ttf' isn't a font text can draw with: it isn't a TrueType or OpenType font" }),
@@ -54,7 +60,7 @@ test "Font: a file text can't draw with, a missing glyph and a wrong font are er
         // A font, but not one text can draw: nothing to draw, or no character to find
         withFiles(rescued("import f from \"./fonts/no-outlines.ttf\""), .{ .str = "ImportError: 'fonts/no-outlines.ttf' isn't a font text can draw with: it has no outlines (TrueType or CFF ones; a variable CFF2 font's and a bitmap font's aren't read)" }),
         withFiles(rescued("import f from \"./fonts/no-cmap.ttf\""), .{ .str = "ImportError: 'fonts/no-cmap.ttf' isn't a font text can draw with: it maps no characters to glyphs (it has no cmap table)" }),
-        withFiles(rescued("import f from \"./fonts/Test.otf\"\ntext(\"x\", font: f)"), .{ .str = "ValueError: text: the font 'KupCAD Test CFF Regular' has no glyph for 'x' (U+0078)" }),
+        withFiles(rescued("import f from \"./fonts/Test.otf\"\ntext(\"x\", font: f)"), .{ .str = "ValueError: text: neither the font 'KupCAD Test CFF Regular' nor the symbol font has a glyph for 'x' (U+0078)" }),
         withFiles(rescued("text(\"A\", font: 5)"), .{ .str = "TypeError: text: font is the name of a font (\"sans\", \"sans-bold\", \"mono\", \"serif\" and \"stencil\") or a Font imported from a font file, got Number" }),
     });
 }

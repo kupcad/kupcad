@@ -161,7 +161,34 @@ test "Text: a character the font has no glyph for is an error, named by firstMis
     try testing.expectEqual(@as(?u21, null), text.firstMissingGlyph(&face, "Привет é"));
 }
 
-/// The kerning `face` gives the pair `left` `right`, in font units.
+test "Text: a character the font lacks comes from the symbol font, at the same size and on its baseline" {
+    const sans = try text.getFace(.sans);
+    const symbols = try text.symbolFace();
+    try testing.expectEqual(@as(u16, 1000), symbols.units_per_em());
+    // Drawn through sans, the diameter sign is the symbol font's own outline, point for point
+    var through = try text.extractText(testing.allocator, &sans, "⌀", 10.0, 0.1, .left, .baseline);
+    defer through.deinit(testing.allocator);
+    var own = try text.extractText(testing.allocator, &symbols, "⌀", 10.0, 0.1, .left, .baseline);
+    defer own.deinit(testing.allocator);
+    try testing.expect(through.contours.items.len > 0);
+    try testing.expectEqual(own.contours.items.len, through.contours.items.len);
+    for (own.contours.items, through.contours.items) |a, b| try testing.expectEqualSlices([2]f64, a.items, b.items);
+    // A character neither font has is still an error, which firstMissingGlyph names
+    try testing.expectEqual(@as(?u21, null), text.firstMissingGlyph(&sans, "⌀ 5 ±0.1"));
+    try testing.expectEqual(@as(?u21, 0x4E2D), text.firstMissingGlyph(&sans, "⌀中"));
+}
+
+test "Text: the symbol font has the symbols of each of its groups" {
+    // One of each: drawing, tolerance modifiers, math, arrows, electrical, signs, shapes
+    const symbols = try text.symbolFace();
+    var iter = (try std.unicode.Utf8View.init("⌀⌴⌵⌖Ⓜ±→↻⏚⚡✓⚠●□")).iterator();
+    while (iter.nextCodepoint()) |cp| {
+        errdefer std.debug.print("no glyph for U+{X:0>4}\n", .{cp});
+        try testing.expect(symbols.glyph_index(cp) != null);
+    }
+}
+
+/// The kerning `face` gives the pair `left` `right`, in font units./// The kerning `face` gives the pair `left` `right`, in font units.
 fn kerningOf(face: *const tatfi.Face, left: u21, right: u21) !i32 {
     var kerning = try Kerning.init(testing.allocator, face);
     defer kerning.deinit(testing.allocator);

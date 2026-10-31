@@ -696,10 +696,7 @@ pub fn nativeText(vm: *VM, args: []const value.Value) !value.Value {
             const cp = text_mod.firstMissingGlyph(&face, text_str) orelse 0;
             // A control character (a line break: text is one line) is named by its code alone.
             if (cp < 0x20 or cp == 0x7F) return vm.fail(.ValueError, "text: the font '{s}' has no glyph for U+{X:0>4} (text is one line, without control characters)", .{ font_name, cp });
-            if (text_mod.standIn(&face, cp)) |instead| {
-                return vm.fail(.ValueError, "text: the font '{s}' has no glyph for '{u}' (U+{X:0>4}); '{u}' (U+{X:0>4}), which it has, is the usual stand-in", .{ font_name, cp, cp, instead, instead });
-            }
-            return vm.fail(.ValueError, "text: the font '{s}' has no glyph for '{u}' (U+{X:0>4})", .{ font_name, cp, cp });
+            return vm.fail(.ValueError, "text: neither the font '{s}' nor the symbol font has a glyph for '{u}' (U+{X:0>4})", .{ font_name, cp, cp });
         },
         else => {
             return vm.fail(.RuntimeError, "Failed to extract text contours", .{});
