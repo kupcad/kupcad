@@ -1,6 +1,6 @@
 {
   "name": "@kupcad/playground",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "KupCAD in the browser: a script's editor, its model and its parameters, running on the core compiled to WebAssembly in a worker. One Svelte component a page embeds.",
   "license": "AGPL-3.0-only",
   "repository": {
