@@ -54,16 +54,14 @@ export class Runner {
     else this.#waiting = setTimeout(() => void this.#start(source, values, files), this.#delayMs);
   }
 
-  /** Stops the run waiting for the delay and the run under way: nothing comes of either. */
+  /**
+   * Stops the run waiting for the delay and the run under way: nothing comes of either. The
+   * next `run` runs again; a host done with the runner stops it and lets it go.
+   */
   stop() {
     clearTimeout(this.#waiting);
     this.#running?.abort();
     this.#running = null;
-  }
-
-  /** Runs nothing more, and stops the run under way. */
-  dispose() {
-    this.stop();
   }
 
   /**

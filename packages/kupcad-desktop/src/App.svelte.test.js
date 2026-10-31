@@ -13,14 +13,9 @@ import { LanguageServer } from './server.js';
 /** @import { Theme } from './theme.js' */
 
 const FOLDER = '/w';
-/** @type {Entry[]} */
-const ENTRIES = [
-  { kind: 'folder', name: 'parts', path: '/w/parts', depth: 0 },
-  { kind: 'script', name: 'lid.kup', path: '/w/parts/lid.kup', depth: 1 },
-  { kind: 'script', name: 'part.kup', path: '/w/part.kup', depth: 0 },
-  { kind: 'data', name: 'sizes.json', path: '/w/sizes.json', depth: 0 },
-];
 const TEXTS = { '/w/parts/lid.kup': 'cube(2)\n', '/w/part.kup': 'cube(1)\n' };
+/** The folder's files, as the disk has them: the scripts' texts, and a data file. */
+const DISK = { ...TEXTS, '/w/sizes.json': '{}' };
 
 /** The windows a test opened, closed after it. @type {(() => void)[]} */
 const opened = [];
@@ -47,7 +42,7 @@ function windowOn({
   const watched =
     /** @type {{ root: string, changed: (change: { tree: boolean }) => void, stop: () => void }[]} */ ([]);
   /** The files' texts, and the folders. */
-  const disk = new Map(Object.entries(TEXTS));
+  const disk = new Map(Object.entries(DISK));
   const folders = new Set(['/w', '/w/parts']);
   /** The menu bar set last, and each row's menu shown. */
   const menus = /** @type {{ bar: MenuEntry[], popups: MenuEntry[][] }} */ ({
@@ -59,7 +54,21 @@ function windowOn({
   const platform = {
     pickFolder: vi.fn(async () => FOLDER),
     launchFolder: vi.fn(async () => launched),
-    listFolder: vi.fn(async (/** @type {string} */ _root) => ENTRIES),
+    readDir: vi.fn(async (/** @type {string} */ dir) => {
+      /** Each name in it, and whether it is a folder. @type {Map<string, boolean>} */
+      const names = new Map();
+      for (const path of [...disk.keys(), ...folders]) {
+        if (!path.startsWith(`${dir}/`)) continue;
+        const name = path.slice(dir.length + 1).split('/')[0];
+        names.set(name, folders.has(`${dir}/${name}`));
+      }
+      return [...names].map(([name, isDirectory]) => ({
+        name,
+        isDirectory,
+        isFile: !isDirectory,
+        isSymlink: false,
+      }));
+    }),
     watchFolder: vi.fn(
       async (
         /** @type {string} */ root,
@@ -93,6 +102,7 @@ function windowOn({
     },
     trash: vi.fn(async (/** @type {string} */ path) => {
       for (const kept of disk.keys()) if (kept.startsWith(path)) disk.delete(kept);
+      for (const kept of folders) if (kept.startsWith(path)) folders.delete(kept);
     }),
     save: vi.fn(async () => null),
     tell: vi.fn(async () => {}),
@@ -103,7 +113,9 @@ function windowOn({
         /** @type {{ yes: string, no: string, cancel: string }} */ buttons,
       ) => buttons.cancel,
     ),
-    writeFile: vi.fn(async (/** @type {string} */ _path, /** @type {Uint8Array} */ _bytes) => {}),
+    writeFile: vi.fn(async (/** @type {string} */ path, /** @type {Uint8Array} */ bytes) => {
+      disk.set(path, new TextDecoder().decode(bytes));
+    }),
     exportModel: vi.fn(async () => {}),
     server: (/** @type {string} */ rootUri, /** @type {any} */ on) =>
       new LanguageServer({ rootUri, origin: 'tauri://localhost', on, spawn: fake.spawn }),
@@ -135,6 +147,7 @@ function windowOn({
     fake,
     watched,
     disk,
+    folders,
     menus,
     found,
     /** Closes the window before the test ends. */
@@ -222,7 +235,7 @@ describe('the window', () => {
     const window = windowOn();
     expect(screen.getByRole('heading', { name: 'KupCAD' })).toBeTruthy();
     const view = await openFolder();
-    expect(window.platform.listFolder).toHaveBeenCalledWith(FOLDER);
+    expect(window.platform.readDir).toHaveBeenCalledWith(FOLDER);
     const files = screen.getByRole('navigation', { name: 'Files' });
     expect(files.textContent).toContain('parts');
     expect(files.textContent).toContain('sizes.json');
@@ -337,11 +350,8 @@ describe('the window', () => {
     expect(screen.getByRole('button', { name: 'lid.kup' })).toBeTruthy();
 
     // Opened again, every folder is open: here the first script, opened with it, is in none
-    window.platform.listFolder.mockResolvedValue([
-      { kind: 'folder', name: 'parts', path: '/w/parts', depth: 0 },
-      { kind: 'data', name: 'lid.stl', path: '/w/parts/lid.stl', depth: 1 },
-      { kind: 'script', name: 'part.kup', path: '/w/part.kup', depth: 0 },
-    ]);
+    window.disk.delete(LID);
+    window.disk.set('/w/parts/lid.stl', 'solid');
     await fireEvent.click(parts());
     await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
     await vi.waitFor(() => expect(screen.getByText('lid.stl')).toBeTruthy());
@@ -356,9 +366,7 @@ describe('the window', () => {
     await openFolder();
     await vi.waitFor(() => expect(window.watched).toHaveLength(1));
     expect(window.watched[0].root).toBe(FOLDER);
-    /** @type {Entry} */
-    const added = { kind: 'script', name: 'new.kup', path: '/w/new.kup', depth: 0 };
-    window.platform.listFolder.mockResolvedValueOnce([...ENTRIES, added]);
+    window.disk.set('/w/new.kup', 'cube(5)\n');
     window.watched[0].changed({ tree: true });
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'new.kup' })).toBeTruthy());
     // A script added is opened as any other
@@ -367,14 +375,15 @@ describe('the window', () => {
 
     // Another folder: the first isn't watched any more, and what its watcher still says is
     // passed over
+    window.folders.add('/v');
+    window.disk.set('/v/other.kup', 'cube(6)\n');
     window.platform.pickFolder.mockResolvedValueOnce('/v');
     await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
     await vi.waitFor(() => expect(window.watched).toHaveLength(2));
     expect(window.watched[0].stop).toHaveBeenCalledOnce();
     expect(window.watched[1].root).toBe('/v');
-    /** @type {Entry} */
-    const stale = { kind: 'script', name: 'stale.kup', path: '/w/stale.kup', depth: 0 };
-    window.platform.listFolder.mockResolvedValueOnce([stale]);
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: 'other.kup' })).toBeTruthy());
+    window.disk.set('/w/stale.kup', '');
     window.watched[0].changed({ tree: true });
     await tick();
     await tick();
@@ -626,7 +635,7 @@ describe('a script the disk changed', () => {
     window.watched[0].changed({ tree: false });
     await vi.waitFor(() => expect(alertText()).toContain('lid.kup changed on disk.'));
     expect(view.state.doc.toString()).toBe('mine\n');
-    await fireEvent.click(screen.getByRole('button', { name: 'Load from disk' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Take theirs' }));
     expect(view.state.doc.toString()).toBe('theirs\n');
     expect(alertText()).toBeUndefined();
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
@@ -681,7 +690,7 @@ describe('a script the disk changed', () => {
     await type(view, 'kept\n');
     window.disk.delete('/w/part.kup');
     window.watched[0].changed({ tree: true });
-    await vi.waitFor(() => expect(alertText()).toContain('part.kup was removed from the disk.'));
+    await vi.waitFor(() => expect(alertText()).toContain('part.kup was deleted on disk.'));
     await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
     await vi.waitFor(() => expect(window.disk.get('/w/part.kup')).toBe('kept\n'));
   });
@@ -710,9 +719,6 @@ describe('the files', () => {
     await openFolder();
     await fireEvent.click(screen.getByRole('button', { name: 'New script' }));
     expect(field().getAttribute('aria-label')).toBe('New script name');
-    /** @type {Entry} */
-    const cover = { kind: 'script', name: 'cover.kup', path: '/w/parts/cover.kup', depth: 1 };
-    window.platform.listFolder.mockResolvedValue([...ENTRIES, cover]);
     await give('cover');
     await vi.waitFor(() => expect(window.disk.get('/w/parts/cover.kup')).toBe(''));
     await vi.waitFor(() =>
@@ -756,11 +762,6 @@ describe('the files', () => {
     expect(window.platform.popupMenu).toHaveBeenCalledOnce();
     await choose(window.menus.popups[0], 'Rename…');
     expect(field().getAttribute('aria-label')).toBe('Rename lid.kup');
-    window.platform.listFolder.mockResolvedValue([
-      ENTRIES[0],
-      { kind: 'script', name: 'cover.kup', path: '/w/parts/cover.kup', depth: 1 },
-      ...ENTRIES.slice(2),
-    ]);
     await give('cover');
     await vi.waitFor(() =>
       expect(window.platform.files.rename).toHaveBeenCalledWith(LID, '/w/parts/cover.kup'),
@@ -781,11 +782,6 @@ describe('the files', () => {
     await openFolder();
     parts().focus();
     await fireEvent.keyDown(parts(), { key: 'F2' });
-    window.platform.listFolder.mockResolvedValue([
-      { kind: 'folder', name: 'pieces', path: '/w/pieces', depth: 0 },
-      { kind: 'script', name: 'lid.kup', path: '/w/pieces/lid.kup', depth: 1 },
-      ...ENTRIES.slice(2),
-    ]);
     await give('pieces');
     await vi.waitFor(() =>
       expect(screen.getByRole('button', { name: 'lid.kup' }).getAttribute('title')).toBe(
@@ -819,16 +815,41 @@ describe('the files', () => {
   });
 });
 
+it('shows the folder opened last, not the one whose listing finished last', async () => {
+  const window = windowOn();
+  window.folders.add('/v');
+  window.disk.set('/v/slow.kup', 'cube(3)\n');
+  // /v lists slowly; /w, opened meanwhile, lists at once
+  /** @type {(() => void) | undefined} */
+  let listed;
+  const slow = new Promise((done) => (listed = /** @type {() => void} */ (done)));
+  const readDir = window.platform.readDir.getMockImplementation();
+  window.platform.readDir.mockImplementationOnce(async (dir) => {
+    await slow;
+    return readDir?.(dir) ?? [];
+  });
+  window.platform.pickFolder.mockResolvedValueOnce('/v').mockResolvedValueOnce(FOLDER);
+  await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Open folder…' }));
+  await editorView();
+  listed?.();
+  await tick();
+  await tick();
+  expect(screen.getByTitle(FOLDER).textContent).toBe('w');
+  expect(screen.queryByRole('button', { name: 'slow.kup' })).toBeNull();
+  expect(screen.queryByText(/didn't start/)).toBeNull();
+});
+
 describe('the folders opened last', () => {
   it('opens the last at the start, unless the settings say not to', async () => {
     const window = windowOn({ settings: memorySettings({ 'app.folder': '/w' }) });
     await editorView();
-    expect(window.platform.listFolder).toHaveBeenCalledWith('/w');
+    expect(window.platform.readDir).toHaveBeenCalledWith('/w');
     window.unmount();
     const not = windowOn({ settings: memorySettings({ 'app.folder': '/w', 'app.reopen': false }) });
     await tick();
     await tick();
-    expect(not.platform.listFolder).not.toHaveBeenCalled();
+    expect(not.platform.readDir).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'KupCAD' })).toBeTruthy();
   });
 
@@ -836,10 +857,10 @@ describe('the folders opened last', () => {
     const settings = memorySettings({ 'app.recent': ['/v', '/w'], 'app.reopen': false });
     const window = windowOn({ settings });
     expect(screen.getByRole('heading', { name: 'Recent' })).toBeTruthy();
-    window.platform.listFolder.mockRejectedValueOnce(new Error('no such folder'));
+    window.platform.readDir.mockRejectedValueOnce(new Error('no such folder'));
     await fireEvent.click(screen.getByTitle('/v'));
     await vi.waitFor(() =>
-      expect(screen.getByText(/v wasn't opened: no such folder/)).toBeTruthy(),
+      expect(screen.getByText(/v wasn't listed: no such folder/)).toBeTruthy(),
     );
     expect(screen.getByRole('heading', { name: 'KupCAD' })).toBeTruthy();
     await fireEvent.click(screen.getByTitle('/w'));
@@ -1000,7 +1021,7 @@ describe('files dropped on the tree from the system', () => {
     const window = windowOn();
     await openFolder();
     window.platform.ask.mockResolvedValueOnce('Rename');
-    const listed = window.platform.listFolder.mock.calls.length;
+    const listed = window.platform.readDir.mock.calls.length;
     const cover = new File(['cube(3)\n'], 'cover.kup');
     await fireEvent.drop(
       within(files()).getByRole('button', { name: 'parts' }),
@@ -1015,7 +1036,7 @@ describe('files dropped on the tree from the system', () => {
     );
     expect(new TextDecoder().decode(window.platform.writeFile.mock.calls[0][1])).toBe('cube(3)\n');
     await vi.waitFor(() =>
-      expect(window.platform.listFolder.mock.calls.length).toBeGreaterThan(listed),
+      expect(window.platform.readDir.mock.calls.length).toBeGreaterThan(listed),
     );
   });
 

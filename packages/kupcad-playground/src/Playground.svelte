@@ -164,7 +164,7 @@
     });
     runner.run(value, {}, { now: true, files });
     return () => {
-      runner?.dispose();
+      runner?.stop();
       made?.terminate();
     };
   });
@@ -427,7 +427,6 @@
     border-radius: var(--kc-radius);
     background: var(--kc-bg);
   }
-  /* A narrow page: the script over the model, the parameters under it */
   /* Narrow, the panes stacked, each at a height of its own, and the playground scrolled: the
      script a few lines, the model 4:3 of its width (at most 32em), the console and the
      parameters as tall as their lines */

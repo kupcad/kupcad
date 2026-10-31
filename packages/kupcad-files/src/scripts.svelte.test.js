@@ -195,3 +195,25 @@ it('moves or forgets what it holds of the scripts under a folder renamed or remo
   expect(scripts.unsaved.size).toBe(0);
   expect(scripts.snapshot('/w/parts/a.kup')).toBeUndefined();
 });
+
+describe('a save', () => {
+  it('writes nothing where the disk has the text already', async () => {
+    const { scripts, io } = scriptsOn({ '/w/a.kup': 'cube(1)\n' });
+    await scripts.read('/w/a.kup');
+    expect(await scripts.save('/w/a.kup')).toBe('saved');
+    expect(io.write).not.toHaveBeenCalled();
+  });
+
+  it("doesn't bring back a script dropped or renamed while it was written", async () => {
+    const { scripts, io } = scriptsOn({ '/w/a.kup': 'cube(1)\n' });
+    const writing = gate();
+    io.write.mockImplementationOnce(() => writing.promise);
+    await scripts.read('/w/a.kup');
+    scripts.edit('/w/a.kup', 'cube(2)\n');
+    const saving = scripts.save('/w/a.kup');
+    scripts.rename('/w/a.kup', '/w/b.kup');
+    writing.resolve();
+    expect(await saving).toBe('saved');
+    expect([scripts.has('/w/a.kup'), scripts.has('/w/b.kup')]).toEqual([false, true]);
+  });
+});

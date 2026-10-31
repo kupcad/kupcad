@@ -6,8 +6,10 @@ import {
   languageOf,
   listFolder,
   MAX_ENTRIES,
+  nameOf,
   nameProblem,
   parentOf,
+  renamedName,
   scriptName,
   shownEntries,
   within,
@@ -187,6 +189,38 @@ describe('a new entry', () => {
     expect([within('/w/p', '/w/p'), within('/w/p/a.kup', '/w/p'), within('/w/pq', '/w/p')]).toEqual(
       [true, true, false],
     );
+  });
+
+  it("keeps a data file's extension renamed to a name the tree wouldn't show", () => {
+    /** @type {Entry} */
+    const stl = { kind: 'data', name: 'lid.stl', path: '/w/lid.stl', depth: 0 };
+    expect([
+      renamedName(stl, 'cover'),
+      renamedName(stl, 'cover.obj'),
+      renamedName(stl, 'a.txt'),
+    ]).toEqual(['cover.stl', 'cover.obj', 'a.txt.stl']);
+    expect(renamedName({ ...stl, kind: 'script', name: 'a.kup' }, 'b')).toBe('b.kup');
+    expect(renamedName({ ...stl, kind: 'folder', name: 'parts' }, 'bits.kup')).toBe('bits.kup');
+  });
+
+  it('is known by its last name, a root by none', () => {
+    expect(['/w/parts/a.kup', 'C:\\w\\a.kup', '/w', '/', 'a.kup'].map(nameOf)).toEqual([
+      'a.kup',
+      'a.kup',
+      'w',
+      '',
+      'a.kup',
+    ]);
+  });
+
+  it("has a root for its folder with the root's separator: /, or a drive", () => {
+    expect([parentOf('/a.kup'), parentOf('C:\\a.kup'), parentOf('C:\\w\\a.kup')]).toEqual([
+      '/',
+      'C:\\',
+      'C:\\w',
+    ]);
+    // A name alone is in no folder, and nothing is within that
+    expect([parentOf('a.kup'), within('a.kup', ''), within('', '')]).toEqual(['', false, false]);
   });
 
   it('is within the root, whose path ends with its separator', () => {

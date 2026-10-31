@@ -28,6 +28,9 @@
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@kupcad/protocol": "workspace:*"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "catalog:",
     "@testing-library/svelte": "catalog:",

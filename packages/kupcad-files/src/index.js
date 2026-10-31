@@ -7,10 +7,12 @@
 // alone, for a module that loads no Svelte (Node, a plain script), is `@kupcad/files/tree`.
 
 export { default as AskDialog } from './AskDialog.svelte';
+export { default as ConflictBar } from './ConflictBar.svelte';
 export { default as ContextMenu } from './ContextMenu.svelte';
 export { default as FileTree } from './FileTree.svelte';
-export { clashQuestion, draggingFiles, freeName, putFiles, refuseStrayDrop } from './drop.js';
+export { clashQuestion, putFiles, refuseStrayDrop } from './drop.js';
 export { rowMenu } from './menu.js';
+export { Project } from './project.svelte.js';
 export { Scripts } from './scripts.svelte.js';
 export {
   childPath,
@@ -19,13 +21,13 @@ export {
   kindOf,
   languageOf,
   listFolder,
-  LOCK_FILE,
   MAX_ENTRIES,
+  nameOf,
   nameProblem,
   parentOf,
+  renamedName,
   SCRIPT_EXTENSION,
   scriptName,
-  shownEntries,
   SKIPPED_FOLDER,
   within,
 } from './tree.js';
@@ -38,3 +40,6 @@ export {
 /** @typedef {import('./drop.js').PutHost} PutHost */
 /** @typedef {import('./menu.js').RowActions} RowActions */
 /** @typedef {import('./scripts.svelte.js').ScriptFiles} ScriptFiles */
+/** @typedef {import('./project.svelte.js').ProjectFiles} ProjectFiles */
+/** @typedef {import('./project.svelte.js').ProjectOptions} ProjectOptions */
+/** @typedef {import('./project.svelte.js').Naming} Naming */

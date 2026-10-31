@@ -187,21 +187,49 @@ export function scriptName(name) {
 }
 
 /**
- * The folder `path` is in.
+ * The name `entry` takes, renamed to `given`: a script's with its extension (`scriptName`), a
+ * data file's with the one it had where `given` is no name the tree would show (the field
+ * offers its stem to type over), a folder's as given.
+ * @param {Entry} entry
+ * @param {string} given
+ */
+export function renamedName(entry, given) {
+  if (entry.kind === 'script') return scriptName(given);
+  if (entry.kind === 'data' && !kindOf(given)) {
+    const dot = entry.name.lastIndexOf('.');
+    return dot > 0 ? `${given}${entry.name.slice(dot)}` : given;
+  }
+  return given;
+}
+
+/**
+ * The last name of `path`: a file's or a folder's own; a root's (`/`) is empty.
+ * @param {string} path
+ */
+export function nameOf(path) {
+  return path.split(/[\\/]/).at(-1) ?? path;
+}
+
+/**
+ * The folder `path` is in: a root (`/`, `C:\\`) with its separator, a path with none in it
+ * (`a.kup`, a name alone) the empty string.
  * @param {string} path
  */
 export function parentOf(path) {
   const at = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-  return at <= 0 ? path.slice(0, at + 1) : path.slice(0, at);
+  // The separator stays where what is before it is a root: nothing, or a drive
+  const root = at <= 0 || /^[A-Za-z]:$/.test(path.slice(0, at));
+  return root ? path.slice(0, at + 1) : path.slice(0, at);
 }
 
 /**
- * Whether `path` is `under`, or in it, however deep. `under` may end with its separator (the
- * root, `/`).
+ * Whether `path` is `under`, or in it, however deep. `under` may end with its separator (a
+ * root, `/`); nothing is within the empty string (a name alone's "folder").
  * @param {string} path
  * @param {string} under
  */
 export function within(path, under) {
+  if (under === '') return false;
   if (path === under) return true;
   if (under.endsWith('/') || under.endsWith('\\')) return path.startsWith(under);
   return path.startsWith(`${under}/`) || path.startsWith(`${under}\\`);

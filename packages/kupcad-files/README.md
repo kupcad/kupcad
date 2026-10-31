@@ -45,10 +45,20 @@ host brings the file system.
   is read as, opened as text: a script or JSON (`languageOf`, `kupcad.json` and `kupcad.lock` among
   the JSON). The names a new entry may take (`nameProblem`, `scriptName`), and paths in it
   (`childPath`, `parentOf`, `within`) with the host's separator, `/` or `\`.
+* **The project** (`Project`, one per folder opened, over the host's file system: `readDir`,
+  `read`, `write`, `writeBytes`, `exists`, `mkdir`, `rename`, `remove`): what the two hosts share
+  of a project. Its tree (`entries`, listed one listing at a time, another after for what changed
+  meanwhile), its closed folders, its scripts (below), the name being given in the tree
+  (`startNew`, `startRename`, `commitName`: what came of it, an entry made or paths renamed, for
+  the host to open or follow), removing an entry, the files given from outside (below), and the
+  saves waiting (`edit`, `saveAfterMs`, `onsave`). What went wrong is the host's to show
+  (`onproblem`). A folder opened over another is a new Project: a listing of the old lands on it,
+  discarded. `ConflictBar` says what was done to the open script elsewhere (`where`: on disk, in
+  another tab) under unsaved changes, and takes the person's choice.
 * **The scripts read** (`Scripts`, over the host's `read`, `write` and `exists`): each one's text
-  now and as the disk had it, for what is unsaved; a save that finds the disk changed since
-  holds the disk's text as a conflict for the person to choose; each script's editor snapshot,
-  its undo history, kept while another is shown.
+  now and as the disk had it, for what is unsaved (a save writes nothing where they are the
+  same); a save that finds the disk changed since holds the disk's text as a conflict for the
+  person to choose; each script's editor snapshot, its undo history, kept while another is shown.
 
 * **Files given from outside** (`putFiles`): files dropped on the tree from the system's file
   manager (`FileTree`'s `ondropfiles`: a folder's row is that folder, a file's row its folder,

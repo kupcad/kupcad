@@ -91,7 +91,8 @@ export class Scripts {
    */
   async save(path, { overwrite = false } = {}) {
     const held = this.#held.get(path);
-    if (!held) return 'saved';
+    // Nothing to write where the disk has the text already
+    if (!held || held.text === held.saved) return 'saved';
     const { text } = held;
     this.#writing.add(path);
     try {
@@ -106,8 +107,10 @@ export class Scripts {
     } finally {
       this.#writing.delete(path);
     }
-    // What was typed while it was written stays, unsaved
-    this.#held.set(path, { text: this.#held.get(path)?.text ?? text, saved: text });
+    // What was typed while it was written stays, unsaved; a script dropped or renamed meanwhile
+    // isn't brought back
+    const now = this.#held.get(path);
+    if (now) this.#held.set(path, { text: now.text, saved: text });
     this.conflicts.delete(path);
     return 'saved';
   }

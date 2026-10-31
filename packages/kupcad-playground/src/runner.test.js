@@ -115,20 +115,12 @@ describe('Runner', () => {
     expect(got).toEqual([]);
   });
 
-  it('says why a call failed, and runs nothing more once disposed', async () => {
+  it('says why a call failed', async () => {
     const { calls, kupcad } = standIn();
     const { got, handlers } = handlersOf();
-    const runner = new Runner(kupcad, handlers, { delayMs: 10 });
+    const runner = new Runner(kupcad, handlers);
     runner.run('cube(1)', {}, { now: true });
     calls[0].fail(new Error('the worker stopped'));
     await vi.waitFor(() => expect(got).toEqual([['error', 'Error: the worker stopped']]));
-    runner.run('cube(2)', {}, { now: true });
-    runner.run('cube(3)', {});
-    runner.dispose();
-    expect(calls[1].signal.aborted).toBe(true);
-    vi.advanceTimersByTime(10);
-    expect(calls).toHaveLength(2);
-    await Promise.resolve();
-    expect(got).toHaveLength(1);
   });
 });

@@ -112,29 +112,30 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   editor, the model, the parameters and the console, and the Parameters button hides the
   parameters. It takes its services as a prop (`platform.js`, Tauri's), so its tests give it
   stand-ins.
-* **The files** (`@kupcad/files`, `folder.js`): a script or a folder is made in the tree (its bar's
-  buttons, the File menu, ⌘N and ⇧⌘N: in the open script's folder, or a row's menu, a native one of
-  `rowMenu`'s: in that row's), renamed (a row's menu, F2) and moved to the system's trash (a row's
-  menu, Delete or ⌘⌫, once the person says so, the unsaved changes it takes said), each name given
-  in a field in the tree (Enter, Escape), one that is there already or that a system doesn't take
-  refused under it. Files dragged from the system's file manager onto the tree are added to the
-  folder dropped on (`ondropfiles`: the window takes the drop itself, Tauri's `dragDropEnabled`
-  off), a name it has asked about in the system's dialog (Replace, Rename to the next free name,
-  Cancel). A script made is opened; a script renamed, or a folder with one in it, stays open by its
-  new path, its unsaved changes and undo history with it. The tree follows the folder: watched (the
+* **The files** (`@kupcad/files`' `Project`, `folder.js`): a script or a folder is made in the tree
+  (its bar's buttons, the File menu, ⌘N and ⇧⌘N: in the open script's folder, or a row's menu, a
+  native one of `rowMenu`'s: in that row's), renamed (a row's menu, F2) and moved to the system's
+  trash (a row's menu, Delete or ⌘⌫, once the person says so, the unsaved changes it takes said),
+  each name given in a field in the tree (Enter, Escape), one that is there already or that a system
+  doesn't take refused under it; a data file renamed keeps its extension. Files dragged from the
+  system's file manager onto the tree are added to the folder dropped on (`ondropfiles`: the window
+  takes the drop itself, Tauri's `dragDropEnabled` off), a name it has asked about in the system's
+  dialog (Replace, Rename to the next free name, Cancel). A script made is opened; a script renamed,
+  or a folder with one in it, stays open by its new path, its unsaved changes and undo history with
+  it. A folder opened while another is being opened wins. The tree follows the folder: watched (the
   file system plugin's `watch`, its changes gathered for 300 ms), it is listed again when something
   in it is made, removed or renamed, and not for a file only read or written in place, nor for
   anything in a folder the tree leaves out.
-* **The scripts read** (`@kupcad/files`' `Scripts`): each one's text, as it is now and as the disk had
-  it last, for what is unsaved (marked in the tree and the bar; ⌘S saves it, or a moment after
-  each change where the settings say). A file written in the folder, or the window coming back
-  to the front, has them read again: one with nothing unsaved takes the disk's text; one with
-  unsaved changes keeps them, a bar above the editor saying the disk changed (Load from disk,
-  Keep mine); one removed from the disk is closed, or kept, unsaved, where it has changes (a
-  save puts it back). A save finding the disk changed since asks before it writes over it, and
-  an autosave never does. Each script keeps its editor's undo history while another is shown
-  (the editor's `snapshot()`). The window asks before it closes, or opens another folder, on
-  unsaved changes.
+* **The scripts read** (`@kupcad/files`' `Scripts`): each one's text, as it is now and as the disk
+  had it last, for what is unsaved (marked in the tree and the bar; ⌘S saves it, or a moment after
+  each change where the settings say). A file written in the folder, or the window coming back to
+  the front, has them read again: one with nothing unsaved takes the disk's text; one with unsaved
+  changes keeps them, a bar above the editor saying the disk changed (`ConflictBar`: Take theirs,
+  Keep mine); one removed from the disk is closed, or kept, unsaved, where it has changes (a save
+  puts it back). A save finding the disk changed since asks before it writes over it, and an
+  autosave never does. Each script keeps its editor's undo history while another is shown (the
+  editor's `snapshot()`). The window asks before it closes, or opens another folder, on unsaved
+  changes.
 * **The strip, the menus and the settings** (`src/App.svelte`, `menu.js`, `SettingsPane.svelte`,
   `prefs.js`, `theme.js`): a strip at the window's left edge, as VS Code's activity bar, shows
   or hides the files, and its gear (⌘, or Ctrl+,) opens the settings: a page over the bar and

@@ -130,6 +130,26 @@ describe("the tree's keys", () => {
     expect(document.activeElement).toBe(row('brackets'));
   });
 
+  it('go into a folder whose first file is data to the first row that can be focused', async () => {
+    treeOf([], {
+      entries: [
+        { kind: 'folder', name: 'assets', path: '/w/assets', depth: 0 },
+        { kind: 'data', name: 'logo.svg', path: '/w/assets/logo.svg', depth: 1 },
+        { kind: 'script', name: 'a.kup', path: '/w/assets/a.kup', depth: 1 },
+        { kind: 'folder', name: 'empty', path: '/w/empty', depth: 0 },
+        { kind: 'data', name: 'x.stl', path: '/w/empty/x.stl', depth: 1 },
+        { kind: 'script', name: 'b.kup', path: '/w/b.kup', depth: 0 },
+      ],
+    });
+    row('assets').focus();
+    await fireEvent.keyDown(row('assets'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(row('a.kup'));
+    // Nothing in it to focus: the focus stays
+    row('empty').focus();
+    await fireEvent.keyDown(row('empty'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(row('empty'));
+  });
+
   it('close an open folder with the left arrow, and go out of a closed one or a script', async () => {
     const tree = treeOf(['/w/parts/brackets']);
     row('parts').focus();

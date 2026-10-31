@@ -14,14 +14,13 @@ import { readDir, writeFile } from '@tauri-apps/plugin-fs';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { load } from '@tauri-apps/plugin-store';
 import { check } from '@tauri-apps/plugin-updater';
-import { listFolder } from '@kupcad/files/tree';
 import { memorySettings } from '@kupcad/ui';
 import { files, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
-/** @import { Entry } from '@kupcad/files/tree' */
+/** @import { DirEntry } from '@kupcad/files/tree' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */
@@ -30,7 +29,7 @@ import { LanguageServer } from './server.js';
  * @typedef {object} Platform
  * @property {() => Promise<string | null>} pickFolder
  * @property {() => Promise<string | null>} launchFolder the folder named on the command line
- * @property {(root: string) => Promise<Entry[]>} listFolder
+ * @property {(path: string) => Promise<DirEntry[]>} readDir a folder's entries, for the tree
  * @property {(root: string, onchange: (change: { tree: boolean }) => void) => Promise<() => void>} watchFolder
  *   calls `onchange` when a file in `root` may have been written, its tree changed too or not;
  *   resolves to what stops it
@@ -120,11 +119,14 @@ const SETTINGS_FILE = 'settings.json';
 /** How long the store waits after a change before writing the file, in milliseconds. */
 const SETTINGS_SAVE_MS = 250;
 
+/** The row menu shown last, let go when the next is shown. @type {Menu | null} */
+let popup = null;
+
 /** @type {Platform} */
 export const tauri = {
   pickFolder: () => pickFolder(),
   launchFolder: () => invoke('launch_folder'),
-  listFolder: (root) => listFolder(root, { readDir }),
+  readDir: (path) => readDir(path),
   watchFolder: (root, onchange) => watchFolder(root, onchange),
   files,
   trash: (path) => invoke('move_to_trash', { path }),
@@ -148,9 +150,10 @@ export const tauri = {
     await release(await menu.setAsAppMenu());
   },
   async popupMenu(entries) {
-    // Kept until the page goes: an item chosen is told through it after the menu is gone
-    const menu = await Menu.new({ items: nativeItems(entries) });
-    await menu.popup();
+    // Kept until the next opens: an item chosen is told through it after the menu is gone
+    await release(popup);
+    popup = await Menu.new({ items: nativeItems(entries) });
+    await popup.popup();
   },
   onClose: (canClose) =>
     getCurrentWindow().onCloseRequested(async (event) => {

@@ -31,19 +31,14 @@
     VIEWER_SHORTCUTS,
   } from '@kupcad/ui';
   import { onMount, tick } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
   import {
-    childPath,
     clashQuestion,
+    ConflictBar,
     FileTree,
-    foldersAbove,
-    nameProblem,
-    parentOf,
-    putFiles,
+    nameOf,
+    Project,
     refuseStrayDrop,
     rowMenu,
-    Scripts,
-    scriptName,
     within,
   } from '@kupcad/files';
   import { fileUri } from './folder.js';
@@ -54,7 +49,7 @@
   import { themeOf } from './theme.js';
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
-  /** @import { Entry } from '@kupcad/files' */
+  /** @import { Clash, Entry, ProjectFiles } from '@kupcad/files' */
   /** @import { Settings, ShortcutGroup } from '@kupcad/ui' */
   /** @import { Platform } from './platform.js' */
 
@@ -93,42 +88,36 @@
   const fontSize = $derived(fontSizeOf(settings.get(KEYS.fontSize)));
   const autosave = $derived(settings.get(KEYS.autosave) === true);
   const recent = $derived(recentOf(settings.get(KEYS.recent)));
-  /** The tree's closed folders, by their paths: none in a folder just opened. */
-  const collapsed = new SvelteSet();
-
-  /** The folder open, by its path. */
-  let folder = $state(/** @type {string | null} */ (null));
+  /** The folder open: its tree, its scripts, the name being given in it (@kupcad/files). */
+  let project = $state.raw(/** @type {Project | null} */ (null));
+  const folder = $derived(project?.root ?? null);
   /** How many folders were opened: what a listing or a watcher of an earlier one checks. */
   let opened = 0;
   /** Stops watching the folder open. */
   let unwatch = /** @type {(() => void) | null} */ (null);
-  let entries = $state(/** @type {Entry[]} */ ([]));
   /** The script open in the editor. */
   let open = $state(/** @type {{ path: string, name: string, uri: string } | null} */ (null));
-  /** The scripts read: their texts, what is unsaved, what the disk changed under them. */
-  const scripts = new Scripts({
+  /** How many scripts were asked to open: one read after a later one is asked for isn't shown. */
+  let opening = 0;
+  /** What the disk did to the script open under its unsaved changes, if anything. */
+  const conflict = $derived(open ? project?.scripts.conflicts.get(open.path) : undefined);
+  /** The project's files, on the disk: the trash is where one removed goes. */
+  const projectFiles = /** @type {ProjectFiles} */ ({
+    readDir: (path) => platform.readDir(path),
     read: (path) => platform.files.read(path),
     write: (path, text) => platform.files.write(path, text),
+    writeBytes: (path, bytes) => platform.writeFile(path, bytes),
     exists: (path) => platform.files.exists(path),
+    mkdir: (path) => platform.files.mkdir(path),
+    rename: (from, to) => platform.files.rename(from, to),
+    remove: (path) => platform.trash(path),
   });
-  /** What the disk did to the script open under its unsaved changes, if anything. */
-  const conflict = $derived(open ? scripts.conflicts.get(open.path) : undefined);
   let server = $state(/** @type {ReturnType<Platform['server']> | null} */ (null));
   let viewportUrl = $state(/** @type {string | null} */ (null));
   let running = $state(false);
   let editor = $state(/** @type {ScriptEditor | null} */ (null));
   /** What went wrong last, shown in the bar until something else does. */
   let problem = $state('');
-
-  /** A name being given in the tree, and what is wrong with the last one given. */
-  let editing = $state(
-    /** @type {{ path: string } | { in: string, kind: 'script' | 'folder' } | null} */ (null),
-  );
-  let nameError = $state(/** @type {string | null} */ (null));
-  /** A name given is being made into an entry: one given again meanwhile is the same. */
-  let naming = false;
-  /** Each script changed that waits to be saved, by its path. */
-  const autosaves = new Map();
 
   /** Whether the files show beside the editor: none before a folder is opened. */
   let showsFiles = $state(true);
@@ -193,55 +182,54 @@
     log: (text) => (problem = text),
   });
 
-  const name = (/** @type {string} */ path) => path.split(/[\\/]/).at(-1) ?? path;
-
   /**
-   * Opens a folder, kept as the last opened; one that can't be listed leaves the window as it was.
+   * Opens a folder, kept as the last opened; one that can't be listed leaves the window as it
+   * was, and one opened while another was being opened wins.
    * @param {string | null} [named] the folder, else the one the person picks
    */
   async function openFolder(named) {
     const picked = named ?? (await platform.pickFolder());
     if (!picked) return;
     if (
-      scripts.unsaved.size > 0 &&
+      (project?.scripts.unsaved.size ?? 0) > 0 &&
       !(await platform.confirm('Leave this folder without saving?'))
     ) {
       return;
     }
-    let listed;
-    try {
-      listed = await platform.listFolder(picked);
-    } catch (error) {
-      problem = `${name(picked)} wasn't opened: ${errorText(error)}`;
-      return;
-    }
     const mine = ++opened;
+    const next = new Project(picked, projectFiles, {
+      onproblem: (text) => {
+        if (mine === opened) problem = text;
+      },
+      onsave: (path) => void saveScript(path, { quiet: true }),
+      saveAfterMs: () => (autosave ? AUTOSAVE_MS : null),
+      beforeRename: keepEditor,
+      // macOS and Windows take a name in another case for the same file
+      ignoresCase: true,
+    });
+    if (!(await next.list()) || mine !== opened) return;
     unwatch?.();
     unwatch = null;
-    stopAutosaves();
+    project?.dispose();
     await server?.stop();
-    scripts.clear();
-    collapsed.clear();
-    editing = null;
+    if (mine !== opened) return;
+    project = next;
     open = null;
     preview.show(null);
     problem = '';
-    folder = picked;
     showsFiles = true;
-    entries = listed;
     settings.set(KEYS.folder, picked);
     settings.set(KEYS.recent, withRecent(recent, picked));
-    const relist = listAgain(picked, mine);
     platform
       .watchFolder(picked, ({ tree }) => {
-        if (tree) void relist();
+        if (tree) void next.list();
         void checkDisk(mine);
       })
       .then((stop) => {
         if (mine === opened) unwatch = stop;
         else stop();
       })
-      .catch((error) => (problem = `${name(picked)} isn't watched: ${errorText(error)}`));
+      .catch((error) => (problem = `${nameOf(picked)} isn't watched: ${errorText(error)}`));
     const started = platform.server(fileUri(picked), {
       viewport: (url) => (viewportUrl = url),
       state: (up) => (running = up),
@@ -251,52 +239,11 @@
     try {
       await started.start();
     } catch (error) {
-      problem = `kupcad didn't start: ${errorText(error)}`;
+      if (mine === opened) problem = `kupcad didn't start: ${errorText(error)}`;
     }
-    const first = entries.find((entry) => entry.kind === 'script');
+    if (mine !== opened) return;
+    const first = next.entries.find((entry) => entry.kind === 'script');
     if (first) await openScript(first);
-  }
-
-  /**
-   * What lists the folder `root` again when the watcher says its tree changed: one listing at a
-   * time, another after it for what changed meanwhile, none once another folder is opened.
-   * @param {string} root
-   * @param {number} mine which folder opened it was
-   */
-  function listAgain(root, mine) {
-    let listing = false;
-    let again = false;
-    return async () => {
-      if (listing) {
-        again = true;
-        return;
-      }
-      listing = true;
-      try {
-        do {
-          again = false;
-          const listed = await platform.listFolder(root);
-          if (mine !== opened) return;
-          entries = listed;
-        } while (again);
-      } catch (error) {
-        if (mine === opened) problem = `${name(root)} wasn't listed again: ${errorText(error)}`;
-      } finally {
-        listing = false;
-      }
-    };
-  }
-
-  /** Lists the folder open again now: an entry was made, renamed or moved away. */
-  async function listNow() {
-    if (!folder) return;
-    const mine = opened;
-    try {
-      const listed = await platform.listFolder(folder);
-      if (mine === opened) entries = listed;
-    } catch (error) {
-      if (mine === opened) problem = `${name(folder)} wasn't listed again: ${errorText(error)}`;
-    }
   }
 
   /**
@@ -305,41 +252,36 @@
    * @param {number} [mine] which folder opened it was
    */
   async function checkDisk(mine = opened) {
-    if (mine !== opened) return;
-    const dropped = await scripts.check();
+    const current = project;
+    if (mine !== opened || !current) return;
+    const dropped = await current.scripts.check();
     if (mine !== opened || !open || !dropped.includes(open.path)) return;
     problem = `${open.name} was removed from the disk.`;
     closeScript();
   }
 
-  /**
-   * Opens or closes the tree's folder at `path`.
-   * @param {string} path
-   * @param {boolean} opening
-   */
-  function toggle(path, opening) {
-    if (opening) collapsed.delete(path);
-    else collapsed.add(path);
-  }
-
   /** @param {Entry} entry */
   async function openScript(entry) {
+    const current = project;
+    if (!current) return;
+    const mine = ++opening;
     try {
-      await scripts.read(entry.path);
+      await current.scripts.read(entry.path);
     } catch (error) {
-      problem = `${entry.name} wasn't read: ${errorText(error)}`;
+      if (mine === opening) problem = `${entry.name} wasn't read: ${errorText(error)}`;
       return;
     }
+    if (mine !== opening || current !== project) return;
     keepEditor();
     open = { path: entry.path, name: entry.name, uri: fileUri(entry.path) };
     // Shown in the tree: the folders it is in open
-    for (const path of foldersAbove(entries, entry.path)) collapsed.delete(path);
+    current.reveal(entry.path);
     preview.show(open);
   }
 
   /** Keeps the editor of the script open as it is, its undo history with it, for its return. */
   function keepEditor() {
-    if (open && editor) scripts.keep(open.path, editor.snapshot());
+    if (open && editor) project?.scripts.keep(open.path, editor.snapshot());
   }
 
   function closeScript() {
@@ -349,23 +291,7 @@
 
   /** @param {string} text */
   function edited(text) {
-    if (!open) return;
-    const { path } = open;
-    scripts.edit(path, text);
-    if (!autosave) return;
-    clearTimeout(autosaves.get(path));
-    autosaves.set(
-      path,
-      setTimeout(() => {
-        autosaves.delete(path);
-        void saveScript(path, { quiet: true });
-      }, AUTOSAVE_MS),
-    );
-  }
-
-  function stopAutosaves() {
-    for (const timer of autosaves.values()) clearTimeout(timer);
-    autosaves.clear();
+    if (open) project?.edit(open.path, text);
   }
 
   /**
@@ -376,15 +302,15 @@
    * @param {{ quiet?: boolean }} [options]
    */
   async function saveScript(path = open?.path, { quiet = false } = {}) {
-    if (!path || !scripts.has(path)) return;
-    clearTimeout(autosaves.get(path));
-    autosaves.delete(path);
+    const current = project;
+    if (!path || !current?.scripts.has(path)) return;
+    current.saving(path);
     try {
-      if ((await scripts.save(path)) === 'saved' || quiet) return;
-      const question = `${name(path)} changed on disk since it was opened. Save yours over it?`;
-      if (await platform.confirm(question)) await scripts.save(path, { overwrite: true });
+      if ((await current.scripts.save(path)) === 'saved' || quiet) return;
+      const question = `${nameOf(path)} changed on disk since it was opened. Save yours over it?`;
+      if (await platform.confirm(question)) await current.scripts.save(path, { overwrite: true });
     } catch (error) {
-      problem = `${name(path)} wasn't saved: ${errorText(error)}`;
+      problem = `${nameOf(path)} wasn't saved: ${errorText(error)}`;
     }
   }
 
@@ -393,9 +319,9 @@
    * @param {'disk' | 'mine'} keep
    */
   function resolveConflict(keep) {
-    if (!open) return;
-    scripts.resolve(open.path, keep);
-    if (!scripts.has(open.path)) closeScript();
+    if (!open || !project) return;
+    project.scripts.resolve(open.path, keep);
+    if (!project.scripts.has(open.path)) closeScript();
   }
 
   /**
@@ -406,7 +332,7 @@
    */
   async function reveal(uri, line, column) {
     if (open?.uri !== uri) {
-      const entry = entries.find((candidate) => fileUri(candidate.path) === uri);
+      const entry = project?.entries.find((candidate) => fileUri(candidate.path) === uri);
       if (!entry) return;
       await openScript(entry);
       await tick();
@@ -421,104 +347,43 @@
    * @param {Entry | null} [entry]
    */
   function startNew(kind, entry = null) {
-    if (!folder) return;
-    let dir = folder;
-    if (entry) dir = entry.kind === 'folder' ? entry.path : parentOf(entry.path);
-    else if (open) dir = parentOf(open.path);
-    collapsed.delete(dir);
-    for (const path of foldersAbove(entries, dir)) collapsed.delete(path);
-    if (settingsOpen) void closeSettings();
-    showsFiles = true;
-    nameError = null;
-    editing = { in: dir, kind };
+    if (!project) return;
+    showFiles();
+    project.startNew(kind, project.folderFor(entry, open?.path));
   }
 
   /** @param {Entry} entry */
   function startRename(entry) {
+    showFiles();
+    project?.startRename(entry);
+  }
+
+  /** The files, for a name to be given in them: over the settings, which close. */
+  function showFiles() {
     if (settingsOpen) void closeSettings();
     showsFiles = true;
-    nameError = null;
-    editing = { path: entry.path };
   }
 
   /**
-   * Makes the name given in the tree an entry: a new one, or a row's new name. One refused stays
-   * in the field, what is wrong with it said under it.
+   * Makes the name given in the tree an entry (the project's `commitName`): a script made is
+   * opened, to be written; the script open, renamed or in a folder renamed, stays open by its
+   * new path.
    * @param {string} given
    */
   async function commitName(given) {
-    const now = editing;
-    if (!now || !folder || naming) return;
-    const wrong = nameProblem(given);
-    if (wrong) {
-      nameError = wrong;
-      return;
-    }
-    naming = true;
-    try {
-      if ('in' in now) await makeEntry(now.in, now.kind, given);
-      else await renameEntry(now.path, given);
-    } catch (error) {
-      nameError = errorText(error);
-    } finally {
-      naming = false;
-    }
-  }
-
-  /**
-   * @param {string} dir
-   * @param {'script' | 'folder'} kind
-   * @param {string} given
-   */
-  async function makeEntry(dir, kind, given) {
-    const named = kind === 'script' ? scriptName(given) : given;
-    const path = childPath(dir, named);
-    if (await platform.files.exists(path)) {
-      nameError = `${named} is there already.`;
-      return;
-    }
-    if (kind === 'script') await platform.files.write(path, '');
-    else await platform.files.mkdir(path);
-    editing = null;
-    await listNow();
-    if (kind !== 'script') return;
-    const depth = (entries.find((entry) => entry.path === dir)?.depth ?? -1) + 1;
-    await openScript(
-      entries.find((entry) => entry.path === path) ?? { kind, name: named, path, depth },
-    );
-    await tick();
-    editor?.focus();
-  }
-
-  /**
-   * @param {string} from
-   * @param {string} given
-   */
-  async function renameEntry(from, given) {
-    const kind = entries.find((entry) => entry.path === from)?.kind;
-    const named = kind === 'script' ? scriptName(given) : given;
-    const to = childPath(parentOf(from), named);
-    // Only its case changed: the same file to a system that ignores case
-    if (to.toLowerCase() !== from.toLowerCase() && (await platform.files.exists(to))) {
-      nameError = `${named} is there already.`;
-      return;
-    }
-    keepEditor();
-    await platform.files.rename(from, to);
-    scripts.rename(from, to);
-    // A copy: renaming adds to what is iterated
-    for (const path of Array.from(collapsed)) {
-      if (!within(path, from)) continue;
-      collapsed.delete(path);
-      collapsed.add(to + path.slice(from.length));
-    }
-    if (open && within(open.path, from)) {
-      const path = to + open.path.slice(from.length);
-      open = { path, name: name(path), uri: fileUri(path) };
+    const current = project;
+    const done = await current?.commitName(given);
+    if (!done || current !== project) return;
+    if ('made' in done) {
+      if (done.made.kind !== 'script') return;
+      await openScript(done.made);
+      await tick();
+      editor?.focus();
+    } else if (open && within(open.path, done.renamed.from)) {
+      const path = done.renamed.to + open.path.slice(done.renamed.from.length);
+      open = { path, name: nameOf(path), uri: fileUri(path) };
       preview.show(open);
     }
-    editing = null;
-    await listNow();
   }
 
   /**
@@ -527,51 +392,28 @@
    * @param {Entry} entry
    */
   async function trashEntry(entry) {
-    const lost = [...scripts.unsaved].some((path) => within(path, entry.path));
+    if (!project) return;
+    const lost = [...project.scripts.unsaved].some((path) => within(path, entry.path));
     const what =
       entry.kind === 'folder'
         ? `the folder “${entry.name}” and everything in it`
         : `“${entry.name}”`;
     const question = `Move ${what} to the ${TRASH}?${lost ? ' Its unsaved changes are lost.' : ''}`;
     if (!(await platform.confirm(question))) return;
-    try {
-      await platform.trash(entry.path);
-    } catch (error) {
-      problem = `${entry.name} wasn't moved to the ${TRASH}: ${errorText(error)}`;
-      return;
-    }
-    scripts.drop(entry.path);
-    for (const path of collapsed) if (within(path, entry.path)) collapsed.delete(path);
+    if (!(await project.remove(entry))) return;
     if (open && within(open.path, entry.path)) closeScript();
-    await listNow();
   }
 
   /**
-   * Puts files dropped on the tree from the system's file manager in the folder `dir`, asking
-   * about a name it has (Replace, Rename, Cancel), what the tree wouldn't show refused; a script
+   * Puts files dropped on the tree from the system's file manager in the folder `dir` (the
+   * project's `addFiles`, asking about a name it has with the system's dialog); a script
    * replaced is read again.
    * @param {File[]} files
    * @param {string} dir
    */
   async function dropFiles(files, dir) {
-    let added;
-    try {
-      added = await putFiles(files, dir, {
-        exists: (path) => platform.files.exists(path),
-        write: (path, bytes) => platform.writeFile(path, bytes),
-        clash: (named, renamed) => askClash(named, renamed, name(dir)),
-      });
-    } catch (error) {
-      problem = `The files weren't added: ${errorText(error)}`;
-      return;
-    }
-    if (added.refused.length > 0) {
-      problem = `Not added, being no script or file a script reads: ${added.refused.join(', ')}`;
-    }
-    if (added.put.length === 0) return;
-    for (const path of [dir, ...foldersAbove(entries, dir)]) collapsed.delete(path);
-    await listNow();
-    await checkDisk();
+    const put = await project?.addFiles(files, dir, askClash);
+    if (put?.length) await checkDisk();
   }
 
   /**
@@ -579,7 +421,7 @@
    * @param {string} named
    * @param {string} renamed the free name it would take
    * @param {string} folderName
-   * @returns {Promise<import('@kupcad/files').Clash>}
+   * @returns {Promise<Clash>}
    */
   async function askClash(named, renamed, folderName) {
     const question = clashQuestion(named, renamed, folderName);
@@ -674,7 +516,7 @@
         (await platform.confirm(
           `KupCAD ${update.version} is out (this is ${update.current}). Install it and restart?`,
         )) &&
-        (scripts.unsaved.size === 0 ||
+        ((project?.scripts.unsaved.size ?? 0) === 0 ||
           (await platform.confirm('Restart without saving your changes?')));
       if (!install) {
         await update.dismiss();
@@ -736,7 +578,7 @@
       {
         mac: MAC,
         folder: folder !== null,
-        canSave: open !== null && scripts.unsaved.has(open.path),
+        canSave: open !== null && (project?.scripts.unsaved.has(open.path) ?? false),
         filesShown,
         recent,
       },
@@ -764,7 +606,9 @@
 
   onMount(() => {
     const closing = platform.onClose(async () =>
-      scripts.unsaved.size === 0 ? true : platform.confirm('Close without saving your changes?'),
+      (project?.scripts.unsaved.size ?? 0) === 0
+        ? true
+        : platform.confirm('Close without saving your changes?'),
     );
     platform
       .launchFolder()
@@ -779,7 +623,7 @@
     return () => {
       opened++;
       unwatch?.();
-      stopAutosaves();
+      project?.dispose();
       void closing.then((stop) => stop());
       void server?.stop();
     };
@@ -827,16 +671,17 @@
     </button>
   </nav>
   <div class="main">
-    {#if folder}
+    {#if project}
       <header class="bar" inert={settingsOpen}>
         <button type="button" class="kc-control" onclick={() => openFolder()}>Open folder…</button>
-        <span class="folder" title={folder}>{name(folder)}</span>
+        <span class="folder" title={project.root}>{nameOf(project.root)}</span>
         {#if open}
-          <span class="script">{open.name}{scripts.unsaved.has(open.path) ? ' ●' : ''}</span>
+          <span class="script">{open.name}{project.scripts.unsaved.has(open.path) ? ' ●' : ''}</span
+          >
           <button
             type="button"
             class="kc-control kc-primary"
-            disabled={!scripts.unsaved.has(open.path)}
+            disabled={!project.scripts.unsaved.has(open.path)}
             onclick={() => saveScript()}
           >
             Save
@@ -848,20 +693,20 @@
       </header>
     {/if}
     <div class="body" inert={settingsOpen}>
-      {#if filesShown && folder}
+      {#if filesShown && project}
         <nav class="side" aria-label="Files" style:width="{filesWidth}px">
           <FileTree
-            {entries}
-            {collapsed}
+            entries={project.entries}
+            collapsed={project.collapsed}
             selected={open?.path ?? null}
-            unsaved={scripts.unsaved}
-            root={folder}
-            {editing}
-            problem={nameError}
+            unsaved={project.scripts.unsaved}
+            root={project.root}
+            editing={project.editing}
+            problem={project.nameError}
             onopen={openScript}
-            ontoggle={(entry, opening) => toggle(entry.path, opening)}
+            ontoggle={(entry, opening) => project?.toggle(entry.path, opening)}
             oncommit={(given) => void commitName(given)}
-            oncancel={() => (editing = null)}
+            oncancel={() => project?.cancelNaming()}
             onmenu={rowMenuOf}
             onrename={startRename}
             ontrash={(entry) => void trashEntry(entry)}
@@ -878,34 +723,19 @@
           onchange={(size) => settings.set(KEYS.files, size)}
         />
       {/if}
-      {#if folder}
+      {#if project}
         <section class="code" aria-label="Script" style:width="{editorWidth}px">
           {#if open && conflict !== undefined}
-            <div class="conflict" role="alert">
-              {#if conflict === null}
-                <span>{open.name} was removed from the disk. Saving puts it back.</span>
-                <button type="button" class="kc-control" onclick={() => resolveConflict('disk')}>
-                  Discard mine
-                </button>
-              {:else}
-                <span>{open.name} changed on disk.</span>
-                <button type="button" class="kc-control" onclick={() => resolveConflict('disk')}>
-                  Load from disk
-                </button>
-              {/if}
-              <button type="button" class="kc-control" onclick={() => resolveConflict('mine')}>
-                Keep mine
-              </button>
-            </div>
+            <ConflictBar name={open.name} {conflict} where="on disk" onresolve={resolveConflict} />
           {/if}
           {#if open && server}
             <div class="editor">
               {#key open.path}
                 <Editor
-                  value={scripts.text(open.path)}
+                  value={project.scripts.text(open.path)}
                   label={open.name}
                   languageServer={{ client: server.client, uri: open.uri }}
-                  restore={scripts.snapshot(open.path)}
+                  restore={project.scripts.snapshot(open.path)}
                   onchange={edited}
                   bind:editor
                 />
@@ -948,7 +778,7 @@
                 {#each recent as path (path)}
                   <li>
                     <button type="button" title={path} onclick={() => openFolder(path)}>
-                      <span class="recent-name">{name(path)}</span>
+                      <span class="recent-name">{nameOf(path)}</span>
                       <span class="recent-path">{path}</span>
                     </button>
                   </li>
@@ -1093,19 +923,6 @@
   .editor {
     flex: 1;
     min-height: 0;
-  }
-  /* What the disk did to the script under its unsaved changes, and the person's choice */
-  .conflict {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--kc-gap);
-    padding: 6px var(--kc-gap);
-    background: var(--kc-accent-subtle);
-    border-bottom: 1px solid var(--kc-accent);
-  }
-  .conflict span {
-    flex: 1 1 12em;
   }
   /* What the others leave, however wide they are made: the window's least width keeps some */
   .preview {

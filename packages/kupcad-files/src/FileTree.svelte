@@ -150,7 +150,13 @@
     else if (event.key === 'ArrowUp') rows[row - 1]?.focus();
     else if (event.key === 'ArrowRight' && entry.kind === 'folder') {
       if (closed) ontoggle(entry, true);
-      else if (shown[at + 1]?.depth > entry.depth) rowOf(shown[at + 1].path)?.focus();
+      else {
+        // The first row in it that can take the focus (a data file's can't)
+        const inside = shown
+          .slice(at + 1)
+          .find((next) => next.depth <= entry.depth || rowOf(next.path));
+        if (inside && inside.depth > entry.depth) rowOf(inside.path)?.focus();
+      }
     } else if (event.key === 'ArrowLeft') {
       if (entry.kind === 'folder' && !closed) ontoggle(entry, false);
       else rowOf(foldersAbove(entries, entry.path).at(-1))?.focus();
