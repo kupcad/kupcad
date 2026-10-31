@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { createEvent, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree.svelte';
 
@@ -239,5 +239,62 @@ describe('a name given in the tree', () => {
       /** @type {string} */ (field().getAttribute('aria-describedby')),
     );
     expect(said?.textContent).toBe('b.kup is there already.');
+  });
+});
+
+/** A drag from the system's file manager, of `files`. @param {File[]} [files] */
+const dragging = (files = []) => ({
+  dataTransfer: { types: ['Files'], files, dropEffect: 'none' },
+});
+/** Whether the row named `name` is marked as where files dragged would go. @param {string} name */
+const marked = (name) => row(name).closest('li')?.classList.contains('dropping');
+const tree = () => screen.getByRole('list');
+
+describe('files dropped on the tree', () => {
+  it("go in a folder's row's own folder, the one a file's row is in, or the root", async () => {
+    const ondropfiles = vi.fn();
+    treeOf([], { ondropfiles });
+    const lid = new File(['cube(1)'], 'lid.kup');
+    for (const target of [
+      row('brackets'),
+      row('lid.kup'),
+      screen.getByText('l.stl'),
+      row('b.kup'),
+      tree(),
+    ]) {
+      await fireEvent.drop(target, dragging([lid]));
+    }
+    expect(ondropfiles.mock.calls).toEqual([
+      [[lid], '/w/parts/brackets'],
+      [[lid], '/w/parts'],
+      [[lid], '/w/parts/brackets'],
+      [[lid], '/w'],
+      [[lid], '/w'],
+    ]);
+  });
+
+  it('mark the folder they would go in while they are over it, the whole tree for the root', async () => {
+    treeOf([], { ondropfiles: vi.fn() });
+    expect(await fireEvent.dragOver(row('l.kup'), dragging())).toBe(false);
+    expect([marked('brackets'), marked('parts')]).toEqual([true, false]);
+    await fireEvent.dragOver(row('b.kup'), dragging());
+    expect([marked('brackets'), tree().classList.contains('dropping')]).toEqual([false, true]);
+    // From row to row, still over the tree; then off it
+    const between = createEvent.dragLeave(row('b.kup'));
+    Object.defineProperty(between, 'relatedTarget', { value: row('parts') });
+    await fireEvent(row('b.kup'), between);
+    expect(tree().classList.contains('dropping')).toBe(true);
+    await fireEvent.dragLeave(tree());
+    expect(tree().classList.contains('dropping')).toBe(false);
+  });
+
+  it('are taken by no tree without a host for them, and a drag of text by none', async () => {
+    treeOf();
+    expect(await fireEvent.dragOver(row('b.kup'), dragging())).toBe(true);
+    document.body.replaceChildren();
+    treeOf([], { ondropfiles: vi.fn() });
+    const words = { dataTransfer: { types: ['text/plain'], files: [], dropEffect: 'none' } };
+    expect(await fireEvent.dragOver(row('b.kup'), words)).toBe(true);
+    expect(tree().classList.contains('dropping')).toBe(false);
   });
 });

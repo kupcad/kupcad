@@ -112,16 +112,19 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   editor, the model, the parameters and the console, and the Parameters button hides the
   parameters. It takes its services as a prop (`platform.js`, Tauri's), so its tests give it
   stand-ins.
-* **The files** (`@kupcad/files`, `folder.js`): a script or a folder is made in the tree (its
-  bar's buttons, the File menu, ⌘N and ⇧⌘N: in the open script's folder, or a row's menu, a
-  native one of `rowMenu`'s: in that row's), renamed (a row's menu, F2) and moved to the system's trash (a row's
-  menu, Delete or ⌘⌫, once the person says so, the unsaved changes it takes said), each name
-  given in a field in the tree (Enter, Escape), one that is there already or that a system
-  doesn't take refused under it. A script made is opened; a script renamed, or a folder with
-  one in it, stays open by its new path, its unsaved changes and undo history with it. The tree
-  follows the folder: watched (the file system plugin's `watch`, its changes gathered for
-  300 ms), it is listed again when something in it is made, removed or renamed, and not for a
-  file only read or written in place, nor for anything in a folder the tree leaves out.
+* **The files** (`@kupcad/files`, `folder.js`): a script or a folder is made in the tree (its bar's
+  buttons, the File menu, ⌘N and ⇧⌘N: in the open script's folder, or a row's menu, a native one of
+  `rowMenu`'s: in that row's), renamed (a row's menu, F2) and moved to the system's trash (a row's
+  menu, Delete or ⌘⌫, once the person says so, the unsaved changes it takes said), each name given
+  in a field in the tree (Enter, Escape), one that is there already or that a system doesn't take
+  refused under it. Files dragged from the system's file manager onto the tree are added to the
+  folder dropped on (`ondropfiles`: the window takes the drop itself, Tauri's `dragDropEnabled`
+  off), a name it has asked about in the system's dialog (Replace, Rename to the next free name,
+  Cancel). A script made is opened; a script renamed, or a folder with one in it, stays open by its
+  new path, its unsaved changes and undo history with it. The tree follows the folder: watched (the
+  file system plugin's `watch`, its changes gathered for 300 ms), it is listed again when something
+  in it is made, removed or renamed, and not for a file only read or written in place, nor for
+  anything in a folder the tree leaves out.
 * **The scripts read** (`@kupcad/files`' `Scripts`): each one's text, as it is now and as the disk had
   it last, for what is unsaved (marked in the tree and the bar; ⌘S saves it, or a moment after
   each change where the settings say). A file written in the folder, or the window coming back

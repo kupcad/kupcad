@@ -9,10 +9,14 @@
   or Shift+F10) and the tree's are the host's (`onmenu`, with where to show it); F2 renames a
   row, Delete or ⌘⌫ (Ctrl+Backspace) removes it. A name being given (`editing`: a row renamed,
   an entry made in a folder) is a field in the tree, Enter giving it and Escape leaving it, what
-  is wrong with it said under it (`problem`). It fills its box, the rows scrolling under the bar.
+  is wrong with it said under it (`problem`). Files dragged from the system's file manager are
+  dropped in a folder (`ondropfiles`): a folder's row's own, the one a file's row is in, the
+  root's elsewhere in the tree, that folder marked while they are over it. It fills its box, the
+  rows scrolling under the bar.
 -->
 <script>
-  import { foldersAbove, shownEntries } from './tree.js';
+  import { draggingFiles } from './drop.js';
+  import { foldersAbove, parentOf, shownEntries } from './tree.js';
 
   /** @import { Entry } from './tree.js' */
 
@@ -37,6 +41,8 @@
    * @property {string} [title] the bar's
    * @property {{ script?: string, folder?: string }} [keys] the host's shortcuts for the bar's
    *   buttons, shown in their tooltips (`⌘N`)
+   * @property {(files: File[], folder: string) => void} [ondropfiles] files from outside the
+   *   page dropped on the tree, for `folder`; without it the tree takes no drop
    */
 
   /** A point in the window, in its pixels. @typedef {{ x: number, y: number }} Point */
@@ -65,12 +71,55 @@
     onnew,
     title = 'Files',
     keys = {},
+    ondropfiles,
   } = $props();
 
   const id = $props.id();
 
   const shown = $derived(shownEntries(entries, collapsed));
   let list = $state(/** @type {HTMLUListElement | null} */ (null));
+  /** The folder files dragged over the tree would be dropped in. */
+  let dropping = $state(/** @type {string | null} */ (null));
+
+  /**
+   * The folder files dropped on `target` go in: a folder's row's own, the one a file's row is in,
+   * the root's elsewhere in the tree.
+   * @param {EventTarget | null} target
+   */
+  function folderAt(target) {
+    const row = target instanceof Element ? target.closest('li[data-path]') : null;
+    const entry = entries.find((candidate) => candidate.path === row?.getAttribute('data-path'));
+    if (!entry) return root;
+    return entry.kind === 'folder' ? entry.path : parentOf(entry.path);
+  }
+
+  /** @param {DragEvent} event */
+  function dragover(event) {
+    if (!ondropfiles || !draggingFiles(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    dropping = folderAt(event.target);
+  }
+
+  /** Off the tree (onto the page, out of the window): nothing is dropped on it. @param {DragEvent} event */
+  function dragleave(event) {
+    const into = event.relatedTarget;
+    if (!(
+      into instanceof Node &&
+      event.currentTarget instanceof Node &&
+      event.currentTarget.contains(into)
+    )) {
+      dropping = null;
+    }
+  }
+
+  /** @param {DragEvent} event */
+  function drop(event) {
+    if (!ondropfiles || !draggingFiles(event)) return;
+    event.preventDefault();
+    dropping = null;
+    ondropfiles([...(event.dataTransfer?.files ?? [])], folderAt(event.target));
+  }
 
   /** The row of the entry at `path`, when it has one to focus (data files have none). */
   const rowOf = (/** @type {string | undefined} */ path) =>
@@ -186,7 +235,8 @@
   {/if}
 {/snippet}
 
-<div class="kc-files">
+<!-- svelte-ignore a11y_no_static_element_interactions: a drop of files from the system's file manager, which the bar's buttons and the rows' menus offer the keys too (the host's upload) -->
+<div class="kc-files" ondragover={dragover} ondragleave={dragleave} ondrop={drop}>
   <div class="bar">
     <span class="title">{title}</span>
     {#if onnew}
@@ -219,6 +269,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions: its rows are the buttons the keys move between, and their menu is the keys' too -->
   <ul
     class="tree"
+    class:dropping={dropping !== null && dropping === root}
     bind:this={list}
     onkeydown={keydown}
     oncontextmenu={(event) => menu(event, null)}
@@ -231,6 +282,8 @@
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions: a row's menu is its keys' too -->
         <li
           class={entry.kind}
+          class:dropping={entry.kind === 'folder' && entry.path === dropping}
+          data-path={entry.path}
           style:padding-left="{entry.depth * 12 + 8}px"
           oncontextmenu={(event) => menu(event, entry)}
         >
@@ -340,6 +393,13 @@
   .folder {
     color: var(--kc-muted);
     font-weight: 600;
+  }
+  /* Where files dragged over the tree would be dropped: a folder's row, or the whole tree for its
+     root */
+  .dropping {
+    background: var(--kc-accent-subtle);
+    outline: 1px dashed var(--kc-accent);
+    outline-offset: -1px;
   }
   .data,
   .empty {

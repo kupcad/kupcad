@@ -5,6 +5,6 @@ import { SVELTE_TESTS } from '../../vitest.svelte.js';
 
 export default defineConfig({
   plugins: [svelte({ configFile: false }), svelteTesting()],
-  // The context menu is a popover, which jsdom lacks
-  test: { ...SVELTE_TESTS, setupFiles: ['src/popover.test-helper.js'] },
+  // The context menu is a popover and the question a modal dialog, which jsdom lacks
+  test: { ...SVELTE_TESTS, setupFiles: ['src/dom.test-helper.js'] },
 });

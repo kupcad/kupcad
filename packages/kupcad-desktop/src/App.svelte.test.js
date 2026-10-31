@@ -97,7 +97,13 @@ function windowOn({
     save: vi.fn(async () => null),
     tell: vi.fn(async () => {}),
     confirm: vi.fn(async (/** @type {string} */ _question) => false),
-    writeFile: vi.fn(async () => {}),
+    ask: vi.fn(
+      async (
+        /** @type {string} */ _question,
+        /** @type {{ yes: string, no: string, cancel: string }} */ buttons,
+      ) => buttons.cancel,
+    ),
+    writeFile: vi.fn(async (/** @type {string} */ _path, /** @type {Uint8Array} */ _bytes) => {}),
     exportModel: vi.fn(async () => {}),
     server: (/** @type {string} */ rootUri, /** @type {any} */ on) =>
       new LanguageServer({ rootUri, origin: 'tauri://localhost', on, spawn: fake.spawn }),
@@ -979,4 +985,50 @@ it('saves a script a moment after each change where the settings say, never over
   await vi.waitFor(() => expect(alertText()).toContain('changed on disk'), { timeout: 3000 });
   expect(window.disk.get(LID)).toBe('theirs\n');
   expect(window.platform.confirm).not.toHaveBeenCalled();
+});
+
+/** A drag from the system's file manager, of `dropped`. @param {File[]} dropped */
+const dragging = (dropped) => ({
+  dataTransfer: { types: ['Files'], files: dropped, dropEffect: 'none' },
+});
+/** The paths the window wrote files dropped at. */
+const written = (/** @type {ReturnType<typeof windowOn>} */ window) =>
+  window.platform.writeFile.mock.calls.map(([path]) => path);
+
+describe('files dropped on the tree from the system', () => {
+  it('are added to the folder dropped on, one of a name it has renamed as the person says', async () => {
+    const window = windowOn();
+    await openFolder();
+    window.platform.ask.mockResolvedValueOnce('Rename');
+    const listed = window.platform.listFolder.mock.calls.length;
+    const cover = new File(['cube(3)\n'], 'cover.kup');
+    await fireEvent.drop(
+      within(files()).getByRole('button', { name: 'parts' }),
+      dragging([cover, new File(['cube(9)\n'], 'lid.kup')]),
+    );
+    await vi.waitFor(() =>
+      expect(written(window)).toEqual(['/w/parts/cover.kup', '/w/parts/lid 2.kup']),
+    );
+    expect(window.platform.ask).toHaveBeenCalledExactlyOnceWith(
+      '“lid.kup” is in parts already. Replace it with yours, or add yours as “lid 2.kup”?',
+      { yes: 'Rename', no: 'Replace', cancel: 'Cancel' },
+    );
+    expect(new TextDecoder().decode(window.platform.writeFile.mock.calls[0][1])).toBe('cube(3)\n');
+    await vi.waitFor(() =>
+      expect(window.platform.listFolder.mock.calls.length).toBeGreaterThan(listed),
+    );
+  });
+
+  it('are none of them added once the person cancels, and what the tree would not show never', async () => {
+    const window = windowOn();
+    await openFolder();
+    const tree = within(files()).getByRole('list');
+    await fireEvent.drop(tree, dragging([new File([''], 'a.kup'), new File([''], 'part.kup')]));
+    await vi.waitFor(() => expect(window.platform.ask).toHaveBeenCalledOnce());
+    await fireEvent.drop(tree, dragging([new File([''], 'notes.txt')]));
+    expect(
+      await screen.findByText('Not added, being no script or file a script reads: notes.txt'),
+    ).toBeTruthy();
+    expect(window.platform.writeFile).not.toHaveBeenCalled();
+  });
 });

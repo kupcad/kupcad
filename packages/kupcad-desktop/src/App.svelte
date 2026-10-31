@@ -34,10 +34,13 @@
   import { SvelteSet } from 'svelte/reactivity';
   import {
     childPath,
+    clashQuestion,
     FileTree,
     foldersAbove,
     nameProblem,
     parentOf,
+    putFiles,
+    refuseStrayDrop,
     rowMenu,
     Scripts,
     scriptName,
@@ -544,6 +547,54 @@
   }
 
   /**
+   * Puts files dropped on the tree from the system's file manager in the folder `dir`, asking
+   * about a name it has (Replace, Rename, Cancel), what the tree wouldn't show refused; a script
+   * replaced is read again.
+   * @param {File[]} files
+   * @param {string} dir
+   */
+  async function dropFiles(files, dir) {
+    let added;
+    try {
+      added = await putFiles(files, dir, {
+        exists: (path) => platform.files.exists(path),
+        write: (path, bytes) => platform.writeFile(path, bytes),
+        clash: (named, renamed) => askClash(named, renamed, name(dir)),
+      });
+    } catch (error) {
+      problem = `The files weren't added: ${errorText(error)}`;
+      return;
+    }
+    if (added.refused.length > 0) {
+      problem = `Not added, being no script or file a script reads: ${added.refused.join(', ')}`;
+    }
+    if (added.put.length === 0) return;
+    for (const path of [dir, ...foldersAbove(entries, dir)]) collapsed.delete(path);
+    await listNow();
+    await checkDisk();
+  }
+
+  /**
+   * What to do with a file dropped whose name the folder has, the system's dialog asking.
+   * @param {string} named
+   * @param {string} renamed the free name it would take
+   * @param {string} folderName
+   * @returns {Promise<import('@kupcad/files').Clash>}
+   */
+  async function askClash(named, renamed, folderName) {
+    const question = clashQuestion(named, renamed, folderName);
+    const label = (/** @type {string} */ value) =>
+      question.answers.find((answer) => answer.value === value)?.text ?? value;
+    const pressed = await platform.ask(`${question.title}. ${question.text}`, {
+      yes: label('rename'),
+      no: label('replace'),
+      cancel: label('cancel'),
+    });
+    if (pressed === label('rename')) return 'rename';
+    return pressed === label('replace') ? 'replace' : 'cancel';
+  }
+
+  /**
    * The menu of a row of the tree, or of the tree itself (null), where the pointer is.
    * @param {Entry | null} entry
    */
@@ -735,7 +786,12 @@
   });
 </script>
 
-<svelte:window onkeydown={keydown} onfocus={() => void checkDisk()} />
+<svelte:window
+  onkeydown={keydown}
+  onfocus={() => void checkDisk()}
+  ondragover={refuseStrayDrop}
+  ondrop={refuseStrayDrop}
+/>
 
 <div class="kc-desktop" style:--kc-code-font-size="{fontSize}px">
   <nav class="rail" aria-label="Views">
@@ -811,6 +867,7 @@
             ontrash={(entry) => void trashEntry(entry)}
             onnew={(kind) => startNew(kind)}
             keys={{ script: combo('N'), folder: combo('N', true) }}
+            ondropfiles={(dropped, dir) => void dropFiles(dropped, dir)}
           />
         </nav>
         <Splitter

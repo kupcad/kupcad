@@ -40,6 +40,9 @@ import { LanguageServer } from './server.js';
  * @property {(options: { defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }) => Promise<string | null>} save
  * @property {(text: string) => Promise<void>} tell
  * @property {(text: string) => Promise<boolean>} confirm
+ * @property {(text: string, buttons: { yes: string, no: string, cancel: string }) => Promise<string>} ask
+ *   a question of three answers: the label of the button pressed (the cancel's for the dialog
+ *   closed), the yes the default
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
  * @property {(script: string, output: string, format: ExportFormat, params: [string, string][]) => Promise<void>} exportModel
  * @property {(rootUri: string, on: ServerEvents) => Pick<LanguageServer, 'client' | 'start' | 'stop' | 'preview' | 'setParams'>} server
@@ -128,6 +131,7 @@ export const tauri = {
   save: (options) => save(options),
   tell: async (text) => void (await message(text, { title: 'KupCAD', kind: 'warning' })),
   confirm: (text) => confirm(text, { title: 'KupCAD', kind: 'warning' }),
+  ask: (text, buttons) => message(text, { title: 'KupCAD', kind: 'warning', buttons }),
   writeFile: (path, bytes) => writeFile(path, bytes),
   exportModel: (script, output, format, params) =>
     invoke('export_model', { script, output, format, params }),

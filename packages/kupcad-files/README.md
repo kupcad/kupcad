@@ -48,4 +48,15 @@ host brings the file system.
   holds the disk's text as a conflict for the person to choose; each script's editor snapshot,
   its undo history, kept while another is shown.
 
-`pnpm test` runs its tests under jsdom (the popover is stood in for, `popover.test-helper.js`).
+* **Files given from outside** (`putFiles`): files dropped on the tree from the system's file
+  manager (`FileTree`'s `ondropfiles`: a folder's row is that folder, a file's row its folder,
+  elsewhere the root, marked while they are over it) or picked to upload, put in a folder through
+  the host's `exists` and `write`. What the tree wouldn't show is refused; for a name the folder
+  has, the person is asked (`clash`): Replace, Rename (the next free name, `lid 2.kup`) or Cancel,
+  every question before anything is written. `clashQuestion` words it, which `AskDialog` (a
+  page's modal dialog) asks as it is; a desktop asks with its own. `refuseStrayDrop`, on the
+  window's `dragover` and `drop`, keeps a drop the page didn't take from opening the file in its
+  place.
+
+`pnpm test` runs its tests under jsdom (the popover and the modal dialog are stood in for,
+`dom.test-helper.js`).
