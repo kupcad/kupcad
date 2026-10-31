@@ -1,8 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import FileTree from './FileTree.svelte';
 
-/** @import { Entry } from './folder.js' */
+/** @import { Entry } from './tree.js' */
 
 /** @type {Entry[]} */
 const ENTRIES = [
@@ -28,6 +28,7 @@ function treeOf(closed = [], more = {}) {
     onmenu: vi.fn(),
     onrename: vi.fn(),
     ontrash: vi.fn(),
+    onnew: vi.fn(),
   };
   const props = {
     entries: ENTRIES,
@@ -42,7 +43,10 @@ function treeOf(closed = [], more = {}) {
   return { ...told, rerender };
 }
 
-const shown = () => screen.getAllByRole('listitem').map((row) => row.textContent?.trim());
+const shown = () =>
+  within(screen.getByRole('list'))
+    .getAllByRole('listitem')
+    .map((row) => row.textContent?.trim());
 const row = (/** @type {string} */ name) => screen.getByRole('button', { name });
 
 describe('the tree', () => {
@@ -72,6 +76,24 @@ describe('the tree', () => {
     await fireEvent.click(row('lid.kup'));
     expect(tree.onopen).toHaveBeenCalledWith(ENTRIES[4]);
     expect(tree.ontoggle).not.toHaveBeenCalled();
+  });
+});
+
+describe("the tree's bar", () => {
+  it('makes a script or a folder, its shortcuts the tooltips', async () => {
+    const tree = treeOf([], { keys: { script: '⌘N', folder: '⇧⌘N' } });
+    expect(screen.getByText('Files')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'New script' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'New folder' }));
+    expect(tree.onnew.mock.calls).toEqual([['script'], ['folder']]);
+    expect(screen.getByRole('button', { name: 'New script' }).title).toBe('New script (⌘N)');
+    expect(screen.getByRole('button', { name: 'New folder' }).title).toBe('New folder (⇧⌘N)');
+  });
+
+  it('has its title alone for a host that makes nothing', () => {
+    treeOf([], { onnew: undefined, title: 'Project' });
+    expect(screen.getByText('Project')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'New script' })).toBeNull();
   });
 });
 
@@ -122,17 +144,22 @@ describe("the tree's keys", () => {
 });
 
 describe("the tree's own menus and keys", () => {
-  it("gives a row's menu, and the tree's, in place of the page's", async () => {
+  it("gives a row's menu, and the tree's, in place of the page's, where the pointer is", async () => {
     const tree = treeOf();
-    const right = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    const right = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 90,
+    });
     row('lid.kup').dispatchEvent(right);
     expect(right.defaultPrevented).toBe(true);
-    expect(tree.onmenu).toHaveBeenCalledExactlyOnceWith(ENTRIES[4]);
+    expect(tree.onmenu).toHaveBeenCalledExactlyOnceWith(ENTRIES[4], { x: 40, y: 90 });
     // A data file has no button, its row a menu all the same
     await fireEvent.contextMenu(screen.getByText('l.stl'));
-    expect(tree.onmenu).toHaveBeenLastCalledWith(ENTRIES[3]);
+    expect(tree.onmenu).toHaveBeenLastCalledWith(ENTRIES[3], { x: 0, y: 0 });
     await fireEvent.contextMenu(screen.getByRole('list'));
-    expect(tree.onmenu).toHaveBeenLastCalledWith(null);
+    expect(tree.onmenu).toHaveBeenLastCalledWith(null, { x: 0, y: 0 });
     expect(tree.onmenu).toHaveBeenCalledTimes(3);
   });
 
@@ -149,9 +176,15 @@ describe("the tree's own menus and keys", () => {
     // Backspace alone is nothing to it
     await fireEvent.keyDown(row('b.kup'), { key: 'Backspace' });
     expect(tree.ontrash).toHaveBeenCalledTimes(2);
+    row('b.kup').getBoundingClientRect = () => /** @type {DOMRect} */ ({ left: 20, bottom: 82 });
     await fireEvent.keyDown(row('b.kup'), { key: 'F10', shiftKey: true });
     await fireEvent.keyDown(row('b.kup'), { key: 'ContextMenu' });
-    expect(tree.onmenu.mock.calls).toEqual([[ENTRIES[5]], [ENTRIES[5]]]);
+    // Under the row
+    const under = { x: 20, y: 82 };
+    expect(tree.onmenu.mock.calls).toEqual([
+      [ENTRIES[5], under],
+      [ENTRIES[5], under],
+    ]);
   });
 });
 

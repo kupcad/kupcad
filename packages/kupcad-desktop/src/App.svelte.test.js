@@ -8,7 +8,7 @@ import App from './App.svelte';
 import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';
 
-/** @import { Entry } from './folder.js' */
+/** @import { Entry } from '@kupcad/files' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { Theme } from './theme.js' */
 

@@ -3,8 +3,8 @@
 Everything in `packages/` is JavaScript (typed by JSDoc) and Svelte, built with Vite and tested
 with Vitest, in one pnpm workspace. The geometry, the language and the language server live in `core/` (Zig); the
 packages here are the ways a person reaches them: the VS Code extension, the playground on the
-docs site, and later a desktop app and a PWA. They are built from shared pieces so that a viewer
-or a parameter panel is written once.
+site, the desktop app, and the pieces of the browser IDE (a repository of its own). They are
+built from shared pieces so that a viewer, a parameter panel or a file tree is written once.
 
 See [architecture.md](architecture.md) for how the pieces fit and why.
 
@@ -16,13 +16,14 @@ See [architecture.md](architecture.md) for how the pieces fit and why.
 | `kupcad-wasm` | `@kupcad/wasm` | The core compiled to WebAssembly (`kupcad.wasm`, built by `core/build.zig`) with a typed JavaScript API around its exports, and a Web Worker wrapper so a build never blocks the page. | protocol |
 | `kupcad-ui` | `@kupcad/ui` | The UI: the 3D viewer, a framework-free class over three.js that shows a model (GLB) or a drawing (SVG), with the camera, grid, render modes, section plane and part picking (`@kupcad/ui/viewer`, for any host); and the Svelte components a KupCAD host shows beside its editor: the viewer, its pane with its toolbar, the parameter panel, presets, the console, a language server's preview, and the theme tokens they share. | protocol, three |
 | `kupcad-editor` | `@kupcad/editor` | A CodeMirror 6 editor for `.kup` files: highlighting by the core's vocabulary, indentation, completion, the findings of `check` marked with their fixes, or a client of `kupcad lsp` (`@codemirror/lsp-client`). For the playground, the PWA and the desktop app; VS Code has its own. | protocol |
-| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the PWA. | wasm, editor, ui |
+| `kupcad-playground` | `@kupcad/playground` | The editor beside the viewer pane and the parameters, all running on `@kupcad/wasm` in a worker in the browser. One Svelte component the site embeds, and the heart of the browser IDE. | wasm, editor, ui |
+| `kupcad-files` | `@kupcad/files` | A project's files as a tree, for any host of them: the tree with its bar (new script, new folder), its rows' menu (as data, and as a page's popover), the folder listed through the host's `readDir`, and the scripts read with their unsaved changes and undo histories. The desktop app's on the disk, the browser IDE's in OPFS. | — |
 | `kupcad-vscode` | `@kupcad/vscode` (private) | The VS Code extension: the language client, the viewer panel (a webview of `@kupcad/ui`), and the manager that downloads the `kupcad` binary from GitHub releases and keeps it current. | protocol, ui |
-| `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol |
-| `kupcad-pwa` (later) | private | The web app: the playground with files, projects and exports, installable. | playground |
+| `kupcad-desktop` | `@kupcad/desktop` (private) | The desktop app (Tauri 2): a folder of scripts, `@kupcad/editor` on the bundled `kupcad`'s language server, and `@kupcad/ui`'s preview. | editor, ui, protocol, files |
 
-The site (Astro: the playground's page, the documentation) is in a repository of its own, and
-embeds `@kupcad/playground` as its page here (`kupcad-playground/dev/`) does.
+The site (Astro: the playground's page) and the browser IDE (kupcad.dev, an installable PWA: the
+playground beside `@kupcad/files`' tree of a project in the browser's private file system) are
+repositories of their own, and install these packages from npm as any site would.
 
 Libraries are published to npm under `@kupcad`; apps are `"private": true`. A package is published
 only when another repository would use it: the docs site uses the playground, a third-party tool

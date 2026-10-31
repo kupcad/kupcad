@@ -2,10 +2,11 @@
 // edit, and at once when a parameter's value changes or the playground starts. A run under way
 // when the next starts is stopped (the core's worker drops or ends its call), so what comes is
 // the last script's. A run is the script's findings (`check`, quick: the editor marks them
-// first), then its preview (the model, its parameters, why it failed).
+// first), then its preview (the model, its parameters, why it failed), the files its imports
+// read given with it.
 
 /** @import { Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
-/** @import { KupcadApi } from '@kupcad/wasm/types' */
+/** @import { KupcadApi, PreviewOptions } from '@kupcad/wasm/types' */
 
 /** How long the script stays as it is after an edit before it runs. */
 export const DELAY_MS = 300;
@@ -42,15 +43,15 @@ export class Runner {
 
   /**
    * Runs `source` with `values` once it stays so for the delay (a later call waits again), or at
-   * once.
+   * once; with `files`, what its imports read.
    * @param {string} source
    * @param {ParamValues} values
-   * @param {{ now?: boolean }} [when]
+   * @param {{ now?: boolean, files?: PreviewOptions['files'] }} [options]
    */
-  run(source, values, { now = false } = {}) {
+  run(source, values, { now = false, files } = {}) {
     clearTimeout(this.#waiting);
-    if (now) void this.#start(source, values);
-    else this.#waiting = setTimeout(() => void this.#start(source, values), this.#delayMs);
+    if (now) void this.#start(source, values, files);
+    else this.#waiting = setTimeout(() => void this.#start(source, values, files), this.#delayMs);
   }
 
   /** Runs nothing more, and stops the run under way. */
@@ -63,8 +64,9 @@ export class Runner {
   /**
    * @param {string} source
    * @param {ParamValues} values
+   * @param {PreviewOptions['files']} files
    */
-  async #start(source, values) {
+  async #start(source, values, files) {
     this.#running?.abort();
     const running = new AbortController();
     this.#running = running;
@@ -73,7 +75,7 @@ export class Runner {
       const findings = await this.#kupcad.check(source, { signal });
       if (signal.aborted) return;
       this.#handlers.onfindings(findings, source);
-      const preview = await this.#kupcad.preview(source, { params: values, signal });
+      const preview = await this.#kupcad.preview(source, { params: values, files, signal });
       if (signal.aborted) return;
       this.#handlers.onpreview(preview, source);
     } catch (error) {

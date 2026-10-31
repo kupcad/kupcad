@@ -11,7 +11,8 @@
     "@kupcad/wasm",
     "@kupcad/ui",
     "@kupcad/editor",
-    "@kupcad/playground"
+    "@kupcad/playground",
+    "@kupcad/files"
   ],
   "updateInternalDependencies": "patch"
 }

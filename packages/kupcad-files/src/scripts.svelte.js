@@ -1,14 +1,14 @@
-// The scripts the window read, by their paths: each one's text now and as the disk had it when
-// it was last read or saved, for what is unsaved, and its editor's snapshot (its undo history)
-// while another is shown. The disk is read again when the folder's watcher says a file changed,
-// or the window is back (`check`): a script with no unsaved changes takes the disk's text; one
-// with them keeps its own, the disk's held as a conflict for the person to choose (`resolve`);
-// one gone from the disk is dropped, or kept, unsaved, where it has changes. A save that finds
-// the disk changed since writes nothing unless told to (`overwrite`): nothing someone else wrote
-// is lost unasked.
+// The scripts a host read, by their paths: each one's text now and as the disk (whatever keeps
+// them) had it when it was last read or saved, for what is unsaved, and its editor's snapshot
+// (its undo history) while another is shown. The disk is read again when the host says a file
+// changed, or the window is back (`check`): a script with no unsaved changes takes the disk's
+// text; one with them keeps its own, the disk's held as a conflict for the person to choose
+// (`resolve`); one gone from the disk is dropped, or kept, unsaved, where it has changes. A save
+// that finds the disk changed since writes nothing unless told to (`overwrite`): nothing
+// someone else wrote is lost unasked.
 
 import { SvelteMap } from 'svelte/reactivity';
-import { within } from './folder.js';
+import { within } from './tree.js';
 
 /**
  * What the scripts are read and written with.

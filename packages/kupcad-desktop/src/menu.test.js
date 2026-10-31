@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { menuBar, rowMenu } from './menu.js';
+import { menuBar } from './menu.js';
 
 /** @import { MenuAction, MenuEntry, MenuState } from './menu.js' */
 
@@ -126,17 +126,4 @@ describe('the menu bar', () => {
       predefined: 'Paste',
     });
   });
-});
-
-/** A menu's items' texts, its separators as they are. */
-const texts = (/** @type {MenuEntry[]} */ menu) =>
-  menu.map((entry) => (typeof entry === 'object' && 'text' in entry ? entry.text : entry));
-
-it("offers a tree's row what it can do, and the tree itself what can be made", () => {
-  const does = { newScript: vi.fn(), newFolder: vi.fn(), rename: vi.fn(), trash: vi.fn() };
-  expect(texts(rowMenu(null, does))).toEqual(['New Script', 'New Folder']);
-  const row = rowMenu({ kind: 'script', name: 'a.kup', path: '/w/a.kup', depth: 0 }, does);
-  expect(texts(row)).toEqual(['New Script', 'New Folder', '-', 'Rename…', 'Move to Trash']);
-  for (const entry of row) if (typeof entry === 'object' && 'action' in entry) entry.action();
-  expect(Object.values(does).map((action) => action.mock.calls.length)).toEqual([1, 1, 1, 1]);
 });

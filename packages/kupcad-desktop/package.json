@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@kupcad/editor": "workspace:*",
+    "@kupcad/files": "workspace:*",
     "@kupcad/protocol": "workspace:*",
     "@kupcad/ui": "workspace:*",
     "@tauri-apps/api": "^2.12.4",

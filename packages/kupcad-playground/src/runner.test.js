@@ -2,23 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DELAY_MS, Runner } from './runner.js';
 
 /** @import { Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
+/** @import { PreviewOptions } from '@kupcad/wasm/types' */
 
 /**
  * A stand-in for the core: each call waits until the test settles it, and says it was stopped
  * when its signal is.
  */
 function standIn() {
-  /** @type {{ method: string, source: string, values?: ParamValues, signal: AbortSignal, settle: (value: unknown) => void, fail: (error: unknown) => void }[]} */
+  /** @type {{ method: string, source: string, values?: ParamValues, files?: PreviewOptions['files'], signal: AbortSignal, settle: (value: unknown) => void, fail: (error: unknown) => void }[]} */
   const calls = [];
   /**
    * @param {string} method
-   * @returns {(source: string, options: { signal: AbortSignal, params?: ParamValues }) => Promise<any>}
+   * @returns {(source: string, options: { signal: AbortSignal, params?: ParamValues, files?: PreviewOptions['files'] }) => Promise<any>}
    */
   const call =
     (method) =>
-    (source, { signal, params }) =>
+    (source, { signal, params, files }) =>
       new Promise((settle, fail) => {
-        calls.push({ method, source, values: params, signal, settle, fail });
+        calls.push({ method, source, values: params, files, signal, settle, fail });
         signal.addEventListener('abort', () => fail(signal.reason));
       });
   return { calls, kupcad: { check: call('check'), preview: call('preview') } };
@@ -86,6 +87,17 @@ describe('Runner', () => {
       ['findings', 'cube(2)', 0],
       ['preview', 'cube(2)'],
     ]);
+  });
+
+  it("gives the preview the files the script's imports read", async () => {
+    const { calls, kupcad } = standIn();
+    const runner = new Runner(kupcad, handlersOf().handlers);
+    const files = { 'lib.kup': 'export size = 2\n' };
+    runner.run('import { size } from "./lib.kup"\ncube(size)', {}, { files });
+    vi.advanceTimersByTime(DELAY_MS);
+    calls[0].settle([]);
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    expect([calls[0].files, calls[1].files]).toEqual([undefined, files]);
   });
 
   it('says why a call failed, and runs nothing more once disposed', async () => {

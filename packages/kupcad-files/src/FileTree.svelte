@@ -1,19 +1,20 @@
 <!--
   @component
-  The folder's tree: its folders, scripts and the files they read, each under its folder. A
-  folder, clicked, opens or closes, nothing under a closed one shown; a script, clicked, is
-  opened; the open one is marked, and one with unsaved changes too. The arrow keys move through
-  it as through any tree: up and down from row to row, right into a folder (opening it first),
-  left out of it to its folder (closing an open one first). A row's menu (a right click, the
-  menu key or Shift+F10) and the tree's are the host's (`onmenu`); F2 renames a row, Delete or
-  ⌘⌫ (Ctrl+Backspace) moves it to the trash. A name being given (`editing`: a row renamed, an
-  entry made in a folder) is a field in the tree, Enter giving it and Escape leaving it, what is
-  wrong with it said under it (`problem`).
+  A project's tree: its folders, scripts and the files they read, each under its folder, under a
+  bar with its title and what can be made in it (`onnew`: a script, a folder). A folder,
+  clicked, opens or closes, nothing under a closed one shown; a script, clicked, is opened; the
+  open one is marked, and one with unsaved changes too. The arrow keys move through it as
+  through any tree: up and down from row to row, right into a folder (opening it first), left
+  out of it to its folder (closing an open one first). A row's menu (a right click, the menu key
+  or Shift+F10) and the tree's are the host's (`onmenu`, with where to show it); F2 renames a
+  row, Delete or ⌘⌫ (Ctrl+Backspace) removes it. A name being given (`editing`: a row renamed,
+  an entry made in a folder) is a field in the tree, Enter giving it and Escape leaving it, what
+  is wrong with it said under it (`problem`). It fills its box, the rows scrolling under the bar.
 -->
 <script>
-  import { foldersAbove, shownEntries } from './folder.js';
+  import { foldersAbove, shownEntries } from './tree.js';
 
-  /** @import { Entry } from './folder.js' */
+  /** @import { Entry } from './tree.js' */
 
   /**
    * @typedef {object} Props
@@ -28,10 +29,17 @@
    * @property {string | null} [problem] what is wrong with the name given last
    * @property {(name: string) => void} [oncommit] the name is given
    * @property {() => void} [oncancel] it isn't
-   * @property {(entry: Entry | null) => void} [onmenu] a row's menu, or the tree's (null)
+   * @property {(entry: Entry | null, at: Point) => void} [onmenu] a row's menu, or the tree's
+   *   (null), to show at `at`: where the pointer is, or under the row for the keys
    * @property {(entry: Entry) => void} [onrename]
-   * @property {(entry: Entry) => void} [ontrash]
+   * @property {(entry: Entry) => void} [ontrash] removes it
+   * @property {(kind: 'script' | 'folder') => void} [onnew] makes one: the bar's buttons
+   * @property {string} [title] the bar's
+   * @property {{ script?: string, folder?: string }} [keys] the host's shortcuts for the bar's
+   *   buttons, shown in their tooltips (`⌘N`)
    */
+
+  /** A point in the window, in its pixels. @typedef {{ x: number, y: number }} Point */
 
   /**
    * A name being given: a row's new one, or a new entry's in the folder `in`.
@@ -54,6 +62,9 @@
     onmenu,
     onrename,
     ontrash,
+    onnew,
+    title = 'Files',
+    keys = {},
   } = $props();
 
   const id = $props.id();
@@ -80,7 +91,8 @@
     ) {
       ontrash?.(entry);
     } else if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-      onmenu?.(entry);
+      const { left, bottom } = rows[row].getBoundingClientRect();
+      onmenu?.(entry, { x: left, y: bottom });
     } else if (event.key === 'ArrowDown') rows[row + 1]?.focus();
     else if (event.key === 'ArrowUp') rows[row - 1]?.focus();
     else if (event.key === 'ArrowRight' && entry.kind === 'folder') {
@@ -102,7 +114,7 @@
     if (!onmenu) return;
     event.preventDefault();
     event.stopPropagation();
-    onmenu(entry);
+    onmenu(entry, { x: event.clientX, y: event.clientY });
   }
 
   /**
@@ -174,61 +186,146 @@
   {/if}
 {/snippet}
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions: its rows are the buttons the keys move between, and their menu is the keys' too -->
-<ul class="tree" bind:this={list} onkeydown={keydown} oncontextmenu={(event) => menu(event, null)}>
-  {#if editing && 'in' in editing && editing.in === root}{@render made(0)}{/if}
-  {#each shown as entry (entry.path)}
-    {#if editing && 'path' in editing && editing.path === entry.path}
-      {@render field(entry.name, `Rename ${entry.name}`, entry.depth)}
-    {:else}
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions: a row's menu is its keys' too -->
-      <li
-        class={entry.kind}
-        style:padding-left="{entry.depth * 12 + 8}px"
-        oncontextmenu={(event) => menu(event, entry)}
+<div class="kc-files">
+  <div class="bar">
+    <span class="title">{title}</span>
+    {#if onnew}
+      <button
+        type="button"
+        class="action"
+        aria-label="New script"
+        title={keys.script ? `New script (${keys.script})` : 'New script'}
+        onclick={() => onnew('script')}
       >
-        {#if entry.kind === 'folder'}
-          {@const open = !collapsed.has(entry.path)}
-          <button
-            type="button"
-            data-path={entry.path}
-            aria-expanded={open}
-            title={entry.path}
-            onclick={() => ontoggle(entry, !open)}
-          >
-            <span class="twisty" aria-hidden="true">{open ? '▾' : '▸'}</span>{entry.name}
-          </button>
-        {:else if entry.kind === 'script'}
-          <span class="twisty" aria-hidden="true"></span>
-          <button
-            type="button"
-            data-path={entry.path}
-            class:selected={entry.path === selected}
-            aria-current={entry.path === selected ? 'true' : undefined}
-            aria-label={unsaved.has(entry.path) ? `${entry.name}, unsaved` : entry.name}
-            title={entry.path}
-            onclick={() => onopen(entry)}
-          >
-            {entry.name}{#if unsaved.has(entry.path)}<span class="unsaved" aria-hidden="true"
-                >●</span
-              >{/if}
-          </button>
-        {:else}
-          <span class="twisty" aria-hidden="true"></span>
-          <span class="name" title={entry.path}>{entry.name}</span>
-        {/if}
-      </li>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 3.5h7l4 4v13H7z" />
+          <path d="M14 3.5v4h4M12.5 11v6M9.5 14h6" />
+        </svg>
+      </button>
+      <button
+        type="button"
+        class="action"
+        aria-label="New folder"
+        title={keys.folder ? `New folder (${keys.folder})` : 'New folder'}
+        onclick={() => onnew('folder')}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3.5 6.5h6l2 2h9v11h-17z" />
+          <path d="M12 11v6M9 14h6" />
+        </svg>
+      </button>
     {/if}
-    {#if editing && 'in' in editing && editing.in === entry.path}{@render made(
-        entry.depth + 1,
-      )}{/if}
-  {:else}
-    <li class="empty">No scripts here.</li>
-  {/each}
-</ul>
+  </div>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions: its rows are the buttons the keys move between, and their menu is the keys' too -->
+  <ul
+    class="tree"
+    bind:this={list}
+    onkeydown={keydown}
+    oncontextmenu={(event) => menu(event, null)}
+  >
+    {#if editing && 'in' in editing && editing.in === root}{@render made(0)}{/if}
+    {#each shown as entry (entry.path)}
+      {#if editing && 'path' in editing && editing.path === entry.path}
+        {@render field(entry.name, `Rename ${entry.name}`, entry.depth)}
+      {:else}
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions: a row's menu is its keys' too -->
+        <li
+          class={entry.kind}
+          style:padding-left="{entry.depth * 12 + 8}px"
+          oncontextmenu={(event) => menu(event, entry)}
+        >
+          {#if entry.kind === 'folder'}
+            {@const open = !collapsed.has(entry.path)}
+            <button
+              type="button"
+              data-path={entry.path}
+              aria-expanded={open}
+              title={entry.path}
+              onclick={() => ontoggle(entry, !open)}
+            >
+              <span class="twisty" aria-hidden="true">{open ? '▾' : '▸'}</span>{entry.name}
+            </button>
+          {:else if entry.kind === 'script'}
+            <span class="twisty" aria-hidden="true"></span>
+            <button
+              type="button"
+              data-path={entry.path}
+              class:selected={entry.path === selected}
+              aria-current={entry.path === selected ? 'true' : undefined}
+              aria-label={unsaved.has(entry.path) ? `${entry.name}, unsaved` : entry.name}
+              title={entry.path}
+              onclick={() => onopen(entry)}
+            >
+              {entry.name}{#if unsaved.has(entry.path)}<span class="unsaved" aria-hidden="true"
+                  >●</span
+                >{/if}
+            </button>
+          {:else}
+            <span class="twisty" aria-hidden="true"></span>
+            <span class="name" title={entry.path}>{entry.name}</span>
+          {/if}
+        </li>
+      {/if}
+      {#if editing && 'in' in editing && editing.in === entry.path}{@render made(
+          entry.depth + 1,
+        )}{/if}
+    {:else}
+      <li class="empty">No scripts here.</li>
+    {/each}
+  </ul>
+</div>
 
 <style>
+  .kc-files {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  /* The tree's own bar: its title, and what can be made in it, each a plain icon in the text's
+     colour */
+  .bar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 4px 3px 12px;
+    border-bottom: 1px solid var(--kc-border);
+  }
+  .title {
+    flex: 1;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--kc-muted);
+  }
+  .action {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    color: var(--kc-fg);
+  }
+  .action:focus-visible {
+    outline: 2px solid var(--kc-focus);
+    outline-offset: -2px;
+  }
+  .action svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
   .tree {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
     margin: 0;
     padding: 4px 0;
     list-style: none;

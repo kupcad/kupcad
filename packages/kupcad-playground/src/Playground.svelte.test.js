@@ -22,7 +22,7 @@ afterEach(() => vi.restoreAllMocks());
 async function playground(source, settings = memorySettings(), props = {}) {
   const kupcad = await testCore();
   const { renderer, drawn } = stubRenderer();
-  const { component } = render(Playground, {
+  const { component, rerender } = render(Playground, {
     props: {
       source,
       kupcad,
@@ -32,11 +32,20 @@ async function playground(source, settings = memorySettings(), props = {}) {
       ...props,
     },
   });
-  const view = /** @type {EditorView} */ (
+  return { kupcad, view: editorView(), component, rerender, drawn };
+}
+
+/** The editor's view, as it is now. */
+const editorView = () =>
+  /** @type {EditorView} */ (
     EditorView.findFromDOM(/** @type {HTMLElement} */ (document.querySelector('.cm-editor')))
   );
-  return { kupcad, view, component, drawn };
-}
+
+/**
+ * The undo key, as the person presses it (jsdom is no Mac: Ctrl).
+ * @param {EditorView} view
+ */
+const undo = (view) => fireEvent.keyDown(view.contentDOM, { key: 'z', ctrlKey: true });
 
 /** The status line's words. */
 const statusText = () => screen.queryByRole('status')?.textContent?.replace(/\s+/g, ' ').trim();
@@ -249,6 +258,67 @@ describe('Playground', () => {
     await tick();
     expect(view.state.doc.toString()).toBe('cube(10).named("box")\n');
     expect(sources).toEqual(['cube(12).named("box")\n']);
+  });
+
+  it('opens another document in place of the one shown, each with its own undo history', async () => {
+    const { view, component } = await playground('cube(1).named("a")\n');
+    view.dispatch({ changes: { from: 5, to: 6, insert: '2' } });
+    const kept = component.snapshot();
+    component.open('cube(3).named("b")\n');
+    await tick();
+    const other = editorView();
+    expect(other).not.toBe(view);
+    expect(other.state.doc.toString()).toBe('cube(3).named("b")\n');
+    await vi.waitFor(() => expect(partsListed()).toBe('b'), RUN_MS);
+    // Nothing of the last document's to undo
+    await undo(other);
+    expect(other.state.doc.toString()).toBe('cube(3).named("b")\n');
+    component.open('cube(2).named("a")\n', kept);
+    await tick();
+    const back = editorView();
+    expect(back.state.doc.toString()).toBe('cube(2).named("a")\n');
+    await undo(back);
+    expect(back.state.doc.toString()).toBe('cube(1).named("a")\n');
+    component.focus();
+    expect(back.hasFocus).toBe(true);
+  });
+
+  it("runs and exports with the files the script's imports read", async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:model');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const files = { 'parts/size.kup': 'size = 6\nexport size\n' };
+    const { kupcad } = await playground(
+      'import { size } from "./parts/size.kup"\ncube(size).named("box")\n',
+      memorySettings(),
+      { files },
+    );
+    await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
+    const build = vi.spyOn(kupcad, 'build');
+    await fireEvent.change(screen.getByRole('combobox', { name: 'Export' }), {
+      target: { value: 'stl' },
+    });
+    await vi.waitFor(() =>
+      expect(build).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ files })),
+    );
+  });
+
+  it('runs again when the page says what its script imports changed, and not before', async () => {
+    const { kupcad, component, rerender } = await playground(
+      'import { size } from "./size.kup"\ncube(size).named("box")\n',
+      memorySettings(),
+      { files: { 'size.kup': 'size = 6\nexport size\n' } },
+    );
+    await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
+    const preview = vi.spyOn(kupcad, 'preview');
+    await rerender({ files: {} });
+    expect(preview).not.toHaveBeenCalled();
+    component.run();
+    await vi.waitFor(() => expect(statusText()).toMatch(/^Failed/), RUN_MS);
+    expect(preview).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ files: {} }),
+    );
   });
 
   it('runs again at once with the value the parameter panel gives', async () => {

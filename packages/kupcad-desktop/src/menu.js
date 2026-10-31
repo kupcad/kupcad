@@ -1,5 +1,6 @@
 // The window's menus, as data the platform makes native ones of (platform.js): the app's menu
-// bar, its items enabled as the window's state allows, and a row's menu in the folder's tree.
+// bar, its items enabled as the window's state allows (a row's menu in the folder's tree is
+// @kupcad/files' rowMenu).
 // macOS has the app's own menu first (About, Check for Updates…, Settings…, Quit); elsewhere
 // Settings and Quit are the File menu's, and Check for Updates… the Help menu's. An item's shortcut is its accelerator, which the menu takes before the page
 // sees the key.
@@ -161,19 +162,4 @@ export function menuBar(state, actions) {
       ],
     },
   ];
-}
-
-/**
- * The menu of a row of the folder's tree (`entry`), or of the tree itself (none): what can be
- * made in its folder, and what can be done to it.
- * @param {import('./folder.js').Entry | null} entry
- * @param {{ newScript: () => void, newFolder: () => void, rename: () => void, trash: () => void }} actions
- * @param {string} [trash] what the system calls where a file moved away goes
- * @returns {MenuEntry[]}
- */
-export function rowMenu(entry, actions, trash = 'Trash') {
-  /** @type {MenuEntry[]} */
-  const make = [item('New Script', actions.newScript), item('New Folder', actions.newFolder)];
-  if (!entry) return make;
-  return [...make, '-', item('Rename…', actions.rename), item(`Move to ${trash}`, actions.trash)];
 }

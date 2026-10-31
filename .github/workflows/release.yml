@@ -7,7 +7,7 @@ name: Release
 # latest.json the installed apps update from, as the tag's GitHub release, each file attested
 # (actions/attest-build-provenance). Once the release is out, the
 # npm packages a site or a tool installs (@kupcad/playground and what it runs on, the core's
-# module shrunk by wasm-opt among them) go to npm at the same version, with provenance.
+# module shrunk by wasm-opt among them, and @kupcad/files, the browser IDE's tree) go to npm at the same version, with provenance.
 on:
   push:
     tags:
@@ -18,7 +18,7 @@ permissions:
 
 env:
   # The packages published to npm as @kupcad/<name>, each after those it depends on
-  NPM_PACKAGES: protocol wasm ui editor playground
+  NPM_PACKAGES: protocol wasm ui editor playground files
 
 jobs:
   version:
@@ -363,7 +363,7 @@ jobs:
       # playground in headless Chromium as a site embeds them
       - name: Test them on it
         run: |
-          pnpm --filter @kupcad/wasm --filter @kupcad/ui --filter @kupcad/playground test
+          pnpm --filter @kupcad/wasm --filter @kupcad/ui --filter @kupcad/playground --filter @kupcad/files test
           pnpm --filter @kupcad/playground exec playwright install --with-deps chromium
           pnpm --filter @kupcad/ui --filter @kupcad/playground test:browser
 

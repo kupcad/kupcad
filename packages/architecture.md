@@ -16,14 +16,15 @@ flowchart BT
         wasm["@kupcad/wasm<br/>the core in the browser"]
         ui["@kupcad/ui<br/>viewer: three.js scene, any host<br/>Svelte: viewer pane, parameters, console"]
         editor["@kupcad/editor<br/>CodeMirror 6"]
+        files["@kupcad/files<br/>a project's tree, any file system"]
     end
 
     subgraph hosts ["Hosts"]
         playground["@kupcad/playground<br/>editor + viewer + params<br/>on wasm, in a worker"]
         vscode["@kupcad/vscode<br/>host: LSP client, binary manager<br/>webview: @kupcad/ui"]
         desktop["@kupcad/desktop (Tauri)<br/>bundled kupcad + LSP"]
-        docs["the site (own repository)<br/>Astro: the playground,<br/>the docs later"]
-        pwa["kupcad-pwa"]
+        docs["the site (own repository)<br/>Astro: the playground"]
+        pwa["the browser IDE (own repository)<br/>Astro PWA: files in OPFS"]
     end
 
     wasm --> protocol
@@ -36,8 +37,10 @@ flowchart BT
     vscode --> ui
     desktop --> editor
     desktop --> ui
+    desktop --> files
     docs --> playground
     pwa --> playground
+    pwa --> files
 ```
 
 An arrow points at what a package builds on.
@@ -380,7 +383,9 @@ its `ParamsPanel`, and the run's error and warnings marked in the editor too (no
 editor to its line. Exports (`build` in a format of `EXPORT_FORMATS`, with the panel's values)
 and the screenshot download as files named after `name`. It keeps nothing of the host's: the
 site (an Astro site in a repository of its own) embeds it in a page with a script of the page's
-own, the PWA will wrap it with files and projects.
+own, the browser IDE beside a project's tree: it gives each script it opens as a document of its
+own (`open`, its undo history the `snapshot()` it kept), and the files the script imports
+(`files`, the same map of paths to contents the core's calls take).
 
 Its page (`dev/`) is the playground on an example, as a site embeds it: `pnpm dev` serves it as it
 changes (`pnpm dev:playground` at the root builds the core first). The smoke test builds the page
@@ -388,6 +393,15 @@ changes (`pnpm dev:playground` at the root builds the core first). The smoke tes
 as assets, as a site's build does) and drives it in headless Chromium: the example runs to Ready
 in the real worker, its parts and parameters show, `param` is highlighted, and a script that
 raises says so.
+
+### A project's files (`@kupcad/files`)
+
+What the desktop app and the browser IDE share of a project: the tree (`FileTree`, its bar
+making a script or a folder), its rows' menu as data (`rowMenu`, which the desktop app makes a
+native menu of and the browser draws with `ContextMenu`, a popover), the folder listed through
+the host's `readDir` (the disk's, Tauri's; OPFS's), the names an entry may take and the paths in
+it, and the scripts read (`Scripts`: unsaved changes, what the disk changed under them, each
+script's undo history). It holds no file system of its own, so the same tree runs on both.
 
 ### The VS Code extension (`@kupcad/vscode`)
 
@@ -553,5 +567,6 @@ the truth.
 4. **The playground** (done: `@kupcad/editor`, `@kupcad/playground` and its page), then the
    site, in a repository of its own: the playground's page and the docs.
 5. **The desktop app** (started: a folder, the editor on the bundled language server, the
-   preview; presets and release builds to come), then **the PWA**, in a repository of its own,
-   which reuse everything above.
+   preview; presets and release builds to come), then **the browser IDE** (kupcad.dev), in a
+   repository of its own: the playground beside `@kupcad/files`' tree of a project kept in the
+   browser's private file system, installable and offline (a PWA).

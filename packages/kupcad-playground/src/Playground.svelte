@@ -10,8 +10,10 @@
   model's width); the sizes, what is hidden or folded, and how the view looks are kept in
   `settings` (the page's localStorage by default), and follow them as they are set. It keeps
   nothing else of the page's: the page gives the script it starts with (`source`) and another
-  in its place (`load`), and is told of each edit of it (`onsource`), for its own buttons in the
-  toolbar (`actions`) to share or save it.
+  in its place (`load`, or `open` for another document, with an undo history of its own), and
+  is told of each edit of it (`onsource`), for its own buttons in the toolbar (`actions`) to
+  share or save it. The files the script imports, a page of several scripts gives with them
+  (`files`).
 -->
 <script>
   import { onMount, untrack } from 'svelte';
@@ -42,7 +44,7 @@
   /** @import { ConsoleLine, Problem, Settings, ShortcutGroup } from '@kupcad/ui' */
   /** @import { Snippet } from 'svelte' */
   /** @import { ViewerOptions } from '@kupcad/ui/viewer/types' */
-  /** @import { KupcadApi, WorkerWasmSource } from '@kupcad/wasm/types' */
+  /** @import { KupcadApi, PreviewOptions, WorkerWasmSource } from '@kupcad/wasm/types' */
 
   /**
    * @typedef {object} Props
@@ -57,6 +59,9 @@
    *   by default the page's localStorage
    * @property {(source: string) => void} [onsource] the person's edit changed the script: it now
    *   is `source` (for a host to share it, or save it)
+   * @property {PreviewOptions['files']} [files] what the script's imports read, by the paths it
+   *   names them by (`import { } from "./lib.kup"` reads `lib.kup`), given with each run and
+   *   export
    * @property {Snippet} [actions] a host's own buttons in the model's toolbar, after Export
    *   (`.kc-control` gives them its look)
    * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
@@ -72,6 +77,7 @@
     viewerOptions = {},
     settings = localSettings(),
     onsource,
+    files,
     actions: hostActions,
     shortcuts = [],
     shortcutsOpen = $bindable(false),
@@ -109,6 +115,10 @@
    * view frames each one's model whole (another subject), where an edit's keeps the camera.
    */
   let loads = $state(0);
+  /** How many other documents the page opened: the editor is made again for each. */
+  let documents = $state(0);
+  /** The editor's snapshot the document opened last starts from, if it has one. */
+  let restored = $state.raw(/** @type {unknown} */ (undefined));
   let editor = $state(/** @type {EditorClass | null} */ (null));
   /** `check`'s findings of the script as it is, none while it changed since. */
   let findings = $state(/** @type {Finding[]} */ ([]));
@@ -147,7 +157,7 @@
       },
       onerror: (error) => (notice = errorText(error)),
     });
-    runner.run(value, {}, { now: true });
+    runner.run(value, {}, { now: true, files });
     return () => {
       runner?.dispose();
       made?.terminate();
@@ -165,7 +175,38 @@
     findings = [];
     overrides = {};
     loads += 1;
-    runner?.run(script, {}, { now: true });
+    runner?.run(script, {}, { now: true, files });
+  }
+
+  /**
+   * Opens `script` in the editor in place of the one there as another document: the editor made
+   * again on it, its undo history its own, not the last one's (`restore`, an earlier
+   * `snapshot()` of it, gives it back), and run at once as `load` runs one.
+   * @param {string} script one of the page's scripts
+   * @param {unknown} [restore] the snapshot the page kept when it opened another
+   */
+  export function open(script, restore) {
+    restored = restore;
+    documents += 1;
+    load(script);
+  }
+
+  /** The editor as it is now, its undo history with it, for `open` to give back: plain JSON. */
+  export function snapshot() {
+    return editor?.snapshot();
+  }
+
+  /**
+   * Runs the script again at once, as it is, on the panel's values: what it imports changed
+   * (`files`), which the page knows of and it doesn't.
+   */
+  export function run() {
+    runner?.run(value, plainValues(overrides), { now: true, files });
+  }
+
+  /** Puts the focus in the editor: a script the page made, to be written. */
+  export function focus() {
+    editor?.focus();
   }
 
   /** @param {string} line of the core's log, which goes to the console */
@@ -176,13 +217,13 @@
   /** @param {string} next the user's script */
   function edited(next) {
     findings = [];
-    runner?.run(next, plainValues(overrides));
+    runner?.run(next, plainValues(overrides), { files });
     onsource?.(next);
   }
 
   /** @param {ParamValues} values the panel's */
   function valuesChanged(values) {
-    runner?.run(value, values, { now: true });
+    runner?.run(value, values, { now: true, files });
   }
 
   /** @param {Problem | ConsoleLine} place a problem or a console line with a line, clicked */
@@ -194,7 +235,7 @@
   async function exportChosen(format) {
     if (!core) return;
     try {
-      const bytes = await core.build(value, { format, params: plainValues(overrides) });
+      const bytes = await core.build(value, { format, params: plainValues(overrides), files });
       download(bytes, `${name}.${format}`);
       notice = '';
     } catch (error) {
@@ -215,7 +256,16 @@
   style:--params-width="{paramsWidth}px"
 >
   <section class="code" aria-label="Script">
-    <Editor bind:value bind:editor findings={marks} label={name} onchange={edited} />
+    {#key documents}
+      <Editor
+        bind:value
+        bind:editor
+        findings={marks}
+        label={name}
+        restore={restored}
+        onchange={edited}
+      />
+    {/key}
     {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
   </section>
   <Splitter

@@ -10,17 +10,18 @@ import { Menu } from '@tauri-apps/api/menu/menu';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { confirm, message, save } from '@tauri-apps/plugin-dialog';
-import { writeFile } from '@tauri-apps/plugin-fs';
+import { readDir, writeFile } from '@tauri-apps/plugin-fs';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { load } from '@tauri-apps/plugin-store';
 import { check } from '@tauri-apps/plugin-updater';
+import { listFolder } from '@kupcad/files';
 import { memorySettings } from '@kupcad/ui';
-import { files, listFolder, pickFolder, watchFolder } from './folder.js';
+import { files, pickFolder, watchFolder } from './folder.js';
 import { LanguageServer } from './server.js';
 
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
-/** @import { Entry } from './folder.js' */
+/** @import { Entry } from '@kupcad/files' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */
@@ -120,7 +121,7 @@ const SETTINGS_SAVE_MS = 250;
 export const tauri = {
   pickFolder: () => pickFolder(),
   launchFolder: () => invoke('launch_folder'),
-  listFolder: (root) => listFolder(root),
+  listFolder: (root) => listFolder(root, { readDir }),
   watchFolder: (root, onchange) => watchFolder(root, onchange),
   files,
   trash: (path) => invoke('move_to_trash', { path }),

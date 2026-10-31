@@ -5,7 +5,7 @@
   kupcad's language server, started for the folder. The folder's tree follows what is made,
   removed or renamed in it, and its closed folders stay closed until a script in one is opened;
   in it the person makes scripts and folders, renames them and moves them to the trash (its
-  rows' menus, the File menu). A script read is read again when the disk changes it (scripts.svelte.js):
+  rows' menus, the File menu). A script read is read again when the disk changes it (Scripts):
   one with no unsaved changes follows the disk, one with them says so above the editor, for
   the person to choose; a save never writes over what someone else wrote unasked. Each script
   keeps its undo history while another is shown. A script is saved with ⌘S (Ctrl+S), or a
@@ -32,25 +32,26 @@
   } from '@kupcad/ui';
   import { onMount, tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
-  import FileTree from './FileTree.svelte';
   import {
     childPath,
-    fileUri,
+    FileTree,
     foldersAbove,
     nameProblem,
     parentOf,
+    rowMenu,
+    Scripts,
     scriptName,
     within,
-  } from './folder.js';
+  } from '@kupcad/files';
+  import { fileUri } from './folder.js';
   import { createHost } from './host.js';
-  import { menuBar, rowMenu } from './menu.js';
+  import { menuBar } from './menu.js';
   import { fontSizeOf, KEYS, recentOf, withRecent, zoomOf, zoomStep } from './prefs.js';
-  import { Scripts } from './scripts.svelte.js';
   import SettingsPane from './SettingsPane.svelte';
   import { themeOf } from './theme.js';
 
   /** @import { Editor as ScriptEditor } from '@kupcad/editor' */
-  /** @import { Entry } from './folder.js' */
+  /** @import { Entry } from '@kupcad/files' */
   /** @import { Settings, ShortcutGroup } from '@kupcad/ui' */
   /** @import { Platform } from './platform.js' */
 
@@ -553,9 +554,9 @@
         newScript: () => startNew('script', entry),
         newFolder: () => startNew('folder', entry),
         rename: () => entry && startRename(entry),
-        trash: () => entry && void trashEntry(entry),
+        remove: () => entry && void trashEntry(entry),
       },
-      TRASH,
+      { remove: `Move to ${TRASH}` },
     );
     platform.popupMenu(menu).catch((error) => (problem = errorText(error)));
   }
@@ -793,33 +794,6 @@
     <div class="body" inert={settingsOpen}>
       {#if filesShown && folder}
         <nav class="side" aria-label="Files" style:width="{filesWidth}px">
-          <div class="side-bar">
-            <span class="side-title">Files</span>
-            <button
-              type="button"
-              class="side-action"
-              aria-label="New script"
-              title="New script ({combo('N')})"
-              onclick={() => startNew('script')}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M7 3.5h7l4 4v13H7z" />
-                <path d="M14 3.5v4h4M12.5 11v6M9.5 14h6" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              class="side-action"
-              aria-label="New folder"
-              title="New folder ({combo('N', true)})"
-              onclick={() => startNew('folder')}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3.5 6.5h6l2 2h9v11h-17z" />
-                <path d="M12 11v6M9 14h6" />
-              </svg>
-            </button>
-          </div>
           <FileTree
             {entries}
             {collapsed}
@@ -835,6 +809,8 @@
             onmenu={rowMenuOf}
             onrename={startRename}
             ontrash={(entry) => void trashEntry(entry)}
+            onnew={(kind) => startNew(kind)}
+            keys={{ script: combo('N'), folder: combo('N', true) }}
           />
         </nav>
         <Splitter
@@ -954,8 +930,7 @@
     background: var(--kc-section-bg);
     border-right: 1px solid var(--kc-border);
   }
-  .rail button,
-  .side-action {
+  .rail button {
     position: relative;
     display: grid;
     place-items: center;
@@ -968,13 +943,11 @@
     border-radius: var(--kc-radius);
     cursor: pointer;
   }
-  .rail button:hover:not(:disabled),
-  .side-action:hover {
+  .rail button:hover:not(:disabled) {
     color: var(--kc-fg);
     background: var(--kc-hover);
   }
-  .rail button:focus-visible,
-  .side-action:focus-visible {
+  .rail button:focus-visible {
     outline: 2px solid var(--kc-focus);
     outline-offset: -2px;
   }
@@ -999,8 +972,7 @@
   .rail .settings {
     margin-top: auto;
   }
-  .rail svg,
-  .side-action svg {
+  .rail svg {
     width: 22px;
     height: 22px;
     fill: none;
@@ -1051,31 +1023,7 @@
   }
   .side {
     flex: none;
-    overflow: auto;
     border-right: 1px solid var(--kc-border);
-  }
-  /* The files' own bar: their title, and what can be made in them */
-  .side-bar {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px 4px 2px 12px;
-  }
-  .side-title {
-    flex: 1;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--kc-muted);
-  }
-  .side-action {
-    width: 26px;
-    height: 26px;
-  }
-  .side-action svg {
-    width: 18px;
-    height: 18px;
   }
   .code {
     position: relative;

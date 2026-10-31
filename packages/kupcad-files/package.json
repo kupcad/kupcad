@@ -1,0 +1,43 @@
+{
+  "name": "@kupcad/files",
+  "version": "0.1.4",
+  "description": "A KupCAD project's files as a tree, for any host of them (the desktop app's disk, a browser's private file system): the Svelte tree with its bar, its rows' menu, the folder model and the scripts read with their unsaved changes.",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kupcad/kupcad.git",
+    "directory": "packages/kupcad-files"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.js",
+    "!src/**/*.test-helper.*"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "catalog:",
+    "@testing-library/svelte": "catalog:",
+    "@types/node": "catalog:",
+    "jsdom": "catalog:",
+    "svelte": "catalog:",
+    "svelte-check": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "svelte": "^5.57.2"
+  }
+}
