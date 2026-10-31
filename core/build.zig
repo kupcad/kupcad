@@ -406,10 +406,17 @@ pub fn build(b: *std.Build) void {
     });
 
     // HarfBuzz, lean: without what text doesn't use (variable fonts, outlines, names, vertical
-    // text, Apple's AAT shaping), harfbuzz_config.h adjusting the preset; a Wasm build without
-    // threads has no mutexes. SheenBidi, its sources as one file.
+    // text, Apple's AAT shaping), harfbuzz_config.h adjusting the preset. A Wasm build without
+    // threads has no mutexes; one with them locks with wasi-libc's pthreads, as its libc++ has
+    // no std::mutex (HarfBuzz's fallback, which broke the threaded build). SheenBidi, its
+    // sources as one file.
     const harfbuzz_base: []const []const u8 = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti", "-DHB_LEAN", "-DHB_NO_AAT", "-DHB_CONFIG_OVERRIDE_H=\"harfbuzz_config.h\"" };
-    const harfbuzz_threads: []const []const u8 = if (is_wasm and !wasm_threads) &.{"-DHB_NO_MT"} else &.{};
+    const harfbuzz_threads: []const []const u8 = if (!is_wasm)
+        &.{}
+    else if (wasm_threads)
+        &.{ "-DHAVE_PTHREAD", "-matomics", "-mbulk-memory", "-pthread" }
+    else
+        &.{"-DHB_NO_MT"};
     native_mod.addCSourceFile(.{
         .file = b.path("vendor/harfbuzz/src/harfbuzz.cc"),
         .flags = vendoredFlags(b, optimize, std.mem.concat(b.allocator, []const u8, &.{ harfbuzz_base, harfbuzz_threads }) catch @panic("OOM")),
