@@ -4,6 +4,9 @@ coffee_mug
 cup
   sketch 1 manifold area=1457.6294655467268 min=-39.8,-1.8 max=56.8,97.8 vertices=2083
   exports svg
+fan_wheel
+  part 1 manifold volume=13699.258642449655 area=11060.714904054668 min=-39.11584638267548,-39.99552407241094,0 max=39.49038719438524,37.421356400612204,20 genus=1 vertices=657 triangles=1314
+  exports glb
 grid_organizer
   part 1 manifold volume=35896.55693508814 area=36275.84624952826 min=-41.75,-41.75,0 max=41.75,41.75,25 genus=0 vertices=296 triangles=588
   exports glb
@@ -11,8 +14,8 @@ hex_bit_holder
   part 1 manifold volume=33933.33788964843 area=12054.32253910761 min=0,0,0 max=78.1,28.7,18 genus=0 vertices=317 triangles=630
   exports glb
 hinge
-  part 1 manifold volume=5239.409500648588 area=4783.619232423205 min=0,-3.9708354963922163,0 max=60,23,7.883767269704208 genus=4 vertices=184 triangles=380
-  part 2 manifold volume=4458.108201188854 area=3787.528028735931 min=0,-23,0 max=60,3.970835496392216,7.883767269704208 genus=4 vertices=132 triangles=276
+  part 1 manifold volume=5516.655530904619 area=4897.267437403605 min=0,-4,0 max=60,24.3,8 genus=4 vertices=970 triangles=1952
+  part 2 manifold volume=4571.747274496406 area=3837.0721645317794 min=0,-24.3,0 max=60,4,8 genus=4 vertices=692 triangles=1396
   exports glb
 honeycomb_wall
   part 1 manifold volume=23952.118349087134 area=19043.725656486833 min=-11.799999999999997,-13.347005383792514,0 max=99,69.9850667912948,8 genus=18 vertices=240 triangles=548
@@ -20,6 +23,10 @@ honeycomb_wall
   exports glb
 name_tag
   part 1 manifold volume=2682.346062879795 area=2305.638318991189 min=-25.7861328125,-9.159423828125,0 max=25.7861328125,9.159423828125,4 genus=1 vertices=387 triangles=774
+  exports glb
+parabolic_dish
+  part 1 manifold volume=30797.07677633065 area=49232.39792625129 min=-60,-59.6713137220964,-2 max=60,59.6713137220964,24.5 genus=0 vertices=3782 triangles=7560
+  part 2 manifold volume=449.6250071626849 area=529.4061826299867 min=-4,-4,0 max=4,4,46 genus=0 vertices=86 triangles=168
   exports glb
 phone_stand
   part 1 manifold volume=33453.66703960632 area=18604.823155824164 min=-29.583278321848965,0,0 max=20,70,65.1320181395283 genus=0 vertices=39 triangles=74

@@ -5,11 +5,13 @@ const std = @import("std");
 const EXAMPLES = [_][]const u8{
     "coffee_mug",
     "cup",
+    "fan_wheel",
     "grid_organizer",
     "hex_bit_holder",
     "hinge",
     "honeycomb_wall",
     "name_tag",
+    "parabolic_dish",
     "phone_stand",
     "planetary_gearbox",
     "project_box",
