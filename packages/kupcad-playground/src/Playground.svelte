@@ -274,113 +274,121 @@
   }
 </script>
 
-<div
-  class="kc-playground"
-  bind:clientWidth={width}
-  style:--editor-width="{editorWidth}px"
-  style:--params-width="{paramsWidth}px"
->
-  <section class="code" aria-label="Script">
-    {#key documents}
-      <Editor
-        bind:value
-        bind:editor
-        findings={marks}
-        label={name}
-        restore={restored}
-        {language}
-        onchange={edited}
-      />
-    {/key}
-    {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
-  </section>
-  <Splitter
-    bind:size={editorWidth}
-    min={240}
-    max={width > 0 ? width - (paramsShown ? paramsWidth : 0) - MIN_VIEW : undefined}
-    label="Resize the script"
-    onchange={(size) => settings.set(KEYS.editor, size)}
-  />
-  <section class="view" aria-label="Model">
-    <div class="model">
-      <ViewerPane
-        model={ran?.preview.model ?? null}
-        subject="script {loads}"
-        options={viewerOptions}
-        bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
-        {status}
-        {problems}
-        onproblem={reveal}
-        onscreenshot={screenshot}
-        {settings}
-        {shortcuts}
-        bind:shortcutsOpen
-      >
-        {#snippet actions()}
-          <ExportMenu kind={ran?.preview.model.kind ?? 'none'} onexport={exportChosen} />
-          {@render hostActions?.()}
-        {/snippet}
-        {#snippet toggles()}
-          {#if header && parameters.length > 0}
-            <button
-              type="button"
-              class="kc-control"
-              aria-controls="{id}-params"
-              aria-expanded={paramsOpen}
-              onclick={() => settings.set(KEYS.paramsOpen, !paramsOpen)}
-            >
-              Parameters
-            </button>
-          {/if}
-        {/snippet}
-      </ViewerPane>
-    </div>
-    {#if consoleOpen}
-      <Splitter
-        between="rows"
-        pane="after"
-        bind:size={consoleHeight}
-        min={48}
-        label="Resize the console"
-        onchange={(size) => settings.set(KEYS.console, size)}
-      />
-    {/if}
-    <ConsolePanel
-      lines={consoleLines}
-      height={consoleHeight}
-      bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, open)}
-      onreveal={reveal}
-      onclear={() => (consoleLines = [])}
-    />
-  </section>
-  {#if header && parameters.length > 0}
-    {#if paramsOpen}
-      <Splitter
-        pane="after"
-        bind:size={paramsWidth}
-        min={200}
-        max={640}
-        label="Resize the parameters"
-        onchange={(size) => settings.set(KEYS.params, size)}
-      />
-    {/if}
-    <!-- Hidden, not gone: what its fields hold stays, and the toggle has it to control -->
-    <aside class="params" id="{id}-params" aria-label="Parameters" hidden={!paramsOpen}>
-      <!-- Made again for each script loaded: no field keeps what was typed in the last's -->
-      {#key loads}
-        <ParamsPanel
-          schema={header.params.schema}
-          values={header.params.values}
-          error={header.error}
-          bind:overrides
-          onchange={valuesChanged}
+<!-- The box the playground is laid out by: its own width, wide or a column of a page -->
+<div class="kc-playground-box">
+  <div
+    class="kc-playground"
+    bind:clientWidth={width}
+    style:--editor-width="{editorWidth}px"
+    style:--params-width="{paramsWidth}px"
+  >
+    <section class="code" aria-label="Script">
+      {#key documents}
+        <Editor
+          bind:value
+          bind:editor
+          findings={marks}
+          label={name}
+          restore={restored}
+          {language}
+          onchange={edited}
         />
       {/key}
-    </aside>
-  {/if}
+      {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
+    </section>
+    <Splitter
+      bind:size={editorWidth}
+      min={240}
+      max={width > 0 ? width - (paramsShown ? paramsWidth : 0) - MIN_VIEW : undefined}
+      label="Resize the script"
+      onchange={(size) => settings.set(KEYS.editor, size)}
+    />
+    <section class="view" aria-label="Model">
+      <div class="model">
+        <ViewerPane
+          model={ran?.preview.model ?? null}
+          subject="script {loads}"
+          options={viewerOptions}
+          bind:panel={() => panelOpen, (open) => settings.set(KEYS.panelOpen, open)}
+          {status}
+          {problems}
+          onproblem={reveal}
+          onscreenshot={screenshot}
+          {settings}
+          {shortcuts}
+          bind:shortcutsOpen
+        >
+          {#snippet actions()}
+            <ExportMenu kind={ran?.preview.model.kind ?? 'none'} onexport={exportChosen} />
+            {@render hostActions?.()}
+          {/snippet}
+          {#snippet toggles()}
+            {#if header && parameters.length > 0}
+              <button
+                type="button"
+                class="kc-control"
+                aria-controls="{id}-params"
+                aria-expanded={paramsOpen}
+                onclick={() => settings.set(KEYS.paramsOpen, !paramsOpen)}
+              >
+                Parameters
+              </button>
+            {/if}
+          {/snippet}
+        </ViewerPane>
+      </div>
+      {#if consoleOpen}
+        <Splitter
+          between="rows"
+          pane="after"
+          bind:size={consoleHeight}
+          min={48}
+          label="Resize the console"
+          onchange={(size) => settings.set(KEYS.console, size)}
+        />
+      {/if}
+      <ConsolePanel
+        lines={consoleLines}
+        height={consoleHeight}
+        bind:open={() => consoleOpen, (open) => settings.set(KEYS.open, open)}
+        onreveal={reveal}
+        onclear={() => (consoleLines = [])}
+      />
+    </section>
+    {#if header && parameters.length > 0}
+      {#if paramsOpen}
+        <Splitter
+          pane="after"
+          bind:size={paramsWidth}
+          min={200}
+          max={640}
+          label="Resize the parameters"
+          onchange={(size) => settings.set(KEYS.params, size)}
+        />
+      {/if}
+      <!-- Hidden, not gone: what its fields hold stays, and the toggle has it to control -->
+      <aside class="params" id="{id}-params" aria-label="Parameters" hidden={!paramsOpen}>
+        <!-- Made again for each script loaded: no field keeps what was typed in the last's -->
+        {#key loads}
+          <ParamsPanel
+            schema={header.params.schema}
+            values={header.params.values}
+            error={header.error}
+            bind:overrides
+            onchange={valuesChanged}
+          />
+        {/key}
+      </aside>
+    {/if}
+  </div>
 </div>
 
 <style>
+  .kc-playground-box {
+    height: 100%;
+    min-height: 0;
+    container-type: inline-size;
+  }
   .kc-playground {
     display: flex;
     height: 100%;
@@ -428,10 +436,10 @@
     border-radius: var(--kc-radius);
     background: var(--kc-bg);
   }
-  /* Narrow, the panes stacked, each at a height of its own, and the playground scrolled: the
-     script a few lines, the model 4:3 of its width (at most 32em), the console and the
-     parameters as tall as their lines */
-  @media (max-width: 800px) {
+  /* Narrow (a phone, a column of a page), the panes stacked, each at a height of its own, and
+     the playground scrolled: the script a few lines, the model 4:3 of its width (at most 32em),
+     the console and the parameters as tall as their lines */
+  @container (max-width: 800px) {
     .kc-playground {
       flex-direction: column;
       overflow-y: auto;

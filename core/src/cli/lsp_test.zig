@@ -247,6 +247,8 @@ test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd
     // LSP severity 1 is an error: the project's level, where the default is a warning.
     try testing.expect(std.mem.find(u8, server.outbox.last(), "\"severity\":1,") != null);
     try testing.expect(std.mem.find(u8, server.outbox.last(), "unused-variable") != null);
+    // The code links to the rule's documentation
+    try testing.expect(std.mem.find(u8, server.outbox.last(), "\"codeDescription\":{\"href\":\"https://docs.kupcad.org/reference/tooling/lint-rules/#unused-variable\"}") != null);
 }
 
 test "LSP: a script that never ends doesn't hang the server" {

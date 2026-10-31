@@ -237,7 +237,19 @@ const PublishedDiagnostic = struct {
     message: []const u8,
     /// The lint rule's id, which editors show beside the message.
     code: ?[]const u8 = null,
+    /// Where the code is explained, which editors link the code to: the rule's section of
+    /// the docs, or the compile error codes'.
+    codeDescription: ?struct { href: []const u8 } = null,
 };
+
+/// The documentation of a finding's code: a lint rule has a section of its own, a syntax or
+/// compile error its row in the codes' table.
+fn codeDocsUrl(arena: std.mem.Allocator, d: anytype) ![]const u8 {
+    if (d.ruleId()) |rule| {
+        return std.fmt.allocPrint(arena, "https://docs.kupcad.org/reference/tooling/lint-rules/#{s}", .{rule});
+    }
+    return "https://docs.kupcad.org/reference/language/errors/#compile-error-codes";
+}
 
 pub const Handler = struct {
     allocator: std.mem.Allocator,
@@ -1153,6 +1165,7 @@ pub const Handler = struct {
                 .message = d.message,
                 .source = "kupcad",
                 .code = d.code(),
+                .codeDescription = .{ .href = try codeDocsUrl(arena, d) },
             });
         }
         // A warning is placed from its call to the end of that line; one with no place (the

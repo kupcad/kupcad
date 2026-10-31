@@ -55,8 +55,8 @@ browser IDE embed; it keeps nothing of the page's.
   resize them (`@kupcad/ui`'s `Splitter`), and the toolbar's Parameters button hides the
   parameters for the model's width; the sizes, and what is hidden or folded, are kept in
   `settings`, by default the page's localStorage (`localSettings`, the `playground.*` keys), and
-  how the view looks too (the pane's `view.*` keys), all followed as they are set. A page 800px
-  wide or less stacks the panes, each at a height of its own (the script a few lines, the model
+  how the view looks too (the pane's `view.*` keys), all followed as they are set. Given 800px
+  or less (a phone, or a column of a page: it goes by its own width) it stacks the panes, each at a height of its own (the script a few lines, the model
   4:3 of its width, at most 32em, the console and the parameters as tall as their lines), and
   the playground scrolls; on a phone the view's panel is under the model (`ViewerPane`'s).
 * **The console** (`@kupcad/ui`'s `ConsolePanel`, under the model): each run, what it printed
