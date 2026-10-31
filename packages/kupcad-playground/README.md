@@ -26,15 +26,16 @@ browser IDE embed; it keeps nothing of the page's.
   component's, by `bind:this`) puts one in the editor in place of the person's, which the
   editor's undo takes back, and runs it at once on its own values, its model framed whole (an
   edit's keeps the camera); the core, the console and the layout stay as they are.
-* **For a host of several scripts** (the browser IDE's project): `open(script, restore)` opens
-  one as another document, the editor made again on it with an undo history of its own (none of
-  the last one's), run as `load` runs one; `snapshot()` is the editor as it is, its undo history
-  with it, for `open` to give back when the host opens that script again; `run()` runs the
-  script again as it is (what it imports changed), and `focus()` puts the focus in the editor
-  (a script the host just made). `files` is what the
-  script's imports read, by the paths the script names them by (`import { } from "./lib.kup"`
-  reads `lib.kup`), given with each run and export as the core's calls take them. `download`
-  (exported) saves bytes or a Blob as a file, as the exports are saved.
+* **For a host of several scripts** (the browser IDE's project): `open(script, restore)` opens one
+  as another document, the editor made again on it with an undo history of its own (none of the last
+  one's), run as `load` runs one; `open(text, restore, 'json')` opens a JSON file of the project (a
+  package's `kupcad.json` or `kupcad.lock`, data a script imports) the same way, edited with nothing
+  run, no model, status or parameters shown. `snapshot()` is the editor as it is, its undo history
+  with it, for `open` to give back when the host opens that file again; `run()` runs the script
+  again as it is (what it imports changed), and `focus()` puts the focus in the editor (a script the
+  host just made). `files` is what the script's imports read, by the paths the script names them by
+  (`import { } from "./lib.kup"` reads `lib.kup`), given with each run and export as the core's
+  calls take them. `download` (exported) saves bytes or a Blob as a file, as the exports are saved.
 * **When it runs** (`runner.js`, `Runner`): once the script stays as it is for a moment after an
   edit (`DELAY_MS`, 300), at once when a parameter's value changes or it starts. A run under
   way when the next starts is stopped (the worker drops or ends its call), so what is shown is

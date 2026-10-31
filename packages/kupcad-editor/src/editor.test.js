@@ -1,5 +1,6 @@
 import { undo } from '@codemirror/commands';
-import { forEachDiagnostic } from '@codemirror/lint';
+import { syntaxTree } from '@codemirror/language';
+import { forceLinting, forEachDiagnostic } from '@codemirror/lint';
 import { EditorView } from '@codemirror/view';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Editor } from './editor.js';
@@ -94,5 +95,44 @@ describe('Editor', () => {
     editor.dispose();
     made.length = 0;
     expect(parent.querySelector('.cm-editor')).toBeNull();
+  });
+});
+
+/** The messages of what the editor marks. @param {EditorView} view */
+const marked = (view) => {
+  /** @type {string[]} */
+  const messages = [];
+  forEachDiagnostic(view.state, (diagnostic) => messages.push(diagnostic.message));
+  return messages;
+};
+
+describe('a JSON file', () => {
+  it("is read as JSON, not as a script: a package's kupcad.json", () => {
+    const { view } = editorOn({
+      value: '{ "name": "parts", "version": "1.0.0" }\n',
+      language: 'json',
+    });
+    expect(syntaxTree(view.state).topNode.name).toBe('JsonText');
+    expect(syntaxTree(editorOn({ value: 'cube(1)\n' }).view.state).topNode.name).not.toBe(
+      'JsonText',
+    );
+  });
+
+  it('has its syntax errors marked, and none of the findings a host gives a script', async () => {
+    const { editor, view } = editorOn({ value: '{ "name": }\n', language: 'json' });
+    forceLinting(view);
+    await vi.waitFor(() => expect(marked(view)).toHaveLength(1));
+    editor.setFindings([
+      {
+        severity: 'warning',
+        message: 'Unused variable',
+        line: 1,
+        column: 1,
+        endLine: 1,
+        endColumn: 2,
+      },
+    ]);
+    expect(marked(view)).toHaveLength(1);
+    expect(marked(view)[0]).not.toBe('Unused variable');
   });
 });

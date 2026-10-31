@@ -17,6 +17,8 @@ export const DATA_EXTENSIONS = new Set([
   'otf',
 ]);
 export const SCRIPT_EXTENSION = 'kup';
+/** A package's lockfile, JSON though its extension doesn't say so. */
+export const LOCK_FILE = 'kupcad.lock';
 /** Folders that hold no file of the user's: hidden ones (.git, .kupcad's packages) and build output. */
 export const SKIPPED_FOLDER = /^\.|^node_modules$|^target$/;
 /** A folder with more files than this is no project: the list stops there. */
@@ -128,16 +130,35 @@ export function foldersAbove(entries, path) {
 }
 
 /**
- * What a file is to KupCAD, by its extension: a script, data a script reads, or nothing.
+ * What a file is to KupCAD, by its extension: a script, data a script reads (a package's
+ * lockfile too), or nothing.
  * @param {string} name
  * @returns {'script' | 'data' | null}
  */
 export function kindOf(name) {
-  const dot = name.lastIndexOf('.');
-  if (dot <= 0) return null;
-  const extension = name.slice(dot + 1).toLowerCase();
+  if (name === LOCK_FILE) return 'data';
+  const extension = extensionOf(name);
   if (extension === SCRIPT_EXTENSION) return 'script';
-  return DATA_EXTENSIONS.has(extension) ? 'data' : null;
+  return extension !== null && DATA_EXTENSIONS.has(extension) ? 'data' : null;
+}
+
+/**
+ * What a file is read as when it is opened as text: a script, or JSON (a package's kupcad.json
+ * and kupcad.lock, data a script imports); null for one not opened as text.
+ * @param {string} name
+ * @returns {'kupcad' | 'json' | null}
+ */
+export function languageOf(name) {
+  if (name === LOCK_FILE) return 'json';
+  const extension = extensionOf(name);
+  if (extension === SCRIPT_EXTENSION) return 'kupcad';
+  return extension === 'json' ? 'json' : null;
+}
+
+/** A file's extension, lower case; none for a name without one (or a hidden name's dot). @param {string} name */
+function extensionOf(name) {
+  const dot = name.lastIndexOf('.');
+  return dot <= 0 ? null : name.slice(dot + 1).toLowerCase();
 }
 
 /**

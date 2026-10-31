@@ -26,10 +26,11 @@ host brings the file system.
 
 * **The tree** (`FileTree`): folders, scripts and the files they read, each under its folder, a
   folder opened and closed by a click or the arrow keys, the open script marked, and one with
-  unsaved changes. Its bar has its title and the buttons that make a script and a folder
-  (`onnew`; `keys` shows the host's shortcuts in their tooltips). A row's menu, and the tree's,
-  are the host's (`onmenu`, with where to show it); F2 renames a row, Delete or ⌘⌫ removes it. A
-  name being given (`editing`) is a field in the tree, what is wrong with it said under it
+  unsaved changes. A script's row opens it; another file's does where the host says (`opens`: the
+  browser IDE opens JSON files). Its bar has its title and the buttons that make a script and a
+  folder (`onnew`; `keys` shows the host's shortcuts in their tooltips). A row's menu, and the
+  tree's, are the host's (`onmenu`, with where to show it); F2 renames a row, Delete or ⌘⌫ removes
+  it. A name being given (`editing`) is a field in the tree, what is wrong with it said under it
   (`problem`). It fills its box, its rows scrolling under the bar, in `@kupcad/ui`'s `--kc-*`
   tokens.
 * **The rows' menu** (`rowMenu`): what a row, or the tree, offers, as data: New Script, New
@@ -37,12 +38,13 @@ host brings the file system.
   and a file's Download where the host gives them (a browser's). A desktop app draws it as a
   native menu; a page draws it with `ContextMenu`, a popover at the pointer that the arrow keys
   move through and Escape, a click elsewhere or the focus leaving close.
-* **The folder** (`listFolder(root, { readDir })`; alone, without Svelte, from
-  `@kupcad/files/tree`, for Node or a module no Svelte compiler sees): the tree of `root`, each
-  folder's folders first, hidden folders, `node_modules` and `target` left out, and a folder
-  holding files but no script or file a script reads (`kindOf`), at most `MAX_ENTRIES`. The
-  names a new entry may take (`nameProblem`, `scriptName`), and paths in it (`childPath`,
-  `parentOf`, `within`) with the host's separator, `/` or `\`.
+* **The folder** (`listFolder(root, { readDir })`; alone, without Svelte, from `@kupcad/files/tree`,
+  for Node or a module no Svelte compiler sees): the tree of `root`, each folder's folders first,
+  hidden folders, `node_modules` and `target` left out, and a folder holding files but no script or
+  file a script reads (`kindOf`: a package's `kupcad.lock` too), at most `MAX_ENTRIES`. What a file
+  is read as, opened as text: a script or JSON (`languageOf`, `kupcad.json` and `kupcad.lock` among
+  the JSON). The names a new entry may take (`nameProblem`, `scriptName`), and paths in it
+  (`childPath`, `parentOf`, `within`) with the host's separator, `/` or `\`.
 * **The scripts read** (`Scripts`, over the host's `read`, `write` and `exists`): each one's text
   now and as the disk had it, for what is unsaved; a save that finds the disk changed since
   holds the disk's text as a conflict for the person to choose; each script's editor snapshot,

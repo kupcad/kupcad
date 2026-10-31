@@ -3,7 +3,8 @@
 // the camera's controls capture the pointer while it drags, and a screenshot reads the canvas as
 // an image, which jsdom draws none of: here an empty PNG. A canvas has no context, as jsdom's has
 // none, but quietly (jsdom says "not implemented" when asked). A dialog (the shortcuts') opens and
-// closes, which jsdom's element can't. `stubRenderer` draws in place of WebGL.
+// closes, which jsdom's element can't. A range of text measures, as an editor beside the viewer
+// measures its lines (jsdom lays out nothing: no box). `stubRenderer` draws in place of WebGL.
 
 /** @import { Camera, Object3D } from 'three' */
 /** @import { RendererLike } from './types.js' */
@@ -13,6 +14,9 @@ globalThis.ResizeObserver ??= class {
   unobserve() {}
   disconnect() {}
 };
+
+Range.prototype.getClientRects ??= () => /** @type {DOMRectList} */ (/** @type {unknown} */ ([]));
+Range.prototype.getBoundingClientRect ??= () => DOMRect.fromRect();
 
 Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.releasePointerCapture ??= () => {};

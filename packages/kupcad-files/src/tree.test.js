@@ -3,6 +3,7 @@ import {
   childPath,
   foldersAbove,
   kindOf,
+  languageOf,
   listFolder,
   MAX_ENTRIES,
   nameProblem,
@@ -203,6 +204,18 @@ describe('a file', () => {
     expect(['a.kup', 'mesh.stl', 'part.STEP', 'f.otf', 'kup', '.kup', 'a.png'].map(kindOf)).toEqual(
       ['script', 'data', 'data', 'data', null, null, null],
     );
+  });
+
+  it("is listed as data where it is a package's lockfile, JSON though its extension isn't", () => {
+    expect(['kupcad.lock', 'yarn.lock', 'kupcad.json'].map(kindOf)).toEqual(['data', null, 'data']);
+  });
+
+  it('is opened as a script, as JSON, or not at all as text', () => {
+    expect(
+      ['a.kup', 'kupcad.json', 'sizes.JSON', 'kupcad.lock', 'mesh.stl', 'notes.txt'].map(
+        languageOf,
+      ),
+    ).toEqual(['kupcad', 'json', 'json', 'json', null, null]);
   });
 
   it("is in its folder with the folder's separator", () => {

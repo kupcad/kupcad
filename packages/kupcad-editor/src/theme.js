@@ -48,6 +48,11 @@ export const editorTheme = EditorView.theme({
   '.cm-panels': { color: FG, backgroundColor: BG },
 });
 
+/** A JSON file's keys, named as a definition is: its strings, numbers and literals are as code's. */
+export const jsonHighlightStyle = HighlightStyle.define([
+  { tag: tags.propertyName, color: code('definition', '#953800', '#ffa657') },
+]);
+
 export const highlightStyle = HighlightStyle.define([
   { tag: tags.keyword, color: code('keyword', '#cf222e', '#ff7b72') },
   { tag: [tags.string, tags.special(tags.string)], color: code('string', '#0a3069', '#a5d6ff') },

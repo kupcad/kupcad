@@ -1,9 +1,10 @@
 <!--
   @component
-  The editor for Svelte: CodeMirror on a KupCAD script, filling its box. `value` is bindable (the
-  user's changes set it, a host's reach the editor), and so is `editor`, the Editor itself, for
-  what isn't state: `reveal(line, column)`, `focus()`. `findings` are marked as given; with a
-  `languageServer` (set when it mounts) the server's are, and no findings are given.
+  The editor for Svelte: CodeMirror on a KupCAD script, or a JSON file (`language`), filling its
+  box. `value` is bindable (the user's changes set it, a host's reach the editor), and so is
+  `editor`, the Editor itself, for what isn't state: `reveal(line, column)`, `focus()`.
+  `findings` are marked as given; with a `languageServer` (set when it mounts) the server's are,
+  and no findings are given. A JSON file's marks are its syntax errors.
 -->
 <script>
   import { onMount } from 'svelte';
@@ -22,6 +23,8 @@
    *   server the script is known to, by its URI
    * @property {unknown} [restore] an earlier editor's `snapshot()` of the script, its undo
    *   history with it (read when it mounts)
+   * @property {import('./editor.js').EditorLanguage} [language] what the text is: a script, or
+   *   a JSON file (read when it mounts)
    */
 
   /** @type {Props} */
@@ -33,6 +36,7 @@
     onchange,
     languageServer,
     restore,
+    language,
   } = $props();
 
   /** @type {HTMLDivElement} */
@@ -44,6 +48,7 @@
       label,
       languageServer,
       restore,
+      language,
       onchange: (next) => {
         value = next;
         onchange?.(next);

@@ -100,6 +100,21 @@ describe('Runner', () => {
     expect([calls[0].files, calls[1].files]).toEqual([undefined, files]);
   });
 
+  it('stops the run waiting and the run under way, and runs the next', async () => {
+    const { calls, kupcad } = standIn();
+    const { got, handlers } = handlersOf();
+    const runner = new Runner(kupcad, handlers);
+    runner.run('cube(1)', {}, { now: true });
+    runner.run('cube(2)', {});
+    runner.stop();
+    vi.advanceTimersByTime(DELAY_MS);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].signal.aborted).toBe(true);
+    runner.run('cube(3)', {}, { now: true });
+    expect(calls.map(({ source }) => source)).toEqual(['cube(1)', 'cube(3)']);
+    expect(got).toEqual([]);
+  });
+
   it('says why a call failed, and runs nothing more once disposed', async () => {
     const { calls, kupcad } = standIn();
     const { got, handlers } = handlersOf();

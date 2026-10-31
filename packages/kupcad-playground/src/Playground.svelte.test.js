@@ -1,3 +1,4 @@
+import { syntaxTree } from '@codemirror/language';
 import { forEachDiagnostic } from '@codemirror/lint';
 import { EditorView } from '@codemirror/view';
 import { fireEvent, render, screen } from '@testing-library/svelte';
@@ -7,6 +8,7 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/ui';
 import Playground from './Playground.svelte';
+import { DELAY_MS } from './runner.js';
 
 /** How long a run may take here: the pause after an edit, then the real core's. */
 const RUN_MS = 5000;
@@ -281,6 +283,29 @@ describe('Playground', () => {
     expect(back.state.doc.toString()).toBe('cube(1).named("a")\n');
     component.focus();
     expect(back.hasFocus).toBe(true);
+  });
+
+  it('edits a JSON file opened as a document, running nothing and showing no model', async () => {
+    /** @type {string[]} */
+    const sources = [];
+    const { kupcad, component } = await playground('cube(10).named("box")\n', memorySettings(), {
+      onsource: (/** @type {string} */ source) => sources.push(source),
+    });
+    await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
+    const calls = [vi.spyOn(kupcad, 'check'), vi.spyOn(kupcad, 'preview')];
+    component.open('{ "name": "parts" }\n', undefined, 'json');
+    await tick();
+    const view = editorView();
+    expect(syntaxTree(view.state).topNode.name).toBe('JsonText');
+    expect(statusText()).toBeUndefined();
+    expect(partsListed() ?? '').not.toContain('box');
+    view.dispatch({ changes: { from: 11, to: 16, insert: 'lids' } });
+    await new Promise((settle) => setTimeout(settle, DELAY_MS * 2));
+    expect(sources).toEqual(['{ "name": "lids" }\n']);
+    expect(calls.map((call) => call.mock.calls.length)).toEqual([0, 0]);
+    // A script opened after it runs
+    component.open('cube(4).named("lid")\n');
+    await vi.waitFor(() => expect(partsListed()).toBe('lid'), RUN_MS);
   });
 
   it("runs and exports with the files the script's imports read", async () => {

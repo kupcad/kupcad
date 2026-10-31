@@ -23,6 +23,9 @@ editor.dispose();
 // Another script shown meanwhile, this one back as it was left, undo and all; `value` put in
 // place of the snapshot's text where the file changed since (itself undoable)
 const again = new Editor(element, { value: source, restore: kept });
+// A project's JSON file (kupcad.json, kupcad.lock, data a script imports): highlighted, its
+// syntax errors marked, with no findings, completion or language server of KupCAD's
+const manifest = new Editor(element, { value: text, language: 'json', label: 'kupcad.json' });
 ```
 
 ```svelte

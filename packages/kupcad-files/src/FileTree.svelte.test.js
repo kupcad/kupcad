@@ -97,6 +97,16 @@ describe("the tree's bar", () => {
   });
 });
 
+it("opens a file the host opens besides scripts, the others' rows nothing to click", async () => {
+  const tree = treeOf([], { opens: (/** @type {Entry} */ entry) => entry.name.endsWith('.stl') });
+  await fireEvent.click(row('l.stl'));
+  expect(tree.onopen).toHaveBeenCalledWith(ENTRIES[3]);
+  // By default a data file's row is no button
+  document.body.replaceChildren();
+  treeOf();
+  expect(screen.queryByRole('button', { name: 'l.stl' })).toBeNull();
+});
+
 describe("the tree's keys", () => {
   it('move up and down its rows, past what has none to open', async () => {
     treeOf();

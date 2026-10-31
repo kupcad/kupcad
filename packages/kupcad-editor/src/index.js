@@ -13,5 +13,6 @@ export {
 } from './language-server.js';
 
 /** @typedef {import('./findings.js').Mark} Mark */
+/** @typedef {import('./editor.js').EditorLanguage} EditorLanguage */
 /** @typedef {import('./language-server.js').ByteStream} ByteStream */
 /** @typedef {import('@codemirror/lsp-client').LSPClient} LSPClient */

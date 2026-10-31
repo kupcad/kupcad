@@ -5,7 +5,9 @@
 // (language-server.js), the server completes, marks and answers instead: hovers, signatures,
 // formatting, renaming, definitions. It tells its host of each change the user makes to the
 // script; one the host makes (setValue) it doesn't. A host that shows another script in its
-// place keeps this one's snapshot(), its undo history with it, and restores it (`restore`).
+// place keeps this one's snapshot(), its undo history with it, and restores it (`restore`). It
+// edits a JSON file of a project too (`language`: a package's kupcad.json and kupcad.lock, the
+// data a script imports): highlighted, its syntax errors marked, with nothing of KupCAD's.
 
 import {
   autocompletion,
@@ -26,7 +28,8 @@ import {
   indentUnit,
   syntaxHighlighting,
 } from '@codemirror/language';
-import { lintGutter, lintKeymap, setDiagnostics } from '@codemirror/lint';
+import { json, jsonParseLinter } from '@codemirror/lang-json';
+import { linter, lintGutter, lintKeymap, setDiagnostics } from '@codemirror/lint';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { Annotation, EditorState } from '@codemirror/state';
 import {
@@ -39,7 +42,7 @@ import {
 } from '@codemirror/view';
 import { diagnosticsOf, positionOf } from './findings.js';
 import { kupcad } from './language.js';
-import { editorTheme, highlightStyle } from './theme.js';
+import { editorTheme, highlightStyle, jsonHighlightStyle } from './theme.js';
 
 /** @import { LSPClient } from '@codemirror/lsp-client' */
 /** @import { Mark } from './findings.js' */
@@ -64,6 +67,8 @@ const INDENT = '  ';
 /** The language, as a language server is told a document's (and VS Code names it). */
 export const LANGUAGE_ID = 'kupcad';
 
+/** What the editor edits: a KupCAD script, or a JSON file. @typedef {'kupcad' | 'json'} EditorLanguage */
+
 /**
  * @typedef {object} EditorOptions
  * @property {string} [value] the script it starts with
@@ -71,6 +76,8 @@ export const LANGUAGE_ID = 'kupcad';
  * @property {string} [label] what the script is, for a screen reader
  * @property {{ client: LSPClient, uri: string }} [languageServer] the server the script is known
  *   to, by its URI: it completes and marks the script then, and the host gives no findings
+ * @property {EditorLanguage} [language] what the text is: a script by default; a JSON file is
+ *   highlighted and its syntax errors marked, and given no findings or language server
  * @property {unknown} [restore] a `snapshot()` of an editor of this script: it starts as that one
  *   was (its undo history, its selection), `value` put in place of its text where they differ;
  *   one it can't read is passed over
@@ -79,6 +86,8 @@ export const LANGUAGE_ID = 'kupcad';
 export class Editor {
   /** @type {EditorView} */
   #view;
+  /** @type {EditorLanguage} */
+  #language;
 
   /**
    * @param {HTMLElement} parent where it goes
@@ -86,8 +95,16 @@ export class Editor {
    */
   constructor(
     parent,
-    { value = '', onchange, label = 'The script', languageServer, restore } = {},
+    {
+      value = '',
+      onchange,
+      label = 'The script',
+      languageServer,
+      restore,
+      language = /** @type {EditorLanguage} */ ('kupcad'),
+    } = {},
   ) {
+    this.#language = language;
     const extensions = [
       lineNumbers(),
       highlightActiveLineGutter(),
@@ -102,7 +119,9 @@ export class Editor {
       highlightActiveLine(),
       highlightSelectionMatches(),
       lintGutter(),
-      kupcad({ complete: !languageServer }),
+      language === 'json'
+        ? [json(), linter(jsonParseLinter()), syntaxHighlighting(jsonHighlightStyle)]
+        : kupcad({ complete: !languageServer }),
       syntaxHighlighting(highlightStyle),
       editorTheme,
       keymap.of([
@@ -114,7 +133,9 @@ export class Editor {
         ...lintKeymap,
         indentWithTab,
       ]),
-      languageServer ? languageServer.client.plugin(languageServer.uri, LANGUAGE_ID) : [],
+      languageServer && language === 'kupcad'
+        ? languageServer.client.plugin(languageServer.uri, LANGUAGE_ID)
+        : [],
       EditorView.contentAttributes.of({ 'aria-label': label }),
       EditorView.updateListener.of((update) => {
         const user = !update.transactions.some((tr) => tr.annotation(fromHost));
@@ -155,6 +176,8 @@ export class Editor {
    * @param {readonly Mark[]} findings
    */
   setFindings(findings) {
+    // A JSON file's marks are its syntax errors, its own linter's
+    if (this.#language !== 'kupcad') return;
     const { state } = this.#view;
     this.#view.dispatch(setDiagnostics(state, diagnosticsOf(state.doc, findings)));
   }

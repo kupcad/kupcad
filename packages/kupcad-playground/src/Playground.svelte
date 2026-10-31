@@ -10,7 +10,8 @@
   model's width); the sizes, what is hidden or folded, and how the view looks are kept in
   `settings` (the page's localStorage by default), and follow them as they are set. It keeps
   nothing else of the page's: the page gives the script it starts with (`source`) and another
-  in its place (`load`, or `open` for another document, with an undo history of its own), and
+  in its place (`load`, or `open` for another document, with an undo history of its own: a
+  script, or a JSON file of the project, edited with nothing run and nothing in the viewer), and
   is told of each edit of it (`onsource`), for its own buttons in the toolbar (`actions`) to
   share or save it. The files the script imports, a page of several scripts gives with them
   (`files`).
@@ -39,7 +40,7 @@
   import { marksOf } from './marks.js';
   import { Runner } from './runner.js';
 
-  /** @import { Editor as EditorClass } from '@kupcad/editor' */
+  /** @import { Editor as EditorClass, EditorLanguage } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
   /** @import { ConsoleLine, Problem, Settings, ShortcutGroup } from '@kupcad/ui' */
   /** @import { Snippet } from 'svelte' */
@@ -119,6 +120,9 @@
   let documents = $state(0);
   /** The editor's snapshot the document opened last starts from, if it has one. */
   let restored = $state.raw(/** @type {unknown} */ (undefined));
+  /** What the document open is: a script, which runs, or a JSON file, which nothing runs of. */
+  let language = $state(/** @type {EditorLanguage} */ ('kupcad'));
+  const runs = $derived(language === 'kupcad');
   let editor = $state(/** @type {EditorClass | null} */ (null));
   /** `check`'s findings of the script as it is, none while it changed since. */
   let findings = $state(/** @type {Finding[]} */ ([]));
@@ -135,7 +139,7 @@
   let runner = null;
 
   const header = $derived(ran?.preview.header ?? null);
-  const status = $derived(runStatusOf(header));
+  const status = $derived(runs ? runStatusOf(header) : null);
   const problems = $derived(problemsOf(header));
   // Marked where they are in the script as it is: a run of another (older) script marks nothing
   const marks = $derived(marksOf(findings, ran?.source === value ? problems : []));
@@ -148,9 +152,10 @@
     core = kupcad ?? made;
     runner = new Runner(/** @type {KupcadApi} */ (core), {
       onfindings: (next, of) => {
-        if (of === value) findings = next;
+        if (runs && of === value) findings = next;
       },
       onpreview: (preview, of) => {
+        if (!runs) return;
         ran = { preview, source: of };
         notice = '';
         consoleLines = appendLines(consoleLines, linesOfRun(preview.header, name));
@@ -167,28 +172,47 @@
   /**
    * Puts `script` in the editor in place of the one there (the editor's undo takes that back),
    * and runs it at once on its own values (none the panel set for the last), its model framed
-   * whole.
+   * whole. In place of a JSON file, it is a document of its own.
    * @param {string} script another the page gives: an example, a script it opened
    */
   export function load(script) {
-    value = script;
-    findings = [];
-    overrides = {};
-    loads += 1;
+    if (!runs) {
+      language = 'kupcad';
+      restored = undefined;
+      documents += 1;
+    }
+    show(script);
     runner?.run(script, {}, { now: true, files });
   }
 
   /**
-   * Opens `script` in the editor in place of the one there as another document: the editor made
+   * Opens a file in the editor in place of the one there as another document: the editor made
    * again on it, its undo history its own, not the last one's (`restore`, an earlier
-   * `snapshot()` of it, gives it back), and run at once as `load` runs one.
-   * @param {string} script one of the page's scripts
+   * `snapshot()` of it, gives it back). A script runs at once as `load` runs one; a JSON file (a
+   * package's kupcad.json or kupcad.lock, data a script imports) is edited with nothing run,
+   * nothing in the viewer.
+   * @param {string} text one of the page's files
    * @param {unknown} [restore] the snapshot the page kept when it opened another
+   * @param {EditorLanguage} [of] what it is
    */
-  export function open(script, restore) {
+  export function open(text, restore, of = 'kupcad') {
     restored = restore;
+    language = of;
     documents += 1;
-    load(script);
+    show(text);
+    if (of === 'kupcad') runner?.run(text, {}, { now: true, files });
+    else {
+      runner?.stop();
+      ran = null;
+    }
+  }
+
+  /** @param {string} text the document's, in place of the last one's, with none of its runs' */
+  function show(text) {
+    value = text;
+    findings = [];
+    overrides = {};
+    loads += 1;
   }
 
   /** The editor as it is now, its undo history with it, for `open` to give back: plain JSON. */
@@ -201,7 +225,7 @@
    * (`files`), which the page knows of and it doesn't.
    */
   export function run() {
-    runner?.run(value, plainValues(overrides), { now: true, files });
+    if (runs) runner?.run(value, plainValues(overrides), { now: true, files });
   }
 
   /** Puts the focus in the editor: a script the page made, to be written. */
@@ -214,10 +238,10 @@
     consoleLines = appendLines(consoleLines, linesOfLog(line));
   }
 
-  /** @param {string} next the user's script */
+  /** @param {string} next the user's script (or JSON file) */
   function edited(next) {
     findings = [];
-    runner?.run(next, plainValues(overrides), { files });
+    if (runs) runner?.run(next, plainValues(overrides), { files });
     onsource?.(next);
   }
 
@@ -263,6 +287,7 @@
         findings={marks}
         label={name}
         restore={restored}
+        {language}
         onchange={edited}
       />
     {/key}

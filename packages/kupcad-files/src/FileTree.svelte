@@ -2,8 +2,9 @@
   @component
   A project's tree: its folders, scripts and the files they read, each under its folder, under a
   bar with its title and what can be made in it (`onnew`: a script, a folder). A folder,
-  clicked, opens or closes, nothing under a closed one shown; a script, clicked, is opened; the
-  open one is marked, and one with unsaved changes too. The arrow keys move through it as
+  clicked, opens or closes, nothing under a closed one shown; a script, clicked, is opened (and a
+  file the host opens too, `opens`: a JSON file); the open one is marked, and one with unsaved
+  changes too. The arrow keys move through it as
   through any tree: up and down from row to row, right into a folder (opening it first), left
   out of it to its folder (closing an open one first). A row's menu (a right click, the menu key
   or Shift+F10) and the tree's are the host's (`onmenu`, with where to show it); F2 renames a
@@ -27,6 +28,8 @@
    * @property {string | null} selected the open script's path
    * @property {ReadonlySet<string>} unsaved the paths of the scripts with unsaved changes
    * @property {(entry: Entry) => void} onopen
+   * @property {(entry: Entry) => boolean} [opens] which files besides scripts it opens: by
+   *   default none
    * @property {(folder: Entry, open: boolean) => void} ontoggle opens or closes a folder
    * @property {string} [root] the folder's own path: where an entry made in no folder of it goes
    * @property {Naming | null} [editing] the name being given, if one is
@@ -59,6 +62,7 @@
     selected,
     unsaved,
     onopen,
+    opens = () => false,
     ontoggle,
     root = '',
     editing = null,
@@ -298,7 +302,7 @@
             >
               <span class="twisty" aria-hidden="true">{open ? '▾' : '▸'}</span>{entry.name}
             </button>
-          {:else if entry.kind === 'script'}
+          {:else if entry.kind === 'script' || opens(entry)}
             <span class="twisty" aria-hidden="true"></span>
             <button
               type="button"
