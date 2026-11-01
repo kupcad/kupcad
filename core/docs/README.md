@@ -308,6 +308,7 @@ Mistakes found before a script runs (a syntax error, `break` outside a loop, ass
 | `outside-method` | A `yield`, `block_given?` or `super` outside a method. |
 | `builtin-redefined` | A built-in, such as `cube`, assigned or redefined. |
 | `import-collision` | An import named like a variable of the file. |
+| `export-before-definition` | An `export` of a name the file sets only further down (`export { w }` above `w = 1`): an export reads its names where it stands, so move it below them. |
 | `too-many-parameters` | A method or block with more than 255 parameters. |
 | `too-many-arguments` | A call with more than 255 arguments. |
 | `too-many-variables` | A function with more than 65,535 variables, or more than 255 captured from outside. |
@@ -578,6 +579,8 @@ import { bolt } from "./bolt.txt" with { type: "kup" }
 ```
 
 `with { }` takes no other key (`with { version: 2 }` is the syntax error `import-attribute`), and a file gives one value, named by one variable without braces: `import gears from "./gears.json"`. Braces name what is in a JSON file's object, its keys (see below); a mesh or a font has no names in it, so `import { teeth } from "./gear.stl"` is the syntax error `file-import-names`.
+
+`export { bolt }` takes `bolt` as it is where the export stands, so it goes below what sets it: one above `bolt = ...` or `def bolt` is the compile error `export-before-definition`.
 
 `export { bolt } from "./hardware.kup"` passes another file's export on, so a library's entry file can gather its parts (`as` renames one: `export { bolt as m3_bolt } from ...`). It binds nothing in the file that writes it: that file's own `bolt`, if it has one, is neither exported nor used. A file is re-exported as it is imported: its value under one bare name (`export machine from "./machine.json"`), or a JSON file's keys in braces (`export { gears } from "./machine.json"`).
 

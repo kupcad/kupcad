@@ -45,6 +45,7 @@ pub const Code = enum {
     @"outside-method",
     @"builtin-redefined",
     @"import-collision",
+    @"export-before-definition",
     // A limit of the bytecode
     @"too-many-parameters",
     @"too-many-arguments",
@@ -87,6 +88,7 @@ pub const Code = enum {
             .@"outside-method" => "A yield, block_given? or super outside a method.",
             .@"builtin-redefined" => "A built-in, such as cube, assigned or redefined.",
             .@"import-collision" => "An import named like a variable of the file.",
+            .@"export-before-definition" => "An export of a name the file sets only further down; an export reads its names where it stands.",
             .@"too-many-parameters" => "A method or block with more parameters than the limit.",
             .@"too-many-arguments" => "A call with more arguments than the limit.",
             .@"too-many-variables" => "A function with more variables, or more captured from outside, than the limit.",

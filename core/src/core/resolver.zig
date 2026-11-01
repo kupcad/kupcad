@@ -2,13 +2,14 @@
 //! upvalue, a global or an instance variable (`ResolvedSymbol`) and, for a local or an
 //! upvalue, the node that declared it (`declarations`: the assignment, the `def` or lambda
 //! whose parameter it is, the block parameter, the `for`), and which variables each
-//! closure captures; it also reports `break` and `next` outside a loop. Run by
-//! `frontend/document.zig`.
+//! closure captures; it also reports `break` and `next` outside a loop, and an `export` of
+//! a name the file sets only further down. Run by `frontend/document.zig`.
 
 const std = @import("std");
 const ast = @import("ast.zig");
 const visitor = @import("visitor.zig");
 const errors = @import("errors.zig");
+const token = @import("token.zig");
 
 pub const ScopeKind = enum(u8) {
     unresolved,
@@ -50,6 +51,9 @@ const Scope = struct {
     }
 };
 
+/// A plain `export`'s name that nothing has set yet where the export stands.
+const EarlyExport = struct { name: ast.StringId, node: ast.NodeIndex };
+
 pub const Resolver = struct {
     allocator: std.mem.Allocator,
     tree: *const ast.Tree,
@@ -68,6 +72,10 @@ pub const Resolver = struct {
     scopes: std.ArrayList(Scope) = .empty,
     diagnostics: *errors.Diagnostics,
     loop_depth: usize = 0,
+    /// The names the top level has set so far, in source order: assigned, defined, imported.
+    top_level_names: std.AutoHashMapUnmanaged(ast.StringId, void) = .empty,
+    /// Exports that came before their names were set, an error if the file sets them later.
+    early_exports: std.ArrayList(EarlyExport) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, tree: *const ast.Tree, token_starts: []const u32, token_lengths: []const u32, diagnostics: *errors.Diagnostics) !Resolver {
         const symbols = try allocator.alloc(ResolvedSymbol, tree.nodes.items.len);
@@ -93,6 +101,8 @@ pub const Resolver = struct {
 
     pub fn deinit(self: *Resolver) void {
         self.active_method_blocks.deinit(self.allocator);
+        self.top_level_names.deinit(self.allocator);
+        self.early_exports.deinit(self.allocator);
 
         for (self.scopes.items) |*scope| {
             scope.deinit(self.allocator);
@@ -117,6 +127,26 @@ pub const Resolver = struct {
         try visitor.walk(ResolverContext, &ctx, self.tree, root);
 
         try self.popScope();
+        self.reportEarlyExports();
+    }
+
+    /// Records `name` as set, when the top level sets it: not in a method, class or a
+    /// call's block (the bodies of the program, an `if` or a loop are blocks of its own).
+    fn noteTopLevel(self: *Resolver, name: ast.StringId) !void {
+        for (self.scopes.items[1..]) |scope| if (scope.is_closure or scope.is_block) return;
+        try self.top_level_names.put(self.allocator, name, {});
+    }
+
+    /// An export reads its names where it stands, so one set only further down was nil
+    /// there: "Undefined variable", which reads as though the file never set it.
+    fn reportEarlyExports(self: *Resolver) void {
+        for (self.early_exports.items) |early| {
+            if (!self.top_level_names.contains(early.name)) continue; // Never set: the run says so
+            const node = self.tree.getNode(early.node).?;
+            const at: token.Location = .{ .offset = self.token_starts[node.main_token], .length = self.token_lengths[node.main_token], .file_id = 0 };
+            const name = self.tree.getString(early.name);
+            self.diagnostics.add(at, .@"export-before-definition", "Cannot export '{s}' before it is defined; move the export below where '{s}' is set", .{ name, name });
+        }
     }
 
     pub fn pushScope(self: *Resolver, is_closure: bool, is_block: bool, node: ast.NodeIndex) !void {
@@ -344,8 +374,9 @@ const ResolverContext = struct {
                 }
             },
             .def_stmt => {
-                try self.resolver.pushScope(true, false, node_idx);
                 const ds = tree.defStmt(node);
+                try self.resolver.noteTopLevel(ds.name);
+                try self.resolver.pushScope(true, false, node_idx);
                 for (tree.getParams(ds.params)) |param| {
                     _ = try self.resolver.declareLocal(param.name, node_idx);
                 }
@@ -363,14 +394,35 @@ const ResolverContext = struct {
                 const fs = tree.forStmt(node);
                 for (tree.getLhsExprs(fs.targets)) |target| {
                     _ = try self.resolver.declareLocal(target.name, node_idx);
+                    try self.resolver.noteTopLevel(target.name);
                 }
             },
             .class_stmt, .module_stmt, .singleton_class => {
+                switch (node.tag) {
+                    .class_stmt => if (tree.getNode(tree.classStmt(node).name)) |name| {
+                        if (name.tag == .identifier) try self.resolver.noteTopLevel(@fromBackingInt(name.data));
+                    },
+                    .module_stmt => try self.resolver.noteTopLevel(tree.moduleStmt(node).name),
+                    else => {},
+                }
                 try self.resolver.pushScope(true, false, node_idx);
+            },
+            .import_stmt => {
+                for (tree.getAliasPairs(tree.importStmt(node).symbols)) |pair| try self.resolver.noteTopLevel(pair.alias);
+            },
+            .export_stmt => {
+                const ex = tree.exportStmt(node);
+                // A re-export (`export { a } from "./a.kup"`) reads its names from the file it names
+                if (ex.path == .none) for (tree.getAliasPairs(ex.symbols)) |pair| {
+                    if (!self.resolver.top_level_names.contains(pair.original)) {
+                        try self.resolver.early_exports.append(self.resolver.allocator, .{ .name = pair.original, .node = node_idx });
+                    }
+                };
             },
             .assignment => {
                 const assign = tree.assignment(node);
                 _ = try self.resolver.declareLocal(assign.name, node_idx);
+                try self.resolver.noteTopLevel(assign.name);
                 // A reassignment's declaration is the first one
                 self.resolver.declarations[@backingInt(node_idx)] = self.resolver.declaredBy(assign.name);
             },
@@ -378,6 +430,7 @@ const ResolverContext = struct {
                 const ma = tree.multipleAssignment(node);
                 for (tree.getLhsExprs(ma.lhs)) |lhs| {
                     _ = try self.resolver.declareLocal(lhs.name, node_idx);
+                    try self.resolver.noteTopLevel(lhs.name);
                 }
             },
             .identifier => {

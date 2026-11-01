@@ -46,6 +46,7 @@ test "Error codes: a script for each code gets that code" {
         .{ .@"unexpected-block", "f(&b) { 1 }" },
         .{ .@"outside-loop", "break" },
         .{ .@"outside-method", "yield" },
+        .{ .@"export-before-definition", "export { w }\nw = 1\n" },
         .{ .@"builtin-redefined", "cube = 5" },
         .{ .@"import-collision", "a = 1\nimport { a } from \"./a.kup\"\n" },
     };
@@ -99,6 +100,35 @@ test "Error codes: a script past each limit gets that limit's code" {
     for (0..limits.MAX_INLINE_CACHES + 2) |_| try w.writeAll("  x\n");
     try w.writeAll("end\n");
     try expectCode(.@"too-many-global-uses", source.written());
+}
+
+test "Error codes: an export of a name set only further down, and nothing else" {
+    // It said "NameError: Undefined variable 'w'", as though the file never set it
+    for ([_][]const u8{
+        "export { w }\nw = 1\n",
+        "export { box }\ndef box = cube(1)\n",
+        "export { Part }\nclass Part\nend\n",
+        "export { Kit }\nmodule Kit\nend\n",
+        "export { a, b }\na, b = 1, 2\n",
+        "export { i }\nfor i in [1]\nend\n",
+        "export { w as width }\nif true\n  w = 1\nend\n",
+    }) |source| try expectCode(.@"export-before-definition", source);
+
+    const diags = try api.checkCode(testing.allocator, testing.io, "export { w }\nw = 1\n", .{});
+    defer api.freeDiagnostics(testing.allocator, diags);
+    try testing.expectEqualStrings("Cannot export 'w' before it is defined; move the export below where 'w' is set", diags[0].message);
+
+    for ([_][]const u8{
+        // Set before: the export takes the value it has there
+        "w = 1\nexport { w }\nw = 2\n",
+        // Never set: the run names it, a built-in or not
+        "export { nothing }\n",
+        // Set only inside a method or a block: not the file's
+        "export { w }\ndef f\n  w = 1\nend\n[1].each { |x| w = x }\n",
+    }) |source| {
+        errdefer std.debug.print("source: {s}\n", .{source});
+        try testing.expectError(error.NoError, errorCodeOf(source));
+    }
 }
 
 test "Error codes: docs/README.md lists every code, and only codes" {
