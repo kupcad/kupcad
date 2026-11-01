@@ -2,6 +2,8 @@
 //! (`.step`, `.continue`, `.locals`, `.stack`, `.globals`) or expressions to evaluate in
 //! the paused frame, with line editing and history. `terminalDebugger` picks it when stdin
 //! is a terminal; the `debugger` built-in (stdlib/diagnostics.zig) calls the VM's handler.
+//! `session` is the debugger apart from the terminal, the lines it is given and where it
+//! answers its caller's, so its tests give it both.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -14,12 +16,24 @@ const VM = @import("../vm/vm.zig").VM;
 const log = std.log.scoped(.debugger);
 
 const MAX_HISTORY = 100;
+const PROMPT = "(dbg) > ";
+const HELP =
+    \\Commands:
+    \\  .s, .step      Step to next line
+    \\  .c, .continue  Resume execution
+    \\  .l, .locals    Print local variables
+    \\  .st, .stack    Print VM stack
+    \\  .g, .globals   Print User Globals
+    \\  .q, .exit      Stop the run (Ctrl+C too)
+    \\  <expr>         Evaluate expression (e.g. 'c', 'width * 2')
+    \\
+;
 /// How long after an Esc the rest of an arrow key's sequence may come: an Esc alone (no more
 /// within it) waited for two more bytes.
 const ESCAPE_FOLLOW_MS = 50;
 
-// DOD History Buffer
-const History = struct {
+/// The lines typed before, the newest last, at most MAX_HISTORY, none twice in a row.
+pub const History = struct {
     chars: std.ArrayList(u8) = .empty,
     line_starts: std.ArrayList(usize) = .empty,
 
@@ -201,11 +215,8 @@ fn readLine(vm: *VM, prompt: []const u8, history: *History) !?[]const u8 {
     }
 }
 
-fn printLocals(vm: *VM) void {
-    const stderr = std.Io.File.stderr();
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
-    defer out.deinit();
-    out.writer.writeAll("--- Locals ---\n") catch return;
+fn printLocals(vm: *VM, out: *std.Io.Writer) !void {
+    try out.writeAll("--- Locals ---\n");
 
     if (vm.frames.items.len > 0) {
         const frame = &vm.frames.items[vm.frames.items.len - 1];
@@ -216,38 +227,30 @@ fn printLocals(vm: *VM) void {
                 if (std.mem.eql(u8, name, "<anonymous>")) continue;
                 const slot = frame.base_slot + i;
                 if (slot < vm.stack_top) {
-                    out.writer.print("{s}: ", .{name}) catch return;
-                    vm.stack[slot].stringify(true, &out.writer) catch return;
-                    out.writer.writeAll("\n") catch return;
+                    try out.print("{s}: ", .{name});
+                    try vm.stack[slot].stringify(true, out);
+                    try out.writeAll("\n");
                 }
             }
         }
     }
-    out.writer.writeAll("--------------\n") catch return;
-    stderr.writeStreamingAll(vm.io, out.written()) catch return;
+    try out.writeAll("--------------\n");
 }
 
-fn printStack(vm: *VM) void {
-    const stderr = std.Io.File.stderr();
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
-    defer out.deinit();
-    out.writer.writeAll("--- VM Stack ---\n") catch return;
+fn printStack(vm: *VM, out: *std.Io.Writer) !void {
+    try out.writeAll("--- VM Stack ---\n");
     var i: usize = vm.stack_top;
     while (i > 0) {
         i -= 1;
-        out.writer.print("[{d:0>2}] ", .{i}) catch return;
-        vm.stack[i].stringify(true, &out.writer) catch return;
-        out.writer.writeAll("\n") catch return;
+        try out.print("[{d:0>2}] ", .{i});
+        try vm.stack[i].stringify(true, out);
+        try out.writeAll("\n");
     }
-    out.writer.writeAll("----------------\n") catch return;
-    stderr.writeStreamingAll(vm.io, out.written()) catch return;
+    try out.writeAll("----------------\n");
 }
 
-fn printGlobals(vm: *VM) void {
-    const stderr = std.Io.File.stderr();
-    var out: std.Io.Writer.Allocating = .init(vm.allocator);
-    defer out.deinit();
-    out.writer.writeAll("--- User Globals ---\n") catch return;
+fn printGlobals(vm: *VM, out: *std.Io.Writer) !void {
+    try out.writeAll("--- User Globals ---\n");
 
     var it = vm.globals.iterator();
     while (it.next()) |entry| {
@@ -255,26 +258,20 @@ fn printGlobals(vm: *VM) void {
         if (val.isNative() or val.isClass() or val.isModule()) continue;
         if (std.mem.eql(u8, entry.key_ptr.*, "GC") or std.mem.eql(u8, entry.key_ptr.*, "Math")) continue;
 
-        out.writer.print("{s}: ", .{entry.key_ptr.*}) catch return;
-        val.stringify(true, &out.writer) catch return;
-        out.writer.writeAll("\n") catch return;
+        try out.print("{s}: ", .{entry.key_ptr.*});
+        try val.stringify(true, out);
+        try out.writeAll("\n");
     }
-    out.writer.writeAll("--------------------\n") catch return;
-    stderr.writeStreamingAll(vm.io, out.written()) catch return;
+    try out.writeAll("--------------------\n");
 }
 
-fn evaluateContextually(vm: *VM, input: []const u8) void {
-    const stderr = std.Io.File.stderr();
-    var doc = Document.parse(vm.allocator, input) catch {
-        stderr.writeStreamingAll(vm.io, "Parse error.\n") catch return;
-        return;
-    };
+/// `input` evaluated in the paused frame, its locals read and written back; the value, or why
+/// there is none, on `out`.
+fn evaluateContextually(vm: *VM, input: []const u8, out: *std.Io.Writer) !void {
+    var doc = Document.parse(vm.allocator, input) catch return out.writeAll("Parse error.\n");
     defer doc.deinit();
 
-    if (doc.diagnostics.len > 0) {
-        stderr.writeStreamingAll(vm.io, "Syntax error.\n") catch return;
-        return;
-    }
+    if (doc.diagnostics.len > 0) return out.writeAll("Syntax error.\n");
 
     var eval_chunk = chunk.Chunk.init();
     defer eval_chunk.free(vm.allocator);
@@ -295,10 +292,7 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
     comp.compile(doc.tree.root) catch |err| {
         const where = comp.errorLine(vm.allocator, &doc.line_index);
         defer if (where) |w| vm.allocator.free(w);
-        var err_buf: [256]u8 = undefined;
-        const err_str = std.mem.print(&err_buf, "Compile error: {s}\n", .{where orelse @errorName(err)}) catch "Compile error.\n";
-        stderr.writeStreamingAll(vm.io, err_str) catch return;
-        return;
+        return out.print("Compile error: {s}\n", .{where orelse @errorName(err)});
     };
 
     const func = vm.gc.allocateFunction(vm) catch return;
@@ -349,7 +343,13 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
 
     const saved_step = vm.hooks.step;
     vm.hooks.setStep(false);
+    // The paused script's rescues are none of what is typed here: an error would have unwound
+    // into them, the paused frame jumping to its rescue
+    const paused_rescues = vm.rescue_frames;
+    vm.rescue_frames = .empty;
     const res = vm.runUntil(target_depth);
+    vm.rescue_frames.deinit(vm.allocator);
+    vm.rescue_frames = paused_rescues;
     // A lambda typed here holds this closure as its `self` and may outlive eval_chunk (see
     // VM.interpret); detached before anything allocates
     func.chunk = null;
@@ -364,81 +364,89 @@ fn evaluateContextually(vm: *VM, input: []const u8) void {
             }
         }
 
-        var out: std.Io.Writer.Allocating = .init(vm.allocator);
-        defer out.deinit();
-        result_val.stringify(true, &out.writer) catch return;
-        out.writer.writeAll("\n") catch return;
-        stderr.writeStreamingAll(vm.io, out.written()) catch return;
+        try result_val.stringify(true, out);
+        try out.writeAll("\n");
     } else {
-        stderr.writeStreamingAll(vm.io, "Evaluation failed.\n") catch return;
+        defer vm.abandonNestedRun(target_depth, repl_base_slot);
+        try out.print("Evaluation failed: {s}\n", .{vm.last_error orelse @tagName(res)});
     }
 }
 
 /// Stops the paused run, as a failure: `.quit` and Ctrl+C. It used to exit the process, with
 /// success, its outputs unwritten and nothing it holds released.
-fn stopRun(vm: *VM) void {
-    std.Io.File.stderr().writeStreamingAll(vm.io, "Stopping the run.\n") catch {};
+fn stopRun(vm: *VM, out: *std.Io.Writer) void {
+    out.writeAll("Stopping the run.\n") catch {};
     vm.cancel_token.store(true, .release);
 }
 
-pub fn debuggerLoop(vm: *VM) void {
-    const stderr = std.Io.File.stderr();
+/// The terminal's lines, edited and recalled from the history (`readLine`).
+const Terminal = struct {
+    history: History = .{},
 
-    stderr.writeStreamingAll(vm.io, "\n===   KupCAD Debugger ===\n") catch return;
-    stderr.writeStreamingAll(vm.io, "Commands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
-
-    if (vm.currentPosition()) |at| {
-        var loc_buf: [64]u8 = undefined;
-        if (std.mem.print(&loc_buf, "Break at line {d}, col {d}\n", .{ at.line, at.column })) |msg| {
-            stderr.writeStreamingAll(vm.io, msg) catch return;
-        } else |_| {}
+    pub fn next(self: *Terminal, vm: *VM) !?[]const u8 {
+        const line = try readLine(vm, PROMPT, &self.history) orelse return null;
+        const typed = std.mem.trim(u8, line, " \r\n\t");
+        if (typed.len > 0) self.history.push(vm.allocator, typed) catch |err| log.warn("History push failed: {}", .{err});
+        return line;
     }
+};
 
-    var history = History{};
-    defer history.deinit(vm.allocator);
+pub fn debuggerLoop(vm: *VM) void {
+    var terminal: Terminal = .{};
+    defer terminal.history.deinit(vm.allocator);
+    var stderr = std.Io.File.stderr().writer(vm.io, &.{});
+    session(vm, &terminal, &stderr.interface);
+}
+
+/// The debugger at a pause: each line `lines.next(vm)` gives (owned by the VM's allocator; null
+/// at their end, error.Interrupted for Ctrl+C) a command or an expression, answered on `out`,
+/// until one resumes the run, steps it or stops it.
+pub fn session(vm: *VM, lines: anytype, out: *std.Io.Writer) void {
+    out.writeAll("\n===   KupCAD Debugger ===\nCommands: .step, .continue, .locals, .stack, .globals, .help\n") catch return;
+    if (vm.currentPosition()) |at| out.print("Break at line {d}, col {d}\n", .{ at.line, at.column }) catch return;
 
     while (true) {
-        const input_opt = readLine(vm, "(dbg) > ", &history) catch |err| {
+        const input = lines.next(vm) catch |err| {
             if (err == error.Interrupted) {
-                stopRun(vm);
+                stopRun(vm, out);
                 break;
             }
             log.err("Debugger input error: {}", .{err});
             break;
-        };
-
-        if (input_opt == null) break;
-
-        const input = input_opt.?;
+        } orelse break;
         defer vm.allocator.free(input);
 
         const trimmed = std.mem.trim(u8, input, " \r\n\t");
         if (trimmed.len == 0) continue;
 
-        history.push(vm.allocator, trimmed) catch |err| log.warn("History push failed: {}", .{err});
-
-        if (std.mem.eql(u8, trimmed, ".c") or std.mem.eql(u8, trimmed, ".continue")) {
-            stderr.writeStreamingAll(vm.io, "Resuming execution...\n\n") catch return;
+        if (isCommand(trimmed, ".c", ".continue")) {
+            out.writeAll("Resuming execution...\n\n") catch return;
             vm.hooks.setStep(false);
             break;
-        } else if (std.mem.eql(u8, trimmed, ".s") or std.mem.eql(u8, trimmed, ".step")) {
+        } else if (isCommand(trimmed, ".s", ".step")) {
             vm.hooks.setStep(true);
             break;
-        } else if (std.mem.eql(u8, trimmed, ".q") or std.mem.eql(u8, trimmed, ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
-            stopRun(vm);
+        } else if (isCommand(trimmed, ".q", ".exit") or std.mem.eql(u8, trimmed, ".quit")) {
+            stopRun(vm, out);
             break;
-        } else if (std.mem.eql(u8, trimmed, ".l") or std.mem.eql(u8, trimmed, ".locals")) {
-            printLocals(vm);
-        } else if (std.mem.eql(u8, trimmed, ".st") or std.mem.eql(u8, trimmed, ".stack")) {
-            printStack(vm);
-        } else if (std.mem.eql(u8, trimmed, ".g") or std.mem.eql(u8, trimmed, ".globals")) {
-            printGlobals(vm);
-        } else if (std.mem.eql(u8, trimmed, ".h") or std.mem.eql(u8, trimmed, ".help")) {
-            stderr.writeStreamingAll(vm.io, "Commands:\n  .s, .step      Step to next line\n  .c, .continue  Resume execution\n  .l, .locals    Print local variables\n  .st, .stack    Print VM stack\n  .g, .globals   Print User Globals\n  .q, .exit      Stop the run (Ctrl+C too)\n  <expr>         Evaluate expression (e.g. 'c', 'width * 2')\n") catch return;
-        } else {
-            evaluateContextually(vm, trimmed);
         }
+        const answered = if (isCommand(trimmed, ".l", ".locals"))
+            printLocals(vm, out)
+        else if (isCommand(trimmed, ".st", ".stack"))
+            printStack(vm, out)
+        else if (isCommand(trimmed, ".g", ".globals"))
+            printGlobals(vm, out)
+        else if (isCommand(trimmed, ".h", ".help"))
+            out.writeAll(HELP)
+        else
+            evaluateContextually(vm, trimmed, out);
+        answered catch return;
     }
+}
+
+/// Whether `input` is a command, by its short name or its long one.
+fn isCommand(input: []const u8, short: []const u8, long: []const u8) bool {
+    return std.mem.eql(u8, input, short) or std.mem.eql(u8, input, long);
 }
 
 /// The debugger for a host run from a terminal (`kupcad build`, `kupcad watch`), or null

@@ -94,6 +94,13 @@ pub const CallFrame = struct {
         const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
         return exec_chunk.getOffset(if (self.ip > 0) self.ip - 1 else 0);
     }
+
+    /// The source offset of the instruction the frame runs next: where a step pauses.
+    pub fn nextOffset(self: *const CallFrame) ?u32 {
+        const chunk_ptr = self.closure.function.chunk orelse return null;
+        const exec_chunk: *chunk.Chunk = @ptrCast(@alignCast(chunk_ptr));
+        return exec_chunk.getOffset(self.ip);
+    }
 };
 
 pub const RescueFrame = struct {
@@ -142,6 +149,10 @@ pub const VM = struct {
     line_index: ?*const LineIndex = null, // Injected by CLI for debugging
     profiler: ?*profiler_mod.Profiler = null, // First-class tracing profiler
     debugger_step_handler: ?*const fn (vm: *VM) void = null,
+    /// Set while the step handler has the run: the top frame is before its next instruction,
+    /// the line stepped to, not after its last (where an error is placed, and where the pause
+    /// said it was: the line stepped from).
+    paused_at_step: bool = false,
     /// Opens the interactive debugger when a script calls `debugger()`. Null (the default)
     /// where no one is at a terminal to answer it, such as the LSP, whose stdin and stdout
     /// carry the protocol: there `debugger()` does nothing.
@@ -622,7 +633,9 @@ pub const VM = struct {
             if (current_line == prev) return null;
             if (self.debugger_step_handler) |handler| {
                 // A new line: the debugger takes over, then the step goes on from it.
+                self.paused_at_step = true;
                 handler(self);
+                self.paused_at_step = false;
                 previous_line.* = current_line;
             } else {
                 // Nobody to pause for (a host armed stepping without a handler): the run
@@ -1662,6 +1675,18 @@ pub const VM = struct {
         self.clearUnwindState();
     }
 
+    /// Ends a nested run that failed, so the run it is nested in goes on (the debugger's
+    /// evaluation at a pause): its frames past `frame_count` dropped, the upvalues it opened
+    /// closed, the stack back to `base_slot` and its error forgotten. A failed run left its
+    /// frame on the stack, which the paused script then resumed into.
+    pub fn abandonNestedRun(self: *VM, frame_count: usize, base_slot: usize) void {
+        self.closeUpvalues(&self.stack[base_slot]);
+        self.frames.shrinkRetainingCapacity(frame_count);
+        self.shrinkStack(base_slot);
+        self.clearUnwindState();
+        self.clearLastError();
+    }
+
     /// Forgets what a run left: the ghosts it put on display (display_list owns its
     /// handles, clones taken by ghost(), see materials.zig), its materials, the files it
     /// read, its report, the parameters it declared and the settings it put in force. A
@@ -1770,7 +1795,9 @@ pub const VM = struct {
     pub fn currentPosition(self: *const VM) ?LinePosition {
         const li = self.line_index orelse return null;
         const frame = self.innermostScriptFrame() orelse return null;
-        const at = li.humanPosition(frame.sourceOffset() orelse return null);
+        const stepped_to = self.paused_at_step and frame == &self.frames.items[self.frames.items.len - 1];
+        const offset = (if (stepped_to) frame.nextOffset() else frame.sourceOffset()) orelse return null;
+        const at = li.humanPosition(offset);
         return .{ .line = at.line, .column = at.column };
     }
 
