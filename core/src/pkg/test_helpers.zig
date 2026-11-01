@@ -174,3 +174,60 @@ pub const SlowServer = struct {
         self.stopping.waitUncancelable(testing.io);
     }
 };
+
+// ---------------------------------------------------------------------------
+// A host of one archive
+// ---------------------------------------------------------------------------
+
+/// Serves `body` to every GET on 127.0.0.1, on a thread of its own, until `stop`: a package's
+/// archive at a URL, fetched by `pkg add` and again by an install that finds it gone.
+pub const ArchiveServer = struct {
+    server: std.Io.net.Server,
+    port: u16,
+    body: []const u8,
+    stopping: std.Io.Event = .unset,
+    thread: std.Thread,
+    /// How many requests it answered.
+    served: std.atomic.Value(usize) = .init(0),
+
+    pub fn start(self: *ArchiveServer, body: []const u8) !void {
+        const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+        const server = try address.listen(testing.io, .{});
+        self.* = .{ .server = server, .port = server.socket.address.getPort(), .body = body, .thread = undefined };
+        errdefer self.server.deinit(testing.io);
+        self.thread = try std.Thread.spawn(.{}, serve, .{self});
+    }
+
+    /// A throwaway connection wakes the pending accept.
+    pub fn stop(self: *ArchiveServer) void {
+        self.stopping.set(testing.io);
+        const address = std.Io.net.IpAddress.parse("127.0.0.1", self.port) catch unreachable;
+        if (address.connect(testing.io, .{ .mode = .stream })) |s| s.close(testing.io) else |_| {}
+        self.thread.join();
+        self.server.deinit(testing.io);
+    }
+
+    /// The URL of `path` on this host, in `buffer`.
+    pub fn url(self: *const ArchiveServer, buffer: []u8, path: []const u8) ![]const u8 {
+        return std.mem.print(buffer, "http://127.0.0.1:{d}{s}", .{ self.port, path });
+    }
+
+    fn serve(self: *ArchiveServer) void {
+        while (!self.stopping.isSet()) self.serveOne() catch {};
+    }
+
+    fn serveOne(self: *ArchiveServer) !void {
+        const stream = try self.server.accept(testing.io);
+        defer stream.close(testing.io);
+        if (self.stopping.isSet()) return;
+        var r_buf: [4096]u8 = undefined;
+        var reader = stream.reader(testing.io, &r_buf);
+        while (!std.mem.eql(u8, try reader.interface.takeDelimiterInclusive('\n'), "\r\n")) {}
+        var w_buf: [4096]u8 = undefined;
+        var writer = stream.writer(testing.io, &w_buf);
+        try writer.interface.print("HTTP/1.1 200 OK\r\nContent-Type: application/gzip\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{self.body.len});
+        try writer.interface.writeAll(self.body);
+        try writer.interface.flush();
+        _ = self.served.fetchAdd(1, .monotonic);
+    }
+};

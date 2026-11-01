@@ -402,6 +402,66 @@ test "kupcad: pkg add of a local package records it, and keeps what else kupcad.
     try sb.tmp.dir.access(testing.io, "kupcad.lock", .{});
 }
 
+test "kupcad: pkg add of an archive's URL installs it, a script imports it, and install fetches it again" {
+    // Each stage was tested alone: the URL read, the archive fetched, stored and linked,
+    // the import resolved; never one after the other, as a person runs them
+    var sb = try Sandbox.init();
+    defer sb.deinit();
+    const home = try std.fs.path.join(testing.allocator, &.{ sb.path, "kupcad-home" });
+    defer testing.allocator.free(home);
+    var env = std.process.Environ.Map.init(testing.allocator);
+    defer env.deinit();
+    try env.put("KUPCAD_HOME", home);
+
+    const archive = try pkg_helpers.buildTarGz(testing.allocator, &.{
+        .{ .name = "main.kup", .data = "plate = cube(3).named(\"plate\")\nexport { plate }\n" },
+        .{ .name = "holes.kup", .data = "hole = cylinder(r: 0.5, h: 10, center: true)\nexport { hole }\n" },
+    });
+    defer testing.allocator.free(archive);
+    var host: pkg_helpers.ArchiveServer = undefined;
+    try host.start(archive);
+    defer host.stop();
+    var url_buf: [64]u8 = undefined;
+    const url = try host.url(&url_buf, "/parts-1.0.tar.gz");
+    const arg = try std.fmt.allocPrint(testing.allocator, "parts={s}", .{url});
+    defer testing.allocator.free(arg);
+
+    const created = try kupcadIn(sb.path, &.{ "pkg", "init" }, &env);
+    defer created.deinit();
+    try testing.expectEqual(@as(u8, 0), created.code);
+    const added = try kupcadIn(sb.path, &.{ "pkg", "add", arg }, &env);
+    defer added.deinit();
+    errdefer std.debug.print("pkg add said:\n{s}{s}\n", .{ added.stdout, added.stderr });
+    try testing.expectEqual(@as(u8, 0), added.code);
+    const manifest = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
+    defer testing.allocator.free(manifest);
+    try testing.expect(std.mem.find(u8, manifest, url) != null);
+    const lock = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.lock", testing.allocator, .limited(4096));
+    defer testing.allocator.free(lock);
+    try testing.expect(std.mem.find(u8, lock, "\"integrity\": \"sha") != null);
+
+    // A script imports it by its alias, its main.kup and another of its files
+    try sb.tmp.dir.writeFile(testing.io, .{ .sub_path = "bracket.kup", .data = "import { plate } from \"parts\"\nimport { hole } from \"parts/holes.kup\"\nputs (plate - hole).volume.round(2)\nplate - hole\n" });
+    const built = try kupcadIn(sb.path, &.{ "build", "bracket.kup", "-o", "bracket.stl" }, &env);
+    defer built.deinit();
+    errdefer std.debug.print("build said:\n{s}{s}\n", .{ built.stdout, built.stderr });
+    try testing.expectEqual(@as(u8, 0), built.code);
+    try sb.tmp.dir.access(testing.io, "bracket.stl", .{});
+
+    // A clone has the manifest and the lock, not the store nor the links: install fetches it
+    try sb.tmp.dir.deleteTree(testing.io, ".kupcad");
+    try sb.tmp.dir.deleteTree(testing.io, "kupcad-home");
+    const fetched_before = host.served.load(.monotonic);
+    const installed = try kupcadIn(sb.path, &.{ "pkg", "install" }, &env);
+    defer installed.deinit();
+    errdefer std.debug.print("pkg install said:\n{s}{s}\n", .{ installed.stdout, installed.stderr });
+    try testing.expectEqual(@as(u8, 0), installed.code);
+    try testing.expect(host.served.load(.monotonic) > fetched_before);
+    const rebuilt = try kupcadIn(sb.path, &.{ "build", "bracket.kup", "-o", "bracket.stl" }, &env);
+    defer rebuilt.deinit();
+    try testing.expectEqual(@as(u8, 0), rebuilt.code);
+}
+
 test "kupcad: pkg add that fails to install leaves kupcad.json as it was" {
     var sb = try Sandbox.init();
     defer sb.deinit();
