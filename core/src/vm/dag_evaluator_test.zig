@@ -82,6 +82,40 @@ test "DAG Evaluator: a chain of unions is one batch, and its links still evaluat
     try testing.expectApproxEqAbs(@as(f64, 5), kernel.volume(try dag_evaluator.evaluateDAG(&vm, abcde)), 1e-9);
 }
 
+test "DAG Evaluator: a chain of differences is one batch, the first less the rest" {
+    // `acc = acc - hole` made one kernel call per hole, each over the plate so far
+    var vm = try initVm();
+    defer vm.deinit();
+    const b = &vm.dag_builder;
+    const plate = try b.addCube(10, 10, 1, false);
+    var holes: [4]u32 = undefined;
+    for (&holes, 0..) |*h, i| h.* = try b.addTranslate(try b.addCube(1, 1, 1, false), @floatFromInt(2 * i), 0, 0);
+    var acc = plate;
+    for (holes[0..3]) |h| acc = try b.addBinary(.difference_op, acc, h);
+    try testing.expectApproxEqAbs(@as(f64, 97), kernel.volume(try dag_evaluator.evaluateDAG(&vm, acc)), 1e-9);
+    // A difference on the right is its own: a - (b - c) is not a - b - c
+    const inner = try b.addBinary(.difference_op, holes[0], holes[1]);
+    const nested = try b.addBinary(.difference_op, try b.addBinary(.difference_op, plate, inner), holes[2]);
+    try testing.expectApproxEqAbs(@as(f64, 98), kernel.volume(try dag_evaluator.evaluateDAG(&vm, nested)), 1e-9);
+    // A cached link is one operand: one more hole cuts the plate evaluated above
+    try testing.expect(vm.dag_cache.contains(b.node_hashes.items[acc]));
+    const more = try b.addBinary(.difference_op, acc, holes[3]);
+    try testing.expectApproxEqAbs(@as(f64, 96), kernel.volume(try dag_evaluator.evaluateDAG(&vm, more)), 1e-9);
+}
+
+test "DAG Evaluator: a sketch's chain of unions or differences is one batch too" {
+    // A honeycomb's `acc = acc + hexagon` was pairwise, 400 cells 25 times the batch
+    const cases = [_]support.ScriptCase{
+        .{ .src = "acc = square(1)\n(1...6).each { |i| acc = acc + square(1).translate(x: 2 * i) }\nr = acc.area", .expected = .{ .num = 6 } },
+        .{ .src = "acc = square(10)\n(0...4).each { |i| acc = acc - square(1).translate(x: 2 * i) }\nr = acc.area", .expected = .{ .num = 96 } },
+        // Unions inside a difference's right side stay a union of their own
+        .{ .src = "r = (square(10) - (square(1) + square(1).translate(x: 2)) - square(1).translate(x: 4)).area", .expected = .{ .num = 97 } },
+        // An intersection isn't flattened
+        .{ .src = "r = (square(10) - square(1)).intersection(square(5)).area", .expected = .{ .num = 24 } },
+    };
+    try support.expectScripts(&cases);
+}
+
 test "DAG Evaluator: a transform of a solid over the vertex budget is still refused" {
     // The result checks are skipped after a pure transform (the solid is its operand's);
     // the operand itself is checked, so nothing over the budget gets through.

@@ -106,6 +106,7 @@ extern fn manifold_cross_section_empty_vec(mem: ?*ManifoldCrossSectionVec) ?*Man
 extern fn manifold_delete_cross_section_vec(csv: ?*ManifoldCrossSectionVec) void;
 extern fn manifold_cross_section_vec_push_back(csv: ?*ManifoldCrossSectionVec, cs: ?*ManifoldCrossSection) void;
 extern fn manifold_cross_section_batch_hull(mem: ?*ManifoldCrossSection, css: ?*ManifoldCrossSectionVec) ?*ManifoldCrossSection;
+extern fn manifold_cross_section_batch_boolean(mem: ?*ManifoldCrossSection, css: ?*ManifoldCrossSectionVec, op: OpType) ?*ManifoldCrossSection;
 extern fn manifold_cross_section_area(cs: ?*ManifoldCrossSection) f64;
 extern fn manifold_cross_section_bounds(mem: ?*ManifoldRect, cs: ?*ManifoldCrossSection) ?*ManifoldRect;
 extern fn manifold_rect_min(r: ?*ManifoldRect) ManifoldVec2;
@@ -324,6 +325,15 @@ pub fn trimByPlane(obj: ?*ManifoldObj, nx: f64, ny: f64, nz: f64, offset_dist: f
 
 pub fn crossSectionBoolean(a: ?*ManifoldCrossSection, b: ?*ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
     return manifold_cross_section_boolean(manifold_alloc_cross_section(), a, b, op);
+}
+
+/// `op` over the sketches in one call: their union, or the first less (or cut by) the rest.
+/// The vector holds copies (a CrossSection shares its outlines), freed with it.
+pub fn crossSectionBatchBoolean(sketches: []const *ManifoldCrossSection, op: OpType) ?*ManifoldCrossSection {
+    const vec = manifold_cross_section_empty_vec(manifold_alloc_cross_section_vec() orelse return null);
+    defer manifold_delete_cross_section_vec(vec);
+    for (sketches) |cs| manifold_cross_section_vec_push_back(vec, cs);
+    return manifold_cross_section_batch_boolean(manifold_alloc_cross_section(), vec, op);
 }
 
 /// The convex hull of the sketches together. The vector holds copies (a CrossSection

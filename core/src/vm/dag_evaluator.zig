@@ -149,32 +149,103 @@ fn isPureTransform(tag: dag.DAGTag) bool {
     };
 }
 
-/// The operands of the chain of unions under `root`, `((a + b) + c) + d` as a script's
-/// `acc = acc + part` loop builds it, left to right in `chain`, so the kernel unions them
-/// in one batch: one call sorts and merges N shapes, where the chain made N − 1 calls,
-/// each over a growing result (300 parts took 60× the batch). A union already in the
-/// cache is one operand, so after an edit only the new parts join the cached rest.
-fn collectUnionOperands(vm: *VM, chain: *std.ArrayList(dag.DAGNodeIndex), root: dag.DAGNode) !void {
+/// The operands of the chain of booleans of one kind under `root`, left to right in `chain`,
+/// so the kernel does them in one batch: one call sorts and merges N shapes, where the chain
+/// made N − 1 calls, each over a growing result (300 parts took 60× the batch). A union,
+/// `((a + b) + c) + d` as a script's `acc = acc + part` loop builds it, flattens on both
+/// sides; a difference, `((a - b) - c) - d` from `acc = acc - hole`, only down its left side,
+/// since `a - b - c` is `a` less `b` and `c` (a difference on its right is no part of the
+/// chain): `a` first, then what it loses. Sketches' chains as solids'. A node of the chain
+/// already in the cache is one operand, so after an edit only the new parts join the cached
+/// rest.
+fn collectChainOperands(vm: *VM, chain: *std.ArrayList(dag.DAGNodeIndex), root: dag.DAGNode) !void {
     chain.clearRetainingCapacity();
-    var work: std.ArrayList(dag.DAGNodeIndex) = .empty;
-    defer work.deinit(vm.allocator);
-    const p = vm.dag_builder.getBinaryPayload(root);
-    try work.appendSlice(vm.allocator, &.{ p.right, p.left });
-    while (work.pop()) |idx| {
-        if (idx < vm.dag_builder.nodes.items.len) {
-            const node = vm.dag_builder.nodes.items[idx];
-            if (node.tag == .union_op and !vm.dag_cache.contains(vm.dag_builder.node_hashes.items[idx])) {
-                const q = vm.dag_builder.getBinaryPayload(node);
-                try work.appendSlice(vm.allocator, &.{ q.right, q.left });
-                continue;
-            }
+    const b = &vm.dag_builder;
+    // In the chain: a node of the root's kind that isn't cached already
+    const ofChain = struct {
+        fn check(v: *VM, tag: dag.DAGTag, idx: dag.DAGNodeIndex) ?dag.DAGNode {
+            if (idx >= v.dag_builder.nodes.items.len) return null;
+            const node = v.dag_builder.nodes.items[idx];
+            if (node.tag != tag) return null;
+            const hash = v.dag_builder.node_hashes.items[idx];
+            if (v.dag_cache.contains(hash) or v.cs_cache.contains(hash)) return null;
+            return node;
         }
-        try chain.append(vm.allocator, idx);
+    }.check;
+    switch (root.tag) {
+        .union_op, .cs_union_op => {
+            var work: std.ArrayList(dag.DAGNodeIndex) = .empty;
+            defer work.deinit(vm.allocator);
+            const p = b.getBinaryPayload(root);
+            try work.appendSlice(vm.allocator, &.{ p.right, p.left });
+            while (work.pop()) |idx| {
+                if (ofChain(vm, root.tag, idx)) |node| {
+                    const q = b.getBinaryPayload(node);
+                    try work.appendSlice(vm.allocator, &.{ q.right, q.left });
+                    continue;
+                }
+                try chain.append(vm.allocator, idx);
+            }
+        },
+        .difference_op, .cs_difference_op => {
+            // Down the left side, the right operands met last first: put back in order after
+            var p = b.getBinaryPayload(root);
+            try chain.append(vm.allocator, p.right);
+            while (ofChain(vm, root.tag, p.left)) |node| {
+                p = b.getBinaryPayload(node);
+                try chain.append(vm.allocator, p.right);
+            }
+            try chain.append(vm.allocator, p.left);
+            std.mem.reverse(dag.DAGNodeIndex, chain.items);
+        },
+        else => unreachable,
+    }
+}
+
+/// The boolean of a chain (collectChainOperands) over the top `count` operands of `v_stack`,
+/// in one kernel call: a union of them all, or the first less the rest.
+fn executeChain(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag: dag.DAGTag, count: usize) !void {
+    const entries = try vm.allocator.alloc(StackEntry, count);
+    defer vm.allocator.free(entries);
+    var i: usize = count;
+    while (i > 0) {
+        i -= 1;
+        entries[i] = v_stack.pop();
+    }
+    defer for (entries) |e| v_stack.release(e);
+    const op: kernel.BooleanOp = switch (tag) {
+        .union_op, .cs_union_op => .union_op,
+        .difference_op, .cs_difference_op => .difference_op,
+        else => unreachable,
+    };
+    switch (tag) {
+        .union_op, .difference_op => {
+            const handles = try vm.allocator.alloc(geom.GeometryHandle, count);
+            defer vm.allocator.free(handles);
+            for (entries, handles) |e, *h| {
+                h.* = try geometryOf(e);
+                try vm.requireSameEngine(handles[0].engine, h.engine);
+            }
+            try vm.requireFeature(handles[0].engine, .boolean);
+            const result = kernel.batchBoolean(vm.allocator, handles, op) orelse return kernelFailed(vm, tag);
+            try v_stack.pushOwned(.{ .geometry = maybeSimplify(config, result) });
+        },
+        .cs_union_op, .cs_difference_op => {
+            const sketches = try vm.allocator.alloc(geom.CrossSectionHandle, count);
+            defer vm.allocator.free(sketches);
+            for (entries, sketches) |e, *cs| {
+                cs.* = try crossSectionOf(e);
+                try vm.requireSameEngine(sketches[0].engine, cs.engine);
+            }
+            try vm.requireFeature(sketches[0].engine, .sketch_boolean);
+            try pushSketch(vm, v_stack, tag, kernel.crossSectionBatchBoolean(vm.allocator, sketches, op));
+        },
+        else => unreachable,
     }
 }
 
 /// Unions or hulls the top `count` operands of `v_stack` in one kernel call, as a batch
-/// node asks (or a chain of unions flattened to one, see collectUnionOperands).
+/// node asks.
 fn executeBatch(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag: dag.DAGTag, count: usize) !void {
     if (count == 0) return error.RuntimeError;
     const is_union = tag == .batch_union_op;
@@ -209,8 +280,8 @@ fn executeBatch(vm: *VM, v_stack: *IntermediateStack, config: EngineConfig, tag:
 pub const EvaluationFrame = struct {
     node_idx: dag.DAGNodeIndex,
     state: EvalState = .visit,
-    /// For a union at the top of a chain of unions: how many operands the chain was
-    /// flattened to (see collectUnionOperands); 0 for every other node.
+    /// For a boolean at the top of a chain of its kind: how many operands the chain was
+    /// flattened to (see collectChainOperands); 0 for every other node.
     operands: u32 = 0,
 };
 
@@ -246,7 +317,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
     var f_stack = EvaluationFrameStack.init(vm.allocator);
     defer f_stack.deinit();
 
-    // The operands of the union chain being visited (collectUnionOperands).
+    // The operands of the boolean chain being visited (collectChainOperands).
     var chain: std.ArrayList(dag.DAGNodeIndex) = .empty;
     defer chain.deinit(vm.allocator);
 
@@ -278,7 +349,7 @@ fn evaluateInternal(vm: *VM, root_node_idx: dag.DAGNodeIndex) anyerror!ValueHand
             _ = f_stack.pop();
             // The settings the node was made under, whatever is in force now.
             const config = vm.dag_builder.settings(node.settings);
-            if (operands > 2) try executeBatch(vm, &v_stack, config, .batch_union_op, operands) else try executeNode(vm, &v_stack, node, config);
+            if (operands > 2) try executeChain(vm, &v_stack, config, node.tag, operands) else try executeNode(vm, &v_stack, node, config);
             try cacheResult(vm, &v_stack, node.tag, node_hash, config);
         }
     }
@@ -307,14 +378,14 @@ fn pushCached(vm: *VM, v_stack: *IntermediateStack, node_hash: u64) !bool {
 fn pushOperands(vm: *VM, f_stack: *EvaluationFrameStack, chain: *std.ArrayList(dag.DAGNodeIndex), frame: *EvaluationFrame, node: dag.DAGNode) !void {
     const b = &vm.dag_builder;
     switch (node.tag) {
-        .union_op => {
-            try collectUnionOperands(vm, chain, node);
-            // Two operands: the plain binary union. More: a batch of them. The count goes
+        .union_op, .difference_op, .cs_union_op, .cs_difference_op => {
+            try collectChainOperands(vm, chain, node);
+            // Two operands: the plain binary boolean. More: a batch of them. The count goes
             // on the frame before anything is pushed (pushing may move the frames).
             if (chain.items.len > 2) frame.operands = @intCast(chain.items.len);
             try pushAll(f_stack, chain.items);
         },
-        .difference_op, .intersection_op, .minkowski, .cs_union_op, .cs_difference_op, .cs_intersection_op => {
+        .intersection_op, .minkowski, .cs_intersection_op => {
             const p = b.getBinaryPayload(node);
             try pushAll(f_stack, &.{ p.left, p.right });
         },

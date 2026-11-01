@@ -336,6 +336,22 @@ fn batchHullImpl(allocator: std.mem.Allocator, objs: []const geom.GeometryHandle
     return geom.GeometryHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
 }
 
+fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    const m_sketches = allocator.alloc(*manifold.ManifoldCrossSection, sketches.len) catch return null;
+    defer allocator.free(m_sketches);
+    for (sketches, m_sketches) |cs, *m| {
+        if (cs.engine != .manifold) return null;
+        m.* = @ptrCast(@alignCast(cs.ptr));
+    }
+    const m_op = switch (op) {
+        .union_op => manifold.OpType.add,
+        .difference_op => manifold.OpType.subtract,
+        .intersection_op => manifold.OpType.intersect,
+    };
+    const ptr = manifold.crossSectionBatchBoolean(m_sketches, m_op) orelse return null;
+    return geom.CrossSectionHandle{ .engine = .manifold, .ptr = @ptrCast(ptr) };
+}
+
 fn crossSectionHullImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle) ?geom.CrossSectionHandle {
     const m_sketches = allocator.alloc(*manifold.ManifoldCrossSection, sketches.len) catch return null;
     defer allocator.free(m_sketches);
@@ -773,6 +789,7 @@ pub const driver = struct {
     pub const trimByPlaneFn = trimByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const crossSectionHullFn = crossSectionHullImpl;
+    pub const crossSectionBatchBooleanFn = crossSectionBatchBooleanImpl;
     pub const genusFn = genusImpl;
     pub const minkowskiFn = minkowskiImpl;
     pub const erodeFn = erodeImpl;

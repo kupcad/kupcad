@@ -411,6 +411,20 @@ fn minkowskiImpl(a: geom.GeometryHandle, b: geom.GeometryHandle) ?geom.GeometryH
     return derive(geom.GeometryHandle, a.ptr, locus_mink.minkowskiSumConvex, .{ &other.t_arena, &other.g_arena, other.solid_id });
 }
 
+/// `op` over the sketches, one pair at a time (Locus has no batch): the first with the second,
+/// the result with the third, and on. One failed step fails it all.
+fn crossSectionBatchBooleanImpl(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
+    _ = allocator;
+    if (sketches.len < 2) return null;
+    var acc = crossSectionBooleanImpl(sketches[0], sketches[1], op) orelse return null;
+    for (sketches[2..]) |cs| {
+        const next = crossSectionBooleanImpl(acc, cs, op);
+        destructCrossSectionImpl(acc);
+        acc = next orelse return null;
+    }
+    return acc;
+}
+
 fn crossSectionBooleanImpl(a: geom.CrossSectionHandle, b: geom.CrossSectionHandle, op: kernel.BooleanOp) ?geom.CrossSectionHandle {
     if (a.engine != .brep_native or b.engine != .brep_native) return null;
     const other = solidOf(b.ptr);
@@ -787,6 +801,7 @@ pub const driver = struct {
     pub const trimByPlaneFn = trimByPlaneImpl;
     pub const crossSectionBooleanFn = crossSectionBooleanImpl;
     pub const crossSectionHullFn = crossSectionHullImpl;
+    pub const crossSectionBatchBooleanFn = crossSectionBatchBooleanImpl;
     pub const erodeFn = erodeImpl;
     pub const genusFn = genusImpl;
     pub const transformMatrixFn = transformMatrixImpl;

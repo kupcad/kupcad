@@ -276,6 +276,14 @@ pub inline fn crossSectionBoolean(a: geom.CrossSectionHandle, b: geom.CrossSecti
     return dispatch("crossSectionBooleanFn", a, .{ b, op });
 }
 
+/// `op` over two or more sketches of one engine in one call: their union, or the first less
+/// (or cut by) the rest.
+pub inline fn crossSectionBatchBoolean(allocator: std.mem.Allocator, sketches: []const geom.CrossSectionHandle, op: BooleanOp) ?geom.CrossSectionHandle {
+    if (sketches.len < 2) return null;
+    for (sketches) |cs| if (cs.engine != sketches[0].engine) return null;
+    return dispatchOn("crossSectionBatchBooleanFn", sketches[0].engine, .{ allocator, sketches, op });
+}
+
 pub inline fn crossSectionArea(handle: geom.CrossSectionHandle) f64 {
     return dispatch("crossSectionAreaFn", handle, .{});
 }
