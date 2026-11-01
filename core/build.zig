@@ -644,17 +644,21 @@ pub fn build(b: *std.Build) void {
         });
         const run_cli_tests = b.addRunArtifact(cli_tests);
 
-        const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&run_mod_tests.step);
-        test_step.dependOn(&run_exe_tests.step);
-        test_step.dependOn(&run_cli_tests.step);
-
         // tatfi's own tests, with every table it reads
         const tatfi_tests = b.addTest(.{
             .root_module = tatfiModule(b, target, optimize, .{}),
             .filters = test_filters,
         });
-        test_step.dependOn(&b.addRunArtifact(tatfi_tests).step);
+        const run_tatfi_tests = b.addRunArtifact(tatfi_tests);
+
+        const test_step = b.step("test", "Run tests");
+        // Built for a system this one can't run (`-Dtarget=x86_64-windows-gnu`), the tests are
+        // compiled and not run: CI's check that Windows-only code compiles, where no runner is
+        // Windows
+        for ([_]*std.Build.Step.Run{ run_mod_tests, run_exe_tests, run_cli_tests, run_tatfi_tests }) |run| {
+            run.skip_foreign_checks = true;
+            test_step.dependOn(&run.step);
+        }
 
         // `zig build fuzz --fuzz=<runs>` searches from the fuzz corpus with the front end's
         // and the runtime's fuzz tests (src/frontend/fuzz_test.zig, src/vm/fuzz_test.zig),
