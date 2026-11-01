@@ -15,6 +15,7 @@ const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
 const Args = @import("args.zig").Args;
 const param_flags = @import("param_flags.zig");
+const memory_flag = @import("memory_flag.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
 const ScriptOptions = @import("script_options.zig").ScriptOptions;
@@ -30,7 +31,7 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ export_usage ++ param_flags.USAGE ++
+++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -51,14 +52,15 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const session = &script_session;
     session.setParams(&options.params);
     session.vm.debugger_handler = debugger.terminalDebugger(init.io);
-    // A long-lived session caps the script heap: the project's `vm_memory_limit`, else the
-    // interactive default, so a runaway loop ends with an error instead of the machine.
+    // A long-lived session caps the script heap: the project's `vm_memory_limit` (no higher
+    // than --memory-limit), else --memory-limit, else the interactive default, so a runaway
+    // loop ends with an error instead of the machine.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(init.io, allocator, file_path, &where) catch |err| {
         reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, file_path, where.line, where.column, ProjectConfig.describeError(err) });
         return .failure;
     };
-    session.vm.setMemoryLimit(config.vm_memory_limit orelse limits.INTERACTIVE_MEMORY_LIMIT);
+    session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, limits.INTERACTIVE_MEMORY_LIMIT));
     if (options.writes) try options.exports.prepare(&session.vm);
 
     const source = fs.readFile(init.io, allocator, file_path) catch |err| {

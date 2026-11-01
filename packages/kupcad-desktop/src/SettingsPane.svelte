@@ -3,13 +3,15 @@
   The app's settings, a page over the window's workspace, each a row of its name and its
   control: how the app looks (the window's theme, the system's by default, or light or dark; the
   editor's font size), how it keeps the person's files (the last folder opened again at the
-  start; a script saved a moment after each change, off by default), how a model is shown (the
+  start; a script saved a moment after each change, off by default), the most memory a script may
+  hold (8 GB by default, in the preview and an export), how a model is shown (the
   view's render mode, projection, floor, edges and axes: the keys the preview's own toolbar
   sets, so either follows the other at once), and whether the console shows under the model.
   Each is read from the app's reactive `settings`, and set there as it is chosen; the close
   button gives the window back.
 -->
 <script>
+  import { memoryLimitOf } from '@kupcad/protocol';
   import { ENVIRONMENTS, PROJECTIONS, RENDER_MODES, VIEW_KEYS, viewChoices } from '@kupcad/ui';
   import { FONT_SIZES, fontSizeOf, KEYS } from './prefs.js';
   import { THEMES, themeOf } from './theme.js';
@@ -32,6 +34,17 @@
   const reopen = $derived(settings.get(KEYS.reopen) !== false);
   const autosave = $derived(settings.get(KEYS.autosave) === true);
   const showsConsole = $derived(settings.get(KEYS.console) !== false);
+  const memoryLimit = $derived(memoryLimitOf(settings.get(KEYS.memoryLimit)));
+
+  /**
+   * Keeps the memory limit typed, a whole number of GB from 1; anything else is put back.
+   * @param {Event & { currentTarget: HTMLInputElement }} event
+   */
+  function setMemoryLimit(event) {
+    const typed = event.currentTarget.valueAsNumber;
+    if (memoryLimitOf(typed) === typed) settings.set(KEYS.memoryLimit, typed);
+    else event.currentTarget.value = String(memoryLimit);
+  }
   const view = $derived(viewChoices(settings));
 
   /** What each choice of the view is called. @type {Record<string, string>} */
@@ -153,6 +166,33 @@
   </section>
 
   <section>
+    <h3>Scripts</h3>
+    <div class="row">
+      <label class="name" for="{id}-memory">Memory limit</label>
+      <div>
+        <span class="amount">
+          <input
+            id="{id}-memory"
+            type="number"
+            class="kc-control"
+            min="1"
+            step="1"
+            value={memoryLimit}
+            aria-describedby="{id}-memory-hint"
+            onchange={setMemoryLimit}
+          />
+          GB
+        </span>
+        <p class="hint" id="{id}-memory-hint">
+          The most memory a script may hold, in the preview and an export, so a model someone else
+          wrote can't take the computer down. Raise it for a model that needs more; a project's
+          vm_memory_limit may lower it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <h3>View</h3>
     <p class="hint lead">How a model is shown. The preview's toolbar changes these too.</p>
     {@render choices(
@@ -255,6 +295,15 @@
   }
   select {
     justify-self: start;
+  }
+  /* A number and its unit */
+  .amount {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .amount input {
+    width: 6em;
   }
   /* A choice of a few side by side, one control: the radios hidden, their labels the segments */
   .segments {

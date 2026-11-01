@@ -3,7 +3,7 @@
 // an update or a setting changed, and opens the viewer, a webview the server sends its models to.
 
 import * as fs from 'node:fs';
-import { errorText, ScriptValues } from '@kupcad/protocol';
+import { DEFAULT_MEMORY_LIMIT_GB, errorText, ScriptValues } from '@kupcad/protocol';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { BinaryManager, UPDATE_CLI_COMMAND } from './binary/manager.js';
@@ -16,10 +16,12 @@ export const OPEN_VIEWER_COMMAND = 'kupcad.openViewer';
 /** The viewport socket's port the server tries first, unless the settings say another. */
 const DEFAULT_VIEWPORT_PORT = 9001;
 /** The settings the server is started with: changed, it starts again. */
-const SERVER_SETTINGS = ['kupcad.serverPath', 'kupcad.viewport.port'];
+const SERVER_SETTINGS = ['kupcad.serverPath', 'kupcad.viewport.port', 'kupcad.memoryLimit'];
 
 /** The extension's settings, as they are now. */
 const settings = () => vscode.workspace.getConfiguration('kupcad');
+/** The most memory, in GB, a script may hold, in the preview and an export: the setting. */
+const memoryLimit = () => settings().get('memoryLimit', DEFAULT_MEMORY_LIMIT_GB);
 
 /** @type {LanguageServer | null} */
 let server = null;
@@ -51,9 +53,15 @@ export async function activate(context) {
     const viewportPort = settings().get('viewport.port', DEFAULT_VIEWPORT_PORT);
     try {
       if (server) {
-        await server.restart({ serverPath: found.path, viewportPort });
+        await server.restart({ serverPath: found.path, viewportPort, memoryLimit: memoryLimit() });
       } else {
-        server = new LanguageServer({ serverPath: found.path, viewportPort, values, log });
+        server = new LanguageServer({
+          serverPath: found.path,
+          viewportPort,
+          memoryLimit: memoryLimit(),
+          values,
+          log,
+        });
         await server.start();
       }
     } catch (error) {
@@ -108,6 +116,7 @@ export async function activate(context) {
     }),
     ...registerExportCommands({
       kupcad: () => server?.serverPath ?? null,
+      memoryLimit,
       values,
       shown: () => (viewer?.closed ? null : (viewer?.shown?.uri ?? null)),
       log,

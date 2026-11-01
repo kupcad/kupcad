@@ -6,7 +6,8 @@
  * The app's keys in its settings (the view's are @kupcad/ui's `VIEW_KEYS`): the files' width and
  * the editor's, the theme, whether the console shows, the zoom, the editor's font size, whether
  * a script is saved as it is changed, whether the last folder opens at the start, the last
- * folder and the ones before it.
+ * folder and the ones before it, and the most memory, in GB, a script may hold (@kupcad/protocol's
+ * `memoryLimitOf` reads it).
  */
 export const KEYS = Object.freeze({
   files: 'app.files',
@@ -19,6 +20,7 @@ export const KEYS = Object.freeze({
   reopen: 'app.reopen',
   folder: 'app.folder',
   recent: 'app.recent',
+  memoryLimit: 'app.memoryLimit',
 });
 
 /** The window's zooms, as a browser steps them. */

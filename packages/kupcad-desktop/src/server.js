@@ -1,11 +1,13 @@
 // The language server the app runs: the bundled kupcad's (`kupcad lsp`), which the native side
 // starts for the page and holds (src-tauri/src/server.rs), its stdio framed for the editor's
 // client (@kupcad/editor's streamTransport). Its viewport socket admits this page by its origin
-// (`--viewport-origin`). A server that ends is started again, a little later each time, and the
+// (`--viewport-origin`), and its previews hold no more memory than the app's setting
+// (`--memory-limit`). A server that ends is started again, a little later each time, and the
 // client reconnects to it, opening the scripts the editors hold on it again.
 
 import { languageServerClient, streamTransport } from '@kupcad/editor';
 import {
+  DEFAULT_MEMORY_LIMIT_GB,
   isCompatible,
   PREVIEW_COMMAND,
   PROTOCOL_VERSION,
@@ -37,8 +39,9 @@ export const RESTART_MS = { first: 500, most: 10_000 };
  */
 
 /**
- * Starts a server for the page at `origin`: `kupcad lsp --stdio --viewport-origin <origin>`.
- * @typedef {(origin: string, on: ProcessEvents) => Promise<ServerProcess>} Spawn
+ * Starts a server for the page at `origin`, its previews holding up to `memoryLimit` GB:
+ * `kupcad lsp --stdio --viewport-origin <origin> --memory-limit <n>GB`.
+ * @typedef {(origin: string, memoryLimit: number, on: ProcessEvents) => Promise<ServerProcess>} Spawn
  */
 
 /**
@@ -55,6 +58,8 @@ export const RESTART_MS = { first: 500, most: 10_000 };
  * @property {string} rootUri the folder the server reads the scripts' imports from
  * @property {string} origin this page's, which the server's viewport socket admits
  * @property {ServerEvents} on
+ * @property {() => number} [memoryLimit] the most memory, in GB, a preview may hold (the setting),
+ *   read at each start
  * @property {Record<string, (client: LSPClient, params: any) => boolean>} [notifications] the
  *   server's notifications the app hears itself, by method, besides `kupcad/viewportReady`
  * @property {Spawn} [spawn] the process, by default the native side's
@@ -67,14 +72,14 @@ export const RESTART_MS = { first: 500, most: 10_000 };
  */
 
 /** @type {Spawn} */
-async function sidecar(origin, on) {
+async function sidecar(origin, memoryLimit, on) {
   /** @type {Channel<ServerEvent>} */
   const events = new Channel((message) => {
     if (message.event === 'stdout') on.stdout(Uint8Array.from(message.data));
     else if (message.event === 'stderr') on.stderr(message.data);
     else on.exit(message.data);
   });
-  await invoke('start_server', { origin, onEvent: events });
+  await invoke('start_server', { origin, memoryLimit, onEvent: events });
   const decoder = new TextDecoder();
   return {
     // The frames are text: their headers and their JSON, UTF-8
@@ -92,6 +97,8 @@ export class LanguageServer {
   #on;
   /** @type {Spawn} */
   #spawn;
+  /** @type {() => number} */
+  #memoryLimit;
   /** @type {typeof setTimeout} */
   #later;
   /** @type {ServerProcess | null} */
@@ -106,12 +113,14 @@ export class LanguageServer {
     rootUri,
     origin,
     on,
+    memoryLimit = () => DEFAULT_MEMORY_LIMIT_GB,
     notifications = {},
     spawn = sidecar,
     setTimeout = globalThis.setTimeout,
   }) {
     this.#origin = origin;
     this.#on = on;
+    this.#memoryLimit = memoryLimit;
     this.#spawn = spawn;
     this.#later = setTimeout;
     this.client = languageServerClient({
@@ -144,7 +153,7 @@ export class LanguageServer {
     });
     // Once it is up, its end is #ended's alone
     ends.catch(() => {});
-    started = await this.#spawn(this.#origin, {
+    started = await this.#spawn(this.#origin, this.#memoryLimit(), {
       stdout: (chunk) => reading?.(chunk),
       stderr: (text) => this.#on.log(text),
       exit: (code) => {
@@ -181,6 +190,15 @@ export class LanguageServer {
    */
   setParams(uri, values) {
     return this.#command(SET_PARAMS_COMMAND, { uri, values });
+  }
+
+  /**
+   * Starts the server again now, as it is set up now (its memory limit changed): the client
+   * reconnects to the new one, as after a crash, without it being taken for one.
+   */
+  async restart() {
+    await this.stop();
+    await this.start();
   }
 
   /** Stops the server for good. */

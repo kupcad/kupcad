@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFrame } from '@kupcad/protocol';
+import { memoryLimitOptions, readFrame } from '@kupcad/protocol';
 import { afterEach, expect, it } from 'vitest';
 import { fileUri } from './folder.js';
 import { LanguageServer } from './server.js';
@@ -31,8 +31,8 @@ const SCRIPT = 'unused = 1\ncube(10)\n';
 const PATIENCE_MS = 60_000;
 
 /** @type {Spawn} */
-const nodeProcess = async (origin, on) => {
-  const args = ['lsp', '--stdio', '--viewport-origin', origin];
+const nodeProcess = async (origin, memoryLimit, on) => {
+  const args = ['lsp', '--stdio', '--viewport-origin', origin, ...memoryLimitOptions(memoryLimit)];
   const child = spawn(KUPCAD, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdout.on('data', (chunk) => on.stdout(new Uint8Array(chunk)));
   child.stderr.on('data', (chunk) => on.stderr(String(chunk)));

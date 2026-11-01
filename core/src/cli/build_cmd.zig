@@ -7,6 +7,7 @@ const std = @import("std");
 const api = @import("../api.zig");
 const fs = @import("fs.zig");
 const param_flags = @import("param_flags.zig");
+const memory_flag = @import("memory_flag.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
@@ -29,7 +30,7 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ export_usage ++ param_flags.USAGE ++
+++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -62,16 +63,17 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
     var disk = NativeVfs.init(reporter.io, root.dir);
     var session = try ScriptSession.init(allocator, reporter.io, disk.vfs());
     defer session.deinit();
-    if (!try runScript(allocator, &session, &root, &options.params, &options.exports, reporter)) return .failure;
+    if (!try runScript(allocator, &session, &root, &options.params, &options.exports, options.memory_limit, reporter)) return .failure;
     return if (try options.exports.write(allocator, &session.vm, options.input_path, reporter)) .success else .failure;
 }
 
 /// Runs the script `root` names in `session` (reading `root`'s folder), set up as the command
 /// and the project ask: `params` (which the session takes), the terminal debugger, the
-/// project's memory limit (`vm_memory_limit` in .kupcad.json) and the engine `exports` need
-/// (STEP's exact B-Rep). Whether its model was built; false, the failure reported, when it
-/// can't be set up or the script doesn't parse, compile or run.
-pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, reporter: Reporter) !bool {
+/// project's memory limit (`vm_memory_limit` in .kupcad.json) no higher than `memory_limit`
+/// (`--memory-limit`; none without either) and the engine `exports` need (STEP's exact
+/// B-Rep). Whether its model was built; false, the failure reported, when it can't be set up
+/// or the script doesn't parse, compile or run.
+pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, memory_limit: ?usize, reporter: Reporter) !bool {
     const io = reporter.io;
     const input_path = root.input;
     // Read first: a file that isn't there is named so, before a session is made for it
@@ -87,7 +89,7 @@ pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *c
         reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, input_path, where.line, where.column, ProjectConfig.describeError(err) });
         return false;
     };
-    session.vm.setMemoryLimit(config.vm_memory_limit);
+    session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, memory_limit, null));
     if (exports) |e| try e.prepare(&session.vm);
     return evaluate(allocator, session, root, source, reporter);
 }

@@ -25,6 +25,7 @@ const Preview = lsp_preview.Preview;
 const SessionPreview = lsp_preview.SessionPreview;
 const freeFiles = lsp_preview.freeFiles;
 const lsp_worker = @import("lsp_worker.zig");
+const memory_flag = @import("memory_flag.zig");
 const Args = @import("args.zig").Args;
 const Reporter = @import("reporter.zig").Reporter;
 const viewport_ws = @import("viewport_ws.zig");
@@ -64,7 +65,7 @@ pub const STDIO_FLAG = "--stdio";
 pub const VIEWPORT_ORIGIN_FLAG = "--viewport-origin";
 
 pub const USAGE =
-    \\Usage: kupcad lsp [--stdio] [--viewport-origin <origin>]
+    \\Usage: kupcad lsp [--stdio] [--viewport-origin <origin>] [--memory-limit <size>]
     \\
     \\Starts the language server on stdin and stdout (--stdio, which language clients
     \\give, says so; it is the only transport). Editors start it themselves;
@@ -75,6 +76,8 @@ pub const USAGE =
     \\  --viewport-origin <origin>  Let the page at <origin> (scheme://host[:port], such as
     \\                              tauri://localhost) read the viewport socket, besides
     \\                              VS Code's webviews
+    \\  --memory-limit <size>       Most memory a preview may hold, as 512MB or 8GB (1GB
+    \\                              without it)
     \\
 ;
 
@@ -1268,12 +1271,20 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
     var host_origin: ?[]const u8 = null;
+    // A host's setting: previews hold up to it in place of the interactive limit, so a model
+    // the host exports (`kupcad build --memory-limit`, the same setting) previews too
+    var memory_limit: ?usize = null;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) {
-            try lsp_worker.runWorker(init.io, allocator);
+            try lsp_worker.runWorker(init.io, allocator, memory_limit);
             return .success;
         }
         if (std.mem.eql(u8, arg, STDIO_FLAG)) continue;
+        switch (memory_flag.take(arg, args, &memory_limit, Reporter.forProcess(init))) {
+            .taken => continue,
+            .refused => return .failure,
+            .other => {},
+        }
         if (std.mem.eql(u8, arg, VIEWPORT_ORIGIN_FLAG)) {
             const origin = args.next() orelse "";
             if (!viewport_ws.isOriginValue(origin)) {
@@ -1294,11 +1305,18 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
         break :blk null;
     };
     defer if (exe) |e| allocator.free(e);
-    const worker_argv = [_][]const u8{ exe orelse "", "lsp", lsp_worker.WORKER_FLAG };
-    var worker_preview = lsp_worker.WorkerPreview.init(allocator, init.io, &worker_argv);
+    // The limit before the worker's flag: the worker's argument loop runs it on seeing that
+    var limit_text: [24]u8 = undefined;
+    const plain_argv = [_][]const u8{ exe orelse "", "lsp", lsp_worker.WORKER_FLAG };
+    const limited_argv = [_][]const u8{ exe orelse "", "lsp", memory_flag.FLAG, if (memory_limit) |bytes| std.fmt.bufPrint(&limit_text, "{d}", .{bytes}) catch unreachable else "", lsp_worker.WORKER_FLAG };
+    const worker_argv: []const []const u8 = if (memory_limit != null) &limited_argv else &plain_argv;
+    var worker_preview = lsp_worker.WorkerPreview.init(allocator, init.io, worker_argv);
     defer worker_preview.deinit();
     var session_preview: SessionPreview = undefined;
-    if (exe == null) try session_preview.init(allocator, init.io, true);
+    if (exe == null) {
+        try session_preview.init(allocator, init.io, true);
+        if (memory_limit) |bytes| session_preview.limitMemory(bytes);
+    }
     defer if (exe == null) session_preview.deinit();
     const preview = if (exe != null) worker_preview.preview() else session_preview.preview();
 

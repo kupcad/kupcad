@@ -63,7 +63,7 @@ Export…) looks at once, and installs what it finds without asking; the install
 (another window may still run it). A newer release out of range says the extension needs
 updating first. A `kupcad` from the setting, `PATH` or a checkout is updated where it came from.
 
-Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again with it.
+Changing `kupcad.serverPath`, `kupcad.viewport.port` or `kupcad.memoryLimit` starts the server again with it.
 
 ## Extension Settings
 
@@ -73,6 +73,10 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
 * `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` =
   always pick a free port). If the port is taken, the server falls back to a free one and the
   viewer follows it.
+* `kupcad.memoryLimit` (machine scope, default `8`): the most memory, in GB, a script may hold, in
+  the preview and in an export (`kupcad --memory-limit`). A project's `vm_memory_limit` in
+  `.kupcad.json` may lower it, never raise it, so a cloned project can't lift it; raise it here
+  for a model that needs more.
 * `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
   instead of asking. `KupCAD: Update CLI` looks at once.
 * `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.
@@ -91,6 +95,8 @@ Changing `kupcad.serverPath` or `kupcad.viewport.port` starts the server again w
   repository's release downloads alone, and a download whose redirects end anywhere but GitHub
   and its storage (`objects.githubusercontent.com`, `release-assets.githubusercontent.com`) is
   refused.
+* A script holds no more memory than `kupcad.memoryLimit` allows, so a model someone else wrote
+  can't take the machine down by allocating without end.
 * The viewport socket only listens on `127.0.0.1` and only accepts connections whose `Origin` is a
   VS Code webview. The viewer's page runs under a strict Content Security Policy: no script but
   its own (nonced), no inline style, and no network but that socket.

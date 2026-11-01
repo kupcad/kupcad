@@ -3,7 +3,7 @@
 // viewport shows, and the values a document's parameters take.
 
 import * as vscode from 'vscode';
-import { errorText, viewportUrl } from '@kupcad/protocol';
+import { errorText, memoryLimitOptions, viewportUrl } from '@kupcad/protocol';
 import { LanguageClient, State, TransportKind } from 'vscode-languageclient/node';
 import {
   isCompatible,
@@ -27,6 +27,7 @@ const KUP_FILES = '**/*.kup';
  * @typedef {object} ServerOptions
  * @property {string} serverPath
  * @property {number} viewportPort the port its socket tries first
+ * @property {number} memoryLimit the most memory, in GB, a preview may hold (the setting)
  * @property {ScriptValues} values what each script's parameters were given, which a server
  *   that starts is given again
  * @property {vscode.LogOutputChannel} log
@@ -82,7 +83,7 @@ export class LanguageServer {
   /**
    * Runs kupcad as `change` says from now on (an update, a setting changed): the documents are
    * opened in it again, and the viewer follows its socket.
-   * @param {Partial<Pick<ServerOptions, 'serverPath' | 'viewportPort'>>} change
+   * @param {Partial<Pick<ServerOptions, 'serverPath' | 'viewportPort' | 'memoryLimit'>>} change
    */
   restart(change) {
     return this.#serially(async () => {
@@ -145,11 +146,11 @@ export class LanguageServer {
 
   /** @returns {[LanguageClient, vscode.FileSystemWatcher]} */
   #clientOf() {
-    const { serverPath, viewportPort, log } = this.#options;
+    const { serverPath, viewportPort, memoryLimit, log } = this.#options;
     const watcher = vscode.workspace.createFileSystemWatcher(KUP_FILES);
     const run = {
       command: serverPath,
-      args: ['lsp'],
+      args: ['lsp', ...memoryLimitOptions(memoryLimit)],
       transport: TransportKind.stdio,
       options: { env: { ...process.env, [VIEWPORT_PORT_ENV]: String(viewportPort) } },
     };

@@ -117,8 +117,18 @@ function windowOn({
       disk.set(path, new TextDecoder().decode(bytes));
     }),
     exportModel: vi.fn(async () => {}),
-    server: (/** @type {string} */ rootUri, /** @type {any} */ on) =>
-      new LanguageServer({ rootUri, origin: 'tauri://localhost', on, spawn: fake.spawn }),
+    server: (
+      /** @type {string} */ rootUri,
+      /** @type {any} */ on,
+      /** @type {() => number} */ memoryLimit,
+    ) =>
+      new LanguageServer({
+        rootUri,
+        origin: 'tauri://localhost',
+        on,
+        memoryLimit,
+        spawn: fake.spawn,
+      }),
     setTheme: vi.fn(async (/** @type {Theme} */ _theme) => {}),
     setZoom: vi.fn(async (/** @type {number} */ _zoom) => {}),
     setMenu: vi.fn(async (/** @type {MenuEntry[]} */ bar) => void (menus.bar = bar)),
@@ -541,6 +551,22 @@ describe('the settings', () => {
     expect(
       screen.getByRole('checkbox', { name: 'Show the console under the model' }),
     ).toHaveProperty('checked', false);
+  });
+
+  it('hold the server to the memory limit kept, started again under a new one', async () => {
+    const settings = memorySettings({ 'app.memoryLimit': 16 });
+    const window = windowOn({ settings });
+    await openFolder();
+    expect(window.fake.processes.map((p) => p.memoryLimit)).toEqual([16]);
+    settings.set('app.memoryLimit', 64);
+    await vi.waitFor(() =>
+      expect(window.fake.processes.map((p) => p.memoryLimit)).toEqual([16, 64]),
+    );
+    expect(window.fake.processes[0].killed).toBe(true);
+    // A limit that isn't one is the default's, which the server is held to as well
+    settings.set('app.memoryLimit', 0);
+    await vi.waitFor(() => expect(window.fake.processes.at(-1)?.memoryLimit).toBe(8));
+    expect(screen.queryByText(/kupcad didn't start/)).toBeNull();
   });
 
   it("take a kept theme they don't know as the system's", async () => {

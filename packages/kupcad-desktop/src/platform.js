@@ -43,8 +43,9 @@ import { LanguageServer } from './server.js';
  *   a question of three answers: the label of the button pressed (the cancel's for the dialog
  *   closed), the yes the default
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
- * @property {(script: string, output: string, format: ExportFormat, params: [string, string][]) => Promise<void>} exportModel
- * @property {(rootUri: string, on: ServerEvents) => Pick<LanguageServer, 'client' | 'start' | 'stop' | 'preview' | 'setParams'>} server
+ * @property {(script: string, output: string, format: ExportFormat, params: [string, string][], memoryLimit: number) => Promise<void>} exportModel
+ *   builds with the bundled kupcad, its script holding up to `memoryLimit` GB
+ * @property {(rootUri: string, on: ServerEvents, memoryLimit: () => number) => Pick<LanguageServer, 'client' | 'start' | 'restart' | 'stop' | 'preview' | 'setParams'>} server
  * @property {(theme: Theme) => Promise<void>} setTheme the window's appearance, which the page's
  *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
  * @property {(zoom: number) => Promise<void>} setZoom how large the page is drawn, 1 its own size
@@ -135,9 +136,10 @@ export const tauri = {
   confirm: (text) => confirm(text, { title: 'KupCAD', kind: 'warning' }),
   ask: (text, buttons) => message(text, { title: 'KupCAD', kind: 'warning', buttons }),
   writeFile: (path, bytes) => writeFile(path, bytes),
-  exportModel: (script, output, format, params) =>
-    invoke('export_model', { script, output, format, params }),
-  server: (rootUri, on) => new LanguageServer({ rootUri, origin: location.origin, on }),
+  exportModel: (script, output, format, params, memoryLimit) =>
+    invoke('export_model', { script, output, format, params, memoryLimit }),
+  server: (rootUri, on, memoryLimit) =>
+    new LanguageServer({ rootUri, origin: location.origin, on, memoryLimit }),
   setTheme: (theme) => getCurrentWindow().setTheme(theme === 'system' ? null : theme),
   setZoom: (zoom) => getCurrentWebview().setZoom(zoom),
   async setMenu(entries) {

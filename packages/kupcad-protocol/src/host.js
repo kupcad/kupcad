@@ -1,7 +1,8 @@
 // What every host of the viewer's page does alike (the VS Code extension's panel, the desktop
 // app's page): keeps the values each script's parameters were given, and writes them as
-// `kupcad build -p` takes them, reads the viewport socket's URL from the port the language
-// server names, and takes a page's message about the document shown alone. The hosts differ in the rest (presets, exports, where a place is shown).
+// `kupcad build -p` takes them, limits the memory a script it runs may hold (its setting), reads
+// the viewport socket's URL from the port the language server names, and takes a page's message
+// about the document shown alone. The hosts differ in the rest (presets, exports, where a place is shown).
 
 /** @import { ParamValue, ParamValues, ShownDocument, ViewerMessage } from './types.js' */
 
@@ -21,6 +22,43 @@ export const paramOptions = (values) =>
  */
 export const paramText = (value) =>
   typeof value === 'object' ? JSON.stringify(value) : String(value);
+
+/**
+ * The most memory, in GB, a script a host runs may hold, unless the person sets more: the
+ * default of the hosts' setting. `kupcad` itself has none, and a script someone else wrote,
+ * opened in the editor, could take the machine down (one reached 60 GB in 15 s).
+ */
+export const DEFAULT_MEMORY_LIMIT_GB = 8;
+/** The largest the setting may be: a petabyte, past which it is the default again. */
+const MAX_MEMORY_LIMIT_GB = 1024 * 1024;
+
+/**
+ * The memory limit, in GB, a setting holds: a whole number from 1 up to a petabyte; anything
+ * else (none, a hand-edited file's text, 0) is the default, as kupcad would refuse it.
+ * @param {unknown} gigabytes
+ * @returns {number}
+ */
+export function memoryLimitOf(gigabytes) {
+  const valid =
+    typeof gigabytes === 'number' &&
+    Number.isInteger(gigabytes) &&
+    gigabytes >= 1 &&
+    gigabytes <= MAX_MEMORY_LIMIT_GB;
+  return valid ? gigabytes : DEFAULT_MEMORY_LIMIT_GB;
+}
+
+/**
+ * `kupcad build`'s and `kupcad lsp`'s option for a host's memory limit of `gigabytes`
+ * (`memoryLimitOf`), the same setting for an export and the preview, so a model the host exports
+ * previews too. A ceiling: a project's `vm_memory_limit` may lower it, not raise it
+ * (core/src/cli/memory_flag.zig).
+ * @param {unknown} gigabytes
+ * @returns {string[]}
+ */
+export const memoryLimitOptions = (gigabytes) => [
+  '--memory-limit',
+  `${memoryLimitOf(gigabytes)}GB`,
+];
 
 /** Where the language server's viewport socket listens. */
 export const VIEWPORT_HOST = '127.0.0.1';

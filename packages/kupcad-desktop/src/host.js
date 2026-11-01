@@ -34,8 +34,9 @@ const EXTENSIONS = new Map(
  * @property {(options: { defaultPath: string, filters: { name: string, extensions: string[] }[], title: string }) => Promise<string | null>} save
  *   asks where to write a file
  * @property {(message: string) => Promise<void>} tell shows the person a message
- * @property {(script: string, output: string, format: ExportFormat, params: [string, string][]) => Promise<void>} exportModel
+ * @property {(script: string, output: string, format: ExportFormat, params: [string, string][], memoryLimit: number) => Promise<void>} exportModel
  *   builds the script (the native side's `kupcad build`); rejects with what kupcad said
+ * @property {() => number} memoryLimit the most memory, in GB, a build may hold (the setting)
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
  * @property {(uri: string, line: number, column: number) => void} reveal shows the script there
  * @property {(text: string) => void} log
@@ -103,7 +104,7 @@ export function createHost(services) {
       ([name, value]) => /** @type {[string, string]} */ ([name, paramText(value)]),
     );
     try {
-      await services.exportModel(script.path, output, format, params);
+      await services.exportModel(script.path, output, format, params, services.memoryLimit());
     } catch (error) {
       const said = errorText(error);
       await services.tell(`${script.name} wasn't exported: ${whyBuildFailed(said) ?? said}`);

@@ -4,7 +4,7 @@ import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer, RESTART_MS } from './server.js';
 
 /** A server on `fake`, with what it told the app, and a clock the test moves. */
-function serverOn(fake = fakeServer()) {
+function serverOn(fake = fakeServer(), memoryLimit = () => 8) {
   const events = { viewport: vi.fn(), state: vi.fn(), log: vi.fn() };
   /** @type {(() => void)[]} */
   const timers = [];
@@ -23,6 +23,7 @@ function serverOn(fake = fakeServer()) {
     rootUri: 'file:///w',
     origin: 'tauri://localhost',
     on: events,
+    memoryLimit,
     spawn: fake.spawn,
     setTimeout: later,
   });
@@ -109,8 +110,8 @@ describe('the language server', () => {
     const fake = fakeServer();
     const spawn = fake.spawn;
     let refused = 0;
-    fake.spawn = (origin, on) =>
-      refused-- > 0 ? Promise.reject(new Error('no sidecar')) : spawn(origin, on);
+    fake.spawn = (origin, memoryLimit, on) =>
+      refused-- > 0 ? Promise.reject(new Error('no sidecar')) : spawn(origin, memoryLimit, on);
     const { server, events, timers, waits } = serverOn(fake);
     await server.start();
     refused = 2;
@@ -134,5 +135,21 @@ describe('the language server', () => {
     fake.processes[0].on.exit(0);
     expect(timers).toEqual([]);
     await expect(server.preview('file:///w/part.kup')).rejects.toThrow(/isn't running/);
+  });
+
+  it('starts kupcad lsp under the memory limit set, and at once under a new one', async () => {
+    let limit = 8;
+    const { server, events, fake, timers } = serverOn(fakeServer(), () => limit);
+    await server.start();
+    expect(fake.processes[0].memoryLimit).toBe(8);
+    limit = 32;
+    await server.restart();
+    expect(fake.processes[0].killed).toBe(true);
+    expect(fake.processes[1].memoryLimit).toBe(32);
+    // Started again on purpose, not after a crash: nothing waits, nothing says it ended
+    fake.processes[0].on.exit(0);
+    expect(timers).toEqual([]);
+    expect(events.log).not.toHaveBeenCalledWith(expect.stringMatching(/ended/));
+    await server.preview('file:///w/part.kup');
   });
 });

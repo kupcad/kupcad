@@ -17,6 +17,7 @@ function registered(world = {}) {
   const values = new ScriptValues();
   registerExportCommands({
     kupcad: () => (world.kupcad === undefined ? '/usr/local/bin/kupcad' : world.kupcad),
+    memoryLimit: () => 8,
     values,
     shown: () => world.shown ?? null,
     log: /** @type {any} */ (window.createOutputChannel()),
@@ -51,7 +52,18 @@ describe('export', () => {
     expect(builds).toEqual([
       {
         kupcad: '/usr/local/bin/kupcad',
-        args: ['build', '/work/part.kup', '-o', '/out/part.3mf', '-f', '3mf', '-p', 'width=40'],
+        args: [
+          'build',
+          '/work/part.kup',
+          '-o',
+          '/out/part.3mf',
+          '-f',
+          '3mf',
+          '-p',
+          'width=40',
+          '--memory-limit',
+          '8GB',
+        ],
         cwd: '/work',
       },
     ]);

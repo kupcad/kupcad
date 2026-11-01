@@ -18,6 +18,7 @@ const REVEAL = 'Reveal';
 /**
  * @typedef {object} CommandOptions
  * @property {() => string | null} kupcad the kupcad running now, or null
+ * @property {() => number} memoryLimit the most memory, in GB, the build may hold (the setting)
  * @property {ScriptValues} values
  * @property {() => string | null} shown the URI of the script the viewer shows, if one
  * @property {vscode.LogOutputChannel} log
@@ -150,7 +151,8 @@ async function scriptOf(options, given) {
  */
 function build(options, { kupcad, document, output, format, title }) {
   const script = document.uri.fsPath;
-  const args = buildArguments(script, output, format, options.values.of(document.uri.toString()));
+  const values = options.values.of(document.uri.toString());
+  const args = buildArguments(script, output, format, values, options.memoryLimit());
   return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title, cancellable: true },
     async (_progress, token) => {

@@ -25,6 +25,8 @@ const box = (/** @type {string} */ name) =>
   /** @type {HTMLInputElement} */ (screen.getByRole('checkbox', { name }));
 const fontSize = () =>
   /** @type {HTMLSelectElement} */ (screen.getByRole('combobox', { name: 'Editor font size' }));
+const memoryLimit = () =>
+  /** @type {HTMLInputElement} */ (screen.getByRole('spinbutton', { name: 'Memory limit' }));
 
 /** The checkboxes' names, in the pane's order. */
 const BOXES = [
@@ -40,6 +42,7 @@ describe('the settings pane', () => {
     paneOf();
     expect(chosen('Theme')).toEqual(['System']);
     expect(fontSize().value).toBe('13');
+    expect(memoryLimit().value).toBe('8');
     expect(BOXES.map((name) => box(name).checked)).toEqual([true, false, true, true, true]);
     expect([chosen('Render mode'), chosen('Projection'), chosen('Floor')]).toEqual([
       ['Solid'],
@@ -104,6 +107,20 @@ describe('the settings pane', () => {
     await tick();
     expect(chosen('Render mode')).toEqual(['X-ray']);
     expect(box('Save a script a moment after each change').checked).toBe(true);
+  });
+
+  it('keeps a memory limit of whole GB from 1, and puts anything else back', async () => {
+    const { settings } = paneOf();
+    await fireEvent.change(memoryLimit(), { target: { value: '32' } });
+    expect(settings.get('app.memoryLimit')).toBe(32);
+    for (const wrong of ['0', '1.5', '', '-4']) {
+      await fireEvent.change(memoryLimit(), { target: { value: wrong } });
+      expect(settings.get('app.memoryLimit')).toBe(32);
+      expect(memoryLimit().value).toBe('32');
+    }
+    // What it is for, read with it
+    const hint = document.getElementById(memoryLimit().getAttribute('aria-describedby') ?? '');
+    expect(hint?.textContent).toMatch(/so a model someone else/);
   });
 
   it('tells when it is closed', async () => {

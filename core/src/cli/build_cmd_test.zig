@@ -643,6 +643,42 @@ test "build_cmd: the project's vm_memory_limit caps the script's heap" {
     try testing.expect(std.mem.find(u8, result.text(), "Build failed") != null); // the VM reports the OutOfMemoryError itself
 }
 
+test "build_cmd: --memory-limit caps the script's heap, and a project can lower it but not lift it" {
+    // A host (the desktop app, the VS Code extension) passes its setting: without it a build
+    // has no limit, and an untrusted script grew past 60 GB
+    const script = "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n";
+    const cases = [_]struct { project: ?[]const u8, flag: []const u8, outcome: build_cmd.Outcome }{
+        // The flag alone
+        .{ .project = null, .flag = "64KB", .outcome = .failure },
+        .{ .project = null, .flag = "1GB", .outcome = .success },
+        // A project asking for more is held to the flag's
+        .{ .project = "{ \"vm_memory_limit\": 1073741824 }", .flag = "64KB", .outcome = .failure },
+        // A project asking for less keeps its own
+        .{ .project = "{ \"vm_memory_limit\": 65536 }", .flag = "1GB", .outcome = .failure },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("project {?s}, flag {s}\n", .{ case.project, case.flag });
+        var fx = try Fixture.init(script);
+        defer fx.deinit();
+        if (case.project) |json| try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = json });
+        var result = try runBuild(&.{ fx.input, "-o", fx.output, "--memory-limit", case.flag });
+        defer result.deinit();
+        try testing.expectEqual(case.outcome, result.outcome);
+    }
+}
+
+test "build_cmd: --memory-limit takes a size greater than zero" {
+    for ([_][]const u8{ "0", "8G", "-1GB", "lots" }) |size| {
+        errdefer std.debug.print("size '{s}'\n", .{size});
+        var result = try runBuild(&.{ "model.kup", "--memory-limit", size });
+        defer result.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, result.outcome);
+        const message = try testing.allocator.print("Error: --memory-limit takes a size greater than zero, as 512MB or 8GB, got '{s}'\n", .{size});
+        defer testing.allocator.free(message);
+        try testing.expectEqualStrings(message, result.text());
+    }
+}
+
 test "build_cmd: every option's description starts in the same column of the help" {
     // The format's line ran its option and its description together: "<name>stl, glb"
     const description_column = "  -o, --output <file>       ".len;

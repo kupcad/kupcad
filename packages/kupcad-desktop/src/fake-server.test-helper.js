@@ -16,17 +16,18 @@ export function fakeServer({
   protocolVersion = PROTOCOL_VERSION,
   answers = true,
 } = {}) {
-  /** @type {{ origin: string, on: ProcessEvents, received: any[], killed: boolean }[]} */
+  /** @type {{ origin: string, memoryLimit: number, on: ProcessEvents, received: any[], killed: boolean }[]} */
   const processes = [];
   /**
    * @param {string} origin
+   * @param {number} memoryLimit
    * @param {ProcessEvents} on
    */
-  const spawn = async (origin, on) => {
+  const spawn = async (origin, memoryLimit, on) => {
     const reader = new MessageReader((error) => {
       throw error;
     });
-    const process = { origin, on, received: /** @type {any[]} */ ([]), killed: false };
+    const process = { origin, memoryLimit, on, received: /** @type {any[]} */ ([]), killed: false };
     processes.push(process);
     /** @param {object} message */
     const send = (message) =>

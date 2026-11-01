@@ -21,7 +21,7 @@
 -->
 <script>
   import { Editor } from '@kupcad/editor/svelte';
-  import { errorText } from '@kupcad/protocol';
+  import { errorText, memoryLimitOf } from '@kupcad/protocol';
   import {
     memorySettings,
     PreviewPanel,
@@ -30,7 +30,7 @@
     Splitter,
     VIEWER_SHORTCUTS,
   } from '@kupcad/ui';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     clashQuestion,
     ConflictBar,
@@ -88,6 +88,8 @@
   const fontSize = $derived(fontSizeOf(settings.get(KEYS.fontSize)));
   const autosave = $derived(settings.get(KEYS.autosave) === true);
   const recent = $derived(recentOf(settings.get(KEYS.recent)));
+  /** The most memory, in GB, a script may hold, in the preview and an export: the setting. */
+  const memoryLimit = $derived(memoryLimitOf(settings.get(KEYS.memoryLimit)));
   /** The folder open: its tree, its scripts, the name being given in it (@kupcad/files). */
   let project = $state.raw(/** @type {Project | null} */ (null));
   const folder = $derived(project?.root ?? null);
@@ -169,6 +171,16 @@
     },
   ];
 
+  // The server holds its previews to the limit it was started with: a new one starts it again
+  let serverLimit = untrack(() => memoryLimit);
+  $effect(() => {
+    const limit = memoryLimit;
+    if (limit === serverLimit) return;
+    serverLimit = limit;
+    const started = untrack(() => server);
+    started?.restart().catch((error) => (problem = `kupcad didn't start: ${errorText(error)}`));
+  });
+
   const preview = createHost({
     server: {
       preview: (uri) => (server ? server.preview(uri) : Promise.resolve()),
@@ -177,6 +189,7 @@
     save: (options) => platform.save(options),
     tell: (text) => platform.tell(text),
     exportModel: (...args) => platform.exportModel(...args),
+    memoryLimit: () => memoryLimit,
     writeFile: (path, bytes) => platform.writeFile(path, bytes),
     reveal: (uri, line, column) => void reveal(uri, line, column),
     log: (text) => (problem = text),
@@ -230,11 +243,15 @@
         else stop();
       })
       .catch((error) => (problem = `${nameOf(picked)} isn't watched: ${errorText(error)}`));
-    const started = platform.server(fileUri(picked), {
-      viewport: (url) => (viewportUrl = url),
-      state: (up) => (running = up),
-      log: (text) => preview.log(text),
-    });
+    const started = platform.server(
+      fileUri(picked),
+      {
+        viewport: (url) => (viewportUrl = url),
+        state: (up) => (running = up),
+        log: (text) => preview.log(text),
+      },
+      () => memoryLimit,
+    );
     server = started;
     try {
       await started.start();

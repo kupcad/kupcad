@@ -1,10 +1,12 @@
 //! What `kupcad build`, `run` and `watch` read from their arguments: the script, the
-//! parameters' values (`-p`, `-P`) and, for a command that writes the model, its exports.
+//! parameters' values (`-p`, `-P`), the memory limit (`--memory-limit`) and, for a command
+//! that writes the model, its exports.
 //! Read here once: each command had its own copy of the loop and its messages.
 
 const std = @import("std");
 const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
+const memory_flag = @import("memory_flag.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const Reporter = @import("reporter.zig").Reporter;
 
@@ -21,6 +23,8 @@ pub const ScriptOptions = struct {
     exports: ExportFlags = .{},
     /// Whether an export option was given.
     writes: bool = false,
+    /// `--memory-limit`, a ceiling on the project's own (memory_flag.zig); null when not given.
+    memory_limit: ?usize = null,
 
     pub fn deinit(self: *ScriptOptions, allocator: std.mem.Allocator) void {
         self.exports.deinit(allocator);
@@ -35,6 +39,11 @@ pub const ScriptOptions = struct {
         var given = false;
         while (args.next()) |arg| {
             switch (try param_flags.take(allocator, arg, args, &options.params, reporter)) {
+                .taken => continue,
+                .refused => return options.refuse(allocator),
+                .other => {},
+            }
+            switch (memory_flag.take(arg, args, &options.memory_limit, reporter)) {
                 .taken => continue,
                 .refused => return options.refuse(allocator),
                 .other => {},

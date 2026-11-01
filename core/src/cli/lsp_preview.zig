@@ -13,6 +13,7 @@ const chunk = @import("../vm/chunk.zig");
 const value = @import("../core/value.zig");
 const kernel = @import("../kernel/kernel.zig");
 const owned_keys = @import("../core/owned_keys.zig");
+const limits = @import("../core/limits.zig");
 const registry = @import("../stdlib/registry.zig");
 const preview_build = @import("../preview/build.zig");
 const VM = @import("../vm/vm.zig").VM;
@@ -26,6 +27,9 @@ const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ReadOnlyVfs = @import("../vfs/readonly.zig").ReadOnlyVfs;
 const Folders = @import("../vfs/folders.zig").Folders;
 const script_root = @import("script_root.zig");
+const project_config = @import("config.zig");
+const ProjectConfig = project_config.ProjectConfig;
+const memory_flag = @import("memory_flag.zig");
 const Vfs = @import("../vfs/vfs.zig").Vfs;
 const ParamValues = api.ParamValues;
 const FrameWarning = @import("../preview/frame.zig").Warning;
@@ -203,6 +207,12 @@ pub const SessionPreview = struct {
     round: ?Round = null,
     /// The modules that ran since their warnings were last taken (takeRunWarnings), keys owned.
     ran_since_taken: std.StringHashMapUnmanaged(void) = .empty,
+    /// The workspace folder's path (setRoot), owned: where a document's project settings are
+    /// looked for, as its files are.
+    root: ?[]u8 = null,
+    /// The host's `--memory-limit` (limitMemory): a ceiling on a project's `vm_memory_limit`,
+    /// and the limit of a run without one. Null: none, the interactive limit in its place.
+    host_memory_limit: ?usize = null,
 
     const Hover = struct {
         module_path: []u8,
@@ -254,6 +264,43 @@ pub const SessionPreview = struct {
         self.session.vm.previewing = true;
     }
 
+    /// Holds each run to `bytes` of script heap at most, in place of the interactive limit: the
+    /// host's setting (`kupcad lsp --memory-limit`), which holds its exports the same way, so a
+    /// model it exports previews too.
+    pub fn limitMemory(self: *SessionPreview, bytes: usize) void {
+        self.host_memory_limit = bytes;
+    }
+
+    /// The most script heap a run of `module_path` (the preview's, a hover's) may hold, as
+    /// `kupcad build --memory-limit` gives it: the `vm_memory_limit` of its project on disk, no
+    /// higher than the host's limit; else the host's; else the interactive one.
+    pub fn memoryLimitOf(self: *SessionPreview, module_path: []const u8) usize {
+        return memory_flag.limitFor(self.projectMemoryLimit(module_path), self.host_memory_limit, limits.INTERACTIVE_MEMORY_LIMIT).?;
+    }
+
+    /// The `vm_memory_limit` of the `.kupcad.json` nearest `module_path`'s folder, read at each
+    /// run, so an edit of it holds from the next. Null where the files on disk aren't read, for
+    /// a relative path before a workspace folder is named, and for settings that can't be read
+    /// (logged, as the editor's other settings are).
+    fn projectMemoryLimit(self: *SessionPreview, module_path: []const u8) ?usize {
+        if (!self.read_workspace) return null;
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const path = if (std.fs.path.isAbsolute(module_path))
+            module_path
+        else if (self.root) |root|
+            std.fs.path.join(a, &.{ root, module_path }) catch return null
+        else
+            return null;
+        var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
+        const config = ProjectConfig.forScript(self.io, a, path, &where) catch |err| {
+            logger.warn("{s} of {s} near {d}:{d}: {s}; its memory limit isn't applied", .{ project_config.FILE_NAME, module_path, where.line, where.column, ProjectConfig.describeError(err) });
+            return null;
+        };
+        return config.vm_memory_limit;
+    }
+
     pub fn deinit(self: *SessionPreview) void {
         self.dropHover();
         self.dropFrame();
@@ -263,6 +310,7 @@ pub const SessionPreview = struct {
         self.documents.deinit();
         self.outside.deinit();
         if (self.workspace_dir) |d| d.close(self.io);
+        if (self.root) |r| self.allocator.free(r);
     }
 
     pub fn preview(self: *SessionPreview) Preview {
@@ -283,7 +331,11 @@ pub const SessionPreview = struct {
 
     pub fn setRoot(self: *SessionPreview, root: []const u8) !void {
         if (!self.read_workspace) return;
+        const owned = try self.allocator.dupe(u8, root);
+        errdefer self.allocator.free(owned);
         const dir = try std.Io.Dir.cwd().openDir(self.io, root, .{});
+        if (self.root) |old| self.allocator.free(old);
+        self.root = owned;
         if (self.workspace_dir) |old| old.close(self.io);
         self.workspace_dir = dir;
         self.workspace = NativeVfs.init(self.io, dir);
@@ -426,6 +478,8 @@ pub const SessionPreview = struct {
         if (want_frame and !self.hasFrameFor(target)) self.session.runAgain(module_path) catch |err| return notEvaluated(module_path, err);
         self.round = .{ .target = target, .wants_frame = want_frame };
         defer self.round = null;
+        // Under the limit an export of it would have
+        self.session.vm.setMemoryLimit(self.memoryLimitOf(module_path));
         const evaluated = self.session.evaluateWithImports(module_path);
         if (self.cancelled()) return .cancelled;
         evaluated catch |err| switch (err) {
@@ -566,7 +620,7 @@ pub const SessionPreview = struct {
         errdefer self.allocator.free(path);
         var doc = try api.Document.parse(self.allocator, source);
         errdefer doc.deinit();
-        const run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), &doc, module_path, self.paramsOf(module_path));
+        const run = try HoverRun.create(self.allocator, self.io, self.sandbox.vfs(), &doc, module_path, self.paramsOf(module_path), self.memoryLimitOf(module_path));
         self.hover = .{ .module_path = path, .doc = doc, .run = run };
         return &self.hover.?;
     }
@@ -634,7 +688,7 @@ pub const HoverRun = struct {
     /// write: the document is untrusted, with `params` as the preview runs it. Null when it
     /// doesn't compile: running an incomplete chunk broke the VM's invariants, and its
     /// diagnostics say why.
-    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, params: *const ParamValues) !?*HoverRun {
+    pub fn create(allocator: std.mem.Allocator, io: std.Io, sandbox: Vfs, doc: *const api.Document, module_path: []const u8, params: *const ParamValues, memory_limit: usize) !?*HoverRun {
         const self = try allocator.create(HoverRun);
         errdefer allocator.destroy(self);
         self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
@@ -643,6 +697,7 @@ pub const HoverRun = struct {
         self.vm.vfs = sandbox;
         self.vm.mute_errors = true; // its errors are the document's diagnostics
         self.vm.useInteractiveLimits();
+        self.vm.setMemoryLimit(memory_limit); // as the preview's
         // Hovers read the run the preview shows
         self.vm.previewing = true;
         try registry.registerStandardLibrary(&self.vm);

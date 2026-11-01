@@ -22,8 +22,10 @@ function hostOn({ saveAs = /** @type {string | null} */ ('/out/part.3mf') } = {}
         /** @type {string} */ _output,
         /** @type {ExportFormat} */ _format,
         /** @type {[string, string][]} */ _params,
+        /** @type {number} */ _memoryLimit,
       ) => {},
     ),
+    memoryLimit: () => 8,
     writeFile: vi.fn(async (/** @type {string} */ _path, /** @type {Uint8Array} */ _bytes) => {}),
     reveal: vi.fn(
       (/** @type {string} */ _uri, /** @type {number} */ _line, /** @type {number} */ _col) => {},
@@ -102,12 +104,19 @@ describe('the host', () => {
     expect(asked.filters.map((/** @type {{ extensions: string[] }} */ f) => f.extensions)).toEqual([
       ['3mf'],
     ]);
-    expect(services.exportModel).toHaveBeenCalledWith('/w/part.kup', '/out/part.3mf', '3mf', [
-      ['width', '40'],
-      ['hollow', 'true'],
-      // An array as kupcad build -p reads one
-      ['holes', '[[0,0],[10,0]]'],
-    ]);
+    expect(services.exportModel).toHaveBeenCalledWith(
+      '/w/part.kup',
+      '/out/part.3mf',
+      '3mf',
+      [
+        ['width', '40'],
+        ['hollow', 'true'],
+        // An array as kupcad build -p reads one
+        ['holes', '[[0,0],[10,0]]'],
+      ],
+      // The setting: the build holds the script to it
+      8,
+    );
   });
 
   it('offers a STEP file as .step or .stp', async () => {

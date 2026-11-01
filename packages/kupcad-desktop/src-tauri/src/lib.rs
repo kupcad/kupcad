@@ -19,11 +19,14 @@ use tauri_plugin_shell::ShellExt;
 pub(crate) const SIDECAR: &str = "kupcad";
 /// The formats `kupcad build -f` writes (core/src/exporters/format.zig).
 const FORMATS: [&str; 8] = ["stl", "3mf", "step", "glb", "gltf", "obj", "svg", "dxf"];
+/// The largest memory limit the setting may be, in GB: a petabyte (@kupcad/protocol's).
+const MAX_MEMORY_LIMIT_GB: u32 = 1024 * 1024;
 
 /// Builds the script at `script` into `output`, in `format`, each parameter given its value
-/// (`-p name=value`), in the script's folder, where its imports are. Both paths must be ones
-/// the user chose: the script in the folder they opened, the output where they saved it. A
-/// failed build's error is what kupcad said.
+/// (`-p name=value`), the script holding no more than `memory_limit` GB (the app's setting), in
+/// the script's folder, where its imports are. Both paths must be ones the user chose: the
+/// script in the folder they opened, the output where they saved it. A failed build's error is
+/// what kupcad said.
 #[tauri::command]
 async fn export_model(
     app: AppHandle,
@@ -31,6 +34,7 @@ async fn export_model(
     output: String,
     format: String,
     params: Vec<(String, String)>,
+    memory_limit: u32,
 ) -> Result<(), String> {
     // By their real paths: the scope matches a path as written, and `picked/../elsewhere`
     // matched the folder picked
@@ -46,7 +50,7 @@ async fn export_model(
         }
     }
     let (script, output) = (script.to_string_lossy(), output.to_string_lossy());
-    let args = build_args(&script, &output, &format, &params)?;
+    let args = build_args(&script, &output, &format, &params, memory_limit)?;
     let folder = Path::new(script.as_ref())
         .parent()
         .ok_or("the script has no folder")?;
@@ -133,12 +137,13 @@ fn to_write(path: &str) -> Result<PathBuf, String> {
 }
 
 /// `kupcad build`'s arguments for an export, or why they can't be: a format it doesn't write,
-/// or a parameter whose name would be read as something else.
+/// a parameter whose name would be read as something else, or a memory limit out of range.
 fn build_args(
     script: &str,
     output: &str,
     format: &str,
     params: &[(String, String)],
+    memory_limit: u32,
 ) -> Result<Vec<String>, String> {
     if !FORMATS.contains(&format) {
         return Err(format!("kupcad writes no format '{format}'"));
@@ -154,7 +159,17 @@ fn build_args(
         args.push("-p".to_string());
         args.push(format!("{name}={value}"));
     }
+    args.extend(memory_limit_arg(memory_limit)?);
     Ok(args)
+}
+
+/// `--memory-limit <n>GB` for a limit of `gigabytes`, from 1 to a petabyte, or why it isn't one:
+/// kupcad holds the script to it (a project may lower it, not raise it).
+pub(crate) fn memory_limit_arg(gigabytes: u32) -> Result<[String; 2], String> {
+    if !(1..=MAX_MEMORY_LIMIT_GB).contains(&gigabytes) {
+        return Err(format!("{gigabytes} GB is no memory limit"));
+    }
+    Ok(["--memory-limit".to_string(), format!("{gigabytes}GB")])
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -192,7 +207,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_args, existing, to_write};
+    use super::{build_args, existing, memory_limit_arg, to_write};
     use std::path::PathBuf;
 
     /// A folder of the test's own, made afresh.
@@ -242,7 +257,7 @@ mod tests {
     #[test]
     fn an_export_is_kupcad_build_with_its_format_and_values() {
         let params = vec![("width".to_string(), "40".to_string())];
-        let args = build_args("/w/part.kup", "/out/part.3mf", "3mf", &params).unwrap();
+        let args = build_args("/w/part.kup", "/out/part.3mf", "3mf", &params, 8).unwrap();
         assert_eq!(
             args,
             [
@@ -253,18 +268,30 @@ mod tests {
                 "-f",
                 "3mf",
                 "-p",
-                "width=40"
+                "width=40",
+                "--memory-limit",
+                "8GB"
             ]
         );
     }
 
     #[test]
+    fn a_memory_limit_is_a_whole_number_of_gb_from_one_to_a_petabyte() {
+        assert_eq!(memory_limit_arg(1).unwrap(), ["--memory-limit", "1GB"]);
+        assert_eq!(memory_limit_arg(1024 * 1024).unwrap()[1], "1048576GB");
+        for gigabytes in [0, 1024 * 1024 + 1, u32::MAX] {
+            assert!(memory_limit_arg(gigabytes).is_err(), "{gigabytes}");
+            assert!(build_args("/w/a.kup", "/o/a.stl", "stl", &[], gigabytes).is_err());
+        }
+    }
+
+    #[test]
     fn a_format_kupcad_doesnt_write_or_a_name_read_as_an_option_is_refused() {
-        assert!(build_args("/w/a.kup", "/o/a.exe", "exe", &[]).is_err());
+        assert!(build_args("/w/a.kup", "/o/a.exe", "exe", &[], 8).is_err());
         for name in ["", "-o", "a=b"] {
             let params = vec![(name.to_string(), "1".to_string())];
             assert!(
-                build_args("/w/a.kup", "/o/a.stl", "stl", &params).is_err(),
+                build_args("/w/a.kup", "/o/a.stl", "stl", &params, 8).is_err(),
                 "{name}"
             );
         }

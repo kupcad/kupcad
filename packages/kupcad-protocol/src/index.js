@@ -42,6 +42,9 @@ export { EXPORT_FORMATS, exportFormatsFor } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
 export {
   anotherDocument,
+  DEFAULT_MEMORY_LIMIT_GB,
+  memoryLimitOf,
+  memoryLimitOptions,
   paramOptions,
   paramText,
   ScriptValues,

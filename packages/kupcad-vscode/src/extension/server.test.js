@@ -77,6 +77,7 @@ function serverOf(serverPath = '/bin/kupcad') {
   const server = new LanguageServer({
     serverPath,
     viewportPort: 9001,
+    memoryLimit: 8,
     values,
     log: /** @type {any} */ (window.createOutputChannel()),
   });
@@ -93,7 +94,11 @@ describe('LanguageServer', () => {
     const { server } = serverOf();
     await server.start();
     const [client] = clients;
-    expect(client.server.run).toMatchObject({ command: '/bin/kupcad', args: ['lsp'] });
+    // The setting limits the preview's memory, as an export's
+    expect(client.server.run).toMatchObject({
+      command: '/bin/kupcad',
+      args: ['lsp', '--memory-limit', '8GB'],
+    });
     expect(client.server.run.options.env.KUPCAD_VIEWPORT_PORT).toBe('9001');
     expect(client.options.documentSelector).toEqual([{ scheme: 'file', language: 'kupcad' }]);
     expect(client.options.synchronize.fileEvents).toBeDefined();
@@ -153,6 +158,12 @@ describe('LanguageServer', () => {
     expect(clients[1].server.run.options.env.KUPCAD_VIEWPORT_PORT).toBe('9001');
     expect(server.serverPath).toBe('/bin/kupcad-0.1.3');
     expect(clients[1].isRunning()).toBe(true);
+    // Under a new memory limit, the path kept
+    await server.restart({ memoryLimit: 32 });
+    expect(clients[2].server.run).toMatchObject({
+      command: '/bin/kupcad-0.1.3',
+      args: ['lsp', '--memory-limit', '32GB'],
+    });
   });
 
   it('starts again from a client that failed to start, which has nothing to stop', async () => {

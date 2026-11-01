@@ -100,6 +100,14 @@
           "default": "stable",
           "description": "Which releases of kupcad the extension installs: `prerelease` takes the release candidates too."
         },
+        "kupcad.memoryLimit": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 1,
+          "maximum": 1048576,
+          "scope": "machine",
+          "markdownDescription": "Most memory, in GB, a script may hold, in the preview and in an export. A model someone else wrote could otherwise take the machine down. A project's `vm_memory_limit` in `.kupcad.json` may lower it, never raise it; raise it here for a model that needs more."
+        },
         "kupcad.viewport.port": {
           "type": "integer",
           "default": 9001,

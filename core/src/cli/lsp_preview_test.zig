@@ -7,6 +7,7 @@ const lsp_preview = @import("lsp_preview.zig");
 const SessionPreview = lsp_preview.SessionPreview;
 const Target = lsp_preview.Target;
 const ParamValues = @import("../core/param_values.zig").ParamValues;
+const limits = @import("../core/limits.zig");
 const test_support = @import("../test_support.zig");
 
 const Read = struct { header: test_support.FrameHeader, bytes: []const u8, body: []const u8 };
@@ -433,4 +434,70 @@ test "LSP preview: a document opened from outside the workspace imports its neig
     const past = try frameFor(a, &preview, .{ .module_path = main, .uri = uri });
     try testing.expectEqualStrings("none", past.header.kind);
     try testing.expect(std.mem.find(u8, past.header.@"error".?.message, "secret.kup") != null);
+}
+
+test "LSP preview: a host's memory limit stands in for the interactive one, for runs and hovers" {
+    // `kupcad lsp --memory-limit` (the desktop app's and the VS Code extension's setting): a
+    // model the host exports, under the same limit, previews too
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const heavy = "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n";
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, false);
+    defer preview.deinit();
+    try preview.update("part.kup", heavy);
+    try testing.expectEqual(null, (try frameOf(arena.allocator(), &preview, "part.kup")).header.@"error");
+
+    preview.limitMemory(64 * 1024);
+    try preview.update("part.kup", heavy ++ "\n");
+    const refused = (try frameOf(arena.allocator(), &preview, "part.kup")).header.@"error" orelse return error.TestExpectedError;
+    try testing.expect(std.mem.find(u8, refused.message, "memory") != null);
+    try testing.expectEqual(@as(usize, 64 * 1024), preview.memoryLimitOf("part.kup")); // a hover's run's too
+}
+
+test "LSP preview: a project's vm_memory_limit holds, no higher than the host's, as an export's does" {
+    // Read from the .kupcad.json nearest each script on disk, as `kupcad build` reads it, so a
+    // preview stops where the export would
+    const warnings = test_support.expectWarnings(); // the broken settings are logged
+    defer warnings.restore();
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const gb: usize = 1024 * 1024 * 1024;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(testing.io, "small");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "small/.kupcad.json", .data = "{\"vm_memory_limit\": 65536}" });
+    try tmp.dir.createDirPath(testing.io, "large");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "large/.kupcad.json", .data = "{\"vm_memory_limit\": 1099511627776}" });
+    try tmp.dir.createDirPath(testing.io, "broken");
+    try tmp.dir.writeFile(testing.io, .{ .sub_path = "broken/.kupcad.json", .data = "{" });
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", a);
+    var preview: SessionPreview = undefined;
+    try preview.init(testing.allocator, testing.io, true);
+    defer preview.deinit();
+    preview.session.vm.mute_errors = true;
+    // Before a folder is named a relative path has no project
+    try testing.expectEqual(limits.INTERACTIVE_MEMORY_LIMIT, preview.memoryLimitOf("small/part.kup"));
+    try preview.setRoot(root);
+
+    // Without the host's limit: the project's, else the interactive one (settings that don't
+    // read too, as the editor's others)
+    try testing.expectEqual(@as(usize, 65536), preview.memoryLimitOf("small/part.kup"));
+    try testing.expectEqual(@as(usize, 1024 * gb), preview.memoryLimitOf("large/part.kup"));
+    try testing.expectEqual(limits.INTERACTIVE_MEMORY_LIMIT, preview.memoryLimitOf("part.kup"));
+    try testing.expectEqual(limits.INTERACTIVE_MEMORY_LIMIT, preview.memoryLimitOf("broken/part.kup"));
+    // Under it: no higher, so a cloned project can't lift it; and a document from outside the
+    // workspace, by its absolute path, gets its own project's
+    preview.limitMemory(8 * gb);
+    try testing.expectEqual(@as(usize, 65536), preview.memoryLimitOf("small/part.kup"));
+    try testing.expectEqual(@as(usize, 8 * gb), preview.memoryLimitOf("large/part.kup"));
+    try testing.expectEqual(@as(usize, 8 * gb), preview.memoryLimitOf("part.kup"));
+    const outside = try std.fs.path.join(a, &.{ root, "small", "part.kup" });
+    try testing.expectEqual(@as(usize, 65536), preview.memoryLimitOf(outside));
+
+    // A run of the small project's script stops at its limit
+    try preview.update("small/part.kup", "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n");
+    const refused = (try frameOf(a, &preview, "small/part.kup")).header.@"error" orelse return error.TestExpectedError;
+    try testing.expect(std.mem.find(u8, refused.message, "65536") != null);
 }

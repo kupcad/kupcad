@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { anotherDocument, paramOptions, ScriptValues, viewportUrl } from './host.js';
+import {
+  anotherDocument,
+  DEFAULT_MEMORY_LIMIT_GB,
+  memoryLimitOf,
+  memoryLimitOptions,
+  paramOptions,
+  ScriptValues,
+  viewportUrl,
+} from './host.js';
 
 describe('host', () => {
   it('writes values as kupcad build takes them: an array or an object as JSON', () => {
@@ -53,5 +61,16 @@ describe('host', () => {
     values.set('file:///a.kup', { width: 4 });
     expect(values.of('file:///a.kup')).toEqual({ width: 4 });
     expect([...values.entries()]).toEqual([['file:///a.kup', { width: 4 }]]);
+  });
+
+  it('limits the memory of a script it runs as kupcad reads the flag, the default for any other value', () => {
+    expect(memoryLimitOptions(8)).toEqual(['--memory-limit', '8GB']);
+    expect(memoryLimitOptions(64)).toEqual(['--memory-limit', '64GB']);
+    // kupcad refuses these, and a server given one wouldn't start
+    for (const wrong of [0, -1, 1.5, Number.NaN, Infinity, 1e30, '16', null, undefined]) {
+      expect(memoryLimitOf(wrong)).toBe(DEFAULT_MEMORY_LIMIT_GB);
+      expect(memoryLimitOptions(wrong)).toEqual(['--memory-limit', `${DEFAULT_MEMORY_LIMIT_GB}GB`]);
+    }
+    expect(memoryLimitOf(1024 * 1024)).toBe(1024 * 1024);
   });
 });

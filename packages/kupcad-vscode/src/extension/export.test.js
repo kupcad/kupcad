@@ -24,17 +24,23 @@ function kupcad(body) {
 }
 
 describe('export', () => {
-  it("builds the script to the output in the format picked, a -p for each of the viewer's values", () => {
+  it("builds the script to the output in the format picked, a -p for each of the viewer's values, under the memory limit", () => {
     expect(
-      buildArguments('/w/part.kup', '/w/part.stl', 'stl', {
-        width: 40,
-        hollow: true,
-        label: 'A b=c',
-        holes: [
-          [0, 0],
-          [10, 0],
-        ],
-      }),
+      buildArguments(
+        '/w/part.kup',
+        '/w/part.stl',
+        'stl',
+        {
+          width: 40,
+          hollow: true,
+          label: 'A b=c',
+          holes: [
+            [0, 0],
+            [10, 0],
+          ],
+        },
+        8,
+      ),
     ).toEqual([
       'build',
       '/w/part.kup',
@@ -50,15 +56,19 @@ describe('export', () => {
       'label=A b=c',
       '-p',
       'holes=[[0,0],[10,0]]',
+      '--memory-limit',
+      '8GB',
     ]);
     // A name without the format's extension is still written in it
-    expect(buildArguments('/w/part.kup', '/w/part', '3mf', {})).toEqual([
+    expect(buildArguments('/w/part.kup', '/w/part', '3mf', {}, 32)).toEqual([
       'build',
       '/w/part.kup',
       '-o',
       '/w/part',
       '-f',
       '3mf',
+      '--memory-limit',
+      '32GB',
     ]);
   });
 

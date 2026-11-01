@@ -11,7 +11,7 @@ use tauri::{AppHandle, State, ipc::Channel};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
-use crate::SIDECAR;
+use crate::{SIDECAR, memory_limit_arg};
 
 /// The page's origins in a build: macOS and Linux's, Windows'.
 const PAGE_ORIGINS: [&str; 2] = ["tauri://localhost", "http://tauri.localhost"];
@@ -52,26 +52,33 @@ pub enum ServerEvent {
     Exit(Option<i32>),
 }
 
-/// `kupcad lsp`'s arguments for the page at `origin`, or why there are none: an origin that
-/// isn't the page's.
-fn server_args(origin: &str) -> Result<[&str; 4], String> {
+/// `kupcad lsp`'s arguments for the page at `origin`, its previews holding up to
+/// `memory_limit` GB, or why there are none: an origin that isn't the page's, a limit out of
+/// range.
+fn server_args(origin: &str, memory_limit: u32) -> Result<Vec<String>, String> {
     let dev = cfg!(debug_assertions) && origin == DEV_ORIGIN;
     if !(PAGE_ORIGINS.contains(&origin) || dev) {
         return Err(format!("{origin} is no origin of the app's page"));
     }
-    Ok(["lsp", "--stdio", "--viewport-origin", origin])
+    let mut args: Vec<String> = ["lsp", "--stdio", "--viewport-origin", origin]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+    args.extend(memory_limit_arg(memory_limit)?);
+    Ok(args)
 }
 
-/// Starts the server for the page at `origin`, stopping the one before; what it says goes to
-/// `on_event`.
+/// Starts the server for the page at `origin`, its previews holding up to `memory_limit` GB (the
+/// app's setting), stopping the one before; what it says goes to `on_event`.
 #[tauri::command]
 pub fn start_server(
     app: AppHandle,
     server: State<'_, Server>,
     origin: String,
+    memory_limit: u32,
     on_event: Channel<ServerEvent>,
 ) -> Result<(), String> {
-    let args = server_args(&origin)?;
+    let args = server_args(&origin, memory_limit)?;
     let (mut events, child) = app
         .shell()
         .sidecar(SIDECAR)
@@ -127,17 +134,26 @@ mod tests {
     fn the_server_admits_the_pages_own_origin_and_no_other() {
         for origin in ["tauri://localhost", "http://tauri.localhost"] {
             assert_eq!(
-                server_args(origin).unwrap(),
-                ["lsp", "--stdio", "--viewport-origin", origin]
+                server_args(origin, 8).unwrap(),
+                [
+                    "lsp",
+                    "--stdio",
+                    "--viewport-origin",
+                    origin,
+                    "--memory-limit",
+                    "8GB"
+                ]
             );
         }
         for origin in ["null", "http://localhost:1420", "https://evil.example", ""] {
-            assert!(server_args(origin).is_err(), "{origin}");
+            assert!(server_args(origin, 8).is_err(), "{origin}");
         }
+        // Nor a memory limit kupcad would refuse
+        assert!(server_args("tauri://localhost", 0).is_err());
     }
 
     #[test]
     fn vites_origin_is_a_debug_builds_alone() {
-        assert_eq!(server_args(DEV_ORIGIN).is_ok(), cfg!(debug_assertions));
+        assert_eq!(server_args(DEV_ORIGIN, 8).is_ok(), cfg!(debug_assertions));
     }
 }

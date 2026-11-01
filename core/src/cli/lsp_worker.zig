@@ -142,10 +142,13 @@ fn u32Bytes(n: u32) [4]u8 {
 // --- The worker ---
 
 /// `kupcad lsp --preview-worker`: serves the server on stdin and stdout until it closes them.
-pub fn runWorker(io: std.Io, allocator: std.mem.Allocator) !void {
+/// Serves previews on stdin and stdout, each run holding up to `memory_limit` of script heap
+/// when the server was given one (`--memory-limit`), else the interactive limit.
+pub fn runWorker(io: std.Io, allocator: std.mem.Allocator, memory_limit: ?usize) !void {
     var preview: SessionPreview = undefined;
     try preview.init(allocator, io, true);
     defer preview.deinit();
+    if (memory_limit) |bytes| preview.limitMemory(bytes);
     var in_buf: [IO_BUFFER_BYTES]u8 = undefined;
     var out_buf: [IO_BUFFER_BYTES]u8 = undefined;
     var stdin = std.Io.File.stdin().readerStreaming(io, &in_buf);

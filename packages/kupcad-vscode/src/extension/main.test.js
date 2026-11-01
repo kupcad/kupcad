@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The module Vitest gives the code as `vscode`
 import { commands, EventEmitter, fake, memento, resetFake, Uri } from './testing/vscode.js';
+import { DEFAULT_MEMORY_LIMIT_GB } from '@kupcad/protocol';
 import { activate, deactivate, OPEN_VIEWER_COMMAND } from './main.js';
 import { PAGE_DIR } from './viewer-panel.js';
 
@@ -120,6 +121,7 @@ describe('activate', () => {
     expect(servers[0].options).toMatchObject({
       serverPath: '/usr/local/bin/kupcad',
       viewportPort: 9100,
+      memoryLimit: DEFAULT_MEMORY_LIMIT_GB,
     });
     expect(servers[0].started).toBe(true);
     await deactivate();
@@ -181,22 +183,38 @@ describe('activate', () => {
     binaries.failStart = false;
     await commands.executeCommand('kupcad.updateCli');
     expect(servers[0].restarts).toEqual([
-      { serverPath: '/usr/local/bin/kupcad', viewportPort: 9001 },
+      { serverPath: '/usr/local/bin/kupcad', viewportPort: 9001, memoryLimit: 8 },
     ]);
     expect(binaries.asked).toEqual([]);
     await commands.executeCommand(OPEN_VIEWER_COMMAND);
     expect(fake.panels).toHaveLength(1);
   });
 
-  it('starts the server again when its path or port is set, and not for another setting', async () => {
+  it('starts the server again when its path, port or memory limit is set, and not for another setting', async () => {
     await activate(/** @type {any} */ (context));
     fake.changeSettings('kupcad.binary.autoUpdate');
     fake.settings['kupcad.viewport.port'] = 9200;
     fake.changeSettings('kupcad.viewport.port');
     await vi.waitFor(() =>
       expect(servers[0].restarts).toEqual([
-        { serverPath: '/usr/local/bin/kupcad', viewportPort: 9200 },
+        { serverPath: '/usr/local/bin/kupcad', viewportPort: 9200, memoryLimit: 8 },
       ]),
     );
+    fake.settings['kupcad.memoryLimit'] = 32;
+    fake.changeSettings('kupcad.memoryLimit');
+    await vi.waitFor(() => expect(servers[0].restarts.at(-1)).toMatchObject({ memoryLimit: 32 }));
+  });
+
+  it("declares the memory limit's setting with the hosts' default, out of a repository's reach", () => {
+    // A repository's workspace settings mustn't raise the limit that protects the machine
+    const manifest = JSON.parse(
+      fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+    );
+    const setting = manifest.contributes.configuration.properties['kupcad.memoryLimit'];
+    expect(setting).toMatchObject({
+      default: DEFAULT_MEMORY_LIMIT_GB,
+      scope: 'machine',
+      minimum: 1,
+    });
   });
 });

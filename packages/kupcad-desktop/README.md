@@ -156,14 +156,16 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   Zoom In and Out, ⌘= and ⌘-, Actual Size: the webview's `setZoom`); the editor's font size; the
   view a model is shown in (`view.*`, which the preview's toolbar sets too); whether a script is
   saved a moment after each change (off by default); whether the console shows under the model;
-  and the folders opened last (Open Recent, and the welcome's list), the last opened again at
-  the start unless the settings say not to. The window's own size and place are kept by the
+  the most memory a script may hold (`app.memoryLimit`, 8 GB by default, in the preview and an
+  export: a project's `vm_memory_limit` may lower it, never raise it; a new one starts the
+  server again); and the folders opened last (Open Recent, and the welcome's list), the last
+  opened again at the start unless the settings say not to. The window's own size and place are kept by the
   window-state plugin. The icons are inline SVG: the page fetches nothing, an icon set's
   neither.
 * **The language server** (`src/server.js`, `src-tauri/src/server.rs`): the native side starts
-  `kupcad lsp --stdio --viewport-origin <the page's origin>` for the page and holds it, at most
-  one: a page that loads again replaces the one it left, and the app stops it when it exits. Its
-  stdio comes to the page over a Tauri channel and is framed for the editor's client
+  `kupcad lsp --stdio --viewport-origin <the page's origin> --memory-limit <the setting>GB` for
+  the page and holds it, at most one: a page that loads again replaces the one it left, and the
+  app stops it when it exits. Its stdio comes to the page over a Tauri channel and is framed for the editor's client
   (`@kupcad/editor`'s `streamTransport`); a server that ends, or doesn't start again, is started
   again a little later each time, the editors' scripts opened on it again. Its viewport socket
   admits the page by its origin, `tauri://localhost` (`http://tauri.localhost` on Windows), and
@@ -185,7 +187,8 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   `move_to_trash` (a file or folder in the scope, by its own real path: a symlink goes, not what
   it leads to; on macOS by NSFileManager, which asks the person nothing, not by the Finder) and
   `export_model`, which builds with the bundled `kupcad` only a script in the folder opened into
-  a file the person saved, in a format `kupcad` writes, its parameters' names checked.
+  a file the person saved, in a format `kupcad` writes, its parameters' names checked, under the
+  memory limit set (a whole number of GB from 1, else refused).
 
 ## What the page may do
 
@@ -211,7 +214,8 @@ a save's own write not taken for another's, renamed and dropped with what they h
 recent folders as the settings keep them; the preview's host (what the panel is told, an
 export with its values and its formats, a screenshot, a refused message); the language
 server's lifecycle on a stand-in server (its handshake through the framing, the viewport's URL,
-the commands, restarts, a server that ends before it is up or doesn't start again); the
+the commands, restarts, one under a new memory limit, a server that ends before it is up or
+doesn't start again); the
 settings page (every setting shown as kept, set as chosen, followed as it is set elsewhere);
 and the window on stand-ins: a folder opened, a script opened, an edit saved with ⌘S, the
 question on closing, the tree's folders closed and opened, none of it kept, the folder listed
