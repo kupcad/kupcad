@@ -5,6 +5,14 @@
 const std = @import("std");
 const testing = std.testing;
 const options = @import("cli_test_options");
+
+/// The built kupcad's real path: the build gives it relative to the core's folder, which
+/// isn't always the working directory. Caller frees.
+fn kupcadPath() ![:0]u8 {
+    const joined = try std.fs.path.resolve(testing.allocator, &.{ options.core_dir, options.kupcad_exe });
+    defer testing.allocator.free(joined);
+    return std.Io.Dir.cwd().realPathFileAlloc(testing.io, joined, testing.allocator);
+}
 const pkg_helpers = @import("pkg/test_helpers.zig");
 
 const VALID_SCRIPT = "cube(10)\n";
@@ -32,7 +40,7 @@ fn kupcad(cwd: []const u8, args: []const []const u8) !Run {
 
 fn kupcadIn(cwd: []const u8, args: []const []const u8, env: ?*const std.process.Environ.Map) !Run {
     // The build hands us a path relative to the build root; the child runs elsewhere.
-    const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
+    const exe = try kupcadPath();
     defer testing.allocator.free(exe);
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(testing.allocator);
@@ -600,7 +608,7 @@ const Conversation = struct {
 
     /// In place: the reader and writer point into it.
     fn start(self: *Conversation, cwd: []const u8, args: []const []const u8) !void {
-        const exe = try std.Io.Dir.cwd().realPathFileAlloc(testing.io, options.kupcad_exe, testing.allocator);
+        const exe = try kupcadPath();
         defer testing.allocator.free(exe);
         var argv: std.ArrayList([]const u8) = .empty;
         defer argv.deinit(testing.allocator);

@@ -17,8 +17,10 @@ const path_mod = @import("core/path.zig");
 const test_support = @import("test_support.zig");
 const examples = @import("examples");
 
-const SNAPSHOT_PATH = "src/examples.snap";
-const EXAMPLES_DIR = "../examples";
+const core_dir = @import("test_paths").core_dir;
+
+const SNAPSHOT_PATH = core_dir ++ "/src/examples.snap";
+const EXAMPLES_DIR = core_dir ++ "/../examples";
 /// Measures (volume, area, bounds) may differ by this fraction between platforms.
 const MEASURE_TOLERANCE = 1e-6;
 /// Mesh counts may differ by this fraction (a boolean can split one triangle differently).

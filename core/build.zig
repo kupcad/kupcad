@@ -597,6 +597,13 @@ pub fn build(b: *std.Build) void {
         examples_options.addOption([]const []const u8, "names", &EXAMPLES);
         examples_options.addOption(bool, "update", update_snapshots);
         mod.addOptions("examples", examples_options);
+        // Where the core's sources are, for the tests that read them (the layout, the
+        // registrations, the examples): they resolved them from the working directory, so ran
+        // only from this one. Imported by tests alone, so no released binary holds the path.
+        const core_dir = b.root.root_dir.handle.realPathFileAlloc(b.graph.io, if (b.root.sub_path.len > 0) b.root.sub_path else ".", b.allocator) catch @panic("the build root has no real path");
+        const test_paths = b.addOptions();
+        test_paths.addOption([]const u8, "core_dir", core_dir);
+        mod.addOptions("test_paths", test_paths);
         for (EXAMPLES) |name| {
             mod.addAnonymousImport(b.fmt("example/{s}", .{name}), .{ .root_source_file = b.path(b.fmt("../examples/{s}.kup", .{name})) });
         }
@@ -624,6 +631,7 @@ pub fn build(b: *std.Build) void {
         // Black-box CLI tests: run the built `kupcad` binary and check exit codes and output.
         const cli_test_options = b.addOptions();
         cli_test_options.addOptionPath("kupcad_exe", exe.getEmittedBin());
+        cli_test_options.addOption([]const u8, "core_dir", core_dir);
         cli_test_options.addOption([]const u8, "version", @import("build.zig.zon").version);
         const cli_tests = b.addTest(.{
             .root_module = b.createModule(.{

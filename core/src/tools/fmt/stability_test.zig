@@ -6,8 +6,9 @@ const std = @import("std");
 const testing = std.testing;
 const api = @import("../../api.zig");
 
-/// Relative to `core/`, where the tests run.
-const DIRS = [_][]const u8{ "../examples", "src/fixtures", "src/tools/lint/snapshots" };
+/// In the core's folder (the build's, whichever directory the tests run in).
+const CORE_DIR = @import("test_paths").core_dir;
+const DIRS = [_][]const u8{ CORE_DIR ++ "/../examples", CORE_DIR ++ "/src/fixtures", CORE_DIR ++ "/src/tools/lint/snapshots" };
 
 test "Formatter: formatting the formatted output changes nothing, for every script here" {
     var checked: usize = 0;

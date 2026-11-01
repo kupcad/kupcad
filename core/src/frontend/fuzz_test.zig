@@ -85,7 +85,8 @@ fn checkFrontEnd(source: []const u8, from: Source) !void {
 
 test "Fuzz corpus: every program in fuzz_corpus/ is listed" {
     inline for (.{ .{ "canonical", &corpus.CANONICAL }, .{ "raw", &corpus.RAW } }) |sub| {
-        var dir = try std.Io.Dir.cwd().openDir(testing.io, corpus.CORPUS_DIR ++ "/" ++ sub[0], .{ .iterate = true });
+        // From the core's folder (the build's, whichever directory the tests run in)
+        var dir = try std.Io.Dir.cwd().openDir(testing.io, @import("test_paths").core_dir ++ "/" ++ corpus.CORPUS_DIR ++ "/" ++ sub[0], .{ .iterate = true });
         defer dir.close(testing.io);
         var it = dir.iterate();
         while (try it.next(testing.io)) |entry| {

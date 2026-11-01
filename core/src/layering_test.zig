@@ -87,7 +87,7 @@ fn resolve(buf: []u8, path: []const u8, import: []const u8) ?[]const u8 {
 }
 
 test "Layers: every file under src/ imports only what the source layout lets its layer" {
-    var dir = try std.Io.Dir.cwd().openDir(testing.io, "src", .{ .iterate = true });
+    var dir = try std.Io.Dir.cwd().openDir(testing.io, @import("test_paths").core_dir ++ "/src", .{ .iterate = true });
     defer dir.close(testing.io);
     var walker = try dir.walk(testing.allocator);
     defer walker.deinit();

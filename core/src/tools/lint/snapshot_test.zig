@@ -12,7 +12,8 @@ const testing = std.testing;
 const api = @import("../../api.zig");
 const update = @import("lint_snapshot_options").update;
 
-const SNAPSHOT_DIR = "src/tools/lint/snapshots";
+/// In the core's folder (the build's, whichever directory the tests run in).
+const SNAPSHOT_DIR = @import("test_paths").core_dir ++ "/src/tools/lint/snapshots";
 const CASES = [_][]const u8{
     "brep_unsupported",
     "clean_model",

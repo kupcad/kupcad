@@ -6,6 +6,8 @@
 
 const std = @import("std");
 const testing = std.testing;
+/// The core's folder, which the paths below are from (the build's, not the working directory).
+const CORE_DIR = @import("test_paths").core_dir;
 
 /// Test roots the build runs on their own.
 const OWN_ROOTS = [_][]const u8{ "main_test.zig", "wasm_test.zig", "cli_process_test.zig" };
@@ -17,7 +19,9 @@ fn sourcesOf(registries: []const []const u8) !std.ArrayList(u8) {
     var sources: std.ArrayList(u8) = .empty;
     errdefer sources.deinit(testing.allocator);
     for (registries) |registry| {
-        const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, registry, testing.allocator, .limited(1 << 20));
+        const path = try std.fs.path.join(testing.allocator, &.{ CORE_DIR, registry });
+        defer testing.allocator.free(path);
+        const source = try std.Io.Dir.cwd().readFileAlloc(testing.io, path, testing.allocator, .limited(1 << 20));
         defer testing.allocator.free(source);
         try sources.appendSlice(testing.allocator, source);
     }
@@ -30,7 +34,7 @@ test "Tests: every *_test.zig under src/ is registered in root.zig, main.zig or 
     var locus = try sourcesOf(&.{"src/" ++ LOCUS_TREE ++ "root.zig"});
     defer locus.deinit(testing.allocator);
 
-    var dir = try std.Io.Dir.cwd().openDir(testing.io, "src", .{ .iterate = true });
+    var dir = try std.Io.Dir.cwd().openDir(testing.io, CORE_DIR ++ "/src", .{ .iterate = true });
     defer dir.close(testing.io);
     var walker = try dir.walk(testing.allocator);
     defer walker.deinit();

@@ -17,7 +17,8 @@ const json_object = @import("classes/json_object.zig");
 /// The longest input the fuzzer makes.
 const MAX_INPUT_BYTES = 16 * 1024;
 const Buffer = [MAX_INPUT_BYTES]u8;
-const CORPUS_DIR = "src/stdlib/json_fuzz_corpus";
+/// In the core's folder (the build's, whichever directory the tests run in).
+const CORPUS_DIR = @import("test_paths").core_dir ++ "/src/stdlib/json_fuzz_corpus";
 /// The file a fuzzed input is read from.
 const FUZZ_PATH = "fuzz.json";
 
