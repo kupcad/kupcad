@@ -210,8 +210,8 @@ pub const SessionPreview = struct {
     /// The workspace folder's path (setRoot), owned: where a document's project settings are
     /// looked for, as its files are.
     root: ?[]u8 = null,
-    /// The host's `--memory-limit` (limitMemory): a ceiling on a project's `vm_memory_limit`,
-    /// and the limit of a run without one. Null: none, the interactive limit in its place.
+    /// The host's `--memory-limit` (limitMemory), every run's limit in place of its project's
+    /// `vm_memory_limit`. Null: none, the project's or the interactive limit in its place.
     host_memory_limit: ?usize = null,
 
     const Hover = struct {
@@ -264,18 +264,20 @@ pub const SessionPreview = struct {
         self.session.vm.previewing = true;
     }
 
-    /// Holds each run to `bytes` of script heap at most, in place of the interactive limit: the
-    /// host's setting (`kupcad lsp --memory-limit`), which holds its exports the same way, so a
-    /// model it exports previews too.
+    /// Holds each run to `bytes` of script heap at most, in place of the project's and the
+    /// interactive limit: the host's setting (`kupcad lsp --memory-limit`), which holds its
+    /// exports the same way, so a model it exports previews too.
     pub fn limitMemory(self: *SessionPreview, bytes: usize) void {
         self.host_memory_limit = bytes;
     }
 
     /// The most script heap a run of `module_path` (the preview's, a hover's) may hold, as
-    /// `kupcad build --memory-limit` gives it: the `vm_memory_limit` of its project on disk, no
-    /// higher than the host's limit; else the host's; else the interactive one.
+    /// `kupcad build` gives it: the host's limit; else the `vm_memory_limit` of its project on
+    /// disk; else the interactive one.
     pub fn memoryLimitOf(self: *SessionPreview, module_path: []const u8) usize {
-        return memory_flag.limitFor(self.projectMemoryLimit(module_path), self.host_memory_limit, limits.INTERACTIVE_MEMORY_LIMIT).?;
+        // The host's wins, so with one the project's settings aren't read
+        const project = if (self.host_memory_limit == null) self.projectMemoryLimit(module_path) else null;
+        return memory_flag.limitFor(project, self.host_memory_limit, limits.INTERACTIVE_MEMORY_LIMIT).?;
     }
 
     /// The `vm_memory_limit` of the `.kupcad.json` nearest `module_path`'s folder, read at each

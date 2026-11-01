@@ -74,9 +74,9 @@ Changing `kupcad.serverPath`, `kupcad.viewport.port` or `kupcad.memoryLimit` sta
   always pick a free port). If the port is taken, the server falls back to a free one and the
   viewer follows it.
 * `kupcad.memoryLimit` (machine scope, default `8`): the most memory, in GB, a script may hold, in
-  the preview and in an export (`kupcad --memory-limit`). A project's `vm_memory_limit` in
-  `.kupcad.json` may lower it, never raise it, so a cloned project can't lift it; raise it here
-  for a model that needs more.
+  the preview and in an export (`kupcad --memory-limit`). It applies in place of a project's
+  `vm_memory_limit` in `.kupcad.json`, as the command line wins over the project's file, so a
+  cloned project can't lift it. Raise it for a model that needs more.
 * `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
   instead of asking. `KupCAD: Update CLI` looks at once.
 * `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.

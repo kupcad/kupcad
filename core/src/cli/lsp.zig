@@ -1271,8 +1271,9 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
     var host_origin: ?[]const u8 = null;
-    // A host's setting: previews hold up to it in place of the interactive limit, so a model
-    // the host exports (`kupcad build --memory-limit`, the same setting) previews too
+    // A host's setting: previews hold up to it in place of the project's and the interactive
+    // limit, so a model the host exports (`kupcad build --memory-limit`, the same setting)
+    // previews too
     var memory_limit: ?usize = null;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) {

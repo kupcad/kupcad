@@ -106,7 +106,7 @@
           "minimum": 1,
           "maximum": 1048576,
           "scope": "machine",
-          "markdownDescription": "Most memory, in GB, a script may hold, in the preview and in an export. A model someone else wrote could otherwise take the machine down. A project's `vm_memory_limit` in `.kupcad.json` may lower it, never raise it; raise it here for a model that needs more."
+          "markdownDescription": "Most memory, in GB, a script may hold, in the preview and in an export. A model someone else wrote could otherwise take the machine down. It applies in place of a project's `vm_memory_limit` in `.kupcad.json`. Raise it for a model that needs more."
         },
         "kupcad.viewport.port": {
           "type": "integer",

@@ -20,14 +20,15 @@ test "memory_flag: zero, a fraction, a sign, another unit, a unit alone or an ov
     }
 }
 
-test "memory_flag: the flag caps the project's limit, and stands in for the command's default" {
-    // A project asks for less: its own
-    try testing.expectEqual(@as(?usize, 100), memory_flag.limitFor(100, 8 * GB, null));
-    // A project asks for more: the flag's, so a cloned project can't lift the host's limit
-    try testing.expectEqual(@as(?usize, 8 * GB), memory_flag.limitFor(100 * GB, 8 * GB, null));
-    try testing.expectEqual(@as(?usize, 100 * GB), memory_flag.limitFor(100 * GB, null, null));
-    // No project limit: the flag's, else the command's (build: none; watch, lsp: interactive)
+test "memory_flag: the flag wins over the project's limit, which wins over the command's default" {
+    // The flag's, whether the project asks for less or for more, as `-p` wins over a default:
+    // a cloned project can't lift the host's limit, and a setting raised takes
+    try testing.expectEqual(@as(?usize, 8 * GB), memory_flag.limitFor(100, 8 * GB, null));
+    try testing.expectEqual(@as(?usize, 8 * GB), memory_flag.limitFor(100 * GB, 8 * GB, GB));
     try testing.expectEqual(@as(?usize, 8 * GB), memory_flag.limitFor(null, 8 * GB, GB));
+    // No flag: the project's, else the command's (build: none; watch, lsp: interactive)
+    try testing.expectEqual(@as(?usize, 100 * GB), memory_flag.limitFor(100 * GB, null, GB));
+    try testing.expectEqual(@as(?usize, 100), memory_flag.limitFor(100, null, null));
     try testing.expectEqual(@as(?usize, GB), memory_flag.limitFor(null, null, GB));
     try testing.expectEqual(@as(?usize, null), memory_flag.limitFor(null, null, null));
 }

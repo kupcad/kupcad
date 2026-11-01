@@ -455,7 +455,7 @@ test "LSP preview: a host's memory limit stands in for the interactive one, for 
     try testing.expectEqual(@as(usize, 64 * 1024), preview.memoryLimitOf("part.kup")); // a hover's run's too
 }
 
-test "LSP preview: a project's vm_memory_limit holds, no higher than the host's, as an export's does" {
+test "LSP preview: a project's vm_memory_limit holds without the host's, which wins over it, as in an export" {
     // Read from the .kupcad.json nearest each script on disk, as `kupcad build` reads it, so a
     // preview stops where the export would
     const warnings = test_support.expectWarnings(); // the broken settings are logged
@@ -487,17 +487,21 @@ test "LSP preview: a project's vm_memory_limit holds, no higher than the host's,
     try testing.expectEqual(@as(usize, 1024 * gb), preview.memoryLimitOf("large/part.kup"));
     try testing.expectEqual(limits.INTERACTIVE_MEMORY_LIMIT, preview.memoryLimitOf("part.kup"));
     try testing.expectEqual(limits.INTERACTIVE_MEMORY_LIMIT, preview.memoryLimitOf("broken/part.kup"));
-    // Under it: no higher, so a cloned project can't lift it; and a document from outside the
-    // workspace, by its absolute path, gets its own project's
-    preview.limitMemory(8 * gb);
-    try testing.expectEqual(@as(usize, 65536), preview.memoryLimitOf("small/part.kup"));
-    try testing.expectEqual(@as(usize, 8 * gb), preview.memoryLimitOf("large/part.kup"));
-    try testing.expectEqual(@as(usize, 8 * gb), preview.memoryLimitOf("part.kup"));
+    // A document from outside the workspace, by its absolute path, gets its own project's
     const outside = try std.fs.path.join(a, &.{ root, "small", "part.kup" });
     try testing.expectEqual(@as(usize, 65536), preview.memoryLimitOf(outside));
-
     // A run of the small project's script stops at its limit
-    try preview.update("small/part.kup", "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n");
+    const heavy = "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n";
+    try preview.update("small/part.kup", heavy);
     const refused = (try frameOf(a, &preview, "small/part.kup")).header.@"error" orelse return error.TestExpectedError;
     try testing.expect(std.mem.find(u8, refused.message, "65536") != null);
+
+    // The host's wins, lower or higher: a cloned project can't lift it, and a setting raised
+    // takes, so the same script runs
+    preview.limitMemory(8 * gb);
+    for ([_][]const u8{ "small/part.kup", "large/part.kup", "part.kup", outside }) |path| {
+        try testing.expectEqual(@as(usize, 8 * gb), preview.memoryLimitOf(path));
+    }
+    try preview.update("small/part.kup", heavy ++ "\n");
+    try testing.expectEqual(null, (try frameOf(a, &preview, "small/part.kup")).header.@"error");
 }

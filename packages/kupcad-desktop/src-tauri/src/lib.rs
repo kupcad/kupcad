@@ -164,7 +164,7 @@ fn build_args(
 }
 
 /// `--memory-limit <n>GB` for a limit of `gigabytes`, from 1 to a petabyte, or why it isn't one:
-/// kupcad holds the script to it (a project may lower it, not raise it).
+/// kupcad holds the script to it, in place of a project's `vm_memory_limit`.
 pub(crate) fn memory_limit_arg(gigabytes: u32) -> Result<[String; 2], String> {
     if !(1..=MAX_MEMORY_LIMIT_GB).contains(&gigabytes) {
         return Err(format!("{gigabytes} GB is no memory limit"));

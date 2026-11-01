@@ -23,7 +23,7 @@ pub const ScriptOptions = struct {
     exports: ExportFlags = .{},
     /// Whether an export option was given.
     writes: bool = false,
-    /// `--memory-limit`, a ceiling on the project's own (memory_flag.zig); null when not given.
+    /// `--memory-limit`, which wins over the project's own (memory_flag.zig); null when not given.
     memory_limit: ?usize = null,
 
     pub fn deinit(self: *ScriptOptions, allocator: std.mem.Allocator) void {

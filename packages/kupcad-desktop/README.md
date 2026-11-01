@@ -157,9 +157,9 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   view a model is shown in (`view.*`, which the preview's toolbar sets too); whether a script is
   saved a moment after each change (off by default); whether the console shows under the model;
   the most memory a script may hold (`app.memoryLimit`, 8 GB by default, in the preview and an
-  export: a project's `vm_memory_limit` may lower it, never raise it; a new one starts the
-  server again); and the folders opened last (Open Recent, and the welcome's list), the last
-  opened again at the start unless the settings say not to. The window's own size and place are kept by the
+  export, in place of a project's `vm_memory_limit`; a new one starts the server again); and
+  the folders opened last (Open Recent, and the welcome's list), the last opened again at the
+  start unless the settings say not to. The window's own size and place are kept by the
   window-state plugin. The icons are inline SVG: the page fetches nothing, an icon set's
   neither.
 * **The language server** (`src/server.js`, `src-tauri/src/server.rs`): the native side starts

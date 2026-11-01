@@ -69,9 +69,8 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
 /// Runs the script `root` names in `session` (reading `root`'s folder), set up as the command
 /// and the project ask: `params` (which the session takes), the terminal debugger, the
-/// project's memory limit (`vm_memory_limit` in .kupcad.json) no higher than `memory_limit`
-/// (`--memory-limit`; none without either) and the engine `exports` need (STEP's exact
-/// B-Rep). Whether its model was built; false, the failure reported, when it can't be set up
+/// memory limit (`memory_limit`, from `--memory-limit`, else the project's `vm_memory_limit`
+/// in .kupcad.json; none without either) and the engine `exports` need (STEP's exact B-Rep). Whether its model was built; false, the failure reported, when it can't be set up
 /// or the script doesn't parse, compile or run.
 pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, memory_limit: ?usize, reporter: Reporter) !bool {
     const io = reporter.io;

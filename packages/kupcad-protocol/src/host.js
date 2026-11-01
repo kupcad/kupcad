@@ -50,8 +50,8 @@ export function memoryLimitOf(gigabytes) {
 /**
  * `kupcad build`'s and `kupcad lsp`'s option for a host's memory limit of `gigabytes`
  * (`memoryLimitOf`), the same setting for an export and the preview, so a model the host exports
- * previews too. A ceiling: a project's `vm_memory_limit` may lower it, not raise it
- * (core/src/cli/memory_flag.zig).
+ * previews too. It wins over a project's `vm_memory_limit`, as the command line wins over the
+ * project's file (core/src/cli/memory_flag.zig).
  * @param {unknown} gigabytes
  * @returns {string[]}
  */

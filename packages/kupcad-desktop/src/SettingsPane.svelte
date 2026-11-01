@@ -185,8 +185,8 @@
         </span>
         <p class="hint" id="{id}-memory-hint">
           The most memory a script may hold, in the preview and an export, so a model someone else
-          wrote can't take the computer down. Raise it for a model that needs more; a project's
-          vm_memory_limit may lower it.
+          wrote can't take the computer down. Raise it for a model that needs more. It applies in
+          place of a project's vm_memory_limit.
         </p>
       </div>
     </div>

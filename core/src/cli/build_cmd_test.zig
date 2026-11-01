@@ -643,18 +643,18 @@ test "build_cmd: the project's vm_memory_limit caps the script's heap" {
     try testing.expect(std.mem.find(u8, result.text(), "Build failed") != null); // the VM reports the OutOfMemoryError itself
 }
 
-test "build_cmd: --memory-limit caps the script's heap, and a project can lower it but not lift it" {
+test "build_cmd: --memory-limit caps the script's heap, in place of the project's own" {
     // A host (the desktop app, the VS Code extension) passes its setting: without it a build
-    // has no limit, and an untrusted script grew past 60 GB
+    // has no limit, and an untrusted script grew past 60 GB. Like `-p`, it wins over the file
     const script = "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n";
     const cases = [_]struct { project: ?[]const u8, flag: []const u8, outcome: build_cmd.Outcome }{
         // The flag alone
         .{ .project = null, .flag = "64KB", .outcome = .failure },
         .{ .project = null, .flag = "1GB", .outcome = .success },
-        // A project asking for more is held to the flag's
+        // A project asking for more is held to the flag's: a cloned project can't lift it
         .{ .project = "{ \"vm_memory_limit\": 1073741824 }", .flag = "64KB", .outcome = .failure },
-        // A project asking for less keeps its own
-        .{ .project = "{ \"vm_memory_limit\": 65536 }", .flag = "1GB", .outcome = .failure },
+        // A project asking for less gets the flag's too: a setting raised takes
+        .{ .project = "{ \"vm_memory_limit\": 65536 }", .flag = "1GB", .outcome = .success },
     };
     for (cases) |case| {
         errdefer std.debug.print("project {?s}, flag {s}\n", .{ case.project, case.flag });

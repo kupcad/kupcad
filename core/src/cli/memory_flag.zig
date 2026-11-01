@@ -1,9 +1,10 @@
 //! `--memory-limit <size>`: the most script heap a run may hold (what `vm_memory_limit` in
 //! .kupcad.json limits), for a host that runs scripts someone else wrote (the desktop app, the
-//! VS Code extension, from their settings). It is a ceiling: a project's `vm_memory_limit` may
-//! ask for less, never for more, so a cloned project can't lift the host's limit. Without it a
-//! command keeps its own default: none for `build` and `run`, the interactive one for `watch`
-//! and `lsp`.
+//! VS Code extension, from their settings). The command line wins over the project's file, as
+//! `-p` does over a parameter's default: with the flag the project's `vm_memory_limit` doesn't
+//! apply, so a cloned project can't lift the host's limit and a setting raised always takes.
+//! Without either a command keeps its own default: none for `build` and `run`, the interactive
+//! one for `watch` and `lsp`.
 
 const std = @import("std");
 const Reporter = @import("reporter.zig").Reporter;
@@ -12,8 +13,8 @@ const Taken = @import("param_flags.zig").Taken;
 pub const FLAG = "--memory-limit";
 
 pub const USAGE =
-    \\  --memory-limit <size>     Most memory the script may hold, as 512MB or 8GB; a
-    \\                            project's vm_memory_limit may lower it, not raise it
+    \\  --memory-limit <size>     Most memory the script may hold, as 512MB or 8GB, in
+    \\                            place of the project's vm_memory_limit
     \\
 ;
 
@@ -55,9 +56,8 @@ pub fn take(arg: []const u8, args: anytype, limit: *?usize, reporter: Reporter) 
     return .taken;
 }
 
-/// The limit a run gets: the project's own, no higher than the flag's; else the flag's; else
-/// the command's `default` (null: none).
+/// The limit a run gets: the flag's, as the command line wins over the project's file; else
+/// the project's; else the command's `default` (null: none).
 pub fn limitFor(project: ?usize, flag: ?usize, default: ?usize) ?usize {
-    if (project) |own| return if (flag) |ceiling| @min(own, ceiling) else own;
-    return flag orelse default;
+    return flag orelse project orelse default;
 }
