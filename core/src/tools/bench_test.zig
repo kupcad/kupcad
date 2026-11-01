@@ -20,6 +20,21 @@ test "bench: medians over repeated runs, with the geometry evaluated as a phase"
     try testing.expect(parsed.value.object.get("median_ns").?.object.get("evaluate").?.integer > 0);
 }
 
+test "bench: a Sketch, an Assembly's parts and an Array's items are evaluated too" {
+    // Only a Solid was: every heavy example ends in an assemble or an Array, and was timed at
+    // 0 ms of evaluation, "the script left no geometry to evaluate"
+    for ([_][]const u8{
+        "square(2)\n",
+        "assemble(name: \"kit\", parts: [cube(1), cube(2).translate(x: 3)])\n",
+        "[cube(1), [square(1)], 5]\n",
+    }) |source| {
+        errdefer std.debug.print("script: {s}\n", .{source});
+        var report = try bench.run(testing.allocator, testing.io, source, .{ .repeat = 1, .profile = false });
+        defer report.deinit();
+        try testing.expect(report.evaluated);
+    }
+}
+
 test "bench: a script without geometry has no evaluate phase, and the profile is optional" {
     var report = try bench.run(testing.allocator, testing.io, "x = 1 + 2\n", .{ .repeat = 1, .profile = true });
     defer report.deinit();

@@ -8,6 +8,7 @@ const Document = @import("../frontend/document.zig").Document;
 const Compiler = @import("../compiler/compiler.zig").Compiler;
 const chunk = @import("../vm/chunk.zig");
 const VM = @import("../vm/vm.zig").VM;
+const value = @import("../core/value.zig");
 const registry = @import("../stdlib/registry.zig");
 const profiler_mod = @import("../vm/profiler.zig");
 const Stopwatch = @import("../core/stopwatch.zig").Stopwatch;
@@ -136,12 +137,41 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     if (profile_out) |w| try profiler.dumpProfile(w);
 
     var evaluated = false;
-    if (evaluate and vm.finalValue().isGeometry()) {
-        _ = try vm.ensureConcrete(vm.finalValue());
-        evaluated = true;
-        ns.set(.evaluate, clock.lap());
+    if (evaluate) {
+        evaluated = try evaluateModel(&vm, vm.finalValue(), 0);
+        if (evaluated) ns.set(.evaluate, clock.lap());
     }
     return .{ .ns = ns, .evaluated = evaluated };
+}
+
+/// How deep the model's Arrays and Assemblies are walked (as the exporters' MAX_MODEL_NESTING,
+/// which this layer may not import).
+const MAX_MODEL_DEPTH = 64;
+
+/// Evaluates every shape the script left as its model: a Solid, a Sketch, an Assembly's parts,
+/// an Array's items. Whether there was one. A script ending in a Sketch, an Assembly or an
+/// Array (every heavy example) was timed with no evaluation at all, as if it had no geometry.
+fn evaluateModel(vm: *VM, val: value.Value, depth: usize) anyerror!bool {
+    if (val.isGeometry()) {
+        _ = try vm.ensureConcrete(val);
+        return true;
+    }
+    if (val.isCrossSection()) {
+        _ = try vm.ensureConcreteCrossSection(val);
+        return true;
+    }
+    if (depth >= MAX_MODEL_DEPTH) return false;
+    const items = if (val.isAssembly())
+        val.asAssembly().parts.items.items
+    else if (val.isArray())
+        val.asArray().items.items
+    else
+        return false;
+    var any = false;
+    for (items) |item| {
+        if (try evaluateModel(vm, item, depth + 1)) any = true;
+    }
+    return any;
 }
 
 fn median(values: []u64) u64 {
