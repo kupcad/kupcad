@@ -210,6 +210,44 @@ Allowed import direction, enforced by a layering test as KupCAD's `layering_test
 measure, query, mesh, io` ← `boolean, local` ← `root`. Nothing imports upward; `io` and
 `check` import no operation.
 
+### 4.1 The shape of every public function
+
+Zig errors carry no payload, so every operation takes a `*Diagnostics` and returns an
+error set: `fn boolean(allocator, a: *const Body, b: *const Body, op, options, diag:
+*Diagnostics) Error!Body`. The error names the class (`InvalidInput`, `Degenerate`,
+`NotRepresentable`, `TooSmallEdge`, `IntersectionFailed`, `NotValid`, `Canceled`,
+`OutOfMemory`, …); `Diagnostics` holds the findings and warnings with their entities and
+measured values. A host that ignores diagnostics still gets a precise error; one that
+reads them gets the entity (KupCAD's error line can then name the face).
+
+`Options` is per operation and always has `tolerance: ?Tolerance` (null: the bodies'),
+`limits: Limits`, `cancel: ?*const std.atomic.Value(bool)` and `parallel: ?Parallel`.
+`Limits` bounds every iteration a bad input could lengthen: Newton trials, marching
+steps, subdivision depth, curve-fit points, faces per body, entities per arena (KupCAD's
+`max_newton_trials` and `max_marching_steps` come from here; the loops are bounded by
+construction, the limits make the bounds explicit). The cancel flag is checked between
+phases and every few hundred marching or sweep steps, and a cancelled operation returns
+`error.Canceled` with its inputs untouched and nothing allocated; KupCAD's language
+server cancels a preview on every keystroke and today has to kill the worker when the
+mesh kernel cannot stop.
+
+Inputs are validated at the boundary: finite numbers, positive sizes, `t0 < t1`, bodies
+that pass the structural checker; a violation is `error.InvalidInput` with a message,
+never an assertion (assertions are compiled out of release builds). Bodies are immutable
+once returned, so they can be read from any thread; the allocator a host passes must be
+thread-safe when it also passes a threaded `Parallel`. Because Locus allocates only
+through the caller's allocator, KupCAD can hand it its counting allocator and, for the
+first time, include the kernel's memory in the script's memory limit (Manifold's C++
+allocations never counted).
+
+Every public function's doc comment states what it assumes, what it returns, how it can
+fail and roughly what it costs, in the plain style of KupCAD's own docs.
+
+**Licensing.** The reference kernels are sources of ideas, not code: OCCT is LGPL,
+SolveSpace GPL-3, SMLib proprietary, libfive MPL-2. Nothing is copied from them. Shewchuk's
+predicates are public domain and are ported; the books' algorithms are reimplemented from
+their descriptions.
+
 ---
 
 ## 5. The model
@@ -277,7 +315,8 @@ and Hoffmann both expect, with an explicit edge record, and a body that owns its
 ```
 Vertex  { point: PointIndex, gap: f64, coedge: CoedgeIndex /* one leaving it */, tag }
 Edge    { curve: CurveRef, t0, t1: f64, start, end: VertexIndex, gap: f64,
-          coedge: CoedgeIndex /* first of its two */, flags: {degenerate, seam, approx}, tag }
+          coedge: CoedgeIndex /* first of its two */, flags: {degenerate, seam, approx},
+          regularity: {c0, g1, g2} /* how its two faces meet */, tag }
 Coedge  { edge: EdgeIndex, same_sense: bool, partner: CoedgeIndex /* NULL on a sheet edge */,
           next, prev: CoedgeIndex, loop: LoopIndex, pcurve: PCurveRef /* NULL on planes */ }
 Loop    { face: FaceIndex, first: CoedgeIndex, next_in_face: LoopIndex }   // first loop = outer
@@ -294,9 +333,19 @@ edge from `t0` to `t1`; the two coedges of an edge are opposite (`partner.same_s
 same_sense`), which the checker enforces as the manifold condition.
 
 A `Body` is a value: one outer shell, optional void shells, or one open sheet (a sketch
-is a body of planar faces on `z = 0`). Operations take bodies by `const` reference and
-return a new body; inputs are never touched (KupCAD's single-owner rule, and the opposite
-of SMLib's consuming booleans). `Checkpoint` rolls back a body under construction.
+is a body of planar faces on `z = 0`; `Body.kind` is `solid` or `sheet`). A body with no
+shells is the **empty body**, valid, with zero measures and an empty mesh: a union of
+nothing, an intersection of disjoint parts, a difference that removes everything.
+Operations take bodies by `const` reference and return a new body; inputs are never
+touched (KupCAD's single-owner rule, and the opposite of SMLib's consuming booleans).
+`Checkpoint` rolls back a body under construction.
+
+`regularity` on an edge records how its two faces meet: `c0` (a real crease), `g1`
+(tangent planes agree: a seam split, a fillet's boundary, a cylinder meeting its tangent
+plane) or `g2`. Fillet chains (§7.8) follow `g1` edges; the viewer draws only `c0` edges
+as feature lines; `simplify` never merges across `c0`. The two half-faces of a split
+periodic surface carry the **same tag**, so a selection of "the cylindrical face" by name
+finds both halves and a tag never distinguishes an artefact of D7.
 
 Degenerate edges: a sphere's pole, a cone's apex and a revolved profile's point on the
 axis are edges whose 3D curve is a point (`start == end`, `flags.degenerate`) but whose
@@ -472,8 +521,9 @@ Hoffmann's once-only incidence rule and OCCT's "paves" vocabulary:
 4. **Classify** each face fragment once as in / out / on-same / on-opposite the other body,
    by one interior sample point through the point-in-body classifier: a ray along the
    fragment's normal, the nearest hit strictly inside a face decides, a hit on an edge or
-   vertex or a tangent face retries with another direction, a bounded number of times
-   (H p.76–80; OCCT `BRepClass3d_SClassifier`). Same-domain faces (same interned surface,
+   vertex or a tangent face retries with the next direction from a fixed table (never a
+   random one: determinism), a bounded number of times (H p.76–80; OCCT
+   `BRepClass3d_SClassifier`; SolveSpace's six-direction table). Same-domain faces (same interned surface,
    equal edge sets after imprinting) are decided by normal agreement, never by sampling.
 5. **Select** by Mäntylä's table (S p.137): union = A out ∪ B out ∪ on-same; difference =
    A out ∪ (B in, flipped) ∪ on-opposite; intersection = A in ∪ B in ∪ on-same. The
@@ -523,16 +573,24 @@ Edges first (SMLib `SmTess`, SolveSpace `triangulate.cpp`, OCCT `BRepMesh`): eve
 discretized once by `Resolution` (segments per circle, or angle and length limits; a
 circle's step is `min(2·acos(1 − d/R), angle)` for chord height `d`) and, for a curve on
 two curved faces, by the finer of the two, so adjacent faces share identical boundary
-points and the mesh is watertight by construction. Per face: the loops' pcurves become a
+points and the mesh is watertight by construction. A circle of radius `r` is cut into
+exactly `Resolution.segmentsFor(r)` equal segments starting at angle 0, and an arc into
+the segments of that same grid it covers, rounded outward: the very polygon KupCAD's mesh
+engine builds for the same circle. That is the kernel-parity rule (every parameter means
+the same on both engines): a cylinder tessellated by Locus has the vertices Manifold's
+cylinder has, so the parity tests' bounding boxes and the viewer's picture agree. Per face: the loops' pcurves become a
 UV polygon with holes, scaled to be near-isometric (on a cylinder `u` is radians and `v`
 millimetres; without the scaling every triangle is a sliver); triangulated by monotone
 partition (BKOS ch. 3, deterministic, holes native), then Lawson flips to a constrained
 Delaunay (Lemma 9.4, exact `incircle`, boundary edges never flipped) and, for curved
 surfaces, interior points added until the chordal deviation is within `Resolution`
 (later); mapped to 3D through the surface; degenerate edges yield one point. Output:
-positions, normals, triangles, per-face triangle ranges so KupCAD can colour parts and
-map a hovered triangle to its face, and a status per face: a face that fails to
-triangulate is reported and left out, and the rest of the mesh is still delivered (a
+positions, normals, triangles (`f64` inside Locus; the adapter narrows to KupCAD's
+`f32`), per-face triangle ranges so KupCAD can colour parts and map a hovered triangle to
+its face, **per-edge polylines with the edge's id and regularity** so the viewer draws the
+model's true edges (today it infers feature edges from mesh dihedral angles and misses or
+invents some) and draws none of the `g1` ones, and a status per face: a face that fails
+to triangulate is reported and left out, and the rest of the mesh is still delivered (a
 viewer wants the part it can draw; a boolean, by contrast, fails whole). Tests assert
 `CHECK_EDGE_PAIRS` (every edge once forward and once backward), exact counts for a box,
 outward normals on a sphere, no degenerate triangles, and the mesh's area against the
@@ -578,14 +636,20 @@ Variable-radius and vertex blends are therefore a roadmap entry, not a non-goal.
 STEP AP214 writer for every geometry kind (the current writer plus cones, tori, ellipses,
 B-spline curves and surfaces, extrusion and revolution surfaces, pcurves optional), one
 `MANIFOLD_SOLID_BREP` per body, vertices and edges written once (SolveSpace's aliasing),
-validated by KupCAD's `check:3mf`-style job with an external reader. STEP export is what
+validated by KupCAD's `check:3mf`-style job with an external reader. Numbers are written
+at full `f64` precision (the shortest text that reads back to the same double, Zig's
+`{d}`), never rounded: the present writer prints radii with six decimals, which is a
+0.1 µm error on every circle and makes a "lossless" export lossy. The file's
+`UNCERTAINTY_MEASURE_WITH_UNIT` is the body's `zone`. STEP export is what
 KupCAD's users need first, on wasm too, and is why the writer is in M1. A body JSON format
 that is a straight dump of the arenas (usd-brep's `BrepArray` layout: per-table arrays,
 counts, first-is-outer) replaces the fixture format and is the debugging snapshot. STEP
 reading is scheduled only once the kernel is in good shape (after M7): it is the one place
 a normalizer (weld vertices, drop degenerate faces, split seamed faces, insert pole
 edges) runs, and it needs the booleans and checker mature enough to tell a bad import from
-a kernel bug.
+a kernel bug. A reader treats the file as hostile: every count, degree and index it reads
+is bounded by `Limits` before any allocation (SMLib's unchecked degree fields were a
+crash), and the reader is fuzzed like KupCAD's importers.
 
 ---
 
@@ -618,7 +682,8 @@ G)` with `G` a whole number ≥ 0 per shell; flagged degenerate edges have `star
 no other edge does.
 *Orientation*: adjacent faces agree (the two coedges of each edge are opposite);
 outer loops counter-clockwise and holes clockwise in UV; `same_sense` consistent with the
-outward normal by one ray test per shell.
+outward normal by one ray test per shell, and the cheap cross-check that the signed
+volume (divergence theorem) is positive for an outer shell and negative for a void.
 *Geometric*: vertex points on their edges' curves within `xsect`; edge curves on both
 adjacent surfaces within `xsect`; pcurves lift onto their edges within `approx`, tested at
 a fixed number of samples along the edge (OCCT uses 23); `t0 < t1` inside the curve's
@@ -726,7 +791,56 @@ through the tag table (§8). Anything else new is a plan change first (§11).
 
 ---
 
-## 12. Risks
+## 12. Running it: caches, hashes, tools, performance
+
+Things no book covers because they belong to a library in use.
+
+**Derived data.** A body is immutable once returned, so anything computed from it can be
+cached beside it without ever going stale: per-face AABBs and UV boxes, the face BVH, the
+tessellation for a given `Resolution`, the edge polylines. `Body.derived` holds them,
+built on first use, dropped with the body. The viewer casts a ray at every pointer move
+and asks for the mesh at every redraw; both must be answered from the cache, not rebuilt.
+
+**Content hash.** `body.hash()` is a 64-bit hash of the canonical serialization (the body
+JSON's byte stream). KupCAD's DAG cache and export fingerprints can use it in place of
+hashing a mesh; the determinism test compares it; two bodies built from the same inputs
+on different machines must hash alike.
+
+**Scale guard.** `f64` carries about 16 significant digits; a `zone` of 1e-5 mm on a model
+1e9 mm across is below the representable spacing of its coordinates and every predicate
+of tier 2 degrades. An operation checks `zone ≥ extent · 1e-12` (one digit of margin) and
+otherwise returns `error.InvalidInput` naming the model size; the fix is the host's
+(scale the model or raise the tolerance), as SMLib's decade table implies.
+
+**Trace.** Every operation can be run with `options.trace = dir`, writing the body JSON
+after each phase (`01-paved.json`, `02-imprinted.json`, …) plus the diagnostics, so a
+failing boolean is inspected as a sequence of valid bodies rather than a stack trace
+(Stroud: "print or draw any entity", S p.605). KupCAD's `kupcad dev` exposes it as `dev
+brep-trace <script>`; the playground can later load a trace file and show each phase.
+
+**Fixtures.** Body JSON fixtures carry a format `version`; they are regenerated only by
+`zig build test -Dupdate-snapshots` and the diff is reviewed like code, as KupCAD does
+for its example snapshots. A fixture that changes without a geometry change is a
+determinism bug.
+
+**Performance.** Measured, never assumed (the project's rule). `test/bench/` times, on
+fixed inputs: a 1,000-face planar boolean, a 100-face quadric boolean, tessellation of
+10,000 faces, a ray cast on a 10,000-face body (budget: well under a millisecond from the
+cache, since the viewer calls it per pointer move), STEP export of 1,000 faces, and a
+`compact()` of 1e6 entities. Budgets are set from the first measurements and the suite
+fails on a regression of more than 20%. Algorithmic choices in this plan (BVH culling,
+grid welding, edges-first meshing) are the ones that remove quadratic behaviour; constant
+factors wait for the profiler.
+
+**CI.** Locus's own `zig build test` runs in Debug and ReleaseSafe on Linux, macOS and
+Windows, and under wasmtime for `wasm32-wasi`, in KupCAD's workflow; allocation-failure
+and determinism tests on every run; the fuzz harness for a fixed budget nightly.
+
+**Readiness.** A `kupcad dev brep-readiness` report runs every example and documentation
+snippet with `engine: :brep` and lists, per script, the features still refused; each
+milestone's exit criteria name the examples that must newly build.
+
+## 13. Risks
 
 - **Tangent and coincident configurations** are where every kernel still breaks (SMLib
   `KNOWN_ISSUES.md`, OCCT's and SolveSpace's issue histories). Mitigation: detect them

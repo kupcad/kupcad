@@ -30,4 +30,10 @@ the test strategy, the milestones, and the decisions with their reasons.
 6. Inputs are never modified; on any failure nothing stays allocated.
 7. Tests first, from the books' worked examples; every operation's tests end with the
    checker and the property suite (`architecture.md` §9).
-8. Deterministic: strict `f64`, no FMA in decisions, iteration by index.
+8. Deterministic: strict `f64`, no FMA in decisions, iteration by index; a retry picks
+   the next direction from a table, never a random one.
+9. Every public function documents what it assumes, returns, how it fails and what it
+   costs; it takes a `*Diagnostics`, honours `Limits` and the cancel flag.
+10. Ideas from other kernels, never their code: OCCT (LGPL), SolveSpace (GPL), SMLib
+    (proprietary) and libfive (MPL) are read, not copied. Shewchuk's public-domain
+    predicates are ported.
