@@ -173,6 +173,15 @@ jobs:
         if: matrix.name == 'linux debug'
         run: pnpm check:drawings
 
+      # The protocol package's tests read the headers the core's preview worker sent: captured
+      # again from this build, they are what is committed, or the protocol changed without them
+      - name: Check the protocol fixtures are what the core sends
+        if: matrix.name == 'linux debug'
+        run: |
+          pnpm install --frozen-lockfile --filter kupcad --filter '@kupcad/protocol...'
+          pnpm --filter @kupcad/protocol fixtures
+          git diff --exit-code packages/kupcad-protocol/src/fixtures
+
       # The desktop app's page and its server on the real kupcad lsp, the one check:examples
       # built: the handshake, a script's diagnostics, and its model from the viewport socket
       - name: Run the desktop app on the real kupcad lsp

@@ -27,7 +27,7 @@
   "scripts": {
     "check": "tsc -p jsconfig.json",
     "test": "vitest run",
-    "fixtures": "node scripts/capture-fixtures.js"
+    "fixtures": "node scripts/capture-fixtures.js && oxfmt src/fixtures"
   },
   "devDependencies": {
     "@types/node": "catalog:",
