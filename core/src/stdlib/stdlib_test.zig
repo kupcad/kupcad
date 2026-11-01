@@ -1744,6 +1744,17 @@ test "Stdlib: a Solid's volume and area are measured once, and each Solid has it
     try testing.expectEqual(@as(?f64, 24), c.cached_surface_area);
 }
 
+test "Stdlib: sort without a block orders Numbers and Strings directly, sort_by stays stable" {
+    // Each comparison went through the block-capable comparator: 1M numbers took 117 ms
+    try expectScripts(&.{
+        .{ .src = "r = [3, -1, 2.5, 0, -7].sort", .expected = .{ .nums = &.{ -7, -1, 0, 2.5, 3 } } },
+        .{ .src = "r = [\"b\", \"a\", \"ab\", \"\"].sort.join(\",\")", .expected = .{ .str = ",a,ab,b" } },
+        .{ .src = "r = [].sort.length", .expected = .{ .num = 0 } },
+        .{ .src = "r = [[2, 1], [1, 2], [2, 3], [1, 4]].sort_by { |p| p[0] }.map { |p| p[1] }", .expected = .{ .nums = &.{ 2, 4, 1, 3 } } },
+        .{ .src = comptime rescued("[1, Number::NAN].sort"), .expected = .{ .str = "MathError: sort: the Array holds NaN at index 1" } },
+    });
+}
+
 test "Stdlib: a script may start with a byte order mark" {
     // The three bytes glued to the first name: `x = 1` defined a variable no `x` found
     try expectScripts(&.{

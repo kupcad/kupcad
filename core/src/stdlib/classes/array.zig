@@ -411,6 +411,26 @@ pub fn arraySort(vm: *VM, arr: *value.ObjArray, block: ?*value.ObjClosure) !valu
     const new_arr = try scope.array();
     try new_arr.items.appendSlice(vm.gc.trackingAllocator(), arr.items.items);
 
+    // Without a block, Numbers or Strings (requireOrdered said which, and no NaN) compare
+    // directly: through SortOrder each comparison checked for a block and a failure first
+    if (block == null) {
+        const items = new_arr.items.items;
+        if (items.len > 0 and items[0].isNumber()) {
+            std.sort.pdq(value.Value, items, {}, struct {
+                fn lessThan(_: void, a: value.Value, b: value.Value) bool {
+                    return a.asNumber() < b.asNumber();
+                }
+            }.lessThan);
+        } else {
+            std.sort.pdq(value.Value, items, {}, struct {
+                fn lessThan(_: void, a: value.Value, b: value.Value) bool {
+                    return std.mem.order(u8, a.asString().chars, b.asString().chars) == .lt;
+                }
+            }.lessThan);
+        }
+        return value.Value.initObj(&new_arr.obj);
+    }
+
     var sorting = SortOrder{ .vm = vm, .block = block };
     std.sort.pdq(value.Value, new_arr.items.items, &sorting, SortOrder.lessThan);
     if (sorting.failed) |err| return err;
@@ -718,11 +738,20 @@ pub fn arraySortBy(vm: *VM, arr: *value.ObjArray, closure: *value.ObjClosure) !v
     const order = try vm.allocator.alloc(usize, keys.len);
     defer vm.allocator.free(order);
     for (order, 0..) |*o, i| o.* = i;
-    std.mem.sort(usize, order, keys, struct {
-        fn lessThan(ks: []const value.Value, a: usize, b: usize) bool {
-            return orderOf(ks[a], ks[b]) == .lt;
-        }
-    }.lessThan);
+    // Stable, the keys compared directly (requireOrdered said which kind, and no NaN)
+    if (keys.len > 0 and keys[0].isNumber()) {
+        std.mem.sort(usize, order, keys, struct {
+            fn lessThan(ks: []const value.Value, a: usize, b: usize) bool {
+                return ks[a].asNumber() < ks[b].asNumber();
+            }
+        }.lessThan);
+    } else {
+        std.mem.sort(usize, order, keys, struct {
+            fn lessThan(ks: []const value.Value, a: usize, b: usize) bool {
+                return orderOf(ks[a], ks[b]) == .lt;
+            }
+        }.lessThan);
+    }
     const sorted = try vm.gc.allocateArrayOf(vm, by.items.items.items);
     for (sorted.items.items, order) |*slot, from| slot.* = by.items.items.items[from];
     return value.Value.initObj(&sorted.obj);
