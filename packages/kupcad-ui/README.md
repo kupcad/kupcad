@@ -287,5 +287,7 @@ The viewer's scene logic in Node (jsdom), with a stand-in for WebGL and models t
 makes through `@kupcad/wasm`; the components mounted under jsdom (the `testing` setup and its
 `stubRenderer`), with the schemas and models the real core gives. And a smoke test in headless
 Chromium (`pnpm test:browser`) that draws what the core makes in the page and reads the pixels
-back: the part's colour, the background, a section cutting it all away, and a cap; and the view
-cube, which turns the camera to the part clicked.
+back: the part's colour, the background, a section cutting it all away, and a cap; the view
+cube, which turns the camera to the part clicked; and the `ViewerPane` laid out by the browser,
+its panel beside the model and, in a pane narrower than 36em, under it (a container query,
+which jsdom doesn't apply).
