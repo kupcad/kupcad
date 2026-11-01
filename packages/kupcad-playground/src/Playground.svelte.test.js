@@ -8,7 +8,6 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { memorySettings } from '@kupcad/ui';
 import Playground from './Playground.svelte';
-import { DELAY_MS } from './runner.js';
 
 /** How long a run may take here: the pause after an edit, then the real core's. */
 const RUN_MS = 5000;
@@ -36,6 +35,9 @@ async function playground(source, settings = memorySettings(), props = {}) {
   });
   return { kupcad, view: editorView(), component, rerender, drawn };
 }
+
+/** Until the next task: a run due after no delay has started by then. */
+const nextTask = () => new Promise((settle) => setTimeout(settle));
 
 /** The editor's view, as it is now. */
 const editorView = () =>
@@ -286,9 +288,10 @@ describe('Playground', () => {
   });
 
   it('runs nothing and says nothing of a run while it starts empty, until something is typed', async () => {
-    const { kupcad, view } = await playground('');
+    // No debounce: a run that would come is due on the next task, where it waited 600 ms
+    const { kupcad, view } = await playground('', memorySettings(), { runDelayMs: 0 });
     const calls = [vi.spyOn(kupcad, 'check'), vi.spyOn(kupcad, 'preview')];
-    await new Promise((settle) => setTimeout(settle, DELAY_MS * 2));
+    await nextTask();
     expect(calls.map((call) => call.mock.calls.length)).toEqual([0, 0]);
     expect(statusText()).toBeUndefined();
     expect(consoleLines()).toEqual([]);
@@ -302,6 +305,7 @@ describe('Playground', () => {
     const sources = [];
     const { kupcad, component } = await playground('cube(10).named("box")\n', memorySettings(), {
       onsource: (/** @type {string} */ source) => sources.push(source),
+      runDelayMs: 0,
     });
     await vi.waitFor(() => expect(partsListed()).toBe('box'), RUN_MS);
     const calls = [vi.spyOn(kupcad, 'check'), vi.spyOn(kupcad, 'preview')];
@@ -312,7 +316,7 @@ describe('Playground', () => {
     expect(statusText()).toBeUndefined();
     expect(partsListed() ?? '').not.toContain('box');
     view.dispatch({ changes: { from: 11, to: 16, insert: 'lids' } });
-    await new Promise((settle) => setTimeout(settle, DELAY_MS * 2));
+    await nextTask();
     expect(sources).toEqual(['{ "name": "lids" }\n']);
     expect(calls.map((call) => call.mock.calls.length)).toEqual([0, 0]);
     // A script opened after it runs

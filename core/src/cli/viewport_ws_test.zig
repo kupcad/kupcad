@@ -423,7 +423,8 @@ test "ViewportWs: a connection that never sends its upgrade request is closed" {
     try client.open(server.port);
     defer client.close();
     _ = try client.handshake(browser_upgrade_request);
-    sleepMs(100);
+    // Past the timeout, which must not close it: a timer that doesn't fire takes waiting out
+    sleepMs(2 * server.handshake_timeout.toMilliseconds());
     var got: [1]u8 = undefined;
     try receiveBroadcast(&server, &client, "!", &got);
 }

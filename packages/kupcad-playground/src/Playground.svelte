@@ -39,7 +39,7 @@
   import { createKupcadWorker } from '@kupcad/wasm';
   import { download } from './download.js';
   import { marksOf } from './marks.js';
-  import { Runner } from './runner.js';
+  import { DELAY_MS, Runner } from './runner.js';
 
   /** @import { Editor as EditorClass, EditorLanguage } from '@kupcad/editor' */
   /** @import { ExportFormat, Finding, ParamValues, Preview } from '@kupcad/protocol/types' */
@@ -68,6 +68,8 @@
    *   (`.kc-control` gives them its look)
    * @property {readonly ShortcutGroup[]} [shortcuts] the host's own, listed before the viewer's
    * @property {boolean} [shortcutsOpen] whether the shortcuts' dialog shows; bindable
+   * @property {number} [runDelayMs] how long the script stays as it is after an edit before it
+   *   runs (runner.js's DELAY_MS); a test gives 0, so a run that would come comes at once
    */
 
   /** @type {Props} */
@@ -83,6 +85,7 @@
     actions: hostActions,
     shortcuts = [],
     shortcutsOpen = $bindable(false),
+    runDelayMs = DELAY_MS,
   } = $props();
 
   /**
@@ -145,18 +148,22 @@
   onMount(() => {
     const made = kupcad ? null : createKupcadWorker(wasm ? { wasm, log } : { log });
     core = kupcad ?? made;
-    runner = new Runner(/** @type {KupcadApi} */ (core), {
-      onfindings: (next, of) => {
-        if (runs && of === value) findings = next;
+    runner = new Runner(
+      /** @type {KupcadApi} */ (core),
+      {
+        onfindings: (next, of) => {
+          if (runs && of === value) findings = next;
+        },
+        onpreview: (preview, of) => {
+          if (!runs) return;
+          ran = { preview, source: of };
+          notice = '';
+          consoleLines = appendLines(consoleLines, linesOfRun(preview.header, name));
+        },
+        onerror: (error) => (notice = errorText(error)),
       },
-      onpreview: (preview, of) => {
-        if (!runs) return;
-        ran = { preview, source: of };
-        notice = '';
-        consoleLines = appendLines(consoleLines, linesOfRun(preview.header, name));
-      },
-      onerror: (error) => (notice = errorText(error)),
-    });
+      { delayMs: runDelayMs },
+    );
     if (value !== '') runner.run(value, {}, { now: true, files });
     return () => {
       runner?.stop();

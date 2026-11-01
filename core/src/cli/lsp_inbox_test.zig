@@ -26,6 +26,8 @@ const Client = struct {
     transport: lsp.Transport = .{ .vtable = &.{ .readJsonMessage = read, .writeJsonMessage = write } },
     messages: []const []const u8,
     permits: std.Io.Semaphore = .{},
+    /// Set as the reader first asks for a message: a test that needs it waiting waits on this.
+    reading: std.Io.Event = .unset,
     read_count: usize = 0,
     written: std.ArrayList([]u8) = .empty,
 
@@ -35,6 +37,7 @@ const Client = struct {
 
     fn read(transport: *lsp.Transport, io: std.Io, allocator: std.mem.Allocator) lsp.Transport.ReadError![]u8 {
         const self: *Client = @alignCast(@fieldParentPtr("transport", transport));
+        self.reading.set(io);
         try self.permits.wait(io);
         if (self.read_count == self.messages.len) return error.EndOfStream;
         defer self.read_count += 1;
@@ -209,6 +212,7 @@ test "LSP inbox: deinit stops a reader that is waiting on the client" {
     var preview: Preview = .{};
     var inbox = Inbox.init(testing.allocator, testing.io, &client.transport, preview.work());
     try inbox.start();
-    sleepMs(5); // let the reader block on the client
+    // The reader blocked on the client (it slept 5 ms and hoped)
+    try client.reading.wait(testing.io);
     inbox.deinit();
 }
