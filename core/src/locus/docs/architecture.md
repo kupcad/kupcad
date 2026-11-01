@@ -75,15 +75,18 @@ evaluation is recursive Cox–de Boor without span search, derivatives or knot i
 point projection on NURBS is a 9×9 grid search; the Euler check accepts any even χ ≤ 2;
 interning is O(n²); the docs described a deleted implementation.
 
-**The deleted attempt.** Between 2026-09-04 and 09-19 Locus had 14,635 lines: a boolean
+**The first attempt.** Between 2026-09-04 and 09-19 Locus had 14,635 lines: a boolean
 built from face slicing by 3D segments followed by vertex welding and coplanar merging,
 an LM-driven NURBS surface–surface marcher, a Bowyer–Watson tessellator, sweeps,
-fillets, a healer, stress and fuzz tests. Commit `75b68678` removed it. Its test names
-tell the story: 21 "Hang Test" cases in the healing suite alone, and "Healed Solid Fails
-Manifold Validation". The pipeline split faces first and repaired afterwards, with no
-invariant the intermediate states satisfied, so each fix exposed another cycle. This plan
-keeps the model valid between every step (S p.125), decides each geometric incidence once
-(H p.81–82), never repairs inside an operation, and bounds every traversal by construction.
+fillets, a healer, stress and fuzz tests. Commit `75b68678` removed it deliberately: the
+decision was to finish the language and the mesh kernel first and come back to the B-Rep
+once it was clear what KupCAD needs from it, and the first attempt had been built without
+a plan. Its tests are still instructive: 21 "Hang Test" cases in the healing suite alone,
+and "Healed Solid Fails Manifold Validation". The pipeline split faces first and repaired
+afterwards, with no invariant the intermediate states satisfied, so each fix exposed
+another cycle. This plan keeps the model valid between every step (S p.125), decides each
+geometric incidence once (H p.81–82), never repairs inside an operation, and bounds every
+traversal by construction.
 
 ---
 
@@ -150,11 +153,13 @@ Each principle is a rule the code is held to, not a slogan.
 
 ## 4. Package layout and dependencies
 
-Locus becomes a Zig package with its own `build.zig` and `build.zig.zon`, first as
-`core/src/locus/` inside the KupCAD monorepo, consumed by `core/build.zig` as a path
-dependency (`b.dependency("locus", .{})`), then extractable to its own repository with no
-code change. KupCAD's adapter (`core/src/kernel/engines/brep/driver.zig`) stays in KupCAD;
-KupCAD continues to import `locus.Resolution` for the shared curve-cutting rule.
+Locus becomes a Zig package with its own `build.zig` and `build.zig.zon`, kept as
+`core/src/locus/` inside the KupCAD monorepo for now (one checkout, one CI, one place to
+keep the adapter in sync) and consumed by `core/build.zig` as a path dependency
+(`b.dependency("locus", .{})`). Extraction to its own repository is planned for later and
+must need no code change, which is why the package boundary is drawn now. KupCAD's
+adapter (`core/src/kernel/engines/brep/driver.zig`) stays in KupCAD; KupCAD continues to
+import `locus.Resolution` for the shared curve-cutting rule.
 
 Locus is pure Zig. The two C++ files go: the Levenberg–Marquardt solver, 3×3/4×4
 determinants and the PCA normal are small Zig routines (Jacobi eigenvalues for a
@@ -162,6 +167,16 @@ symmetric 3×3 is ~60 lines); the exact predicates are a Zig port of Shewchuk's 
 `orient2d`/`incircle`/`orient3d`; `parallelFor` becomes a `Parallel` interface the host
 implements (KupCAD's with oneTBB, the default serial). Removing Eigen and TBB from Locus
 is what makes it buildable alone and for WebAssembly without flags.
+
+**Targets**: native (Linux, macOS, Windows) and `wasm32` (KupCAD's browser and desktop
+builds carry the B-Rep engine, STEP export included). On wasm there is no threading and
+no file system: the host's `Parallel` is the serial default, every operation is a pure
+function of its inputs, and nothing in Locus touches `std.fs`, `std.Thread` or the
+environment. Workers in the browser can later implement `Parallel` without a change to
+Locus. Memory is tighter on wasm32 (KupCAD runs scripts under a heap limit there):
+operations allocate through the caller's allocator only, free intermediates as each phase
+ends, and never hold a second copy of a body beyond the result. Locus's tests run under
+wasmtime in CI as KupCAD's do.
 
 ```
 locus/
@@ -528,23 +543,49 @@ exact surface area within the chordal error.
 Offsets of planes, cylinders, cones, spheres and tori are exact (move the defining point
 or radius; S App. D.12); a solid offset is the offset of every face, re-intersected at the
 edges, with convex edges joined by cylinders/spheres (rolling ball) and concave ones by
-intersection; shell = body minus its inward offset as a void shell (S p.115). Chamfer and
-constant-radius fillet on convex straight and circular edges follow Stroud's rebate recipe
-(S p.246–250): offset surfaces, intersect with the adjacent edges, side faces, eaves at
-vertices of more than three edges; the blend surfaces are cylinders, tori and spheres,
-exact, where the adjacent faces are planes and cylinders. Variable radius and vertex
-blends are not planned.
+intersection; shell = body minus its inward offset as a void shell (S p.115).
+
+Fillets and chamfers are built in phases, each a usable release, on one option structure
+designed for all of them from the start. The options follow SMLib's four independent
+axes (usd-brep `SmApiFillets.h`): the **radius law** (constant; constant distance = a
+chamfer; variable), the **cross-section** (circular; later linear or a blend), the
+**continuity** (G1; later G2) and the **corner strategy** (round; later bevel). Phase 1
+implements one point on each axis and leaves the others as enum values that return
+`error.NotImplemented` with the phase that will add them.
+
+- *Phase 1, single convex edge, constant radius*: Stroud's rebate recipe (S p.246–250):
+  offset the two adjacent surfaces by `r`, intersect them for the spine of the rolling
+  ball, cut the adjacent faces back to the tangency lines, and insert the blend face; where
+  the adjacent faces are planes and cylinders the blend surface is exactly a cylinder, a
+  torus or a sphere (OCCT `ChFi3d` takes the same exact cases first), otherwise a rolling-
+  ball march in `(u1, v1, u2, v2)` with `P1 + r·n1 = P2 + r·n2` (OCCT) fitted within
+  `approx`. Ends of the edge meet the neighbouring faces by a straight cut. Refused: a
+  radius below `8·zone` (SMLib's limit) or larger than the adjacent faces can take.
+- *Phase 2, tangent propagation*: an edge selected for filleting extends along its chain
+  of tangent-continuous neighbours (OCCT's *spine*), so a filleted box edge that turns
+  into an arc is blended as one stripe.
+- *Phase 3, corners*: where two or three filleted edges meet at a vertex, trim the stripes
+  against each other and fill the corner with the exact patch when one exists (a sphere
+  for three equal radii on a box corner, S p.248's eaves for vertices of more than three
+  edges), else a small NURBS patch (F §19 G1 conditions, Coons fill).
+- *Phase 4 and beyond*: variable radius along the spine, G2 cross-sections, bevel corners,
+  vertex blends. Not scheduled; the option axes keep the door open.
+
+Variable-radius and vertex blends are therefore a roadmap entry, not a non-goal.
 
 ### 7.9 Input and output
 
 STEP AP214 writer for every geometry kind (the current writer plus cones, tori, ellipses,
 B-spline curves and surfaces, extrusion and revolution surfaces, pcurves optional), one
 `MANIFOLD_SOLID_BREP` per body, vertices and edges written once (SolveSpace's aliasing),
-validated by KupCAD's `check:3mf`-style job with an external reader. A body JSON format
+validated by KupCAD's `check:3mf`-style job with an external reader. STEP export is what
+KupCAD's users need first, on wasm too, and is why the writer is in M1. A body JSON format
 that is a straight dump of the arenas (usd-brep's `BrepArray` layout: per-table arrays,
 counts, first-is-outer) replaces the fixture format and is the debugging snapshot. STEP
-reading is a later milestone and the only place a normalizer (weld vertices, drop
-degenerate faces, insert pole edges) runs.
+reading is scheduled only once the kernel is in good shape (after M7): it is the one place
+a normalizer (weld vertices, drop degenerate faces, split seamed faces, insert pole
+edges) runs, and it needs the booleans and checker mature enough to tell a bad import from
+a kernel bug.
 
 ---
 
@@ -638,8 +679,8 @@ retargeted, and the docs updated. Line counts are estimates of the delta includi
 | M4 | Booleans on planar bodies | The full §7.4 pipeline with planes only; BVH; containment table; batch chains; `trim_by_plane`, `decompose`, `empty`; fuzz harness; degeneracy corpus (planar part) | `boolean` (planar), `trim_by_plane`, `decompose`, `empty` | 6k |
 | M5 | Booleans on analytic bodies | Exact pair tables; coincidence and tangency detection; marching with Newton for the rest; approximate curves and pcurves with recorded gaps; simplify for curved faces; curved hull as a polyhedron at `Resolution`, documented approximate | `boolean` (all), `curved_hull` | 5k |
 | M6 | NURBS surfaces | Loft (skinning), sweep along a path, twisted and tapered extrude; general surface–surface marching; projection (silhouettes) | `loft`, `extrude_twist`, `extrude_scale`, `project` | 5k |
-| M7 | Local operations | Exact analytic offsets, shell, chamfer, constant-radius fillet on convex straight and circular edges, convex Minkowski | `offset` (solid), `minkowski` | 5k |
-| M8 | Interop and API | STEP reader (AP203/214 B-Rep subset, with the input normalizer); C API with opaque handles and error codes; binary body format; parallel tessellation and intersection | — | 4k |
+| M7 | Local operations | Exact analytic offsets, shell, convex Minkowski; fillet phase 1 (single edge, constant radius) and chamfer on the four-axis option structure; then phase 2 (tangent chains) and phase 3 (corners) | `offset` (solid), `minkowski`, fillets | 6k |
+| M8 | Interop and API | C API with opaque handles and error codes; binary body format; parallel tessellation and intersection (browser workers as a `Parallel`); STEP reader (AP203/214 B-Rep subset, with the input normalizer) last, once M4–M7 are stable | — | 4k |
 
 Order rationale: M0 is the only milestone with no new capability and must come first
 because every later one would otherwise be rewritten; M1–M3 give KupCAD exact single
@@ -648,8 +689,16 @@ because every boolean difficulty exists on planes and is debugged there without 
 intersection noise; M6–M8 are independent of each other.
 
 "Never" within this plan: non-manifold topology, a healer, exact rational arithmetic,
-randomized incremental Delaunay as the tessellator, BSP booleans, variable-radius blends,
-F-rep evaluation, assemblies, features.
+randomized incremental Delaunay as the tessellator, BSP booleans, F-rep evaluation,
+assemblies, features.
+
+**Extension points.** The plan leaves room, in these places and no others, for what is
+not scheduled: a new curve or surface kind (one array, one `switch` arm per contract
+function, §3); a new `Parallel` implementation (browser workers, a thread pool, §4);
+the fillet option axes (§7.8); N-ary booleans by General Fuse cells (D17); closed-form
+mass properties replacing quadrature (§7.6); a STEP reader behind the same body JSON and
+normalizer (§7.9); a C API over the Zig one (M8); per-face attributes beyond a `u32`
+through the tag table (§8). Anything else new is a plan change first (§11).
 
 ---
 
