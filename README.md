@@ -64,6 +64,7 @@ kupcad build part.kup -P bracket.json              # parameter values from a JSO
 kupcad build part.kup --bom bom.json               # also write the parts list (count, volume, mass)
 kupcad build part.kup -o part.3mf                  # 3MF: each part once, placed per copy, with colours
 kupcad build part.kup --split parts/               # one STL per part, as made, for printing
+kupcad build part.kup --memory-limit 2GB           # cap the script's memory (else KUPCAD_MEMORY_LIMIT, else the project's)
 kupcad check part.kup                              # lint
 kupcad fmt part.kup                                # format
 kupcad watch part.kup -P bracket.json              # rebuild on change, with parameter values
@@ -83,6 +84,7 @@ and `kupcad --version` prints the version. Environment variables:
 |---|---|
 | `KUPCAD_HOME` | Package cache directory, an absolute path (default `~/.kupcad`; empty is unset) |
 | `KUPCAD_VIEWPORT_PORT` | Preferred port for the LSP viewport WebSocket (default `9001`, falls back to a free port) |
+| `KUPCAD_MEMORY_LIMIT` | Most memory a script may hold, as `512MB` or `8GB`, when `--memory-limit` isn't given; wins over the project's `vm_memory_limit` (empty is unset) |
 
 ## Developer notes
 
