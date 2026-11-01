@@ -708,7 +708,7 @@ test "build_cmd: a project's settings that don't read are named, with where" {
     var res = try runBuild(&.{ fx.input, "-o", fx.output });
     defer res.deinit();
     try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
-    const expected = try std.fmt.allocPrint(testing.allocator, "Error: {s}/.kupcad.json:1:11: invalid JSON\n", .{fx.dir});
+    const expected = try std.fmt.allocPrint(testing.allocator, "Error: {s}{c}.kupcad.json:1:11: invalid JSON\n", .{ fx.dir, std.fs.path.sep });
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, res.text());
 }

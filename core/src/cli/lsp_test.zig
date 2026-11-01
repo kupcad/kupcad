@@ -258,10 +258,9 @@ test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd
     defer tmp.cleanup();
     try tmp.dir.createDirPath(testing.io, "parts");
     try tmp.dir.writeFile(testing.io, .{ .sub_path = FILE_NAME, .data = "{ \"lint\": { \"unused-variable\": \"error\" } }" });
-    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const uri = try testing.allocator.print("file://{s}/parts/part.kup", .{root});
-    defer testing.allocator.free(uri);
+    var names = std.heap.ArenaAllocator.init(testing.allocator);
+    defer names.deinit();
+    const uri = try uriIn(names.allocator(), tmp, "parts/part.kup");
 
     var server: Server = undefined;
     try server.init();
@@ -636,14 +635,11 @@ test "LSP: a module a document imports, changed on disk while not open, updates 
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "hw.kup", .data = "def bolt\n  cube(2)\nend\nexport bolt\n" });
-    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
-    defer testing.allocator.free(root);
-    const root_uri = try std.mem.concat(testing.allocator, u8, &.{ "file://", root });
-    defer testing.allocator.free(root_uri);
-    const main_uri = try std.mem.concat(testing.allocator, u8, &.{ root_uri, "/main.kup" });
-    defer testing.allocator.free(main_uri);
-    const hw_uri = try std.mem.concat(testing.allocator, u8, &.{ root_uri, "/hw.kup" });
-    defer testing.allocator.free(hw_uri);
+    var names = std.heap.ArenaAllocator.init(testing.allocator);
+    defer names.deinit();
+    const root_uri = try uriIn(names.allocator(), tmp, "");
+    const main_uri = try uriIn(names.allocator(), tmp, "main.kup");
+    const hw_uri = try uriIn(names.allocator(), tmp, "hw.kup");
 
     var server: Server = undefined;
     try server.initReading(true);
@@ -905,6 +901,15 @@ test "LSP: without kupcad.preview, the document last edited is shown" {
     try server.open(LIB_URI, "square(1)\n");
     server.settle();
     try testing.expectEqualStrings(LIB_URI, (try viewers.last(server.arena.allocator())).document.?);
+}
+
+/// The file URI of `name` (`/` between its folders) in the folder `tmp`, as an editor names it
+/// on this system (`file:///D:/...` on Windows); the folder's own for "".
+fn uriIn(arena: std.mem.Allocator, tmp: testing.TmpDir, name: []const u8) ![]const u8 {
+    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", arena);
+    std.mem.replaceScalar(u8, root, '\\', '/');
+    const path = if (name.len == 0) root else try std.mem.join(arena, "/", &.{ root, name });
+    return (try fileUri(@import("builtin").target.os.tag, arena, path)).?;
 }
 
 /// What a test reads of a published diagnostic.

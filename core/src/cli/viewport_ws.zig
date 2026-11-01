@@ -4,6 +4,7 @@
 //! SVG) as binary messages (`broadcastBinary`). Started by cli/lsp.zig.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const log = std.log.scoped(.viewport_ws);
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -20,6 +21,9 @@ pub const MAX_CLIENTS: usize = 8;
 /// How long a connection may take to finish its upgrade request before it is closed, so a
 /// socket that connects and sends nothing can't hold one of the MAX_CLIENTS slots for good.
 pub const HANDSHAKE_TIMEOUT_MS: i64 = 5000;
+/// How long Windows is given to say whether something listens at the preferred port (init):
+/// its refusal of a loopback connection to a closed port takes about two seconds.
+const PORT_PROBE_TIMEOUT_MS: i64 = 200;
 /// How long the accept loop waits after accept fails (out of file descriptors, say) before
 /// it tries again, instead of spinning.
 const ACCEPT_RETRY_MS: i64 = 50;
@@ -307,6 +311,9 @@ pub const ViewportWsServer = struct {
     /// Binds 127.0.0.1:`port`. Pass 0 for an OS-assigned port; read `.port` for the result.
     pub fn init(allocator: std.mem.Allocator, io: std.Io, port: u16) !ViewportWsServer {
         const address = try std.Io.net.IpAddress.parse("127.0.0.1", port);
+        // Windows binds a port another socket listens on (std binds through AFD, with no
+        // exclusive option), so a second LSP shared the first's port: one that answers is taken
+        if (builtin.target.os.tag == .windows and port != 0 and answers(io, &address)) return error.AddressInUse;
         // No `reuse_address`: std sets SO_REUSEPORT with it on every POSIX target, which lets a
         // second LSP bind a port another window still listens on (so its viewer could reach the
         // wrong LSP) and makes initWithFallback dead code. std has no SO_REUSEADDR-only option;
@@ -320,6 +327,13 @@ pub const ViewportWsServer = struct {
             .port = server.socket.address.getPort(),
             .server = server,
         };
+    }
+
+    /// Whether something listens at `address`: a connection to it is made (and closed).
+    fn answers(io: std.Io, address: *const std.Io.net.IpAddress) bool {
+        const stream = address.connect(io, .{ .mode = .stream, .timeout = .{ .duration = .{ .raw = .fromMilliseconds(PORT_PROBE_TIMEOUT_MS), .clock = .awake } } }) catch return false;
+        stream.close(io);
+        return true;
     }
 
     /// Tries `preferred_port`, then falls back to an ephemeral port if it is unavailable.

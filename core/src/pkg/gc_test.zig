@@ -90,6 +90,8 @@ test "GarbageCollector: prune(false) skips files younger than 7 days" {
 }
 
 test "GarbageCollector: prune(true) skips files actively linked to projects (nlink > 1)" {
+    // Windows' projects hold copies (Zig's std has no hard link there): no blob is linked
+    if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
     var fx: Fixture = undefined;
     try fx.init();
     defer fx.deinit();

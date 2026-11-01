@@ -69,7 +69,7 @@ test "ProjectConfig: a file that can't be read is named, with where and why" {
     try testing.expectError(error.UnknownField, ProjectConfig.forScript(testing.io, testing.allocator, script, &failure));
     const said = try std.fmt.allocPrint(testing.allocator, "{f}", .{failure.?});
     defer testing.allocator.free(said);
-    const expected = try std.fmt.allocPrint(testing.allocator, "{s}/{s}:2:18: unknown setting (see the lint rules with `kupcad check --help`)", .{ root, FILE_NAME });
+    const expected = try std.fmt.allocPrint(testing.allocator, "{s}{c}{s}:2:18: unknown setting (see the lint rules with `kupcad check --help`)", .{ root, std.fs.path.sep, FILE_NAME });
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, said);
     // A file that can't be read has no place

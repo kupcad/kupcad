@@ -101,6 +101,8 @@ test "NativeVfs: re-linking replaces stale symlinks but never real files" {
     try fs.symLink("store/new", "dep");
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = try tmp.dir.readLink(testing.io, "dep", &buf);
+    // Windows reads a link's target back with `\` between its folders
+    std.mem.replaceScalar(u8, buf[0..n], '\\', '/');
     try testing.expectEqualStrings("store/new", buf[0..n]);
 
     // A real file at the link path is left untouched.
@@ -170,6 +172,8 @@ test "NativeVfs: a symlink to nothing is written through nowhere, and a stale on
     try fs.symLink("store/new", "dep");
     var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
     const n = try root.readLink(testing.io, "dep", &buf);
+    // Windows reads a link's target back with `\` between its folders
+    std.mem.replaceScalar(u8, buf[0..n], '\\', '/');
     try testing.expectEqualStrings("store/new", buf[0..n]);
 }
 

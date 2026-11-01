@@ -274,6 +274,8 @@ test "Cafs: failed extraction leaves no partial blobs or temp files" {
 
 // Real installs failed with AccessDenied: the sandbox rejected the absolute blob source.
 test "Cafs: linkBlob hard-links blobs into a NativeVfs sandbox" {
+    // Zig's std has no hard link on Windows (OperationUnsupported): linkBlob copies the blob
+    if (@import("builtin").target.os.tag == .windows) return error.SkipZigTest;
     var proj = testing.tmpDir(.{});
     defer proj.cleanup();
     var global = testing.tmpDir(.{});

@@ -381,7 +381,7 @@ test "ViewportWs: connections are capped, a viewer gets in past idle ones, deini
         defer extra.close();
         var dog = Watchdog{ .stream = extra.stream };
         try dog.arm();
-        try testing.expectError(error.EndOfStream, extra.reader.interface.takeByte());
+        try expectClosed(&extra);
         try dog.disarm();
         try testing.expectEqual(ws.MAX_CLIENTS, server.clientCount());
     }
@@ -400,6 +400,19 @@ test "ViewportWs: connections are capped, a viewer gets in past idle ones, deini
     server.deinit();
 }
 
+/// That the server closed `client`'s connection: its next read ends. Windows tells the client
+/// with a reset (the read fails) where POSIX ends the stream.
+fn expectClosed(client: *TestClient) !void {
+    const read = client.reader.interface.takeByte();
+    if (read) |byte| {
+        std.debug.print("read {d} from a connection that should be closed\n", .{byte});
+        return error.TestExpectedClosed;
+    } else |err| switch (err) {
+        error.EndOfStream => {},
+        error.ReadFailed => if (@import("builtin").target.os.tag != .windows) return err,
+    }
+}
+
 test "ViewportWs: a connection that never sends its upgrade request is closed" {
     const warnings = test_support.expectWarnings();
     defer warnings.restore();
@@ -414,7 +427,7 @@ test "ViewportWs: a connection that never sends its upgrade request is closed" {
     defer silent.close();
     var dog = Watchdog{ .stream = silent.stream };
     try dog.arm();
-    try testing.expectError(error.EndOfStream, silent.reader.interface.takeByte());
+    try expectClosed(&silent);
     try dog.disarm();
     try waitForClients(&server, 0);
 

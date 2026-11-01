@@ -395,7 +395,8 @@ test "kupcad: pkg add of a local package records it, and keeps what else kupcad.
     // It used to write back the name, the version and the dependencies alone
     const saved = try sb.tmp.dir.readFileAlloc(testing.io, "kupcad.json", testing.allocator, .limited(4096));
     defer testing.allocator.free(saved);
-    const expected = try std.fmt.allocPrint(testing.allocator, "{{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {{\n    \"screws\": \"{s}\"\n  }}\n}}\n", .{spec});
+    // The spec as JSON writes it: a Windows path's `\\` escaped
+    const expected = try std.fmt.allocPrint(testing.allocator, "{{\n  \"name\": \"plate\",\n  \"version\": \"1.0.0\",\n  \"description\": \"A plate\",\n  \"license\": \"MIT\",\n  \"dependencies\": {{\n    \"screws\": {f}\n  }}\n}}\n", .{std.json.fmt(spec, .{})});
     defer testing.allocator.free(expected);
     try testing.expectEqualStrings(expected, saved);
     // And locked

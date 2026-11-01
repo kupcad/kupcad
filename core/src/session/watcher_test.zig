@@ -43,7 +43,8 @@ const Fixture = struct {
         errdefer tmp.cleanup();
         // Relative to the test's cwd: the VM's file system refuses absolute paths, as it
         // does for a script given to `kupcad watch`.
-        const dir = try std.fs.path.join(testing.allocator, &.{ ".zig-cache", "tmp", &tmp.sub_path });
+        // A module's path, `/` between its folders, as the watch command gives it (ScriptRoot)
+        const dir = try std.mem.join(testing.allocator, "/", &.{ ".zig-cache", "tmp", &tmp.sub_path });
         errdefer testing.allocator.free(dir);
         const disk = try testing.allocator.create(NativeVfs);
         errdefer testing.allocator.destroy(disk);
@@ -59,7 +60,7 @@ const Fixture = struct {
     }
 
     fn path(self: *Fixture, name: []const u8) ![]u8 {
-        return std.fs.path.join(testing.allocator, &.{ self.dir, name });
+        return std.mem.join(testing.allocator, "/", &.{ self.dir, name });
     }
 
     fn write(self: *Fixture, name: []const u8, data: []const u8) !void {

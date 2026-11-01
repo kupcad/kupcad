@@ -30,7 +30,7 @@ pub const ScriptRoot = struct {
         const inside = try std.fs.path.relativeAlloc(allocator, cwd, null, cwd, script_path);
         if (!isOutside(inside)) {
             errdefer allocator.free(inside);
-            return .{ .dir = std.Io.Dir.cwd(), .opened = false, .input = script_path, .path = inside, .prefix = try allocator.dupe(u8, "") };
+            return .{ .dir = std.Io.Dir.cwd(), .opened = false, .input = script_path, .path = modulePathOf(inside), .prefix = try allocator.dupe(u8, "") };
         }
         allocator.free(inside);
 
@@ -44,7 +44,7 @@ pub const ScriptRoot = struct {
         const prefix = try std.fs.path.relativeAlloc(allocator, cwd, null, cwd, project);
         errdefer allocator.free(prefix);
         const dir = try std.Io.Dir.cwd().openDir(io, project, .{});
-        return .{ .dir = dir, .opened = true, .input = script_path, .path = path, .prefix = prefix };
+        return .{ .dir = dir, .opened = true, .input = script_path, .path = modulePathOf(path), .prefix = prefix };
     }
 
     /// The root of the script at `script_path` for a command, or null, why not reported (its
@@ -74,6 +74,14 @@ pub const ScriptRoot = struct {
         return std.fs.path.join(allocator, &.{ self.prefix, module_path });
     }
 };
+
+/// `relative`, a path from the root, as a module's path: `/` between its folders, as imports
+/// join them (import_path.zig). Windows gave `parts\main.kup`, whose folder an import's
+/// POSIX join didn't find, so its neighbours were read from the root, or refused. In place.
+fn modulePathOf(relative: []u8) []u8 {
+    if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, relative, std.fs.path.sep, '/');
+    return relative;
+}
 
 /// Whether a path relative to a folder leads out of it.
 fn isOutside(relative: []const u8) bool {

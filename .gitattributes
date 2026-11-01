@@ -1,0 +1,3 @@
+# Text is LF everywhere, Windows' checkouts too: tests compare snapshots, the README, the
+# grammars and the formatter's fixtures byte for byte, and Git for Windows wrote them CRLF.
+* text=auto eol=lf

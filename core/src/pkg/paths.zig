@@ -64,7 +64,7 @@ pub fn getGlobalDir(allocator: std.mem.Allocator, env_map: *const std.process.En
     const home_dir = try getHomeDir(allocator, env_map);
     defer allocator.free(home_dir);
 
-    return try allocator.print("{s}/.kupcad", .{home_dir});
+    return try std.fs.path.join(allocator, &.{ home_dir, ".kupcad" });
 }
 
 /// The variable `name`, when it is an absolute path: an empty or relative home is none.

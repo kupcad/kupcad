@@ -180,7 +180,7 @@ pub const NativeVfs = struct {
                 // but never delete a real file/directory that happens to be there.
                 var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
                 const n = self.root_dir.readLink(self.io, link_path, &buf) catch return err;
-                if (std.mem.eql(u8, buf[0..n], target_path)) return;
+                if (sameLinkTarget(buf[0..n], target_path)) return;
                 try self.root_dir.deleteFile(self.io, link_path);
                 try self.root_dir.symLink(self.io, target_path, link_path, .{});
             },
@@ -188,3 +188,17 @@ pub const NativeVfs = struct {
         };
     }
 };
+
+/// Whether a link's target as the system reads it back is `target`: Windows gives it with `\`
+/// between its folders, which made every re-install replace a link already right.
+fn sameLinkTarget(read: []const u8, target: []const u8) bool {
+    if (read.len != target.len) return false;
+    for (read, target) |a, b| {
+        if (a != b and !(isSeparator(a) and isSeparator(b))) return false;
+    }
+    return true;
+}
+
+fn isSeparator(c: u8) bool {
+    return c == '/' or c == '\\';
+}

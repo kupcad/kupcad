@@ -423,7 +423,9 @@ test "LSP preview: a document opened from outside the workspace imports its neig
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "proj/lib.kup", .data = "side = 3\nexport side\n" });
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "secret.kup", .data = "side = 9\nexport side\n" });
     const base = try tmp.dir.realPathFileAlloc(testing.io, ".", a);
-    const main = try std.fs.path.join(a, &.{ base, "proj", "parts", "main.kup" });
+    // As the server takes it from the document's URI: `/` between its folders, Windows' too
+    std.mem.replaceScalar(u8, base, '\\', '/');
+    const main = try std.mem.join(a, "/", &.{ base, "proj", "parts", "main.kup" });
     const uri = try std.fmt.allocPrint(a, "file://{s}", .{main});
 
     try preview.update(main, "import { side } from \"../lib.kup\"\ncube(side)\n");

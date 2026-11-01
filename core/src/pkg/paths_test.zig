@@ -22,7 +22,11 @@ test "Paths: an empty KUPCAD_HOME is unset, a relative one refused, and no home 
     try env_map.put("HOME", "/home/maker");
     const global_dir = try paths.getGlobalDir(testing.allocator, &env_map);
     defer testing.allocator.free(global_dir);
-    try testing.expectEqualStrings("/home/maker/.kupcad", global_dir);
+    if (@import("builtin").target.os.tag == .windows) {
+        // Windows' home is the profile folder the system names, whatever HOME says
+        try testing.expect(std.fs.path.isAbsolute(global_dir));
+        try testing.expect(std.mem.endsWith(u8, global_dir, "\\.kupcad"));
+    } else try testing.expectEqualStrings("/home/maker/.kupcad", global_dir);
     // Relative, it moved with the directory a command started in
     try env_map.put("KUPCAD_HOME", "store");
     try testing.expectError(error.RelativeKupcadHome, paths.getGlobalDir(testing.allocator, &env_map));

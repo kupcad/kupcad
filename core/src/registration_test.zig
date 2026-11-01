@@ -41,14 +41,18 @@ test "Tests: every *_test.zig under src/ is registered in root.zig, main.zig or 
     var missing: usize = 0;
     while (try walker.next(testing.io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, "_test.zig")) continue;
+        // As the registries name it: Windows walks `cli\lsp_test.zig`
+        const path = try testing.allocator.dupe(u8, entry.path);
+        defer testing.allocator.free(path);
+        std.mem.replaceScalar(u8, path, '\\', '/');
         var skip = false;
-        for (OWN_ROOTS) |own| skip = skip or std.mem.eql(u8, entry.path, own);
+        for (OWN_ROOTS) |own| skip = skip or std.mem.eql(u8, path, own);
         if (skip) continue;
-        const in_locus = std.mem.startsWith(u8, entry.path, LOCUS_TREE);
-        const quoted = try testing.allocator.print("\"{s}\"", .{if (in_locus) entry.path[LOCUS_TREE.len..] else entry.path});
+        const in_locus = std.mem.startsWith(u8, path, LOCUS_TREE);
+        const quoted = try testing.allocator.print("\"{s}\"", .{if (in_locus) path[LOCUS_TREE.len..] else path});
         defer testing.allocator.free(quoted);
         if (std.mem.find(u8, (if (in_locus) locus else registered).items, quoted) == null) {
-            std.debug.print("unregistered test file: src/{s}\n", .{entry.path});
+            std.debug.print("unregistered test file: src/{s}\n", .{path});
             missing += 1;
         }
     }
