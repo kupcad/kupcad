@@ -201,7 +201,14 @@
    * @param {string | null} [named] the folder, else the one the person picks
    */
   async function openFolder(named) {
-    const picked = named ?? (await platform.pickFolder());
+    // A folder opened before is let into the file system's scope again (a picked one is by
+    // the dialog); one that is gone says so
+    const picked = named
+      ? await platform.openFolder(named).catch((error) => {
+          problem = `${named} can't be opened: ${errorText(error)}`;
+          return null;
+        })
+      : await platform.pickFolder();
     if (!picked) return;
     if (
       (project?.scripts.unsaved.size ?? 0) > 0 &&

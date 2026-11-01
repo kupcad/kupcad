@@ -1,11 +1,12 @@
 //! The desktop app's native side: the bundled kupcad's language server, which it runs for the
 //! page (server.rs); the plugins the page uses (dialogs, the files of the folder the user opens,
-//! its settings file, the app's updates and its restart) and the app's own (the folders opened
-//! kept in the file system's scope across launches, the window's size and place); `launch_folder`, the folder named on the
-//! command line; `move_to_trash`, a file or folder of the one opened, to the system's trash; and
-//! `export_model`, which builds a script with the bundled kupcad (`kupcad build`). The page runs
-//! the binary through these alone, its arguments checked here, and reads and writes only what
-//! the user chose.
+//! its settings file, the app's updates and its restart, the window's size and place);
+//! `launch_folder`, the folder named on the command line, and `open_folder`, one opened before
+//! (its recents), each let into the file system's scope for this run alone: the scope used to
+//! be kept across launches, so it held every folder ever opened; `move_to_trash`, a file or
+//! folder of the one opened, to the system's trash; and `export_model`, which builds a script
+//! with the bundled kupcad (`kupcad build`). The page runs the binary through these alone, its
+//! arguments checked here, and reads and writes only what the user chose.
 
 mod server;
 
@@ -81,15 +82,35 @@ fn launch_folder(app: AppHandle) -> Result<Option<String>, String> {
     else {
         return Ok(None);
     };
-    let path = std::fs::canonicalize(&arg)
-        .map_err(|e| format!("{} can't be opened: {e}", arg.to_string_lossy()))?;
-    if !path.is_dir() {
-        return Err(format!("{} is no folder", path.display()));
-    }
+    Ok(Some(allow_folder(&app, Path::new(&arg))?))
+}
+
+/// A folder the user opened before (the page's recents), opened again: by its real path, in the
+/// file system's scope with what is under it, as a folder picked in the dialog is. The scope
+/// holds the folders of this run alone: it was kept across launches, with every folder ever
+/// opened in it.
+#[tauri::command]
+fn open_folder(app: AppHandle, path: String) -> Result<String, String> {
+    allow_folder(&app, Path::new(&path))
+}
+
+/// `folder` by its real path, which must be a folder, let into the file system's scope.
+fn allow_folder(app: &AppHandle, folder: &Path) -> Result<String, String> {
+    let path = real_folder(folder)?;
     app.fs_scope()
         .allow_directory(&path, true)
         .map_err(|e| e.to_string())?;
-    Ok(Some(path.to_string_lossy().into_owned()))
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// The real path of `folder`, which must be there and be a folder.
+fn real_folder(folder: &Path) -> Result<PathBuf, String> {
+    let path = std::fs::canonicalize(folder)
+        .map_err(|e| format!("{} can't be opened: {e}", folder.display()))?;
+    if !path.is_dir() {
+        return Err(format!("{} is no folder", path.display()));
+    }
+    Ok(path)
 }
 
 /// Moves the file or folder at `path`, in the folder the user opened, to the system's trash,
@@ -180,8 +201,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        // The folders the user opened stay theirs to open again, the last on the next launch
-        .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         // Newer versions from the releases' latest.json (tauri.conf.json), signed by the release,
@@ -192,6 +211,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             export_model,
             launch_folder,
+            open_folder,
             move_to_trash,
             server::start_server,
             server::write_server,
@@ -209,7 +229,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_args, existing, memory_limit_arg, to_write};
+    use super::{build_args, existing, memory_limit_arg, real_folder, to_write};
     use std::path::PathBuf;
 
     /// A folder of the test's own, made afresh.
@@ -254,6 +274,26 @@ mod tests {
             dir.join("part.stl")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_opened_again_is_its_real_path_and_a_folder() {
+        let dir = std::env::temp_dir().join(format!("kupcad-open-folder-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("part.kup"), "cube(1)\n").unwrap();
+        let real = real_folder(&dir.join("sub").join("..")).unwrap();
+        assert_eq!(real, std::fs::canonicalize(&dir).unwrap());
+        assert!(
+            real_folder(&dir.join("part.kup"))
+                .unwrap_err()
+                .ends_with("is no folder")
+        );
+        assert!(
+            real_folder(&dir.join("gone"))
+                .unwrap_err()
+                .contains("can't be opened")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -29,6 +29,8 @@ import { LanguageServer } from './server.js';
  * @typedef {object} Platform
  * @property {() => Promise<string | null>} pickFolder
  * @property {() => Promise<string | null>} launchFolder the folder named on the command line
+ * @property {(path: string) => Promise<string>} openFolder a folder opened before, let into the
+ *   file system's scope again by its real path (the scope holds this run's folders alone)
  * @property {(path: string) => Promise<DirEntry[]>} readDir a folder's entries, for the tree
  * @property {(root: string, onchange: (change: { tree: boolean }) => void) => Promise<() => void>} watchFolder
  *   calls `onchange` when a file in `root` may have been written, its tree changed too or not;
@@ -127,6 +129,7 @@ let popup = null;
 export const tauri = {
   pickFolder: () => pickFolder(),
   launchFolder: () => invoke('launch_folder'),
+  openFolder: (path) => invoke('open_folder', { path }),
   readDir: (path) => readDir(path),
   watchFolder: (root, onchange) => watchFolder(root, onchange),
   files,

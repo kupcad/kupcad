@@ -19,7 +19,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
-tauri-plugin-persisted-scope = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-store = "2"

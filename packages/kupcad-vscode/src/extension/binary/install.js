@@ -22,6 +22,11 @@ const TAKEN = ['ENOTEMPTY', 'EEXIST', 'EPERM'];
  * The hosts a release's file may come from, over HTTPS: GitHub, and the storage it redirects a
  * download to. A download that lands anywhere else is refused, whatever it holds.
  */
+/**
+ * The most a release's file may be: the archive is a few MB, the checksums a few hundred bytes,
+ * and a download was read whole into memory however long it ran.
+ */
+export const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 const DOWNLOAD_HOSTS = [
   'github.com',
   'objects.githubusercontent.com',
@@ -145,12 +150,18 @@ async function download(get, url, progress) {
   }
   const length = Number(response.headers.get('content-length'));
   const total = Number.isFinite(length) && length > 0 ? length : null;
+  const tooLarge = (/** @type {number} */ bytes) =>
+    new InstallError(
+      `couldn't download ${url}: it is over ${bytes} bytes, more than a release's file holds (${MAX_DOWNLOAD_BYTES})`,
+    );
+  if (total !== null && total > MAX_DOWNLOAD_BYTES) throw tooLarge(total);
   /** @type {Uint8Array[]} */
   const chunks = [];
   let received = 0;
   for await (const chunk of response.body) {
     chunks.push(chunk);
     received += chunk.byteLength;
+    if (received > MAX_DOWNLOAD_BYTES) throw tooLarge(received);
     progress?.(received, total);
   }
   const bytes = new Uint8Array(received);

@@ -70,16 +70,20 @@ Changing `kupcad.serverPath`, `kupcad.viewport.port` or `kupcad.memoryLimit` sta
 * `kupcad.serverPath` (machine scope): absolute path to the `kupcad` executable. Empty means "look
   it up as above". Machine scope means a workspace's `.vscode/settings.json` cannot point the
   extension at an arbitrary binary.
-* `kupcad.viewport.port`: preferred port for the local viewport WebSocket (default `9001`, `0` =
-  always pick a free port). If the port is taken, the server falls back to a free one and the
-  viewer follows it.
+* `kupcad.viewport.port` (machine scope): preferred port for the local viewport WebSocket
+  (default `9001`, `0` = always pick a free port). If the port is taken, the server falls back
+  to a free one and the viewer follows it.
 * `kupcad.memoryLimit` (machine scope, default `8`): the most memory, in GB, a script may hold, in
   the preview and in an export (`kupcad --memory-limit`). It applies in place of a project's
   `vm_memory_limit` in `.kupcad.json`, as the command line wins over the project's file, so a
   cloned project can't lift it. Raise it for a model that needs more.
-* `kupcad.binary.autoUpdate` (default `true`): install a newer release of `kupcad` at once,
-  instead of asking. `KupCAD: Update CLI` looks at once.
-* `kupcad.binary.channel`: `stable` (the default), or `prerelease` to take release candidates.
+* `kupcad.binary.autoUpdate` (machine scope, default `true`): install a newer release of
+  `kupcad` at once, instead of asking. `KupCAD: Update CLI` looks at once.
+* `kupcad.binary.channel` (machine scope): `stable` (the default), or `prerelease` to take
+  release candidates.
+
+Every setting is of machine scope, so a repository's `.vscode/settings.json` can set none of
+them for whoever opens it.
 
 ## Security notes
 

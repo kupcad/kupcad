@@ -210,11 +210,16 @@ describe('activate', () => {
     const manifest = JSON.parse(
       fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     );
-    const setting = manifest.contributes.configuration.properties['kupcad.memoryLimit'];
-    expect(setting).toMatchObject({
+    const properties = manifest.contributes.configuration.properties;
+    expect(properties['kupcad.memoryLimit']).toMatchObject({
       default: DEFAULT_MEMORY_LIMIT_GB,
       scope: 'machine',
       minimum: 1,
     });
+    // Every setting is the machine's: a repository's .vscode/settings.json could otherwise
+    // pick the binary, its channel, the port and the limit for whoever opens it
+    for (const [name, setting] of Object.entries(properties)) {
+      expect([name, setting.scope]).toEqual([name, 'machine']);
+    }
   });
 });

@@ -54,6 +54,7 @@ function windowOn({
   const platform = {
     pickFolder: vi.fn(async () => FOLDER),
     launchFolder: vi.fn(async () => launched),
+    openFolder: vi.fn(async (/** @type {string} */ path) => path),
     readDir: vi.fn(async (/** @type {string} */ dir) => {
       /** Each name in it, and whether it is a folder. @type {Map<string, boolean>} */
       const names = new Map();
@@ -307,6 +308,20 @@ describe('the window', () => {
     const view = await editorView();
     expect(window.platform.pickFolder).not.toHaveBeenCalled();
     expect(view.state.doc.toString()).toBe('cube(2)\n');
+    // Let into the file system's scope first, as a recent one is: the scope holds this run's
+    // folders, not every folder ever opened
+    expect(window.platform.openFolder).toHaveBeenCalledWith(FOLDER);
+  });
+
+  it("says when a folder opened before can't be opened again", async () => {
+    const window = windowOn({ launched: '/gone' });
+    window.platform.openFolder.mockRejectedValueOnce(
+      new Error("/gone can't be opened: no such file"),
+    );
+    await vi.waitFor(() =>
+      expect(screen.getByText(/\/gone can't be opened: no such file/)).toBeTruthy(),
+    );
+    expect(window.platform.readDir).not.toHaveBeenCalled();
   });
 
   it('lays its panes out as the settings keep them, and keeps what the person changes', async () => {

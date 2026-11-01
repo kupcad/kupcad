@@ -180,10 +180,11 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   goes to the panel's console, under the model, with each run (what it printed, its warnings
   and its error). Presets aren't offered yet.
 * **The native side** (`src-tauri/src/lib.rs`): the plugins (dialogs, the file system, the
-  settings' store; the folders opened kept in the file system's scope across launches,
-  persisted-scope, so the last one opens again; the window's size and place, window-state) and
-  the app's commands: `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder
-  named on the command line, put in the file system's scope as a picked one is),
+  settings' store; the window's size and place, window-state) and the app's commands:
+  `start_server`, `write_server`, `stop_server`, `launch_folder` (the folder named on the
+  command line, put in the file system's scope as a picked one is), `open_folder` (a folder
+  opened before, from the recents, put in the scope again: the scope holds this run's folders
+  alone, where it used to keep every folder ever opened across launches),
   `move_to_trash` (a file or folder in the scope, by its own real path: a symlink goes, not what
   it leads to; on macOS by NSFileManager, which asks the person nothing, not by the Finder) and
   `export_model`, which builds with the bundled `kupcad` only a script in the folder opened into
@@ -198,8 +199,9 @@ the person chose (`capabilities/default.json`: the dialogs, and the file system 
 folder opened, which it watches, makes files and folders in and renames them in, and the files
 saved), moves to the trash only what is in that folder, sets the window's theme, zoom and
 menus, and its Content Security Policy (`tauri.conf.json`) lets it connect to the app's IPC and
-the server's viewport socket on 127.0.0.1 alone. The folders the person opened stay in the
-file system's scope across launches (persisted-scope), as the last one opens again.
+the server's viewport socket on 127.0.0.1 alone. The file system's scope holds the folders
+opened in this run: a recent one is let in again as it is opened (`open_folder`). Of the
+settings' store it may load the file, read it whole and set a key, nothing else.
 
 ## Tests
 

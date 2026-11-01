@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { sha256 } from './assets.js';
-import { install, InstallError, installedVersions } from './install.js';
+import { install, InstallError, installedVersions, MAX_DOWNLOAD_BYTES } from './install.js';
 import { probe } from './probe.js';
 
 const POSIX = process.platform !== 'win32';
@@ -120,6 +120,51 @@ describe('install', () => {
       expect(await installedVersions(bin, 'kupcad')).toEqual([VERSION]);
     },
   );
+
+  it.runIf(POSIX)("refuses a file larger than a release's, said or found so", async () => {
+    // A download was read whole into memory, however long it went on
+    const bytes = archive();
+    const files = {
+      'https://github.com/kupcad/kupcad/releases/download/v0.1.2/archive': bytes,
+      'https://github.com/kupcad/kupcad/releases/download/v0.1.2/checksums': `${sha256(bytes)}  ${ARCHIVE}\n`,
+    };
+    const served = serving(files);
+    /** @type {typeof fetch} */
+    const saidLarge = async (url) => {
+      const response = await served(url);
+      if (!String(url).endsWith('/archive')) return response;
+      return new Response(response.body, {
+        headers: { 'content-length': String(MAX_DOWNLOAD_BYTES + 1) },
+      });
+    };
+    const options = {
+      attest: attested,
+      dir: path.join(dir, 'bin'),
+      platform: 'linux',
+      arch: 'x64',
+    };
+    await expect(install(release, { get: saidLarge, ...options })).rejects.toThrow(
+      /more than a release's file holds/,
+    );
+    // Or found so as it comes, said or not
+    /** @type {typeof fetch} */
+    const foundLarge = async (url) => {
+      if (!String(url).endsWith('/archive')) return served(url);
+      const chunk = new Uint8Array(1024 * 1024);
+      let sent = 0;
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (sent > MAX_DOWNLOAD_BYTES) return controller.close();
+          controller.enqueue(chunk);
+          sent += chunk.length;
+        },
+      });
+      return new Response(stream);
+    };
+    await expect(install(release, { get: foundLarge, ...options })).rejects.toThrow(
+      /more than a release's file holds/,
+    );
+  });
 
   it.runIf(POSIX)(
     "takes a download GitHub's storage serves, and refuses one redirected anywhere else",

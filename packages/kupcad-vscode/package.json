@@ -88,11 +88,13 @@
         },
         "kupcad.binary.autoUpdate": {
           "type": "boolean",
+          "scope": "machine",
           "default": true,
           "description": "Install a newer release of kupcad at once when one is out (looked for once a day), instead of asking first. Only the extension's own install is updated. The KupCAD: Update CLI command looks at once."
         },
         "kupcad.binary.channel": {
           "type": "string",
+          "scope": "machine",
           "enum": [
             "stable",
             "prerelease"
@@ -110,6 +112,7 @@
         },
         "kupcad.viewport.port": {
           "type": "integer",
+          "scope": "machine",
           "default": 9001,
           "minimum": 0,
           "maximum": 65535,
