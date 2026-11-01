@@ -6,6 +6,8 @@ const testing = std.testing;
 const lsp = @import("lsp");
 const Handler = @import("lsp.zig").Handler;
 const documentPath = @import("lsp.zig").documentPath;
+const documentPathOn = @import("lsp.zig").documentPathOn;
+const fileUri = @import("lsp.zig").fileUri;
 const SET_PARAMS_COMMAND = @import("lsp.zig").SET_PARAMS_COMMAND;
 const PREVIEW_COMMAND = @import("lsp.zig").PREVIEW_COMMAND;
 const Viewport = @import("lsp.zig").Viewport;
@@ -228,6 +230,27 @@ test "LSP: documentPath reads file URIs and nothing else" {
     try testing.expectEqualStrings("/work/part.kup", (try documentPath(a, URI)).?);
     try testing.expectEqualStrings("/work/my part.kup", (try documentPath(a, "file:///work/my%20part.kup")).?);
     try testing.expect(try documentPath(a, "untitled:Untitled-1") == null);
+}
+
+test "LSP: a Windows drive's file URI is its path, and its path that URI" {
+    // Windows-only code that no CI runner ran: the drive letter is the path's start, not a
+    // folder under the root, both ways (go to definition of a module outside the workspace)
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try testing.expectEqualStrings("C:/dir/part.kup", (try documentPathOn(.windows, a, "file:///C:/dir/part.kup")).?);
+    // VS Code writes the colon as %3A
+    try testing.expectEqualStrings("c:/My Parts/a.kup", (try documentPathOn(.windows, a, "file:///c%3A/My%20Parts/a.kup")).?);
+    try testing.expectEqualStrings("/work/part.kup", (try documentPathOn(.windows, a, "file:///work/part.kup")).?);
+    try testing.expectEqualStrings("/C:/dir/part.kup", (try documentPathOn(.linux, a, "file:///C:/dir/part.kup")).?);
+
+    try testing.expectEqualStrings("file:///C:/dir/my%20part.kup", (try fileUri(.windows, a, "C:/dir/my part.kup")).?);
+    try testing.expectEqualStrings("C:/dir/my part.kup", (try documentPathOn(.windows, a, (try fileUri(.windows, a, "C:/dir/my part.kup")).?)).?);
+    try testing.expectEqualStrings("file:///work/my%20part.kup", (try fileUri(.linux, a, "/work/my part.kup")).?);
+    try testing.expectEqualStrings("file:///work/part.kup", (try fileUri(.windows, a, "/work/part.kup")).?);
+    // Relative: joined to the workspace folder by the caller
+    try testing.expect(try fileUri(.windows, a, "parts/lib.kup") == null);
+    try testing.expect(try fileUri(.linux, a, "C:/dir/part.kup") == null);
 }
 
 test "LSP: diagnostics follow the .kupcad.json nearest the document, not the cwd" {

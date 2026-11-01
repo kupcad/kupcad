@@ -914,13 +914,10 @@ pub const Handler = struct {
     /// it says for a document outside one; null for a relative one with no folder open.
     fn moduleUri(self: *const Handler, arena: std.mem.Allocator, module_path: []const u8, spec: []const u8) !?[]const u8 {
         const resolved = try import_path.resolve(arena, module_path, spec);
+        if (try fileUri(builtin.target.os.tag, arena, resolved)) |uri| return uri;
+        const root_uri = self.root_uri orelse return null;
         var out: std.Io.Writer.Allocating = .init(arena);
-        if (std.fs.path.isAbsolutePosix(resolved)) {
-            try out.writer.writeAll("file://");
-        } else {
-            const root_uri = self.root_uri orelse return null;
-            try out.writer.print("{s}/", .{std.mem.trimEnd(u8, root_uri, "/")});
-        }
+        try out.writer.print("{s}/", .{std.mem.trimEnd(u8, root_uri, "/")});
         try (std.Uri.Component{ .raw = resolved }).formatPath(&out.writer);
         return out.written();
     }
@@ -1220,12 +1217,36 @@ pub const Handler = struct {
 /// The file a `file:` URI names (percent-decoding it), or null for another scheme, such as
 /// an editor's unsaved `untitled:` buffer.
 pub fn documentPath(arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
+    return documentPathOn(builtin.target.os.tag, arena, uri);
+}
+
+/// documentPath on `os`, which only Windows changes: file:///C:/dir/part.kup is the path
+/// C:/dir/part.kup (VS Code writes the colon as %3A). Taken as an argument, so it is
+/// tested on any system.
+pub fn documentPathOn(os: std.Target.Os.Tag, arena: std.mem.Allocator, uri: []const u8) !?[]const u8 {
     const parsed = std.Uri.parse(uri) catch return null;
     if (!std.mem.eql(u8, parsed.scheme, "file")) return null;
     const path = try parsed.path.toRawMaybeAlloc(arena);
-    // Windows: file:///C:/dir/part.kup is the path C:/dir/part.kup.
-    if (builtin.target.os.tag == .windows and path.len >= 3 and path[0] == '/' and path[2] == ':') return path[1..];
+    if (os == .windows and path.len > 0 and path[0] == '/' and isDrivePath(path[1..])) return path[1..];
     return path;
+}
+
+/// The `file:` URI of an absolute `path` on `os`, as documentPathOn reads it back; null for a
+/// relative one. A Windows drive's path is absolute there, and its URI file:///C:/dir/part.kup:
+/// taken for relative, it was joined to the workspace folder's URI.
+pub fn fileUri(os: std.Target.Os.Tag, arena: std.mem.Allocator, path: []const u8) !?[]const u8 {
+    const drive = os == .windows and isDrivePath(path);
+    if (!drive and !std.fs.path.isAbsolutePosix(path)) return null;
+    var out: std.Io.Writer.Allocating = .init(arena);
+    try out.writer.writeAll(if (drive) "file:///" else "file://");
+    try (std.Uri.Component{ .raw = path }).formatPath(&out.writer);
+    return out.written();
+}
+
+/// Whether `path` starts at a Windows drive: `C:/` or `C:\`, or the drive alone.
+fn isDrivePath(path: []const u8) bool {
+    return path.len >= 2 and std.ascii.isAlphabetic(path[0]) and path[1] == ':' and
+        (path.len == 2 or path[2] == '/' or path[2] == '\\');
 }
 
 /// Whether two runs warned of the same, at the same places.
