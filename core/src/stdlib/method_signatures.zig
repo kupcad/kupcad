@@ -37,6 +37,7 @@ pub const TRIM_BY_PLANE = Signature{ .positional = &.{ "nx", "ny", "nz", "offset
 pub const SPLIT_BY_PLANE = TRIM_BY_PLANE;
 pub const OFFSET = Signature{ .positional = &.{"delta"}, .keywords = &.{ "delta", "join", "miter_limit", "segments" } };
 pub const SHELL = Signature{ .positional = &.{"thickness"}, .keywords = &.{ "thickness", "segments" }, .sizes = &.{"thickness"} };
+pub const ROUND_EDGES = Signature{ .positional = &.{"r"}, .keywords = &.{ "r", "segments" }, .sizes = &.{"r"} };
 pub const SLICE = Signature{ .positional = &.{"height"} };
 pub const PROJECT = Signature{ .keywords = &.{"cut"} };
 pub const ON_FACE = Signature{ .positional = &.{"direction"} };

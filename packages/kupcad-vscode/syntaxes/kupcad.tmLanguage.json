@@ -208,7 +208,7 @@
       "name": "support.class.primitive.2d.kupcad"
     },
     "transforms": {
-      "match": "(?<![\\w])(align|center|decompose|extrude|ghost|helix|highlight|hull|loft|material|minkowski|mirror|named|offset|project|repeat_linear|repeat_polar|resize|revolve|rotate|scale|shell|simplify|slice|split_by_plane|sweep|transform|translate|trim_by_plane)(?![\\w?!])",
+      "match": "(?<![\\w])(align|center|decompose|extrude|ghost|helix|highlight|hull|loft|material|minkowski|mirror|named|offset|project|repeat_linear|repeat_polar|resize|revolve|rotate|round_edges|scale|shell|simplify|slice|split_by_plane|sweep|transform|translate|trim_by_plane)(?![\\w?!])",
       "name": "support.function.transform.kupcad"
     },
     "csg_operators": {

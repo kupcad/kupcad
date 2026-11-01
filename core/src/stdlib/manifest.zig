@@ -219,6 +219,7 @@ pub const mesh_methods = [_]MeshMethod{
     method("minkowski", .transform, methods.meshMinkowski, &sig.MINKOWSKI, .receiver, .solids),
     method("offset", .transform, methods.meshOffset, &sig.OFFSET, .receiver, .both),
     method("shell", .transform, methods.meshShell, &sig.SHELL, .receiver, .both),
+    method("round_edges", .transform, methods.meshRoundEdges, &sig.ROUND_EDGES, .receiver, .solids),
     method("transform", .transform, methods.meshTransform, &sig.TRANSFORM, .receiver, .both),
     method("min_gap", .inspection_method, methods.meshMinGap, &sig.MIN_GAP, .number, .solids),
     method("contains?", .inspection_method, methods.meshContains, &sig.CONTAINS, .boolean, .both),

@@ -231,6 +231,7 @@
     "rjust",
     "rotate",
     "round",
+    "round_edges",
     "sample",
     "scale",
     "seed",

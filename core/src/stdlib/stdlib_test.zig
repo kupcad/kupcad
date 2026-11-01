@@ -913,7 +913,7 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
             checked += 1;
         }
     }
-    try std.testing.expectEqual(@as(usize, 18), checked); // export_obj counts since its mtl: became a keyword
+    try std.testing.expectEqual(@as(usize, 19), checked); // export_obj counts since its mtl: became a keyword, round_edges since it was added
 }
 
 test "Stdlib: each Signature's sizes and single name parameters it takes" {
@@ -1310,6 +1310,22 @@ test "Stdlib: a negative offset shrinks a Solid, and shell hollows a shape to wa
         .{ .src = "r = cube(10).shell(6).volume", .expected = .{ .num = 1000 } },
         .{ .src = "r = square(10).shell(1).area", .expected = .{ .num = 100 - 64 } },
         .{ .src = comptime rescued("cube(10).shell"), .expected = .{ .str = "ArgumentError: shell needs its walls' thickness: shell(thickness)" } },
+    });
+}
+
+test "Stdlib: round_edges rounds a Solid's outer edges and keeps its size, its inner edges sharp" {
+    // A rounded box: a cube of 8 grown by a ball of 1 (a^3 + 6a^2r + 3πar^2 + 4/3πr^3), less
+    // what the sphere's facets cut off; offset(1) alone grew it to 12
+    const exact = 512.0 + 6.0 * 64.0 + 3.0 * std.math.pi * 8.0 + 4.0 / 3.0 * std.math.pi;
+    try expectScripts(&.{
+        .{ .src = "r = cube(10).round_edges(1).bbox.size", .expected = .{ .nums = &.{ 10, 10, 10 } } },
+        .{ .src = std.fmt.comptimePrint("v = cube(10).round_edges(r: 1, segments: 32).volume\nr = v < {d} && v > {d} * 0.98", .{ exact, exact }), .expected = .{ .boolean = true } },
+        // A notch's inner edges stay sharp: the notch's floor is still at its depth, wall to wall
+        .{ .src = "n = (cube(10) - cube([10, 4, 4]).translate(0, 3, 6)).round_edges(1)\nr = n.contains?([5, 3.05, 6.05])", .expected = .{ .boolean = false } },
+        .{ .src = "n = (cube(10) - cube([10, 4, 4]).translate(0, 3, 6)).round_edges(1)\nr = n.contains?([5, 2.95, 6.05])", .expected = .{ .boolean = true } },
+        .{ .src = comptime rescued("cube(10).round_edges"), .expected = .{ .str = "ArgumentError: round_edges needs the edges' radius: round_edges(r)" } },
+        .{ .src = comptime rescued("cube(10).round_edges(-1)"), .expected = .{ .str = "ValueError: round_edges expects r to be a finite number greater than zero, got -1" } },
+        .{ .src = comptime rescued("square(10).round_edges(1)"), .expected = .{ .str = "NoMethodError: undefined method 'round_edges' for Sketch" } },
         .{ .src = comptime rescued("cube(10).shell(0)"), .expected = .{ .str = "ValueError: shell expects thickness to be a finite number greater than zero, got 0" } },
         .{ .src = comptime rescued("cube(10).shell(1, join: :miter)"), .expected = .{ .str = "ArgumentError: shell does not take a keyword 'join' (it accepts: thickness, segments)" } },
         .{ .src = comptime rescued("line([0, 0], [1, 0]).shell(1)"), .expected = .{ .str = "NoMethodError: undefined method 'shell' for Path: a Path is open and encloses nothing: close it (.close) into a Sketch or give it a width (.stroke(w)) first" } },
@@ -2256,6 +2272,7 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("square(10).hull.extrude(1).simplify"), .expected = brepLacks(.sketch_hull) },
         .{ .src = comptime rescued("cube(10).offset(-1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("cube(10).shell(1).simplify"), .expected = brepLacks(.minkowski) },
+        .{ .src = comptime rescued("cube(10).round_edges(1).simplify"), .expected = brepLacks(.minkowski) },
         .{ .src = comptime rescued("square(10).shell(1).extrude(1).simplify"), .expected = brepLacks(.offset) },
         .{ .src = comptime rescued("square(2).sweep(line([0, 0], [10, 0]))"), .expected = brepLacks(.extrude) },
         .{ .src = comptime rescued("cube(1).minkowski(cube(1)).simplify"), .expected = brepLacks(.minkowski) },
@@ -3105,6 +3122,7 @@ test "Stdlib: each method gives back what the manifest says it does" {
         .{ "area", "s.area" },                                   .{ "center_of_mass", "c.center_of_mass" },
         .{ "intersects?", "c.intersects?(cube(1))" },            .{ "mass", "c.material(density: 1).mass" },
         .{ "shell", "c.shell(0.1)" },                            .{ "sweep", "s.sweep(line([0, 0], [1, 0]))" },
+        .{ "round_edges", "c.round_edges(0.2)" },
     };
     // They write files; each returns its receiver.
     const writes_files = [_][]const u8{ "export_stl", "export_step", "export_gltf", "export_3mf", "export_obj", "export_svg", "export_dxf" };

@@ -101,8 +101,8 @@ const MIN_MITER_LIMIT = 2.0;
 /// when it is negative), its corners joined as `join` says, a miter's reaching at most
 /// `miter_limit` times `delta` before it is squared off. A Solid grows by `delta` in every
 /// direction: a Minkowski sum with a sphere of that radius, the 3D form of a round join, so
-/// its edges and corners come out rounded. A Solid can't shrink (that is an erosion, which
-/// the kernel lacks) and has no other join. The rounding, a join's or the sphere's, is as
+/// its edges and corners come out rounded; a negative one shrinks it as much (an erosion,
+/// its inner edges rounded). A Solid has no other join. The rounding, a join's or the sphere's, is as
 /// fine as the resolution makes a circle of radius `delta`, or `segments:` says (a sketch's
 /// took the kernel's own default, whatever the script's resolution).
 pub fn meshOffset(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
@@ -165,6 +165,27 @@ pub fn meshShell(vm: *VM, receiver: value.Value, args: []const value.Value) !val
     }
     const solid = receiver.asGeometry().dag_idx;
     return try vm.allocateGeometry(.{ .symbolic = try b.addBinary(.difference_op, solid, try b.addErode(solid, thickness, segments)) });
+}
+
+/// `round_edges(r, segments:)`: the Solid with its outer edges and corners rounded to radius
+/// `r`, its size kept: shrunk by `r`, then grown by it again (`offset(-r).offset(r)`, an
+/// opening). Its inner edges stay sharp, and a part thinner than `2 * r` anywhere is lost
+/// there. An approximation of a fillet, as fine as the sphere's `segments:`; B-Rep fillets,
+/// per edge, are Locus's to come. On the mesh engine only, as offset is.
+pub fn meshRoundEdges(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {
+    const Opts = struct { r: ?f64 = null, segments: i32 = 0 };
+    const pos = arguments.positionalArgs(args);
+    var base = Opts{};
+    if (pos.len > 0) base.r = try arguments.requireNumber(vm, pos[0], "round_edges", "r");
+    const opts = (try arguments.parseKwargsOver(Opts, base, sig.ROUND_EDGES.keywords, vm, args, "round_edges")).opts;
+    // A radius given is a size, refused at zero before the native runs (ROUND_EDGES)
+    const r = opts.r orelse return vm.fail(.ArgumentError, "round_edges needs the edges' radius: round_edges(r)", .{});
+    try arguments.requireSegmentCount(vm, opts.segments, "segments");
+    const segments = if (opts.segments > 0) opts.segments else arguments.autoSegments(vm, r);
+    const b = &vm.dag_builder;
+    const shrunk = try b.addErode(receiver.asGeometry().dag_idx, r, segments);
+    const grown = try b.addBinary(.minkowski, shrunk, try b.addSphere(r, segments));
+    return try vm.allocateGeometry(.{ .symbolic = grown });
 }
 
 pub fn meshSlice(vm: *VM, receiver: *value.ObjGeometry, height: ?value.Value) !value.Value {
