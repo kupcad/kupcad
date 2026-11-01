@@ -36,7 +36,8 @@ pnpm install                       # once; builds nothing from core
 pnpm build:core:wasm               # kupcad.wasm, which @kupcad/wasm copies into its package
 pnpm -r build                      # what builds: the module copied into @kupcad/wasm, the extension
 pnpm test:packages                 # every package's Vitest suite
-pnpm test:browser                  # the viewer's and the playground's smoke tests, headless Chromium
+pnpm test:browser                  # the viewer's, the pane's and the playground's smoke tests, headless Chromium
+pnpm --filter @kupcad/vscode test:integration  # the built extension in a real VS Code, on core's kupcad
 pnpm check                         # oxlint, oxfmt --check, and tsc over every package (CI's gate)
 pnpm fmt                           # format what oxfmt would change
 pnpm changeset                     # describe a change to a published package
