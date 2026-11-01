@@ -26,8 +26,10 @@ const EXACT_MODEL =
 
 /// A script and the formats it is exported to, or null for the one its model is written
 /// in (test_support.modelFormat): one run, each format written from it (the run is what
-/// costs; each format used to run the script again).
-const Case = struct { source: []const u8, formats: ?[]const api.ExportFormat = null };
+/// costs; each format used to run the script again). `serial` builds it a third time with
+/// the kernel on one thread: worth it for a model large enough to run in parallel, not for
+/// each example (the third build of every example was most of the test's minute).
+const Case = struct { source: []const u8, formats: ?[]const api.ExportFormat = null, serial: bool = false };
 /// A file a build wrote, and its format.
 const File = struct { format: api.ExportFormat, bytes: []const u8 };
 
@@ -39,7 +41,7 @@ test "determinism: a build gives the same bytes every time, on one thread or man
     const allocator = checked.allocator();
     var cases: std.ArrayList(Case) = .empty;
     defer cases.deinit(testing.allocator);
-    try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .formats = &.{ .glb, .obj, .svg, .dxf } });
+    try cases.append(testing.allocator, .{ .source = HEAVY_MODEL, .formats = &.{ .glb, .obj, .svg, .dxf }, .serial = true });
     try cases.append(testing.allocator, .{ .source = EXACT_MODEL, .formats = &.{.step} });
     inline for (examples.names) |name| {
         try cases.append(testing.allocator, .{ .source = @embedFile("example/" ++ name) });
@@ -51,13 +53,17 @@ test "determinism: a build gives the same bytes every time, on one thread or man
         defer freeAll(allocator, first);
         const second = try build(allocator, case);
         defer freeAll(allocator, second);
+        for (first, second) |a, b| {
+            errdefer std.debug.print("format {s}\n", .{@tagName(a.format)});
+            try testing.expectEqualSlices(u8, a.bytes, b.bytes);
+        }
+        if (!case.serial) continue;
         manifold.setMaxThreads(1);
         defer manifold.setMaxThreads(null);
         const serial = try build(allocator, case);
         defer freeAll(allocator, serial);
-        for (first, second, serial) |a, b, c| {
-            errdefer std.debug.print("format {s}\n", .{@tagName(a.format)});
-            try testing.expectEqualSlices(u8, a.bytes, b.bytes);
+        for (first, serial) |a, c| {
+            errdefer std.debug.print("format {s}, on one thread\n", .{@tagName(a.format)});
             try testing.expectEqualSlices(u8, a.bytes, c.bytes);
         }
     }
