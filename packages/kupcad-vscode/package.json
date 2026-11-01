@@ -17,6 +17,7 @@
     "build": "vite build --config vite.config.extension.js && vite build --config vite.config.webview.js",
     "watch": "concurrently \"vite build --config vite.config.extension.js --watch\" \"vite build --config vite.config.webview.js --watch\"",
     "test": "vitest run",
+    "test:integration": "node test/run.js",
     "check": "svelte-check --tsconfig ./jsconfig.json --fail-on-warnings"
   },
   "devDependencies": {
@@ -31,6 +32,7 @@
     "@testing-library/svelte": "catalog:",
     "@types/node": "catalog:",
     "@types/vscode": "~1.140.0",
+    "@vscode/test-electron": "^3.1.0",
     "concurrently": "^10.0.6",
     "jsdom": "catalog:",
     "svelte": "catalog:",

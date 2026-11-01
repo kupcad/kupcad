@@ -9,3 +9,4 @@ node_modules/**
 **/*.map
 # three's Draco decoder, which the build copies in: the language server sends no Draco model
 dist-webview/assets/draco_*
+test/**

@@ -420,6 +420,8 @@ src/
     presets-file.js       <script>.presets.json beside the file (@kupcad/protocol's format), read,
                           a preset put in it, and watched (a RelativePattern)
     testing/vscode.js     a stand-in for VS Code's API, which the host's tests run against
+test/                     the built extension in a real VS Code, on the real `kupcad lsp`
+                          (test:integration): run.js starts it, suite.cjs runs in its host
   webview/                runs in the panel (browser)
     main.js               @kupcad/ui's PreviewPanel (the viewport socket, ViewerPane, ParamsPanel,
                           problems, presets), themed by vscode.css

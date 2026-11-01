@@ -4,5 +4,5 @@
     "lib": ["es2023", "dom"],
     "maxNodeModuleJsDepth": 0
   },
-  "include": ["src", "*.config.js"]
+  "include": ["src", "test", "*.config.js"]
 }

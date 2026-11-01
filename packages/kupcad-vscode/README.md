@@ -166,6 +166,7 @@ While you work on it:
 ```sh
 pnpm --filter @kupcad/vscode watch     # the host and the page, rebuilt as they change
 pnpm --filter @kupcad/vscode test      # the host's tests in Node, the page's under jsdom
+pnpm --filter @kupcad/vscode test:integration  # built, in a real VS Code, on core's kupcad
 pnpm --filter @kupcad/vscode check     # svelte-check over both
 pnpm --filter @kupcad/vscode build     # dist/extension.cjs and dist-webview/, once
 ```
@@ -178,4 +179,9 @@ are `Developer: Open Webview Developer Tools`; the host logs to the `KupCAD` out
 
 The host's tests run against a stand-in for VS Code's API (`src/extension/testing/vscode.js`,
 which Vitest gives the code as `vscode`); the page's mount it on models the real core makes
-(`@kupcad/wasm`).
+(`@kupcad/wasm`). `test:integration` runs the built extension in a real VS Code, the newest
+stable (downloaded into `.vscode-test/` the first time), on the `kupcad` in `core/zig-out` (or the
+one `KUPCAD` names; build it with `zig build` in `core/`): `test/run.js` starts VS Code on a copy
+of `test/workspace/`, which runs `test/suite.cjs` in its extension host. It checks a script's
+diagnostics, formatting and hover, and that the viewer opens; on Linux it needs a display
+(`xvfb-run -a`, as CI runs it).

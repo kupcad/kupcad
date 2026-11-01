@@ -173,6 +173,15 @@ jobs:
           pnpm install --frozen-lockfile --filter '@kupcad/desktop...'
           pnpm --filter @kupcad/desktop test:integration
 
+      # The VS Code extension in a real VS Code (the newest stable, downloaded), on the same kupcad
+      # lsp: its diagnostics, formatting and hover, and the viewer opening; xvfb gives it a display
+      - name: Run the VS Code extension in VS Code on the real kupcad lsp
+        if: matrix.name == 'linux debug'
+        run: |
+          pnpm install --frozen-lockfile --filter '@kupcad/vscode...'
+          pnpm --filter @kupcad/vscode build
+          xvfb-run -a pnpm --filter @kupcad/vscode test:integration
+
       # The desktop app's native side, on the kupcad check:examples built as its sidecar: macOS
       # needs no WebKit packages to build it
       - name: Lint and test the desktop app's native side
