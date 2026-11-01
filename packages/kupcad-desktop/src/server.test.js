@@ -59,6 +59,25 @@ describe('the language server', () => {
     ]);
   });
 
+  it('tells the server of files changed on disk, and nothing while it is down', async () => {
+    const { server, fake } = serverOn();
+    server.filesChanged([{ uri: 'file:///w/data.json', type: 2 }]);
+    await server.start();
+    server.filesChanged([]);
+    server.filesChanged([{ uri: 'file:///w/data.json', type: 2 }]);
+    await vi.waitFor(() =>
+      expect(
+        fake.processes[0].received.filter(
+          (message) => message.method === 'workspace/didChangeWatchedFiles',
+        ),
+      ).toEqual([
+        expect.objectContaining({
+          params: { changes: [{ uri: 'file:///w/data.json', type: 2 }] },
+        }),
+      ]),
+    );
+  });
+
   it('shows no viewport at what is no port, and says why', async () => {
     // It took whatever came: ws://127.0.0.1:undefined
     const { server, events } = serverOn(fakeServer({ port: /** @type {any} */ ('9001') }));

@@ -70,9 +70,21 @@ it('watches everything under the folder, telling of a file written, and whether 
   expect(onchange).not.toHaveBeenCalled();
   // Written in place, as another editor saves: a file to read again, the tree as it was
   report(event({ modify: { kind: 'data', mode: 'content' } }, ['/w/b.kup']));
-  expect(onchange).toHaveBeenLastCalledWith({ tree: false });
+  expect(onchange).toHaveBeenLastCalledWith({
+    tree: false,
+    files: [{ uri: 'file:///w/b.kup', type: 2 }],
+  });
   report(event({ create: { kind: 'file' } }, ['/w/c.kup']));
-  expect(onchange).toHaveBeenLastCalledWith({ tree: true });
+  expect(onchange).toHaveBeenLastCalledWith({
+    tree: true,
+    files: [{ uri: 'file:///w/c.kup', type: 1 }],
+  });
+  // Removed, and what else changed with it in a folder the tree leaves out: the file alone
+  report(event({ remove: { kind: 'file' } }, ['/w/data.json', '/w/.git/index']));
+  expect(onchange).toHaveBeenLastCalledWith({
+    tree: true,
+    files: [{ uri: 'file:///w/data.json', type: 3 }],
+  });
   unwatch();
   expect(stop).toHaveBeenCalledOnce();
 });

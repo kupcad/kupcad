@@ -105,3 +105,49 @@ it(
   },
   PATIENCE_MS,
 );
+
+it(
+  "runs the script shown again as a data file it reads changes on disk, as the folder's watcher tells",
+  async () => {
+    // The app's client registers no watchers: saving the JSON file left the preview as it was
+    expect(existsSync(KUPCAD), `no kupcad at ${KUPCAD}: build it with \`zig build\``).toBe(true);
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'kupcad-desktop-')));
+    cleanups.push(async () => rmSync(folder, { recursive: true, force: true }));
+    const source = 'import sizes from "./sizes.json"\ncube(sizes["side"]).named("box")\n';
+    writeFileSync(join(folder, 'part.kup'), source);
+    writeFileSync(join(folder, 'sizes.json'), '{ "side": 2 }');
+    const uri = fileUri(join(folder, 'part.kup'));
+    /** @type {((url: string | null) => void) | null} */
+    let viewportAt = null;
+    const viewport = new Promise((resolve) => (viewportAt = resolve));
+    const server = new LanguageServer({
+      rootUri: fileUri(folder),
+      origin: ORIGIN,
+      spawn: nodeProcess,
+      on: { viewport: (url) => viewportAt?.(url), state: () => {}, log: () => {} },
+    });
+    cleanups.push(() => server.stop());
+    await server.start();
+    server.client.notification('textDocument/didOpen', {
+      textDocument: { uri, languageId: 'kupcad', version: 1, text: source },
+    });
+    const socket = new WebSocket(/** @type {string} */ (await viewport));
+    socket.binaryType = 'arraybuffer';
+    cleanups.push(async () => socket.close());
+    await once(socket, 'open');
+    /** The box's side in each frame sent. @type {number[]} */
+    const sides = [];
+    socket.addEventListener('message', ({ data }) => {
+      const { header } = readFrame(data);
+      const size = header.parts?.[0]?.size;
+      if (size) sides.push(size[0]);
+    });
+    await server.preview(uri);
+    await expect.poll(() => sides, { timeout: PATIENCE_MS }).toEqual([2]);
+
+    writeFileSync(join(folder, 'sizes.json'), '{ "side": 5 }');
+    server.filesChanged([{ uri: fileUri(join(folder, 'sizes.json')), type: 2 }]);
+    await expect.poll(() => sides, { timeout: PATIENCE_MS }).toEqual([2, 5]);
+  },
+  PATIENCE_MS * 2,
+);

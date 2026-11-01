@@ -125,7 +125,12 @@ RGBA: an image optimiser that turns them into palette PNGs breaks the build
   it. A folder opened while another is being opened wins. The tree follows the folder: watched (the
   file system plugin's `watch`, its changes gathered for 300 ms), it is listed again when something
   in it is made, removed or renamed, and not for a file only read or written in place, nor for
-  anything in a folder the tree leaves out.
+  anything in a folder the tree leaves out. Every file changed is told to the server too
+  (`workspace/didChangeWatchedFiles`), which runs again the script shown when it reads one: a
+  data file saved, or a module no editor has open changed by another program.
+* **A JSON file** (a data file, `kupcad.json`, `kupcad.lock`) opens in the editor as text, its
+  syntax errors marked, and isn't the server's: the preview stays the last script's, which runs
+  again as the file is saved.
 * **The scripts read** (`@kupcad/files`' `Scripts`): each one's text, as it is now and as the disk
   had it last, for what is unsaved (marked in the tree and the bar; ⌘S saves it, or a moment after
   each change where the settings say). A file written in the folder, or the window coming back to

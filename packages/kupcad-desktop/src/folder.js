@@ -11,6 +11,10 @@ import { exists, mkdir, readTextFile, rename, watch, writeTextFile } from '@taur
 
 /** How long the watcher gathers a folder's changes before it reports them, in milliseconds. */
 export const WATCH_DELAY_MS = 300;
+/** The language server's kinds of a file's change (LSP FileChangeType). */
+const FILE_CHANGE = { created: 1, changed: 2, deleted: 3 };
+
+/** A file changed on disk, as the language server is told (LSP FileEvent). @typedef {{ uri: string, type: number }} FileChange */
 
 /**
  * The folder the user picks, with everything under it in the app's file system scope; null if
@@ -54,6 +58,28 @@ export function changesTree(event, root) {
 }
 
 /**
+ * The files a change the watcher reports under `root` is to, as the language server is told
+ * of them: made, removed, or else changed (written, renamed: it reads the disk again); none in
+ * the folders the tree leaves out.
+ * @param {WatchEvent} event
+ * @param {string} root
+ * @returns {FileChange[]}
+ */
+export function fileChangesOf(event, root) {
+  if (!changesFiles(event, root)) return [];
+  const { type } = event;
+  const kind =
+    typeof type === 'object' && 'create' in type
+      ? FILE_CHANGE.created
+      : typeof type === 'object' && 'remove' in type
+        ? FILE_CHANGE.deleted
+        : FILE_CHANGE.changed;
+  return event.paths
+    .filter((path) => !leftOut(root, path))
+    .map((path) => ({ uri: fileUri(path), type: kind }));
+}
+
+/**
  * Whether `path`, under `root`, is what the tree leaves out: in a skipped folder, or one itself
  * (a hidden file too). A path the root isn't a prefix of (the system's real path for it) may be
  * anything.
@@ -70,10 +96,11 @@ function leftOut(root, path) {
 
 /**
  * Watches everything under `root`, calling `onchange` once a moment's changes may be to the
- * user's files (`changesFiles`): a file written, its tree changed too or not (`changesTree`).
+ * user's files (`changesFiles`): a file written, its tree changed too or not (`changesTree`),
+ * and the files, as the language server is told of them (`fileChangesOf`).
  * Resolves to what stops it.
  * @param {string} root
- * @param {(change: { tree: boolean }) => void} onchange
+ * @param {(change: { tree: boolean, files: FileChange[] }) => void} onchange
  * @param {Pick<typeof import('@tauri-apps/plugin-fs'), 'watch'>} [fs]
  * @returns {Promise<() => void>}
  */
@@ -81,7 +108,9 @@ export function watchFolder(root, onchange, fs = { watch }) {
   return fs.watch(
     root,
     (event) => {
-      if (changesFiles(event, root)) onchange({ tree: changesTree(event, root) });
+      if (changesFiles(event, root)) {
+        onchange({ tree: changesTree(event, root), files: fileChangesOf(event, root) });
+      }
     },
     { recursive: true, delayMs: WATCH_DELAY_MS },
   );

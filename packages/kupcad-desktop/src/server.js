@@ -193,6 +193,17 @@ export class LanguageServer {
   }
 
   /**
+   * Tells the server of files changed on disk (the folder's watcher's): it runs the scripts
+   * that read one again, as data or as a module no editor has open. Saving a JSON file, or
+   * a module changed by another program, left the preview as it was.
+   * @param {import('./folder.js').FileChange[]} changes
+   */
+  filesChanged(changes) {
+    if (!this.#process || changes.length === 0) return;
+    this.client.notification('workspace/didChangeWatchedFiles', { changes });
+  }
+
+  /**
    * Starts the server again now, as it is set up now (its memory limit changed): the client
    * reconnects to the new one, as after a crash, without it being taken for one.
    */

@@ -35,6 +35,7 @@
     clashQuestion,
     ConflictBar,
     FileTree,
+    languageOf,
     nameOf,
     Project,
     refuseStrayDrop,
@@ -241,8 +242,9 @@
     settings.set(KEYS.folder, picked);
     settings.set(KEYS.recent, withRecent(recent, picked));
     platform
-      .watchFolder(picked, ({ tree }) => {
+      .watchFolder(picked, ({ tree, files }) => {
         if (tree) void next.list();
+        if (mine === opened) server?.filesChanged(files);
         void checkDisk(mine);
       })
       .then((stop) => {
@@ -300,7 +302,16 @@
     open = { path: entry.path, name: entry.name, uri: fileUri(entry.path) };
     // Shown in the tree: the folders it is in open
     current.reveal(entry.path);
-    preview.show(open);
+    showPreviewOf(open);
+  }
+
+  /**
+   * Previews `file` if it is a script; a JSON file open, the preview stays the last script's,
+   * which runs again as the file is saved (the server is told by the folder's watcher).
+   * @param {{ path: string, name: string, uri: string }} file
+   */
+  function showPreviewOf(file) {
+    if (languageOf(file.name) === 'kupcad') preview.show(file);
   }
 
   /** Keeps the editor of the script open as it is, its undo history with it, for its return. */
@@ -309,8 +320,9 @@
   }
 
   function closeScript() {
+    const closed = open;
     open = null;
-    preview.show(null);
+    if (!closed || languageOf(closed.name) === 'kupcad') preview.show(null);
   }
 
   /** @param {string} text */
@@ -406,7 +418,7 @@
     } else if (open && within(open.path, done.renamed.from)) {
       const path = done.renamed.to + open.path.slice(done.renamed.from.length);
       open = { path, name: nameOf(path), uri: fileUri(path) };
-      preview.show(open);
+      showPreviewOf(open);
     }
   }
 
@@ -728,6 +740,7 @@
             editing={project.editing}
             problem={project.nameError}
             onopen={openScript}
+            opens={(entry) => languageOf(entry.name) === 'json'}
             ontoggle={(entry, opening) => project?.toggle(entry.path, opening)}
             oncommit={(given) => void commitName(given)}
             oncancel={() => project?.cancelNaming()}
@@ -758,6 +771,7 @@
                 <Editor
                   value={project.scripts.text(open.path)}
                   label={open.name}
+                  language={languageOf(open.name) ?? 'kupcad'}
                   languageServer={{ client: server.client, uri: open.uri }}
                   restore={project.scripts.snapshot(open.path)}
                   onchange={edited}

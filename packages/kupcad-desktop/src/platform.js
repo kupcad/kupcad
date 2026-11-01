@@ -21,6 +21,7 @@ import { LanguageServer } from './server.js';
 /** @import { ExportFormat } from '@kupcad/protocol/types' */
 /** @import { Settings } from '@kupcad/ui' */
 /** @import { DirEntry } from '@kupcad/files/tree' */
+/** @import { FileChange } from './folder.js' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { ServerEvents } from './server.js' */
 /** @import { Theme } from './theme.js' */
@@ -32,7 +33,7 @@ import { LanguageServer } from './server.js';
  * @property {(path: string) => Promise<string>} openFolder a folder opened before, let into the
  *   file system's scope again by its real path (the scope holds this run's folders alone)
  * @property {(path: string) => Promise<DirEntry[]>} readDir a folder's entries, for the tree
- * @property {(root: string, onchange: (change: { tree: boolean }) => void) => Promise<() => void>} watchFolder
+ * @property {(root: string, onchange: (change: { tree: boolean, files: FileChange[] }) => void) => Promise<() => void>} watchFolder
  *   calls `onchange` when a file in `root` may have been written, its tree changed too or not;
  *   resolves to what stops it
  * @property {PlatformFiles} files
@@ -47,7 +48,7 @@ import { LanguageServer } from './server.js';
  * @property {(path: string, bytes: Uint8Array) => Promise<void>} writeFile
  * @property {(script: string, output: string, format: ExportFormat, params: [string, string][], memoryLimit: number) => Promise<void>} exportModel
  *   builds with the bundled kupcad, its script holding up to `memoryLimit` GB
- * @property {(rootUri: string, on: ServerEvents, memoryLimit: () => number) => Pick<LanguageServer, 'client' | 'start' | 'restart' | 'stop' | 'preview' | 'setParams'>} server
+ * @property {(rootUri: string, on: ServerEvents, memoryLimit: () => number) => Pick<LanguageServer, 'client' | 'start' | 'restart' | 'stop' | 'preview' | 'setParams' | 'filesChanged'>} server
  * @property {(theme: Theme) => Promise<void>} setTheme the window's appearance, which the page's
  *   colour scheme follows (`prefers-color-scheme`); the system's follows the system again
  * @property {(zoom: number) => Promise<void>} setZoom how large the page is drawn, 1 its own size

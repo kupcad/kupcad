@@ -9,6 +9,7 @@ import { fakeServer } from './fake-server.test-helper.js';
 import { LanguageServer } from './server.js';
 
 /** @import { Entry } from '@kupcad/files' */
+/** @import { FileChange } from './folder.js' */
 /** @import { MenuEntry } from './menu.js' */
 /** @import { Theme } from './theme.js' */
 
@@ -40,7 +41,7 @@ function windowOn({
   let canClose = null;
   /** Each folder watched: what it is told when it changes, and what stopping it was asked. */
   const watched =
-    /** @type {{ root: string, changed: (change: { tree: boolean }) => void, stop: () => void }[]} */ ([]);
+    /** @type {{ root: string, changed: (change: { tree: boolean, files: FileChange[] }) => void, stop: () => void }[]} */ ([]);
   /** The files' texts, and the folders. */
   const disk = new Map(Object.entries(DISK));
   const folders = new Set(['/w', '/w/parts']);
@@ -73,7 +74,7 @@ function windowOn({
     watchFolder: vi.fn(
       async (
         /** @type {string} */ root,
-        /** @type {(change: { tree: boolean }) => void} */ changed,
+        /** @type {(change: { tree: boolean, files: FileChange[] }) => void} */ changed,
       ) => {
         const stop = vi.fn();
         watched.push({ root, changed, stop });
@@ -285,6 +286,30 @@ describe('the window', () => {
     expect(view.state.doc.toString()).toBe('cube(1)\n');
   });
 
+  it('opens a JSON file as text, the preview kept on the script, the server told as it is saved', async () => {
+    // It opened scripts alone; and a data file saved left the preview as it was
+    const window = windowOn();
+    await openFolder();
+    await vi.waitFor(() => expect(window.watched).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: 'sizes.json' }));
+    await vi.waitFor(async () => expect((await editorView()).state.doc.toString()).toBe('{}'));
+    expect(screen.getByRole('button', { name: 'sizes.json' }).getAttribute('aria-current')).toBe(
+      'true',
+    );
+    const uris = (/** @type {string} */ method) =>
+      window.sent(method).map((m) => JSON.stringify(m.params));
+    // Not a script of the server's, nor the one previewed
+    expect(uris('textDocument/didOpen').some((p) => p.includes('sizes.json'))).toBe(false);
+    expect(uris('workspace/executeCommand').some((p) => p.includes('sizes.json'))).toBe(false);
+    const change = { uri: 'file:///w/sizes.json', type: 2 };
+    window.watched[0].changed({ tree: false, files: [change] });
+    await vi.waitFor(() =>
+      expect(window.sent('workspace/didChangeWatchedFiles').map((m) => m.params)).toEqual([
+        { changes: [change] },
+      ]),
+    );
+  });
+
   it('marks a script edited as unsaved, and saves it with ⌘S', async () => {
     const window = windowOn();
     const view = await openFolder();
@@ -392,7 +417,7 @@ describe('the window', () => {
     await vi.waitFor(() => expect(window.watched).toHaveLength(1));
     expect(window.watched[0].root).toBe(FOLDER);
     window.disk.set('/w/new.kup', 'cube(5)\n');
-    window.watched[0].changed({ tree: true });
+    window.watched[0].changed({ tree: true, files: [] });
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'new.kup' })).toBeTruthy());
     // A script added is opened as any other
     await fireEvent.click(screen.getByRole('button', { name: 'new.kup' }));
@@ -409,7 +434,7 @@ describe('the window', () => {
     expect(window.watched[1].root).toBe('/v');
     await vi.waitFor(() => expect(screen.getByRole('button', { name: 'other.kup' })).toBeTruthy());
     window.disk.set('/w/stale.kup', '');
-    window.watched[0].changed({ tree: true });
+    window.watched[0].changed({ tree: true, files: [] });
     await tick();
     await tick();
     expect(screen.queryByRole('button', { name: 'stale.kup' })).toBeNull();
@@ -657,7 +682,7 @@ describe('a script the disk changed', () => {
     const view = await openFolder();
     await vi.waitFor(() => expect(window.watched).toHaveLength(1));
     window.disk.set(LID, 'cube(5)\n');
-    window.watched[0].changed({ tree: false });
+    window.watched[0].changed({ tree: false, files: [] });
     await vi.waitFor(() => expect(view.state.doc.toString()).toBe('cube(5)\n'));
     expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true);
     // A change the watcher missed, read when the window has the focus again
@@ -673,7 +698,7 @@ describe('a script the disk changed', () => {
     await vi.waitFor(() => expect(window.watched).toHaveLength(1));
     await type(view, 'mine\n');
     window.disk.set(LID, 'theirs\n');
-    window.watched[0].changed({ tree: false });
+    window.watched[0].changed({ tree: false, files: [] });
     await vi.waitFor(() => expect(alertText()).toContain('lid.kup changed on disk.'));
     expect(view.state.doc.toString()).toBe('mine\n');
     await fireEvent.click(screen.getByRole('button', { name: 'Take theirs' }));
@@ -684,7 +709,7 @@ describe('a script the disk changed', () => {
     // Kept, the next save writes it over the disk's, unasked
     await type(view, 'mine again\n');
     window.disk.set(LID, 'theirs again\n');
-    window.watched[0].changed({ tree: false });
+    window.watched[0].changed({ tree: false, files: [] });
     await vi.waitFor(() => expect(alertText()).toContain('changed on disk'));
     await fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
     expect(alertText()).toBeUndefined();
@@ -718,7 +743,7 @@ describe('a script the disk changed', () => {
     await openFolder();
     await vi.waitFor(() => expect(window.watched).toHaveLength(1));
     window.disk.delete(LID);
-    window.watched[0].changed({ tree: true });
+    window.watched[0].changed({ tree: true, files: [] });
     await vi.waitFor(() => expect(screen.getByText('Open a script from the folder.')).toBeTruthy());
     expect(screen.getByRole('status').textContent).toContain('lid.kup was removed from the disk.');
 
@@ -730,7 +755,7 @@ describe('a script the disk changed', () => {
     });
     await type(view, 'kept\n');
     window.disk.delete('/w/part.kup');
-    window.watched[0].changed({ tree: true });
+    window.watched[0].changed({ tree: true, files: [] });
     await vi.waitFor(() => expect(alertText()).toContain('part.kup was deleted on disk.'));
     await fireEvent.keyDown(globalThis.window, { key: 's', metaKey: true });
     await vi.waitFor(() => expect(window.disk.get('/w/part.kup')).toBe('kept\n'));
