@@ -738,6 +738,30 @@ test "build_cmd: a file that can't be written is named, with why" {
     }
 }
 
+test "build_cmd: --split makes the folders it needs, and names a place it can't write" {
+    var fx = try Fixture.init("assemble(name: \"kit\", parts: [cube(1).named(\"a\"), cube(2).named(\"b\")])\n");
+    defer fx.deinit();
+    const nested = try fx.path("out/deeper/parts");
+    defer testing.allocator.free(nested);
+    var made = try runBuild(&.{ fx.input, "--split", nested });
+    defer made.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, made.outcome);
+    for ([_][]const u8{ "out/deeper/parts/a.stl", "out/deeper/parts/b.stl" }) |name| {
+        try fx.tmp.dir.access(testing.io, name, .{});
+    }
+
+    // A file where its folder would be
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = "taken", .data = "" });
+    const taken = try fx.path("taken");
+    defer testing.allocator.free(taken);
+    var res = try runBuild(&.{ fx.input, "--split", taken });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+    const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not write '{s}': NotDir\n", .{taken});
+    defer testing.allocator.free(expected);
+    try testing.expect(std.mem.endsWith(u8, res.text(), expected));
+}
+
 test "build_cmd: --errors json tells a host why, one JSON line last, for each kind of failure" {
     // The hosts read the words (`error(vm): RuntimeError: ...`), and a wording changed under them
     const Case = struct { source: []const u8, args: []const []const u8 = &.{}, project: ?[]const u8 = null, kind: []const u8, message: []const u8, line: ?i64 = null };
