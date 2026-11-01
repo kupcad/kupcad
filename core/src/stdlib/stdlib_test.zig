@@ -1732,6 +1732,18 @@ test "Stdlib: a size is refused where the lint reads it, before the native runs"
     });
 }
 
+test "Stdlib: a Solid's volume and area are measured once, and each Solid has its own" {
+    // Each call went over every triangle again (150 µs at 300k)
+    var vm = try initVm();
+    defer vm.deinit();
+    try testing.expectEqual(.ok, try runOn(&vm, "c = cube(2)\nv = c.volume\nw = c.volume\na = c.surface_area\nd = c.translate(x: 1).scale(2)\nr = [v, w, a, d.volume, d.surface_area]"));
+    const r = vm.globals.get("r").?.asArray().items.items;
+    for ([_]f64{ 8, 8, 24, 64, 96 }, r) |want, got| try testing.expectApproxEqAbs(want, got.asNumber(), 1e-9);
+    const c = vm.globals.get("c").?.asGeometry();
+    try testing.expectEqual(@as(?f64, 8), c.cached_volume);
+    try testing.expectEqual(@as(?f64, 24), c.cached_surface_area);
+}
+
 test "Stdlib: a script may start with a byte order mark" {
     // The three bytes glued to the first name: `x = 1` defined a variable no `x` found
     try expectScripts(&.{

@@ -466,6 +466,10 @@ pub const ObjGeometry = struct {
     // Optional memoized properties populated via JIT evaluation
     cached_handle: ?geom.GeometryHandle = null,
     cached_bbox: ?BBox = null,
+    /// Its volume and surface area, measured once: the handle never changes, and each call
+    /// went over every triangle (150 µs at 300k).
+    cached_volume: ?f64 = null,
+    cached_surface_area: ?f64 = null,
 
     pub fn isConcrete(self: *const ObjGeometry) bool {
         return self.cached_handle != null;

@@ -68,7 +68,9 @@ pub fn meshVolume(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "volume", receiver);
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .volume);
-    return value.Value.initNumber(kernel.volume(handle));
+    const solid = receiver.asGeometry();
+    if (solid.cached_volume == null) solid.cached_volume = kernel.volume(handle);
+    return value.Value.initNumber(solid.cached_volume.?);
 }
 
 /// `solid.center_of_mass`: the centroid of its volume, [x, y, z], where it balances at a
@@ -135,7 +137,9 @@ pub fn meshSurfaceArea(vm: *VM, receiver: value.Value) !value.Value {
     if (!receiver.isGeometry()) return arguments.notDefinedFor(vm, "surface_area", receiver);
     const handle = try vm.ensureConcrete(receiver);
     try vm.requireFeature(handle.engine, .surface_area);
-    return value.Value.initNumber(kernel.surfaceArea(handle));
+    const solid = receiver.asGeometry();
+    if (solid.cached_surface_area == null) solid.cached_surface_area = kernel.surfaceArea(handle);
+    return value.Value.initNumber(solid.cached_surface_area.?);
 }
 
 pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !value.Value {

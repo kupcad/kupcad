@@ -503,6 +503,8 @@ pub const GC = struct {
             .concrete => |h| h,
         };
         ptr.cached_bbox = null;
+        ptr.cached_volume = null;
+        ptr.cached_surface_area = null;
         return ptr;
     }
 
