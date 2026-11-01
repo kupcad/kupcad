@@ -17,3 +17,13 @@ test "json_input: a syntax error is placed at its line and column" {
 test "json_input: a key written twice is an error, not the last one winning" {
     try std.testing.expectError(error.DuplicateField, parse(std.json.Value, std.testing.allocator, "{\"a\": 1, \"a\": 2}", null));
 }
+
+test "json_input: a byte order mark before the JSON is read past, and a column counts after it" {
+    // Notepad writes one: import_json said "line 1, column 1: invalid JSON"
+    const parsed = try parse(std.json.Value, std.testing.allocator, "\xEF\xBB\xBF{\"w\": 5}", null);
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(i64, 5), parsed.value.object.get("w").?.integer);
+    var where: Position = undefined;
+    try std.testing.expectError(error.SyntaxError, parse(std.json.Value, std.testing.allocator, "\xEF\xBB\xBF{\"w\" 5}", &where));
+    try std.testing.expectEqual(Position{ .line = 1, .column = 6 }, where);
+}

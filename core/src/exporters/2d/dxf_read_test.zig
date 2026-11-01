@@ -50,6 +50,13 @@ test "DXF read: lines and arcs drawn apart are joined end to end, either way rou
     try testing.expectEqualStrings("cut", drawing.layers[0]);
 }
 
+test "DXF read: a byte order mark before the first group code is read past" {
+    // "line 1: '\u{FEFF}0' isn't a group code"
+    var drawing = try read("\xEF\xBB\xBF" ++ comptime file("", SLOT), null);
+    defer drawing.deinit();
+    try testing.expectEqual(@as(usize, 1), drawing.outlines.len);
+}
+
 test "DXF read: a polyline's bulges are arcs, its closing segment too, and a circle is whole" {
     // A 10 by 10 square whose right side bulges out into a half circle, and whose closing
     // side (from the last vertex back to the first) bulges in by a quarter turn

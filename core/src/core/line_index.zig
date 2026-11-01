@@ -2,6 +2,7 @@
 //! lines and columns, in UTF-8 and in the UTF-16 units LSP clients count.
 
 const std = @import("std");
+const byte_order_mark = @import("byte_order_mark.zig");
 
 /// The LineIndex provides O(log N) lookups for converting flat byte offsets
 /// into Line/Column coordinates, and handles UTF-16 conversion for LSP clients.
@@ -14,8 +15,9 @@ pub const LineIndex = struct {
         var starts = std.ArrayList(u32).empty;
         errdefer starts.deinit(allocator);
 
-        // Line 1 (index 0) always starts at offset 0
-        try starts.append(allocator, 0);
+        // Line 1 (index 0) starts at offset 0, or past a byte order mark: it is no part of the
+        // line, so a column counts from where an editor shows it to start (they were 3 more)
+        try starts.append(allocator, @intCast(source.len - byte_order_mark.skip(source).len));
 
         for (source, 0..) |c, i| {
             if (c == '\n') {
@@ -37,7 +39,8 @@ pub const LineIndex = struct {
     /// The 0-based line `offset` is on (binary search: the last line starting at or before it).
     pub fn getLine(self: *const LineIndex, offset: u32) u32 {
         const after = std.sort.upperBound(u32, self.line_starts, offset, orderOf);
-        return @intCast(after - 1);
+        // An offset in a byte order mark is before line 1 starts: on it
+        return @intCast(after -| 1);
     }
 
     /// The text of 0-based `line` of `source` (the text this index was built from), without
@@ -71,7 +74,7 @@ pub const LineIndex = struct {
     pub fn getUtf8Column(self: *const LineIndex, offset: u32) u32 {
         const line = self.getLine(offset);
         const line_start = self.line_starts[line];
-        return offset - line_start;
+        return offset -| line_start;
     }
 
     /// Returns the 0-indexed UTF-16 code unit column.
@@ -81,12 +84,12 @@ pub const LineIndex = struct {
         const line_start = self.line_starts[line];
 
         // Slice the exact text from the start of the line up to the token offset
-        const line_text_to_offset = self.source[line_start..offset];
+        const line_text_to_offset = self.source[line_start..@max(line_start, offset)];
 
         // Calculate how many UTF-16 code units this UTF-8 text represents
         return @intCast(std.unicode.calcUtf16LeLen(line_text_to_offset) catch {
             // Fallback to byte length if invalid unicode is encountered
-            return offset - line_start;
+            return offset -| line_start;
         });
     }
 };

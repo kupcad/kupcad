@@ -4,14 +4,16 @@
 //! error at the same line and column.
 
 const std = @import("std");
+const byte_order_mark = @import("byte_order_mark.zig");
 
 /// Where a parse stopped: 1-based line and column.
 pub const Position = struct { line: u64, column: u64 };
 
-/// `text` parsed as a `T` (std.json.Value for any JSON), owned by the result's arena. When it
-/// fails, `where` (if given) receives the line and column the parse stopped at.
+/// `text` parsed as a `T` (std.json.Value for any JSON), owned by the result's arena; past a
+/// byte order mark (RFC 8259 lets a parser ignore one, and Notepad writes it). When it fails,
+/// `where` (if given) receives the line and column the parse stopped at.
 pub fn parse(comptime T: type, allocator: std.mem.Allocator, text: []const u8, where: ?*Position) !std.json.Parsed(T) {
-    var scanner = std.json.Scanner.initCompleteInput(allocator, text);
+    var scanner = std.json.Scanner.initCompleteInput(allocator, byte_order_mark.skip(text));
     defer scanner.deinit();
     var diagnostics: std.json.Diagnostics = .{};
     scanner.enableDiagnostics(&diagnostics);

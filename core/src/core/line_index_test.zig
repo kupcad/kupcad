@@ -85,3 +85,21 @@ test "LineIndex: offsetOf is humanPosition's way back, a column held to its line
     try testing.expectEqual(@as(?u32, null), index.offsetOf(4, 1));
     try testing.expectEqual(@as(?u32, null), index.offsetOf(0, 1));
 }
+
+test "LineIndex: a byte order mark is no part of line 1, which an editor shows without it" {
+    // `cube(-1)` was flagged at 1:9 for the `-` at 1:6, the caret three places past it
+    const source = "\xEF\xBB\xBFcube(-1)\nx = 1\n";
+    const index = try LineIndex.init(testing.allocator, source);
+    defer index.deinit(testing.allocator);
+    const minus: u32 = @intCast(std.mem.findScalar(u8, source, '-').?);
+    try testing.expectEqual(@as(u32, 1), index.humanPosition(minus).line);
+    try testing.expectEqual(@as(u32, 6), index.humanPosition(minus).column);
+    try testing.expectEqual(@as(u32, 5), index.getUtf16Column(minus));
+    try testing.expectEqualStrings("cube(-1)", index.lineText(source, 0));
+    try testing.expectEqual(@as(?u32, minus), index.offsetOf(1, 6));
+    // The mark's own bytes are at the line's start, not before it
+    try testing.expectEqual(@as(u32, 1), index.humanPosition(0).column);
+    try testing.expectEqual(@as(u32, 0), index.getUtf16Column(1));
+    // Line 2 as it was
+    try testing.expectEqual(@as(u32, 2), index.humanPosition(minus + 5).line);
+}

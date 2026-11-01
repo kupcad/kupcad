@@ -14,6 +14,7 @@ const imported_mesh = @import("imported_mesh.zig");
 const triangulate = @import("../../core/triangulate.zig");
 const vec3 = @import("../../core/vec3.zig");
 const limits = @import("../../core/limits.zig");
+const byte_order_mark = @import("../../core/byte_order_mark.zig");
 pub const Diagnostic = @import("../diagnostic.zig").Diagnostic;
 
 /// The name of the object the faces before any `o` are in.
@@ -38,8 +39,9 @@ pub const Error = error{Unreadable} || std.mem.Allocator.Error;
 /// positive number's not yet checked against how many there are) and its line.
 const Face = struct { object: usize, corners: []const u32, line: usize };
 
-/// The objects of the OBJ `text`.
-pub fn read(allocator: std.mem.Allocator, text: []const u8, diag: *Diagnostic) Error!Model {
+/// The objects of the OBJ `text` (past a byte order mark, which glued to its first word).
+pub fn read(allocator: std.mem.Allocator, file_text: []const u8, diag: *Diagnostic) Error!Model {
+    const text = byte_order_mark.skip(file_text);
     var model = Model{ .objects = &.{}, .arena = .init(allocator) };
     errdefer model.deinit();
     const arena = model.arena.allocator();

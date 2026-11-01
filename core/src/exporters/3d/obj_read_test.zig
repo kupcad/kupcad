@@ -29,6 +29,14 @@ test "OBJ read: a cube of quads is its 8 corners and 12 triangles" {
     try testing.expectEqual(@as(usize, 12), model.objects[0].mesh.faces.len);
 }
 
+test "OBJ read: a byte order mark before the first line is read past" {
+    // It glued to the first `v`, so the file had a vertex too few
+    var model = try read("\xEF\xBB\xBF" ++ CUBE);
+    defer model.deinit();
+    try testing.expectEqual(@as(usize, 8), model.objects[0].mesh.points.len);
+    try testing.expectEqual(@as(usize, 12), model.objects[0].mesh.faces.len);
+}
+
 test "OBJ read: objects, every corner form, numbers counted back, comments and lines that go on" {
     // A second object of one triangle named by its last three vertices, with texture and
     // normal numbers, a colour after a vertex, a comment and a face split over two lines

@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const units_mod = @import("../../core/units.zig");
+const byte_order_mark = @import("../../core/byte_order_mark.zig");
 const path = @import("../../core/path.zig");
 const bezier = @import("../../core/bezier.zig");
 const bspline = @import("../../core/bspline.zig");
@@ -90,8 +91,10 @@ pub const Drawing = struct {
 
 pub const Error = error{Unreadable} || std.mem.Allocator.Error;
 
-/// The outlines of the DXF `text`, as `options` says.
-pub fn read(allocator: std.mem.Allocator, text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
+/// The outlines of the DXF `text`, as `options` says (past a byte order mark, which glued to
+/// its first group code).
+pub fn read(allocator: std.mem.Allocator, file_text: []const u8, options: Options, diag: *Diagnostic) Error!Drawing {
+    const text = byte_order_mark.skip(file_text);
     var drawing = Drawing{ .outlines = &.{}, .open_paths = &.{}, .layers = &.{}, .arena = .init(allocator) };
     errdefer drawing.deinit();
     if (std.mem.startsWith(u8, text, BINARY_SENTINEL)) return diag.fail("it is a binary DXF file: save it as an ASCII DXF", .{});
