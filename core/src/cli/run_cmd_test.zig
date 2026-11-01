@@ -8,7 +8,9 @@ const Args = @import("args.zig").Args;
 /// Runs `kupcad run` with `args`; the outcome, and what it reported in `output`.
 fn runWith(args: []const []const u8, output: *std.Io.Writer.Allocating) !run_cmd.Outcome {
     var it: Args = .{ .items = args };
-    return run_cmd.run(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer });
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    return run_cmd.run(testing.allocator, &it, &environ, .{ .io = testing.io, .capture = &output.writer });
 }
 
 test "kupcad run: runs the script with its parameters and writes no model" {

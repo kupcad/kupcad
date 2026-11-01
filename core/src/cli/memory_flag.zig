@@ -1,20 +1,24 @@
-//! `--memory-limit <size>`: the most script heap a run may hold (what `vm_memory_limit` in
-//! .kupcad.json limits), for a host that runs scripts someone else wrote (the desktop app, the
-//! VS Code extension, from their settings). The command line wins over the project's file, as
-//! `-p` does over a parameter's default: with the flag the project's `vm_memory_limit` doesn't
-//! apply, so a cloned project can't lift the host's limit and a setting raised always takes.
-//! Without either a command keeps its own default: none for `build` and `run`, the interactive
-//! one for `watch` and `lsp`.
+//! `--memory-limit <size>`, and `KUPCAD_MEMORY_LIMIT` in the environment: the most script heap
+//! a run may hold (what `vm_memory_limit` in .kupcad.json limits), for a host that runs scripts
+//! someone else wrote (the desktop app, the VS Code extension, from their settings; a shell or
+//! a CI job, from the variable). The flag wins over the variable, and either over the
+//! project's file, as `-p` does over a parameter's default: with one the project's
+//! `vm_memory_limit` doesn't apply, so a cloned project can't lift the host's limit and a
+//! setting raised always takes. Without any a command keeps its own default: none for `build`
+//! and `run`, the interactive one for `watch` and `lsp`.
 
 const std = @import("std");
 const Reporter = @import("reporter.zig").Reporter;
 const Taken = @import("param_flags.zig").Taken;
 
 pub const FLAG = "--memory-limit";
+/// The variable read when the flag isn't given; empty counts as unset.
+pub const ENV = "KUPCAD_MEMORY_LIMIT";
 
 pub const USAGE =
     \\  --memory-limit <size>     Most memory the script may hold, as 512MB or 8GB, in
-    \\                            place of the project's vm_memory_limit
+    \\                            place of KUPCAD_MEMORY_LIMIT and the project's
+    \\                            vm_memory_limit
     \\
 ;
 
@@ -56,8 +60,25 @@ pub fn take(arg: []const u8, args: anytype, limit: *?usize, reporter: Reporter) 
     return .taken;
 }
 
-/// The limit a run gets: the flag's, as the command line wins over the project's file; else
-/// the project's; else the command's `default` (null: none).
-pub fn limitFor(project: ?usize, flag: ?usize, default: ?usize) ?usize {
-    return flag orelse project orelse default;
+/// `KUPCAD_MEMORY_LIMIT`'s size (as the flag reads one), null when it is unset or empty; a
+/// value that isn't a size is reported and refused, as the flag's would be.
+pub fn fromEnv(environ: *const std.process.Environ.Map, reporter: Reporter) error{Refused}!?usize {
+    const text = environ.get(ENV) orelse return null;
+    if (text.len == 0) return null;
+    return parseSize(text) orelse {
+        reporter.err("Error: {s} takes a size greater than zero, as 512MB or 8GB, got '{s}'\n", .{ ENV, text });
+        return error.Refused;
+    };
+}
+
+/// What a run is given from outside its project: the flag's size, else the variable's.
+pub fn given(flag: ?usize, environ: *const std.process.Environ.Map, reporter: Reporter) error{Refused}!?usize {
+    return flag orelse try fromEnv(environ, reporter);
+}
+
+/// The limit a run gets: the one `given` (the flag's, else the variable's), as the command line
+/// and the environment win over the project's file; else the project's; else the command's
+/// `default` (null: none).
+pub fn limitFor(project: ?usize, given_limit: ?usize, default: ?usize) ?usize {
+    return given_limit orelse project orelse default;
 }

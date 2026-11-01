@@ -1,6 +1,7 @@
 const std = @import("std");
 const testing = std.testing;
 const build_cmd = @import("build_cmd.zig");
+const memory_flag = @import("memory_flag.zig");
 
 const Args = @import("args.zig").Args;
 
@@ -26,10 +27,17 @@ const Result = struct {
 };
 
 fn runBuild(args: []const []const u8) !Result {
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    return runBuildIn(args, &environ);
+}
+
+/// `runBuild` with `environ` for the process's environment.
+fn runBuildIn(args: []const []const u8, environ: *const std.process.Environ.Map) !Result {
     var output: std.Io.Writer.Allocating = .init(testing.allocator);
     errdefer output.deinit();
     var it: Args = .{ .items = args };
-    const outcome = try build_cmd.run(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer });
+    const outcome = try build_cmd.run(testing.allocator, &it, environ, .{ .io = testing.io, .capture = &output.writer });
     return .{ .outcome = outcome, .output = output };
 }
 
@@ -665,6 +673,34 @@ test "build_cmd: --memory-limit caps the script's heap, in place of the project'
         defer result.deinit();
         try testing.expectEqual(case.outcome, result.outcome);
     }
+}
+
+test "build_cmd: KUPCAD_MEMORY_LIMIT stands in for --memory-limit, which wins over it" {
+    const script = "a = []\n2000.times { |i| a.push(\"item number #{i}\") }\ncube(1)\n";
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    try environ.put(memory_flag.ENV, "64KB");
+    var fx = try Fixture.init(script);
+    defer fx.deinit();
+    // The variable's: over the project's too
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"vm_memory_limit\": 1073741824 }" });
+    var held = try runBuildIn(&.{ fx.input, "-o", fx.output }, &environ);
+    defer held.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, held.outcome);
+    // The flag's over the variable's
+    var lifted = try runBuildIn(&.{ fx.input, "-o", fx.output, "--memory-limit", "1GB" }, &environ);
+    defer lifted.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, lifted.outcome);
+    // Empty counts as unset; a value that isn't a size is refused as the flag's is
+    try environ.put(memory_flag.ENV, "");
+    var unset = try runBuildIn(&.{ fx.input, "-o", fx.output }, &environ);
+    defer unset.deinit();
+    try testing.expectEqual(build_cmd.Outcome.success, unset.outcome);
+    try environ.put(memory_flag.ENV, "lots");
+    var refused = try runBuildIn(&.{ fx.input, "-o", fx.output }, &environ);
+    defer refused.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, refused.outcome);
+    try testing.expectEqualStrings("Error: KUPCAD_MEMORY_LIMIT takes a size greater than zero, as 512MB or 8GB, got 'lots'\n", refused.text());
 }
 
 test "build_cmd: --memory-limit takes a size greater than zero" {

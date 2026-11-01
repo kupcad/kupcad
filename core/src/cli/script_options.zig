@@ -1,6 +1,6 @@
 //! What `kupcad build`, `run` and `watch` read from their arguments: the script, the
-//! parameters' values (`-p`, `-P`), the memory limit (`--memory-limit`) and, for a command
-//! that writes the model, its exports.
+//! parameters' values (`-p`, `-P`), the memory limit (`--memory-limit`, else
+//! `KUPCAD_MEMORY_LIMIT` in `environ`) and, for a command that writes the model, its exports.
 //! Read here once: each command had its own copy of the loop and its messages.
 
 const std = @import("std");
@@ -23,7 +23,8 @@ pub const ScriptOptions = struct {
     exports: ExportFlags = .{},
     /// Whether an export option was given.
     writes: bool = false,
-    /// `--memory-limit`, which wins over the project's own (memory_flag.zig); null when not given.
+    /// `--memory-limit`, else `KUPCAD_MEMORY_LIMIT`, which win over the project's own
+    /// (memory_flag.zig); null when neither is given.
     memory_limit: ?usize = null,
 
     pub fn deinit(self: *ScriptOptions, allocator: std.mem.Allocator) void {
@@ -33,7 +34,7 @@ pub const ScriptOptions = struct {
 
     /// The options in `args` (`next() ?[]const u8`) of a command taking `exports`, whose
     /// help is `usage`; null, the refusal reported.
-    pub fn parse(allocator: std.mem.Allocator, args: anytype, reporter: Reporter, comptime exports: Exports, comptime usage: []const u8) !?ScriptOptions {
+    pub fn parse(allocator: std.mem.Allocator, args: anytype, environ: *const std.process.Environ.Map, reporter: Reporter, comptime exports: Exports, comptime usage: []const u8) !?ScriptOptions {
         var options: ScriptOptions = .{ .input_path = "" };
         errdefer options.deinit(allocator);
         var given = false;
@@ -77,6 +78,7 @@ pub const ScriptOptions = struct {
             .when_given => options.writes,
         };
         if (settles and !try options.exports.settle(allocator, reporter)) return options.refuse(allocator);
+        options.memory_limit = memory_flag.given(options.memory_limit, environ, reporter) catch return options.refuse(allocator);
         return options;
     }
 

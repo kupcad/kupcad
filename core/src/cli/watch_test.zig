@@ -12,7 +12,9 @@ const Args = @import("args.zig").Args;
 /// The options `args` give `kupcad watch`, or null; `output` receives what was reported.
 fn parse(args: []const []const u8, output: *std.Io.Writer.Allocating) !?ScriptOptions {
     var it: Args = .{ .items = args };
-    return ScriptOptions.parse(testing.allocator, &it, .{ .io = testing.io, .capture = &output.writer }, .when_given, watch.USAGE);
+    var environ: std.process.Environ.Map = .init(testing.allocator);
+    defer environ.deinit();
+    return ScriptOptions.parse(testing.allocator, &it, &environ, .{ .io = testing.io, .capture = &output.writer }, .when_given, watch.USAGE);
 }
 
 test "kupcad watch: takes the file and parameter values, as build does, the later one winning" {

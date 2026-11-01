@@ -48,13 +48,14 @@ pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession,
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
-    return run(allocator, args_iter, .forProcess(init));
+    return run(allocator, args_iter, init.environ_map, .forProcess(init));
 }
 
-/// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`).
-/// User-facing failures are reported and return `.failure`; unexpected errors propagate.
-pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter) !Outcome {
-    var options = try ScriptOptions.parse(allocator, args_iter, reporter, .always, USAGE) orelse return .failure;
+/// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`)
+/// in `environ`. User-facing failures are reported and return `.failure`; unexpected errors
+/// propagate.
+pub fn run(allocator: std.mem.Allocator, args_iter: anytype, environ: *const std.process.Environ.Map, reporter: Reporter) !Outcome {
+    var options = try ScriptOptions.parse(allocator, args_iter, environ, reporter, .always, USAGE) orelse return .failure;
     defer options.deinit(allocator);
 
     // The script reads and writes the disk from where its imports are
@@ -69,8 +70,8 @@ pub fn run(allocator: std.mem.Allocator, args_iter: anytype, reporter: Reporter)
 
 /// Runs the script `root` names in `session` (reading `root`'s folder), set up as the command
 /// and the project ask: `params` (which the session takes), the terminal debugger, the
-/// memory limit (`memory_limit`, from `--memory-limit`, else the project's `vm_memory_limit`
-/// in .kupcad.json; none without either) and the engine `exports` need (STEP's exact B-Rep). Whether its model was built; false, the failure reported, when it can't be set up
+/// memory limit (`memory_limit`, from `--memory-limit` or `KUPCAD_MEMORY_LIMIT`, else the
+/// project's `vm_memory_limit` in .kupcad.json; none without any) and the engine `exports` need (STEP's exact B-Rep). Whether its model was built; false, the failure reported, when it can't be set up
 /// or the script doesn't parse, compile or run.
 pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *const ScriptRoot, params: *api.ParamValues, exports: ?*const ExportFlags, memory_limit: ?usize, reporter: Reporter) !bool {
     const io = reporter.io;

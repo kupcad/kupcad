@@ -38,7 +38,7 @@ pub const USAGE =
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
     const reporter: Reporter = .forProcess(init);
-    var options = try ScriptOptions.parse(allocator, args_iter, reporter, .when_given, USAGE) orelse return .failure;
+    var options = try ScriptOptions.parse(allocator, args_iter, init.environ_map, reporter, .when_given, USAGE) orelse return .failure;
     defer options.deinit(allocator);
     const file_path = options.input_path;
 
@@ -52,9 +52,9 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     const session = &script_session;
     session.setParams(&options.params);
     session.vm.debugger_handler = debugger.terminalDebugger(init.io);
-    // A long-lived session caps the script heap: --memory-limit, else the project's
-    // `vm_memory_limit`, else the interactive default, so a runaway loop ends with an error
-    // instead of the machine.
+    // A long-lived session caps the script heap: --memory-limit or KUPCAD_MEMORY_LIMIT, else
+    // the project's `vm_memory_limit`, else the interactive default, so a runaway loop ends
+    // with an error instead of the machine.
     var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
     const config = ProjectConfig.forScript(init.io, allocator, file_path, &where) catch |err| {
         reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, file_path, where.line, where.column, ProjectConfig.describeError(err) });

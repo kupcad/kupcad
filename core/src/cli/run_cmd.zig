@@ -29,13 +29,13 @@ pub const USAGE =
 ;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
-    return run(allocator, args_iter, .forProcess(init));
+    return run(allocator, args_iter, init.environ_map, .forProcess(init));
 }
 
-/// Runs `kupcad run` with the remaining CLI arguments (`next() ?[]const u8`); a script that
-/// doesn't parse, compile or run is a failure, reported.
-pub fn run(allocator: std.mem.Allocator, args: anytype, reporter: Reporter) !Outcome {
-    var options = try ScriptOptions.parse(allocator, args, reporter, .none, USAGE) orelse return .failure;
+/// Runs `kupcad run` with the remaining CLI arguments (`next() ?[]const u8`) in `environ`; a
+/// script that doesn't parse, compile or run is a failure, reported.
+pub fn run(allocator: std.mem.Allocator, args: anytype, environ: *const std.process.Environ.Map, reporter: Reporter) !Outcome {
+    var options = try ScriptOptions.parse(allocator, args, environ, reporter, .none, USAGE) orelse return .failure;
     defer options.deinit(allocator);
     const input_path = options.input_path;
     // The script reads and writes the disk, as under kupcad build

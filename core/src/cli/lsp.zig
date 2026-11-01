@@ -76,8 +76,9 @@ pub const USAGE =
     \\  --viewport-origin <origin>  Let the page at <origin> (scheme://host[:port], such as
     \\                              tauri://localhost) read the viewport socket, besides
     \\                              VS Code's webviews
-    \\  --memory-limit <size>       Most memory a preview may hold, as 512MB or 8GB (1GB
-    \\                              without it)
+    \\  --memory-limit <size>       Most memory a preview may hold, as 512MB or 8GB, in
+    \\                              place of KUPCAD_MEMORY_LIMIT and the project's
+    \\                              vm_memory_limit (1GB without any)
     \\
 ;
 
@@ -1271,9 +1272,9 @@ fn setParamsArgument(arena: std.mem.Allocator, arguments: []const std.json.Value
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args) !Outcome {
     var host_origin: ?[]const u8 = null;
-    // A host's setting: previews hold up to it in place of the project's and the interactive
-    // limit, so a model the host exports (`kupcad build --memory-limit`, the same setting)
-    // previews too
+    // A host's setting, or the environment's: previews hold up to it in place of the
+    // project's and the interactive limit, so a model the host exports (`kupcad build
+    // --memory-limit`, the same setting) previews too
     var memory_limit: ?usize = null;
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, lsp_worker.WORKER_FLAG)) {
@@ -1306,6 +1307,7 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args: *Args
         break :blk null;
     };
     defer if (exe) |e| allocator.free(e);
+    memory_limit = memory_flag.given(memory_limit, init.environ_map, Reporter.forProcess(init)) catch return .failure;
     // The limit before the worker's flag: the worker's argument loop runs it on seeing that
     var limit_text: [24]u8 = undefined;
     const plain_argv = [_][]const u8{ exe orelse "", "lsp", lsp_worker.WORKER_FLAG };
