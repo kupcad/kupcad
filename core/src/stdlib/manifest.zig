@@ -171,14 +171,14 @@ pub const global_functions = [_]GlobalFunction{
     primitive("torus", .primitive_3d, primitives.nativeTorus, &primitives.TORUS),
     primitive("polyhedron", .primitive_3d, primitives.nativePolyhedron, &primitives.POLYHEDRON),
     primitive("text", .primitive_2d, primitives.nativeText, &primitives.TEXT),
-    .{ .name = "import_stl", .func = common.wrapGlobal(mesh_import.nativeImportStl), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
-    .{ .name = "import_obj", .func = common.wrapGlobal(mesh_import.nativeImportObj), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
-    .{ .name = "import_3mf", .func = common.wrapGlobal(mesh_import.nativeImport3mf), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
+    .{ .name = "import_stl", .func = common.wrapGlobalWith(mesh_import.nativeImportStl, mesh_import.IMPORT_MESH), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
+    .{ .name = "import_obj", .func = common.wrapGlobalWith(mesh_import.nativeImportObj, mesh_import.IMPORT_MESH), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
+    .{ .name = "import_3mf", .func = common.wrapGlobalWith(mesh_import.nativeImport3mf, mesh_import.IMPORT_MESH), .category = .file_io, .result = .solid, .signature = &mesh_import.IMPORT_MESH },
     .{ .name = "import_step", .func = common.wrapGlobal(files.nativeImportStep), .category = .file_io, .result = .solid },
     .{ .name = "import_json", .func = common.wrapGlobal(json.nativeImportJson), .category = .file_io, .result = .varies },
     .{ .name = "import_font", .func = common.wrapGlobal(files.nativeImportFont), .category = .file_io, .result = .font },
-    .{ .name = "import_dxf", .func = common.wrapGlobal(drawing_import.nativeImportDxf), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_DXF },
-    .{ .name = "import_svg", .func = common.wrapGlobal(drawing_import.nativeImportSvg), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_SVG },
+    .{ .name = "import_dxf", .func = common.wrapGlobalWith(drawing_import.nativeImportDxf, drawing_import.IMPORT_DXF), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_DXF },
+    .{ .name = "import_svg", .func = common.wrapGlobalWith(drawing_import.nativeImportSvg, drawing_import.IMPORT_SVG), .category = .file_io, .result = .sketch, .result_when = .{ .keyword = "paths", .result = .array }, .signature = &drawing_import.IMPORT_SVG },
 };
 
 pub const mesh_methods = [_]MeshMethod{

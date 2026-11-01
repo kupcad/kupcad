@@ -73,9 +73,8 @@ pub fn nativeImportSvg(vm: *VM, args: []const value.Value) !value.Value {
 fn pathAndTolerance(vm: *VM, positional: []const value.Value, given: ?f64, comptime method: []const u8, comptime file: []const u8) !struct { []const u8, f64 } {
     if (positional.len != 1) return vm.fail(.ArgumentError, method ++ " expects the path of " ++ file, .{});
     const file_path = try arguments.requireName(vm, positional[0], method, "path");
-    const tolerance = given orelse vm.config().tolerance;
-    try arguments.requirePositive(vm, tolerance, method, "tolerance");
-    return .{ file_path, tolerance };
+    // A tolerance given is a size, refused at zero before the native runs (IMPORT_DXF, IMPORT_SVG)
+    return .{ file_path, given orelse vm.config().tolerance };
 }
 
 /// The Sketch of a drawing's outlines, an ImportError when it has none.

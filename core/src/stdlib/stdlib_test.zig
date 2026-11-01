@@ -13,6 +13,7 @@ const engine_config = @import("../core/engine_config.zig");
 const test_support = @import("../test_support.zig");
 const MemoryVfs = @import("../vfs/memory.zig").MemoryVfs;
 const geom = @import("../core/geometry_handle.zig");
+const Signature = @import("signature.zig").Signature;
 
 const print = std.fmt.comptimePrint;
 const MAX_SEGS = limits.MAX_SEGMENTS;
@@ -913,6 +914,98 @@ test "Stdlib: each method's Signature lists exactly the keywords it accepts" {
         }
     }
     try std.testing.expectEqual(@as(usize, 18), checked); // export_obj counts since its mtl: became a keyword
+}
+
+test "Stdlib: each Signature's sizes and single name parameters it takes" {
+    // A size or a single that names no parameter is a check that never runs and a hint for a
+    // keyword no call can give (cube's `single` named a keyword cube didn't take)
+    const manifest = @import("manifest.zig");
+    var checked: usize = 0;
+    inline for (manifest.global_functions) |f| {
+        if (f.signature) |sig| {
+            try expectNamesParameters(f.name, sig.*);
+            checked += 1;
+        }
+    }
+    inline for (manifest.mesh_methods ++ manifest.path_methods ++ manifest.assembly_methods) |m| {
+        try expectNamesParameters(m.name, m.signature.*);
+        checked += 1;
+    }
+    try std.testing.expect(checked > 100);
+}
+
+fn expectNamesParameters(name: []const u8, sig: Signature) !void {
+    for ([_][]const []const u8{ sig.sizes, sig.solid_sizes }) |sizes| for (sizes) |size| {
+        if (!isListed(sig.positional, size) and !isListed(sig.keywords, size)) {
+            std.debug.print("{s}: the size '{s}' is no parameter\n", .{ name, size });
+            return error.TestUnexpectedResult;
+        }
+    };
+    if (sig.single) |single| if (!isListed(sig.keywords, single)) {
+        std.debug.print("{s}: the single '{s}' is no keyword\n", .{ name, single });
+        return error.TestUnexpectedResult;
+    };
+}
+
+fn isListed(list: []const []const u8, name: []const u8) bool {
+    for (list) |n| if (std.mem.eql(u8, n, name)) return true;
+    return false;
+}
+
+test "Stdlib: each size a Signature declares is refused at zero when the script runs" {
+    // The lint flags a size of zero by the Signature (nonpositive-size); common.checkArguments
+    // refuses it by the same list before the native runs, so a built-in whose wrapper skipped
+    // the check would take what the lint says it won't. Each size is given as 0 alone: by
+    // keyword, or at its place with 1 before it when it is positional only.
+    const manifest = @import("manifest.zig");
+    var checked: usize = 0;
+    inline for (manifest.global_functions) |f| {
+        if (f.signature) |sig| inline for (sig.sizes) |size| {
+            try expectSizeRefused(f.name, comptime f.name ++ "(" ++ sizeArguments(sig.*, size) ++ ")", size);
+            checked += 1;
+        };
+    }
+    const tables = .{
+        .{ manifest.mesh_methods, "cube(1)", "square(1)" },
+        .{ manifest.path_methods, "line([0, 0], [1, 0])", "line([0, 0], [1, 0])" },
+        .{ manifest.assembly_methods, "assemble(name: \"a\", parts: [cube(1)])", "assemble(name: \"a\", parts: [cube(1)])" },
+    };
+    inline for (tables) |table| {
+        inline for (table[0]) |m| {
+            const receiver = comptime if (m.on == .sketches) table[2] else table[1];
+            inline for (m.signature.sizes) |size| {
+                try expectSizeRefused(m.name, comptime receiver ++ "." ++ m.name ++ "(" ++ sizeArguments(m.signature.*, size) ++ ")", size);
+                checked += 1;
+            }
+            // On a Solid: a sketch's own may be negative (offset)
+            if (comptime m.on != .sketches) inline for (m.signature.solid_sizes) |size| {
+                try expectSizeRefused(m.name, comptime table[1] ++ "." ++ m.name ++ "(" ++ sizeArguments(m.signature.*, size) ++ ")", size);
+                checked += 1;
+            };
+        }
+    }
+    try std.testing.expect(checked > 30);
+}
+
+/// The arguments that give `size` as 0 and nothing else that is checked.
+fn sizeArguments(comptime sig: Signature, comptime size: []const u8) []const u8 {
+    if (isListed(sig.keywords, size)) return size ++ ": 0";
+    var args: []const u8 = "";
+    for (sig.positional) |p| {
+        if (std.mem.eql(u8, p, size)) return args ++ "0";
+        args = args ++ "1, ";
+    }
+    unreachable; // a size is a parameter (the test above)
+}
+
+fn expectSizeRefused(comptime name: []const u8, comptime call: []const u8, comptime size: []const u8) !void {
+    expectScripts(&.{.{
+        .src = comptime rescued(call),
+        .expected = .{ .str = "ValueError: " ++ name ++ " expects " ++ size ++ " to be a finite number greater than zero, got 0" },
+    }}) catch |err| {
+        std.debug.print("{s} took {s} at 0: {s}\n", .{ name, size, call });
+        return err;
+    };
 }
 
 fn isOneOf(comptime name: []const u8, comptime names: []const []const u8) bool {
