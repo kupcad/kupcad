@@ -136,9 +136,12 @@ describe('sceneOf an SVG', () => {
     const orders = order.map((object) => object.renderOrder);
     expect(orders).toEqual([0, 1, 2, 3, 4]);
     const [a, b] = scene.shapes;
+    // All see-through to three.js, which draws an opaque thing before any see-through one
     for (const shape of [a, b]) {
-      expect(/** @type {MeshBasicMaterial} */ (shape.mesh.material).depthTest).toBe(false);
+      const material = /** @type {MeshBasicMaterial} */ (shape.mesh.material);
+      expect(material).toMatchObject({ depthTest: false, transparent: true });
     }
+    expect(scene.edgeMaterial.transparent).toBe(true);
     expect(LAYERS.floor).toBeLessThan(LAYERS.drawing);
     expect(LAYERS.drawing).toBeLessThan(LAYERS.axes);
   });

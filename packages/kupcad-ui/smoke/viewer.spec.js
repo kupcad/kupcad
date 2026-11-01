@@ -72,6 +72,25 @@ test('draws a drawing in its order, over the floor', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("draws a see-through shape in the drawing's order too", async ({ page }) => {
+  // Three.js draws every opaque thing before a see-through one: the black square was under it
+  const errors = /** @type {string[]} */ ([]);
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await page.waitForFunction(() => window.ready);
+  await page.evaluate(() =>
+    window.smoke.show(
+      '[square(40, center: true).material(color: "#d02020", alpha: 0.5), square(10, center: true).material(color: "#000000")]',
+    ),
+  );
+  const black = await page.evaluate(() => window.smoke.pixels(0.46, 0.46, 0.54, 0.54));
+  expect(black.filter((rgb) => !dark(rgb))).toEqual([]);
+  // The see-through square, past the black one, over the background
+  const red = await page.evaluate(() => window.smoke.pixels(0.3, 0.3, 0.35, 0.35));
+  expect(red.filter((rgb) => !leads(rgb, 0))).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('a section on a face cuts it cleanly: the cap at the bottom, the face at the top', async ({
   page,
 }) => {

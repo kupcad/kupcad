@@ -19,6 +19,8 @@ import { faceTriangles } from './faces.js';
 /** How much of the selection's colour the copy under the pointer takes on, and its face. */
 export const COPY_GLOW = 0.2;
 export const FACE_GLOW = 0.4;
+/** A mark is drawn this far after its mesh in the order: before the next (orders are whole). */
+const MARK_AFTER = 0.5;
 /** What a mark draws while it marks nothing. */
 const NOTHING = new BufferGeometry();
 
@@ -72,6 +74,9 @@ export class HoverMark {
           material.needsUpdate = true;
         }
         mesh.add(this.#copy);
+        // Over the mesh, a drawing's shape drawn in its order (model.js), before what is next
+        this.#copy.renderOrder = mesh.renderOrder + MARK_AFTER;
+        this.#face.renderOrder = mesh.renderOrder + MARK_AFTER;
       }
     }
     this.#face.removeFromParent();

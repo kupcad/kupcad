@@ -215,8 +215,9 @@ function drawing(svg, theme) {
   root.scale.y = -1;
   root.renderOrder = LAYERS.drawing;
   let order = 0;
-  // Outlines on the background
-  const edgeMaterial = new LineBasicMaterial({ color: theme.wire });
+  // Outlines on the background. Each thing a drawing draws is see-through to three.js, as are
+  // its fills, which it draws after everything opaque whatever their order: one list, in order
+  const edgeMaterial = new LineBasicMaterial({ color: theme.wire, transparent: true });
   /** @type {Shape[]} */
   const shapes = [];
   for (const path of new SVGLoader().parse(svg).paths) {
@@ -233,7 +234,7 @@ function drawing(svg, theme) {
     const material = new MeshBasicMaterial({
       color: path.color,
       side: DoubleSide,
-      transparent: opacity < 1,
+      transparent: true,
       opacity,
       // Over what is drawn before it; it writes no depth then, so its outline, after it, shows
       depthTest: false,

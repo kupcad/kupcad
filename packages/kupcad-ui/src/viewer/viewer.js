@@ -125,7 +125,8 @@ export class Viewer extends EventTarget {
   #sectionView;
   #raycaster = new Raycaster();
   /** The selected part's edges, in the selection's colour. */
-  #selectionEdges = new LineBasicMaterial();
+  // See-through to three.js, as a drawing's outlines are, so a selected one keeps its order
+  #selectionEdges = new LineBasicMaterial({ transparent: true });
   /** What the pointer is over, marked. */
   #hoverMark = new HoverMark(LIGHT.selection);
   /** @type {SceneModel | null} */

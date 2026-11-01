@@ -102,7 +102,8 @@ For Svelte, the component around it (`@kupcad/ui`'s `Viewer`):
 * **Rendering** is on demand: when the model, a setting or the camera changes, once a frame. A
   solid shows its feature edges; x-ray sees through it; a wireframe is the edges alone. A
   drawing's shapes are drawn in the SVG's order, each over the floor and the ones before it, as
-  SVG draws them (at z = 0 all, depth can't order them); the axes over it.
+  SVG draws them (at z = 0 all, depth can't order them), a see-through one too; the axes over
+  it.
 * **A section** clips every material of a solid's model at its plane and caps the cut where it
   runs inside a solid (three.js's stencil technique), but in a wireframe; a drawing isn't cut. A
   face at the offset is kept, so a cut at the bottom shows the footprint and one at the top the

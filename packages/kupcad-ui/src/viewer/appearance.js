@@ -37,7 +37,8 @@ export function applyRenderMode(model, mode, edges, theme) {
     const material = /** @type {MeshStandardMaterial} */ (shape.mesh.material);
     const xray = mode === 'xray';
     material.visible = mode !== 'wireframe';
-    material.transparent = xray || shape.opacity < 1;
+    // A drawing's shapes always: drawn in their order with its outlines (model.js)
+    material.transparent = model.kind === '2d' || xray || shape.opacity < 1;
     material.opacity = xray ? Math.min(shape.opacity, XRAY_OPACITY) : shape.opacity;
     material.depthWrite = !xray;
     material.needsUpdate = true;

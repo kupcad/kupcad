@@ -132,6 +132,21 @@ describe('applyRenderMode', () => {
   });
 });
 
+it("keeps a drawing's shapes in the one list three.js orders, see-through to it, as they are", async () => {
+  const scene = await sceneOf(
+    await modelOf('[square(4).named("a"), square(2).named("b")]'),
+    new GLTFLoader(),
+    LIGHT,
+  );
+  if (!scene) throw new Error('no scene');
+  for (const mode of /** @type {RenderMode[]} */ (['solid', 'xray', 'solid'])) {
+    applyRenderMode(scene, mode, true, LIGHT);
+    for (const shape of scene.shapes) expect(materialOf(shape).transparent).toBe(true);
+  }
+  // At their own opacity in solid
+  expect(scene.shapes.map((shape) => materialOf(shape).opacity)).toEqual([1, 1]);
+});
+
 describe('edgeColorOf', () => {
   it("is the theme's edges over faces, its wire on the background: a wireframe, a drawing", () => {
     expect(edgeColorOf('3d', 'solid', DARK)).toBe(DARK.edges);

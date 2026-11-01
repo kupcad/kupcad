@@ -39,10 +39,14 @@ describe('HoverMark', () => {
     expect(mark.mark(second, 2)).toBe(true);
     expect(first.children).toHaveLength(0);
     expect(second.children).toHaveLength(2);
-    // A drawing's shape has no face: its copy alone, on both its sides
+    // A drawing's shape has no face: its copy alone, on both its sides, drawn over the shape
+    // in the drawing's order and before the next shape (whole orders apart)
     const shape = new Mesh(geometry, new MeshBasicMaterial({ side: DoubleSide }));
+    shape.renderOrder = 4;
     expect(mark.mark(shape, null)).toBe(true);
     expect(shape.children).toHaveLength(1);
+    expect(shape.children[0].renderOrder).toBeGreaterThan(4);
+    expect(shape.children[0].renderOrder).toBeLessThan(5);
     expect(mark.materials[0].side).toBe(DoubleSide);
     expect(mark.mark(null, null)).toBe(true);
     expect(shape.children).toHaveLength(0);
