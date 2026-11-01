@@ -202,6 +202,35 @@ test "GC: String interning prevents duplicate allocations" {
     try testing.expectEqual(@as(usize, 4), vm.gc.strings.items.len);
 }
 
+test "GC: a sweep leaves no tombstones in the intern tables, which a lookup would probe past" {
+    var vm = try VM.init(testing.allocator, testing.io);
+    defer vm.deinit();
+    collectOnlyWhenAsked(&vm);
+
+    const kept = try vm.gc.allocateString(&vm, "kept");
+    vm.push(value.Value.initObj(&kept.obj));
+    var name_buf: [16]u8 = undefined;
+    for (0..1000) |i| {
+        _ = try vm.gc.allocateString(&vm, try std.fmt.bufPrint(&name_buf, "dropped {d}", .{i}));
+        _ = try vm.gc.allocateSymbol(&vm, try std.fmt.bufPrint(&name_buf, "gone_{d}", .{i}));
+    }
+    vm.gc.collectGarbage(&vm, false);
+
+    try testing.expectEqual(0, tombstones(&vm.strings));
+    try testing.expectEqual(0, tombstones(&vm.symbols));
+    try testing.expectEqual(kept, vm.strings.get("kept").?);
+    try testing.expectEqual(null, vm.strings.get("dropped 7"));
+    try testing.expectEqual(kept, try vm.gc.allocateString(&vm, "kept"));
+}
+
+/// The slots of `map` whose entry was removed and not yet reused.
+fn tombstones(map: anytype) usize {
+    const metadata = map.metadata orelse return 0;
+    var count: usize = 0;
+    for (metadata[0..map.capacity()]) |slot| count += @intFromBool(slot.isTombstone());
+    return count;
+}
+
 test "GC Sandbox: Enforces max_memory_limit strictly" {
     var vm = try VM.init(testing.allocator, testing.io);
     defer vm.deinit();

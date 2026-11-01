@@ -814,12 +814,19 @@ pub const GC = struct {
         // --- SAFE ZERO-ALLOCATION MAP EVICTION ---
         // By iterating the backing arrays directly, we can safely remove from
         // the VM hashmaps without invalidating iterators or allocating temporary tracking lists.
+        var strings_removed = false;
         for (self.strings.items) |str| {
-            if (!str.obj.is_marked) _ = vm.strings.remove(str.chars);
+            if (!str.obj.is_marked) strings_removed = vm.strings.remove(str.chars) or strings_removed;
         }
+        var symbols_removed = false;
         for (self.symbols.items) |sym| {
-            if (!sym.obj.is_marked) _ = vm.symbols.remove(sym.chars);
+            if (!sym.obj.is_marked) symbols_removed = vm.symbols.remove(sym.chars) or symbols_removed;
         }
+        // A removal leaves a tombstone, which a lookup that misses probes past: kept, they
+        // filled the tables, and 200k new Strings took a second where 100k took 35 ms. Rehashing
+        // in place drops them, a pass over the table as the loops above are.
+        if (strings_removed) vm.strings.rehash(std.hash_map.StringContext{});
+        if (symbols_removed) vm.symbols.rehash(std.hash_map.StringContext{});
 
         // Sweep dependent objects before their referenced functions/primitives
         self.sweepList(vm, value.ObjBoundMethod, &self.bound_methods);
