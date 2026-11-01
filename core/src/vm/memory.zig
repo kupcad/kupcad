@@ -433,18 +433,9 @@ pub const GC = struct {
     }
 
     pub fn allocateString(self: *GC, vm: *VM, chars: []const u8) !*value.ObjString {
-        if (vm.strings.get(chars)) |existing| return existing;
-
-        const owned_chars = try self.trackingAllocator().dupe(u8, chars);
-
-        const ptr = self.allocateObject(vm, value.ObjString, &self.strings, .string) catch |err| {
-            self.trackingAllocator().free(owned_chars);
-            return err;
-        };
-        ptr.chars = owned_chars;
-
-        try vm.strings.put(self.allocator, ptr.chars, ptr);
-        return ptr;
+        const known: KnownHash = .of(chars);
+        if (vm.strings.getAdapted(chars, known)) |existing| return existing;
+        return self.internNew(vm, try self.trackingAllocator().dupe(u8, chars), known);
     }
 
     pub fn allocateSymbol(self: *GC, vm: *VM, chars: []const u8) !*value.ObjSymbol {
@@ -477,18 +468,51 @@ pub const GC = struct {
     /// `chars` whatever happens: a duplicate's and a failure's are freed here, so a caller
     /// must not free them (four natives did, on failure, a second time).
     pub fn takeString(self: *GC, vm: *VM, chars: []u8) !*value.ObjString {
-        if (vm.strings.get(chars)) |existing| {
+        const known: KnownHash = .of(chars);
+        if (vm.strings.getAdapted(chars, known)) |existing| {
             self.trackingAllocator().free(chars); // Safely free the duplicate via tracker
             return existing;
         }
+        return self.internNew(vm, chars, known);
+    }
 
+    /// A string's hash, worked out once for its lookup and its insert: a long string was
+    /// hashed for each (and copied in between), so building one up by `s = s + x` hashed
+    /// the whole of it three times a step.
+    const KnownHash = struct {
+        value: u64,
+
+        fn of(chars: []const u8) KnownHash {
+            return .{ .value = std.hash_map.hashString(chars) };
+        }
+
+        pub fn hash(self: KnownHash, _: []const u8) u64 {
+            return self.value;
+        }
+
+        pub fn eql(_: KnownHash, a: []const u8, b: []const u8) bool {
+            return std.mem.eql(u8, a, b);
+        }
+    };
+
+    /// A new interned string of `chars` (tracked; taken whatever happens), which the table
+    /// hasn't got. Its slot is made before the object, so a failure leaves no string the
+    /// table doesn't know, whose sweep would evict a later string of the same text (the
+    /// collector removes a swept string by its text); a collection while the object is
+    /// made only removes others.
+    fn internNew(self: *GC, vm: *VM, chars: []u8, known: KnownHash) !*value.ObjString {
+        vm.strings.ensureUnusedCapacity(self.allocator, 1) catch |err| {
+            self.trackingAllocator().free(chars);
+            return err;
+        };
         const ptr = self.allocateObject(vm, value.ObjString, &self.strings, .string) catch |err| {
             self.trackingAllocator().free(chars);
             return err;
         };
         ptr.chars = chars;
-
-        try vm.strings.put(self.allocator, ptr.chars, ptr);
+        const slot = vm.strings.getOrPutAssumeCapacityAdapted(chars, known);
+        slot.key_ptr.* = chars;
+        slot.value_ptr.* = ptr;
         return ptr;
     }
 

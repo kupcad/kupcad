@@ -1423,14 +1423,9 @@ pub const VM = struct {
 
     // --- Allocators ---
     pub fn allocateString(self: *VM, chars: []const u8) !value.Value {
-        if (self.strings.get(chars)) |existing| {
-            return value.Value.initObj(&existing.obj);
-        }
-
-        // MUST use trackingAllocator so the GC natively registers these bytes.
-        // If it's a duplicate, GC.takeString will safely call trackingAllocator().free to un-track it.
-        const heap_chars = try self.gc.trackingAllocator().dupe(u8, chars);
-        return try self.allocateStringTakeOwnership(heap_chars);
+        // Copied, if new, into the GC's tracked memory, its hash worked out once
+        const str_obj = try self.gc.allocateString(self, chars);
+        return value.Value.initObj(&str_obj.obj);
     }
 
     /// Takes `chars` even when it fails (see GC.takeString).
@@ -2257,11 +2252,12 @@ pub const VM = struct {
                 @memcpy(stack_buf[a_str.len..total_len], b_str);
                 str_val = self.allocateString(stack_buf[0..total_len]) catch |err| return self.allocationFailed(err);
             } else {
-                const heap_buf = self.allocator.alloc(u8, total_len) catch |err| return self.allocationFailed(err);
-                defer self.allocator.free(heap_buf);
-                @memcpy(heap_buf[0..a_str.len], a_str);
-                @memcpy(heap_buf[a_str.len..total_len], b_str);
-                str_val = self.allocateString(heap_buf) catch |err| return self.allocationFailed(err);
+                // Joined once, in the GC's tracked memory, and taken as the string: it was
+                // joined in a scratch buffer, copied again, and hashed three times
+                const joined = self.gc.trackingAllocator().alloc(u8, total_len) catch |err| return self.allocationFailed(err);
+                @memcpy(joined[0..a_str.len], a_str);
+                @memcpy(joined[a_str.len..total_len], b_str);
+                str_val = self.allocateStringTakeOwnership(joined) catch |err| return self.allocationFailed(err);
             }
 
             self.push(str_val);

@@ -1755,6 +1755,17 @@ test "Stdlib: sort without a block orders Numbers and Strings directly, sort_by 
     });
 }
 
+test "Stdlib: a long string joined by + is interned as any other, under collections too" {
+    // Joined in place and hashed once now (it was joined, copied and hashed three times):
+    // equal texts must still be one string, which == compares by
+    const long = "a = Array.new(1500, \"x\").join\nb = Array.new(1499, \"x\").join\n";
+    try expectScripts(&.{
+        .{ .src = long ++ "r = (a + \"y\") == (b + \"xy\")", .expected = .{ .boolean = true }, .gc_stress = true },
+        .{ .src = long ++ "s = \"\"\n3.times { s = s + a }\nr = s.length", .expected = .{ .num = 4500 }, .gc_stress = true },
+        .{ .src = long ++ "r = { (a + \"!\") => 1 }[b + \"x!\"]", .expected = .{ .num = 1 } },
+    });
+}
+
 test "Stdlib: a script may start with a byte order mark" {
     // The three bytes glued to the first name: `x = 1` defined a variable no `x` found
     try expectScripts(&.{
