@@ -84,7 +84,7 @@ const Fixture = struct {
     }
 
     fn link(self: *Fixture) !void {
-        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile);
+        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile, self.tmp_path);
         defer resolver.deinit();
         try resolver.linkWorkspace(self.mem_vfs.vfs());
     }
@@ -121,7 +121,7 @@ const Fixture = struct {
     }
 
     fn resolve(self: *Fixture) !void {
-        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile);
+        var resolver = Resolver.init(testing.allocator, testing.io, &self.cafs, &self.store, &self.manifest, &self.lockfile, self.tmp_path);
         defer resolver.deinit();
         try resolver.resolve();
     }
@@ -250,6 +250,40 @@ test "Resolver: resolve propagates install errors instead of reporting success" 
 
     try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "missing"), try testing.allocator.dupe(u8, "file:/nonexistent-kupcad-audit/pkg.tar.gz"));
     try testing.expectError(error.FileNotFound, fx.resolve());
+}
+
+test "Resolver: a file: archive is read from the project, and may not leave it" {
+    // A cloned project's manifest named any archive on the disk, and install copied it in
+    var fx: Fixture = undefined;
+    try fx.init();
+    defer fx.deinit();
+    var elsewhere = testing.tmpDir(.{});
+    defer elsewhere.cleanup();
+    const gz = try helpers.buildTarGz(testing.allocator, &SAMPLE_PKG);
+    defer testing.allocator.free(gz);
+    try elsewhere.dir.writeFile(testing.io, .{ .sub_path = "pkg.tar.gz", .data = gz });
+    const outside = try elsewhere.dir.realPathFileAlloc(testing.io, "pkg.tar.gz", testing.allocator);
+    defer testing.allocator.free(outside);
+    // By its absolute path, and by a relative one that climbs out (the archive is in the
+    // folder beside the project's: `..`, then its name)
+    const absolute = try std.fmt.allocPrint(testing.allocator, "file:{s}", .{outside});
+    defer testing.allocator.free(absolute);
+    const relative = try std.fmt.allocPrint(testing.allocator, "file:../{s}/pkg.tar.gz", .{std.fs.path.basename(std.fs.path.dirname(outside).?)});
+    defer testing.allocator.free(relative);
+    try fx.manifest.dependencies.put(try testing.allocator.dupe(u8, "by_path"), try testing.allocator.dupe(u8, absolute));
+    try testing.expectError(error.ArchiveOutsideProject, fx.resolve());
+    var climbing: Fixture = undefined;
+    try climbing.init();
+    defer climbing.deinit();
+    try climbing.manifest.dependencies.put(try testing.allocator.dupe(u8, "by_climb"), try testing.allocator.dupe(u8, relative));
+    try testing.expectError(error.ArchiveOutsideProject, climbing.resolve());
+    // Inside, by a path relative to the project
+    var within: Fixture = undefined;
+    try within.init();
+    defer within.deinit();
+    try within.tmp.dir.writeFile(testing.io, .{ .sub_path = "pkg.tar.gz", .data = gz });
+    try within.manifest.dependencies.put(try testing.allocator.dupe(u8, "inside"), try testing.allocator.dupe(u8, "file:./pkg.tar.gz"));
+    try within.resolve();
 }
 
 test "Resolver: resolve verifies cached content against the locked integrity" {
@@ -402,7 +436,7 @@ test "Resolver: an invalid alias fails before any package is fetched" {
         if (!std.mem.eql(u8, it.next().?.*, "-bad")) break;
     } else return error.TestSetupFailed;
 
-    var resolver = Resolver.init(testing.allocator, testing.io, &fx.cafs, &fx.store, &fx.manifest, &fx.lockfile);
+    var resolver = Resolver.init(testing.allocator, testing.io, &fx.cafs, &fx.store, &fx.manifest, &fx.lockfile, fx.tmp_path);
     defer resolver.deinit();
     // It used to validate while spawning, returning with "good"'s worker still running
     // on a resolver about to be freed.

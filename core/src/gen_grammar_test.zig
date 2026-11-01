@@ -136,4 +136,32 @@ test "gen_grammar: the grammars in the packages are what it writes now (else: zi
     const vocabulary = try gen_grammar.generateVocabularyJson(allocator);
     defer allocator.free(vocabulary);
     try testing.expectEqualStrings(vocabulary, @embedFile("grammar/vocabulary.json"));
+    const configuration = try gen_grammar.generateLanguageConfigurationJson(allocator);
+    defer allocator.free(configuration);
+    try testing.expectEqualStrings(configuration, @embedFile("grammar/language-configuration.json"));
+}
+
+test "gen_grammar: the indentation rules know every block keyword, and only at a line's start" {
+    // The hand-written rules left `begin` and `for` out, and `rescue` and `ensure` stayed at
+    // the body's level
+    const allocator = testing.allocator;
+    const configuration = try gen_grammar.generateLanguageConfigurationJson(allocator);
+    defer allocator.free(configuration);
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, configuration, .{});
+    defer parsed.deinit();
+    const rules = parsed.value.object.get("indentationRules").?.object;
+    const increase = rules.get("increaseIndentPattern").?.string;
+    const decrease = rules.get("decreaseIndentPattern").?.string;
+    for ([_][]const u8{ "def", "class", "module", "if", "unless", "while", "until", "case", "for", "begin", "elsif", "else", "when", "rescue", "ensure" }) |word| {
+        errdefer std.debug.print("word: {s}\n", .{word});
+        try testing.expect(std.mem.indexOf(u8, increase, word) != null);
+    }
+    for ([_][]const u8{ "elsif", "else", "when", "rescue", "ensure", "end" }) |word| {
+        errdefer std.debug.print("word: {s}\n", .{word});
+        try testing.expect(std.mem.indexOf(u8, decrease, word) != null);
+    }
+    // `do` and `{` open a block at the end of a line, `}` closes one at the start
+    try testing.expect(std.mem.indexOf(u8, increase, "\\bdo\\b") != null);
+    try testing.expect(std.mem.startsWith(u8, increase, "^\\s*("));
+    try testing.expect(std.mem.endsWith(u8, decrease, "|^\\s*\\}\\s*$"));
 }

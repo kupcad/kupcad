@@ -112,14 +112,14 @@ fn timeOnce(allocator: std.mem.Allocator, io: std.Io, source: []const u8, evalua
     if (doc.diagnostics.len > 0) return error.ParseError;
     ns.set(.parse, clock.lap());
 
+    // Set up by hand, as api.newVm does for every other run: the tools layer may not import
+    // the API. Muted and silent: the script's own output (puts, print, inspect, benchmark)
+    // went into the report, once per run, and the timings don't depend on it being shown.
     var vm = try VM.init(allocator, io);
     defer vm.deinit();
     vm.mute_errors = true;
     vm.line_index = &doc.line_index;
-    defer vm.line_index = null;
     try registry.registerStandardLibrary(&vm);
-    // The script's own output (puts, print, inspect, benchmark) went into the report,
-    // once per run; the timings don't depend on it being shown.
     vm.host.print_handler = null;
     var program = chunk.Chunk.init();
     defer program.free(allocator);

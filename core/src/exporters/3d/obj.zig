@@ -120,8 +120,10 @@ fn writeMaterialName(w: *std.Io.Writer, slot: u32) !void {
 
 /// `text` on the current line: a script's name can hold a line break, which would start
 /// another statement of the file.
+/// `text` on one line of the file: a control character (a line break, which would start
+/// another statement; a NUL, a tab) becomes a space, as DXF and 3MF names leave none in.
 fn writeLineText(w: *std.Io.Writer, text: []const u8) !void {
-    for (text) |c| try w.writeByte(if (c == '\n' or c == '\r') ' ' else c);
+    for (text) |c| try w.writeByte(if (std.ascii.isControl(c)) ' ' else c);
 }
 
 /// The unit normal of triangle `tri` by its winding, or zero for a degenerate one; a

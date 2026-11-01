@@ -198,6 +198,9 @@ test "Cafs: extractTarball rejects escaping and duplicate entries" {
         .{ .name = "lib/A.kup", .data = "1" },
         .{ .name = "LIB/a.kup", .data = "2" },
     });
+    // Beyond ASCII the folding differs by disk (É, é, e + a combining acute), so such a name
+    // is refused rather than guessed at
+    try fx.expectExtractError(error.ArchiveEntryNotAscii, &.{.{ .name = "lib/\xc3\xa9.kup", .data = "1" }});
     // A file where another's folder is, either way round: linking failed half-way (NotDir)
     try fx.expectExtractError(error.ArchivePathConflict, &.{
         .{ .name = "a", .data = "1" },

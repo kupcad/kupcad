@@ -15,6 +15,9 @@ pub const MAX_URL_BYTES: usize = 8 * 1024;
 /// timeout, and drops the one its connect is given, so a host that stopped sending held
 /// `kupcad pkg install` for good.
 pub const STALL_TIMEOUT: std.Io.Duration = .fromSeconds(30);
+/// The most a request may take in all, however steadily it receives: a host that trickles
+/// bytes held `pkg install` for good.
+pub const TOTAL_TIMEOUT: std.Io.Duration = .fromSeconds(10 * 60);
 
 /// What a GET accepts: bodies are read as they come (JSON, or an archive that is already
 /// gzipped), so a compressed one reached the JSON parser still compressed. A server that
@@ -145,16 +148,18 @@ pub const Counted = struct {
     }
 };
 
-/// What `watched(…, run, …)` returns: `run`'s result, or error.DownloadStalled.
+/// What `watched(…, run, …)` returns: `run`'s result, error.DownloadStalled or
+/// error.DownloadTimedOut.
 pub fn Watched(comptime run: anytype) type {
     const result = @typeInfo(@typeInfo(@TypeOf(run)).@"fn".return_type.?).error_union;
-    return (error{DownloadStalled} || std.Io.ConcurrentError || result.error_set)!result.payload;
+    return (error{ DownloadStalled, DownloadTimedOut } || std.Io.ConcurrentError || result.error_set)!result.payload;
 }
 
 /// `run(args…, received)` on a thread of its own, abandoned once `received` hasn't grown for
-/// `stall` (noticed within twice that): error.DownloadStalled. A request that ended as it was
-/// abandoned keeps what it got. Canceling the caller cancels the request too.
-pub fn watched(io: std.Io, stall: std.Io.Duration, comptime run: anytype, args: anytype) Watched(run) {
+/// `stall` (noticed within twice that): error.DownloadStalled; or once `total` has passed
+/// since it started, however steadily it received: error.DownloadTimedOut. A request that
+/// ended as it was abandoned keeps what it got. Canceling the caller cancels the request too.
+pub fn watched(io: std.Io, stall: std.Io.Duration, total: std.Io.Duration, comptime run: anytype, args: anytype) Watched(run) {
     const Task = struct {
         fn call(task_io: std.Io, done: *std.Io.Event, task_args: @TypeOf(args), received: *Received) @typeInfo(@TypeOf(run)).@"fn".return_type.? {
             defer done.set(task_io);
@@ -164,7 +169,7 @@ pub fn watched(io: std.Io, stall: std.Io.Duration, comptime run: anytype, args: 
     var received: Received = .init(0);
     var done: std.Io.Event = .unset;
     var task = try io.concurrent(Task.call, .{ io, &done, args, &received });
-    const stalled = untilStalled(io, &done, &received, stall) catch |err| switch (err) {
+    const ended = untilStalled(io, &done, &received, stall, total) catch |err| switch (err) {
         // What the request got meanwhile is the caller's still, who sees the cancelation at
         // its next point
         error.Canceled => {
@@ -173,29 +178,40 @@ pub fn watched(io: std.Io, stall: std.Io.Duration, comptime run: anytype, args: 
             return result;
         },
     };
-    if (!stalled) return task.await(io);
-    return task.cancel(io) catch error.DownloadStalled;
+    switch (ended) {
+        .done => return task.await(io),
+        .stalled => return task.cancel(io) catch error.DownloadStalled,
+        .timed_out => return task.cancel(io) catch error.DownloadTimedOut,
+    }
 }
 
-/// Waits until `done`, or until `received` hasn't grown for `stall`; whether it stalled.
-fn untilStalled(io: std.Io, done: *std.Io.Event, received: *const Received, stall: std.Io.Duration) std.Io.Cancelable!bool {
+/// How a watched request ended: of itself, receiving nothing for the stall, or past the total.
+const Ended = enum { done, stalled, timed_out };
+
+/// Waits until `done`, until `received` hasn't grown for `stall`, or until `total` has
+/// passed.
+fn untilStalled(io: std.Io, done: *std.Io.Event, received: *const Received, stall: std.Io.Duration, total: std.Io.Duration) std.Io.Cancelable!Ended {
     const window: std.Io.Clock.Duration = .{ .raw = stall, .clock = .awake };
     var seen = received.load(.monotonic);
-    var deadline = std.Io.Clock.Timestamp.now(io, .awake).addDuration(window);
+    const started = std.Io.Clock.Timestamp.now(io, .awake);
+    const last = started.addDuration(.{ .raw = total, .clock = .awake });
+    var deadline = started.addDuration(window);
     while (true) {
-        done.waitTimeout(io, .{ .deadline = deadline }) catch |err| switch (err) {
+        const next = if (deadline.raw.nanoseconds < last.raw.nanoseconds) deadline else last;
+        done.waitTimeout(io, .{ .deadline = next }) catch |err| switch (err) {
             error.Canceled => |e| return e,
             // Or woken early: it stalled only once nothing came all the while
             error.Timeout => {
                 const now = std.Io.Clock.Timestamp.now(io, .awake);
+                if (now.raw.nanoseconds >= last.raw.nanoseconds) return .timed_out;
                 const count = received.load(.monotonic);
                 if (count != seen) {
                     seen = count;
                     deadline = now.addDuration(window);
-                } else if (now.raw.nanoseconds >= deadline.raw.nanoseconds) return true;
+                } else if (now.raw.nanoseconds >= deadline.raw.nanoseconds) return .stalled;
                 continue;
             },
         };
-        return false;
+        return .done;
     }
 }

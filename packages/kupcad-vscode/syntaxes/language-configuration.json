@@ -3,9 +3,18 @@
     "lineComment": "#"
   },
   "brackets": [
-    ["{", "}"],
-    ["[", "]"],
-    ["(", ")"]
+    [
+      "{",
+      "}"
+    ],
+    [
+      "[",
+      "]"
+    ],
+    [
+      "(",
+      ")"
+    ]
   ],
   "autoClosingPairs": [
     {
@@ -23,17 +32,23 @@
     {
       "open": "\"",
       "close": "\"",
-      "notIn": ["string"]
+      "notIn": [
+        "string"
+      ]
     },
     {
       "open": "'",
       "close": "'",
-      "notIn": ["string"]
+      "notIn": [
+        "string"
+      ]
     },
     {
       "open": "|",
       "close": "|",
-      "notIn": ["string"]
+      "notIn": [
+        "string"
+      ]
     }
   ],
   "surroundingPairs": [
@@ -63,7 +78,7 @@
     }
   ],
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(def|class|module|if|elsif|else|while|until|case|when|unless)\\b.*$|.*\\bdo\\b\\s*(\\|.*\\|)?\\s*$|.*\\{\\s*(\\|.*\\|)?\\s*$",
-    "decreaseIndentPattern": "^\\s*(elsif|else|when|end)\\b.*$|^\\s*\\}\\s*$"
+    "increaseIndentPattern": "^\\s*(def|class|module|if|unless|while|until|case|for|begin|elsif|else|when|rescue|ensure)\\b.*$|.*\\bdo\\b\\s*(\\|.*\\|)?\\s*$|.*\\{\\s*(\\|.*\\|)?\\s*$",
+    "decreaseIndentPattern": "^\\s*(elsif|else|when|rescue|ensure|end)\\b.*$|^\\s*\\}\\s*$"
   }
 }

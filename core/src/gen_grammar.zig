@@ -87,6 +87,68 @@ pub const Vocabulary = struct {
     }
 };
 
+/// The keywords that open a block, whose body is indented: VS Code's indentation rules
+/// (`generateLanguageConfigurationJson`) are made of these, where a hand-written copy left
+/// `begin` and `for` out. `do` and `{` open one at a line's end, read apart.
+const BLOCK_OPENERS = [_][]const u8{ "def", "class", "module", "if", "unless", "while", "until", "case", "for", "begin" };
+/// The keywords that continue a block at its opener's level: dedented themselves, their
+/// body indented. `rescue` and `ensure` were missing, so they stayed at the body's level.
+const BLOCK_MIDDLES = [_][]const u8{ "elsif", "else", "when", "rescue", "ensure" };
+/// The keyword that closes a block.
+const BLOCK_CLOSER = "end";
+
+comptime {
+    for (BLOCK_OPENERS ++ BLOCK_MIDDLES ++ .{BLOCK_CLOSER}) |word| {
+        if (!kupcad_lexer.keywords.has(word)) @compileError("not a keyword of the lexer: " ++ word);
+    }
+}
+
+/// The VS Code extension's `syntaxes/language-configuration.json`: comments, brackets, the
+/// pairs the editor closes and surrounds, and the indentation rules, from the block keywords.
+pub fn generateLanguageConfigurationJson(allocator: std.mem.Allocator) ![]const u8 {
+    const openers = comptime joinWords(&(BLOCK_OPENERS ++ BLOCK_MIDDLES));
+    const closers = comptime joinWords(&(BLOCK_MIDDLES ++ .{BLOCK_CLOSER}));
+    const configuration = .{
+        .comments = .{ .lineComment = "#" },
+        .brackets = .{ .{ "{", "}" }, .{ "[", "]" }, .{ "(", ")" } },
+        .autoClosingPairs = .{
+            .{ .open = "{", .close = "}" },
+            .{ .open = "[", .close = "]" },
+            .{ .open = "(", .close = ")" },
+            .{ .open = "\"", .close = "\"", .notIn = .{"string"} },
+            .{ .open = "'", .close = "'", .notIn = .{"string"} },
+            .{ .open = "|", .close = "|", .notIn = .{"string"} },
+        },
+        .surroundingPairs = .{
+            .{ .open = "{", .close = "}" },
+            .{ .open = "[", .close = "]" },
+            .{ .open = "(", .close = ")" },
+            .{ .open = "\"", .close = "\"" },
+            .{ .open = "'", .close = "'" },
+            .{ .open = "|", .close = "|" },
+        },
+        .indentationRules = .{
+            // A block keyword starting the line, or a `do` or `{` ending it (block parameters
+            // after it or not): the next line goes in
+            .increaseIndentPattern = "^\\s*(" ++ openers ++ ")\\b.*$|.*\\bdo\\b\\s*(\\|.*\\|)?\\s*$|.*\\{\\s*(\\|.*\\|)?\\s*$",
+            // A keyword that continues or closes a block, or a closing brace, starting the
+            // line: the line itself comes out
+            .decreaseIndentPattern = "^\\s*(" ++ closers ++ ")\\b.*$|^\\s*\\}\\s*$",
+        },
+    };
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try out.writer.print("{f}\n", .{std.json.fmt(configuration, .{ .whitespace = .indent_2 })});
+    return try allocator.dupe(u8, out.written());
+}
+
+/// `words` as the alternatives of a regular expression: `a|b|c`.
+fn joinWords(comptime words: []const []const u8) []const u8 {
+    comptime var joined: []const u8 = "";
+    inline for (words, 0..) |word, i| joined = joined ++ (if (i == 0) "" else "|") ++ word;
+    return joined;
+}
+
 /// The words `@kupcad/editor` highlights by (its `src/vocabulary.json`): the keywords, the global
 /// functions, and the methods (a Solid's or a value's), each list sorted, each word once.
 pub fn generateVocabularyJson(allocator: std.mem.Allocator) ![]const u8 {
@@ -346,7 +408,8 @@ fn wordsMatch(allocator: std.mem.Allocator, list: *std.ArrayList([]const u8), co
     return out.toOwnedSlice();
 }
 
-/// Writes the TextMate grammar to the first path given, and the editor's vocabulary to the second.
+/// Writes the TextMate grammar to the first path given, the editor's vocabulary to the second
+/// and the VS Code language configuration to the third.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
@@ -355,8 +418,9 @@ pub fn main(init: std.process.Init) !void {
     _ = args_iter.skip(); // skip executable name
     const grammar_path = args_iter.next();
     const vocabulary_path = args_iter.next();
-    if (grammar_path == null or vocabulary_path == null) {
-        log_helpers.printStderr(io, "Usage: gen_grammar <tmLanguage.json> <vocabulary.json>\n", .{});
+    const configuration_path = args_iter.next();
+    if (grammar_path == null or vocabulary_path == null or configuration_path == null) {
+        log_helpers.printStderr(io, "Usage: gen_grammar <tmLanguage.json> <vocabulary.json> <language-configuration.json>\n", .{});
         std.process.exit(1);
     }
 
@@ -364,8 +428,11 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(grammar);
     const vocabulary = try generateVocabularyJson(allocator);
     defer allocator.free(vocabulary);
+    const configuration = try generateLanguageConfigurationJson(allocator);
+    defer allocator.free(configuration);
     const cwd = std.Io.Dir.cwd();
     try cwd.writeFile(io, .{ .sub_path = grammar_path.?, .data = grammar });
     try cwd.writeFile(io, .{ .sub_path = vocabulary_path.?, .data = vocabulary });
-    log_helpers.printStdout(io, "Wrote the TextMate grammar to {s} and the editor's vocabulary to {s}\n", .{ grammar_path.?, vocabulary_path.? });
+    try cwd.writeFile(io, .{ .sub_path = configuration_path.?, .data = configuration });
+    log_helpers.printStdout(io, "Wrote the TextMate grammar to {s}, the editor's vocabulary to {s} and the language configuration to {s}\n", .{ grammar_path.?, vocabulary_path.?, configuration_path.? });
 }

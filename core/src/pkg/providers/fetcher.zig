@@ -21,6 +21,8 @@ pub const Fetcher = struct {
     client: std.http.Client,
     /// How long a request may receive nothing before it is abandoned (`http_client.watched`).
     stall: std.Io.Duration = http_client.STALL_TIMEOUT,
+    /// The most a request may take in all, however steadily it receives.
+    total: std.Io.Duration = http_client.TOTAL_TIMEOUT,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io) Fetcher {
         const client = std.http.Client{ .allocator = allocator, .io = io };
@@ -81,7 +83,7 @@ pub const Fetcher = struct {
 
     /// GETs a provider API URL and returns its (bounded) body; caller frees.
     fn fetchApiBody(self: *Fetcher, url_str: []const u8) ![]u8 {
-        return http_client.watched(self.io, self.stall, readApiBody, .{ self, url_str });
+        return http_client.watched(self.io, self.stall, self.total, readApiBody, .{ self, url_str });
     }
 
     fn readApiBody(self: *Fetcher, url_str: []const u8, received: *http_client.Received) ![]u8 {
@@ -153,7 +155,7 @@ pub const Fetcher = struct {
     }
 
     pub fn downloadArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout) !cafs_mod.Archive {
-        return http_client.watched(self.io, self.stall, readArchive, .{ self, url_str, cafs, layout });
+        return http_client.watched(self.io, self.stall, self.total, readArchive, .{ self, url_str, cafs, layout });
     }
 
     fn readArchive(self: *Fetcher, url_str: []const u8, cafs: *Cafs, layout: cafs_mod.ArchiveLayout, received: *http_client.Received) !cafs_mod.Archive {

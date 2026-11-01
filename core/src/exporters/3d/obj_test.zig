@@ -45,3 +45,12 @@ test "OBJ: with a material library, the file names it and each run of faces its 
     try testing.expect(std.mem.indexOf(u8, text, "\nmtllib p.mtl\no p\n") != null);
     try testing.expectEqual(@as(usize, 1), std.mem.count(u8, text, "\nusemtl default\n"));
 }
+
+test "OBJ: a part's name stays on its line, every control character a space" {
+    // A line break became a statement of its own; a NUL reached the file raw
+    const part = kernel.cube(&.{}, 1, 1, 1, false) orelse return error.KernelFailed;
+    defer kernel.destruct(part);
+    const text = try obj.build(testing.allocator, &.{.{ .handle = part, .name = "a\nb\x00c\td\x7fe" }}, "rack", null);
+    defer testing.allocator.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "\no a b c d e\n") != null);
+}

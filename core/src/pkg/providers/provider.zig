@@ -179,7 +179,10 @@ fn providerFor(domain: []const u8, declared: ?ProviderType) !ProviderType {
     return declared orelse error.UnknownPackageHost;
 }
 
-/// Direct archive URLs must be absolute http(s) URLs with a plain hostname.
+/// Direct archive URLs must be absolute http(s) URLs with a plain hostname; plain `http://`
+/// only to a local or intranet host (a test server, a registry of one's own): from a public
+/// host an archive taken over cleartext on first install could be anyone's
+/// (InsecureArchiveUrl).
 fn validateArchiveUrl(url: []const u8) !void {
     if (!std.mem.startsWith(u8, url, "https://") and !std.mem.startsWith(u8, url, "http://")) return error.InvalidPackageUrl;
     for (url) |c| if (c <= ' ' or c == 0x7f) return error.InvalidPackageUrl;
@@ -188,4 +191,5 @@ fn validateArchiveUrl(url: []const u8) !void {
     var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
     const host = std.Io.net.HostName.fromUri(uri, &host_buf) catch return error.InvalidPackageUrl;
     validate.validateHost(host.bytes) catch return error.InvalidPackageUrl;
+    if (std.mem.startsWith(u8, url, "http://") and validate.isPublicRegistryHost(host.bytes)) return error.InsecureArchiveUrl;
 }

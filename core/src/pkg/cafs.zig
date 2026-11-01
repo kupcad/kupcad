@@ -56,6 +56,9 @@ pub const ExtractLimits = struct {
 /// Normalizes a tar entry name into a safe relative path, or fails.
 /// Rejects anything that could resolve outside the package root or that has a
 /// different meaning on another OS (backslashes, drive letters / ADS via ':').
+/// `name` as a path under the package: relative, without `..`, `\\`, `:` or NUL, and ASCII
+/// (ArchiveEntryNotAscii otherwise): two spellings of `é` are one file on some disks (macOS
+/// folds case and composition) and two on others, so one of them was silently dropped.
 pub fn sanitizeEntryPath(buffer: []u8, name: []const u8) ![]const u8 {
     if (name.len == 0 or name[0] == '/') return error.UnsafeArchivePath;
     var len: usize = 0;
@@ -65,6 +68,7 @@ pub fn sanitizeEntryPath(buffer: []u8, name: []const u8) ![]const u8 {
         if (std.mem.eql(u8, component, "..")) return error.UnsafeArchivePath;
         for (component) |c| {
             if (c == 0 or c == '\\' or c == ':') return error.UnsafeArchivePath;
+            if (c >= 0x80) return error.ArchiveEntryNotAscii;
         }
         if (len > 0) {
             if (len >= buffer.len) return error.UnsafeArchivePath;

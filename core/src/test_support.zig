@@ -7,7 +7,7 @@ const InterpretResult = @import("vm/vm.zig").InterpretResult;
 const chunk = @import("vm/chunk.zig");
 const Document = @import("frontend/document.zig").Document;
 const Compiler = @import("compiler/compiler.zig").Compiler;
-const registry = @import("stdlib/registry.zig");
+const api = @import("api.zig");
 const ErrorKind = @import("vm/error_kind.zig").ErrorKind;
 const value = @import("core/value.zig");
 const disassembler = @import("tools/dev/disassembler.zig");
@@ -82,12 +82,7 @@ pub fn initVm() !VM {
 /// `initVm` on `allocator`: one that records no stack traces, for a test whose scripts are
 /// heavy (the testing allocator unwinds the stack on every allocation and free).
 pub fn initVmWith(allocator: std.mem.Allocator) !VM {
-    var vm = try VM.init(allocator, std.testing.io);
-    errdefer vm.deinit();
-    vm.mute_errors = true;
-    try registry.registerStandardLibrary(&vm);
-    vm.host.print_handler = null;
-    return vm;
+    return api.newVm(allocator, std.testing.io, null, .{ .muted = true, .silent = true });
 }
 
 /// Compiles and runs `source` on `vm`. A syntax error fails the test.

@@ -59,13 +59,30 @@ test "Providers: an http package's archive is its URL, a local one's the path it
     try tmp.dir.writeFile(testing.io, .{ .sub_path = "pkg.tar.gz", .data = "" });
     const dir = try tmp.dir.realPathFileAlloc(testing.io, ".", testing.allocator);
     defer testing.allocator.free(dir);
-    const spec = try std.mem.concat(testing.allocator, u8, &.{ "file:", dir, "/./pkg.tar.gz" });
-    defer testing.allocator.free(spec);
-    const local = try LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse(spec), "");
-    defer testing.allocator.free(local);
     const expected = try std.fs.path.join(testing.allocator, &.{ dir, "pkg.tar.gz" });
     defer testing.allocator.free(expected);
+    // Relative to the project (its folder given as written), or absolute inside it
+    const local = try LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse("file:./pkg.tar.gz"), dir);
+    defer testing.allocator.free(local);
     try testing.expectEqualStrings(expected, local);
+    const spec = try std.mem.concat(testing.allocator, u8, &.{ "file:", dir, "/./pkg.tar.gz" });
+    defer testing.allocator.free(spec);
+    const absolute = try LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse(spec), dir);
+    defer testing.allocator.free(absolute);
+    try testing.expectEqualStrings(expected, absolute);
     // A path that isn't there is the install's error, not a link to nothing
-    try testing.expectError(error.FileNotFound, LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse("file:/nonexistent-kupcad-provider/pkg.tar.gz"), ""));
+    try testing.expectError(error.FileNotFound, LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse("file:nonexistent/pkg.tar.gz"), dir));
+    // One outside the project is refused, however it is written: a cloned manifest named any
+    // archive on the disk
+    var elsewhere = testing.tmpDir(.{});
+    defer elsewhere.cleanup();
+    try elsewhere.dir.writeFile(testing.io, .{ .sub_path = "pkg.tar.gz", .data = "" });
+    const outside = try elsewhere.dir.realPathFileAlloc(testing.io, "pkg.tar.gz", testing.allocator);
+    defer testing.allocator.free(outside);
+    const by_path = try std.mem.concat(testing.allocator, u8, &.{ "file:", outside });
+    defer testing.allocator.free(by_path);
+    try testing.expectError(error.ArchiveOutsideProject, LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse(by_path), dir));
+    const by_climb = try std.mem.concat(testing.allocator, u8, &.{ "file:../", std.fs.path.basename(std.fs.path.dirname(outside).?), "/pkg.tar.gz" });
+    defer testing.allocator.free(by_climb);
+    try testing.expectError(error.ArchiveOutsideProject, LocalProvider.formatArchiveUrl(testing.allocator, testing.io, try ParsedPackage.parse(by_climb), dir));
 }

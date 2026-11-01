@@ -131,12 +131,24 @@ fn readBody(client: *std.http.Client, url: []const u8, received: *http_client.Re
     return body.interface.allocRemaining(testing.allocator, .limited(1024));
 }
 
-/// `readBody` of `path` on `server`, watched for `stall`.
+/// `readBody` of `path` on `server`, watched for `stall`, and for `total` in all.
 fn watchedBody(server: *const SlowServer, stall: std.Io.Duration) ![]u8 {
+    return watchedBodyWithin(server, stall, http_client.TOTAL_TIMEOUT);
+}
+
+fn watchedBodyWithin(server: *const SlowServer, stall: std.Io.Duration, total: std.Io.Duration) ![]u8 {
     var client = std.http.Client{ .allocator = testing.allocator, .io = testing.io };
     defer client.deinit();
     var url_buf: [64]u8 = undefined;
-    return http_client.watched(testing.io, stall, readBody, .{ &client, try server.url(&url_buf, "/p.tar.gz") });
+    return http_client.watched(testing.io, stall, total, readBody, .{ &client, try server.url(&url_buf, "/p.tar.gz") });
+}
+
+test "HTTP client: a request that keeps receiving is abandoned past the total, all the same" {
+    // A host that trickled bytes, each within the stall, held pkg install for good
+    var server: SlowServer = undefined;
+    try server.start(.{ .pieces = 100, .gap = .fromMilliseconds(10), .length = 100 });
+    defer server.stop();
+    try testing.expectError(error.DownloadTimedOut, watchedBodyWithin(&server, .fromMilliseconds(500), .fromMilliseconds(100)));
 }
 
 test "HTTP client: a request whose host never answers is abandoned" {

@@ -207,7 +207,8 @@ fn addOrInstall(init: std.process.Init, allocator: std.mem.Allocator, added: ?De
         }
     }
 
-    var resolver = Resolver.init(allocator, init.io, cafs, store, &manifest, &lockfile);
+    // The project is the working directory, whose kupcad.json this reads
+    var resolver = Resolver.init(allocator, init.io, cafs, store, &manifest, &lockfile, ".");
     defer resolver.deinit();
 
     // Any resolution/verification failure aborts before kupcad.lock is rewritten.

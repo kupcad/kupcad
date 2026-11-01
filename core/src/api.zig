@@ -122,10 +122,8 @@ pub fn checkDocument(allocator: std.mem.Allocator, io: std.Io, doc: *const Docum
 /// Compiles `doc` (without running it) and returns its compile error, if any, with a
 /// message the caller owns.
 fn compileError(allocator: std.mem.Allocator, io: std.Io, doc: *const Document) !?Diagnostic {
-    var vm = try VM.init(allocator, io);
+    var vm = try newVm(allocator, io, null, .{ .muted = true });
     defer vm.deinit();
-    vm.mute_errors = true;
-    try registry.registerStandardLibrary(&vm);
 
     var out_chunk = chunk.Chunk.init();
     defer out_chunk.free(allocator);
@@ -208,11 +206,8 @@ fn modelFingerprint(allocator: std.mem.Allocator, io: std.Io, source: []const u8
     // Its imports are read from the disk, as `kupcad check` runs it
     var disk = NativeVfs.init(io, std.Io.Dir.cwd());
     var sandbox = ReadOnlyVfs.init(disk.vfs(), null);
-    var vm = try runVm(allocator, io, &doc, .{ .vfs = sandbox.vfs() });
+    var vm = try runVm(allocator, io, &doc, .{ .vfs = sandbox.vfs(), .interactive = true, .muted = true, .silent = true });
     defer vm.deinit();
-    vm.mute_errors = true;
-    vm.useInteractiveLimits();
-    vm.host.print_handler = null; // puts, print, inspect, benchmark
 
     var program = chunk.Chunk.init();
     defer program.free(allocator);
@@ -360,32 +355,49 @@ pub fn buildModel(allocator: std.mem.Allocator, io: std.Io, source: []const u8, 
     };
 }
 
-/// What a script run in a VM of its own is given (buildModel's, previewScript's): the file
-/// system its imports and exports go through, its parameters' values, and the engine a
-/// format needs, when it needs one.
-const RunSetup = struct {
+/// How a VM is set up for one run or compilation (newVm): the file system its imports and
+/// exports go through, its parameters' values, the engine a format needs, and its switches.
+pub const RunSetup = struct {
     vfs: Vfs = .none,
     params: ?*const ParamValues = null,
     engine: ?geom.EngineType = null,
+    /// The limits of a run someone waits on (VM.useInteractiveLimits).
     interactive: bool = false,
+    /// The script heap's cap, in place of the interactive one (a host's --memory-limit).
+    memory_limit: ?usize = null,
     /// A preview's run: `CAD.preview?` true, what it prints kept for its frame.
     preview: bool = false,
+    /// Its errors stay off the log: whoever runs it reads them (a tool, a hover, a test). A
+    /// test's VM is muted whatever this says (VM.init).
+    muted: bool = false,
+    /// What the script prints (puts, print, inspect, benchmark) is dropped.
+    silent: bool = false,
 };
 
-/// A VM for one run of `doc` as `setup` says: its errors placed by the document's lines (so
-/// `doc` outlives it), the standard library registered, the parameters given. The caller
-/// deinits it.
-fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: RunSetup) !VM {
+/// A VM set up as `setup` says, its errors placed by `line_index` when there is one (which
+/// must outlive it), the standard library registered, the parameters given. The caller
+/// deinits it. Every tool that runs or compiles a document of its own (a build, a preview,
+/// a hover, a benchmark, a test) sets its VM up here: each did it by hand, and remembered
+/// different switches.
+pub fn newVm(allocator: std.mem.Allocator, io: std.Io, line_index: ?*const LineIndex, setup: RunSetup) !VM {
     var vm = try VM.init(allocator, io);
     errdefer vm.deinit();
     vm.vfs = setup.vfs;
-    vm.line_index = &doc.line_index;
+    vm.line_index = line_index;
+    if (setup.muted) vm.mute_errors = true;
     if (setup.interactive) vm.useInteractiveLimits();
+    if (setup.memory_limit) |bytes| vm.setMemoryLimit(bytes);
     vm.previewing = setup.preview;
     try registry.registerStandardLibrary(&vm);
+    if (setup.silent) vm.host.print_handler = null;
     if (setup.engine) |engine| try vm.setRunEngine(engine);
     if (setup.params) |params| try injectParams(&vm, params);
     return vm;
+}
+
+/// `newVm` for one run of `doc`, its errors placed by the document's lines.
+fn runVm(allocator: std.mem.Allocator, io: std.Io, doc: *const Document, setup: RunSetup) !VM {
+    return newVm(allocator, io, &doc.line_index, setup);
 }
 
 /// How previewScript runs a script: with these parameter values, its imports read through

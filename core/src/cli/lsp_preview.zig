@@ -694,16 +694,10 @@ pub const HoverRun = struct {
         const self = try allocator.create(HoverRun);
         errdefer allocator.destroy(self);
         self.* = .{ .allocator = allocator, .vm = undefined, .program = chunk.Chunk.init() };
-        self.vm = try VM.init(allocator, io);
+        // Muted: its errors are the document's diagnostics. Previewing: hovers read the run
+        // the preview shows, under its memory limit
+        self.vm = try api.newVm(allocator, io, null, .{ .vfs = sandbox, .muted = true, .interactive = true, .memory_limit = memory_limit, .preview = true, .params = params });
         errdefer self.vm.deinit();
-        self.vm.vfs = sandbox;
-        self.vm.mute_errors = true; // its errors are the document's diagnostics
-        self.vm.useInteractiveLimits();
-        self.vm.setMemoryLimit(memory_limit); // as the preview's
-        // Hovers read the run the preview shows
-        self.vm.previewing = true;
-        try registry.registerStandardLibrary(&self.vm);
-        try api.injectParams(&self.vm, params);
 
         var comp = Compiler.forDocument(allocator, doc, &self.program, &self.vm);
         defer comp.deinit();

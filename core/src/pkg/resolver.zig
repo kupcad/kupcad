@@ -37,6 +37,9 @@ pub const Resolver = struct {
     store: *Store,
     manifest: *Manifest,
     lockfile: *Lockfile,
+    /// The project's folder (its kupcad.json's), which a `file:` archive is read from and
+    /// may not leave.
+    project_dir: []const u8,
     /// One HTTP client for every package: the connections are pooled and the system's
     /// root certificates are loaded once (a client per package loaded them per package).
     fetcher: Fetcher,
@@ -52,7 +55,7 @@ pub const Resolver = struct {
     /// so a failed install never reports success.
     first_error: ?anyerror = null,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store, manifest: *Manifest, lockfile: *Lockfile) Resolver {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, cafs: *Cafs, store: *Store, manifest: *Manifest, lockfile: *Lockfile, project_dir: []const u8) Resolver {
         return .{
             .allocator = allocator,
             .io = io,
@@ -60,6 +63,7 @@ pub const Resolver = struct {
             .store = store,
             .manifest = manifest,
             .lockfile = lockfile,
+            .project_dir = project_dir,
             .fetcher = Fetcher.init(allocator, io),
         };
     }
@@ -292,7 +296,7 @@ pub const Resolver = struct {
                 return self.fetcher.downloadArchive(archive_url, self.cafs, parsed.provider.archiveLayout());
             },
             .local => {
-                const path = try LocalProvider.formatArchiveUrl(self.allocator, self.io, parsed, "");
+                const path = try LocalProvider.formatArchiveUrl(self.allocator, self.io, parsed, self.project_dir);
                 defer self.allocator.free(path);
                 return self.fetcher.openLocalArchive(path, self.cafs);
             },
