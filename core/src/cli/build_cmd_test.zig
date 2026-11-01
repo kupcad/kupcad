@@ -355,7 +355,7 @@ test "build_cmd: -P reads a JSON object of values, and of two for one parameter 
         try args.appendSlice(testing.allocator, case);
         var res = try runBuild(args.items);
         defer res.deinit();
-            try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
+        try testing.expectEqual(build_cmd.Outcome.success, res.outcome);
     }
 }
 
@@ -378,7 +378,7 @@ test "build_cmd: -P refuses a file it can't read, and one that isn't parameter v
     for (cases) |case| {
         var res = try runBuild(&.{ fx.input, "-P", case.file, "-o", fx.output });
         defer res.deinit();
-            try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
         try testing.expect(std.mem.startsWith(u8, res.text(), "Error: "));
         try testing.expect(std.mem.endsWith(u8, res.text(), case.message));
         try testing.expect(std.mem.find(u8, res.text(), case.file) != null);
@@ -449,7 +449,7 @@ test "build_cmd: several -o refuse a --format, a .step beside a mesh, and an opt
         }
         var res = try runBuild(args.items);
         defer res.deinit();
-            try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
         try testing.expectEqualStrings(case.message, res.text());
     }
     try testing.expectEqual(@as(usize, 1), try fx.entryCount()); // nothing was written
