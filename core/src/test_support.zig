@@ -163,6 +163,9 @@ pub fn expectScripts(cases: []const ScriptCase) !void {
         errdefer std.debug.print("script:\n{s}\n", .{case.src});
         var vm = try initVm();
         defer vm.deinit();
+        // What failed the run, beside the script: a failure read `expected .ok, found
+        // .runtime_error`, and the VM's errors are muted in tests
+        errdefer if (vm.last_error) |message| std.debug.print("error: {s}\n", .{message});
         var files = MemoryVfs.init(std.testing.allocator);
         defer files.deinit();
         for (case.files) |file| try files.vfs().writeFile(file.path, file.data);
@@ -180,6 +183,7 @@ pub fn expectRuns(expected: InterpretResult, sources: []const []const u8) !void 
         errdefer std.debug.print("script:\n{s}\n", .{src});
         var vm = try initVm();
         defer vm.deinit();
+        errdefer if (vm.last_error) |message| std.debug.print("error: {s}\n", .{message});
         try std.testing.expectEqual(expected, try runOn(&vm, src));
     }
 }
