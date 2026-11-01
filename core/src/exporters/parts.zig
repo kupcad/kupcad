@@ -262,7 +262,7 @@ pub fn measuresOf(vm: *VM, part: Part, unmeasurable: Unmeasurable) !?Measures {
     }
     // An empty part is nothing in size: its box was ±infinity, and the parts list `-inf`,
     // which isn't JSON
-    if (kernel.numVerts(solid) == 0) return .{ .volume = 0, .size = .{ 0, 0, 0 } };
+    if (kernel.isEmpty(solid)) return .{ .volume = 0, .size = .{ 0, 0, 0 } };
     const box = kernel.boundingBox(solid) orelse return switch (unmeasurable) {
         .leave_out => null,
         .refuse => vm.fail(.GeometryError, "bom could not compute the bounding box of a part", .{}),

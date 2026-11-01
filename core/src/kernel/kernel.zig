@@ -377,6 +377,13 @@ pub inline fn numVerts(handle: geom.GeometryHandle) usize {
     return dispatch("numVertsFn", handle, .{});
 }
 
+/// Whether the solid holds nothing: a mesh of no vertices, which has no box and no volume.
+/// Each caller asked `numVerts` itself, and `empty?` asked the volume, which a B-Rep solid
+/// can't give.
+pub inline fn isEmpty(handle: geom.GeometryHandle) bool {
+    return numVerts(handle) == 0;
+}
+
 /// How many triangles the solid's mesh has, without building the mesh; null for an engine
 /// that has no mesh of its own (kernel.supports(engine, .mesh)).
 pub inline fn numTris(handle: geom.GeometryHandle) ?usize {

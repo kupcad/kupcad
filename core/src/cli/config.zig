@@ -28,19 +28,50 @@ pub const ProjectConfig = struct {
 
     pub const Position = json_input.Position;
 
+    /// Why a settings file couldn't be read, for a person: the file, with where its parse
+    /// stopped when it has a place (`.../.kupcad.json:3:5: unknown setting ...`), else why
+    /// it couldn't be loaded. Every command said it its own way, two of them naming the
+    /// script with the file's position (`near main.kup:0:0`).
+    pub const Failure = struct {
+        /// The settings file, owned.
+        path: []u8,
+        where: Position,
+        err: anyerror,
+
+        pub fn deinit(self: *Failure, allocator: std.mem.Allocator) void {
+            allocator.free(self.path);
+        }
+
+        pub fn format(self: Failure, w: *std.Io.Writer) std.Io.Writer.Error!void {
+            if (self.where.line > 0) return w.print("{s}:{d}:{d}: {s}", .{ self.path, self.where.line, self.where.column, describeError(self.err) });
+            return w.print("Could not load {s}: {s}", .{ self.path, describeError(self.err) });
+        }
+    };
+
     /// The settings that hold for the script at `script_path`: the nearest .kupcad.json in
     /// its folder or above (as `find` looks), the defaults when there is none. A file that
-    /// doesn't parse is an error; `where` receives the position when it has one.
-    pub fn forScript(io: std.Io, allocator: std.mem.Allocator, script_path: []const u8, where: ?*Position) !ProjectConfig {
+    /// doesn't parse or can't be read is an error, and `failure` says which and why.
+    pub fn forScript(io: std.Io, allocator: std.mem.Allocator, script_path: []const u8, failure: *?Failure) !ProjectConfig {
         const dir = std.fs.path.dirname(script_path) orelse ".";
         const found = try find(io, allocator, dir) orelse return .{};
         defer allocator.free(found);
-        return load(io, allocator, found, where);
+        return load(io, allocator, found, failure);
     }
 
-    /// Reads the settings at `path`; the defaults when there is no file (null).
-    pub fn load(io: std.Io, allocator: std.mem.Allocator, path: ?[]const u8, where: ?*Position) !ProjectConfig {
-        const source = try fs.readFile(io, allocator, path orelse return .{});
+    /// Reads the settings at `path`; the defaults when there is no file (null). An error
+    /// (a file that doesn't parse or can't be read) sets `failure` to say which and why;
+    /// the caller frees it.
+    pub fn load(io: std.Io, allocator: std.mem.Allocator, path: ?[]const u8, failure: *?Failure) !ProjectConfig {
+        const file = path orelse return .{};
+        var where: Position = .{ .line = 0, .column = 0 };
+        return loadAt(io, allocator, file, &where) catch |err| {
+            failure.* = .{ .path = try allocator.dupe(u8, file), .where = where, .err = err };
+            return err;
+        };
+    }
+
+    fn loadAt(io: std.Io, allocator: std.mem.Allocator, path: []const u8, where: *Position) !ProjectConfig {
+        const source = try fs.readFile(io, allocator, path);
         defer allocator.free(source);
         return parse(allocator, source, where);
     }

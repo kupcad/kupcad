@@ -66,7 +66,7 @@ pub fn boundsOf(vm: *VM, receiver: value.Value, method: []const u8) !?geom.Bound
     if (!receiver.isGeometry()) return notDefinedFor(vm, method, receiver);
     const solid = try vm.ensureConcrete(receiver);
     try vm.requireFeature(solid.engine, .bounding_box);
-    if (kernel.numVerts(solid) == 0) return null;
+    if (kernel.isEmpty(solid)) return null;
     return kernel.boundingBox(solid) orelse {
         return vm.fail(.GeometryError, "{s} could not compute the bounding box of this shape", .{method});
     };

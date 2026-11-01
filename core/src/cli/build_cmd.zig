@@ -11,7 +11,6 @@ const memory_flag = @import("memory_flag.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
 const ProjectConfig = @import("config.zig").ProjectConfig;
-const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const diagnostic_report = @import("diagnostic_report.zig");
 const session_mod = @import("../session/session.zig");
 const debugger = @import("debugger.zig");
@@ -84,9 +83,10 @@ pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *c
     defer allocator.free(source);
     session.setParams(params);
     session.vm.debugger_handler = debugger.terminalDebugger(io);
-    var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-    const config = ProjectConfig.forScript(io, allocator, input_path, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, input_path, where.line, where.column, ProjectConfig.describeError(err) });
+    var failure: ?ProjectConfig.Failure = null;
+    defer if (failure) |*f| f.deinit(allocator);
+    const config = ProjectConfig.forScript(io, allocator, input_path, &failure) catch |err| {
+        if (failure) |f| reporter.err("Error: {f}\n", .{f}) else return err;
         return false;
     };
     session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, memory_limit, null));

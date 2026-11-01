@@ -237,9 +237,9 @@ pub const ExportFlags = struct {
             return false;
         };
         defer allocator.free(bytes);
-        try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes });
+        std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes }) catch |err| return reportWriteFailure(reporter, path, err);
         reporter.out("Successfully built {s} ({d} bytes)\n", .{ path, bytes.len });
-        if (mtl_path) |p| try writeMaterialLibrary(allocator, vm, p, reporter);
+        if (mtl_path) |p| return writeMaterialLibrary(allocator, vm, p, reporter);
         return true;
     }
 
@@ -257,11 +257,11 @@ pub const ExportFlags = struct {
             allocator.free(files);
         }
         const cwd = std.Io.Dir.cwd();
-        try cwd.createDirPath(reporter.io, dir);
+        cwd.createDirPath(reporter.io, dir) catch |err| return reportWriteFailure(reporter, dir, err);
         if (self.use_mtl) {
             const path = try std.fs.path.join(allocator, &.{ dir, SPLIT_MTL_NAME });
             defer allocator.free(path);
-            try writeMaterialLibrary(allocator, vm, path, reporter);
+            if (!try writeMaterialLibrary(allocator, vm, path, reporter)) return false;
         }
         var names: PartFileNames = .{};
         defer names.deinit(allocator);
@@ -274,7 +274,7 @@ pub const ExportFlags = struct {
             defer allocator.free(name);
             const path = try std.fs.path.join(allocator, &.{ dir, name });
             defer allocator.free(path);
-            try cwd.writeFile(reporter.io, .{ .sub_path = path, .data = file.bytes });
+            cwd.writeFile(reporter.io, .{ .sub_path = path, .data = file.bytes }) catch |err| return reportWriteFailure(reporter, path, err);
             reporter.out("Wrote {s} ({d} {s})\n", .{ path, file.count, if (file.count == 1) "copy" else "copies" });
         }
         return true;
@@ -335,12 +335,21 @@ fn reportExportFailure(reporter: Reporter, err: anyerror, path: []const u8) void
     } else reporter.err("Export failed: {}\n", .{err});
 }
 
-/// Writes the model's material library (`--mtl`) to `path`.
-fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []const u8, reporter: Reporter) !void {
+/// Writes the model's material library (`--mtl`) to `path`; false, the failure reported, when
+/// it can't be written.
+fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []const u8, reporter: Reporter) !bool {
     const bytes = try api.exportMaterialLibrary(allocator, vm);
     defer allocator.free(bytes);
-    try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes });
+    std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = bytes }) catch |err| return reportWriteFailure(reporter, path, err);
     reporter.out("Wrote {s} ({d} bytes)\n", .{ path, bytes.len });
+    return true;
+}
+
+/// Why `path` wasn't written: the file, and the error (a folder that isn't there, say). The
+/// error alone reached the top, `Error: FileNotFound`, naming nothing.
+fn reportWriteFailure(reporter: Reporter, path: []const u8, err: anyerror) bool {
+    reporter.err("Error: Could not write '{s}': {s}\n", .{ path, @errorName(err) });
+    return false;
 }
 
 /// Writes the model's parts list to `path` (`--bom`); false, the failure reported, when it
@@ -352,7 +361,7 @@ fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: R
         return false;
     };
     defer allocator.free(parts);
-    try std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = parts });
+    std.Io.Dir.cwd().writeFile(reporter.io, .{ .sub_path = path, .data = parts }) catch |err| return reportWriteFailure(reporter, path, err);
     reporter.out("Wrote the parts list to {s}\n", .{path});
     return true;
 }

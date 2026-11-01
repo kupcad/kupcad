@@ -8,6 +8,10 @@ const utils = @import("lexer_utils.zig");
 const identifier = @import("../core/identifier.zig");
 const string_escape = @import("../core/string_escape.zig");
 
+/// What an editor may write at the start of a UTF-8 file: skipped, as whitespace is (it was
+/// read as the first three bytes of an identifier).
+const UTF8_BOM = "\xEF\xBB\xBF";
+
 pub const Tag = enum {
     eof,
     /// A character that starts no token.
@@ -188,7 +192,7 @@ pub const Lexer = struct {
     pub fn init(buffer: []const u8, file_id: u32) Lexer {
         return .{
             .buffer = buffer,
-            .index = 0,
+            .index = if (std.mem.startsWith(u8, buffer, UTF8_BOM)) UTF8_BOM.len else 0,
             .file_id = file_id,
             // SAFETY: The stack is guarded by interp_depth. Uninitialized elements are never read before being written
             .interp_stack = undefined,

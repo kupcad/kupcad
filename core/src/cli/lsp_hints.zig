@@ -77,7 +77,12 @@ const Walker = struct {
         const result = if (call.receiver == .none) shapes_mod.globalResult(tree, call) orelse return else blk: {
             const receiver = self.shapes.of(tree, call.receiver) orelse return;
             const result = manifest.methodResultOf(name) orelse return;
-            if (result == .receiver) break :blk if (receiver == .solid) manifest.Result.solid else manifest.Result.sketch;
+            // Of the receiver's own kind: a Path's `translate` was typed `: Sketch`
+            if (result == .receiver) break :blk switch (receiver) {
+                .solid => manifest.Result.solid,
+                .sketch => .sketch,
+                .path => .path,
+            };
             break :blk result;
         };
         if (result == .nothing) return; // nothing worth saying

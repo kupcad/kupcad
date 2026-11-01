@@ -9,7 +9,6 @@ const Reporter = @import("reporter.zig").Reporter;
 const build_cmd = @import("build_cmd.zig");
 const fs = @import("fs.zig");
 const ProjectConfig = @import("config.zig").ProjectConfig;
-const CONFIG_FILE_NAME = @import("config.zig").FILE_NAME;
 const limits = @import("../core/limits.zig");
 const debugger = @import("debugger.zig");
 const Outcome = @import("outcome.zig").Outcome;
@@ -55,9 +54,10 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
     // A long-lived session caps the script heap: --memory-limit or KUPCAD_MEMORY_LIMIT, else
     // the project's `vm_memory_limit`, else the interactive default, so a runaway loop ends
     // with an error instead of the machine.
-    var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-    const config = ProjectConfig.forScript(init.io, allocator, file_path, &where) catch |err| {
-        reporter.err("Error: {s} near {s}:{d}:{d}: {s}\n", .{ CONFIG_FILE_NAME, file_path, where.line, where.column, ProjectConfig.describeError(err) });
+    var failure: ?ProjectConfig.Failure = null;
+    defer if (failure) |*f| f.deinit(allocator);
+    const config = ProjectConfig.forScript(init.io, allocator, file_path, &failure) catch |err| {
+        if (failure) |f| reporter.err("Error: {f}\n", .{f}) else return err;
         return .failure;
     };
     session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, options.memory_limit, limits.INTERACTIVE_MEMORY_LIMIT));

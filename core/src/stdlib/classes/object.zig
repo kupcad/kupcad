@@ -58,9 +58,9 @@ fn objectEmptyQ(vm: *VM, receiver: value.Value) !value.Value {
     if (receiver.isMap()) return value.Value.initBool(receiver.asMap().count() == 0);
     if (receiver.isJsonObject()) return value.Value.initBool(receiver.asJsonObject().map.count() == 0);
     if (receiver.isGeometry()) {
-        const solid = try vm.ensureConcrete(receiver);
-        try vm.requireFeature(solid.engine, .volume);
-        return value.Value.initBool(kernel.volume(solid) == 0.0);
+        // By its mesh, as bbox and the parts list judge it: by its volume, a B-Rep solid
+        // (which can't measure one yet) couldn't say
+        return value.Value.initBool(kernel.isEmpty(try vm.ensureConcrete(receiver)));
     }
     if (receiver.isCrossSection()) {
         const sketch = try vm.ensureConcreteCrossSection(receiver);

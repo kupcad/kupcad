@@ -703,6 +703,41 @@ test "build_cmd: KUPCAD_MEMORY_LIMIT stands in for --memory-limit, which wins ov
     try testing.expectEqualStrings("Error: KUPCAD_MEMORY_LIMIT takes a size greater than zero, as 512MB or 8GB, got 'lots'\n", refused.text());
 }
 
+test "build_cmd: a project's settings that don't read are named, with where" {
+    // It said `.kupcad.json near <script>:0:0: invalid JSON`: the script, with the file's place
+    var fx = try Fixture.init("cube(1)\n");
+    defer fx.deinit();
+    try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = "{ \"lint\": }" });
+    var res = try runBuild(&.{ fx.input, "-o", fx.output });
+    defer res.deinit();
+    try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+    const expected = try std.fmt.allocPrint(testing.allocator, "Error: {s}/.kupcad.json:1:11: invalid JSON\n", .{fx.dir});
+    defer testing.allocator.free(expected);
+    try testing.expectEqualStrings(expected, res.text());
+}
+
+test "build_cmd: a file that can't be written is named, with why" {
+    // The error alone reached the top: `Error: FileNotFound`, for an output folder that isn't there
+    var fx = try Fixture.init("cube(1)\n");
+    defer fx.deinit();
+    const output = try fx.path("missing_dir/model.stl");
+    defer testing.allocator.free(output);
+    const bom = try fx.path("missing_dir/bom.json");
+    defer testing.allocator.free(bom);
+    const cases = [_]struct { args: []const []const u8, path: []const u8 }{
+        .{ .args = &.{ fx.input, "-o", output }, .path = output },
+        .{ .args = &.{ fx.input, "-o", fx.output, "--bom", bom }, .path = bom },
+    };
+    for (cases) |case| {
+        var res = try runBuild(case.args);
+        defer res.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        const expected = try std.fmt.allocPrint(testing.allocator, "Error: Could not write '{s}': FileNotFound\n", .{case.path});
+        defer testing.allocator.free(expected);
+        try testing.expect(std.mem.endsWith(u8, res.text(), expected));
+    }
+}
+
 test "build_cmd: --memory-limit takes a size greater than zero" {
     for ([_][]const u8{ "0", "8G", "-1GB", "lots" }) |size| {
         errdefer std.debug.print("size '{s}'\n", .{size});

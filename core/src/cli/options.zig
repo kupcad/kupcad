@@ -85,12 +85,10 @@ pub fn CommandSetup(comptime Flags: type) type {
 
             const config_path = if (options.config_path) |p| try allocator.dupe(u8, p) else try ProjectConfig.find(io, allocator, ".");
             defer if (config_path) |p| allocator.free(p);
-            var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-            const config = ProjectConfig.load(io, allocator, config_path, &where) catch |err| {
-                const path = config_path.?;
-                if (where.line > 0) {
-                    log_helpers.printStderr(io, "Error: {s}:{d}:{d}: {s}\n", .{ path, where.line, where.column, ProjectConfig.describeError(err) });
-                } else log_helpers.printStderr(io, "Error: Could not load {s}: {s}\n", .{ path, @errorName(err) });
+            var failure: ?ProjectConfig.Failure = null;
+            defer if (failure) |*f| f.deinit(allocator);
+            const config = ProjectConfig.load(io, allocator, config_path, &failure) catch |err| {
+                if (failure) |f| log_helpers.printStderr(io, "Error: {f}\n", .{f});
                 return err;
             };
             return .{ .options = options, .config = config };

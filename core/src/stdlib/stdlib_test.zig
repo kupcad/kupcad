@@ -1386,6 +1386,11 @@ test "Stdlib: a sketch is empty? when it has no area, and an empty one has no bb
         .{ .src = "r = square(2).bbox.max", .expected = .{ .nums = &.{ 2, 2, 0 } } },
         // Moved, it stays as it is, as an empty Solid does: there is nothing to move
         .{ .src = empty ++ "r = e.center.empty?", .expected = .{ .boolean = true } },
+        // A Solid's `empty?` is its mesh's, as its bbox: a B-Rep solid, whose volume can't be
+        // measured yet, answers too
+        .{ .src = "r = (cube(1) - cube(2)).empty?", .expected = .{ .boolean = true } },
+        .{ .src = "r = cube(1).empty?", .expected = .{ .boolean = false } },
+        .{ .src = "r = CAD.with_config(engine: :brep) { cube(1).empty? }", .expected = .{ .boolean = false } },
         .{ .src = comptime rescued(empty ++ "e.revolve(360)"), .expected = .{ .str = "ValueError: revolve: an empty sketch has no profile" } },
     });
 }
@@ -1724,6 +1729,13 @@ test "Stdlib: a size is refused where the lint reads it, before the native runs"
         .{ .src = comptime rescued("cube(\"wide\")"), .expected = .{ .str = "TypeError: cube expects a number for x, got String" } },
         // A sketch's offset may shrink it; a Solid's by a negative delta too
         .{ .src = "r = square(4).offset(-1).area", .expected = .{ .num = 4 } },
+    });
+}
+
+test "Stdlib: a script may start with a byte order mark" {
+    // The three bytes glued to the first name: `x = 1` defined a variable no `x` found
+    try expectScripts(&.{
+        .{ .src = "\xEF\xBB\xBFx = 1\nr = x + 1", .expected = .{ .num = 2 } },
     });
 }
 
@@ -2126,7 +2138,6 @@ test "Stdlib: what the B-Rep engine can't do yet is an error naming it, never a 
         .{ .src = comptime rescued("cube(10).project.extrude(1).simplify"), .expected = brepLacks(.project) },
         .{ .src = comptime rescued("cube(10).decompose"), .expected = brepLacks(.decompose) }, // was the whole solid as one part
         .{ .src = comptime rescued("cube(10).volume"), .expected = brepLacks(.volume) }, // was 0
-        .{ .src = comptime rescued("cube(10).empty?"), .expected = brepLacks(.volume) }, // was true
         .{ .src = comptime rescued("square(10).empty?"), .expected = brepLacks(.sketch_measure) }, // was false
         .{ .src = comptime rescued("cube(10).surface_area"), .expected = brepLacks(.surface_area) },
         .{ .src = comptime rescued("cube(10).genus"), .expected = brepLacks(.genus) },

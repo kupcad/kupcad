@@ -1128,9 +1128,9 @@ pub const Handler = struct {
             logger.warn("Could not look for {s} above {s}: {}", .{ project_config.FILE_NAME, dir, err });
             return .{};
         } orelse return .{};
-        var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-        return ProjectConfig.load(self.io, arena, found, &where) catch |err| {
-            logger.warn("{s}:{d}:{d}: {s}; using the default settings", .{ found, where.line, where.column, ProjectConfig.describeError(err) });
+        var failure: ?ProjectConfig.Failure = null; // in the arena
+        return ProjectConfig.load(self.io, arena, found, &failure) catch {
+            if (failure) |f| logger.warn("{f}; using the default settings", .{f});
             return .{};
         };
     }

@@ -295,9 +295,9 @@ pub const SessionPreview = struct {
             std.fs.path.join(a, &.{ root, module_path }) catch return null
         else
             return null;
-        var where: ProjectConfig.Position = .{ .line = 0, .column = 0 };
-        const config = ProjectConfig.forScript(self.io, a, path, &where) catch |err| {
-            logger.warn("{s} of {s} near {d}:{d}: {s}; its memory limit isn't applied", .{ project_config.FILE_NAME, module_path, where.line, where.column, ProjectConfig.describeError(err) });
+        var failure: ?ProjectConfig.Failure = null; // in the arena
+        const config = ProjectConfig.forScript(self.io, a, path, &failure) catch {
+            if (failure) |f| logger.warn("{f}; the memory limit of {s} isn't applied", .{ f, module_path });
             return null;
         };
         return config.vm_memory_limit;

@@ -51,6 +51,8 @@ test "LSP hints: a variable assigned a built-in's result gets its class" {
     try testing.expectEqualStrings(":Solid@4 size@12 :Sketch@16 height@30", try hintsOf(a, "part = cube(1)\ns = part.slice(1)"));
     // A method that keeps its receiver's kind is typed by the receiver.
     try testing.expectEqualStrings(":Sketch@2 size@12 :Sketch@16", try hintsOf(a, "sk = square(1)\nt = sk.translate(x: 1)"));
+    // A Path's transform is a Path: it said Sketch, as for anything that wasn't a Solid
+    try testing.expectEqualStrings(":Path@1 from@9 to@17 :Path@26", try hintsOf(a, "p = line([0, 0], [1, 0])\nq = p.translate(x: 1)"));
     try testing.expectEqualStrings(":Number@1 size@9", try hintsOf(a, "v = cube(2).volume"));
     // An import is a Sketch, or with paths: true an Array; with a flag only the run knows, nothing
     try testing.expectEqualStrings(":Sketch@4 path@19", try hintsOf(a, "logo = import_svg(\"logo.svg\")"));

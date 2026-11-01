@@ -151,7 +151,7 @@ pub fn meshMinGap(vm: *VM, receiver: value.Value, args: []const value.Value) !va
     if (search_length) |length| return value.Value.initNumber(kernel.minGap(handle, other_handle, length));
     try vm.requireFeature(handle.engine, .bounding_box);
     // Infinity to an empty one: there is nothing in it to be near (its box has none)
-    if (kernel.numVerts(handle) == 0 or kernel.numVerts(other_handle) == 0) return value.Value.initNumber(std.math.inf(f64));
+    if (kernel.isEmpty(handle) or kernel.isEmpty(other_handle)) return value.Value.initNumber(std.math.inf(f64));
     const box_a = kernel.boundingBox(handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     const box_b = kernel.boundingBox(other_handle) orelse return vm.fail(.GeometryError, error_kind.KERNEL_FAILED_FMT, .{"min_gap"});
     return value.Value.initNumber(fullGap(handle, other_handle, box_a, box_b));
