@@ -1,8 +1,10 @@
 //! The example models (../examples) built end to end and fingerprinted by what each one
 //! leaves: a Solid part's engine, volume, surface area, bounds and genus, and its mesh's
-//! vertices and triangles; a drawing's Sketch's engine, area, bounds and vertices, and its
-//! Path's bounds and segments; then the model written in its format (test_support.modelFormat:
-//! STEP for exact Solids, glb for the rest, SVG for a drawing). The fingerprints must match
+//! vertices and triangles, and the parts list (each part's name, copies and material); a
+//! drawing's Sketch's engine, area, bounds and vertices, and its Path's bounds and segments;
+//! then the model written in its format (test_support.modelFormat: STEP for exact Solids, glb
+//! for the rest, SVG for a drawing), and a drawing's shapes in it (each one's name and colours).
+//! The fingerprints must match
 //! examples.snap, measures within a relative tolerance and mesh counts within 1% (the last
 //! bits of a sine differ between platforms' math libraries), so a change that alters a real
 //! model shows up. `zig build test -Dupdate-snapshots` rewrites the snapshot from the
@@ -14,6 +16,8 @@ const api = @import("api.zig");
 const kernel = @import("kernel/kernel.zig");
 const model_mod = @import("exporters/model.zig");
 const path_mod = @import("core/path.zig");
+const parts_mod = @import("exporters/parts.zig");
+const material = @import("core/material.zig");
 const test_support = @import("test_support.zig");
 const examples = @import("examples");
 
@@ -90,6 +94,20 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
         if (kernel.numTris(h)) |tris| try w.print(" triangles={d}", .{tris});
         try w.writeAll("\n");
     }
+    if (model.solids.items.len > 0) {
+        const grouping = try parts_mod.group(&vm, allocator, model.solids.items);
+        defer grouping.deinit(allocator);
+        for (grouping.parts, 0..) |part, i| {
+            var copies: usize = 0;
+            for (grouping.copies) |copy| copies += @intFromBool(copy.part == i);
+            try w.print("  group {d} name={s} copies={d}", .{ i + 1, part.name orelse "-", copies });
+            if (part.material) |m| {
+                const alpha: u8 = @intFromFloat(@round(std.math.clamp(m.alpha, 0, 1) * 255));
+                try w.print(" material={s}", .{&material.hexRgba(.{ m.rgb[0], m.rgb[1], m.rgb[2], alpha })});
+            }
+            try w.writeAll("\n");
+        }
+    }
     for (model.sketches.items, 1..) |sketch, n| {
         const cs = try vm.ensureConcreteCrossSection(sketch);
         try w.print("  sketch {d} {s} area={d}", .{ n, cs.engine.scriptName(), kernel.crossSectionArea(cs) });
@@ -109,6 +127,28 @@ fn fingerprint(allocator: std.mem.Allocator, source: []const u8, w: *std.Io.Writ
     };
     defer allocator.free(bytes);
     try w.print("  exports {t}\n", .{format});
+    if (format == .svg) try drawnShapes(bytes, w);
+}
+
+/// A line per shape an SVG drawing draws: its id (the shape's name) and its fill and stroke.
+fn drawnShapes(svg: []const u8, w: *std.Io.Writer) !void {
+    var elements = std.mem.splitSequence(u8, svg, "<path");
+    _ = elements.next(); // what comes before the first
+    var n: usize = 0;
+    while (elements.next()) |element| {
+        n += 1;
+        const tag = element[0 .. std.mem.findScalar(u8, element, '>') orelse element.len];
+        try w.print("  drawn {d} id={s} fill={s} stroke={s}\n", .{ n, attribute(tag, "id") orelse "-", attribute(tag, "fill") orelse "-", attribute(tag, "stroke") orelse "-" });
+    }
+}
+
+/// The value of the attribute `name` in an element's `tag` (each attribute after a space), or
+/// null.
+fn attribute(tag: []const u8, comptime name: []const u8) ?[]const u8 {
+    const key = " " ++ name ++ "=\"";
+    const start = (std.mem.find(u8, tag, key) orelse return null) + key.len;
+    const end = std.mem.findScalarPos(u8, tag, start, '"') orelse return null;
+    return tag[start..end];
 }
 
 /// Line by line, token by token; `key=a,b,c` values compare as numbers within the key's
