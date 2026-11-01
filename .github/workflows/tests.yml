@@ -81,6 +81,10 @@ jobs:
     name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    defaults:
+      run:
+        # pnpm's scripts and the steps below are POSIX shell: Git Bash on Windows
+        shell: bash
     concurrency:
       group: test-${{ github.workflow }}-${{ github.ref }}-${{ matrix.name }}
       cancel-in-progress: true
@@ -102,6 +106,13 @@ jobs:
           - name: macos debug
             os: macos-latest
             core_task: test:core
+            wasm_task: ""
+          # Windows, in the mode its release is built in: drive letters in file URIs, the
+          # profile folder, the console, processes. Cross-compiled on Linux, the tests weren't
+          # run, and its SDK's headers (named in any case) weren't found.
+          - name: windows release-safe
+            os: windows-latest
+            core_task: test:core:safe
             wasm_task: ""
 
     steps:
@@ -132,14 +143,6 @@ jobs:
 
       - name: Run lib tests
         run: pnpm ${{ matrix.core_task }}
-
-      # No runner is Windows: built for it, the tests compile and are not run, so its own code
-      # (drive letters in file URIs, the profile folder, the debugger's line reader) at least
-      # compiles before a release builds it
-      - name: Compile the tests for Windows
-        if: matrix.name == 'linux release-safe'
-        working-directory: core
-        run: zig build test -Doptimize=ReleaseSafe -Dtarget=x86_64-windows-gnu --summary line
 
       - name: Check the fuzz corpus is formatted and lint-clean
         if: matrix.core_task == 'test:core'
