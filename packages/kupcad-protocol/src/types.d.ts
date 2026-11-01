@@ -92,6 +92,19 @@ export interface Meta {
   author: string | null;
 }
 
+/**
+ * Why `kupcad build` or `kupcad run` failed, as `--errors json` tells it: what kind of failure
+ * (`settings`, `read`, `syntax`, `compile`, `runtime`, `export`, `write`), its message as the
+ * words say it, and where, when known.
+ */
+export interface BuildFailure {
+  kind: string;
+  message: string;
+  file: string | null;
+  line: number | null;
+  column: number | null;
+}
+
 /** A scalar: what a list, a tuple or a Map holds, as JSON gives it (a Symbol as its text). */
 export type ParamScalar = number | string | boolean;
 

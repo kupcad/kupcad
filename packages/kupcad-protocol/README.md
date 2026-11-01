@@ -68,9 +68,11 @@ client.sendRequest('workspace/executeCommand', {
   an array's as JSON); `viewportUrl(port)`, the viewport socket's URL from the port `kupcad/viewportReady`
   names (null for one that is no port); and `anotherDocument(message, shown)`, the document a page's
   message names when it isn't the one shown, which a host refuses.
-* `whyBuildFailed(stderr)`: what a failed `kupcad build` said of why (the run's error, a syntax
-  error at its place, the CLI's refusal, its summary; not its log nor the script's own output),
-  for a host that runs it to tell the person; null when it said nothing that does.
+* `buildFailure(stderr)`: why a `kupcad build` run with `--errors json` failed, from the JSON line
+  it writes last (its kind, message, and the file, line and column when known), for a host that
+  runs it to tell the person; null without one. `whyBuildFailed(stderr)` reads the words instead
+  (the run's error, a syntax error at its place, the CLI's refusal, its summary; not its log nor
+  the script's own output), for a failure that said no JSON; null when it said nothing that does.
 * `errorText(error)`: what an error says, for a person: an Error's message, anything else
   thrown as text. Every host's messages and logs say it the same way.
 * `characterAt(text, column)`: where a column the core names (1-based, in UTF-8 bytes: a

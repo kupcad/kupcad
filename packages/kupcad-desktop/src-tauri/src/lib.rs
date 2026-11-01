@@ -160,6 +160,8 @@ fn build_args(
         args.push(format!("{name}={value}"));
     }
     args.extend(memory_limit_arg(memory_limit)?);
+    // A failure told as one JSON line last (the page reads it: @kupcad/protocol's buildFailure)
+    args.extend(["--errors".to_string(), "json".to_string()]);
     Ok(args)
 }
 
@@ -270,7 +272,9 @@ mod tests {
                 "-p",
                 "width=40",
                 "--memory-limit",
-                "8GB"
+                "8GB",
+                "--errors",
+                "json"
             ]
         );
     }

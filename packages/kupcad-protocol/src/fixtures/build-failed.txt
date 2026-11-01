@@ -1,0 +1,4 @@
+error(vm): NameError: Undefined variable 'undefined_var'
+error(vm):     from script:1:5:in 'script'
+Build failed: error.RuntimeError
+{"error":{"kind":"runtime","message":"NameError: Undefined variable 'undefined_var'","file":"bad.kup","line":1,"column":5}}

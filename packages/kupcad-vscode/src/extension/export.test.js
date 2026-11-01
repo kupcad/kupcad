@@ -58,6 +58,8 @@ describe('export', () => {
       'holes=[[0,0],[10,0]]',
       '--memory-limit',
       '8GB',
+      '--errors',
+      'json',
     ]);
     // A name without the format's extension is still written in it
     expect(buildArguments('/w/part.kup', '/w/part', '3mf', {}, 32)).toEqual([
@@ -69,6 +71,8 @@ describe('export', () => {
       '3mf',
       '--memory-limit',
       '32GB',
+      '--errors',
+      'json',
     ]);
   });
 
@@ -87,6 +91,13 @@ describe('export', () => {
       );
       await expect(runBuild(failing, [], { cwd: dir })).rejects.toThrow(
         new BuildError('RuntimeError: boom'),
+      );
+      // Asked for JSON, it says what the JSON line says, whatever the words
+      const telling = kupcad(
+        'echo "error(vm): RuntimeError: boom" >&2; echo \'{"error":{"kind":"runtime","message":"RuntimeError: too thin","file":"part.kup","line":1,"column":8}}\' >&2; exit 1',
+      );
+      await expect(runBuild(telling, [], { cwd: dir })).rejects.toThrow(
+        new BuildError('RuntimeError: too thin'),
       );
       const silent = kupcad('exit 2');
       await expect(runBuild(silent, [], { cwd: dir })).rejects.toThrow(/Command failed/);

@@ -1,6 +1,7 @@
 //! What `kupcad build`, `run` and `watch` read from their arguments: the script, the
 //! parameters' values (`-p`, `-P`), the memory limit (`--memory-limit`, else
-//! `KUPCAD_MEMORY_LIMIT` in `environ`) and, for a command that writes the model, its exports.
+//! `KUPCAD_MEMORY_LIMIT` in `environ`), how a failure is told (`--errors`) and, for a command
+//! that writes the model, its exports.
 //! Read here once: each command had its own copy of the loop and its messages.
 
 const std = @import("std");
@@ -8,7 +9,17 @@ const api = @import("../api.zig");
 const param_flags = @import("param_flags.zig");
 const memory_flag = @import("memory_flag.zig");
 const ExportFlags = @import("export_flags.zig").ExportFlags;
-const Reporter = @import("reporter.zig").Reporter;
+const reporter_mod = @import("reporter.zig");
+const Reporter = reporter_mod.Reporter;
+
+pub const ERRORS_FLAG = "--errors";
+
+pub const ERRORS_USAGE =
+    \\  --errors <text|json>      How a failure is told: in words (text, the default), or
+    \\                            with one line of JSON last, for a host: an "error"
+    \\                            object with kind, message, file, line and column
+    \\
+;
 
 /// What a command takes of the export options: none (`run`), settled whatever is given
 /// (`build`, which writes the model always), or settled when one is given (`watch`, which
@@ -26,6 +37,8 @@ pub const ScriptOptions = struct {
     /// `--memory-limit`, else `KUPCAD_MEMORY_LIMIT`, which win over the project's own
     /// (memory_flag.zig); null when neither is given.
     memory_limit: ?usize = null,
+    /// `--errors`: how a failure is told (Reporter.fail).
+    errors: reporter_mod.ErrorsFormat = .text,
 
     pub fn deinit(self: *ScriptOptions, allocator: std.mem.Allocator) void {
         self.exports.deinit(allocator);
@@ -48,6 +61,14 @@ pub const ScriptOptions = struct {
                 .taken => continue,
                 .refused => return options.refuse(allocator),
                 .other => {},
+            }
+            if (std.mem.eql(u8, arg, ERRORS_FLAG)) {
+                const how = args.next() orelse "";
+                options.errors = std.meta.stringToEnum(reporter_mod.ErrorsFormat, how) orelse {
+                    reporter.err("Error: {s} takes text or json, got '{s}'\n", .{ ERRORS_FLAG, how });
+                    return options.refuse(allocator);
+                };
+                continue;
             }
             if (exports != .none) switch (try options.exports.take(allocator, arg, args, reporter)) {
                 .taken => {

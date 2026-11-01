@@ -233,7 +233,7 @@ pub const ExportFlags = struct {
 
         const exporting = self.exportOptions(output.format, if (mtl_path) |p| std.fs.path.basename(p) else null);
         const bytes = api.exportModelFromVm(allocator, vm, output.format, exporting) catch |err| {
-            reportExportFailure(reporter, err, path);
+            try reportExportFailure(allocator, reporter, err, path);
             return false;
         };
         defer allocator.free(bytes);
@@ -249,7 +249,7 @@ pub const ExportFlags = struct {
     fn writeSplit(self: *const ExportFlags, allocator: std.mem.Allocator, vm: *VM, dir: []const u8, reporter: Reporter) !bool {
         const exporting = self.exportOptions(self.split_format, if (self.use_mtl) SPLIT_MTL_NAME else null);
         const files = api.exportPartsFromVm(allocator, vm, self.split_format, exporting) catch |err| {
-            reportExportFailure(reporter, err, dir);
+            try reportExportFailure(allocator, reporter, err, dir);
             return false;
         };
         defer {
@@ -329,10 +329,16 @@ fn flagValue(args: anytype, arg: []const u8, comptime what: []const u8, reporter
 
 /// Why the model wasn't written to `path`: empty (the export's error.NoGeometry), or the
 /// error (a script error the VM has already reported is error.RuntimeError).
-fn reportExportFailure(reporter: Reporter, err: anyerror, path: []const u8) void {
+fn reportExportFailure(allocator: std.mem.Allocator, reporter: Reporter, err: anyerror, path: []const u8) !void {
     if (err == error.NoGeometry) {
         reporter.err("Error: the model is empty, there is nothing to write to '{s}'\n", .{path});
-    } else reporter.err("Export failed: {}\n", .{err});
+        const said = try std.fmt.allocPrint(allocator, "the model is empty, there is nothing to write to '{s}'", .{path});
+        defer allocator.free(said);
+        reporter.fail(.{ .kind = "export", .message = said, .file = path });
+        return;
+    }
+    reporter.err("Export failed: {}\n", .{err});
+    reporter.fail(.{ .kind = "export", .message = @errorName(err), .file = path });
 }
 
 /// Writes the model's material library (`--mtl`) to `path`; false, the failure reported, when
@@ -349,6 +355,7 @@ fn writeMaterialLibrary(allocator: std.mem.Allocator, vm: *const VM, path: []con
 /// error alone reached the top, `Error: FileNotFound`, naming nothing.
 fn reportWriteFailure(reporter: Reporter, path: []const u8, err: anyerror) bool {
     reporter.err("Error: Could not write '{s}': {s}\n", .{ path, @errorName(err) });
+    reporter.fail(.{ .kind = "write", .message = @errorName(err), .file = path });
     return false;
 }
 
@@ -358,6 +365,7 @@ fn reportWriteFailure(reporter: Reporter, path: []const u8, err: anyerror) bool 
 fn writeBom(allocator: std.mem.Allocator, vm: *VM, path: []const u8, reporter: Reporter) !bool {
     const parts = api.billOfMaterials(allocator, vm) catch |err| {
         reporter.err("Parts list failed: {}\n", .{err});
+        reporter.fail(.{ .kind = "export", .message = @errorName(err), .file = path });
         return false;
     };
     defer allocator.free(parts);

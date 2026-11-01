@@ -1,5 +1,54 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { whyBuildFailed } from './build-output.js';
+import { buildFailure, whyBuildFailed } from './build-output.js';
+
+/** What `kupcad build bad.kup --errors json` wrote, captured (scripts/capture-fixtures.js). */
+const FAILED = readFileSync(new URL('./fixtures/build-failed.txt', import.meta.url), 'utf8');
+
+describe('buildFailure', () => {
+  it('reads the JSON line a build asked with --errors json writes last, as the real kupcad writes it', () => {
+    expect(buildFailure(FAILED)).toEqual({
+      kind: 'runtime',
+      message: "NameError: Undefined variable 'undefined_var'",
+      file: 'bad.kup',
+      line: 1,
+      column: 5,
+    });
+    // The words stay for a person, before it
+    expect(FAILED.startsWith('{')).toBe(false);
+    expect(whyBuildFailed(FAILED)).toBe("NameError: Undefined variable 'undefined_var'");
+  });
+
+  it('takes the last such line, the fields it knows, and nothing that is not one', () => {
+    expect(
+      buildFailure(
+        'log\n{"error":{"kind":"export","message":"empty","file":null}}\n{"error":{"kind":"write","message":"FileNotFound","file":"/o/p.stl","line":null,"column":null}}\n',
+      ),
+    ).toEqual({
+      kind: 'write',
+      message: 'FileNotFound',
+      file: '/o/p.stl',
+      line: null,
+      column: null,
+    });
+    expect(buildFailure('{"error":{"kind":"runtime","message":"x","line":"2"}}')).toEqual({
+      kind: 'runtime',
+      message: 'x',
+      file: null,
+      line: null,
+      column: null,
+    });
+    for (const none of [
+      '',
+      'error(vm): RuntimeError: x\n',
+      '{"error":{"kind":"x"}}',
+      '{"error": nope',
+      '{"result": 1}',
+    ]) {
+      expect(buildFailure(none)).toBeNull();
+    }
+  });
+});
 
 describe('whyBuildFailed', () => {
   it('says the first line of why, as kupcad build writes it, not its log, backtrace or summary', () => {

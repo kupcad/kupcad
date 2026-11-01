@@ -63,6 +63,8 @@ describe('export', () => {
           'width=40',
           '--memory-limit',
           '8GB',
+          '--errors',
+          'json',
         ],
         cwd: '/work',
       },

@@ -1,5 +1,7 @@
 // What a failed `kupcad build` said of why, read from its output, for a host that runs it (the
 // VS Code extension, the desktop app) to tell the person: the script's error, not the CLI's log.
+// A host asks for it as JSON (`--errors json`, `buildFailure`), one line last; the words are read
+// (`whyBuildFailed`) only when there is none, as from a kupcad that wasn't asked.
 //
 // Read by prefixes and plain searches, in time linear in the line: the script writes this output
 // (`puts`, `raise`), and the regular expressions it was read with backtracked quadratically on a
@@ -75,6 +77,44 @@ function endsWithPlace(line, end) {
 
 /** @param {number} code */
 const isDigit = (code) => code >= 48 && code <= 57;
+
+/** @import { BuildFailure } from './types.js' */
+
+/** How a failure's JSON line starts: `{"error": {...}}`. */
+const FAILURE_START = '{"error"';
+
+/**
+ * Why a build failed, as `kupcad build --errors json` tells it: the last line that is an
+ * `{"error": ...}` object, with its kind, its message and, where known, the file, line and
+ * column; null without one (a kupcad that wasn't asked, or a failure before it could say),
+ * when `whyBuildFailed` reads the words instead.
+ * @param {string} stderr
+ * @returns {BuildFailure | null}
+ */
+export function buildFailure(stderr) {
+  const lines = stderr.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line.startsWith(FAILURE_START)) continue;
+    /** @type {unknown} */
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return null;
+    }
+    const error = /** @type {{ error?: Record<string, unknown> }} */ (parsed)?.error;
+    if (typeof error?.kind !== 'string' || typeof error.message !== 'string') return null;
+    return {
+      kind: error.kind,
+      message: error.message,
+      file: typeof error.file === 'string' ? error.file : null,
+      line: Number.isInteger(error.line) ? /** @type {number} */ (error.line) : null,
+      column: Number.isInteger(error.column) ? /** @type {number} */ (error.column) : null,
+    };
+  }
+  return null;
+}
 
 /**
  * What a failed build said of why (the first line of the best kind found), or null when it said

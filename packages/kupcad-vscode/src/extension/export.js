@@ -2,7 +2,7 @@
 // so what is written is what the CLI builds. Free of the `vscode` import.
 
 import { execFile } from 'node:child_process';
-import { memoryLimitOptions, paramOptions, whyBuildFailed } from '@kupcad/protocol';
+import { buildFailure, memoryLimitOptions, paramOptions, whyBuildFailed } from '@kupcad/protocol';
 
 /** @import { ExportFormat, ParamValues } from '@kupcad/protocol/types' */
 /** What a build may say, at most: its log and why it failed. */
@@ -17,9 +17,13 @@ export class BuildError extends Error {
   }
 }
 
+/** How a failure is asked for: one JSON line last (`buildFailure`), the words before it. */
+const ERRORS_OPTIONS = ['--errors', 'json'];
+
 /**
  * `kupcad build`'s arguments: the script, the output in `format` (whatever its name's extension),
- * a `-p name=value` for each value (`paramOptions`) and the memory limit, `memoryLimit` GB.
+ * a `-p name=value` for each value (`paramOptions`), the memory limit, `memoryLimit` GB, and a
+ * failure told as JSON.
  * @param {string} script
  * @param {string} output
  * @param {ExportFormat} format
@@ -37,6 +41,7 @@ export function buildArguments(script, output, format, values, memoryLimit) {
     format,
     ...paramOptions(values),
     ...memoryLimitOptions(memoryLimit),
+    ...ERRORS_OPTIONS,
   ];
 }
 
@@ -46,7 +51,7 @@ export function buildArguments(script, output, format, values, memoryLimit) {
  * @param {string[]} args `buildArguments`'
  * @param {{ cwd: string, signal?: AbortSignal }} options
  * @returns {Promise<void>}
- * @throws {BuildError} saying what kupcad said (`@kupcad/protocol`'s `whyBuildFailed`)
+ * @throws {BuildError} saying what kupcad said (`@kupcad/protocol`'s `buildFailure`, else its words)
  */
 export function runBuild(kupcad, args, { cwd, signal }) {
   return new Promise((resolve, reject) => {
@@ -57,7 +62,9 @@ export function runBuild(kupcad, args, { cwd, signal }) {
       (error, _stdout, stderr) => {
         if (!error) return resolve();
         if (error.name === 'AbortError') return reject(error);
-        reject(new BuildError(whyBuildFailed(stderr) ?? error.message));
+        reject(
+          new BuildError(buildFailure(stderr)?.message ?? whyBuildFailed(stderr) ?? error.message),
+        );
       },
     );
   });

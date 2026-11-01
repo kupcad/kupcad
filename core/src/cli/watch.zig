@@ -17,7 +17,8 @@ const param_flags = @import("param_flags.zig");
 const memory_flag = @import("memory_flag.zig");
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
-const ScriptOptions = @import("script_options.zig").ScriptOptions;
+const script_options = @import("script_options.zig");
+const ScriptOptions = script_options.ScriptOptions;
 const ExportFlags = @import("export_flags.zig").ExportFlags;
 const export_usage = @import("export_flags.zig").USAGE;
 
@@ -30,15 +31,16 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++
+++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++ script_options.ERRORS_USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
-    const reporter: Reporter = .forProcess(init);
+    var reporter: Reporter = .forProcess(init);
     var options = try ScriptOptions.parse(allocator, args_iter, init.environ_map, reporter, .when_given, USAGE) orelse return .failure;
     defer options.deinit(allocator);
+    reporter.errors = options.errors;
     const file_path = options.input_path;
 
     // The script reads and writes the disk from where its imports are
@@ -110,7 +112,7 @@ pub const EventPrinter = struct {
                     self.reporter.err("Could not write the model: {s}\n", .{@errorName(err)});
                 };
             },
-            .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.root, self.reporter) catch |err| {
+            .failed => |failure| build_cmd.reportErrors(self.allocator, self.session, failure, self.root, "syntax", self.reporter) catch |err| {
                 self.reporter.err("Build failed ({s}); the errors couldn't be printed: {s}\n", .{ self.root.input, @errorName(err) });
             },
             .run_failed => |err| self.reporter.err("Build failed: {s}\n", .{@errorName(err)}),

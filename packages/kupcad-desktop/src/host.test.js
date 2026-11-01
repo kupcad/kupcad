@@ -146,6 +146,17 @@ describe('the host', () => {
     expect(failing.services.tell).toHaveBeenCalledWith(
       "part.kup wasn't exported: RuntimeError: too thin",
     );
+    // Told as JSON (kupcad build --errors json), the words are left alone
+    const told = hostOn();
+    told.services.exportModel.mockRejectedValue(
+      'error(vm): RuntimeError: too thin\nBuild failed: error.RuntimeError\n{"error":{"kind":"runtime","message":"RuntimeError: too thin, at the lip","file":"part.kup","line":2,"column":1}}\n',
+    );
+    told.show(PART);
+    told.host.post({ type: 'export', uri: PART.uri, format: '3mf' });
+    await settled();
+    expect(told.services.tell).toHaveBeenCalledWith(
+      "part.kup wasn't exported: RuntimeError: too thin, at the lip",
+    );
     // Cancelled, nothing is built
     const cancelled = hostOn({ saveAs: null });
     cancelled.show(PART);

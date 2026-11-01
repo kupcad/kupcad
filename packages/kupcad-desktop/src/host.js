@@ -5,6 +5,7 @@
 
 import {
   anotherDocument,
+  buildFailure,
   EXPORT_FORMATS,
   errorText,
   paramText,
@@ -106,8 +107,11 @@ export function createHost(services) {
     try {
       await services.exportModel(script.path, output, format, params, services.memoryLimit());
     } catch (error) {
+      // kupcad is asked for its reason as JSON (the native side's build_args); its words are
+      // read only when there is none
       const said = errorText(error);
-      await services.tell(`${script.name} wasn't exported: ${whyBuildFailed(said) ?? said}`);
+      const why = buildFailure(said)?.message ?? whyBuildFailed(said) ?? said;
+      await services.tell(`${script.name} wasn't exported: ${why}`);
     }
   }
 

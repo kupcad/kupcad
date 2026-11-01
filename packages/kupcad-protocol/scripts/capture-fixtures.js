@@ -1,10 +1,13 @@
 // Writes src/fixtures/*.json: the headers of the frames the core's preview worker gives for a
-// few scripts, their timings made fixed so the files change only when the protocol does.
+// few scripts, their timings made fixed so the files change only when the protocol does; and
+// src/fixtures/build-failed.txt, what `kupcad build --errors json` writes for a script that fails.
 //
 //   node scripts/capture-fixtures.js [path/to/kupcad]   (default: the core's dev build)
 
-import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The worker's message kinds (core/src/cli/lsp_worker.zig's `Kind`) that this sends. */
@@ -85,3 +88,17 @@ for (const [name, { source, params }] of Object.entries(SCRIPTS)) {
   );
 }
 worker.stdin.end();
+
+// A failed build, run in a folder of its own so the file it names is the bare `bad.kup`
+const folder = mkdtempSync(join(tmpdir(), 'kupcad-fixtures-'));
+try {
+  writeFileSync(join(folder, 'bad.kup'), 'x = undefined_var + 1\n');
+  const built = spawnSync(kupcad, ['build', 'bad.kup', '-o', 'bad.stl', '--errors', 'json'], {
+    cwd: folder,
+    encoding: 'utf8',
+  });
+  if (built.status === 0) throw new Error('the failing build succeeded');
+  writeFileSync(new URL('../src/fixtures/build-failed.txt', import.meta.url), built.stderr);
+} finally {
+  rmSync(folder, { recursive: true, force: true });
+}

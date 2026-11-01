@@ -37,7 +37,7 @@ export {
 } from './messages.js';
 export { characterAt } from './places.js';
 export { errorText } from './error-text.js';
-export { whyBuildFailed } from './build-output.js';
+export { buildFailure, whyBuildFailed } from './build-output.js';
 export { EXPORT_FORMATS, exportFormatsFor } from './formats.js';
 export { PresetsError, presetsPathOf, readPresets, writePresets } from './presets.js';
 export {

@@ -18,7 +18,9 @@ const Args = @import("args.zig").Args;
 const ScriptSession = session_mod.ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
-const ScriptOptions = @import("script_options.zig").ScriptOptions;
+const script_options = @import("script_options.zig");
+const ScriptOptions = script_options.ScriptOptions;
+const LineIndex = @import("../core/line_index.zig").LineIndex;
 pub const Outcome = @import("outcome.zig").Outcome;
 pub const Reporter = @import("reporter.zig").Reporter;
 
@@ -29,14 +31,14 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++
+++ export_usage ++ param_flags.USAGE ++ memory_flag.USAGE ++ script_options.ERRORS_USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
 
 /// Prints a module's errors the way `kupcad check` does (file:line:col, the source line
-/// and a caret), then a one-line summary.
-pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, root: *const ScriptRoot, reporter: Reporter) !void {
+/// and a caret), then a one-line summary; a host is told the first (Reporter.fail).
+pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession, failure: *const session_mod.Failure, root: *const ScriptRoot, kind: []const u8, reporter: Reporter) !void {
     const mod = &session.workspace.modules.items[@backingInt(failure.module)];
     const name = try root.shown(allocator, mod.path);
     defer allocator.free(name);
@@ -44,6 +46,13 @@ pub fn reportErrors(allocator: std.mem.Allocator, session: *const ScriptSession,
     defer rendered.deinit();
     const count = try diagnostic_report.writeErrors(&rendered.writer, allocator, name, mod.source, failure.diagnostics, reporter.err_style);
     reporter.err("{s}Build failed: {d} error{s} in {s}\n", .{ rendered.written(), count, if (count == 1) "" else "s", name });
+    if (failure.diagnostics.len > 0 and reporter.errors == .json) {
+        const first = failure.diagnostics[0];
+        const line_index = try LineIndex.init(allocator, mod.source);
+        defer line_index.deinit(allocator);
+        const at = line_index.humanPosition(first.loc.offset);
+        reporter.fail(.{ .kind = kind, .message = first.message, .file = name, .line = at.line, .column = at.column });
+    }
 }
 
 pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: *Args) !Outcome {
@@ -53,9 +62,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 /// Runs `kupcad build` with the remaining CLI arguments (`args_iter` needs `next() ?[]const u8`)
 /// in `environ`. User-facing failures are reported and return `.failure`; unexpected errors
 /// propagate.
-pub fn run(allocator: std.mem.Allocator, args_iter: anytype, environ: *const std.process.Environ.Map, reporter: Reporter) !Outcome {
-    var options = try ScriptOptions.parse(allocator, args_iter, environ, reporter, .always, USAGE) orelse return .failure;
+pub fn run(allocator: std.mem.Allocator, args_iter: anytype, environ: *const std.process.Environ.Map, given: Reporter) !Outcome {
+    var options = try ScriptOptions.parse(allocator, args_iter, environ, given, .always, USAGE) orelse return .failure;
     defer options.deinit(allocator);
+    var reporter = given;
+    reporter.errors = options.errors;
 
     // The script reads and writes the disk from where its imports are
     var root = try ScriptRoot.open(reporter.io, allocator, options.input_path, reporter) orelse return .failure;
@@ -78,6 +89,7 @@ pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *c
     // Read first: a file that isn't there is named so, before a session is made for it
     const source = fs.readFile(io, allocator, input_path) catch |err| {
         reporter.err("Error: Could not read '{s}': {s}\n", .{ input_path, @errorName(err) });
+        reporter.fail(.{ .kind = "read", .message = @errorName(err), .file = input_path });
         return false;
     };
     defer allocator.free(source);
@@ -86,7 +98,11 @@ pub fn runScript(allocator: std.mem.Allocator, session: *ScriptSession, root: *c
     var failure: ?ProjectConfig.Failure = null;
     defer if (failure) |*f| f.deinit(allocator);
     const config = ProjectConfig.forScript(io, allocator, input_path, &failure) catch |err| {
-        if (failure) |f| reporter.err("Error: {f}\n", .{f}) else return err;
+        const f = failure orelse return err;
+        reporter.err("Error: {f}\n", .{f});
+        const said = try std.fmt.allocPrint(allocator, "{f}", .{f});
+        defer allocator.free(said);
+        reporter.fail(.{ .kind = "settings", .message = said, .file = f.path, .line = if (f.where.line > 0) @intCast(f.where.line) else null, .column = if (f.where.line > 0) @intCast(f.where.column) else null });
         return false;
     };
     session.vm.setMemoryLimit(memory_flag.limitFor(config.vm_memory_limit, memory_limit, null));
@@ -102,10 +118,19 @@ fn evaluate(allocator: std.mem.Allocator, session: *ScriptSession, root: *const 
     try session.buildReverseGraph();
     session.evaluateWorkspace() catch |err| {
         if (err == error.ParseError or err == error.CompileError) if (session.failure) |*failure| {
-            try reportErrors(allocator, session, failure, root, reporter);
+            try reportErrors(allocator, session, failure, root, if (err == error.ParseError) "syntax" else "compile", reporter);
             return false;
         };
         reporter.err("Build failed: {}\n", .{err});
+        // The VM reported the error itself as it happened; a host is told it here
+        const position = session.vm.last_error_position;
+        reporter.fail(.{
+            .kind = "runtime",
+            .message = session.vm.last_error orelse @errorName(err),
+            .file = root.input,
+            .line = if (position) |p| p.line else null,
+            .column = if (position) |p| p.column else null,
+        });
         return false;
     };
     return true;

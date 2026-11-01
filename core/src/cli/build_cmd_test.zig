@@ -738,6 +738,52 @@ test "build_cmd: a file that can't be written is named, with why" {
     }
 }
 
+test "build_cmd: --errors json tells a host why, one JSON line last, for each kind of failure" {
+    // The hosts read the words (`error(vm): RuntimeError: ...`), and a wording changed under them
+    const Case = struct { source: []const u8, args: []const []const u8 = &.{}, project: ?[]const u8 = null, kind: []const u8, message: []const u8, line: ?i64 = null };
+    const cases = [_]Case{
+        .{ .source = "x = undefined_var + 10\n", .kind = "runtime", .message = "NameError: Undefined variable 'undefined_var'", .line = 1 },
+        .{ .source = "cube(\n", .kind = "syntax", .message = "Invalid expression starting with ''", .line = 2 },
+        .{ .source = "cube = 5\n", .kind = "compile", .message = "'cube' is a built-in and can't be assigned", .line = 1 },
+        .{ .source = "cube(1) - cube(2)\n", .kind = "export", .message = "the model is empty, there is nothing to write to '" },
+        .{ .source = "cube(1)\n", .args = &.{ "-o", "missing_dir/model.stl" }, .kind = "write", .message = "FileNotFound" },
+        .{ .source = "cube(1)\n", .project = "{ \"lint\": }", .kind = "settings", .message = "invalid JSON", .line = 1 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("source: {s}\n", .{case.source});
+        var fx = try Fixture.init(case.source);
+        defer fx.deinit();
+        if (case.project) |json| try fx.tmp.dir.writeFile(testing.io, .{ .sub_path = ".kupcad.json", .data = json });
+        var args: std.ArrayList([]const u8) = .empty;
+        defer args.deinit(testing.allocator);
+        try args.appendSlice(testing.allocator, &.{ fx.input, "--errors", "json" });
+        try args.appendSlice(testing.allocator, if (case.args.len > 0) case.args else &.{ "-o", fx.output });
+        var res = try runBuild(args.items);
+        defer res.deinit();
+        try testing.expectEqual(build_cmd.Outcome.failure, res.outcome);
+        // The words first, as ever; the JSON the last line
+        const text = std.mem.trimEnd(u8, res.text(), "\n");
+        const last = text[(std.mem.lastIndexOfScalar(u8, text, '\n') orelse return error.TestExpectedWords) + 1 ..];
+        try testing.expect(std.mem.startsWith(u8, text, "Error") or std.mem.startsWith(u8, text, "Build failed") or std.mem.indexOf(u8, text, ": E: ") != null);
+        var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, last, .{});
+        defer parsed.deinit();
+        const failure = parsed.value.object.get("error").?.object;
+        try testing.expectEqualStrings(case.kind, failure.get("kind").?.string);
+        try testing.expect(std.mem.indexOf(u8, failure.get("message").?.string, case.message) != null);
+        try testing.expect(failure.get("file").?.string.len > 0);
+        if (case.line) |line| try testing.expectEqual(line, failure.get("line").?.integer);
+    }
+    // Without it, the words alone
+    var fx = try Fixture.init("x = undefined_var\n");
+    defer fx.deinit();
+    var res = try fx.build();
+    defer res.deinit();
+    try testing.expect(std.mem.indexOf(u8, res.text(), "{\"error\"") == null);
+    var refused = try runBuild(&.{ fx.input, "--errors", "yaml" });
+    defer refused.deinit();
+    try testing.expectEqualStrings("Error: --errors takes text or json, got 'yaml'\n", refused.text());
+}
+
 test "build_cmd: --memory-limit takes a size greater than zero" {
     for ([_][]const u8{ "0", "8G", "-1GB", "lots" }) |size| {
         errdefer std.debug.print("size '{s}'\n", .{size});

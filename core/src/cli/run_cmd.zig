@@ -11,7 +11,8 @@ const memory_flag = @import("memory_flag.zig");
 const ScriptSession = @import("../session/session.zig").ScriptSession;
 const NativeVfs = @import("../vfs/native.zig").NativeVfs;
 const ScriptRoot = @import("script_root.zig").ScriptRoot;
-const ScriptOptions = @import("script_options.zig").ScriptOptions;
+const script_options = @import("script_options.zig");
+const ScriptOptions = script_options.ScriptOptions;
 const Args = @import("args.zig").Args;
 pub const Outcome = @import("outcome.zig").Outcome;
 const Reporter = @import("reporter.zig").Reporter;
@@ -23,7 +24,7 @@ pub const USAGE =
     \\
     \\Options:
     \\
-++ param_flags.USAGE ++ memory_flag.USAGE ++
+++ param_flags.USAGE ++ memory_flag.USAGE ++ script_options.ERRORS_USAGE ++
     \\  -h, --help                Show this help
     \\
 ;
@@ -34,9 +35,11 @@ pub fn execute(init: std.process.Init, allocator: std.mem.Allocator, args_iter: 
 
 /// Runs `kupcad run` with the remaining CLI arguments (`next() ?[]const u8`) in `environ`; a
 /// script that doesn't parse, compile or run is a failure, reported.
-pub fn run(allocator: std.mem.Allocator, args: anytype, environ: *const std.process.Environ.Map, reporter: Reporter) !Outcome {
-    var options = try ScriptOptions.parse(allocator, args, environ, reporter, .none, USAGE) orelse return .failure;
+pub fn run(allocator: std.mem.Allocator, args: anytype, environ: *const std.process.Environ.Map, given: Reporter) !Outcome {
+    var options = try ScriptOptions.parse(allocator, args, environ, given, .none, USAGE) orelse return .failure;
     defer options.deinit(allocator);
+    var reporter = given;
+    reporter.errors = options.errors;
     const input_path = options.input_path;
     // The script reads and writes the disk, as under kupcad build
     var root = try ScriptRoot.open(reporter.io, allocator, input_path, reporter) orelse return .failure;
