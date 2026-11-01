@@ -7,7 +7,6 @@
 
 import {
   DoubleSide,
-  EdgesGeometry,
   Float32BufferAttribute,
   BufferGeometry,
   GreaterDepth,
@@ -21,14 +20,13 @@ import {
 } from 'three';
 import { SVGLoader } from 'three/addons/loaders/SVGLoader.js';
 import { disposeGeometries } from './dispose.js';
+import { featureEdgesOf } from './topology.js';
 
 /** @import { Material, Object3D } from 'three' */
 /** @import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js' */
 /** @import { Model, Part } from '@kupcad/protocol/types' */
 /** @import { SceneModel, Shape, Theme } from './types.js' */
 
-/** Where a solid's faces meet at more than this many degrees, an edge is drawn: its features. */
-export const EDGE_ANGLE_DEG = 20;
 /** A ghost is seen through. */
 export const GHOST_OPACITY = 0.2;
 /** How much of a highlighted solid shows where something hides it. */
@@ -147,7 +145,7 @@ function solidShape(mesh, partOf, nodeName, { edgeMaterial, highlightEdges }, th
   if (highlighted) material.color.set(theme.highlight);
   Object.assign(material, FACES_BEHIND_EDGES);
   const edges = new LineSegments(
-    new EdgesGeometry(mesh.geometry, EDGE_ANGLE_DEG),
+    featureEdgesOf(mesh.geometry),
     highlighted ? highlightEdges : edgeMaterial,
   );
   mesh.add(edges);

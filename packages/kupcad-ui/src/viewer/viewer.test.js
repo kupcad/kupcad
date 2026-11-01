@@ -1,6 +1,5 @@
 import {
   Color,
-  EdgesGeometry,
   GreaterDepth,
   LineBasicMaterial,
   LineSegments,
@@ -91,7 +90,7 @@ function edgeColorsOf(scene) {
   /** @type {Set<string>} */
   const colors = new Set();
   scene.traverse((object) => {
-    if (object instanceof LineSegments && object.geometry instanceof EdgesGeometry) {
+    if (object instanceof LineSegments && object.parent?.type === 'Mesh') {
       colors.add(`#${/** @type {LineBasicMaterial} */ (object.material).color.getHexString()}`);
     }
   });

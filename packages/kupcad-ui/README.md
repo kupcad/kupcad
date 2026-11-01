@@ -76,10 +76,12 @@ For Svelte, the component around it (`@kupcad/ui`'s `Viewer`):
   what is drawn there, so the mark shows on a part of any colour). The face is what its feature edges
   bound (`faces.js`: triangles joined where they meet at less than the edges' 20°), flat when it
   faces one way (its area in mm², its way, and `+Z (top)` when along an axis) or curved (its
-  area). Which triangles meet which is found once a mesh, as the pointer first meets it, in typed
-  arrays (a third of a second for a million triangles), and each face once, its area kept while
-  the mesh doesn't move. A ghost, seen through, is under nothing, and neither is what a section
-  cut away.
+  area). Which triangles meet which is found once a mesh, when its edges are drawn, in typed
+  arrays (`topology.js`, a fifth of a second for a million triangles; three.js's `EdgesGeometry`
+  took eight times as long), so the edges and the faces' borders are one; the triangle under the
+  pointer is found through a bounds tree (`hits.js`, three-mesh-bvh), and each face once, its
+  area kept while the mesh doesn't move. A ghost, seen through, is under nothing, and neither is
+  what a section cut away.
 * **The view cube** (`ViewCube`, which the Svelte component puts in its corner unless
   `cube={false}`) is turned as the camera is; its faces (labelled TOP, FRONT, RIGHT, ..., each
   upright from its view), edges and corners, 26 ways to look, take the camera there when
