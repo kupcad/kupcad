@@ -1,8 +1,10 @@
 // The parameter panel's logic, apart from its markup: which control a parameter (or a part of its
 // value) gets, how the parameters group, which value a control shows, and whether a value given
 // in the panel is one the script takes (its schema's rules, core/src/core/param_rules.zig's),
-// checked before it leaves the panel; the run is the final check, and a frame names a value it
-// refused, and where in it.
+// checked before it leaves the panel as the core's `check` reads it (a number's text as
+// std.fmt.parseFloat reads it, true or false as 1 and 0 too, a Map's fields all of them and no
+// other, a choice compared once read): the panel accepted values the run then refused, and the
+// other way round. The run is the final check, and a frame names a value it refused, and where.
 
 /** @import { ParamSpec, ParamValue, ParamValues, PathStep, Rule } from '@kupcad/protocol/types' */
 
@@ -288,22 +290,93 @@ export function validate(rule, input) {
 function read(rule, input, path) {
   if (rule.type === 'array') return readArray(rule, input, path);
   if (rule.type === 'map') return readMap(rule, input, path);
+  const result = readScalar(rule, input, path);
+  if (!('value' in result)) return result;
+  // Once read, as the core compares a choice: 20.0 is the choice 20, " 20" no number
   const choices = rule.in;
-  if (choices) {
-    const choice = choices.find((listed) => String(listed) === String(input));
-    return choice === undefined
-      ? { error: `must be one of ${choices.join(', ')}`, path }
-      : { value: choice };
+  if (choices && !choices.includes(result.value)) {
+    return { error: `must be one of ${choices.join(', ')}`, path };
   }
-  if (rule.type === 'boolean') return { value: input === true || input === 'true' };
-  if (rule.type === 'string') return { value: String(input ?? '') };
-  const text = String(input ?? '').trim();
-  const number = Number(text);
-  if (text === '' || !Number.isFinite(number)) return { error: 'must be a number', path };
+  return result;
+}
+
+/**
+ * @param {Rule} rule a number's, a boolean's or text's
+ * @param {Value | null} input
+ * @param {PathStep[]} path
+ * @returns {{ value: Value } | Refusal}
+ */
+function readScalar(rule, input, path) {
+  if (rule.type === 'boolean') {
+    const value = booleanOf(input);
+    return value === null ? { error: 'must be true or false', path } : { value };
+  }
+  if (rule.type === 'string') {
+    return typeof input === 'string' ? { value: input } : { error: 'must be text', path };
+  }
+  const number = numberOf(input);
+  if (number === null) return { error: 'must be a number', path };
   if (rule.min !== null && number < rule.min)
     return { error: `must be at least ${rule.min}`, path };
   if (rule.max !== null && number > rule.max) return { error: `must be at most ${rule.max}`, path };
   return { value: number };
+}
+
+/**
+ * A finite number, or text that reads as one as the core reads it (Zig's std.fmt.parseFloat:
+ * a decimal with a fraction and an exponent, digits joined by single underscores, a hex number
+ * with a binary exponent; no spaces around it, no `inf`); null for anything else.
+ * @param {Value | null} input
+ * @returns {number | null}
+ */
+export function numberOf(input) {
+  if (typeof input === 'number') return Number.isFinite(input) ? input : null;
+  if (typeof input !== 'string') return null;
+  const hex = HEX_NUMBER.exec(input);
+  const number = hex
+    ? hexNumber(hex)
+    : DECIMAL_NUMBER.test(input)
+      ? Number(input.replaceAll('_', ''))
+      : NaN;
+  return Number.isFinite(number) ? number : null;
+}
+
+/** Digits joined by single underscores. */
+const DIGITS = String.raw`\d+(?:_\d+)*`;
+const HEX_DIGITS = String.raw`[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*`;
+/** `12`, `1_000`, `1.`, `.5`, `1.5e-3`, with a sign. */
+const DECIMAL_NUMBER = new RegExp(
+  String.raw`^[+-]?(?:${DIGITS}(?:\.(?:${DIGITS})?)?|\.${DIGITS})(?:[eE][+-]?${DIGITS})?$`,
+);
+/** `0x10`, `0x1.8p1`, with a sign: the sign, the whole, the fraction and the exponent. */
+const HEX_NUMBER = new RegExp(
+  String.raw`^([+-]?)0[xX](?:(${HEX_DIGITS})(?:\.(${HEX_DIGITS})?)?|\.(${HEX_DIGITS}))(?:[pP]([+-]?${DIGITS}))?$`,
+);
+
+/** @param {RegExpExecArray} match HEX_NUMBER's */
+function hexNumber(match) {
+  const sign = match[1];
+  const whole = match[2] ?? '';
+  const fraction = match[3] ?? match[4] ?? '';
+  const exponent = match[5] ?? '0';
+  const digits = `${whole}${fraction}`.replaceAll('_', '');
+  const places = fraction.replaceAll('_', '').length;
+  const magnitude =
+    Number.parseInt(digits || '0', 16) * 2 ** (Number(exponent.replaceAll('_', '')) - 4 * places);
+  return sign === '-' ? -magnitude : magnitude;
+}
+
+/**
+ * true or false, as the core reads them: so, as the numbers 1 and 0, or as the text `true`,
+ * `false`, `1` or `0`; null for anything else (`yes`, `True`, an empty field).
+ * @param {Value | null} input
+ * @returns {boolean | null}
+ */
+export function booleanOf(input) {
+  if (typeof input === 'boolean') return input;
+  if (input === 1 || input === 'true' || input === '1') return true;
+  if (input === 0 || input === 'false' || input === '0') return false;
+  return null;
 }
 
 /**
@@ -342,6 +415,12 @@ function readArray(rule, input, path) {
  */
 function readMap(rule, input, path) {
   if (!isRecord(input)) return { error: 'must be a record', path };
+  const names = (rule.fields ?? []).map((field) => field.name);
+  // Its fields, all of them (one missing is read as nothing, which no field takes) and no other
+  const stranger = Object.keys(input).find((key) => !names.includes(key));
+  if (stranger !== undefined) {
+    return { error: `has no field ${stranger}: only ${names.join(', ')}`, path };
+  }
   /** @type {{ [field: string]: Value }} */
   const fields = {};
   for (const field of rule.fields ?? []) {

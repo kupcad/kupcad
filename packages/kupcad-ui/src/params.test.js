@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testCore } from '@kupcad/wasm/testing';
 import { BRACKET, schemaOf } from './fixtures.test-helper.js';
 import {
   blankOf,
@@ -114,7 +115,100 @@ describe('validate', () => {
     expect(validate(size, 'm5')).toEqual({ value: 'm5' });
     expect(validate(size, 'm6')).toEqual({ error: 'must be one of m3, m4, m5', path: [] });
     expect(validate(await spec('hollow'), true)).toEqual({ value: true });
+    expect(validate(await spec('hollow'), 'yes')).toEqual({
+      error: 'must be true or false',
+      path: [],
+    });
     expect(validate(await spec('label'), 'B')).toEqual({ value: 'B' });
+    expect(validate(await spec('label'), 5)).toEqual({ error: 'must be text', path: [] });
+  });
+
+  it('takes what the core takes, and no more: each input read as kupcad reads it', async () => {
+    // The panel took " 70 ", 0b1111 and "yes", which the run refused, and refused 0x10 and
+    // 1_000, which it takes; a choice was compared as text; a Map's extra field passed
+    const script = `n = param(:n, default: 50, validate: { min: 10, max: 100 })
+b = param(:b, default: false)
+t = param(:t, default: "a")
+s = param(:s, default: :m3, validate: { in: [:m3, :m4] })
+c = param(:c, default: 20, validate: { in: [10, 20, 30] })
+o = param(:o, default: { x: 1, y: 2 })
+cube(1)
+`;
+    const specs = Object.fromEntries(
+      (await schemaOf(script)).parameters.map((parameter) => [parameter.name, parameter]),
+    );
+    /** @type {[string, unknown, boolean][]} a parameter, an input, whether both take it */
+    const rows = [
+      ['n', '70', true],
+      ['n', 70, true],
+      ['n', ' 70 ', false],
+      ['n', '70 ', false],
+      ['n', '0b1111', false],
+      ['n', '0x10', true],
+      ['n', '0X10', true],
+      ['n', '0x1.8p4', true],
+      ['n', '0x_10', false],
+      ['n', '0x1p', false],
+      ['n', '1_0', true],
+      ['n', '1__0', false],
+      ['n', '_10', false],
+      ['n', '10_', false],
+      ['n', '1e1', true],
+      ['n', '1E1', true],
+      ['n', '1e', false],
+      ['n', '1e_1', false],
+      ['n', '50.', true],
+      ['n', '.5e2', true],
+      ['n', '1.e1', true],
+      ['n', '+50', true],
+      ['n', '--5', false],
+      ['n', '00012', true],
+      ['n', '5e-1', false],
+      ['n', '1e1000', false],
+      ['n', 'inf', false],
+      ['n', 'nan', false],
+      ['n', '', false],
+      ['n', '50,5', false],
+      ['n', '٧٠', false],
+      ['n', '5', false],
+      ['n', '101', false],
+      ['b', true, true],
+      ['b', 'true', true],
+      ['b', '1', true],
+      ['b', 1, true],
+      ['b', '0', true],
+      ['b', 'yes', false],
+      ['b', 'True', false],
+      ['b', '2', false],
+      ['b', '', false],
+      ['t', '5', true],
+      ['t', '', true],
+      ['t', 5, false],
+      ['s', 'm4', true],
+      ['s', ':m4', false],
+      ['s', 'm5', false],
+      ['c', 20, true],
+      ['c', '20', true],
+      ['c', '20.0', true],
+      ['c', '25', false],
+      ['c', ' 20', false],
+      ['o', { x: 1, y: 2 }, true],
+      ['o', { x: '1', y: 2 }, true],
+      ['o', { x: 1 }, false],
+      ['o', { x: 1, y: 2, z: 3 }, false],
+      ['o', { x: 'one', y: 2 }, false],
+    ];
+    const core = await testCore();
+    for (const [name, input, taken] of rows) {
+      const panel = 'value' in validate(specs[name], /** @type {any} */ (input));
+      const run = await core.preview(script, { params: { [name]: /** @type {any} */ (input) } });
+      expect([name, input, panel, run.header.error?.message ?? null]).toEqual([
+        name,
+        input,
+        taken,
+        taken ? null : expect.stringMatching(/Error: parameter :/),
+      ]);
+    }
   });
 });
 
